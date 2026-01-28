@@ -13,6 +13,7 @@ import { generateKeyPairFromSeed } from '@libp2p/crypto/keys';
 import { peerIdFromPrivateKey } from '@libp2p/peer-id';
 import { IdentityJson } from '../types/identity';
 import { emitFlowEvent } from '../utils/flow_events';
+import { uint8ArrayToBase64 } from '../utils/base64';
 
 /**
  * Custom error class for identity restoration errors.
@@ -97,9 +98,9 @@ export async function restoreIdentityFromMnemonic(mnemonic12: string): Promise<I
     const publicKeyBytes = keyPair.publicKey.raw;
     const privateKeyBytes = keyPair.raw;
 
-    // Step 6: Encode keys as base64
-    const publicKeyBase64 = Buffer.from(publicKeyBytes).toString('base64');
-    const privateKeyBase64 = Buffer.from(privateKeyBytes).toString('base64');
+    // Step 6: Encode keys as base64 (browser-compatible)
+    const publicKeyBase64 = uint8ArrayToBase64(publicKeyBytes);
+    const privateKeyBase64 = uint8ArrayToBase64(privateKeyBytes);
 
     // Step 7: Set timestamps (same for both on restoration)
     const now = new Date().toISOString();

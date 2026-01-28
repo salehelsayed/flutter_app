@@ -3,7 +3,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/identity/application/generate_identity_use_case.dart';
 import 'package:flutter_app/features/identity/presentation/screens/identity_choice_screen.dart';
-import 'package:flutter_app/features/identity/presentation/screens/mnemonic_input_screen.dart';
+import 'package:flutter_app/features/identity/presentation/screens/mnemonic_input_wired.dart';
 
 class IdentityChoiceWired extends StatefulWidget {
   final IdentityRepository repository;
@@ -111,9 +111,13 @@ class _IdentityChoiceWiredState extends State<IdentityChoiceWired> {
 
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (context) => MnemonicInputScreen(
-          onRestorePressed: (mnemonic) async {
-            // Restore logic will be handled by FL_XS_13
+        builder: (routeContext) => MnemonicInputWired(
+          repository: widget.repository,
+          callJsIdentityRestore: widget.callJsIdentityRestore,
+          onNavigateToMain: () {
+            // Pop back to this screen first, then navigate to main
+            Navigator.of(routeContext).pop();
+            widget.onNavigateToMain();
           },
         ),
       ),

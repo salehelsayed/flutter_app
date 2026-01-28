@@ -12,6 +12,7 @@ import { generateKeyPairFromSeed } from '@libp2p/crypto/keys';
 import { peerIdFromPrivateKey } from '@libp2p/peer-id';
 import { IdentityJson } from '../types/identity';
 import { emitFlowEvent } from '../utils/flow_events';
+import { uint8ArrayToBase64 } from '../utils/base64';
 
 /**
  * Generates a new identity with fresh cryptographic credentials.
@@ -60,9 +61,9 @@ export async function generateIdentity(): Promise<IdentityJson> {
     const publicKeyBytes = keyPair.publicKey.raw;
     const privateKeyBytes = keyPair.raw;
 
-    // 5. Encode keys as base64
-    const publicKeyBase64 = Buffer.from(publicKeyBytes).toString('base64');
-    const privateKeyBase64 = Buffer.from(privateKeyBytes).toString('base64');
+    // 5. Encode keys as base64 (browser-compatible)
+    const publicKeyBase64 = uint8ArrayToBase64(publicKeyBytes);
+    const privateKeyBase64 = uint8ArrayToBase64(privateKeyBytes);
 
     // 6. Set timestamps (same for both on creation)
     const now = new Date().toISOString();

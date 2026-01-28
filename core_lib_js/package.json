@@ -1,0 +1,25 @@
+{
+  "name": "core_lib_js",
+  "version": "1.0.0",
+  "description": "Core JavaScript library for identity management",
+  "type": "module",
+  "main": "dist/bundle.js",
+  "scripts": {
+    "build": "node build.mjs",
+    "build:dev": "node build.mjs --dev",
+    "test": "jest"
+  },
+  "dependencies": {
+    "bip39": "^3.1.0",
+    "@libp2p/crypto": "^5.0.0",
+    "@libp2p/peer-id": "^5.0.0",
+    "buffer": "^6.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "esbuild": "^0.20.0",
+    "jest": "^29.0.0",
+    "ts-jest": "^29.0.0",
+    "typescript": "^5.0.0"
+  }
+}
