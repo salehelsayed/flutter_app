@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import '../utils/flow_event_emitter.dart';
 
@@ -88,4 +89,77 @@ Future<Map<String, dynamic>> callJsIdentityRestore(
   );
 
   return response;
+}
+
+/// Calls the JS bridge to sign payload data with Ed25519.
+///
+/// This function MUST use the real JS bridge for cryptographic signing.
+/// Ed25519 signing is implemented in JavaScript - DO NOT fake this in Dart.
+///
+/// Parameters:
+///   - [bridge]: The JsBridge instance to use for communication
+///   - [dataToSign]: The canonical JSON string to sign
+///   - [privateKey]: Base64-encoded Ed25519 private key
+///
+/// Returns a map with:
+/// - On success: `{ "ok": true, "signature": "base64..." }`
+/// - On error: `{ "ok": false, "errorCode": "...", "errorMessage": "..." }`
+Future<Map<String, dynamic>> callJsSignPayload({
+  required JsBridge bridge,
+  required String dataToSign,
+  required String privateKey,
+  Duration timeout = const Duration(seconds: 10),
+}) async {
+  final correlationId = DateTime.now().microsecondsSinceEpoch.toString();
+
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'QR_FL_BRIDGE_SIGN_REQUEST',
+    details: {
+      'dataLength': dataToSign.length,
+      'correlationId': correlationId,
+    },
+  );
+
+  final request = {
+    'cmd': 'payload.sign',
+    'payload': {
+      'dataToSign': dataToSign,
+      'privateKey': privateKey,
+    },
+  };
+
+  try {
+    final responseJson = await bridge
+        .send(jsonEncode(request))
+        .timeout(timeout);
+    final response = jsonDecode(responseJson) as Map<String, dynamic>;
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'QR_FL_BRIDGE_SIGN_RESPONSE',
+      details: {
+        'ok': response['ok'] ?? false,
+        'correlationId': correlationId,
+      },
+    );
+
+    return response;
+  } on TimeoutException {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'QR_FL_BRIDGE_SIGN_RESPONSE',
+      details: {
+        'ok': false,
+        'errorCode': 'BRIDGE_TIMEOUT',
+        'correlationId': correlationId,
+      },
+    );
+
+    return {
+      'ok': false,
+      'errorCode': 'BRIDGE_TIMEOUT',
+      'errorMessage': 'Bridge call timed out after ${timeout.inSeconds}s',
+    };
+  }
 }

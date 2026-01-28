@@ -5,8 +5,15 @@
  * via JavaScript channels. Uses real libp2p libraries for crypto.
  */
 
+import * as ed from '@noble/ed25519';
+import { sha512 } from '@noble/hashes/sha2.js';
 import { generateIdentity } from '../identity/generate';
 import { restoreIdentityFromMnemonic } from '../identity/restore';
+import { signPayload } from '../signing/sign_payload';
+
+// Polyfill SHA-512 for environments without crypto.subtle (e.g. Flutter WebView)
+ed.hashes.sha512 = (msg: Uint8Array) => sha512(msg);
+ed.hashes.sha512Async = async (msg: Uint8Array) => sha512(msg);
 
 interface BridgeResponse {
   ok: boolean;
@@ -69,6 +76,31 @@ async function handleRequest(requestJson: string): Promise<void> {
       }
       const identity = await restoreIdentityFromMnemonic(mnemonic);
       sendToFlutter({ ok: true, requestId, identity });
+      return;
+    }
+
+    if (cmd === 'payload.sign') {
+      const { dataToSign, privateKey } = payload;
+      if (!dataToSign || typeof dataToSign !== 'string') {
+        sendToFlutter({
+          ok: false,
+          requestId,
+          errorCode: 'SIGNING_ERROR',
+          errorMessage: 'Missing or invalid dataToSign',
+        });
+        return;
+      }
+      if (!privateKey || typeof privateKey !== 'string') {
+        sendToFlutter({
+          ok: false,
+          requestId,
+          errorCode: 'INVALID_PRIVATE_KEY',
+          errorMessage: 'Missing or invalid privateKey',
+        });
+        return;
+      }
+      const signature = await signPayload(dataToSign, privateKey);
+      sendToFlutter({ ok: true, requestId, signature } as any);
       return;
     }
 

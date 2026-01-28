@@ -4,13 +4,20 @@ import 'package:flutter_app/core/bridge/js_bridge_client.dart';
 import 'package:flutter_app/features/identity/application/startup_decision.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/identity/presentation/screens/identity_choice_wired.dart';
+import 'package:flutter_app/features/qr_code/presentation/screens/qr_display_wired.dart';
 
-/// A simple placeholder for the main app screen.
+/// Main app screen displayed when an identity exists.
 ///
-/// This screen is displayed when an identity already exists in the database.
-/// It serves as the entry point to the main application functionality.
+/// Provides access to QR code generation and other app features.
 class MainAppScreen extends StatelessWidget {
-  const MainAppScreen({super.key});
+  final IdentityRepository repository;
+  final JsBridge bridge;
+
+  const MainAppScreen({
+    super.key,
+    required this.repository,
+    required this.bridge,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -18,8 +25,29 @@ class MainAppScreen extends StatelessWidget {
       appBar: AppBar(
         title: const Text('Main App'),
       ),
-      body: const Center(
-        child: Text('Welcome! Identity loaded.'),
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Text('Welcome! Identity loaded.'),
+            const SizedBox(height: 32),
+            ElevatedButton.icon(
+              onPressed: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => QRDisplayWired(
+                      repo: repository,
+                      bridgeClient: bridge,
+                      onClose: () => Navigator.of(context).pop(),
+                    ),
+                  ),
+                );
+              },
+              icon: const Icon(Icons.qr_code),
+              label: const Text('Show my QR Code'),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -73,6 +101,10 @@ class _StartupRouterState extends State<StartupRouter> {
 
       if (!mounted) return;
 
+      // Capture locally to avoid widget reference issues after async gap
+      final bridge = widget.bridge;
+      final repository = widget.repository;
+
       switch (decision) {
         case StartupDecision.hasIdentity:
           emitFlowEvent(
@@ -81,7 +113,7 @@ class _StartupRouterState extends State<StartupRouter> {
             details: {},
           );
           Navigator.of(context).pushReplacement(
-            MaterialPageRoute(builder: (_) => const MainAppScreen()),
+            MaterialPageRoute(builder: (_) => MainAppScreen(repository: repository, bridge: bridge)),
           );
           break;
         case StartupDecision.needsIdentity:
@@ -90,9 +122,6 @@ class _StartupRouterState extends State<StartupRouter> {
             event: 'ID_STARTUP_ROUTE_ONBOARDING',
             details: {},
           );
-          // Capture bridge and repository locally to avoid widget reference issues
-          final bridge = widget.bridge;
-          final repository = widget.repository;
           Navigator.of(context).pushReplacement(
             MaterialPageRoute(
               builder: (routeContext) => IdentityChoiceWired(
@@ -103,7 +132,7 @@ class _StartupRouterState extends State<StartupRouter> {
                 onNavigateToMain: () {
                   // Use the route's context for navigation
                   Navigator.of(routeContext).pushReplacement(
-                    MaterialPageRoute(builder: (_) => const MainAppScreen()),
+                    MaterialPageRoute(builder: (_) => MainAppScreen(repository: repository, bridge: bridge)),
                   );
                 },
               ),

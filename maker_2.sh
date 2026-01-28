@@ -64,11 +64,11 @@ extract_output_filename() {
 
     # Pattern 1: "**File:**" or "File:" followed by backticked path
     # e.g., **File:** `lib/core/database/helpers/identity_db_helpers.dart`
-    filename=$(echo "$content" | grep -oE '\*?\*?File:\*?\*?\s*`[a-zA-Z0-9_./-]+\.(dart|js|ts|sql|py|md|json|yaml|yml|sh|txt|swift|kt|java|go|rs|c|cpp|h|hpp)`' | head -1 | grep -oE '`[^`]+`' | tr -d '`' | xargs basename 2>/dev/null)
+    filename=$(echo "$content" | grep -oE '\*?\*?File:\*?\*?\s*`[a-zA-Z0-9_./-]+\.(dart|js|ts|sql|py|md|json|yaml|yml|sh|txt|swift|kt|java|go|rs|c|cpp|h|hpp)`' | head -1 | grep -oE '`[^`]+`' | tr -d '`')
 
     # Pattern 2: "File: path/to/filename.ext" without backticks
     if [[ -z "$filename" ]]; then
-        filename=$(echo "$content" | grep -oE 'File:\s*[a-zA-Z0-9_./-]+\.(dart|js|ts|sql|py|md|json|yaml|yml|sh|txt|swift|kt|java|go|rs|c|cpp|h|hpp)' | head -1 | sed 's/File:\s*//' | xargs basename 2>/dev/null)
+        filename=$(echo "$content" | grep -oE 'File:\s*[a-zA-Z0-9_./-]+\.(dart|js|ts|sql|py|md|json|yaml|yml|sh|txt|swift|kt|java|go|rs|c|cpp|h|hpp)' | head -1 | sed 's/File:\s*//')
     fi
 
     # Pattern 3: Filenames in backticks like `filename.ext` (simple name, not path)
@@ -102,7 +102,9 @@ CODE_BLOCK_INSTRUCTION="
 ## CRITICAL OUTPUT REQUIREMENT
 
 You MUST output ONLY a code block. No explanations before or after.
-Do NOT check if files exist. Always generate fresh code.
+Do NOT read any files from disk. Do NOT check if files already exist. Do NOT use any tools.
+Do NOT say 'already exists' or 'no changes needed'. Always generate the complete code fresh from scratch based solely on the task specification above.
+The output file will be saved to: $OUTPUT_FILE
 Format your ENTIRE response as:
 
 \`\`\`
@@ -1161,7 +1163,8 @@ phase1_generate_and_vote() {
             echo "════════════════════════════════════════════════════════════"
             echo "  Sample ID: $WINNER_ID"
             
-            # Copy winner to output file
+            # Copy winner to output file (create parent dirs if needed)
+            mkdir -p "$(dirname "$OUTPUT_FILE")"
             cp "$SAMPLES_DIR/sample_${WINNER_ID}.txt" "$OUTPUT_FILE"
             echo "  ✓ Saved to: $OUTPUT_FILE"
             
