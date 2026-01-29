@@ -5,6 +5,7 @@ import 'package:flutter_app/core/database/helpers/identity_db_helpers.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository_impl.dart';
 import 'package:flutter_app/features/identity/presentation/startup_router.dart';
 import 'package:flutter_app/core/bridge/webview_js_bridge.dart';
+import 'package:flutter_app/core/theme/app_theme.dart';
 import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart' show kIsWeb;
 
@@ -56,11 +57,9 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'M1 Identity Demo',
-      theme: ThemeData(
-        primarySwatch: Colors.blue,
-        useMaterial3: true,
-      ),
+      title: 'mknoon',
+      theme: AppTheme.darkTheme,
+      themeMode: ThemeMode.dark,
       home: StartupRouter(
         repository: repository,
         bridge: bridge,
