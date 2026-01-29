@@ -148,8 +148,8 @@ class QRDisplayScreen extends StatelessWidget {
   /// Truncates the peerID for display.
   /// Example: "12D3KooWAbcdefghijk..." → "12D3KooW...ghijk"
   String _truncatePeerId(String id) {
-    if (id.length <= 20) return id;
-    return '${id.substring(0, 10)}...${id.substring(id.length - 6)}';
+    if (id.length <= 12) return id;
+    return '${id.substring(0, 8)}...${id.substring(id.length - 4)}';
   }
 
   @override
@@ -191,13 +191,16 @@ class QRDisplayScreen extends StatelessWidget {
                     ),
                   ],
                 ),
-                child: QrImageView(
-                  data: qrData,
-                  version: QrVersions.auto,
-                  size: qrSize,
-                  backgroundColor: Colors.white,
-                  errorCorrectionLevel: QrErrorCorrectLevel.M,
-                  padding: const EdgeInsets.all(8),
+                child: Semantics(
+                  label: 'QR code for sharing your identity',
+                  child: QrImageView(
+                    data: qrData,
+                    version: QrVersions.auto,
+                    size: qrSize,
+                    backgroundColor: Colors.white,
+                    errorCorrectionLevel: QrErrorCorrectLevel.M,
+                    padding: const EdgeInsets.all(8),
+                  ),
                 ),
               ),
 

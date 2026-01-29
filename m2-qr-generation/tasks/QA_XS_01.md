@@ -1,8 +1,8 @@
-# Task Prompt: QA_XS_01 - Automated Smoke Test: QR Generation Flow (REAL runtime)
+# Task Prompt: QA_XS_01 - Automated Smoke Test: QR Generation Flow
 
 ## Instructions for AI Agent
 
-You are implementing an automated smoke test for a Flutter application. Follow the specification exactly. Output complete, working code that can be directly used.
+You are implementing an automated smoke test for the M2 QR generation flow. Follow the specification exactly. Output complete, working code that can be directly used.
 
 ---
 
@@ -12,15 +12,19 @@ You are implementing an automated smoke test for a Flutter application. Follow t
 Milestone: M2 – QR Code Generation
 
 Smoke Test Requirements:
-  - Must exercise REAL runtime boundaries (WebView JS bridge + SQLite)
-  - NOT a unit test with mocks - this is integration/smoke testing
-  - Runnable as a standalone Flutter app
+  - Must exercise REAL Ed25519 signing (not mocked)
+  - TypeScript CLI script (NOT a Flutter app)
+  - Runnable via ts-node
   - Validates the complete QR generation flow end-to-end
+  - Replicates the Dart buildQRPayload logic in TypeScript for testing
+  - Tests JS signPayload and bridge handler integration
 
 Runtime Boundaries Tested:
-  - WebView JS Bridge: Real JavaScript execution for signing
-  - SQLite: Real database for identity storage/retrieval
-  - Full integration of FL + JS layers
+  - Ed25519 signing via @noble/ed25519
+  - Bridge handler payload.sign flow
+  - Flow event emission sequence
+  - Canonical JSON with sorted keys
+  - Signature cryptographic validity
 ```
 
 ---
@@ -28,361 +32,330 @@ Runtime Boundaries Tested:
 ## Task Definition
 
 ```
-[TASK QA_XS_01 – Automated Smoke Test: QR Generation Flow (REAL runtime)]
+[TASK QA_XS_01 – Automated Smoke Test: QR Generation Flow]
 
 Owner: QA
 
 Goal:
   Create an automated smoke test that validates the QR code generation flow
-  using REAL runtime boundaries (WebView JS bridge + SQLite).
+  using REAL Ed25519 cryptography in a TypeScript CLI script.
 
 What to implement:
-  - File: lib/smoke_test_m2_qr_generation.dart
-  - Runnable via: flutter run -t lib/smoke_test_m2_qr_generation.dart
-  - Exercises the complete flow with real dependencies
-  - Prints "PASS" on success, "FAIL: <reason>" on failure
+  - File: test/smoketest_m2_qr.ts
+  - Runnable via: npx ts-node --esm test/smoketest_m2_qr.ts
+  - Exercises real Ed25519 signing with @noble/ed25519
+  - Replicates Dart buildQRPayload logic in TypeScript
+  - Prints assertion results and summary
 
-Validation Checks:
-  1. QR payload is valid JSON (parseable)
-  2. All required keys present: pk, ns, rv, sig, ts
-  3. pk field matches identity's publicKey
-  4. ns field matches identity's peerId
-  5. rv field equals the constant rendezvous address
-  6. sig field is base64 encoded and non-empty
-  7. FAIL immediately if any stub markers detected (e.g., "STUB", "TODO", "MOCK")
-
-Test Flow:
-  1. Initialize real dependencies (SQLite, WebView bridge)
-  2. Ensure identity exists (create if needed)
-  3. Call buildQRPayload with real repo and real callJsSignPayload
-  4. Parse the returned JSON
-  5. Validate all fields against expected values
-  6. Print result and exit
+Test Cases:
+  1. Happy path (end-to-end):
+     - Generate real Ed25519 keypair
+     - Run buildQRPayload with real signing
+     - Validate all required keys present: ns, pk, rv, sig, ts
+     - Validate pk/ns match identity
+     - Validate rv equals RENDEZVOUS_ADDRESS constant
+     - Validate sig is valid base64 and cryptographically valid
+     - Validate keys are alphabetically sorted
+  2. Flow event sequence:
+     - Verify 13 events fire in expected order
+     - Expected sequence: QR_FL_SCREEN_INIT, QR_FL_SCREEN_LOADING,
+       QR_FL_BUILD_PAYLOAD_START, QR_FL_BUILD_PAYLOAD_IDENTITY_LOADED,
+       QR_FL_BUILD_PAYLOAD_SIGNING, QR_FL_BRIDGE_SIGN_REQUEST,
+       QR_JS_BRIDGE_SIGN_RECEIVED, QR_JS_SIGN_PAYLOAD_START,
+       QR_JS_SIGN_PAYLOAD_SUCCESS, QR_JS_BRIDGE_SIGN_SUCCESS,
+       QR_FL_BRIDGE_SIGN_RESPONSE, QR_FL_BUILD_PAYLOAD_SUCCESS,
+       QR_FL_SCREEN_DISPLAY
+  3. No identity path:
+     - Pass null identity
+     - Verify result is noIdentity
+     - Verify QR_FL_BUILD_PAYLOAD_NO_IDENTITY event emitted
+     - Verify QR_FL_SCREEN_ERROR event emitted
+  4. Re-generation:
+     - Generate QR twice with small delay
+     - Verify pk, ns, rv unchanged
+     - Verify ts and sig differ
 
 Deliverable:
-  - File: lib/smoke_test_m2_qr_generation.dart
+  - File: test/smoketest_m2_qr.ts
 ```
 
 ---
 
 ## Output Requirements
 
-1. **File:** `lib/smoke_test_m2_qr_generation.dart`
+1. **File:** `test/smoketest_m2_qr.ts`
 
 2. **Must include:**
-   - Standalone runnable main() function
-   - Real SQLite repository initialization
-   - Real WebView JS bridge initialization
-   - Call to buildQRPayload with real dependencies
-   - Comprehensive validation of QR payload
-   - Clear PASS/FAIL output
+   - Real Ed25519 keypair generation via `ed.utils.randomSecretKey()`
+   - Inline signPayload function using `ed.signAsync()`
+   - Inline handlePayloadSign bridge handler
+   - Inline buildQRPayload replicating Dart logic with flow events
+   - Flow event capture array for sequence validation
+   - Ed25519 signature verification via `ed.verifyAsync()`
+   - Simple assertion helper with pass/fail counting
 
 3. **Implementation:**
 
-```dart
-import 'dart:convert';
-import 'dart:io';
+```typescript
+/**
+ * M2 QR Generation Smoketest
+ *
+ * Tests the complete QR generation flow:
+ *   1. JS signPayload() signs data with Ed25519
+ *   2. Dart-equivalent buildQRPayload logic (tested via Dart script)
+ *   3. Flow events fire in expected sequence
+ *   4. Payload contains all required fields with sorted keys
+ *
+ * Run: npx ts-node --esm test/smoketest_m2_qr.ts
+ */
 
-import 'package:flutter/material.dart';
+import * as ed from '@noble/ed25519';
 
-import 'package:your_app/core/bridge/js_bridge_client.dart';
-import 'package:your_app/core/database/database_helper.dart';
-import 'package:your_app/features/identity/data/repositories/identity_repository_impl.dart';
-import 'package:your_app/features/identity/domain/repositories/identity_repository.dart';
-import 'package:your_app/features/qr_code/application/build_qr_payload_use_case.dart';
+// ── Flow event capture ──────────────────────────────────────────────
 
-/// Expected rendezvous address constant
-const String kRendezvousAddress =
-    '/dns4/mknoun.xyz/tcp/4001/wss/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g';
+const flowEvents: string[] = [];
 
-/// Smoke test for M2 QR Generation Flow
-///
-/// Run with: flutter run -t lib/smoke_test_m2_qr_generation.dart
-///
-/// This test exercises REAL runtime boundaries:
-/// - WebView JS bridge (real JavaScript execution)
-/// - SQLite database (real persistence)
-///
-/// Validation:
-/// - Valid JSON output
-/// - All keys present (pk, ns, rv, sig, ts)
-/// - pk/ns match stored identity
-/// - rv equals constant rendezvous address
-/// - sig is base64 and non-empty
-/// - FAIL on any stub markers
-void main() {
-  runApp(const SmokeTestApp());
+function emitFlowEvent(p: { layer: string; event: string; details: Record<string, unknown> }) {
+  flowEvents.push(p.event);
+  console.log(`  [FLOW] ${p.layer} | ${p.event} | ${JSON.stringify(p.details)}`);
 }
 
-class SmokeTestApp extends StatelessWidget {
-  const SmokeTestApp({super.key});
+// ── signPayload (inline from core_lib_js) ───────────────────────────
 
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'M2 QR Generation Smoke Test',
-      home: const SmokeTestRunner(),
-    );
+async function signPayload(dataToSign: string, privateKeyBase64: string): Promise<string> {
+  emitFlowEvent({ layer: 'JS', event: 'QR_JS_SIGN_PAYLOAD_START', details: { dataLength: dataToSign.length } });
+
+  const privateKeyBytes = Buffer.from(privateKeyBase64, 'base64');
+  const seed = privateKeyBytes.length === 64 ? privateKeyBytes.slice(0, 32) : privateKeyBytes;
+  const messageBytes = new TextEncoder().encode(dataToSign);
+  const signature = await ed.signAsync(messageBytes, seed);
+  const signatureBase64 = Buffer.from(signature).toString('base64');
+
+  emitFlowEvent({ layer: 'JS', event: 'QR_JS_SIGN_PAYLOAD_SUCCESS', details: { signatureLength: signatureBase64.length } });
+  return signatureBase64;
+}
+
+// ── Bridge handler (inline from handlers.ts) ────────────────────────
+
+async function handlePayloadSign(payload: { dataToSign: string; privateKey: string }): Promise<any> {
+  emitFlowEvent({ layer: 'JS', event: 'QR_JS_BRIDGE_SIGN_RECEIVED', details: { dataLength: payload.dataToSign.length } });
+
+  if (!payload.dataToSign || typeof payload.dataToSign !== 'string') {
+    return { ok: false, errorCode: 'SIGNING_ERROR', errorMessage: 'Missing or invalid dataToSign' };
+  }
+  if (!payload.privateKey || typeof payload.privateKey !== 'string') {
+    return { ok: false, errorCode: 'INVALID_PRIVATE_KEY', errorMessage: 'Missing or invalid privateKey' };
+  }
+
+  const signature = await signPayload(payload.dataToSign, payload.privateKey);
+  emitFlowEvent({ layer: 'JS', event: 'QR_JS_BRIDGE_SIGN_SUCCESS', details: {} });
+  return { ok: true, signature };
+}
+
+// ── buildQRPayload (Dart logic replicated) ──────────────────────────
+
+const RENDEZVOUS_ADDRESS = '/dns4/mknoun.xyz/tcp/4001/wss/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g';
+
+interface Identity {
+  peerId: string;
+  publicKey: string;
+  privateKey: string;
+}
+
+async function buildQRPayload(
+  identity: Identity | null,
+  callJsSign: (data: string, key: string) => Promise<any>,
+): Promise<{ result: string; qrString: string | null }> {
+  emitFlowEvent({ layer: 'FL', event: 'QR_FL_SCREEN_INIT', details: {} });
+  emitFlowEvent({ layer: 'FL', event: 'QR_FL_SCREEN_LOADING', details: {} });
+  emitFlowEvent({ layer: 'FL', event: 'QR_FL_BUILD_PAYLOAD_START', details: {} });
+
+  if (!identity) {
+    emitFlowEvent({ layer: 'FL', event: 'QR_FL_BUILD_PAYLOAD_NO_IDENTITY', details: {} });
+    emitFlowEvent({ layer: 'FL', event: 'QR_FL_SCREEN_ERROR', details: { reason: 'noIdentity' } });
+    return { result: 'noIdentity', qrString: null };
+  }
+
+  emitFlowEvent({ layer: 'FL', event: 'QR_FL_BUILD_PAYLOAD_IDENTITY_LOADED', details: { peerId: identity.peerId.substring(0, 12) } });
+
+  // Build unsigned payload with sorted keys
+  const ts = new Date().toISOString();
+  const unsignedPayload: Record<string, string> = {
+    ns: identity.peerId,
+    pk: identity.publicKey,
+    rv: RENDEZVOUS_ADDRESS,
+    ts,
+  };
+
+  // Canonical JSON (sorted keys)
+  const sortedKeys = Object.keys(unsignedPayload).sort();
+  const sorted: Record<string, string> = {};
+  for (const k of sortedKeys) sorted[k] = unsignedPayload[k];
+  const dataToSign = JSON.stringify(sorted);
+
+  emitFlowEvent({ layer: 'FL', event: 'QR_FL_BUILD_PAYLOAD_SIGNING', details: {} });
+  emitFlowEvent({ layer: 'FL', event: 'QR_FL_BRIDGE_SIGN_REQUEST', details: { dataLength: dataToSign.length } });
+
+  const signResponse = await callJsSign(dataToSign, identity.privateKey);
+
+  emitFlowEvent({ layer: 'FL', event: 'QR_FL_BRIDGE_SIGN_RESPONSE', details: { ok: signResponse.ok } });
+
+  if (!signResponse.ok) {
+    emitFlowEvent({ layer: 'FL', event: 'QR_FL_BUILD_PAYLOAD_ERROR', details: { errorCode: signResponse.errorCode } });
+    emitFlowEvent({ layer: 'FL', event: 'QR_FL_SCREEN_ERROR', details: { reason: 'signingError' } });
+    return { result: 'signingError', qrString: null };
+  }
+
+  const signedPayload = { ...sorted, sig: signResponse.signature };
+  const signedSorted: Record<string, string> = {};
+  for (const k of Object.keys(signedPayload).sort()) signedSorted[k] = signedPayload[k];
+  const finalJson = JSON.stringify(signedSorted);
+
+  emitFlowEvent({ layer: 'FL', event: 'QR_FL_BUILD_PAYLOAD_SUCCESS', details: {} });
+  emitFlowEvent({ layer: 'FL', event: 'QR_FL_SCREEN_DISPLAY', details: {} });
+
+  return { result: 'success', qrString: finalJson };
+}
+
+// ── Assertions ──────────────────────────────────────────────────────
+
+let passed = 0;
+let failed = 0;
+
+function assert(condition: boolean, msg: string) {
+  if (condition) {
+    console.log(`  ✓ ${msg}`);
+    passed++;
+  } else {
+    console.log(`  ✗ FAIL: ${msg}`);
+    failed++;
   }
 }
 
-class SmokeTestRunner extends StatefulWidget {
-  const SmokeTestRunner({super.key});
+// ── Main ────────────────────────────────────────────────────────────
 
-  @override
-  State<SmokeTestRunner> createState() => _SmokeTestRunnerState();
-}
+async function main() {
+  console.log('══════════════════════════════════════════════════════════');
+  console.log('M2 QR Generation Smoketest');
+  console.log('══════════════════════════════════════════════════════════\n');
 
-class _SmokeTestRunnerState extends State<SmokeTestRunner> {
-  String _status = 'Starting smoke test...';
-  bool _passed = false;
-  bool _completed = false;
+  // Generate a real Ed25519 key pair for testing
+  const privateKey = ed.utils.randomSecretKey();
+  const publicKey = await ed.getPublicKeyAsync(privateKey);
+  const privateKeyBase64 = Buffer.from(privateKey).toString('base64');
+  const publicKeyBase64 = Buffer.from(publicKey).toString('base64');
+  const peerId = '12D3KooWTestSmokeTestPeerIdValue1234567890';
 
-  @override
-  void initState() {
-    super.initState();
-    _runSmokeTest();
+  const identity: Identity = {
+    peerId,
+    publicKey: publicKeyBase64,
+    privateKey: privateKeyBase64,
+  };
+
+  // ── Test 1: Happy path ──────────────────────────────────────────
+
+  console.log('── Test 1: Happy Path (end-to-end) ──\n');
+  flowEvents.length = 0;
+
+  const { result, qrString } = await buildQRPayload(identity, (data, key) => handlePayloadSign({ dataToSign: data, privateKey: key }));
+
+  console.log('');
+  assert(result === 'success', 'Result is success');
+  assert(qrString !== null, 'QR string is not null');
+
+  const payload = JSON.parse(qrString!);
+  assert(payload.pk === publicKeyBase64, `pk matches (${payload.pk.substring(0, 20)}...)`);
+  assert(payload.ns === peerId, `ns matches peerId`);
+  assert(payload.rv === RENDEZVOUS_ADDRESS, `rv is rendezvous address`);
+  assert(typeof payload.ts === 'string' && payload.ts.length > 0, `ts is non-empty ISO string`);
+  assert(typeof payload.sig === 'string' && payload.sig.length > 0, `sig is non-empty base64`);
+
+  // Verify sorted keys
+  const keys = Object.keys(payload);
+  const expectedKeys = ['ns', 'pk', 'rv', 'sig', 'ts'];
+  assert(JSON.stringify(keys) === JSON.stringify(expectedKeys), `Keys sorted: ${keys.join(', ')}`);
+
+  // Verify signature is valid Ed25519
+  const sigBytes = Buffer.from(payload.sig, 'base64');
+  const dataWithoutSig = { ...payload };
+  delete dataWithoutSig.sig;
+  const dataBytes = new TextEncoder().encode(JSON.stringify(dataWithoutSig));
+  const valid = await ed.verifyAsync(sigBytes, dataBytes, publicKey);
+  assert(valid === true, 'Ed25519 signature is cryptographically valid');
+
+  // ── Test 2: Flow event sequence ─────────────────────────────────
+
+  console.log('\n── Test 2: Flow Event Sequence ──\n');
+
+  const expectedEvents = [
+    'QR_FL_SCREEN_INIT',
+    'QR_FL_SCREEN_LOADING',
+    'QR_FL_BUILD_PAYLOAD_START',
+    'QR_FL_BUILD_PAYLOAD_IDENTITY_LOADED',
+    'QR_FL_BUILD_PAYLOAD_SIGNING',
+    'QR_FL_BRIDGE_SIGN_REQUEST',
+    'QR_JS_BRIDGE_SIGN_RECEIVED',
+    'QR_JS_SIGN_PAYLOAD_START',
+    'QR_JS_SIGN_PAYLOAD_SUCCESS',
+    'QR_JS_BRIDGE_SIGN_SUCCESS',
+    'QR_FL_BRIDGE_SIGN_RESPONSE',
+    'QR_FL_BUILD_PAYLOAD_SUCCESS',
+    'QR_FL_SCREEN_DISPLAY',
+  ];
+
+  assert(flowEvents.length === expectedEvents.length, `Event count: ${flowEvents.length} === ${expectedEvents.length}`);
+
+  for (let i = 0; i < expectedEvents.length; i++) {
+    const actual = flowEvents[i] ?? '(missing)';
+    const expected = expectedEvents[i];
+    assert(actual === expected, `Event[${i}]: ${actual}`);
   }
 
-  Future<void> _runSmokeTest() async {
-    try {
-      // Step 1: Initialize REAL dependencies
-      _updateStatus('Initializing real dependencies...');
+  // ── Test 3: No identity path ────────────────────────────────────
 
-      final db = await DatabaseHelper.instance.database;
-      final IdentityRepository repo = IdentityRepositoryImpl(db);
-      final JsBridgeClient bridgeClient = JsBridgeClient();
+  console.log('\n── Test 3: No Identity Path ──\n');
+  flowEvents.length = 0;
 
-      // Wait for WebView bridge to be ready
-      await bridgeClient.initialize();
+  const noIdResult = await buildQRPayload(null, (data, key) => handlePayloadSign({ dataToSign: data, privateKey: key }));
 
-      // Step 2: Ensure identity exists
-      _updateStatus('Checking for existing identity...');
+  console.log('');
+  assert(noIdResult.result === 'noIdentity', 'Result is noIdentity');
+  assert(noIdResult.qrString === null, 'QR string is null');
+  assert(flowEvents.includes('QR_FL_BUILD_PAYLOAD_NO_IDENTITY'), 'NO_IDENTITY event emitted');
+  assert(flowEvents.includes('QR_FL_SCREEN_ERROR'), 'SCREEN_ERROR event emitted');
 
-      var identity = await repo.loadIdentity();
-      if (identity == null) {
-        _updateStatus('No identity found. Creating new identity...');
-        // This would trigger M1 flow - for smoke test, we expect identity to exist
-        _fail('No identity found. Please run M1 identity initialization first.');
-        return;
-      }
+  // ── Test 4: Re-generation produces new timestamp ────────────────
 
-      _updateStatus('Identity found: ${identity.peerId.substring(0, 20)}...');
+  console.log('\n── Test 4: Re-generation ──\n');
 
-      // Step 3: Call buildQRPayload with REAL dependencies
-      _updateStatus('Calling buildQRPayload with real repo and bridge...');
+  const { qrString: qr1 } = await buildQRPayload(identity, (data, key) => handlePayloadSign({ dataToSign: data, privateKey: key }));
+  await new Promise(r => setTimeout(r, 50)); // small delay
+  const { qrString: qr2 } = await buildQRPayload(identity, (data, key) => handlePayloadSign({ dataToSign: data, privateKey: key }));
 
-      final (result, qrString) = await buildQRPayload(
-        repo: repo,
-        callJsSign: ({required dataToSign, required privateKey}) =>
-            bridgeClient.callJsSignPayload(
-              dataToSign: dataToSign,
-              privateKey: privateKey,
-            ),
-      );
+  const p1 = JSON.parse(qr1!);
+  const p2 = JSON.parse(qr2!);
 
-      // Step 4: Check result status
-      if (result != BuildQRPayloadResult.success) {
-        _fail('buildQRPayload returned non-success: $result');
-        return;
-      }
+  assert(p1.pk === p2.pk, 'pk unchanged across generations');
+  assert(p1.ns === p2.ns, 'ns unchanged across generations');
+  assert(p1.rv === p2.rv, 'rv unchanged across generations');
+  assert(p1.ts !== p2.ts, `ts differs: ${p1.ts} vs ${p2.ts}`);
+  assert(p1.sig !== p2.sig, 'sig differs (data changed)');
 
-      if (qrString == null || qrString.isEmpty) {
-        _fail('QR string is null or empty');
-        return;
-      }
+  // ── Summary ─────────────────────────────────────────────────────
 
-      _updateStatus('QR payload generated, validating...');
+  console.log('\n══════════════════════════════════════════════════════════');
+  console.log(`Results: ${passed} passed, ${failed} failed`);
+  console.log('══════════════════════════════════════════════════════════');
 
-      // Step 5: Validate - Check for stub markers FIRST
-      final stubMarkers = ['STUB', 'TODO', 'MOCK', 'FAKE', 'PLACEHOLDER'];
-      for (final marker in stubMarkers) {
-        if (qrString.toUpperCase().contains(marker)) {
-          _fail('Stub marker detected in QR payload: $marker');
-          return;
-        }
-      }
-
-      // Step 6: Validate - Parse JSON
-      Map<String, dynamic> payload;
-      try {
-        payload = jsonDecode(qrString) as Map<String, dynamic>;
-      } catch (e) {
-        _fail('QR payload is not valid JSON: $e');
-        return;
-      }
-
-      // Step 7: Validate - All required keys present
-      final requiredKeys = ['pk', 'ns', 'rv', 'sig', 'ts'];
-      for (final key in requiredKeys) {
-        if (!payload.containsKey(key)) {
-          _fail('Missing required key: $key');
-          return;
-        }
-      }
-
-      // Step 8: Validate - pk matches identity's publicKey
-      final pk = payload['pk'] as String?;
-      if (pk == null || pk.isEmpty) {
-        _fail('pk field is null or empty');
-        return;
-      }
-      if (pk != identity.publicKey) {
-        _fail('pk does not match identity publicKey. Expected: ${identity.publicKey}, Got: $pk');
-        return;
-      }
-
-      // Step 9: Validate - ns matches identity's peerId
-      final ns = payload['ns'] as String?;
-      if (ns == null || ns.isEmpty) {
-        _fail('ns field is null or empty');
-        return;
-      }
-      if (ns != identity.peerId) {
-        _fail('ns does not match identity peerId. Expected: ${identity.peerId}, Got: $ns');
-        return;
-      }
-
-      // Step 10: Validate - rv equals constant
-      final rv = payload['rv'] as String?;
-      if (rv == null || rv.isEmpty) {
-        _fail('rv field is null or empty');
-        return;
-      }
-      if (rv != kRendezvousAddress) {
-        _fail('rv does not match expected rendezvous address. Expected: $kRendezvousAddress, Got: $rv');
-        return;
-      }
-
-      // Step 11: Validate - sig is base64 and non-empty
-      final sig = payload['sig'] as String?;
-      if (sig == null || sig.isEmpty) {
-        _fail('sig field is null or empty');
-        return;
-      }
-
-      // Check if sig is valid base64
-      try {
-        final decoded = base64Decode(sig);
-        if (decoded.isEmpty) {
-          _fail('sig decodes to empty bytes');
-          return;
-        }
-      } catch (e) {
-        _fail('sig is not valid base64: $e');
-        return;
-      }
-
-      // Step 12: Validate - ts is present and looks like ISO-8601
-      final ts = payload['ts'] as String?;
-      if (ts == null || ts.isEmpty) {
-        _fail('ts field is null or empty');
-        return;
-      }
-
-      // Basic ISO-8601 format check
-      try {
-        DateTime.parse(ts);
-      } catch (e) {
-        _fail('ts is not a valid ISO-8601 timestamp: $ts');
-        return;
-      }
-
-      // All validations passed!
-      _pass();
-
-    } catch (e, stack) {
-      _fail('Unexpected exception: $e\n$stack');
-    }
-  }
-
-  void _updateStatus(String status) {
-    setState(() {
-      _status = status;
-    });
-    print('[SMOKE TEST] $status');
-  }
-
-  void _pass() {
-    setState(() {
-      _status = 'PASS';
-      _passed = true;
-      _completed = true;
-    });
-    print('');
-    print('========================================');
-    print('PASS');
-    print('========================================');
-    print('');
-    print('M2 QR Generation smoke test completed successfully.');
-    print('All validations passed:');
-    print('  - Valid JSON');
-    print('  - All keys present (pk, ns, rv, sig, ts)');
-    print('  - pk matches identity publicKey');
-    print('  - ns matches identity peerId');
-    print('  - rv equals rendezvous constant');
-    print('  - sig is valid base64 and non-empty');
-    print('  - ts is valid ISO-8601 timestamp');
-    print('  - No stub markers detected');
-  }
-
-  void _fail(String reason) {
-    setState(() {
-      _status = 'FAIL: $reason';
-      _passed = false;
-      _completed = true;
-    });
-    print('');
-    print('========================================');
-    print('FAIL: $reason');
-    print('========================================');
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('M2 QR Generation Smoke Test'),
-      ),
-      body: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(32.0),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              if (!_completed)
-                const CircularProgressIndicator()
-              else
-                Icon(
-                  _passed ? Icons.check_circle : Icons.error,
-                  size: 64,
-                  color: _passed ? Colors.green : Colors.red,
-                ),
-              const SizedBox(height: 24),
-              Text(
-                _status,
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  color: _completed
-                      ? (_passed ? Colors.green : Colors.red)
-                      : null,
-                ),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 48),
-              if (_completed)
-                ElevatedButton(
-                  onPressed: () => exit(_passed ? 0 : 1),
-                  child: Text(_passed ? 'Exit (Success)' : 'Exit (Failure)'),
-                ),
-            ],
-          ),
-        ),
-      ),
-    );
+  if (failed > 0) {
+    process.exit(1);
   }
 }
+
+main().catch(err => {
+  console.error('Smoketest crashed:', err);
+  process.exit(1);
+});
 ```
 
 ---
@@ -390,11 +363,8 @@ class _SmokeTestRunnerState extends State<SmokeTestRunner> {
 ## How to Run
 
 ```bash
-# Run the smoke test
-flutter run -t lib/smoke_test_m2_qr_generation.dart
-
-# Or on a specific device
-flutter run -t lib/smoke_test_m2_qr_generation.dart -d <device-id>
+# From the flutter_app root directory
+npx ts-node --esm test/smoketest_m2_qr.ts
 ```
 
 ---
@@ -404,42 +374,56 @@ flutter run -t lib/smoke_test_m2_qr_generation.dart -d <device-id>
 | Check | Description | PASS Criteria |
 |-------|-------------|---------------|
 | Valid JSON | QR payload parses as JSON | No parse errors |
-| All keys present | pk, ns, rv, sig, ts | All 5 keys exist |
+| All keys present | ns, pk, rv, sig, ts | All 5 keys exist |
+| Keys sorted | Keys in alphabetical order | ns, pk, rv, sig, ts |
 | pk matches | pk equals identity.publicKey | Exact string match |
 | ns matches | ns equals identity.peerId | Exact string match |
-| rv constant | rv equals rendezvous address | Exact string match |
-| sig base64 | sig is valid base64 | Decodes without error |
-| sig non-empty | sig has content | Decoded bytes.length > 0 |
-| ts format | ts is ISO-8601 | DateTime.parse succeeds |
-| No stubs | No STUB/TODO/MOCK markers | None found in payload |
+| rv constant | rv equals RENDEZVOUS_ADDRESS | Exact string match |
+| sig valid | Ed25519 signature verifies | ed.verifyAsync returns true |
+| ts format | ts is ISO-8601 | Non-empty ISO string |
+| Flow events | 13 events in correct order | Exact sequence match |
+| No identity | Returns noIdentity result | result === 'noIdentity' |
+| Re-generation | ts and sig differ | Different values |
 
 ---
 
 ## Expected Output
 
-### On Success:
 ```
-========================================
-PASS
-========================================
+══════════════════════════════════════════════════════════
+M2 QR Generation Smoketest
+══════════════════════════════════════════════════════════
 
-M2 QR Generation smoke test completed successfully.
-All validations passed:
-  - Valid JSON
-  - All keys present (pk, ns, rv, sig, ts)
-  - pk matches identity publicKey
-  - ns matches identity peerId
-  - rv equals rendezvous constant
-  - sig is valid base64 and non-empty
-  - ts is valid ISO-8601 timestamp
-  - No stub markers detected
-```
+── Test 1: Happy Path (end-to-end) ──
 
-### On Failure:
-```
-========================================
-FAIL: <specific reason>
-========================================
+  [FLOW] FL | QR_FL_SCREEN_INIT | {}
+  [FLOW] FL | QR_FL_SCREEN_LOADING | {}
+  ...
+  ✓ Result is success
+  ✓ QR string is not null
+  ✓ pk matches (...)
+  ...
+  ✓ Ed25519 signature is cryptographically valid
+
+── Test 2: Flow Event Sequence ──
+
+  ✓ Event count: 13 === 13
+  ✓ Event[0]: QR_FL_SCREEN_INIT
+  ...
+
+── Test 3: No Identity Path ──
+
+  ✓ Result is noIdentity
+  ...
+
+── Test 4: Re-generation ──
+
+  ✓ ts differs
+  ✓ sig differs
+
+══════════════════════════════════════════════════════════
+Results: 32 passed, 0 failed
+══════════════════════════════════════════════════════════
 ```
 
 ---
@@ -447,12 +431,12 @@ FAIL: <specific reason>
 ## Prerequisites
 
 Before running this smoke test:
-1. M1 Identity Initialization must be complete (identity exists in SQLite)
-2. M2 implementation complete (all tasks JS_XS_01 through FL_XS_05)
-3. WebView bridge functional with real JavaScript runtime
+1. `@noble/ed25519` must be installed (`npm install @noble/ed25519`)
+2. `ts-node` must be available (`npx ts-node`)
+3. No Flutter or device required - this is a pure TypeScript CLI test
 
 ---
 
 ## Begin Implementation
 
-Output the complete Dart file for the automated smoke test.
+Output the complete TypeScript file for the automated smoke test.

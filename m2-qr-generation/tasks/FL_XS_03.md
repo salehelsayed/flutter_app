@@ -86,10 +86,7 @@ What to implement:
   Function signature:
     Future<(BuildQRPayloadResult, String?)> buildQRPayload({
       required IdentityRepository repo,
-      required Future<Map<String, dynamic>> Function({
-        required String dataToSign,
-        required String privateKey,
-      }) callJsSign,
+      required Future<Map<String, dynamic>> Function(String, String) callJsSign,
     })
 
   Logic (detailed steps):
@@ -98,7 +95,7 @@ What to implement:
     3. If identity is null:
        - Emit flow event: QR_FL_BUILD_PAYLOAD_NO_IDENTITY
        - Return (noIdentity, null)
-    4. Emit flow event: QR_FL_BUILD_PAYLOAD_IDENTITY_FOUND
+    4. Emit flow event: QR_FL_BUILD_PAYLOAD_IDENTITY_LOADED
     5. Build unsigned payload map (sorted keys for canonical JSON):
        - pk = identity.publicKey
        - ns = identity.peerId
@@ -106,9 +103,9 @@ What to implement:
        - ts = DateTime.now().toUtc().toIso8601String()
     6. Serialize unsigned payload to canonical JSON (sorted keys)
     7. Emit flow event: QR_FL_BUILD_PAYLOAD_SIGNING
-    8. Call JS bridge to sign: await callJsSign(dataToSign: ..., privateKey: ...)
+    8. Call JS bridge to sign: await callJsSign(dataToSign, identity.privateKey)
     9. If signing response['ok'] != true:
-       - Emit flow event: QR_FL_BUILD_PAYLOAD_SIGN_ERROR
+       - Emit flow event: QR_FL_BUILD_PAYLOAD_ERROR
        - Return (signingError, null)
     10. Add signature to payload (maintaining sorted keys):
         - sig = response['signature']
@@ -130,7 +127,7 @@ Flow Events:
   - At start:
       layer: "FL", event: "QR_FL_BUILD_PAYLOAD_START", details: {}
   - After loading identity - found:
-      layer: "FL", event: "QR_FL_BUILD_PAYLOAD_IDENTITY_FOUND",
+      layer: "FL", event: "QR_FL_BUILD_PAYLOAD_IDENTITY_LOADED",
       details: { "peerId": first 12 chars of peerId }
   - After loading identity - not found:
       layer: "FL", event: "QR_FL_BUILD_PAYLOAD_NO_IDENTITY", details: {}
@@ -139,8 +136,8 @@ Flow Events:
   - After signing - success:
       layer: "FL", event: "QR_FL_BUILD_PAYLOAD_SUCCESS", details: {}
   - After signing - error:
-      layer: "FL", event: "QR_FL_BUILD_PAYLOAD_SIGN_ERROR",
-      details: { "errorCode": response errorCode }
+      layer: "FL", event: "QR_FL_BUILD_PAYLOAD_ERROR",
+      details: { "errorCode": response errorCode, "errorMessage": response errorMessage }
 
 Constraints:
   - Dependency injection for testability (repo and callJsSign are parameters)
@@ -188,9 +185,9 @@ const String RENDEZVOUS_ADDRESS =
 import 'dart:convert';
 import 'dart:collection';
 
-import 'package:your_app/core/constants/network_constants.dart';
-import 'package:your_app/core/utils/flow_event_emitter.dart';
-import 'package:your_app/features/identity/domain/repositories/identity_repository.dart';
+import 'package:flutter_app/core/constants/network_constants.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 
 /// Result of building a QR payload
 enum BuildQRPayloadResult {
@@ -219,10 +216,7 @@ enum BuildQRPayloadResult {
 /// On success, jsonString contains the canonical JSON ready for QR encoding.
 Future<(BuildQRPayloadResult, String?)> buildQRPayload({
   required IdentityRepository repo,
-  required Future<Map<String, dynamic>> Function({
-    required String dataToSign,
-    required String privateKey,
-  }) callJsSign,
+  required Future<Map<String, dynamic>> Function(String, String) callJsSign,
 }) async {
   // Step 1: Emit start event
   emitFlowEvent(
@@ -247,7 +241,7 @@ Future<(BuildQRPayloadResult, String?)> buildQRPayload({
   // Step 4: Emit identity found event
   emitFlowEvent(
     layer: 'FL',
-    event: 'QR_FL_BUILD_PAYLOAD_IDENTITY_FOUND',
+    event: 'QR_FL_BUILD_PAYLOAD_IDENTITY_LOADED',
     details: {'peerId': identity.peerId.substring(0, 12)},
   );
 
@@ -271,18 +265,16 @@ Future<(BuildQRPayloadResult, String?)> buildQRPayload({
   );
 
   // Step 8: Call JS bridge to sign
-  final signResponse = await callJsSign(
-    dataToSign: dataToSign,
-    privateKey: identity.privateKey,
-  );
+  final signResponse = await callJsSign(dataToSign, identity.privateKey);
 
   // Step 9: Check signing result
   if (signResponse['ok'] != true) {
     final errorCode = signResponse['errorCode'] ?? 'UNKNOWN';
+    final errorMessage = signResponse['errorMessage'] ?? '';
     emitFlowEvent(
       layer: 'FL',
-      event: 'QR_FL_BUILD_PAYLOAD_SIGN_ERROR',
-      details: {'errorCode': errorCode},
+      event: 'QR_FL_BUILD_PAYLOAD_ERROR',
+      details: {'errorCode': errorCode, 'errorMessage': errorMessage},
     );
     return (BuildQRPayloadResult.signingError, null);
   }
@@ -317,8 +309,9 @@ Future<(BuildQRPayloadResult, String?)> buildQRPayload({
 // In a widget or controller
 final (result, qrString) = await buildQRPayload(
   repo: identityRepository,
-  callJsSign: ({required dataToSign, required privateKey}) =>
-      bridgeClient.callJsSignPayload(
+  callJsSign: (dataToSign, privateKey) =>
+      callJsSignPayload(
+        bridge: bridgeClient,
         dataToSign: dataToSign,
         privateKey: privateKey,
       ),
@@ -358,10 +351,10 @@ void testBuildQRPayload() async {
   ));
 
   // Mock signing function (for testing only - real code uses JS bridge)
-  Future<Map<String, dynamic>> mockSign({
-    required String dataToSign,
-    required String privateKey,
-  }) async {
+  Future<Map<String, dynamic>> mockSign(
+    String dataToSign,
+    String privateKey,
+  ) async {
     return {'ok': true, 'signature': 'bW9jay1zaWduYXR1cmU='};
   }
 
@@ -391,7 +384,7 @@ void testBuildQRPayloadNoIdentity() async {
 
   final (result, qrString) = await buildQRPayload(
     repo: mockRepo,
-    callJsSign: ({required dataToSign, required privateKey}) async => {},
+    callJsSign: (dataToSign, privateKey) async => {},
   );
 
   expect(result, BuildQRPayloadResult.noIdentity);
@@ -402,10 +395,10 @@ void testBuildQRPayloadSigningError() async {
   final mockRepo = MockIdentityRepository();
   when(mockRepo.loadIdentity()).thenAnswer((_) async => IdentityModel(...));
 
-  Future<Map<String, dynamic>> failingSign({
-    required String dataToSign,
-    required String privateKey,
-  }) async {
+  Future<Map<String, dynamic>> failingSign(
+    String dataToSign,
+    String privateKey,
+  ) async {
     return {
       'ok': false,
       'errorCode': 'SIGNING_ERROR',

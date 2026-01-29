@@ -156,7 +156,7 @@ export async function signPayload(
       event: 'QR_JS_SIGN_PAYLOAD_ERROR',
       details: { error: String(error) },
     });
-    throw error;
+    throw new Error(`signPayload failed: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 ```
@@ -186,14 +186,16 @@ export function emitFlowEvent({
   layer,
   event,
   details,
+  milestone,
 }: {
   layer: 'JS';
   event: string;
   details: Record<string, unknown>;
+  milestone?: string;
 }) {
   const payload = {
     ts: new Date().toISOString(),
-    milestone: 'M2_QR_GENERATION',
+    milestone: milestone ?? 'M1_IDENTITY_INIT',
     layer,
     event,
     details,

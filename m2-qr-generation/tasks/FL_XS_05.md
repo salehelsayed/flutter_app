@@ -22,7 +22,7 @@ Existing Components:
   - QRDisplayScreen (FL_XS_04): Pure layout widget
   - buildQRPayload (FL_XS_03): Use case returning (BuildQRPayloadResult, String?)
   - IdentityRepository (M1): Repository interface
-  - JsBridgeClient (M1 + FL_XS_02): Bridge with callJsSignPayload
+  - JsBridge (M1): Abstract bridge interface; callJsSignPayload is a top-level function
 
 States to Handle:
   - Loading: Show progress indicator
@@ -48,7 +48,7 @@ What to implement:
   - StatefulWidget: QRDisplayWired
   - Constructor parameters:
       - IdentityRepository repo
-      - JsBridgeClient bridgeClient
+      - JsBridge bridgeClient
       - VoidCallback onClose
 
   - States:
@@ -66,11 +66,11 @@ What to implement:
 Wiring:
   - Calls buildQRPayload with:
       - Real IdentityRepository (from constructor)
-      - Real callJsSignPayload (from bridgeClient)
+      - Real callJsSignPayload (top-level function, passing bridgeClient as bridge)
 
 Inputs:
   - repo: IdentityRepository
-  - bridgeClient: JsBridgeClient
+  - bridgeClient: JsBridge
   - onClose: VoidCallback
 
 Outputs:
@@ -79,9 +79,15 @@ Outputs:
 
 Flow_events:
   - On widget mount (initState):
-      - layer: "UI", event: "QR_UI_DISPLAY_OPEN", details: {}
+      - layer: "FL", event: "QR_FL_SCREEN_INIT", details: {}
+  - On entering loading state (_buildPayload start):
+      - layer: "FL", event: "QR_FL_SCREEN_LOADING", details: {}
+  - On success (QR displayed):
+      - layer: "FL", event: "QR_FL_SCREEN_DISPLAY", details: {}
+  - On error (any error path):
+      - layer: "FL", event: "QR_FL_SCREEN_ERROR", details: { "reason": "<error_type>" }
   - On widget unmount (dispose):
-      - layer: "UI", event: "QR_UI_DISPLAY_CLOSE", details: {}
+      - layer: "FL", event: "QR_FL_SCREEN_CLOSE", details: {}
 
 Constraints:
   - Use StatefulWidget for state management
@@ -105,18 +111,18 @@ Deliverable:
    - Loading indicator while building payload
    - Error handling with retry (for signing errors)
    - Integration with QRDisplayScreen (pure UI)
-   - Flow event emissions: QR_UI_DISPLAY_OPEN and QR_UI_DISPLAY_CLOSE
+   - Flow event emissions: QR_FL_SCREEN_INIT, QR_FL_SCREEN_LOADING, QR_FL_SCREEN_DISPLAY, QR_FL_SCREEN_ERROR, QR_FL_SCREEN_CLOSE
 
 3. **Implementation:**
 
 ```dart
 import 'package:flutter/material.dart';
 
-import 'package:your_app/core/bridge/js_bridge_client.dart';
-import 'package:your_app/core/utils/flow_event_emitter.dart';
-import 'package:your_app/features/identity/domain/repositories/identity_repository.dart';
-import 'package:your_app/features/qr_code/application/build_qr_payload_use_case.dart';
-import 'package:your_app/features/qr_code/presentation/screens/qr_display_screen.dart';
+import 'package:flutter_app/core/bridge/js_bridge_client.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
+import 'package:flutter_app/features/qr_code/application/build_qr_payload_use_case.dart';
+import 'package:flutter_app/features/qr_code/presentation/screens/qr_display_screen.dart';
 
 /// Internal state enum for QRDisplayWired
 enum _QRDisplayState {
@@ -132,13 +138,13 @@ enum _QRDisplayState {
 /// - Runs buildQRPayload on init
 /// - Handles loading/success/error states
 /// - Provides retry capability for recoverable errors
-/// - Emits flow events for QR_UI_DISPLAY_OPEN and QR_UI_DISPLAY_CLOSE
+/// - Emits flow events for QR_FL_SCREEN_INIT, QR_FL_SCREEN_CLOSE, etc.
 class QRDisplayWired extends StatefulWidget {
   /// Repository for loading identity data.
   final IdentityRepository repo;
 
-  /// Bridge client for JS communication (callJsSignPayload).
-  final JsBridgeClient bridgeClient;
+  /// Bridge for JS communication (used with callJsSignPayload top-level function).
+  final JsBridge bridgeClient;
 
   /// Called when user closes the screen.
   final VoidCallback onClose;
@@ -163,22 +169,19 @@ class _QRDisplayWiredState extends State<QRDisplayWired> {
   @override
   void initState() {
     super.initState();
-    // Flow event: QR_UI_DISPLAY_OPEN on mount
     emitFlowEvent(
-      layer: 'UI',
-      event: 'QR_UI_DISPLAY_OPEN',
+      layer: 'FL',
+      event: 'QR_FL_SCREEN_INIT',
       details: {},
     );
-    // Run buildQRPayload immediately on init
     _buildPayload();
   }
 
   @override
   void dispose() {
-    // Flow event: QR_UI_DISPLAY_CLOSE on unmount
     emitFlowEvent(
-      layer: 'UI',
-      event: 'QR_UI_DISPLAY_CLOSE',
+      layer: 'FL',
+      event: 'QR_FL_SCREEN_CLOSE',
       details: {},
     );
     super.dispose();
@@ -190,8 +193,13 @@ class _QRDisplayWiredState extends State<QRDisplayWired> {
       _errorMessage = null;
     });
 
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'QR_FL_SCREEN_LOADING',
+      details: {},
+    );
+
     try {
-      // First load identity to get peerId for display
       final identity = await widget.repo.loadIdentity();
 
       if (identity == null) {
@@ -202,15 +210,18 @@ class _QRDisplayWiredState extends State<QRDisplayWired> {
         return;
       }
 
-      // Build the QR payload using the use case
-      // Wiring: real repo + real callJsSignPayload from bridgeClient
+      // Wiring: wrap callJsSignPayload top-level function with bridgeClient
+      Future<Map<String, dynamic>> jsSign(String dataToSign, String privateKey) {
+        return callJsSignPayload(
+          bridge: widget.bridgeClient,
+          dataToSign: dataToSign,
+          privateKey: privateKey,
+        );
+      }
+
       final (result, qrString) = await buildQRPayload(
         repo: widget.repo,
-        callJsSign: ({required dataToSign, required privateKey}) =>
-            widget.bridgeClient.callJsSignPayload(
-              dataToSign: dataToSign,
-              privateKey: privateKey,
-            ),
+        callJsSign: jsSign,
       );
 
       switch (result) {
@@ -220,6 +231,11 @@ class _QRDisplayWiredState extends State<QRDisplayWired> {
             _qrData = qrString;
             _peerId = identity.peerId;
           });
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'QR_FL_SCREEN_DISPLAY',
+            details: {},
+          );
           break;
 
         case BuildQRPayloadResult.noIdentity:
@@ -227,6 +243,11 @@ class _QRDisplayWiredState extends State<QRDisplayWired> {
             _state = _QRDisplayState.noIdentity;
             _errorMessage = 'No identity found. Please create one first.';
           });
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'QR_FL_SCREEN_ERROR',
+            details: {'reason': 'noIdentity'},
+          );
           break;
 
         case BuildQRPayloadResult.signingError:
@@ -234,6 +255,11 @@ class _QRDisplayWiredState extends State<QRDisplayWired> {
             _state = _QRDisplayState.error;
             _errorMessage = 'Failed to sign QR code. Please try again.';
           });
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'QR_FL_SCREEN_ERROR',
+            details: {'reason': 'signingError'},
+          );
           break;
       }
     } catch (e) {
@@ -241,6 +267,11 @@ class _QRDisplayWiredState extends State<QRDisplayWired> {
         _state = _QRDisplayState.error;
         _errorMessage = 'An unexpected error occurred. Please try again.';
       });
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'QR_FL_SCREEN_ERROR',
+        details: {'reason': 'exception', 'error': e.toString()},
+      );
     }
   }
 
@@ -263,7 +294,7 @@ class _QRDisplayWiredState extends State<QRDisplayWired> {
           icon: Icons.person_off,
           title: 'No Identity',
           message: _errorMessage!,
-          showRetry: false, // No retry - user must create identity first
+          showRetry: false,
         );
 
       case _QRDisplayState.error:
@@ -271,7 +302,7 @@ class _QRDisplayWiredState extends State<QRDisplayWired> {
           icon: Icons.error_outline,
           title: 'Error',
           message: _errorMessage!,
-          showRetry: true, // Retry available for signing errors
+          showRetry: true,
         );
     }
   }
@@ -337,14 +368,14 @@ class _QRDisplayWiredState extends State<QRDisplayWired> {
               Text(
                 message,
                 style: theme.textTheme.bodyLarge?.copyWith(
-                  color: theme.colorScheme.onSurface.withOpacity(0.7),
+                  color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
                 ),
                 textAlign: TextAlign.center,
               ),
               if (showRetry) ...[
                 const SizedBox(height: 32),
                 ElevatedButton.icon(
-                  onPressed: _buildPayload, // Retry
+                  onPressed: _buildPayload,
                   icon: const Icon(Icons.refresh),
                   label: const Text('Try Again'),
                 ),
@@ -357,11 +388,6 @@ class _QRDisplayWiredState extends State<QRDisplayWired> {
   }
 
   void _handleShare() {
-    // TODO: Implement share functionality
-    // Could use share_plus package:
-    // Share.share('Scan my QR code to connect with me!');
-
-    // For now, show a snackbar
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Share functionality coming soon!')),
     );
@@ -379,7 +405,7 @@ Navigator.of(context).push(
   MaterialPageRoute(
     builder: (context) => QRDisplayWired(
       repo: identityRepository,         // Real IdentityRepository
-      bridgeClient: jsBridgeClient,     // Real JsBridgeClient with callJsSignPayload
+      bridgeClient: jsBridge,           // Real JsBridge instance
       onClose: () => Navigator.of(context).pop(),
     ),
   ),
@@ -390,7 +416,7 @@ MaterialApp(
   routes: {
     '/qr': (context) => QRDisplayWired(
       repo: getIt<IdentityRepository>(),
-      bridgeClient: getIt<JsBridgeClient>(),
+      bridgeClient: getIt<JsBridge>(),
       onClose: () => Navigator.of(context).pop(),
     ),
   },
@@ -403,8 +429,11 @@ MaterialApp(
 
 | Event | Layer | When | Details |
 |-------|-------|------|---------|
-| QR_UI_DISPLAY_OPEN | UI | initState (widget mount) | {} |
-| QR_UI_DISPLAY_CLOSE | UI | dispose (widget unmount) | {} |
+| QR_FL_SCREEN_INIT | FL | initState (widget mount) | {} |
+| QR_FL_SCREEN_LOADING | FL | _buildPayload start | {} |
+| QR_FL_SCREEN_DISPLAY | FL | success (QR ready) | {} |
+| QR_FL_SCREEN_ERROR | FL | any error path | { "reason": "<type>" } |
+| QR_FL_SCREEN_CLOSE | FL | dispose (widget unmount) | {} |
 
 ---
 
@@ -441,7 +470,7 @@ MaterialApp(
 
 This widget requires:
 1. `IdentityRepository` from M1
-2. `JsBridgeClient` from M1 with `callJsSignPayload` added in FL_XS_02
+2. `JsBridge` from M1 + `callJsSignPayload` top-level function from FL_XS_02
 3. `buildQRPayload` from FL_XS_03
 4. `QRDisplayScreen` from FL_XS_04
 
@@ -453,4 +482,4 @@ Output the complete Dart file with the QRDisplayWired StatefulWidget that:
 - Runs buildQRPayload on init
 - Handles loading/success/error states with retry
 - Wires real repo and callJsSignPayload
-- Emits QR_UI_DISPLAY_OPEN and QR_UI_DISPLAY_CLOSE flow events
+- Emits QR_FL_SCREEN_INIT, QR_FL_SCREEN_LOADING, QR_FL_SCREEN_DISPLAY, QR_FL_SCREEN_ERROR, QR_FL_SCREEN_CLOSE flow events

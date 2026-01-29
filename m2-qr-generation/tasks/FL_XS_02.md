@@ -12,11 +12,11 @@ You are implementing a specific task for a Flutter/JS application. Follow the ta
 Milestone: M2 – QR Code Generation
 
 Baseline M1 Bridge Code:
-  The existing JsBridgeClient class from Milestone 1 provides:
-  - A configured JsBridge instance for Flutter-JS communication
-  - Methods like callJsIdentityGenerate() and callJsIdentityRestore()
+  The existing js_bridge_client.dart from Milestone 1 provides:
+  - An abstract JsBridge interface with send(String message) method
+  - Top-level functions: callJsIdentityGenerate() and callJsIdentityRestore()
   - Flow event emission pattern (emitFlowEvent helper)
-  - Message sending via _sendMessage() or bridge.sendMessage()
+  - Communication via bridge.send(jsonEncode(request)) returning raw JSON strings
 
   Location: lib/core/bridge/js_bridge_client.dart
 
@@ -70,21 +70,25 @@ Goal:
 
 What to implement:
   MODIFY: lib/core/bridge/js_bridge_client.dart
-  ADD: callJsSignPayload method to the existing JsBridgeClient class
+  ADD: callJsSignPayload as a top-level function (matching M1 pattern)
 
-  Method signature:
+  Function signature:
     Future<Map<String, dynamic>> callJsSignPayload({
+      required JsBridge bridge,
       required String dataToSign,
       required String privateKey,
+      Duration timeout = const Duration(seconds: 10),
     })
 
   Behavior:
-    1. Emit flow event: QR_FL_BRIDGE_SIGN_REQUEST
-    2. Build message envelope: { "cmd": "payload.sign", "payload": {...} }
-    3. Send via bridge (uses existing _sendMessage or bridge.sendMessage)
-    4. Await response
-    5. Emit flow event: QR_FL_BRIDGE_SIGN_RESPONSE
-    6. Return decoded response map (do not interpret success/error)
+    1. Generate correlationId for tracing
+    2. Emit flow event: QR_FL_BRIDGE_SIGN_REQUEST (with dataLength and correlationId)
+    3. Build message envelope: { "cmd": "payload.sign", "payload": {...} }
+    4. Send via bridge.send(jsonEncode(request)) with timeout
+    5. Decode JSON response
+    6. Emit flow event: QR_FL_BRIDGE_SIGN_RESPONSE (with ok and correlationId)
+    7. Return decoded response map (do not interpret success/error)
+    8. On timeout: return { "ok": false, "errorCode": "BRIDGE_TIMEOUT", ... }
 
 Inputs:
   - dataToSign: String - The canonical JSON string to sign
@@ -99,11 +103,11 @@ Flow Events:
   - Before sending:
       - layer: "FL"
       - event: "QR_FL_BRIDGE_SIGN_REQUEST"
-      - details: { "dataLength": dataToSign.length }
+      - details: { "dataLength": dataToSign.length, "correlationId": correlationId }
   - After receiving:
       - layer: "FL"
       - event: "QR_FL_BRIDGE_SIGN_RESPONSE"
-      - details: { "ok": response['ok'] ?? false }
+      - details: { "ok": response['ok'] ?? false, "correlationId": correlationId }
 
 Constraints:
   - MUST use real bridge - no fake signing in Dart
@@ -127,71 +131,40 @@ Deliverable:
    - Proper message format with cmd: "payload.sign"
    - Response handling that preserves the full response map
 
-3. **Implementation (as class method):**
-
-```dart
-// Add this method to existing JsBridgeClient class
-
-/// Calls the JS bridge to sign payload data with Ed25519.
-///
-/// This method MUST use the real JS bridge for cryptographic signing.
-/// Ed25519 signing is implemented in JavaScript - DO NOT fake this in Dart.
-///
-/// [dataToSign] - The canonical JSON string to sign
-/// [privateKey] - Base64-encoded Ed25519 private key
-///
-/// Returns a map with:
-/// - On success: { "ok": true, "signature": "base64..." }
-/// - On error: { "ok": false, "errorCode": "...", "errorMessage": "..." }
-Future<Map<String, dynamic>> callJsSignPayload({
-  required String dataToSign,
-  required String privateKey,
-}) async {
-  emitFlowEvent(
-    layer: 'FL',
-    event: 'QR_FL_BRIDGE_SIGN_REQUEST',
-    details: {'dataLength': dataToSign.length},
-  );
-
-  final message = {
-    'cmd': 'payload.sign',
-    'payload': {
-      'dataToSign': dataToSign,
-      'privateKey': privateKey,
-    },
-  };
-
-  final response = await _sendMessage(message);
-
-  emitFlowEvent(
-    layer: 'FL',
-    event: 'QR_FL_BRIDGE_SIGN_RESPONSE',
-    details: {'ok': response['ok'] ?? false},
-  );
-
-  return response;
-}
-```
-
-4. **Alternative (as standalone function):**
+3. **Implementation (top-level function, matching M1 pattern):**
 
 ```dart
 /// Calls the JS bridge to sign payload data with Ed25519.
 ///
 /// This function MUST use the real JS bridge for cryptographic signing.
 /// Ed25519 signing is implemented in JavaScript - DO NOT fake this in Dart.
+///
+/// Parameters:
+///   - [bridge]: The JsBridge instance to use for communication
+///   - [dataToSign]: The canonical JSON string to sign
+///   - [privateKey]: Base64-encoded Ed25519 private key
+///
+/// Returns a map with:
+/// - On success: { "ok": true, "signature": "base64..." }
+/// - On error: { "ok": false, "errorCode": "...", "errorMessage": "..." }
 Future<Map<String, dynamic>> callJsSignPayload({
   required JsBridge bridge,
   required String dataToSign,
   required String privateKey,
+  Duration timeout = const Duration(seconds: 10),
 }) async {
+  final correlationId = DateTime.now().microsecondsSinceEpoch.toString();
+
   emitFlowEvent(
     layer: 'FL',
     event: 'QR_FL_BRIDGE_SIGN_REQUEST',
-    details: {'dataLength': dataToSign.length},
+    details: {
+      'dataLength': dataToSign.length,
+      'correlationId': correlationId,
+    },
   );
 
-  final message = {
+  final request = {
     'cmd': 'payload.sign',
     'payload': {
       'dataToSign': dataToSign,
@@ -199,15 +172,39 @@ Future<Map<String, dynamic>> callJsSignPayload({
     },
   };
 
-  final response = await bridge.sendMessage(message);
+  try {
+    final responseJson = await bridge
+        .send(jsonEncode(request))
+        .timeout(timeout);
+    final response = jsonDecode(responseJson) as Map<String, dynamic>;
 
-  emitFlowEvent(
-    layer: 'FL',
-    event: 'QR_FL_BRIDGE_SIGN_RESPONSE',
-    details: {'ok': response['ok'] ?? false},
-  );
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'QR_FL_BRIDGE_SIGN_RESPONSE',
+      details: {
+        'ok': response['ok'] ?? false,
+        'correlationId': correlationId,
+      },
+    );
 
-  return response;
+    return response;
+  } on TimeoutException {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'QR_FL_BRIDGE_SIGN_RESPONSE',
+      details: {
+        'ok': false,
+        'errorCode': 'BRIDGE_TIMEOUT',
+        'correlationId': correlationId,
+      },
+    );
+
+    return {
+      'ok': false,
+      'errorCode': 'BRIDGE_TIMEOUT',
+      'errorMessage': 'Bridge call timed out after ${timeout.inSeconds}s',
+    };
+  }
 }
 ```
 
@@ -215,44 +212,37 @@ Future<Map<String, dynamic>> callJsSignPayload({
 
 ## Integration with Existing M1 Bridge Client
 
-The JsBridgeClient class should now have:
+The file uses top-level functions (not a class). After this task it should contain:
 
 ```dart
 // lib/core/bridge/js_bridge_client.dart
 
+import 'dart:async';
 import 'dart:convert';
-import 'package:your_app/core/utils/flow_event_emitter.dart';
+import '../utils/flow_event_emitter.dart';
 
-class JsBridgeClient {
-  // ... existing bridge setup code ...
-
-  // ============================================
-  // M1 METHODS (existing)
-  // ============================================
-
-  /// Calls JS to generate a new identity
-  Future<Map<String, dynamic>> callJsIdentityGenerate() async {
-    // ... existing M1 implementation
-  }
-
-  /// Calls JS to restore identity from mnemonic
-  Future<Map<String, dynamic>> callJsIdentityRestore(String mnemonic12) async {
-    // ... existing M1 implementation
-  }
-
-  // ============================================
-  // M2 METHODS (new)
-  // ============================================
-
-  /// Calls JS to sign payload data with Ed25519
-  /// MUST use real bridge - no fake signing in Dart
-  Future<Map<String, dynamic>> callJsSignPayload({
-    required String dataToSign,
-    required String privateKey,
-  }) async {
-    // ... new implementation from this task
-  }
+/// Abstract interface for JS bridge communication.
+abstract class JsBridge {
+  Future<String> send(String message);
 }
+
+// ============================================
+// M1 FUNCTIONS (existing)
+// ============================================
+
+Future<Map<String, dynamic>> callJsIdentityGenerate(JsBridge bridge) async { ... }
+Future<Map<String, dynamic>> callJsIdentityRestore(JsBridge bridge, String mnemonic12) async { ... }
+
+// ============================================
+// M2 FUNCTIONS (new)
+// ============================================
+
+Future<Map<String, dynamic>> callJsSignPayload({
+  required JsBridge bridge,
+  required String dataToSign,
+  required String privateKey,
+  Duration timeout = const Duration(seconds: 10),
+}) async { ... }
 ```
 
 ---
@@ -269,7 +259,7 @@ void emitFlowEvent({
 }) {
   final payload = {
     'ts': DateTime.now().toUtc().toIso8601String(),
-    'milestone': 'M2_QR_GENERATION',
+    'milestone': 'M1_IDENTITY_INIT',
     'layer': layer,
     'event': event,
     'details': details,
@@ -284,9 +274,8 @@ void emitFlowEvent({
 
 ```dart
 // In use case or other calling code
-final bridgeClient = JsBridgeClient();
-
-final response = await bridgeClient.callJsSignPayload(
+final response = await callJsSignPayload(
+  bridge: myBridgeInstance,
   dataToSign: '{"ns":"12D3KooW...","pk":"SGVsbG8=","rv":"/dns4/...","ts":"2025-01-22T00:00:00Z"}',
   privateKey: 'BASE64_PRIVATE_KEY_FROM_IDENTITY',
 );
