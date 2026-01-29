@@ -59,6 +59,7 @@ Future<(BuildQRPayloadResult, String?)> buildQRPayload({
     'pk': identity.publicKey,
     'rv': RENDEZVOUS_ADDRESS,
     'ts': timestamp,
+    'un': identity.username,
   });
 
   // Step 6: Serialize to canonical JSON (sorted keys, no extra whitespace)

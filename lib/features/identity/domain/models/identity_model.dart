@@ -7,6 +7,7 @@ class IdentityModel {
   final String publicKey;
   final String privateKey;
   final String mnemonic12;
+  final String username;
   final String createdAt;
   final String updatedAt;
 
@@ -15,6 +16,7 @@ class IdentityModel {
     required this.publicKey,
     required this.privateKey,
     required this.mnemonic12,
+    this.username = 'Username',
     required this.createdAt,
     required this.updatedAt,
   });
@@ -25,6 +27,7 @@ class IdentityModel {
       publicKey: json['publicKey'] as String,
       privateKey: json['privateKey'] as String,
       mnemonic12: json['mnemonic12'] as String,
+      username: json['username'] as String? ?? 'Username',
       createdAt: json['createdAt'] as String,
       updatedAt: json['updatedAt'] as String,
     );
@@ -36,6 +39,7 @@ class IdentityModel {
       'publicKey': publicKey,
       'privateKey': privateKey,
       'mnemonic12': mnemonic12,
+      'username': username,
       'createdAt': createdAt,
       'updatedAt': updatedAt,
     };
@@ -49,6 +53,7 @@ class IdentityModel {
         other.publicKey == publicKey &&
         other.privateKey == privateKey &&
         other.mnemonic12 == mnemonic12 &&
+        other.username == username &&
         other.createdAt == createdAt &&
         other.updatedAt == updatedAt;
   }
@@ -60,6 +65,7 @@ class IdentityModel {
       publicKey,
       privateKey,
       mnemonic12,
+      username,
       createdAt,
       updatedAt,
     );

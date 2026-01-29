@@ -374,7 +374,7 @@ run_judge_round() {
     local pids=()
     for i in $(seq 1 $JUDGE_CALLS_PER_ROUND); do
         local judge_file="$WORKSPACE_DIR/judge_${round_num}_${i}.txt"
-        (codex exec "$judge_prompt" --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check --model gpt-5.1-codex-max > "$judge_file" 2>/dev/null) &
+        (codex exec "$judge_prompt" --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check --model gpt-5.2-codex > "$judge_file" 2>/dev/null) &
         pids+=($!)
     done
     
