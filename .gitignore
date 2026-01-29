@@ -64,3 +64,18 @@ app.*.map.json
 
 # Heap dumps
 *.hprof
+
+# Node.js
+node_modules/
+package-lock.json
+
+# Source maps
+*.js.map
+
+# Temporary/working directories
+download/
+maker_workspace/
+
+# TypeScript source files (keeping compiled JS only)
+*.ts
+!*.d.ts
