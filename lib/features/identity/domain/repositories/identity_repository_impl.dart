@@ -36,6 +36,7 @@ class IdentityRepositoryImpl implements IdentityRepository {
       publicKey: row['public_key'] as String,
       privateKey: row['private_key'] as String,
       mnemonic12: row['mnemonic12'] as String,
+      username: row['username'] as String? ?? 'Username',
       createdAt: row['created_at'] as String,
       updatedAt: row['updated_at'] as String,
     );
@@ -62,6 +63,7 @@ class IdentityRepositoryImpl implements IdentityRepository {
       'public_key': identity.publicKey,
       'private_key': identity.privateKey,
       'mnemonic12': identity.mnemonic12,
+      'username': identity.username,
       'created_at': identity.createdAt,
       'updated_at': identity.updatedAt,
     };

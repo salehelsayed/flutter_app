@@ -1,0 +1,675 @@
+## Global Context
+
+# Global Context: M2 QR Code Generation
+
+This context is shared across all tasks in the M2 milestone. It defines the canonical data shapes, contracts, and behaviors that all implementations must follow.
+
+---
+
+## Milestone Overview
+
+```
+Milestone: M2 – QR Code Generation
+
+Scope:
+  - Allow user to display a QR code containing their identity contact information
+  - QR payload includes: public key, namespace (peerID), rendezvous point, timestamp
+  - Payload is signed with user's private key for authenticity verification
+  - Display QR in a chat-app style UI (centered QR with identity info)
+
+Tech Stack:
+  - Flutter: UI widgets, business logic, repository layer, JS-bridge client, QR generation
+  - core-lib JS: Ed25519 signing of payload
+  - SQLite: Read identity data (public key, private key, peerID)
+
+Dependencies from M1:
+  - IdentityModel: Contains peerId, publicKey, privateKey
+  - IdentityRepository: loadIdentity() returns IdentityModel?
+  - JsBridge: Message-based communication with JS core-lib
+```
+
+---
+
+## Canonical QR Payload JSON
+
+This is the **single source of truth** for QR payload data shape. The QR code will contain this JSON string.
+
+```json
+{
+  "pk": "base64-string",           // User's public key (from identity.publicKey)
+  "ns": "string",                  // Namespace = peerID (from identity.peerId)
+  "rv": "multiaddr-string",        // Rendezvous point address
+  "ts": "ISO-8601-UTC",            // Timestamp when QR was generated
+  "sig": "base64-string"           // Ed25519 signature of the payload (excluding sig field)
+}
+```
+
+### Field Specifications
+
+| Field | Type | Description | Example |
+|-------|------|-------------|---------|
+| `pk` | string | Base64-encoded Ed25519 public key | `"SGVsbG8gV29ybGQ..."` |
+| `ns` | string | Namespace identifier (same as peerID) | `"12D3KooWA1b2C3d4E5f6..."` |
+| `rv` | string | Rendezvous multiaddr for P2P connection | `"/dns4/mknoun.xyz/tcp/4001/wss/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g"` |
+| `ts` | string | ISO-8601 UTC timestamp of generation | `"2025-01-22T12:34:56.000Z"` |
+| `sig` | string | Base64-encoded Ed25519 signature | `"U2lnbmF0dXJl..."` |
+
+### Signing Process
+
+The signature is computed over the **unsigned payload** (all fields except `sig`):
+
+```json
+{
+  "pk": "...",
+  "ns": "...",
+  "rv": "...",
+  "ts": "..."
+}
+```
+
+1. Construct unsigned payload JSON object
+2. Serialize to canonical JSON string (keys sorted alphabetically, no whitespace)
+3. Sign the UTF-8 bytes with Ed25519 private key
+4. Base64-encode the signature
+5. Add `sig` field to create final payload
+
+---
+
+## Constants
+
+```dart
+// Flutter constants
+const String RENDEZVOUS_ADDRESS = '/dns4/mknoun.xyz/tcp/4001/wss/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g';
+```
+
+```typescript
+// JS constants
+const RENDEZVOUS_ADDRESS = '/dns4/mknoun.xyz/tcp/4001/wss/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g';
+```
+
+---
+
+## JS Bridge Contract
+
+All communication between Flutter and JS core-lib uses this message-based contract.
+
+### Command: `payload.sign`
+
+**Purpose:** Sign a payload using the user's Ed25519 private key.
+
+**Request:**
+```json
+{
+  "cmd": "payload.sign",
+  "payload": {
+    "dataToSign": "canonical-json-string",
+    "privateKey": "base64-encoded-private-key"
+  }
+}
+```
+
+**Success Response:**
+```json
+{
+  "ok": true,
+  "signature": "base64-encoded-signature"
+}
+```
+
+**Error Response:**
+```json
+{
+  "ok": false,
+  "errorCode": "SIGNING_ERROR",
+  "errorMessage": "Description of what went wrong"
+}
+```
+
+### Error Codes
+
+| Code | Meaning | Used By |
+|------|---------|---------|
+| `SIGNING_ERROR` | Failed to sign data | `payload.sign` |
+| `INVALID_PRIVATE_KEY` | Private key format invalid | `payload.sign` |
+| `INTERNAL_ERROR` | Unexpected error | All commands |
+
+---
+
+## QR Generation Flow
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    QR GENERATION FLOW                           │
+└───────────────────────────────────┬─────────────────────────────┘
+                                    │
+                                    ▼
+                      ┌─────────────────────────────┐
+                      │  User taps "Show my QR"     │
+                      └──────────────┬──────────────┘
+                                     │
+                                     ▼
+                      ┌─────────────────────────────┐
+                      │  Load identity from DB      │
+                      │  (peerId, publicKey,        │
+                      │   privateKey)               │
+                      └──────────────┬──────────────┘
+                                     │
+                    ┌────────────────┴────────────────┐
+                    │                                 │
+               Identity Found                   No Identity
+                    │                                 │
+                    ▼                                 ▼
+          ┌─────────────────────┐           ┌─────────────────┐
+          │  Build unsigned     │           │  Show error:    │
+          │  payload:           │           │  "No identity"  │
+          │  {pk, ns, rv, ts}   │           └─────────────────┘
+          └──────────┬──────────┘
+                     │
+                     ▼
+          ┌─────────────────────┐
+          │  Serialize to       │
+          │  canonical JSON     │
+          └──────────┬──────────┘
+                     │
+                     ▼
+          ┌─────────────────────┐
+          │  Call JS bridge     │
+          │  payload.sign       │
+          └──────────┬──────────┘
+                     │
+          ┌──────────┴──────────┐
+          │                     │
+      Sign OK              Sign Error
+          │                     │
+          ▼                     ▼
+   ┌─────────────────┐   ┌─────────────────┐
+   │  Add sig to     │   │  Show error     │
+   │  payload        │   │  message        │
+   └────────┬────────┘   └─────────────────┘
+            │
+            ▼
+   ┌─────────────────┐
+   │  Generate QR    │
+   │  from JSON      │
+   │  string         │
+   └────────┬────────┘
+            │
+            ▼
+   ┌─────────────────┐
+   │  Display QR     │
+   │  screen         │
+   └─────────────────┘
+```
+
+---
+
+## Flow Events
+
+All tasks emit flow events for observability. Use this helper pattern:
+
+```dart
+// Dart
+void emitFlowEvent({
+  required String layer,    // "FL" | "JS" | "DB"
+  required String event,    // Event name
+  required Map<String, dynamic> details,
+}) {
+  final payload = {
+    'ts': DateTime.now().toUtc().toIso8601String(),
+    'milestone': 'M2_QR_GENERATION',
+    'layer': layer,
+    'event': event,
+    'details': details,
+  };
+  // Log or send to telemetry
+  print('[FLOW] ${jsonEncode(payload)}');
+}
+```
+
+```javascript
+// JavaScript
+function emitFlowEvent({ layer, event, details }) {
+  const payload = {
+    ts: new Date().toISOString(),
+    milestone: 'M2_QR_GENERATION',
+    layer,
+    event,
+    details,
+  };
+  console.log('[FLOW]', JSON.stringify(payload));
+}
+```
+
+### Event Naming Convention
+
+```
+{MILESTONE}_{LAYER}_{ENTITY}_{ACTION}_{RESULT}
+
+Examples:
+  QR_FL_PAYLOAD_BUILD_START
+  QR_JS_SIGN_PAYLOAD_SUCCESS
+  QR_FL_SCREEN_DISPLAY_QR
+```
+
+---
+
+## Layer Responsibilities
+
+| Layer | Prefix | Responsibility |
+|-------|--------|----------------|
+| JS Core-Lib | `JS_XS_` | Ed25519 signing, bridge handlers |
+| Flutter Domain | `FL_XS_01` | QRPayloadModel |
+| Flutter Bridge | `FL_XS_02` | JS communication for signing |
+| Flutter Use-Cases | `FL_XS_03` | Business logic orchestration |
+| Flutter UI | `FL_XS_04-05` | QR display screen, wiring |
+| QA | `QA_XS_` | Test scripts and verification |
+
+---
+
+## Dependency Injection Pattern
+
+All use-cases accept their dependencies as parameters for testability:
+
+```dart
+// Good: Dependencies injected
+Future<BuildQRPayloadResult> buildQRPayload({
+  required IdentityRepository repo,
+  required Future<Map<String, dynamic>> Function(String, String) callJsSign,
+}) { ... }
+
+// Bad: Dependencies hardcoded
+Future<BuildQRPayloadResult> buildQRPayload() {
+  final identity = await IdentityRepositoryImpl().loadIdentity(); // Hardcoded!
+}
+```
+
+---
+
+## File Organization
+
+```
+lib/
+├── core/
+│   ├── bridge/
+│   │   └── js_bridge_client.dart        # Add callJsSignPayload (FL_XS_02)
+│   └── constants/
+│       └── network_constants.dart       # RENDEZVOUS_ADDRESS
+├── features/
+│   └── qr_code/
+│       ├── domain/
+│       │   └── models/
+│       │       └── qr_payload_model.dart    # FL_XS_01
+│       ├── application/
+│       │   └── build_qr_payload_use_case.dart  # FL_XS_03
+│       └── presentation/
+│           └── screens/
+│               ├── qr_display_screen.dart       # FL_XS_04
+│               └── qr_display_wired.dart        # FL_XS_05
+└── main.dart
+
+core-lib-js/
+├── src/
+│   ├── types/
+│   │   └── qr_payload.ts               # JS_XS_01
+│   ├── signing/
+│   │   └── sign_payload.ts             # JS_XS_02
+│   └── bridge/
+│       └── handlers.ts                 # Add payload.sign handler (JS_XS_03)
+├── package.json
+└── tsconfig.json
+```
+
+---
+
+## UI Design Guidelines
+
+The QR display screen should follow chat-app conventions:
+
+```
+┌─────────────────────────────────────┐
+│  ←  My QR Code              [close] │
+├─────────────────────────────────────┤
+│                                     │
+│         ┌─────────────────┐         │
+│         │                 │         │
+│         │    [QR CODE]    │         │
+│         │                 │         │
+│         │    256x256px    │         │
+│         │                 │         │
+│         └─────────────────┘         │
+│                                     │
+│     Scan to connect with me         │
+│                                     │
+│     ┌─────────────────────────┐     │
+│     │  12D3KooW...abc123      │     │
+│     │  (your peer ID)         │     │
+│     └─────────────────────────┘     │
+│                                     │
+│         [ Share QR Code ]           │
+│                                     │
+└─────────────────────────────────────┘
+```
+
+Key UI elements:
+- Back/close button in header
+- Centered QR code (256x256 or larger)
+- Helpful instruction text
+- Truncated peerID display
+- Optional share button
+
+---
+
+## Task
+
+# Task Prompt: QA_XS_01 - Manual Test Script: QR Generation Flow
+
+## Instructions for AI Agent
+
+You are creating a QA test script. Follow the specification exactly.
+
+---
+
+## Task Definition
+
+```
+[TASK QA_XS_01 – Manual test script: QR generation flow]
+
+Goal: 
+  Write a manual test script that verifies the complete QR code generation flow.
+
+Prerequisites:
+  - M1 complete (identity exists in database)
+  - M2 implementation complete
+  - App running on device/emulator
+  - QR code scanner available (another device or app)
+
+Test Scenarios:
+  1. Happy path: Generate and display QR code
+  2. Verify QR payload contents
+  3. Error path: No identity (optional if can clear DB)
+
+Pass Criteria:
+  - QR code displays correctly
+  - QR code is scannable
+  - Scanned payload contains all required fields
+  - Flow events fire in expected sequence
+
+Expected Flow Events (in order):
+  - QR_FL_SCREEN_INIT
+  - QR_FL_BUILD_PAYLOAD_START
+  - QR_FL_BUILD_PAYLOAD_IDENTITY_FOUND
+  - QR_FL_BUILD_PAYLOAD_SIGNING
+  - QR_FL_BRIDGE_SIGN_REQUEST
+  - QR_JS_BRIDGE_SIGN_RECEIVED
+  - QR_JS_SIGN_PAYLOAD_START
+  - QR_JS_SIGN_PAYLOAD_SUCCESS
+  - QR_JS_BRIDGE_SIGN_SUCCESS
+  - QR_FL_BRIDGE_SIGN_RESPONSE
+  - QR_FL_BUILD_PAYLOAD_SUCCESS
+  - QR_FL_SCREEN_DISPLAY
+
+Deliverable:
+  - File: docs/qa/QA_M2_XS_01_qr_generation.md
+```
+
+---
+
+## Begin Implementation
+
+Output the complete test script document.
+
+---
+
+# QA_M2_XS_01: QR Code Generation Test Script
+
+## Overview
+
+This test script verifies the M2 QR Code Generation feature, including payload building, signing, and display.
+
+---
+
+## Prerequisites
+
+Before running these tests:
+
+- [ ] M1 Identity Initialization is complete
+- [ ] Identity exists in database (run M1 new identity or restore flow first)
+- [ ] M2 implementation is complete (all tasks JS_XS_01 through FL_XS_05)
+- [ ] App is running on device or emulator
+- [ ] Debug console is visible for flow event verification
+- [ ] QR code scanner available (another phone with camera app, or dedicated QR scanner app)
+
+---
+
+## Test Environment Setup
+
+1. **Start the app** with debug logging enabled
+2. **Open debug console** to monitor flow events
+3. **Prepare QR scanner** on a separate device or use an online QR scanner tool
+4. **Note the current identity's peerId** from database or previous test
+
+---
+
+## Test Case 1: Happy Path - Generate and Display QR Code
+
+### Objective
+Verify that a user with an existing identity can successfully generate and view their QR code.
+
+### Steps
+
+| Step | Action | Expected Result |
+|------|--------|-----------------|
+| 1 | Launch app | App opens, identity already exists |
+| 2 | Navigate to QR code screen (e.g., tap "Show my QR Code" or profile menu) | QR screen navigation begins |
+| 3 | Observe loading state | Loading indicator appears briefly |
+| 4 | Wait for QR to load | QR code displays in center of screen |
+| 5 | Verify screen elements | - Title shows "My QR Code"<br>- QR code is visible and clear<br>- Instruction text "Scan to connect with me" visible<br>- PeerID card shows truncated ID<br>- Back/close button present |
+| 6 | Tap back/close button | Screen closes, returns to previous screen |
+
+### Expected Flow Events (Console)
+
+```
+[FLOW] FL | QR_FL_SCREEN_INIT | {}
+[FLOW] FL | QR_FL_BUILD_PAYLOAD_START | {}
+[FLOW] FL | QR_FL_BUILD_PAYLOAD_IDENTITY_FOUND | { "peerId": "12D3KooW..." }
+[FLOW] FL | QR_FL_BUILD_PAYLOAD_SIGNING | {}
+[FLOW] FL | QR_FL_BRIDGE_SIGN_REQUEST | { "dataLength": ... }
+[FLOW] JS | QR_JS_BRIDGE_SIGN_RECEIVED | { "dataLength": ... }
+[FLOW] JS | QR_JS_SIGN_PAYLOAD_START | { "dataLength": ... }
+[FLOW] JS | QR_JS_SIGN_PAYLOAD_SUCCESS | { "signatureLength": ... }
+[FLOW] JS | QR_JS_BRIDGE_SIGN_SUCCESS | {}
+[FLOW] FL | QR_FL_BRIDGE_SIGN_RESPONSE | { "ok": true }
+[FLOW] FL | QR_FL_BUILD_PAYLOAD_SUCCESS | {}
+[FLOW] FL | QR_FL_SCREEN_DISPLAY | {}
+```
+
+### Pass Criteria
+- [ ] Loading indicator shown briefly
+- [ ] QR code renders clearly
+- [ ] All UI elements present
+- [ ] Flow events match expected sequence
+- [ ] No errors in console
+
+---
+
+## Test Case 2: Verify QR Payload Contents
+
+### Objective
+Verify that the QR code contains valid, correctly structured JSON payload with all required fields.
+
+### Steps
+
+| Step | Action | Expected Result |
+|------|--------|-----------------|
+| 1 | Display QR code | QR code is visible on screen |
+| 2 | Scan QR code with another device | Scanner reads the QR successfully |
+| 3 | Copy/view scanned content | JSON string is captured |
+| 4 | Parse JSON content | Valid JSON, no parse errors |
+| 5 | Verify `pk` field | Base64 string, matches identity's publicKey |
+| 6 | Verify `ns` field | String, matches identity's peerId |
+| 7 | Verify `rv` field | Equals `/dns4/mknoun.xyz/tcp/4001/wss/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g` |
+| 8 | Verify `ts` field | Valid ISO-8601 timestamp, recent |
+| 9 | Verify `sig` field | Base64 string, non-empty |
+| 10 | Verify key ordering | Keys are in alphabetical order: ns, pk, rv, sig, ts |
+
+### Expected Payload Structure
+
+```json
+{
+  "ns": "12D3KooWAbcdefghijklmnopqrstuvwxyz...",
+  "pk": "SGVsbG8gV29ybGQhIFRoaXMgaXMgYSB0ZXN0Lg==",
+  "rv": "/dns4/mknoun.xyz/tcp/4001/wss/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g",
+  "sig": "U2lnbmF0dXJlQmFzZTY0RW5jb2RlZFN0cmluZw==",
+  "ts": "2025-01-22T15:30:00.000Z"
+}
+```
+
+### Verification Checklist
+
+- [ ] QR code scans successfully
+- [ ] Content is valid JSON
+- [ ] `pk` is non-empty base64 string
+- [ ] `ns` matches identity peerId
+- [ ] `rv` is exact rendezvous address
+- [ ] `ts` is valid ISO-8601 timestamp
+- [ ] `sig` is non-empty base64 string
+- [ ] Keys are alphabetically ordered
+
+---
+
+## Test Case 3: Error Path - No Identity (Optional)
+
+### Objective
+Verify proper error handling when no identity exists.
+
+### Prerequisites
+- Ability to clear identity from database
+- Or fresh app install without M1 completion
+
+### Steps
+
+| Step | Action | Expected Result |
+|------|--------|-----------------|
+| 1 | Clear identity from database (or use fresh install) | No identity row exists |
+| 2 | Navigate to QR code screen | QR screen navigation begins |
+| 3 | Observe loading state | Loading indicator appears briefly |
+| 4 | Wait for error | Error screen displays |
+| 5 | Verify error message | Shows "No identity found. Please create one first." or similar |
+| 6 | Verify no retry button | Retry not shown (user needs to create identity) |
+| 7 | Tap back button | Returns to previous screen |
+
+### Expected Flow Events (Console)
+
+```
+[FLOW] FL | QR_FL_SCREEN_INIT | {}
+[FLOW] FL | QR_FL_BUILD_PAYLOAD_START | {}
+[FLOW] FL | QR_FL_BUILD_PAYLOAD_NO_IDENTITY | {}
+[FLOW] FL | QR_FL_SCREEN_ERROR | { "reason": "noIdentity" }
+```
+
+### Pass Criteria
+- [ ] Error screen displays (not crash)
+- [ ] User-friendly error message shown
+- [ ] Back navigation works
+- [ ] Flow events indicate no identity
+
+---
+
+## Test Case 4: Re-generate QR Code
+
+### Objective
+Verify that QR code can be regenerated with new timestamp.
+
+### Steps
+
+| Step | Action | Expected Result |
+|------|--------|-----------------|
+| 1 | Navigate to QR screen | QR displays |
+| 2 | Note the timestamp (`ts` field) by scanning | Record timestamp |
+| 3 | Close QR screen | Screen closes |
+| 4 | Wait 5 seconds | Time passes |
+| 5 | Navigate to QR screen again | QR displays |
+| 6 | Scan and note new timestamp | Timestamp is different (later) |
+| 7 | Verify other fields unchanged | `pk`, `ns`, `rv` are same |
+
+### Pass Criteria
+- [ ] New QR generates successfully each time
+- [ ] Timestamp updates on each generation
+- [ ] Other identity fields remain consistent
+- [ ] Signature is different (because data changed)
+
+---
+
+## Test Case 5: QR Code Readability
+
+### Objective
+Verify QR code is readable from various distances and angles.
+
+### Steps
+
+| Step | Action | Expected Result |
+|------|--------|-----------------|
+| 1 | Display QR code | QR visible |
+| 2 | Scan from ~6 inches away | Scans successfully |
+| 3 | Scan from ~12 inches away | Scans successfully |
+| 4 | Scan at slight angle (~15°) | Scans successfully |
+| 5 | Scan in low light | Scans successfully (may need more time) |
+| 6 | Verify all scans produce same content | Identical JSON each time |
+
+### Pass Criteria
+- [ ] QR readable from reasonable distances
+- [ ] QR readable at slight angles
+- [ ] QR size is adequate (256px+ recommended)
+- [ ] White background provides good contrast
+
+---
+
+## Test Results Summary
+
+| Test Case | Status | Notes |
+|-----------|--------|-------|
+| TC1: Happy Path | ⬜ Pass / ⬜ Fail | |
+| TC2: Payload Verification | ⬜ Pass / ⬜ Fail | |
+| TC3: No Identity Error | ⬜ Pass / ⬜ Fail / ⬜ Skipped | |
+| TC4: Re-generate | ⬜ Pass / ⬜ Fail | |
+| TC5: Readability | ⬜ Pass / ⬜ Fail | |
+
+---
+
+## Issues Found
+
+| Issue # | Description | Severity | Steps to Reproduce |
+|---------|-------------|----------|-------------------|
+| | | | |
+
+---
+
+## Sign-Off
+
+- [ ] All mandatory test cases pass (TC1, TC2, TC4, TC5)
+- [ ] Flow events match expected patterns
+- [ ] No critical issues found
+- [ ] QR codes are consistently scannable
+
+**Tester:** _______________ 
+
+**Date:** _______________
+
+**M2 QR Generation: ⬜ APPROVED / ⬜ NEEDS FIXES**
+
+
+---
+
+## CRITICAL OUTPUT REQUIREMENT
+
+You MUST output ONLY a code block. No explanations before or after.
+Do NOT read any files from disk. Do NOT check if files already exist. Do NOT use any tools.
+Do NOT say 'already exists' or 'no changes needed'. Always generate the complete code fresh from scratch based solely on the task specification above.
+The output file will be saved to:  docs/qa/QA_M2_XS_01_qr_generation.md
+Format your ENTIRE response as:
+
+```
+[your complete code here]
+```
+
+Nothing else. Just the code block.

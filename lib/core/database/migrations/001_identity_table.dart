@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS identity (
   public_key TEXT NOT NULL,
   private_key TEXT NOT NULL,
   mnemonic12 TEXT NOT NULL,
+  username TEXT NOT NULL DEFAULT 'Username',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
