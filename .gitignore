@@ -79,3 +79,12 @@ maker_workspace/
 # TypeScript source files (keeping compiled JS only)
 *.ts
 !*.d.ts
+
+# Screenshots (macOS naming pattern)
+Screenshot*.png
+
+# Root-level Node.js files (for non-JS projects)
+/package.json
+
+# QR generation test artifacts
+m2-qr-generation/
