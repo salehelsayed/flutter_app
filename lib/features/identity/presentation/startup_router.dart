@@ -4,54 +4,7 @@ import 'package:flutter_app/core/bridge/js_bridge_client.dart';
 import 'package:flutter_app/features/identity/application/startup_decision.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/identity/presentation/screens/identity_choice_wired.dart';
-import 'package:flutter_app/features/qr_code/presentation/screens/qr_display_wired.dart';
-
-/// Main app screen displayed when an identity exists.
-///
-/// Provides access to QR code generation and other app features.
-class MainAppScreen extends StatelessWidget {
-  final IdentityRepository repository;
-  final JsBridge bridge;
-
-  const MainAppScreen({
-    super.key,
-    required this.repository,
-    required this.bridge,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Main App'),
-      ),
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Text('Welcome! Identity loaded.'),
-            const SizedBox(height: 32),
-            ElevatedButton.icon(
-              onPressed: () {
-                Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => QRDisplayWired(
-                      repo: repository,
-                      bridgeClient: bridge,
-                      onClose: () => Navigator.of(context).pop(),
-                    ),
-                  ),
-                );
-              },
-              icon: const Icon(Icons.qr_code),
-              label: const Text('Show my QR Code'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
+import 'package:flutter_app/features/home/presentation/screens/first_time_experience_wired.dart';
 
 /// Router widget that handles app startup navigation.
 ///
@@ -113,7 +66,7 @@ class _StartupRouterState extends State<StartupRouter> {
             details: {},
           );
           Navigator.of(context).pushReplacement(
-            MaterialPageRoute(builder: (_) => MainAppScreen(repository: repository, bridge: bridge)),
+            MaterialPageRoute(builder: (_) => FirstTimeExperienceWired(repository: repository, bridge: bridge)),
           );
           break;
         case StartupDecision.needsIdentity:
@@ -132,7 +85,7 @@ class _StartupRouterState extends State<StartupRouter> {
                 onNavigateToMain: () {
                   // Use the route's context for navigation
                   Navigator.of(routeContext).pushReplacement(
-                    MaterialPageRoute(builder: (_) => MainAppScreen(repository: repository, bridge: bridge)),
+                    MaterialPageRoute(builder: (_) => FirstTimeExperienceWired(repository: repository, bridge: bridge)),
                   );
                 },
               ),
