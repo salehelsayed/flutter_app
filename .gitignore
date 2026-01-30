@@ -88,3 +88,13 @@ Screenshot*.png
 
 # QR generation test artifacts
 m2-qr-generation/
+
+# UI branch working directories
+UI-1-2/
+
+# Temporary maker scripts
+maker_*.sh
+
+# CocoaPods lock file (regenerated on pod install)
+macos/Podfile.lock
+ios/Podfile.lock
