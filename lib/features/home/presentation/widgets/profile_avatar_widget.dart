@@ -1,88 +1,155 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/app_colors.dart';
+import 'ring_avatar.dart';
 
-/// Profile avatar with gradient background and camera button.
+/// Profile avatar with ring avatar default and camera button.
+///
+/// When [avatarPath] is provided, displays the user's photo.
+/// When [avatarPath] is null but [peerId] is provided, displays
+/// a unique ring avatar generated from the peerId.
 class ProfileAvatarWidget extends StatelessWidget {
+  /// Path to the user's avatar image file.
+  final String? avatarPath;
+
+  /// The user's peer ID for generating the default ring avatar.
+  final String? peerId;
+
+  /// Callback when the camera button is pressed.
   final VoidCallback? onCameraPressed;
+
+  /// Size of the avatar in logical pixels.
+  final double size;
 
   const ProfileAvatarWidget({
     super.key,
+    this.avatarPath,
+    this.peerId,
     this.onCameraPressed,
+    this.size = 80,
   });
 
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      width: 80,
-      height: 80,
+      width: size,
+      height: size,
       child: Stack(
         children: [
-          // Avatar circle with gradient
-          Container(
-            width: 80,
-            height: 80,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  AppColors.primaryAccent.withValues(alpha: 0.3),
-                  AppColors.redGlow.withValues(alpha: 0.2),
-                ],
-              ),
-              border: Border.all(
-                color: Colors.white,
-                width: 3,
-              ),
-            ),
-            child: const Center(
-              child: Text(
-                '?',
-                style: TextStyle(
-                  color: AppColors.textPrimary,
-                  fontSize: 32,
-                  fontWeight: FontWeight.w300,
-                ),
-              ),
-            ),
-          ),
+          // Avatar content
+          _buildAvatar(),
           // Camera button
-          Positioned(
-            right: 0,
-            bottom: 0,
-            child: GestureDetector(
-              onTap: onCameraPressed,
-              child: Container(
-                width: 28,
-                height: 28,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  gradient: const LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [
-                      AppColors.primaryAccent,
-                      AppColors.secondaryAccent,
-                    ],
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: AppColors.primaryAccent.withValues(alpha: 0.4),
-                      blurRadius: 8,
-                      spreadRadius: 0,
-                    ),
-                  ],
-                ),
-                child: const Icon(
-                  Icons.camera_alt,
-                  color: Colors.white,
-                  size: 14,
-                ),
-              ),
-            ),
-          ),
+          if (onCameraPressed != null) _buildCameraButton(),
         ],
+      ),
+    );
+  }
+
+  Widget _buildAvatar() {
+    // Priority 1: User's photo
+    if (avatarPath != null) {
+      return _buildImageAvatar();
+    }
+
+    // Priority 2: Ring avatar from peerId
+    if (peerId != null) {
+      return RingAvatar(peerId: peerId!, size: size);
+    }
+
+    // Priority 3: Placeholder (edge case)
+    return _buildPlaceholder();
+  }
+
+  Widget _buildImageAvatar() {
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        border: Border.all(
+          color: Colors.white,
+          width: 3,
+        ),
+      ),
+      child: ClipOval(
+        child: Image.file(
+          File(avatarPath!),
+          width: size,
+          height: size,
+          fit: BoxFit.cover,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPlaceholder() {
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            AppColors.primaryAccent.withValues(alpha: 0.3),
+            AppColors.redGlow.withValues(alpha: 0.2),
+          ],
+        ),
+        border: Border.all(
+          color: Colors.white,
+          width: 3,
+        ),
+      ),
+      child: const Center(
+        child: Text(
+          '?',
+          style: TextStyle(
+            color: AppColors.textPrimary,
+            fontSize: 32,
+            fontWeight: FontWeight.w300,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCameraButton() {
+    final buttonSize = size * 0.35;
+    final iconSize = size * 0.175;
+
+    return Positioned(
+      right: 0,
+      bottom: 0,
+      child: GestureDetector(
+        onTap: onCameraPressed,
+        child: Container(
+          width: buttonSize,
+          height: buttonSize,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                AppColors.primaryAccent,
+                AppColors.secondaryAccent,
+              ],
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: AppColors.primaryAccent.withValues(alpha: 0.4),
+                blurRadius: 8,
+                spreadRadius: 0,
+              ),
+            ],
+          ),
+          child: Icon(
+            Icons.camera_alt,
+            color: Colors.white,
+            size: iconSize,
+          ),
+        ),
       ),
     );
   }
