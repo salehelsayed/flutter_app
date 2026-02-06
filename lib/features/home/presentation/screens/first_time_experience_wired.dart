@@ -5,7 +5,6 @@ import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:flutter_app/core/bridge/js_bridge_client.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
-import 'package:flutter_app/core/theme/app_colors.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contact_request/application/accept_contact_request_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
@@ -18,6 +17,8 @@ import 'package:flutter_app/features/identity/domain/models/identity_model.dart'
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/qr_code/application/build_qr_payload_use_case.dart';
 import 'package:flutter_app/features/qr_code/presentation/screens/qr_scanner_wired.dart';
+import 'package:flutter_app/features/feed/presentation/screens/feed_wired.dart';
+import 'package:flutter_app/features/feed/presentation/navigation/feed_route_transition.dart';
 import 'first_time_experience_screen.dart';
 
 /// Wired widget that connects FirstTimeExperienceScreen to business logic.
@@ -54,11 +55,7 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
   @override
   void initState() {
     super.initState();
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'FTE_FL_SCREEN_INIT',
-      details: {},
-    );
+    emitFlowEvent(layer: 'FL', event: 'FTE_FL_SCREEN_INIT', details: {});
     _loadIdentityAndBuildQR();
     _startListeningForContactRequests();
   }
@@ -105,11 +102,17 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
     if (!mounted) return;
 
     if (result == AcceptContactRequestResult.success) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('${request.username} added to your circle!'),
-          backgroundColor: AppColors.primaryAccent,
-          behavior: SnackBarBehavior.floating,
+      Navigator.of(context).pushReplacement(
+        buildFeedSlideUpRoute(
+          builder: (_) => FeedWired(
+            repository: widget.repository,
+            contactRepository: widget.contactRepository,
+            contactRequestRepository: widget.contactRequestRepository,
+            contactRequestListener: widget.contactRequestListener,
+            bridge: widget.bridge,
+            p2pService: widget.p2pService,
+            initialContact: request.toContactModel(),
+          ),
         ),
       );
     } else {
@@ -145,11 +148,7 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
     try {
       final identity = await widget.repository.loadIdentity();
       if (identity == null) {
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'FTE_FL_NO_IDENTITY',
-          details: {},
-        );
+        emitFlowEvent(layer: 'FL', event: 'FTE_FL_NO_IDENTITY', details: {});
         return;
       }
 
@@ -170,7 +169,9 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
   Future<void> _buildQRPayload() async {
     try {
       Future<Map<String, dynamic>> jsSign(
-          String dataToSign, String privateKey) {
+        String dataToSign,
+        String privateKey,
+      ) {
         return callJsSignPayload(
           bridge: widget.bridge,
           dataToSign: dataToSign,
@@ -187,11 +188,7 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
         setState(() {
           _qrData = qrString;
         });
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'FTE_FL_QR_GENERATED',
-          details: {},
-        );
+        emitFlowEvent(layer: 'FL', event: 'FTE_FL_QR_GENERATED', details: {});
       }
     } catch (e) {
       emitFlowEvent(
@@ -333,11 +330,7 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
         });
       }
 
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'FTE_FL_AVATAR_UPDATED',
-        details: {},
-      );
+      emitFlowEvent(layer: 'FL', event: 'FTE_FL_AVATAR_UPDATED', details: {});
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -346,9 +339,9 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
       );
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to update photo: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Failed to update photo: $e')));
       }
     }
   }
@@ -361,6 +354,8 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
         builder: (_) => QRScannerWired(
           bridge: widget.bridge,
           contactRepository: widget.contactRepository,
+          contactRequestRepository: widget.contactRequestRepository,
+          contactRequestListener: widget.contactRequestListener,
           identityRepository: widget.repository,
           p2pService: widget.p2pService,
           ownPeerId: _identity!.peerId,

@@ -4,7 +4,9 @@ import 'package:flutter_app/core/bridge/js_bridge_client.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
 import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository.dart';
+import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
+import 'package:flutter_app/features/feed/presentation/screens/feed_wired.dart';
 import 'package:flutter_app/features/identity/application/startup_decision.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/identity/presentation/screens/identity_choice_wired.dart';
@@ -64,14 +66,13 @@ class _StartupRouterState extends State<StartupRouter> {
   }
 
   Future<void> _routeBasedOnIdentity() async {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'ID_STARTUP_FLOW_BEGIN',
-      details: {},
-    );
+    emitFlowEvent(layer: 'FL', event: 'ID_STARTUP_FLOW_BEGIN', details: {});
 
     try {
-      final decision = await decideStartupRoute(widget.repository);
+      final decision = await decideStartupRoute(
+        identityRepo: widget.repository,
+        contactRepo: widget.contactRepository,
+      );
 
       if (!mounted) return;
 
@@ -84,23 +85,66 @@ class _StartupRouterState extends State<StartupRouter> {
       final p2pService = widget.p2pService;
 
       switch (decision) {
-        case StartupDecision.hasIdentity:
+        case StartupDecision.hasIdentityWithContacts:
+          final contacts = await contactRepository.getAllContacts();
+          if (!mounted) return;
+
+          if (contacts.isEmpty) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'ID_STARTUP_ROUTE_MAIN_EMPTY_CONTACTS',
+              details: {},
+            );
+            _navigateToFirstTime(
+              repository: repository,
+              contactRepository: contactRepository,
+              contactRequestRepository: contactRequestRepository,
+              contactRequestListener: contactRequestListener,
+              bridge: bridge,
+              p2pService: p2pService,
+            );
+            _startP2PInBackground();
+            break;
+          }
+
+          final startupContact = _pickMostRecentContact(contacts);
+
           emitFlowEvent(
             layer: 'FL',
-            event: 'ID_STARTUP_ROUTE_MAIN',
-            details: {},
+            event: 'ID_STARTUP_ROUTE_FEED',
+            details: {'contactCount': contacts.length},
           );
           Navigator.of(context).pushReplacement(
             MaterialPageRoute(
-              builder: (_) => FirstTimeExperienceWired(
+              builder: (_) => FeedWired(
                 repository: repository,
                 contactRepository: contactRepository,
                 contactRequestRepository: contactRequestRepository,
                 contactRequestListener: contactRequestListener,
                 bridge: bridge,
                 p2pService: p2pService,
+                initialContact: startupContact,
               ),
             ),
+          );
+
+          // Start P2P node in background after navigation
+          _startP2PInBackground();
+          break;
+
+        case StartupDecision.hasIdentityNoContacts:
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'ID_STARTUP_ROUTE_MAIN_NO_CONTACTS',
+            details: {},
+          );
+          _navigateToFirstTime(
+            repository: repository,
+            contactRepository: contactRepository,
+            contactRequestRepository: contactRequestRepository,
+            contactRequestListener: contactRequestListener,
+            bridge: bridge,
+            p2pService: p2pService,
           );
 
           // Start P2P node in background after navigation
@@ -164,11 +208,7 @@ class _StartupRouterState extends State<StartupRouter> {
   /// This is called after navigating to the main screen, so failures
   /// don't block the user experience.
   Future<void> _startP2PInBackground() async {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'P2P_STARTUP_BEGIN',
-      details: {},
-    );
+    emitFlowEvent(layer: 'FL', event: 'P2P_STARTUP_BEGIN', details: {});
 
     final result = await startP2PNode(
       identityRepo: widget.repository,
@@ -190,6 +230,40 @@ class _StartupRouterState extends State<StartupRouter> {
     await _routeBasedOnIdentity();
   }
 
+  ContactModel _pickMostRecentContact(List<ContactModel> contacts) {
+    final sorted = List<ContactModel>.of(contacts)
+      ..sort((a, b) {
+        final aMillis =
+            DateTime.tryParse(a.scannedAt)?.millisecondsSinceEpoch ?? 0;
+        final bMillis =
+            DateTime.tryParse(b.scannedAt)?.millisecondsSinceEpoch ?? 0;
+        return bMillis.compareTo(aMillis);
+      });
+    return sorted.first;
+  }
+
+  void _navigateToFirstTime({
+    required IdentityRepository repository,
+    required ContactRepository contactRepository,
+    required ContactRequestRepository contactRequestRepository,
+    required ContactRequestListener contactRequestListener,
+    required JsBridge bridge,
+    required P2PService p2pService,
+  }) {
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(
+        builder: (_) => FirstTimeExperienceWired(
+          repository: repository,
+          contactRepository: contactRepository,
+          contactRequestRepository: contactRequestRepository,
+          contactRequestListener: contactRequestListener,
+          bridge: bridge,
+          p2pService: p2pService,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_hasError) {
@@ -200,18 +274,11 @@ class _StartupRouterState extends State<StartupRouter> {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                const Icon(
-                  Icons.error_outline,
-                  size: 64,
-                  color: Colors.red,
-                ),
+                const Icon(Icons.error_outline, size: 64, color: Colors.red),
                 const SizedBox(height: 24),
                 const Text(
                   'Failed to initialize',
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                  ),
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 8),
                 Text(
@@ -220,10 +287,7 @@ class _StartupRouterState extends State<StartupRouter> {
                   style: const TextStyle(color: Colors.grey),
                 ),
                 const SizedBox(height: 24),
-                ElevatedButton(
-                  onPressed: _retry,
-                  child: const Text('Retry'),
-                ),
+                ElevatedButton(onPressed: _retry, child: const Text('Retry')),
               ],
             ),
           ),
@@ -236,10 +300,7 @@ class _StartupRouterState extends State<StartupRouter> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: const [
-            Icon(
-              Icons.lock,
-              size: 64,
-            ),
+            Icon(Icons.lock, size: 64),
             SizedBox(height: 24),
             CircularProgressIndicator(),
             SizedBox(height: 16),
