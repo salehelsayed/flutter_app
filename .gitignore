@@ -69,6 +69,15 @@ app.*.map.json
 node_modules/
 package-lock.json
 
+# Generated JS build outputs
+core_lib_js/dist/
+core_lib_js/node_modules/
+m3-libp2p-1/core_lib_js/dist/
+m3-libp2p-1/core_lib_js/node_modules/
+
+# Local libp2p credentials
+m3-libp2p-1/Creds_User_*.txt
+
 # Source maps
 *.js.map
 
