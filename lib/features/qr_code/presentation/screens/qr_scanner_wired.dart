@@ -3,10 +3,14 @@ import 'package:flutter_app/core/bridge/js_bridge_client.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/theme/app_colors.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
 import 'package:flutter_app/features/contact_request/application/send_contact_request_use_case.dart';
+import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository.dart';
 import 'package:flutter_app/features/contacts/application/add_contact_use_case.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
+import 'package:flutter_app/features/feed/presentation/navigation/feed_route_transition.dart';
+import 'package:flutter_app/features/feed/presentation/screens/feed_wired.dart';
 import 'package:flutter_app/features/home/presentation/widgets/ring_avatar.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/qr_code/application/parse_qr_payload_use_case.dart';
@@ -24,6 +28,8 @@ import 'qr_scanner_screen.dart';
 class QRScannerWired extends StatelessWidget {
   final JsBridge bridge;
   final ContactRepository contactRepository;
+  final ContactRequestRepository contactRequestRepository;
+  final ContactRequestListener contactRequestListener;
   final IdentityRepository identityRepository;
   final P2PService p2pService;
   final String ownPeerId;
@@ -32,6 +38,8 @@ class QRScannerWired extends StatelessWidget {
     super.key,
     required this.bridge,
     required this.contactRepository,
+    required this.contactRequestRepository,
+    required this.contactRequestListener,
     required this.identityRepository,
     required this.p2pService,
     required this.ownPeerId,
@@ -66,28 +74,51 @@ class QRScannerWired extends StatelessWidget {
         break;
 
       case ParseQRResult.invalidJson:
-        _showError(context, 'Invalid QR Code', 'This doesn\'t look like a valid contact QR code.');
+        _showError(
+          context,
+          'Invalid QR Code',
+          'This doesn\'t look like a valid contact QR code.',
+        );
         break;
 
       case ParseQRResult.missingFields:
-        _showError(context, 'Incomplete QR Code', 'This QR code is missing required information.');
+        _showError(
+          context,
+          'Incomplete QR Code',
+          'This QR code is missing required information.',
+        );
         break;
 
       case ParseQRResult.invalidSignature:
-        _showError(context, 'Invalid Signature', 'This QR code could not be verified.');
+        _showError(
+          context,
+          'Invalid Signature',
+          'This QR code could not be verified.',
+        );
         break;
 
       case ParseQRResult.expired:
-        _showError(context, 'Expired QR Code', 'This QR code has expired. Ask your friend for a new one.');
+        _showError(
+          context,
+          'Expired QR Code',
+          'This QR code has expired. Ask your friend for a new one.',
+        );
         break;
 
       case ParseQRResult.selfScan:
-        _showError(context, 'That\'s You!', 'You can\'t add yourself as a contact.');
+        _showError(
+          context,
+          'That\'s You!',
+          'You can\'t add yourself as a contact.',
+        );
         break;
     }
   }
 
-  Future<void> _handleValidContact(BuildContext context, ContactModel contact) async {
+  Future<void> _handleValidContact(
+    BuildContext context,
+    ContactModel contact,
+  ) async {
     final addResult = await addContact(
       repository: contactRepository,
       contact: contact,
@@ -107,7 +138,11 @@ class QRScannerWired extends StatelessWidget {
         break;
 
       case AddContactResult.dbError:
-        _showError(context, 'Error', 'Failed to add contact. Please try again.');
+        _showError(
+          context,
+          'Error',
+          'Failed to add contact. Please try again.',
+        );
         break;
     }
   }
@@ -143,10 +178,7 @@ class QRScannerWired extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              title,
-              style: const TextStyle(fontWeight: FontWeight.bold),
-            ),
+            Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
             Text(message),
           ],
         ),
@@ -189,17 +221,29 @@ class QRScannerWired extends StatelessWidget {
             // Success message
             Text(
               'Added to your circle!',
-              style: TextStyle(
-                color: AppColors.primaryAccent,
-                fontSize: 14,
-              ),
+              style: TextStyle(color: AppColors.primaryAccent, fontSize: 14),
             ),
             const SizedBox(height: 24),
             // OK button
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
-                onPressed: () => Navigator.of(ctx).pop(),
+                onPressed: () {
+                  Navigator.of(ctx).pushAndRemoveUntil(
+                    buildFeedSlideUpRoute(
+                      builder: (_) => FeedWired(
+                        repository: identityRepository,
+                        contactRepository: contactRepository,
+                        contactRequestRepository: contactRequestRepository,
+                        contactRequestListener: contactRequestListener,
+                        bridge: bridge,
+                        p2pService: p2pService,
+                        initialContact: contact,
+                      ),
+                    ),
+                    (route) => false,
+                  );
+                },
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.primaryAccent,
                   foregroundColor: Colors.white,
@@ -210,10 +254,7 @@ class QRScannerWired extends StatelessWidget {
                 ),
                 child: const Text(
                   'OK',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                  ),
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
                 ),
               ),
             ),
@@ -231,9 +272,7 @@ class QRScannerWired extends StatelessWidget {
         backgroundColor: const Color(0xFF1A1A1A),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(20),
-          side: BorderSide(
-            color: Colors.amber.withValues(alpha: 0.3),
-          ),
+          side: BorderSide(color: Colors.amber.withValues(alpha: 0.3)),
         ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -255,18 +294,12 @@ class QRScannerWired extends StatelessWidget {
             // Already exists message
             const Text(
               'Already in your circle!',
-              style: TextStyle(
-                color: Colors.amber,
-                fontSize: 14,
-              ),
+              style: TextStyle(color: Colors.amber, fontSize: 14),
             ),
             const SizedBox(height: 4),
             Text(
               'This contact was added previously',
-              style: TextStyle(
-                color: AppColors.textMuted,
-                fontSize: 12,
-              ),
+              style: TextStyle(color: AppColors.textMuted, fontSize: 12),
             ),
             const SizedBox(height: 24),
             // OK button
@@ -284,10 +317,7 @@ class QRScannerWired extends StatelessWidget {
                 ),
                 child: const Text(
                   'Got it',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                  ),
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
                 ),
               ),
             ),
