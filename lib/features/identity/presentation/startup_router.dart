@@ -1,10 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/bridge/js_bridge_client.dart';
+import 'package:flutter_app/core/services/p2p_service.dart';
+import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
+import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository.dart';
+import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/identity/application/startup_decision.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/identity/presentation/screens/identity_choice_wired.dart';
 import 'package:flutter_app/features/home/presentation/screens/first_time_experience_wired.dart';
+import 'package:flutter_app/features/p2p/application/start_node_use_case.dart';
 
 /// Router widget that handles app startup navigation.
 ///
@@ -19,13 +24,29 @@ class StartupRouter extends StatefulWidget {
   /// The repository used to check for existing identity.
   final IdentityRepository repository;
 
+  /// The repository used to manage contacts.
+  final ContactRepository contactRepository;
+
+  /// The repository used to manage contact requests.
+  final ContactRequestRepository contactRequestRepository;
+
+  /// The listener for incoming contact requests.
+  final ContactRequestListener contactRequestListener;
+
   /// The JS bridge instance for identity operations.
   final JsBridge bridge;
+
+  /// The P2P service for networking operations.
+  final P2PService p2pService;
 
   const StartupRouter({
     super.key,
     required this.repository,
+    required this.contactRepository,
+    required this.contactRequestRepository,
+    required this.contactRequestListener,
     required this.bridge,
+    required this.p2pService,
   });
 
   @override
@@ -57,6 +78,10 @@ class _StartupRouterState extends State<StartupRouter> {
       // Capture locally to avoid widget reference issues after async gap
       final bridge = widget.bridge;
       final repository = widget.repository;
+      final contactRepository = widget.contactRepository;
+      final contactRequestRepository = widget.contactRequestRepository;
+      final contactRequestListener = widget.contactRequestListener;
+      final p2pService = widget.p2pService;
 
       switch (decision) {
         case StartupDecision.hasIdentity:
@@ -66,9 +91,22 @@ class _StartupRouterState extends State<StartupRouter> {
             details: {},
           );
           Navigator.of(context).pushReplacement(
-            MaterialPageRoute(builder: (_) => FirstTimeExperienceWired(repository: repository, bridge: bridge)),
+            MaterialPageRoute(
+              builder: (_) => FirstTimeExperienceWired(
+                repository: repository,
+                contactRepository: contactRepository,
+                contactRequestRepository: contactRequestRepository,
+                contactRequestListener: contactRequestListener,
+                bridge: bridge,
+                p2pService: p2pService,
+              ),
+            ),
           );
+
+          // Start P2P node in background after navigation
+          _startP2PInBackground();
           break;
+
         case StartupDecision.needsIdentity:
           emitFlowEvent(
             layer: 'FL',
@@ -83,10 +121,22 @@ class _StartupRouterState extends State<StartupRouter> {
                 callJsIdentityRestore: (mnemonic) =>
                     callJsIdentityRestore(bridge, mnemonic),
                 onNavigateToMain: () {
-                  // Use the route's context for navigation
+                  // Navigate and start P2P
                   Navigator.of(routeContext).pushReplacement(
-                    MaterialPageRoute(builder: (_) => FirstTimeExperienceWired(repository: repository, bridge: bridge)),
+                    MaterialPageRoute(
+                      builder: (_) => FirstTimeExperienceWired(
+                        repository: repository,
+                        contactRepository: contactRepository,
+                        contactRequestRepository: contactRequestRepository,
+                        contactRequestListener: contactRequestListener,
+                        bridge: bridge,
+                        p2pService: p2pService,
+                      ),
+                    ),
                   );
+
+                  // Start P2P node in background after identity creation
+                  _startP2PInBackground();
                 },
               ),
             ),
@@ -107,6 +157,29 @@ class _StartupRouterState extends State<StartupRouter> {
         _errorMessage = e.toString();
       });
     }
+  }
+
+  /// Start the P2P node in the background.
+  ///
+  /// This is called after navigating to the main screen, so failures
+  /// don't block the user experience.
+  Future<void> _startP2PInBackground() async {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'P2P_STARTUP_BEGIN',
+      details: {},
+    );
+
+    final result = await startP2PNode(
+      identityRepo: widget.repository,
+      p2pService: widget.p2pService,
+    );
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'P2P_STARTUP_RESULT',
+      details: {'result': result.name},
+    );
   }
 
   Future<void> _retry() async {

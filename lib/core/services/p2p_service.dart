@@ -1,0 +1,62 @@
+import '../../features/p2p/domain/models/node_state.dart';
+import '../../features/p2p/domain/models/chat_message.dart';
+import '../../features/p2p/domain/models/discovered_peer.dart';
+
+/// Abstract interface for P2P networking service.
+///
+/// This service manages the P2P node lifecycle, peer connections,
+/// and messaging. It provides streams for state changes and
+/// incoming messages.
+abstract class P2PService {
+  /// Current node state.
+  NodeState get currentState;
+
+  /// Stream of node state changes.
+  Stream<NodeState> get stateStream;
+
+  /// Stream of incoming chat messages.
+  Stream<ChatMessage> get messageStream;
+
+  /// Start the P2P node with the given identity.
+  ///
+  /// Parameters:
+  ///   - [privateKeyBase64]: Ed25519 private key in BASE64 format
+  ///   - [peerId]: The peer ID associated with this identity
+  ///
+  /// Returns true if the node started successfully.
+  Future<bool> startNode(String privateKeyBase64, String peerId);
+
+  /// Stop the P2P node.
+  ///
+  /// Returns true if the node stopped successfully.
+  Future<bool> stopNode();
+
+  /// Send a message to a peer.
+  ///
+  /// Parameters:
+  ///   - [peerId]: The target peer ID
+  ///   - [message]: The message content
+  ///
+  /// Returns true if the message was sent successfully.
+  Future<bool> sendMessage(String peerId, String message);
+
+  /// Discover a peer by their ID via rendezvous.
+  ///
+  /// Parameters:
+  ///   - [peerId]: The peer ID to discover
+  ///
+  /// Returns the discovered peer info, or null if not found.
+  Future<DiscoveredPeer?> discoverPeer(String peerId);
+
+  /// Dial (connect to) a peer.
+  ///
+  /// Parameters:
+  ///   - [peerId]: The peer ID to dial
+  ///   - [addresses]: Optional list of multiaddrs (discovers if not provided)
+  ///
+  /// Returns true if connection was established.
+  Future<bool> dialPeer(String peerId, {List<String>? addresses});
+
+  /// Dispose of the service and clean up resources.
+  void dispose();
+}

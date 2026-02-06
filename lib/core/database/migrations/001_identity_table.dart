@@ -14,8 +14,39 @@ CREATE TABLE IF NOT EXISTS identity (
   private_key TEXT NOT NULL,
   mnemonic12 TEXT NOT NULL,
   username TEXT NOT NULL DEFAULT 'Username',
+  avatar_path TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
+);
+''';
+
+/// SQL statement to create the contacts table.
+///
+/// Stores contacts added via QR code scanning.
+const String _createContactsTableSql = '''
+CREATE TABLE IF NOT EXISTS contacts (
+  peer_id TEXT PRIMARY KEY,
+  public_key TEXT NOT NULL,
+  rendezvous TEXT NOT NULL,
+  username TEXT NOT NULL,
+  signature TEXT NOT NULL,
+  scanned_at TEXT NOT NULL,
+  avatar_path TEXT
+);
+''';
+
+/// SQL statement to create the contact_requests table.
+///
+/// Stores pending contact requests received via P2P.
+const String _createContactRequestsTableSql = '''
+CREATE TABLE IF NOT EXISTS contact_requests (
+  peer_id TEXT PRIMARY KEY,
+  public_key TEXT NOT NULL,
+  rendezvous TEXT NOT NULL,
+  username TEXT NOT NULL,
+  signature TEXT NOT NULL,
+  received_at TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending'
 );
 ''';
 
@@ -60,6 +91,54 @@ Future<void> runIdentityTableMigration(Database db) async {
       layer: 'DB',
       event: 'ID_DB_IDENTITY_MIGRATION_ERROR',
       details: {'table': 'identity', 'error': e.toString()},
+    );
+    rethrow;
+  }
+
+  // Create contacts table
+  emitFlowEvent(
+    layer: 'DB',
+    event: 'ID_DB_CONTACTS_MIGRATION_START',
+    details: {'table': 'contacts'},
+  );
+
+  try {
+    await db.execute(_createContactsTableSql);
+
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'ID_DB_CONTACTS_MIGRATION_SUCCESS',
+      details: {'table': 'contacts'},
+    );
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'ID_DB_CONTACTS_MIGRATION_ERROR',
+      details: {'table': 'contacts', 'error': e.toString()},
+    );
+    rethrow;
+  }
+
+  // Create contact_requests table
+  emitFlowEvent(
+    layer: 'DB',
+    event: 'ID_DB_CONTACT_REQUESTS_MIGRATION_START',
+    details: {'table': 'contact_requests'},
+  );
+
+  try {
+    await db.execute(_createContactRequestsTableSql);
+
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'ID_DB_CONTACT_REQUESTS_MIGRATION_SUCCESS',
+      details: {'table': 'contact_requests'},
+    );
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'ID_DB_CONTACT_REQUESTS_MIGRATION_ERROR',
+      details: {'table': 'contact_requests', 'error': e.toString()},
     );
     rethrow;
   }

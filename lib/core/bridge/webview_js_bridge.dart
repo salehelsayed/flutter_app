@@ -5,19 +5,29 @@ import 'package:flutter/services.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'js_bridge_client.dart';
 import '../utils/flow_event_emitter.dart';
+import '../../features/p2p/domain/models/chat_message.dart';
+import '../../features/p2p/domain/models/connection_state.dart';
 
 /// WebView-based JavaScript bridge implementation.
 ///
 /// This bridge uses a WebView to execute JavaScript code with full browser
-/// crypto APIs, enabling real libp2p identity generation.
+/// crypto APIs, enabling real libp2p identity generation and P2P networking.
 class WebViewJsBridge extends JsBridge {
   WebViewController? _controller;
   bool _initialized = false;
-  bool _ready = false;
   int _requestId = 0;
 
   final Map<String, Completer<String>> _pendingRequests = {};
   Completer<void>? _readyCompleter;
+
+  /// Event callback for incoming chat messages.
+  void Function(ChatMessage)? onMessageReceived;
+
+  /// Event callback when a peer connects.
+  void Function(ConnectionState)? onPeerConnected;
+
+  /// Event callback when a peer disconnects.
+  void Function(ConnectionState)? onPeerDisconnected;
 
   /// Whether the bridge has been initialized.
   bool get isInitialized => _initialized;
@@ -42,12 +52,17 @@ class WebViewJsBridge extends JsBridge {
 
       // Load assets
       final htmlContent = await rootBundle.loadString('assets/js/bridge.html');
-      final jsCode = await rootBundle.loadString('assets/js/core_lib.js');
+      final identityJsCode = await rootBundle.loadString('assets/js/core_lib.js');
+      final p2pJsCode = await rootBundle.loadString('assets/js/p2p_lib.js');
 
-      // Inject JS into HTML
-      final fullHtml = htmlContent.replaceFirst(
+      // Inject both JS bundles into HTML
+      var fullHtml = htmlContent.replaceFirst(
         '<script src="core_lib.js"></script>',
-        '<script>$jsCode</script>',
+        '<script>$identityJsCode</script>',
+      );
+      fullHtml = fullHtml.replaceFirst(
+        '<script src="p2p_lib.js"></script>',
+        '<script>$p2pJsCode</script>',
       );
 
       // Create WebView controller
@@ -101,13 +116,18 @@ class WebViewJsBridge extends JsBridge {
 
       // Check for ready signal
       if (data['ready'] == true) {
-        _ready = true;
         _readyCompleter?.complete();
         debugPrint('[WebViewJsBridge] Bridge ready');
         return;
       }
 
-      // Handle response
+      // Check for push events (P2P events)
+      if (data['event'] != null) {
+        _handlePushEvent(data);
+        return;
+      }
+
+      // Handle request/response
       final requestId = data['requestId'] as String?;
       if (requestId != null && _pendingRequests.containsKey(requestId)) {
         _pendingRequests[requestId]!.complete(message.message);
@@ -117,6 +137,56 @@ class WebViewJsBridge extends JsBridge {
       }
     } catch (e) {
       debugPrint('[WebViewJsBridge] Error parsing message: $e');
+    }
+  }
+
+  /// Handle push events from the P2P layer.
+  void _handlePushEvent(Map<String, dynamic> data) {
+    final event = data['event'] as String;
+    final eventData = data['data'] as Map<String, dynamic>? ?? {};
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'P2P_PUSH_EVENT_RECEIVED',
+      details: {'event': event},
+    );
+
+    switch (event) {
+      case 'message:received':
+        if (onMessageReceived != null) {
+          try {
+            final chatMessage = ChatMessage.fromJson(eventData);
+            onMessageReceived!(chatMessage);
+          } catch (e) {
+            debugPrint('[WebViewJsBridge] Error parsing chat message: $e');
+          }
+        }
+        break;
+
+      case 'peer:connected':
+        if (onPeerConnected != null) {
+          try {
+            final connState = ConnectionState.fromJson(eventData);
+            onPeerConnected!(connState);
+          } catch (e) {
+            debugPrint('[WebViewJsBridge] Error parsing peer connected: $e');
+          }
+        }
+        break;
+
+      case 'peer:disconnected':
+        if (onPeerDisconnected != null) {
+          try {
+            final connState = ConnectionState.fromJson(eventData);
+            onPeerDisconnected!(connState);
+          } catch (e) {
+            debugPrint('[WebViewJsBridge] Error parsing peer disconnected: $e');
+          }
+        }
+        break;
+
+      default:
+        debugPrint('[WebViewJsBridge] Unknown push event: $event');
     }
   }
 
@@ -195,7 +265,9 @@ class WebViewJsBridge extends JsBridge {
   void dispose() {
     _controller = null;
     _initialized = false;
-    _ready = false;
     _pendingRequests.clear();
+    onMessageReceived = null;
+    onPeerConnected = null;
+    onPeerDisconnected = null;
   }
 }

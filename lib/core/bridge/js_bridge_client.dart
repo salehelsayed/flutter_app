@@ -91,6 +91,79 @@ Future<Map<String, dynamic>> callJsIdentityRestore(
   return response;
 }
 
+/// Calls the JS bridge to verify an Ed25519 signature.
+///
+/// Parameters:
+///   - [bridge]: The JsBridge instance to use for communication
+///   - [publicKey]: Base64-encoded Ed25519 public key
+///   - [data]: The data that was signed (canonical JSON string)
+///   - [signature]: Base64-encoded signature to verify
+///
+/// Returns true if signature is valid, false otherwise.
+Future<bool> callJsVerifyPayload({
+  required JsBridge bridge,
+  required String publicKey,
+  required String data,
+  required String signature,
+  Duration timeout = const Duration(seconds: 10),
+}) async {
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'QR_FL_BRIDGE_VERIFY_REQUEST',
+    details: {'dataLength': data.length},
+  );
+
+  final request = {
+    'cmd': 'payload.verify',
+    'payload': {
+      'publicKey': publicKey,
+      'data': data,
+      'signature': signature,
+    },
+  };
+
+  try {
+    final responseJson = await bridge.send(jsonEncode(request)).timeout(timeout);
+    final response = jsonDecode(responseJson) as Map<String, dynamic>;
+
+    // Debug: print full response
+    // ignore: avoid_print
+    print('[callJsVerifyPayload] Response: $response');
+
+    // Check both: ok means request succeeded, valid means signature is valid
+    final requestOk = response['ok'] == true;
+    final signatureValid = response['valid'] == true;
+    final isValid = requestOk && signatureValid;
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'QR_FL_BRIDGE_VERIFY_RESPONSE',
+      details: {
+        'requestOk': requestOk,
+        'signatureValid': signatureValid,
+        if (!requestOk) 'errorCode': response['errorCode'],
+        if (!requestOk) 'errorMessage': response['errorMessage'],
+      },
+    );
+
+    return isValid;
+  } on TimeoutException {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'QR_FL_BRIDGE_VERIFY_RESPONSE',
+      details: {'valid': false, 'errorCode': 'BRIDGE_TIMEOUT'},
+    );
+    return false;
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'QR_FL_BRIDGE_VERIFY_RESPONSE',
+      details: {'valid': false, 'error': e.toString()},
+    );
+    return false;
+  }
+}
+
 /// Calls the JS bridge to sign payload data with Ed25519.
 ///
 /// This function MUST use the real JS bridge for cryptographic signing.

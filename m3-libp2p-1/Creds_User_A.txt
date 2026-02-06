@@ -1,0 +1,5 @@
+Mnemonic (12 words): wrap damp snow brief female hockey spot skate panel mushroom elite usage
+Seed (32 bytes, hex): 913fea6a43a3cbfd12216d4b2fad5dc3b17d618db05f2a866aa2a2d5ee26e7fd
+Private Key (64 bytes, hex): 913fea6a43a3cbfd12216d4b2fad5dc3b17d618db05f2a866aa2a2d5ee26e7fd3c913dd8ed7b9c463a66450035f4202aa3b24f83ca2050843af8ef70b6d13347
+Public Key (32 bytes, hex): 3c913dd8ed7b9c463a66450035f4202aa3b24f83ca2050843af8ef70b6d13347
+Peer ID (base58): 12D3KooWDto5miiRBpfUcZg1uozYNXUALGetBjtwmUEvuftMmRBc
