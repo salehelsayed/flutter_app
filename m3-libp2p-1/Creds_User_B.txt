@@ -1,5 +1,0 @@
-Mnemonic (12 words): ice hen program bracket project gauge burst fiscal forest dress fish evidence
-Seed (32 bytes, hex): db7084b44dc03b8b7503f6240e4b15873648db426a8012375fa4e50b36d7a383
-Private Key (64 bytes, hex): db7084b44dc03b8b7503f6240e4b15873648db426a8012375fa4e50b36d7a383261486988596e81c376cebc826f4ed4c01ee47f2eb005dc601eb19623c2ebbb8
-Public Key (32 bytes, hex): 261486988596e81c376cebc826f4ed4c01ee47f2eb005dc601eb19623c2ebbb8
-Peer ID (base58): 12D3KooWCP1pBwwH1WoyqF6scuBny9T6JsdsEnDLQwVSpD6SJ8XR
