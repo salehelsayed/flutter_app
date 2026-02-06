@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
+import 'package:flutter_app/features/p2p/presentation/widgets/connection_status_indicator.dart';
 import '../widgets/profile_avatar_widget.dart';
 import '../widgets/editable_username_widget.dart';
 import '../widgets/qr_code_section.dart';
@@ -10,17 +12,23 @@ import '../widgets/empty_circle_state.dart';
 class FirstTimeExperienceScreen extends StatefulWidget {
   final String? qrData;
   final String username;
+  final String? avatarPath;
+  final String? peerId;
   final VoidCallback? onCameraPressed;
   final ValueChanged<String>? onUsernameChanged;
   final VoidCallback? onScanPressed;
+  final P2PService? p2pService;
 
   const FirstTimeExperienceScreen({
     super.key,
     this.qrData,
     required this.username,
+    this.avatarPath,
+    this.peerId,
     this.onCameraPressed,
     this.onUsernameChanged,
     this.onScanPressed,
+    this.p2pService,
   });
 
   @override
@@ -131,70 +139,92 @@ class _FirstTimeExperienceScreenState extends State<FirstTimeExperienceScreen>
       child: SafeArea(
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 24),
-          child: Column(
-            children: [
-              const SizedBox(height: 8),
-              // Header section (avatar + username)
-              AnimatedBuilder(
-                animation: _controller,
-                builder: (context, child) {
-                  return Opacity(
-                    opacity: _headerOpacity.value,
-                    child: SlideTransition(
-                      position: _headerSlide,
-                      child: child,
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              return SingleChildScrollView(
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    minHeight: constraints.maxHeight,
+                  ),
+                  child: IntrinsicHeight(
+                    child: Column(
+                      children: [
+                        const SizedBox(height: 8),
+                        // Connection status indicator at the top
+                        if (widget.p2pService != null)
+                          Align(
+                            alignment: Alignment.topRight,
+                            child: ConnectionStatusIndicator(
+                              p2pService: widget.p2pService!,
+                            ),
+                          ),
+                        const SizedBox(height: 8),
+                        // Header section (avatar + username)
+                        AnimatedBuilder(
+                          animation: _controller,
+                          builder: (context, child) {
+                            return Opacity(
+                              opacity: _headerOpacity.value,
+                              child: SlideTransition(
+                                position: _headerSlide,
+                                child: child,
+                              ),
+                            );
+                          },
+                          child: _buildHeader(),
+                        ),
+                        const SizedBox(height: 16),
+                        // QR code section
+                        AnimatedBuilder(
+                          animation: _controller,
+                          builder: (context, child) {
+                            return Opacity(
+                              opacity: _qrOpacity.value,
+                              child: SlideTransition(
+                                position: _qrSlide,
+                                child: child,
+                              ),
+                            );
+                          },
+                          child: QRCodeSection(qrData: widget.qrData),
+                        ),
+                        const SizedBox(height: 16),
+                        // Scan friend card
+                        AnimatedBuilder(
+                          animation: _controller,
+                          builder: (context, child) {
+                            return Opacity(
+                              opacity: _scanOpacity.value,
+                              child: SlideTransition(
+                                position: _scanSlide,
+                                child: child,
+                              ),
+                            );
+                          },
+                          child: ScanFriendCard(onTap: widget.onScanPressed),
+                        ),
+                        const Spacer(),
+                        // Empty circle state
+                        AnimatedBuilder(
+                          animation: _controller,
+                          builder: (context, child) {
+                            return Opacity(
+                              opacity: _emptyOpacity.value,
+                              child: SlideTransition(
+                                position: _emptySlide,
+                                child: child,
+                              ),
+                            );
+                          },
+                          child: const EmptyCircleState(),
+                        ),
+                        const SizedBox(height: 16),
+                      ],
                     ),
-                  );
-                },
-                child: _buildHeader(),
-              ),
-              const SizedBox(height: 16),
-              // QR code section
-              AnimatedBuilder(
-                animation: _controller,
-                builder: (context, child) {
-                  return Opacity(
-                    opacity: _qrOpacity.value,
-                    child: SlideTransition(
-                      position: _qrSlide,
-                      child: child,
-                    ),
-                  );
-                },
-                child: QRCodeSection(qrData: widget.qrData),
-              ),
-              const SizedBox(height: 16),
-              // Scan friend card
-              AnimatedBuilder(
-                animation: _controller,
-                builder: (context, child) {
-                  return Opacity(
-                    opacity: _scanOpacity.value,
-                    child: SlideTransition(
-                      position: _scanSlide,
-                      child: child,
-                    ),
-                  );
-                },
-                child: ScanFriendCard(onTap: widget.onScanPressed),
-              ),
-              const Spacer(),
-              // Empty circle state
-              AnimatedBuilder(
-                animation: _controller,
-                builder: (context, child) {
-                  return Opacity(
-                    opacity: _emptyOpacity.value,
-                    child: SlideTransition(
-                      position: _emptySlide,
-                      child: child,
-                    ),
-                  );
-                },
-                child: const EmptyCircleState(),
-              ),
-              const SizedBox(height: 16),
-            ],
+                  ),
+                ),
+              );
+            },
           ),
         ),
       ),
@@ -204,7 +234,11 @@ class _FirstTimeExperienceScreenState extends State<FirstTimeExperienceScreen>
   Widget _buildHeader() {
     return Column(
       children: [
-        ProfileAvatarWidget(onCameraPressed: widget.onCameraPressed),
+        ProfileAvatarWidget(
+          avatarPath: widget.avatarPath,
+          peerId: widget.peerId,
+          onCameraPressed: widget.onCameraPressed,
+        ),
         const SizedBox(height: 12),
         EditableUsernameWidget(
           username: widget.username,

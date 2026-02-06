@@ -45,5 +45,9 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>This app needs camera access to take your profile photo and scan QR codes to add friends</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>This app needs photo library access to select your profile photo</string>
 </dict>
 </plist>

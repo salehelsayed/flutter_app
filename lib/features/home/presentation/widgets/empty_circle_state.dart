@@ -31,45 +31,52 @@ class _EmptyCircleStateState extends State<EmptyCircleState>
 
   @override
   Widget build(BuildContext context) {
+    // Make the circle size responsive based on screen height
+    final screenHeight = MediaQuery.of(context).size.height;
+    // Use smaller circles on compact screens (< 700px height)
+    final isCompact = screenHeight < 700;
+    final circleSize = isCompact ? 100.0 : 140.0;
+
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         // Pulsing circles
         SizedBox(
-          width: 140,
-          height: 140,
+          width: circleSize,
+          height: circleSize,
           child: AnimatedBuilder(
             animation: _controller,
             builder: (context, child) {
               return CustomPaint(
                 painter: _DashedCirclesPainter(
                   animation: _controller.value,
+                  scale: isCompact ? 0.71 : 1.0,
                 ),
                 child: Center(
-                  child: _buildCenterIcon(),
+                  child: _buildCenterIcon(isCompact),
                 ),
               );
             },
           ),
         ),
-        const SizedBox(height: 12),
+        SizedBox(height: isCompact ? 8 : 12),
         // Main text
-        const Text(
+        Text(
           'Your circle is waiting to be filled',
           style: TextStyle(
             color: AppColors.textPrimary,
-            fontSize: 15,
+            fontSize: isCompact ? 14 : 15,
             fontWeight: FontWeight.w500,
           ),
           textAlign: TextAlign.center,
         ),
         const SizedBox(height: 4),
         // Secondary text
-        const Text(
+        Text(
           'Scan a friend\'s code or share yours to connect',
           style: TextStyle(
             color: AppColors.textMuted,
-            fontSize: 13,
+            fontSize: isCompact ? 12 : 13,
           ),
           textAlign: TextAlign.center,
         ),
@@ -77,16 +84,17 @@ class _EmptyCircleStateState extends State<EmptyCircleState>
     );
   }
 
-  Widget _buildCenterIcon() {
+  Widget _buildCenterIcon(bool isCompact) {
+    final size = isCompact ? 28.0 : 36.0;
     return Container(
-      width: 36,
-      height: 36,
+      width: size,
+      height: size,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         color: AppColors.primaryAccent.withValues(alpha: 0.1),
       ),
       child: CustomPaint(
-        painter: _ConstellationDotsPainter(),
+        painter: _ConstellationDotsPainter(scale: isCompact ? 0.78 : 1.0),
       ),
     );
   }
@@ -94,13 +102,14 @@ class _EmptyCircleStateState extends State<EmptyCircleState>
 
 class _DashedCirclesPainter extends CustomPainter {
   final double animation;
+  final double scale;
 
-  _DashedCirclesPainter({required this.animation});
+  _DashedCirclesPainter({required this.animation, this.scale = 1.0});
 
   @override
   void paint(Canvas canvas, Size size) {
     final center = Offset(size.width / 2, size.height / 2);
-    final radii = [28.0, 45.0, 63.0];
+    final radii = [28.0 * scale, 45.0 * scale, 63.0 * scale];
     final phases = [0.0, 0.33, 0.66]; // Staggered animation phases
 
     for (var i = 0; i < radii.length; i++) {
@@ -154,11 +163,15 @@ class _DashedCirclesPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_DashedCirclesPainter oldDelegate) {
-    return oldDelegate.animation != animation;
+    return oldDelegate.animation != animation || oldDelegate.scale != scale;
   }
 }
 
 class _ConstellationDotsPainter extends CustomPainter {
+  final double scale;
+
+  _ConstellationDotsPainter({this.scale = 1.0});
+
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
@@ -168,14 +181,14 @@ class _ConstellationDotsPainter extends CustomPainter {
     final center = Offset(size.width / 2, size.height / 2);
     final positions = [
       center,
-      center + const Offset(-6, -6),
-      center + const Offset(7, -4),
-      center + const Offset(-4, 7),
-      center + const Offset(6, 6),
+      center + Offset(-6 * scale, -6 * scale),
+      center + Offset(7 * scale, -4 * scale),
+      center + Offset(-4 * scale, 7 * scale),
+      center + Offset(6 * scale, 6 * scale),
     ];
 
     for (final pos in positions) {
-      canvas.drawCircle(pos, 2.5, paint);
+      canvas.drawCircle(pos, 2.5 * scale, paint);
     }
 
     // Draw connecting lines
@@ -191,5 +204,6 @@ class _ConstellationDotsPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+  bool shouldRepaint(covariant _ConstellationDotsPainter oldDelegate) =>
+      oldDelegate.scale != scale;
 }
