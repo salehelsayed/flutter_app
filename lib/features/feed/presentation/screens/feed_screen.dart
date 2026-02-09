@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/connection_card.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/message_feed_card.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/feed_header.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/feed_navigation_bar.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
@@ -19,6 +20,8 @@ class FeedScreen extends StatelessWidget {
   final P2PService? p2pService;
   final void Function(String) onSwitchView;
   final String activeTab;
+  final void Function(ConnectionFeedItem)? onSendMessage;
+  final void Function(String contactPeerId)? onReplyToMessage;
 
   const FeedScreen({
     super.key,
@@ -30,6 +33,8 @@ class FeedScreen extends StatelessWidget {
     this.p2pService,
     required this.onSwitchView,
     required this.activeTab,
+    this.onSendMessage,
+    this.onReplyToMessage,
   });
 
   @override
@@ -114,26 +119,50 @@ class FeedScreen extends StatelessWidget {
   }
 
   List<Widget> _buildFeedCards() {
-    final connectionItems = feedItems.whereType<ConnectionFeedItem>().toList();
-    if (connectionItems.isEmpty) {
+    if (feedItems.isEmpty) {
       return [
         const SizedBox(height: 12),
         _EmptyFeedStateCard(username: username),
       ];
     }
 
-    return [
-      const SizedBox(height: 6),
-      for (var i = 0; i < connectionItems.length; i++) ...[
-        ConnectionCard(
-          contactPeerId: connectionItems[i].contactPeerId,
-          contactUsername: connectionItems[i].contactUsername,
-          contactAvatarPath: connectionItems[i].contactAvatarPath,
-        ),
-        if (i != connectionItems.length - 1) const SizedBox(height: 16),
-      ],
-      const SizedBox(height: 20),
-    ];
+    final widgets = <Widget>[const SizedBox(height: 6)];
+
+    for (var i = 0; i < feedItems.length; i++) {
+      final item = feedItems[i];
+
+      if (item is ConnectionFeedItem) {
+        widgets.add(
+          ConnectionCard(
+            contactPeerId: item.contactPeerId,
+            contactUsername: item.contactUsername,
+            contactAvatarPath: item.contactAvatarPath,
+            onSendMessage: onSendMessage != null
+                ? () => onSendMessage!(item)
+                : null,
+          ),
+        );
+      } else if (item is MessageFeedItem) {
+        widgets.add(
+          MessageFeedCard(
+            contactPeerId: item.contactPeerId,
+            contactUsername: item.contactUsername,
+            messageText: item.messageText,
+            messageTime: item.messageTime,
+            onReply: onReplyToMessage != null
+                ? () => onReplyToMessage!(item.contactPeerId)
+                : null,
+          ),
+        );
+      }
+
+      if (i != feedItems.length - 1) {
+        widgets.add(const SizedBox(height: 16));
+      }
+    }
+
+    widgets.add(const SizedBox(height: 20));
+    return widgets;
   }
 }
 

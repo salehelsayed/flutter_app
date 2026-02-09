@@ -7,12 +7,14 @@ class ConnectionCard extends StatefulWidget {
   final String contactPeerId;
   final String contactUsername;
   final String? contactAvatarPath;
+  final VoidCallback? onSendMessage;
 
   const ConnectionCard({
     super.key,
     required this.contactPeerId,
     required this.contactUsername,
     this.contactAvatarPath,
+    this.onSendMessage,
   });
 
   @override
@@ -292,9 +294,7 @@ class _ConnectionCardState extends State<ConnectionCard>
       width: compact ? 182 : 198,
       height: 42,
       child: ElevatedButton(
-        onPressed: () {
-          // Future: navigate to message thread/composer.
-        },
+        onPressed: widget.onSendMessage,
         style: ElevatedButton.styleFrom(
           backgroundColor: const Color.fromRGBO(45, 155, 91, 0.26),
           foregroundColor: const Color(0xFF56C672),

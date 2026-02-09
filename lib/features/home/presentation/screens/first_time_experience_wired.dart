@@ -13,6 +13,8 @@ import 'package:flutter_app/features/contact_request/domain/models/contact_reque
 import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository.dart';
 import 'package:flutter_app/features/contact_request/presentation/widgets/contact_request_dialog.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
+import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/qr_code/application/build_qr_payload_use_case.dart';
@@ -27,6 +29,8 @@ class FirstTimeExperienceWired extends StatefulWidget {
   final ContactRepository contactRepository;
   final ContactRequestRepository contactRequestRepository;
   final ContactRequestListener contactRequestListener;
+  final MessageRepository messageRepository;
+  final ChatMessageListener chatMessageListener;
   final JsBridge bridge;
   final P2PService p2pService;
 
@@ -36,6 +40,8 @@ class FirstTimeExperienceWired extends StatefulWidget {
     required this.contactRepository,
     required this.contactRequestRepository,
     required this.contactRequestListener,
+    required this.messageRepository,
+    required this.chatMessageListener,
     required this.bridge,
     required this.p2pService,
   });
@@ -109,6 +115,8 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
             contactRepository: widget.contactRepository,
             contactRequestRepository: widget.contactRequestRepository,
             contactRequestListener: widget.contactRequestListener,
+            messageRepository: widget.messageRepository,
+            chatMessageListener: widget.chatMessageListener,
             bridge: widget.bridge,
             p2pService: widget.p2pService,
             initialContact: request.toContactModel(),
@@ -356,6 +364,8 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
           contactRepository: widget.contactRepository,
           contactRequestRepository: widget.contactRequestRepository,
           contactRequestListener: widget.contactRequestListener,
+          messageRepository: widget.messageRepository,
+          chatMessageListener: widget.chatMessageListener,
           identityRepository: widget.repository,
           p2pService: widget.p2pService,
           ownPeerId: _identity!.peerId,

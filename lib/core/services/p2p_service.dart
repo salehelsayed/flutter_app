@@ -1,6 +1,7 @@
 import '../../features/p2p/domain/models/node_state.dart';
 import '../../features/p2p/domain/models/chat_message.dart';
 import '../../features/p2p/domain/models/discovered_peer.dart';
+import '../../features/p2p/domain/models/send_message_result.dart';
 
 /// Abstract interface for P2P networking service.
 ///
@@ -40,6 +41,15 @@ abstract class P2PService {
   /// Returns true if the message was sent successfully.
   Future<bool> sendMessage(String peerId, String message);
 
+  /// Send a message to a peer and return the full result including reply.
+  ///
+  /// Parameters:
+  ///   - [peerId]: The target peer ID
+  ///   - [message]: The message content
+  ///
+  /// Returns a [SendMessageResult] with sent status and optional reply/ack.
+  Future<SendMessageResult> sendMessageWithReply(String peerId, String message);
+
   /// Discover a peer by their ID via rendezvous.
   ///
   /// Parameters:
@@ -56,6 +66,20 @@ abstract class P2PService {
   ///
   /// Returns true if connection was established.
   Future<bool> dialPeer(String peerId, {List<String>? addresses});
+
+  /// Store a message in the offline inbox for a peer.
+  ///
+  /// Parameters:
+  ///   - [toPeerId]: The target peer ID
+  ///   - [message]: The message content
+  ///
+  /// Returns true if the message was stored successfully.
+  Future<bool> storeInInbox(String toPeerId, String message);
+
+  /// Retrieve messages from the offline inbox.
+  ///
+  /// Returns a list of message maps from the inbox.
+  Future<List<Map<String, dynamic>>> retrieveInbox();
 
   /// Dispose of the service and clean up resources.
   void dispose();
