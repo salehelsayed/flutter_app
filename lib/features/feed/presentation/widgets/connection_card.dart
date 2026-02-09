@@ -1,7 +1,6 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/features/home/presentation/widgets/ring_avatar.dart';
-import 'checkmark_burst_animation.dart';
 
 /// A feed card representing a successful new connection.
 class ConnectionCard extends StatefulWidget {
@@ -76,7 +75,7 @@ class _ConnectionCardState extends State<ConnectionCard>
         final width = constraints.hasBoundedWidth
             ? constraints.maxWidth
             : 360.0;
-        final height = clampDouble(width / 0.98, 320, 430);
+        final height = clampDouble(width / 1.14, 300, 345);
 
         return SizedBox(
           height: height,
@@ -129,12 +128,11 @@ class _ConnectionCardState extends State<ConnectionCard>
                       ),
                     ),
                     Padding(
-                      padding: const EdgeInsets.fromLTRB(22, 22, 22, 6),
+                      padding: const EdgeInsets.fromLTRB(22, 22, 22, 2),
                       child: LayoutBuilder(
                         builder: (context, constraints) {
                           final compact = constraints.maxWidth < 340;
                           final avatarSize = compact ? 88.0 : 98.0;
-                          final burstSize = compact ? 62.0 : 70.0;
                           final contactNameSize = compact ? 20.0 : 22.0;
 
                           return Column(
@@ -161,28 +159,12 @@ class _ConnectionCardState extends State<ConnectionCard>
                                   ],
                                 ),
                               ),
-                              SizedBox(height: compact ? 8 : 12),
-                              CheckmarkBurstAnimation(size: burstSize),
-                              SizedBox(height: compact ? 12 : 16),
+                              SizedBox(height: compact ? 18 : 22),
                               _buildAvatarSection(avatarSize),
-                              SizedBox(height: compact ? 8 : 12),
-                              Text(
-                                widget.contactUsername,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                textAlign: TextAlign.center,
-                                style: TextStyle(
-                                  fontSize: contactNameSize,
-                                  fontWeight: FontWeight.w700,
-                                  color: Colors.white,
-                                  letterSpacing: -0.3,
-                                  shadows: const [
-                                    Shadow(
-                                      color: Color(0x77000000),
-                                      blurRadius: 8,
-                                    ),
-                                  ],
-                                ),
+                              SizedBox(height: compact ? 10 : 14),
+                              _buildContactNameRow(
+                                compact: compact,
+                                contactNameSize: contactNameSize,
                               ),
                               SizedBox(height: compact ? 12 : 16),
                               _buildSendMessageButton(compact),
@@ -244,6 +226,63 @@ class _ConnectionCardState extends State<ConnectionCard>
             child: RingAvatar(peerId: widget.contactPeerId, size: avatarSize),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildContactNameRow({
+    required bool compact,
+    required double contactNameSize,
+  }) {
+    final badgeSize = compact ? 23.0 : 25.0;
+    final iconSize = compact ? 14.0 : 16.0;
+
+    return Align(
+      alignment: Alignment.center,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: compact ? 230 : 270),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: badgeSize,
+              height: badgeSize,
+              decoration: const BoxDecoration(
+                color: Color(0xFF49C462),
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(
+                    color: Color(0x703FC75F),
+                    blurRadius: 12,
+                    spreadRadius: 1,
+                  ),
+                ],
+              ),
+              child: Icon(
+                Icons.check_rounded,
+                size: iconSize,
+                color: const Color.fromRGBO(10, 34, 18, 0.95),
+              ),
+            ),
+            SizedBox(width: compact ? 8 : 10),
+            Flexible(
+              child: Text(
+                widget.contactUsername,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: contactNameSize,
+                  fontWeight: FontWeight.w700,
+                  color: Colors.white,
+                  letterSpacing: -0.3,
+                  shadows: const [
+                    Shadow(color: Color(0x77000000), blurRadius: 8),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
