@@ -1,13 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:flutter_app/core/database/migrations/001_identity_table.dart';
+import 'package:flutter_app/core/database/migrations/002_messages_table.dart';
 import 'package:flutter_app/core/database/helpers/identity_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/contact_requests_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository_impl.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository_impl.dart';
 import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository_impl.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/message_repository_impl.dart';
+import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
+import 'package:flutter_app/core/services/incoming_message_router.dart';
 import 'package:flutter_app/features/identity/presentation/startup_router.dart';
 import 'package:flutter_app/core/bridge/webview_js_bridge.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
@@ -28,9 +33,15 @@ void main() async {
   // Open or create the database
   final db = await openDatabase(
     'identity.db',
-    version: 1,
+    version: 2,
     onCreate: (db, version) async {
       await runIdentityTableMigration(db);
+      await runMessagesTableMigration(db);
+    },
+    onUpgrade: (db, oldVersion, newVersion) async {
+      if (oldVersion < 2) {
+        await runMessagesTableMigration(db);
+      }
     },
   );
 
@@ -61,6 +72,18 @@ void main() async {
     dbRequestExists: (peerId) => dbRequestExists(db, peerId),
   );
 
+  // Create message repository
+  final messageRepository = MessageRepositoryImpl(
+    dbInsertMessage: (row) => dbInsertMessage(db, row),
+    dbLoadMessagesForContact: (contactPeerId) =>
+        dbLoadMessagesForContact(db, contactPeerId),
+    dbLoadLatestMessageForContact: (contactPeerId) =>
+        dbLoadLatestMessageForContact(db, contactPeerId),
+    dbUpdateMessageStatus: (id, status) =>
+        dbUpdateMessageStatus(db, id, status),
+    dbLoadMessage: (id) => dbLoadMessage(db, id),
+  );
+
   // Create and initialize the WebView JS bridge
   final bridge = WebViewJsBridge();
   await bridge.initialize();
@@ -68,25 +91,39 @@ void main() async {
   // Create P2P service (uses the same bridge)
   final p2pService = P2PServiceImpl(bridge: bridge);
 
+  // Create message router — single subscription, routes by type
+  final messageRouter = IncomingMessageRouter(p2pService: p2pService);
+
   // Create contact request listener
   // The getOwnPeerId function gets the peerId from the P2P service's current state.
   // This is populated when the node starts, so it will be empty before that.
   final contactRequestListener = ContactRequestListener(
-    p2pService: p2pService,
+    contactRequestStream: messageRouter.contactRequestStream,
     requestRepo: contactRequestRepository,
     contactRepo: contactRepository,
     bridge: bridge,
     getOwnPeerId: () => p2pService.currentState.peerId ?? '',
   );
 
-  // Start listening for contact requests
+  // Create chat message listener
+  final chatMessageListener = ChatMessageListener(
+    chatMessageStream: messageRouter.chatMessageStream,
+    messageRepo: messageRepository,
+    contactRepo: contactRepository,
+  );
+
+  // Start router first, then listeners
+  messageRouter.start();
   contactRequestListener.start();
+  chatMessageListener.start();
 
   runApp(MyApp(
     repository: repository,
     contactRepository: contactRepository,
     contactRequestRepository: contactRequestRepository,
     contactRequestListener: contactRequestListener,
+    messageRepository: messageRepository,
+    chatMessageListener: chatMessageListener,
     bridge: bridge,
     p2pService: p2pService,
   ));
@@ -97,6 +134,8 @@ class MyApp extends StatelessWidget {
   final ContactRepositoryImpl contactRepository;
   final ContactRequestRepositoryImpl contactRequestRepository;
   final ContactRequestListener contactRequestListener;
+  final MessageRepositoryImpl messageRepository;
+  final ChatMessageListener chatMessageListener;
   final WebViewJsBridge bridge;
   final P2PServiceImpl p2pService;
 
@@ -106,6 +145,8 @@ class MyApp extends StatelessWidget {
     required this.contactRepository,
     required this.contactRequestRepository,
     required this.contactRequestListener,
+    required this.messageRepository,
+    required this.chatMessageListener,
     required this.bridge,
     required this.p2pService,
   }) : super(key: key);
@@ -121,6 +162,8 @@ class MyApp extends StatelessWidget {
         contactRepository: contactRepository,
         contactRequestRepository: contactRequestRepository,
         contactRequestListener: contactRequestListener,
+        messageRepository: messageRepository,
+        chatMessageListener: chatMessageListener,
         bridge: bridge,
         p2pService: p2pService,
       ),

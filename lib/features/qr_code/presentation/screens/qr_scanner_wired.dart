@@ -9,6 +9,8 @@ import 'package:flutter_app/features/contact_request/domain/repositories/contact
 import 'package:flutter_app/features/contacts/application/add_contact_use_case.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
+import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/feed/presentation/navigation/feed_route_transition.dart';
 import 'package:flutter_app/features/feed/presentation/screens/feed_wired.dart';
 import 'package:flutter_app/features/home/presentation/widgets/ring_avatar.dart';
@@ -30,6 +32,8 @@ class QRScannerWired extends StatelessWidget {
   final ContactRepository contactRepository;
   final ContactRequestRepository contactRequestRepository;
   final ContactRequestListener contactRequestListener;
+  final MessageRepository messageRepository;
+  final ChatMessageListener chatMessageListener;
   final IdentityRepository identityRepository;
   final P2PService p2pService;
   final String ownPeerId;
@@ -40,6 +44,8 @@ class QRScannerWired extends StatelessWidget {
     required this.contactRepository,
     required this.contactRequestRepository,
     required this.contactRequestListener,
+    required this.messageRepository,
+    required this.chatMessageListener,
     required this.identityRepository,
     required this.p2pService,
     required this.ownPeerId,
@@ -236,6 +242,8 @@ class QRScannerWired extends StatelessWidget {
                         contactRepository: contactRepository,
                         contactRequestRepository: contactRequestRepository,
                         contactRequestListener: contactRequestListener,
+                        messageRepository: messageRepository,
+                        chatMessageListener: chatMessageListener,
                         bridge: bridge,
                         p2pService: p2pService,
                         initialContact: contact,

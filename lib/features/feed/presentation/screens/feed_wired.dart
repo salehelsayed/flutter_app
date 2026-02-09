@@ -11,6 +11,11 @@ import 'package:flutter_app/features/contact_request/domain/repositories/contact
 import 'package:flutter_app/features/contact_request/presentation/widgets/contact_request_dialog.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
+import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
+import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
+import 'package:flutter_app/features/conversation/presentation/navigation/conversation_route_transition.dart';
+import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
@@ -26,6 +31,8 @@ class FeedWired extends StatefulWidget {
   final ContactRepository contactRepository;
   final ContactRequestRepository contactRequestRepository;
   final ContactRequestListener contactRequestListener;
+  final MessageRepository messageRepository;
+  final ChatMessageListener chatMessageListener;
   final JsBridge bridge;
   final P2PService p2pService;
   final ContactModel initialContact;
@@ -36,6 +43,8 @@ class FeedWired extends StatefulWidget {
     required this.contactRepository,
     required this.contactRequestRepository,
     required this.contactRequestListener,
+    required this.messageRepository,
+    required this.chatMessageListener,
     required this.bridge,
     required this.p2pService,
     required this.initialContact,
@@ -53,6 +62,7 @@ class _FeedWiredState extends State<FeedWired> {
   String _activeTab = 'feed';
   final List<FeedItem> _feedItems = [];
   StreamSubscription<ContactRequestModel>? _requestSubscription;
+  StreamSubscription<ConversationMessage>? _chatSubscription;
 
   @override
   void initState() {
@@ -61,6 +71,7 @@ class _FeedWiredState extends State<FeedWired> {
     _loadIdentity();
     _buildInitialFeedItem();
     _startListeningForContactRequests();
+    _startListeningForChatMessages();
   }
 
   void _loadIdentity() async {
@@ -160,6 +171,84 @@ class _FeedWiredState extends State<FeedWired> {
     );
   }
 
+  void _startListeningForChatMessages() {
+    _chatSubscription =
+        widget.chatMessageListener.incomingMessageStream.listen(
+      _onIncomingChatMessage,
+    );
+  }
+
+  void _onIncomingChatMessage(ConversationMessage message) {
+    if (!mounted) return;
+
+    // Format time for display
+    String displayTime;
+    try {
+      final date = DateTime.parse(message.timestamp).toLocal();
+      final hour = date.hour == 0
+          ? 12
+          : (date.hour > 12 ? date.hour - 12 : date.hour);
+      final minute = date.minute.toString().padLeft(2, '0');
+      final period = date.hour < 12 ? 'AM' : 'PM';
+      displayTime = '$hour:$minute $period';
+    } catch (_) {
+      displayTime = '';
+    }
+
+    // Look up sender username from contacts
+    widget.contactRepository.getContact(message.senderPeerId).then((contact) {
+      if (!mounted) return;
+
+      final item = MessageFeedItem(
+        id: 'message_${message.id}',
+        timestamp: DateTime.now(),
+        contactPeerId: message.contactPeerId,
+        contactUsername: contact?.username ?? 'Unknown',
+        messageId: message.id,
+        messageText: message.text,
+        messageTime: displayTime,
+      );
+
+      setState(() {
+        _feedItems.insert(0, item);
+      });
+    });
+  }
+
+  void _onSendMessage(ConnectionFeedItem item) async {
+    final contact = await widget.contactRepository.getContact(item.contactPeerId);
+    if (contact == null || !mounted) return;
+
+    Navigator.of(context).push(
+      buildConversationSlideUpRoute(
+        builder: (_) => ConversationWired(
+          contact: contact,
+          identityRepo: widget.repository,
+          messageRepo: widget.messageRepository,
+          chatMessageListener: widget.chatMessageListener,
+          p2pService: widget.p2pService,
+        ),
+      ),
+    );
+  }
+
+  void _onReplyToMessage(String contactPeerId) async {
+    final contact = await widget.contactRepository.getContact(contactPeerId);
+    if (contact == null || !mounted) return;
+
+    Navigator.of(context).push(
+      buildConversationSlideUpRoute(
+        builder: (_) => ConversationWired(
+          contact: contact,
+          identityRepo: widget.repository,
+          messageRepo: widget.messageRepository,
+          chatMessageListener: widget.chatMessageListener,
+          p2pService: widget.p2pService,
+        ),
+      ),
+    );
+  }
+
   void _onSwitchView(String tab) {
     setState(() {
       _activeTab = tab;
@@ -216,6 +305,7 @@ class _FeedWiredState extends State<FeedWired> {
   @override
   void dispose() {
     _requestSubscription?.cancel();
+    _chatSubscription?.cancel();
     super.dispose();
   }
 
@@ -231,6 +321,8 @@ class _FeedWiredState extends State<FeedWired> {
         p2pService: widget.p2pService,
         onSwitchView: _onSwitchView,
         activeTab: _activeTab,
+        onSendMessage: _onSendMessage,
+        onReplyToMessage: _onReplyToMessage,
       ),
     );
   }

@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:flutter_app/core/bridge/js_bridge_client.dart';
-import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contact_request/application/handle_incoming_message_use_case.dart';
 import 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart';
@@ -11,10 +10,10 @@ import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 
 /// Listener service that monitors P2P messages for contact requests.
 ///
-/// Subscribes to the P2P message stream and broadcasts new contact requests
-/// to the UI layer for display.
+/// Subscribes to a typed contact request stream (from IncomingMessageRouter)
+/// and broadcasts new contact requests to the UI layer for display.
 class ContactRequestListener {
-  final P2PService p2pService;
+  final Stream<ChatMessage> contactRequestStream;
   final ContactRequestRepository requestRepo;
   final ContactRepository contactRepo;
   final JsBridge bridge;
@@ -24,7 +23,7 @@ class ContactRequestListener {
   final _requestController = StreamController<ContactRequestModel>.broadcast();
 
   ContactRequestListener({
-    required this.p2pService,
+    required this.contactRequestStream,
     required this.requestRepo,
     required this.contactRepo,
     required this.bridge,
@@ -46,7 +45,7 @@ class ContactRequestListener {
       details: {},
     );
 
-    _subscription = p2pService.messageStream.listen(_onMessage);
+    _subscription = contactRequestStream.listen(_onMessage);
   }
 
   /// Stops listening and cleans up resources.
@@ -68,11 +67,6 @@ class ContactRequestListener {
   }
 
   Future<void> _onMessage(ChatMessage message) async {
-    // Only process incoming messages
-    if (!message.isIncoming) {
-      return;
-    }
-
     try {
       final (result, request) = await handleIncomingMessage(
         message: message,

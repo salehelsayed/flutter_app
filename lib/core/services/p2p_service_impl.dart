@@ -8,6 +8,7 @@ import '../utils/flow_event_emitter.dart';
 import '../../features/p2p/domain/models/node_state.dart';
 import '../../features/p2p/domain/models/chat_message.dart';
 import '../../features/p2p/domain/models/discovered_peer.dart';
+import '../../features/p2p/domain/models/send_message_result.dart';
 import '../../features/p2p/domain/models/connection_state.dart';
 
 /// Implementation of P2PService using WebViewJsBridge.
@@ -173,6 +174,48 @@ class P2PServiceImpl implements P2PService {
         details: {'error': e.toString()},
       );
       return false;
+    }
+  }
+
+  @override
+  Future<SendMessageResult> sendMessageWithReply(
+      String peerId, String message) async {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'P2P_SERVICE_SEND_MESSAGE_WITH_REPLY_BEGIN',
+      details: {'peerId': peerId, 'messageLength': message.length},
+    );
+
+    try {
+      final response = await callP2PMessageSend(
+        _bridge,
+        peerId: peerId,
+        message: message,
+      );
+
+      if (response['ok'] == true && response['sent'] == true) {
+        final reply = response['reply'] as String?;
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'P2P_SERVICE_SEND_MESSAGE_WITH_REPLY_SUCCESS',
+          details: {'peerId': peerId, 'hasReply': reply != null},
+        );
+        return SendMessageResult(sent: true, reply: reply);
+      } else {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'P2P_SERVICE_SEND_MESSAGE_WITH_REPLY_ERROR',
+          details: {'errorMessage': response['errorMessage']},
+        );
+        return const SendMessageResult(sent: false);
+      }
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'P2P_SERVICE_SEND_MESSAGE_WITH_REPLY_EXCEPTION',
+        details: {'error': e.toString()},
+      );
+      return const SendMessageResult(sent: false);
     }
   }
 
@@ -393,6 +436,76 @@ class P2PServiceImpl implements P2PService {
 
     _currentState = _currentState.copyWith(connections: updatedConnections);
     _stateController.add(_currentState);
+  }
+
+  @override
+  Future<bool> storeInInbox(String toPeerId, String message) async {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'P2P_SERVICE_INBOX_STORE_BEGIN',
+      details: {'toPeerId': toPeerId},
+    );
+
+    try {
+      final response = await callP2PInboxStore(
+        _bridge,
+        toPeerId: toPeerId,
+        message: message,
+      );
+      final ok = response['ok'] == true;
+      emitFlowEvent(
+        layer: 'FL',
+        event: ok
+            ? 'P2P_SERVICE_INBOX_STORE_SUCCESS'
+            : 'P2P_SERVICE_INBOX_STORE_ERROR',
+        details: {'toPeerId': toPeerId},
+      );
+      return ok;
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'P2P_SERVICE_INBOX_STORE_EXCEPTION',
+        details: {'error': e.toString()},
+      );
+      return false;
+    }
+  }
+
+  @override
+  Future<List<Map<String, dynamic>>> retrieveInbox() async {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'P2P_SERVICE_INBOX_RETRIEVE_BEGIN',
+      details: {},
+    );
+
+    try {
+      final response = await callP2PInboxRetrieve(_bridge);
+      if (response['ok'] == true) {
+        final messages = (response['messages'] as List<dynamic>?)
+                ?.cast<Map<String, dynamic>>() ??
+            [];
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'P2P_SERVICE_INBOX_RETRIEVE_SUCCESS',
+          details: {'count': messages.length},
+        );
+        return messages;
+      }
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'P2P_SERVICE_INBOX_RETRIEVE_ERROR',
+        details: {'errorMessage': response['errorMessage']},
+      );
+      return [];
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'P2P_SERVICE_INBOX_RETRIEVE_EXCEPTION',
+        details: {'error': e.toString()},
+      );
+      return [];
+    }
   }
 
   @override

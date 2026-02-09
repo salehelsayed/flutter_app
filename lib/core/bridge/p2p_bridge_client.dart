@@ -271,6 +271,72 @@ Future<Map<String, dynamic>> callP2PPeerDisconnect(
   return response;
 }
 
+/// Calls the JS bridge to store a message in the offline inbox.
+///
+/// Parameters:
+///   - [bridge]: The JsBridge instance
+///   - [toPeerId]: The target peer ID
+///   - [message]: The message content
+///
+/// Returns: `{ "ok": true, "stored": true }` (stub — JS not yet implemented)
+Future<Map<String, dynamic>> callP2PInboxStore(
+  JsBridge bridge, {
+  required String toPeerId,
+  required String message,
+}) async {
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'P2P_INBOX_STORE_REQUEST',
+    details: {'toPeerId': toPeerId},
+  );
+
+  final request = {
+    'cmd': 'inbox:store',
+    'payload': {
+      'toPeerId': toPeerId,
+      'message': message,
+    },
+  };
+
+  final responseJson = await bridge.send(jsonEncode(request));
+  final response = jsonDecode(responseJson) as Map<String, dynamic>;
+
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'P2P_INBOX_STORE_RESPONSE',
+    details: {'ok': response['ok']},
+  );
+
+  return response;
+}
+
+/// Calls the JS bridge to retrieve messages from the offline inbox.
+///
+/// Returns: `{ "ok": true, "messages": [...] }` (stub — JS not yet implemented)
+Future<Map<String, dynamic>> callP2PInboxRetrieve(JsBridge bridge) async {
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'P2P_INBOX_RETRIEVE_REQUEST',
+    details: {},
+  );
+
+  final request = {
+    'cmd': 'inbox:retrieve',
+    'payload': <String, dynamic>{},
+  };
+
+  final responseJson = await bridge.send(jsonEncode(request));
+  final response = jsonDecode(responseJson) as Map<String, dynamic>;
+
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'P2P_INBOX_RETRIEVE_RESPONSE',
+    details: {'ok': response['ok']},
+  );
+
+  return response;
+}
+
 /// Calls the JS bridge to send a message to a peer.
 ///
 /// Parameters:

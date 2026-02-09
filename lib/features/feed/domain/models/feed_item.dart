@@ -3,6 +3,7 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 /// Types of feed items.
 enum FeedItemType {
   connection,
+  message,
 }
 
 /// Base class for all feed items.
@@ -42,4 +43,23 @@ class ConnectionFeedItem extends FeedItem {
       contactAvatarPath: contact.avatarPath,
     );
   }
+}
+
+/// A feed item representing an incoming message from a contact.
+class MessageFeedItem extends FeedItem {
+  final String contactPeerId;
+  final String contactUsername;
+  final String messageId;
+  final String messageText;
+  final String messageTime;
+
+  const MessageFeedItem({
+    required super.id,
+    required super.timestamp,
+    required this.contactPeerId,
+    required this.contactUsername,
+    required this.messageId,
+    required this.messageText,
+    required this.messageTime,
+  }) : super(type: FeedItemType.message);
 }
