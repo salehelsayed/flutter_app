@@ -220,9 +220,9 @@
 │  │  │  │              FeedScreen [Widget]                          │   │  │ │
 │  │  │  │                                                           │   │  │ │
 │  │  │  │  ┌────────────────┐  ┌────────────────┐  ┌────────────┐  │   │  │ │
-│  │  │  │  │FeedHeader      │  │ConnectionCard  │  │Checkmark   │  │   │  │ │
-│  │  │  │  │(username+avatar)│  │(contact card)  │  │BurstAnim   │  │   │  │ │
-│  │  │  │  └────────────────┘  └────────────────┘  └────────────┘  │   │  │ │
+│  │  │  │  │FeedHeader      │  │ConnectionCard  │                  │   │  │ │
+│  │  │  │  │(username+avatar)│  │(inline badge)  │                  │   │  │ │
+│  │  │  │  └────────────────┘  └────────────────┘                  │   │  │ │
 │  │  │  │  ┌────────────────┐  ┌────────────────┐                  │   │  │ │
 │  │  │  │  │FeedNavBar      │  │NavBarButton    │                  │   │  │ │
 │  │  │  │  │(glass, 3 tabs) │  │(active/inactive)│                  │   │  │ │
@@ -447,8 +447,8 @@
 | FeedHeader | Widget | Sticky header with username and ring avatar |
 | FeedNavigationBar | Widget | Bottom glassmorphic nav bar with 3 SVG tabs (feed, orbit, remember) |
 | NavBarButton | Widget | Individual nav bar tab button (active/inactive states) |
-| ConnectionCard | Widget | Card displaying a contact connection with ring avatar |
-| CheckmarkBurstAnimation | Widget | Animated checkmark with expanding ring burst effect |
+| ConnectionCard | Widget | Card displaying a contact connection with ring avatar and inline green checkmark badge |
+| CheckmarkBurstAnimation | Widget | Animated checkmark with expanding ring burst effect (unused/orphaned) |
 | FeedRouteTransition | Route | Slide-up page transition for feed navigation |
 | **Shared Widgets** | | |
 | AmbientBackground | Widget | Animated green/red glow background |

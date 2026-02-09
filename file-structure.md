@@ -80,8 +80,8 @@ flutter_app/
 │       │       │   ├── feed_header.dart                     # Sticky header (username + avatar)
 │       │       │   ├── feed_navigation_bar.dart             # Bottom glass nav bar (3 tabs)
 │       │       │   ├── nav_bar_button.dart                  # Individual nav button widget
-│       │       │   ├── connection_card.dart                 # Contact connection card
-│       │       │   └── checkmark_burst_animation.dart       # Animated checkmark with rings
+│       │       │   ├── connection_card.dart                 # Contact connection card (inline green badge)
+│       │       │   └── checkmark_burst_animation.dart       # Animated checkmark with rings (unused/orphaned)
 │       │       └── navigation/
 │       │           └── feed_route_transition.dart            # Slide-up route transition
 │       │
@@ -304,8 +304,8 @@ flutter_app/
 | Feed header | `feed_header.dart` | Sticky header with username + avatar |
 | Navigation bar | `feed_navigation_bar.dart` | Bottom glass nav bar (3 tabs) |
 | Nav button | `nav_bar_button.dart` | Individual tab button (active/inactive) |
-| Connection card | `connection_card.dart` | Contact connection display card |
-| Checkmark anim | `checkmark_burst_animation.dart` | Animated checkmark with expanding rings |
+| Connection card | `connection_card.dart` | Contact connection display card (inline green checkmark badge) |
+| Checkmark anim | `checkmark_burst_animation.dart` | Animated checkmark with expanding rings (unused/orphaned) |
 | Route transition | `feed_route_transition.dart` | Slide-up page transition |
 
 ### Core Utilities
