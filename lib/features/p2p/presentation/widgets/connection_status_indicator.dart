@@ -2,10 +2,31 @@ import 'package:flutter/material.dart';
 import '../../../../core/services/p2p_service.dart';
 import '../../domain/models/node_state.dart';
 
+/// Connection health derived from NodeState.
+enum ConnectionHealth {
+  /// Node is started and has circuit relay addresses.
+  online,
+
+  /// Node is started but has no circuit relay addresses.
+  degraded,
+
+  /// Node is not started.
+  offline,
+}
+
+/// Derives [ConnectionHealth] from a [NodeState].
+ConnectionHealth healthFromState(NodeState state) {
+  if (!state.isStarted) return ConnectionHealth.offline;
+  if (state.circuitAddresses.isNotEmpty) return ConnectionHealth.online;
+  return ConnectionHealth.degraded;
+}
+
 /// A compact indicator showing the P2P connection status.
 ///
-/// Displays either "Online" (green) when the node is started,
-/// or "Offline" (grey) when stopped.
+/// Displays one of three states:
+/// - "Online" (green) — node started with circuit relay
+/// - "Connecting" (amber) — node started but no relay yet
+/// - "Offline" (grey) — node not started
 class ConnectionStatusIndicator extends StatelessWidget {
   final P2PService p2pService;
 
@@ -21,10 +42,27 @@ class ConnectionStatusIndicator extends StatelessWidget {
       initialData: p2pService.currentState,
       builder: (context, snapshot) {
         final state = snapshot.data ?? NodeState.stopped;
-        final isOnline = state.isStarted;
+        final health = healthFromState(state);
         final connectionCount = state.connections.length;
 
-        final baseColor = isOnline ? Colors.green : Colors.grey;
+        final Color baseColor;
+        final Color textColor;
+        final String label;
+
+        switch (health) {
+          case ConnectionHealth.online:
+            baseColor = Colors.green;
+            textColor = Colors.green[300]!;
+            label = 'Online';
+          case ConnectionHealth.degraded:
+            baseColor = Colors.amber;
+            textColor = Colors.amber[300]!;
+            label = 'Connecting';
+          case ConnectionHealth.offline:
+            baseColor = Colors.grey;
+            textColor = Colors.grey[400]!;
+            label = 'Offline';
+        }
 
         return Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
@@ -49,14 +87,14 @@ class ConnectionStatusIndicator extends StatelessWidget {
               ),
               const SizedBox(width: 6),
               Text(
-                isOnline ? 'Online' : 'Offline',
+                label,
                 style: TextStyle(
-                  color: isOnline ? Colors.green[300] : Colors.grey[400],
+                  color: textColor,
                   fontSize: 12,
                   fontWeight: FontWeight.w500,
                 ),
               ),
-              if (isOnline && connectionCount > 0) ...[
+              if (health == ConnectionHealth.online && connectionCount > 0) ...[
                 const SizedBox(width: 4),
                 Text(
                   '($connectionCount)',

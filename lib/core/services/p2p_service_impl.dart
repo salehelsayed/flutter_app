@@ -18,6 +18,10 @@ class P2PServiceImpl implements P2PService {
   final _messageController = StreamController<ChatMessage>.broadcast();
 
   NodeState _currentState = NodeState.stopped;
+  Timer? _healthCheckTimer;
+
+  /// How often the health check polls node:status.
+  static const healthCheckInterval = Duration(seconds: 30);
 
   P2PServiceImpl({required WebViewJsBridge bridge}) : _bridge = bridge {
     // Register event handlers on the bridge
@@ -61,6 +65,7 @@ class P2PServiceImpl implements P2PService {
       if (response['ok'] == true) {
         _currentState = NodeState.fromJson(response);
         _stateController.add(_currentState);
+        _startHealthCheck();
 
         emitFlowEvent(
           layer: 'FL',
@@ -99,6 +104,7 @@ class P2PServiceImpl implements P2PService {
     );
 
     try {
+      _stopHealthCheck();
       final response = await callP2PNodeStop(_bridge);
 
       if (response['ok'] == true) {
@@ -257,6 +263,107 @@ class P2PServiceImpl implements P2PService {
     }
   }
 
+  /// Start the periodic health check timer.
+  void _startHealthCheck() {
+    _healthCheckTimer?.cancel();
+    _healthCheckTimer = Timer.periodic(healthCheckInterval, (_) {
+      _performHealthCheck();
+    });
+  }
+
+  /// Stop the periodic health check timer.
+  void _stopHealthCheck() {
+    _healthCheckTimer?.cancel();
+    _healthCheckTimer = null;
+  }
+
+  /// Poll node:status, attempt recovery if degraded, and emit state changes.
+  Future<void> _performHealthCheck() async {
+    try {
+      final response = await callP2PNodeStatus(_bridge);
+      final freshState = NodeState.fromJson(response);
+
+      // Recovery: node is started but has no relay circuit — re-dial the relay.
+      // Registration alone won't help because registerOnce() requires circuit
+      // addresses to already exist. We need to re-establish the relay connection
+      // first, which triggers libp2p's circuit relay reservation.
+      if (freshState.isStarted && freshState.circuitAddresses.isEmpty) {
+        // Extract relay peer ID from the default address
+        final relayPeerId = defaultRendezvousAddress.split('/p2p/').last;
+
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'P2P_HEALTH_CHECK_RECOVERY_ATTEMPT',
+          details: {'relayPeerId': relayPeerId},
+        );
+
+        try {
+          await callP2PPeerDial(
+            _bridge,
+            peerId: relayPeerId,
+            addresses: [defaultRendezvousAddress],
+          );
+        } catch (_) {
+          // Relay still unreachable — will retry on next health check
+        }
+
+        // Re-poll status after dialing the relay
+        final retryResponse = await callP2PNodeStatus(_bridge);
+        final retryState = NodeState.fromJson(retryResponse);
+
+        if (retryState.isStarted != _currentState.isStarted ||
+            retryState.circuitAddresses.length != _currentState.circuitAddresses.length ||
+            retryState.connections.length != _currentState.connections.length) {
+          _currentState = retryState;
+          _stateController.add(_currentState);
+
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'P2P_HEALTH_CHECK_RECOVERY_RESULT',
+            details: {
+              'isStarted': retryState.isStarted,
+              'circuitAddresses': retryState.circuitAddresses.length,
+              'connections': retryState.connections.length,
+            },
+          );
+        }
+        return;
+      }
+
+      // Normal path: only emit if something meaningful changed
+      if (freshState.isStarted != _currentState.isStarted ||
+          freshState.circuitAddresses.length != _currentState.circuitAddresses.length ||
+          freshState.connections.length != _currentState.connections.length) {
+        _currentState = freshState;
+        _stateController.add(_currentState);
+
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'P2P_HEALTH_CHECK_STATE_CHANGED',
+          details: {
+            'isStarted': freshState.isStarted,
+            'circuitAddresses': freshState.circuitAddresses.length,
+            'connections': freshState.connections.length,
+          },
+        );
+      }
+    } catch (e) {
+      debugPrint('[P2PService] Health check failed: $e');
+
+      // If the check itself fails, assume the node is down
+      if (_currentState.isStarted) {
+        _currentState = NodeState.stopped;
+        _stateController.add(_currentState);
+
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'P2P_HEALTH_CHECK_FAILED',
+          details: {'error': e.toString()},
+        );
+      }
+    }
+  }
+
   /// Handle incoming chat message from bridge event.
   void _handleMessageReceived(ChatMessage message) {
     debugPrint('[P2PService] Message received from ${message.from}');
@@ -290,6 +397,7 @@ class P2PServiceImpl implements P2PService {
 
   @override
   void dispose() {
+    _stopHealthCheck();
     _stateController.close();
     _messageController.close();
 
