@@ -530,6 +530,56 @@ void main() {
       await sub.cancel();
     });
 
+    test('Contact name propagates when sender changes username', () async {
+      // Bob's contact for Alice currently has username "Alice"
+      final aliceContactBefore =
+          await bob.contactRepo.getContact(alice.peerId);
+      expect(aliceContactBefore!.username, 'Alice');
+
+      // Subscribe to Bob's contactUpdatedStream
+      final contactUpdates = <ContactModel>[];
+      final contactSub = bob.chatListener.contactUpdatedStream.listen(
+        (c) => contactUpdates.add(c),
+      );
+
+      // Alice "changes her name" — simulate by sending a message
+      // with a different senderUsername. We inject a raw P2P message
+      // since TestUser.sendMessage uses the original username.
+      final renamedJson = jsonEncode({
+        'type': 'chat_message',
+        'version': '1',
+        'payload': {
+          'id': 'msg-rename-001',
+          'text': 'Hey, I changed my name!',
+          'senderPeerId': alice.peerId,
+          'senderUsername': 'Alice Renamed',
+          'timestamp': DateTime.now().toUtc().toIso8601String(),
+        },
+      });
+
+      bob.p2pService.injectIncomingMessage(ChatMessage(
+        from: alice.peerId,
+        to: bob.peerId,
+        content: renamedJson,
+        timestamp: DateTime.now().toUtc().toIso8601String(),
+        isIncoming: true,
+      ));
+
+      await Future.delayed(const Duration(milliseconds: 100));
+
+      // Bob's stored contact should now have the updated name
+      final aliceContactAfter =
+          await bob.contactRepo.getContact(alice.peerId);
+      expect(aliceContactAfter!.username, 'Alice Renamed');
+
+      // contactUpdatedStream should have emitted
+      expect(contactUpdates.length, 1);
+      expect(contactUpdates.first.username, 'Alice Renamed');
+      expect(contactUpdates.first.peerId, alice.peerId);
+
+      await contactSub.cancel();
+    });
+
     test('Messages to disconnected peer fail with peerNotFound', () async {
       // Create a user who is NOT on the network
       final offlineUser = TestUser.create(

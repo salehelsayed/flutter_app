@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/handle_incoming_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
@@ -19,6 +20,7 @@ class ChatMessageListener {
 
   StreamSubscription<ChatMessage>? _subscription;
   final _messageController = StreamController<ConversationMessage>.broadcast();
+  final _contactUpdatedController = StreamController<ContactModel>.broadcast();
 
   ChatMessageListener({
     required this.chatMessageStream,
@@ -29,6 +31,10 @@ class ChatMessageListener {
   /// Stream of new incoming chat messages for the UI to listen to.
   Stream<ConversationMessage> get incomingMessageStream =>
       _messageController.stream;
+
+  /// Stream of contacts whose username was updated from an incoming message.
+  Stream<ContactModel> get contactUpdatedStream =>
+      _contactUpdatedController.stream;
 
   /// Starts listening for incoming P2P messages.
   void start() {
@@ -59,15 +65,21 @@ class ChatMessageListener {
   void dispose() {
     stop();
     _messageController.close();
+    _contactUpdatedController.close();
   }
 
   Future<void> _onMessage(ChatMessage message) async {
     try {
-      final (result, conversationMessage) = await handleIncomingChatMessage(
+      final (result, conversationMessage, updatedContact) =
+          await handleIncomingChatMessage(
         message: message,
         messageRepo: messageRepo,
         contactRepo: contactRepo,
       );
+
+      if (updatedContact != null) {
+        _contactUpdatedController.add(updatedContact);
+      }
 
       if (result == HandleChatMessageResult.chatMessage &&
           conversationMessage != null) {

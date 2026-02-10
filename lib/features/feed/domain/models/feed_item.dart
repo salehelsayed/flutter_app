@@ -37,7 +37,7 @@ class ConnectionFeedItem extends FeedItem {
   factory ConnectionFeedItem.fromContact(ContactModel contact) {
     return ConnectionFeedItem(
       id: 'connection_${contact.peerId}',
-      timestamp: DateTime.now(),
+      timestamp: DateTime.tryParse(contact.scannedAt) ?? DateTime.now(),
       contactPeerId: contact.peerId,
       contactUsername: contact.username,
       contactAvatarPath: contact.avatarPath,

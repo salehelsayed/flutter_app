@@ -4,7 +4,6 @@ import 'package:flutter_app/core/bridge/js_bridge_client.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
 import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository.dart';
-import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
@@ -98,35 +97,13 @@ class _StartupRouterState extends State<StartupRouter> {
 
       switch (decision) {
         case StartupDecision.hasIdentityWithContacts:
-          final contacts = await contactRepository.getAllContacts();
+          final contactCount = await contactRepository.getContactCount();
           if (!mounted) return;
-
-          if (contacts.isEmpty) {
-            emitFlowEvent(
-              layer: 'FL',
-              event: 'ID_STARTUP_ROUTE_MAIN_EMPTY_CONTACTS',
-              details: {},
-            );
-            _navigateToFirstTime(
-              repository: repository,
-              contactRepository: contactRepository,
-              contactRequestRepository: contactRequestRepository,
-              contactRequestListener: contactRequestListener,
-              messageRepository: messageRepository,
-              chatMessageListener: chatMessageListener,
-              bridge: bridge,
-              p2pService: p2pService,
-            );
-            _startP2PInBackground();
-            break;
-          }
-
-          final startupContact = _pickMostRecentContact(contacts);
 
           emitFlowEvent(
             layer: 'FL',
             event: 'ID_STARTUP_ROUTE_FEED',
-            details: {'contactCount': contacts.length},
+            details: {'contactCount': contactCount},
           );
           Navigator.of(context).pushReplacement(
             MaterialPageRoute(
@@ -139,7 +116,6 @@ class _StartupRouterState extends State<StartupRouter> {
                 chatMessageListener: chatMessageListener,
                 bridge: bridge,
                 p2pService: p2pService,
-                initialContact: startupContact,
               ),
             ),
           );
@@ -248,18 +224,6 @@ class _StartupRouterState extends State<StartupRouter> {
       _errorMessage = '';
     });
     await _routeBasedOnIdentity();
-  }
-
-  ContactModel _pickMostRecentContact(List<ContactModel> contacts) {
-    final sorted = List<ContactModel>.of(contacts)
-      ..sort((a, b) {
-        final aMillis =
-            DateTime.tryParse(a.scannedAt)?.millisecondsSinceEpoch ?? 0;
-        final bMillis =
-            DateTime.tryParse(b.scannedAt)?.millisecondsSinceEpoch ?? 0;
-        return bMillis.compareTo(aMillis);
-      });
-    return sorted.first;
   }
 
   void _navigateToFirstTime({
