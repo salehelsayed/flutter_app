@@ -246,7 +246,6 @@ class QRScannerWired extends StatelessWidget {
                         chatMessageListener: chatMessageListener,
                         bridge: bridge,
                         p2pService: p2pService,
-                        initialContact: contact,
                       ),
                     ),
                     (route) => false,

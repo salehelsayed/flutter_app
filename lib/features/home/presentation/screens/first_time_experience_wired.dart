@@ -119,7 +119,6 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
             chatMessageListener: widget.chatMessageListener,
             bridge: widget.bridge,
             p2pService: widget.p2pService,
-            initialContact: request.toContactModel(),
           ),
         ),
       );

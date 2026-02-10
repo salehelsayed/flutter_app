@@ -38,17 +38,21 @@ class ConversationWired extends StatefulWidget {
 
 class _ConversationWiredState extends State<ConversationWired> {
   IdentityModel? _identity;
+  late ContactModel _contact;
   List<ConversationMessage> _messages = [];
   StreamSubscription<ConversationMessage>? _incomingSubscription;
+  StreamSubscription<ContactModel>? _contactUpdateSubscription;
   final _scrollController = ScrollController();
 
   @override
   void initState() {
     super.initState();
+    _contact = widget.contact;
     emitFlowEvent(layer: 'FL', event: 'CONV_FL_SCREEN_INIT', details: {});
     _loadIdentity();
     _loadMessages();
     _startListeningForMessages();
+    _startListeningForContactUpdates();
   }
 
   Future<void> _loadIdentity() async {
@@ -70,7 +74,7 @@ class _ConversationWiredState extends State<ConversationWired> {
     try {
       final messages = await loadConversation(
         messageRepo: widget.messageRepo,
-        contactPeerId: widget.contact.peerId,
+        contactPeerId: _contact.peerId,
       );
       if (mounted) {
         setState(() => _messages = messages);
@@ -92,7 +96,7 @@ class _ConversationWiredState extends State<ConversationWired> {
 
   void _startListeningForMessages() {
     _incomingSubscription = widget.chatMessageListener.incomingMessageStream
-        .where((msg) => msg.contactPeerId == widget.contact.peerId)
+        .where((msg) => msg.contactPeerId == _contact.peerId)
         .listen(_onIncomingMessage);
   }
 
@@ -102,6 +106,15 @@ class _ConversationWiredState extends State<ConversationWired> {
       _messages = [..._messages, message];
     });
     _scrollToBottom();
+  }
+
+  void _startListeningForContactUpdates() {
+    _contactUpdateSubscription = widget.chatMessageListener.contactUpdatedStream
+        .where((c) => c.peerId == _contact.peerId)
+        .listen((updatedContact) {
+      if (!mounted) return;
+      setState(() => _contact = updatedContact);
+    });
   }
 
   Future<void> _onSend(String text) async {
@@ -117,7 +130,7 @@ class _ConversationWiredState extends State<ConversationWired> {
     final (result, message) = await sendChatMessage(
       p2pService: widget.p2pService,
       messageRepo: widget.messageRepo,
-      targetPeerId: widget.contact.peerId,
+      targetPeerId: _contact.peerId,
       text: text,
       senderPeerId: identity.peerId,
       senderUsername: identity.username,
@@ -168,7 +181,7 @@ class _ConversationWiredState extends State<ConversationWired> {
 
   String _formatConnectionDate() {
     try {
-      final date = DateTime.parse(widget.contact.scannedAt);
+      final date = DateTime.parse(_contact.scannedAt);
       const months = [
         'January', 'February', 'March', 'April', 'May', 'June',
         'July', 'August', 'September', 'October', 'November', 'December',
@@ -182,6 +195,7 @@ class _ConversationWiredState extends State<ConversationWired> {
   @override
   void dispose() {
     _incomingSubscription?.cancel();
+    _contactUpdateSubscription?.cancel();
     _scrollController.dispose();
     super.dispose();
   }
@@ -190,8 +204,8 @@ class _ConversationWiredState extends State<ConversationWired> {
   Widget build(BuildContext context) {
     return Scaffold(
       body: ConversationScreen(
-        contactPeerId: widget.contact.peerId,
-        contactUsername: widget.contact.username,
+        contactPeerId: _contact.peerId,
+        contactUsername: _contact.username,
         connectionDate: _formatConnectionDate(),
         ownPeerId: _identity?.peerId,
         messages: _messages,

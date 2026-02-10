@@ -1,4 +1,5 @@
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_payload.dart';
@@ -23,8 +24,10 @@ enum HandleChatMessageResult {
 /// Parses an incoming P2P ChatMessage for chat_message type,
 /// validates the sender, checks for duplicates, and persists.
 ///
-/// Returns (result, ConversationMessage?) — message is non-null on chatMessage.
-Future<(HandleChatMessageResult, ConversationMessage?)>
+/// Returns (result, ConversationMessage?, ContactModel?) —
+/// message is non-null on chatMessage, updatedContact is non-null when
+/// the sender's username changed since last stored.
+Future<(HandleChatMessageResult, ConversationMessage?, ContactModel?)>
     handleIncomingChatMessage({
   required ChatMessage message,
   required MessageRepository messageRepo,
@@ -44,12 +47,12 @@ Future<(HandleChatMessageResult, ConversationMessage?)>
       event: 'CHAT_MSG_RECEIVE_NOT_CHAT',
       details: {},
     );
-    return (HandleChatMessageResult.notChatMessage, null);
+    return (HandleChatMessageResult.notChatMessage, null, null);
   }
 
   // 2. Check sender is a known contact
-  final isContact = await contactRepo.contactExists(payload.senderPeerId);
-  if (!isContact) {
+  final contact = await contactRepo.getContact(payload.senderPeerId);
+  if (contact == null) {
     emitFlowEvent(
       layer: 'FL',
       event: 'CHAT_MSG_RECEIVE_UNKNOWN_SENDER',
@@ -59,7 +62,7 @@ Future<(HandleChatMessageResult, ConversationMessage?)>
             : payload.senderPeerId,
       },
     );
-    return (HandleChatMessageResult.unknownSender, null);
+    return (HandleChatMessageResult.unknownSender, null, null);
   }
 
   // 3. Check for duplicate
@@ -70,10 +73,28 @@ Future<(HandleChatMessageResult, ConversationMessage?)>
       event: 'CHAT_MSG_RECEIVE_DUPLICATE',
       details: {'id': payload.id.substring(0, 8)},
     );
-    return (HandleChatMessageResult.duplicate, null);
+    return (HandleChatMessageResult.duplicate, null, null);
   }
 
-  // 4. Persist
+  // 4. Detect + persist contact name change
+  ContactModel? updatedContact;
+  if (contact.username != payload.senderUsername) {
+    updatedContact = contact.copyWith(username: payload.senderUsername);
+    await contactRepo.addContact(updatedContact);
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_CONTACT_NAME_UPDATED',
+      details: {
+        'peerId': contact.peerId.length > 10
+            ? contact.peerId.substring(0, 10)
+            : contact.peerId,
+        'oldName': contact.username,
+        'newName': payload.senderUsername,
+      },
+    );
+  }
+
+  // 5. Persist message
   final conversationMessage = payload.toConversationMessage(
     contactPeerId: payload.senderPeerId,
     isIncoming: true,
@@ -91,5 +112,5 @@ Future<(HandleChatMessageResult, ConversationMessage?)>
           : payload.senderPeerId,
     },
   );
-  return (HandleChatMessageResult.chatMessage, conversationMessage);
+  return (HandleChatMessageResult.chatMessage, conversationMessage, updatedContact);
 }

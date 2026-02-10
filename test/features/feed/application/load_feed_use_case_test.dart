@@ -1,0 +1,195 @@
+import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
+import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
+import 'package:flutter_app/features/feed/application/load_feed_use_case.dart';
+import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
+
+// -- Fake Contact Repository --
+class FakeContactRepository implements ContactRepository {
+  final List<ContactModel> contacts;
+
+  FakeContactRepository({this.contacts = const []});
+
+  @override
+  Future<List<ContactModel>> getAllContacts() async => contacts;
+
+  @override
+  Future<ContactModel?> getContact(String peerId) async =>
+      contacts.where((c) => c.peerId == peerId).firstOrNull;
+
+  @override
+  Future<void> addContact(ContactModel contact) async {}
+
+  @override
+  Future<void> deleteContact(String peerId) async {}
+
+  @override
+  Future<bool> contactExists(String peerId) async => false;
+
+  @override
+  Future<int> getContactCount() async => contacts.length;
+}
+
+// -- Fake Message Repository --
+class FakeMessageRepository implements MessageRepository {
+  final Map<String, List<ConversationMessage>> messagesByContact;
+
+  FakeMessageRepository({this.messagesByContact = const {}});
+
+  @override
+  Future<List<ConversationMessage>> getMessagesForContact(
+      String contactPeerId) async {
+    return messagesByContact[contactPeerId] ?? [];
+  }
+
+  @override
+  Future<void> saveMessage(ConversationMessage message) async {}
+
+  @override
+  Future<ConversationMessage?> getLatestMessageForContact(
+      String contactPeerId) async {
+    return null;
+  }
+
+  @override
+  Future<void> updateMessageStatus(String id, String status) async {}
+
+  @override
+  Future<bool> messageExists(String id) async => false;
+}
+
+ContactModel _makeContact(String peerId, String username, String scannedAt) {
+  return ContactModel(
+    peerId: peerId,
+    publicKey: 'pk-$peerId',
+    rendezvous: '/dns4/relay/tcp/443/p2p/relay',
+    username: username,
+    signature: 'sig-$peerId',
+    scannedAt: scannedAt,
+  );
+}
+
+ConversationMessage _makeMessage({
+  required String id,
+  required String contactPeerId,
+  required String senderPeerId,
+  required String text,
+  required String timestamp,
+  required bool isIncoming,
+}) {
+  return ConversationMessage(
+    id: id,
+    contactPeerId: contactPeerId,
+    senderPeerId: senderPeerId,
+    text: text,
+    timestamp: timestamp,
+    status: 'delivered',
+    isIncoming: isIncoming,
+    createdAt: timestamp,
+  );
+}
+
+void main() {
+  group('loadFeed', () {
+    test('returns empty list when no contacts', () async {
+      final result = await loadFeed(
+        contactRepo: FakeContactRepository(),
+        messageRepo: FakeMessageRepository(),
+      );
+
+      expect(result, isEmpty);
+    });
+
+    test('returns ConnectionFeedItems for contacts with no messages', () async {
+      final contacts = [
+        _makeContact('peer-A', 'Alice', '2026-02-09T10:00:00.000Z'),
+        _makeContact('peer-B', 'Bob', '2026-02-09T11:00:00.000Z'),
+      ];
+
+      final result = await loadFeed(
+        contactRepo: FakeContactRepository(contacts: contacts),
+        messageRepo: FakeMessageRepository(),
+      );
+
+      expect(result.length, 2);
+      expect(result.every((item) => item is ConnectionFeedItem), isTrue);
+      // Newest-first: Bob (11:00) before Alice (10:00)
+      expect((result[0] as ConnectionFeedItem).contactUsername, 'Bob');
+      expect((result[1] as ConnectionFeedItem).contactUsername, 'Alice');
+    });
+
+    test('includes only incoming messages as MessageFeedItems', () async {
+      final contacts = [
+        _makeContact('peer-A', 'Alice', '2026-02-09T10:00:00.000Z'),
+      ];
+
+      final messages = {
+        'peer-A': [
+          _makeMessage(
+            id: 'msg-1',
+            contactPeerId: 'peer-A',
+            senderPeerId: 'peer-A',
+            text: 'Hello from Alice',
+            timestamp: '2026-02-09T12:00:00.000Z',
+            isIncoming: true,
+          ),
+          _makeMessage(
+            id: 'msg-2',
+            contactPeerId: 'peer-A',
+            senderPeerId: 'my-peer',
+            text: 'My reply',
+            timestamp: '2026-02-09T12:01:00.000Z',
+            isIncoming: false,
+          ),
+        ],
+      };
+
+      final result = await loadFeed(
+        contactRepo: FakeContactRepository(contacts: contacts),
+        messageRepo: FakeMessageRepository(messagesByContact: messages),
+      );
+
+      final messageItems =
+          result.whereType<MessageFeedItem>().toList();
+      expect(messageItems.length, 1);
+      expect(messageItems[0].messageText, 'Hello from Alice');
+    });
+
+    test('sorts all items newest-first across types', () async {
+      final contacts = [
+        _makeContact('peer-A', 'Alice', '2026-02-09T10:00:00.000Z'),
+        _makeContact('peer-B', 'Bob', '2026-02-09T14:00:00.000Z'),
+      ];
+
+      final messages = {
+        'peer-A': [
+          _makeMessage(
+            id: 'msg-1',
+            contactPeerId: 'peer-A',
+            senderPeerId: 'peer-A',
+            text: 'Hello',
+            timestamp: '2026-02-09T12:00:00.000Z',
+            isIncoming: true,
+          ),
+        ],
+      };
+
+      final result = await loadFeed(
+        contactRepo: FakeContactRepository(contacts: contacts),
+        messageRepo: FakeMessageRepository(messagesByContact: messages),
+      );
+
+      expect(result.length, 3);
+      // Bob connection at 14:00, msg at 12:00, Alice connection at 10:00
+      expect(result[0], isA<ConnectionFeedItem>());
+      expect(
+          (result[0] as ConnectionFeedItem).contactUsername, 'Bob');
+      expect(result[1], isA<MessageFeedItem>());
+      expect(result[2], isA<ConnectionFeedItem>());
+      expect(
+          (result[2] as ConnectionFeedItem).contactUsername, 'Alice');
+    });
+  });
+}

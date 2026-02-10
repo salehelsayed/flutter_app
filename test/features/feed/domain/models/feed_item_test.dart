@@ -29,7 +29,7 @@ void main() {
       expect(item.contactPeerId, '12D3KooWTestPeerId1234567890');
       expect(item.contactUsername, 'Bob');
       expect(item.type, FeedItemType.connection);
-      expect(item.timestamp, isNotNull);
+      expect(item.timestamp, DateTime.utc(2026, 2, 9, 15, 0, 0));
     });
   });
 

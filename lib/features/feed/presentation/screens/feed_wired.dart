@@ -16,7 +16,9 @@ import 'package:flutter_app/features/conversation/domain/models/conversation_mes
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/conversation/presentation/navigation/conversation_route_transition.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
+import 'package:flutter_app/features/feed/application/load_feed_use_case.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
+import 'package:flutter_app/features/feed/domain/utils/format_message_time.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'feed_screen.dart';
@@ -35,7 +37,6 @@ class FeedWired extends StatefulWidget {
   final ChatMessageListener chatMessageListener;
   final JsBridge bridge;
   final P2PService p2pService;
-  final ContactModel initialContact;
 
   const FeedWired({
     super.key,
@@ -47,7 +48,6 @@ class FeedWired extends StatefulWidget {
     required this.chatMessageListener,
     required this.bridge,
     required this.p2pService,
-    required this.initialContact,
   });
 
   @override
@@ -61,17 +61,20 @@ class _FeedWiredState extends State<FeedWired> {
   IdentityModel? _identity;
   String _activeTab = 'feed';
   final List<FeedItem> _feedItems = [];
+  final Set<String> _loadedMessageIds = {};
   StreamSubscription<ContactRequestModel>? _requestSubscription;
   StreamSubscription<ConversationMessage>? _chatSubscription;
+  StreamSubscription<ContactModel>? _contactUpdateSubscription;
 
   @override
   void initState() {
     super.initState();
     emitFlowEvent(layer: 'FL', event: 'FEED_FL_SCREEN_INIT', details: {});
     _loadIdentity();
-    _buildInitialFeedItem();
+    _loadFeedFromDatabase();
     _startListeningForContactRequests();
     _startListeningForChatMessages();
+    _startListeningForContactUpdates();
   }
 
   void _loadIdentity() async {
@@ -94,11 +97,30 @@ class _FeedWiredState extends State<FeedWired> {
     }
   }
 
-  void _buildInitialFeedItem() {
-    final item = ConnectionFeedItem.fromContact(widget.initialContact);
-    setState(() {
-      _feedItems.add(item);
-    });
+  Future<void> _loadFeedFromDatabase() async {
+    try {
+      final items = await loadFeed(
+        contactRepo: widget.contactRepository,
+        messageRepo: widget.messageRepository,
+      );
+      if (!mounted) return;
+
+      for (final item in items) {
+        if (item is MessageFeedItem) {
+          _loadedMessageIds.add(item.messageId);
+        }
+      }
+
+      setState(() {
+        _feedItems.addAll(items);
+      });
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'FEED_FL_DB_LOAD_ERROR',
+        details: {'error': e.toString()},
+      );
+    }
   }
 
   void _startListeningForContactRequests() {
@@ -144,10 +166,17 @@ class _FeedWiredState extends State<FeedWired> {
 
     if (result == AcceptContactRequestResult.success) {
       final contact = request.toContactModel();
-      final item = ConnectionFeedItem.fromContact(contact);
-      setState(() {
-        _feedItems.insert(0, item);
-      });
+      final alreadyExists = _feedItems.any(
+        (item) =>
+            item is ConnectionFeedItem &&
+            item.contactPeerId == contact.peerId,
+      );
+      if (!alreadyExists) {
+        final item = ConnectionFeedItem.fromContact(contact);
+        setState(() {
+          _feedItems.insert(0, item);
+        });
+      }
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -180,28 +209,19 @@ class _FeedWiredState extends State<FeedWired> {
 
   void _onIncomingChatMessage(ConversationMessage message) {
     if (!mounted) return;
+    if (_loadedMessageIds.contains(message.id)) return;
 
-    // Format time for display
-    String displayTime;
-    try {
-      final date = DateTime.parse(message.timestamp).toLocal();
-      final hour = date.hour == 0
-          ? 12
-          : (date.hour > 12 ? date.hour - 12 : date.hour);
-      final minute = date.minute.toString().padLeft(2, '0');
-      final period = date.hour < 12 ? 'AM' : 'PM';
-      displayTime = '$hour:$minute $period';
-    } catch (_) {
-      displayTime = '';
-    }
+    final displayTime = formatMessageTime(message.timestamp);
 
     // Look up sender username from contacts
     widget.contactRepository.getContact(message.senderPeerId).then((contact) {
       if (!mounted) return;
 
+      _loadedMessageIds.add(message.id);
+
       final item = MessageFeedItem(
         id: 'message_${message.id}',
-        timestamp: DateTime.now(),
+        timestamp: DateTime.tryParse(message.timestamp) ?? DateTime.now(),
         contactPeerId: message.contactPeerId,
         contactUsername: contact?.username ?? 'Unknown',
         messageId: message.id,
@@ -212,6 +232,43 @@ class _FeedWiredState extends State<FeedWired> {
       setState(() {
         _feedItems.insert(0, item);
       });
+    });
+  }
+
+  void _startListeningForContactUpdates() {
+    _contactUpdateSubscription =
+        widget.chatMessageListener.contactUpdatedStream.listen(
+      _onContactUpdated,
+    );
+  }
+
+  void _onContactUpdated(ContactModel contact) {
+    if (!mounted) return;
+    setState(() {
+      for (var i = 0; i < _feedItems.length; i++) {
+        final item = _feedItems[i];
+        if (item is ConnectionFeedItem &&
+            item.contactPeerId == contact.peerId) {
+          _feedItems[i] = ConnectionFeedItem(
+            id: item.id,
+            timestamp: item.timestamp,
+            contactPeerId: item.contactPeerId,
+            contactUsername: contact.username,
+            contactAvatarPath: item.contactAvatarPath,
+          );
+        } else if (item is MessageFeedItem &&
+            item.contactPeerId == contact.peerId) {
+          _feedItems[i] = MessageFeedItem(
+            id: item.id,
+            timestamp: item.timestamp,
+            contactPeerId: item.contactPeerId,
+            contactUsername: contact.username,
+            messageId: item.messageId,
+            messageText: item.messageText,
+            messageTime: item.messageTime,
+          );
+        }
+      }
     });
   }
 
@@ -306,6 +363,7 @@ class _FeedWiredState extends State<FeedWired> {
   void dispose() {
     _requestSubscription?.cancel();
     _chatSubscription?.cancel();
+    _contactUpdateSubscription?.cancel();
     super.dispose();
   }
 
