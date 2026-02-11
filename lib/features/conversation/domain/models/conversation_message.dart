@@ -18,7 +18,7 @@ class ConversationMessage {
   /// ISO-8601 timestamp when the message was created.
   final String timestamp;
 
-  /// Delivery status: 'sent', 'delivered', 'failed'.
+  /// Delivery status: 'sending', 'sent', 'delivered', 'failed'.
   final String status;
 
   /// Whether this message was received from the contact.

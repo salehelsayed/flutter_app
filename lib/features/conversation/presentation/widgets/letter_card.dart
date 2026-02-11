@@ -101,10 +101,18 @@ class LetterCard extends StatelessWidget {
                         ? const Color(0xFF4ecdc4)
                         : const Color.fromRGBO(255, 255, 255, 0.25),
                     borderRadius: BorderRadius.only(
-                      topLeft: isIncoming ? const Radius.circular(24) : Radius.zero,
-                      bottomLeft: isIncoming ? const Radius.circular(24) : Radius.zero,
-                      topRight: isIncoming ? Radius.zero : const Radius.circular(24),
-                      bottomRight: isIncoming ? Radius.zero : const Radius.circular(24),
+                      topLeft: isIncoming
+                          ? const Radius.circular(24)
+                          : Radius.zero,
+                      bottomLeft: isIncoming
+                          ? const Radius.circular(24)
+                          : Radius.zero,
+                      topRight: isIncoming
+                          ? Radius.zero
+                          : const Radius.circular(24),
+                      bottomRight: isIncoming
+                          ? Radius.zero
+                          : const Radius.circular(24),
                     ),
                   ),
                 ),
@@ -169,19 +177,12 @@ class LetterCard extends StatelessWidget {
                       padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
                       child: Align(
                         alignment: Alignment.centerRight,
-                        child: Text(
-                          switch (status) {
-                            'sent' => 'Sent',
-                            'delivered' => 'Delivered',
-                            'failed' => 'Failed',
-                            _ => status!,
-                          },
-                          style: TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.w400,
-                            color: status == 'failed'
-                                ? const Color.fromRGBO(255, 100, 100, 0.50)
-                                : const Color.fromRGBO(255, 255, 255, 0.15),
+                        child: Semantics(
+                          label: 'Message status: ${_statusSemantic(status!)}',
+                          child: Icon(
+                            _statusIcon(status!),
+                            size: 14,
+                            color: _statusColor(status!),
                           ),
                         ),
                       ),
@@ -193,5 +194,27 @@ class LetterCard extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  static IconData _statusIcon(String status) {
+    if (status == 'delivered') return Icons.done_all_rounded;
+    if (status == 'failed') return Icons.error_outline_rounded;
+    return Icons.done_rounded;
+  }
+
+  static Color _statusColor(String status) {
+    if (status == 'delivered') {
+      return const Color.fromRGBO(255, 255, 255, 0.45);
+    }
+    if (status == 'failed') return const Color.fromRGBO(255, 100, 100, 0.60);
+    return const Color.fromRGBO(255, 255, 255, 0.25);
+  }
+
+  static String _statusSemantic(String status) {
+    if (status == 'delivered') return 'delivered';
+    if (status == 'failed') return 'failed';
+    if (status == 'sending') return 'sending';
+    if (status == 'sent') return 'sent';
+    return status;
   }
 }

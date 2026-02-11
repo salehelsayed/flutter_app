@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:uuid/uuid.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
@@ -12,6 +13,18 @@ import 'package:flutter_app/features/identity/domain/models/identity_model.dart'
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'conversation_screen.dart';
 
+typedef SendChatMessageFn =
+    Future<(SendChatMessageResult, ConversationMessage?)> Function({
+      required P2PService p2pService,
+      required MessageRepository messageRepo,
+      required String targetPeerId,
+      required String text,
+      required String senderPeerId,
+      required String senderUsername,
+      String? messageId,
+      String? timestamp,
+    });
+
 /// Wired widget that connects ConversationScreen to business logic.
 ///
 /// Loads identity and messages on init, subscribes to incoming message stream,
@@ -22,6 +35,7 @@ class ConversationWired extends StatefulWidget {
   final MessageRepository messageRepo;
   final ChatMessageListener chatMessageListener;
   final P2PService p2pService;
+  final SendChatMessageFn sendChatMessageFn;
 
   const ConversationWired({
     super.key,
@@ -30,6 +44,7 @@ class ConversationWired extends StatefulWidget {
     required this.messageRepo,
     required this.chatMessageListener,
     required this.p2pService,
+    this.sendChatMessageFn = sendChatMessage,
   });
 
   @override
@@ -37,6 +52,8 @@ class ConversationWired extends StatefulWidget {
 }
 
 class _ConversationWiredState extends State<ConversationWired> {
+  static const _uuid = Uuid();
+
   IdentityModel? _identity;
   late ContactModel _contact;
   List<ConversationMessage> _messages = [];
@@ -103,7 +120,7 @@ class _ConversationWiredState extends State<ConversationWired> {
   void _onIncomingMessage(ConversationMessage message) {
     if (!mounted) return;
     setState(() {
-      _messages = [..._messages, message];
+      _upsertMessageById(message);
     });
     _scrollToBottom();
   }
@@ -112,9 +129,9 @@ class _ConversationWiredState extends State<ConversationWired> {
     _contactUpdateSubscription = widget.chatMessageListener.contactUpdatedStream
         .where((c) => c.peerId == _contact.peerId)
         .listen((updatedContact) {
-      if (!mounted) return;
-      setState(() => _contact = updatedContact);
-    });
+          if (!mounted) return;
+          setState(() => _contact = updatedContact);
+        });
   }
 
   Future<void> _onSend(String text) async {
@@ -127,22 +144,59 @@ class _ConversationWiredState extends State<ConversationWired> {
       details: {'textLength': text.length},
     );
 
-    final (result, message) = await sendChatMessage(
+    final now = DateTime.now().toUtc().toIso8601String();
+    final optimisticMessage = ConversationMessage(
+      id: _uuid.v4(),
+      contactPeerId: _contact.peerId,
+      senderPeerId: identity.peerId,
+      text: text,
+      timestamp: now,
+      status: 'sending',
+      isIncoming: false,
+      createdAt: now,
+    );
+
+    if (mounted) {
+      setState(() {
+        _upsertMessageById(optimisticMessage);
+      });
+      _scrollToBottom();
+    }
+
+    try {
+      await widget.messageRepo.saveMessage(optimisticMessage);
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONV_FL_OPTIMISTIC_SAVE_ERROR',
+        details: {'error': e.toString()},
+      );
+    }
+
+    final (result, message) = await widget.sendChatMessageFn(
       p2pService: widget.p2pService,
       messageRepo: widget.messageRepo,
       targetPeerId: _contact.peerId,
       text: text,
       senderPeerId: identity.peerId,
       senderUsername: identity.username,
+      messageId: optimisticMessage.id,
+      timestamp: optimisticMessage.timestamp,
     );
 
     if (!mounted) return;
 
     if (message != null) {
       setState(() {
-        _messages = [..._messages, message];
+        _upsertMessageById(message);
       });
       _scrollToBottom();
+    } else {
+      final fallbackStatus = result == SendChatMessageResult.success
+          ? 'sent'
+          : 'failed';
+      _updateLocalMessageStatus(optimisticMessage.id, fallbackStatus);
+      await _persistMessageStatus(optimisticMessage.id, fallbackStatus);
     }
 
     if (result != SendChatMessageResult.success) {
@@ -153,8 +207,7 @@ class _ConversationWiredState extends State<ConversationWired> {
           'Contact appears offline. Message saved.',
         SendChatMessageResult.dialFailed =>
           'Could not connect to contact. Message saved.',
-        SendChatMessageResult.invalidMessage =>
-          'Message cannot be empty.',
+        SendChatMessageResult.invalidMessage => 'Message cannot be empty.',
         _ => 'Failed to send message. Message saved.',
       };
       ScaffoldMessenger.of(context).showSnackBar(
@@ -163,6 +216,40 @@ class _ConversationWiredState extends State<ConversationWired> {
           backgroundColor: Colors.red[700],
           behavior: SnackBarBehavior.floating,
         ),
+      );
+    }
+  }
+
+  void _upsertMessageById(ConversationMessage message) {
+    final index = _messages.indexWhere((m) => m.id == message.id);
+    if (index == -1) {
+      _messages = [..._messages, message];
+      return;
+    }
+    final updated = [..._messages];
+    updated[index] = message;
+    _messages = updated;
+  }
+
+  void _updateLocalMessageStatus(String id, String status) {
+    if (!mounted) return;
+    setState(() {
+      final index = _messages.indexWhere((m) => m.id == id);
+      if (index == -1) return;
+      final updated = [..._messages];
+      updated[index] = updated[index].copyWith(status: status);
+      _messages = updated;
+    });
+  }
+
+  Future<void> _persistMessageStatus(String id, String status) async {
+    try {
+      await widget.messageRepo.updateMessageStatus(id, status);
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONV_FL_STATUS_UPDATE_ERROR',
+        details: {'error': e.toString(), 'status': status},
       );
     }
   }
@@ -183,8 +270,18 @@ class _ConversationWiredState extends State<ConversationWired> {
     try {
       final date = DateTime.parse(_contact.scannedAt);
       const months = [
-        'January', 'February', 'March', 'April', 'May', 'June',
-        'July', 'August', 'September', 'October', 'November', 'December',
+        'January',
+        'February',
+        'March',
+        'April',
+        'May',
+        'June',
+        'July',
+        'August',
+        'September',
+        'October',
+        'November',
+        'December',
       ];
       return '${months[date.month - 1]} ${date.day}, ${date.year}';
     } catch (_) {

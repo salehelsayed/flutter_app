@@ -35,14 +35,14 @@ class FakeP2PService implements P2PService {
     DiscoveredPeer? discoverPeerResult,
     bool useNullDiscover = false,
     this.dialPeerResult = true,
-  })  : _currentState = currentState ?? const NodeState(isStarted: true),
-        discoverPeerResult = useNullDiscover
-            ? null
-            : (discoverPeerResult ??
-                const DiscoveredPeer(
-                  id: 'target-peer',
-                  addresses: ['/ip4/127.0.0.1/tcp/4001'],
-                ));
+  }) : _currentState = currentState ?? const NodeState(isStarted: true),
+       discoverPeerResult = useNullDiscover
+           ? null
+           : (discoverPeerResult ??
+                 const DiscoveredPeer(
+                   id: 'target-peer',
+                   addresses: ['/ip4/127.0.0.1/tcp/4001'],
+                 ));
 
   @override
   NodeState get currentState => _currentState;
@@ -70,7 +70,9 @@ class FakeP2PService implements P2PService {
 
   @override
   Future<SendMessageResult> sendMessageWithReply(
-      String peerId, String message) async {
+    String peerId,
+    String message,
+  ) async {
     if (shouldThrow) throw Exception('Send failed');
     lastSentPeerId = peerId;
     lastSentMessage = message;
@@ -113,16 +115,33 @@ class FakeMessageRepository implements MessageRepository {
   }
 
   @override
-  Future<List<ConversationMessage>> getMessagesForContact(String contactPeerId) async => [];
+  Future<List<ConversationMessage>> getMessagesForContact(
+    String contactPeerId,
+  ) async => [];
 
   @override
-  Future<ConversationMessage?> getLatestMessageForContact(String contactPeerId) async => null;
+  Future<ConversationMessage?> getLatestMessageForContact(
+    String contactPeerId,
+  ) async => null;
 
   @override
   Future<void> updateMessageStatus(String id, String status) async {}
 
   @override
   Future<bool> messageExists(String id) async => false;
+}
+
+Future<List<String>> capturePrintedLines(Future<void> Function() action) async {
+  final printed = <String>[];
+  await runZoned(
+    action,
+    zoneSpecification: ZoneSpecification(
+      print: (_, __, ___, line) {
+        printed.add(line);
+      },
+    ),
+  );
+  return printed;
 }
 
 void main() {
@@ -221,8 +240,9 @@ void main() {
       expect(p2pService.lastSentMessage, contains('"text":"Hello!"'));
     });
 
-    test('returns sendFailed and persists with failed status when send returns false', () async {
-      p2pService.sendMessageResult = false;
+    test('uses provided messageId and timestamp when passed', () async {
+      const fixedMessageId = 'msg-fixed-001';
+      const fixedTimestamp = '2026-02-11T10:00:00.000Z';
 
       final (result, message) = await sendChatMessage(
         p2pService: p2pService,
@@ -231,14 +251,67 @@ void main() {
         text: 'Hello!',
         senderPeerId: 'my-peer',
         senderUsername: 'Me',
+        messageId: fixedMessageId,
+        timestamp: fixedTimestamp,
       );
 
-      expect(result, SendChatMessageResult.sendFailed);
+      expect(result, SendChatMessageResult.success);
       expect(message, isNotNull);
-      expect(message!.status, 'failed');
-      expect(messageRepo.saved.length, 1);
-      expect(messageRepo.saved.first.status, 'failed');
+      expect(message!.id, fixedMessageId);
+      expect(message.timestamp, fixedTimestamp);
+      expect(messageRepo.saved.first.id, fixedMessageId);
+      expect(messageRepo.saved.first.timestamp, fixedTimestamp);
+      expect(p2pService.lastSentMessage, contains('"id":"$fixedMessageId"'));
+      expect(
+        p2pService.lastSentMessage,
+        contains('"timestamp":"$fixedTimestamp"'),
+      );
     });
+
+    test('logs CHAT_OUT with delivered status and text preview', () async {
+      final lines = await capturePrintedLines(() async {
+        await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Hello from logger',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+      });
+
+      expect(
+        lines.any(
+          (line) =>
+              line.contains('[CHAT_OUT]') &&
+              line.contains('status=delivered') &&
+              line.contains('Hello from logger'),
+        ),
+        isTrue,
+      );
+    });
+
+    test(
+      'returns sendFailed and persists with failed status when send returns false',
+      () async {
+        p2pService.sendMessageResult = false;
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Hello!',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+
+        expect(result, SendChatMessageResult.sendFailed);
+        expect(message, isNotNull);
+        expect(message!.status, 'failed');
+        expect(messageRepo.saved.length, 1);
+        expect(messageRepo.saved.first.status, 'failed');
+      },
+    );
 
     test('returns sendFailed when P2P throws exception', () async {
       // Make discover succeed but sendMessageWithReply throw
@@ -263,44 +336,50 @@ void main() {
       expect(message!.status, 'failed');
     });
 
-    test('returns peerNotFound when discover returns null after 3 retries', () async {
-      p2pService = FakeP2PService(useNullDiscover: true);
+    test(
+      'returns peerNotFound when discover returns null after 3 retries',
+      () async {
+        p2pService = FakeP2PService(useNullDiscover: true);
 
-      final (result, message) = await sendChatMessage(
-        p2pService: p2pService,
-        messageRepo: messageRepo,
-        targetPeerId: 'target-peer',
-        text: 'Hello!',
-        senderPeerId: 'my-peer',
-        senderUsername: 'Me',
-      );
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Hello!',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
 
-      expect(result, SendChatMessageResult.peerNotFound);
-      expect(message, isNotNull);
-      expect(message!.status, 'failed');
-      expect(p2pService.discoverCallCount, 3);
-      expect(messageRepo.saved.length, 1);
-      expect(messageRepo.saved.first.status, 'failed');
-    });
+        expect(result, SendChatMessageResult.peerNotFound);
+        expect(message, isNotNull);
+        expect(message!.status, 'failed');
+        expect(p2pService.discoverCallCount, 3);
+        expect(messageRepo.saved.length, 1);
+        expect(messageRepo.saved.first.status, 'failed');
+      },
+    );
 
-    test('returns dialFailed when dial returns false after 3 retries', () async {
-      p2pService = FakeP2PService(dialPeerResult: false);
+    test(
+      'returns dialFailed when dial returns false after 3 retries',
+      () async {
+        p2pService = FakeP2PService(dialPeerResult: false);
 
-      final (result, message) = await sendChatMessage(
-        p2pService: p2pService,
-        messageRepo: messageRepo,
-        targetPeerId: 'target-peer',
-        text: 'Hello!',
-        senderPeerId: 'my-peer',
-        senderUsername: 'Me',
-      );
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Hello!',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
 
-      expect(result, SendChatMessageResult.dialFailed);
-      expect(message, isNotNull);
-      expect(message!.status, 'failed');
-      expect(p2pService.dialCallCount, 3);
-      expect(messageRepo.saved.length, 1);
-    });
+        expect(result, SendChatMessageResult.dialFailed);
+        expect(message, isNotNull);
+        expect(message!.status, 'failed');
+        expect(p2pService.dialCallCount, 3);
+        expect(messageRepo.saved.length, 1);
+      },
+    );
 
     test('succeeds on 2nd attempt after flaky discover', () async {
       // Custom service where discover fails first time, succeeds second
@@ -393,12 +472,16 @@ class _ThrowOnSendP2PService implements P2PService {
 
   @override
   Future<SendMessageResult> sendMessageWithReply(
-          String peerId, String message) async =>
-      throw Exception('Send exploded');
+    String peerId,
+    String message,
+  ) async => throw Exception('Send exploded');
 
   @override
   Future<DiscoveredPeer?> discoverPeer(String peerId) async =>
-      const DiscoveredPeer(id: 'target-peer', addresses: ['/ip4/127.0.0.1/tcp/4001']);
+      const DiscoveredPeer(
+        id: 'target-peer',
+        addresses: ['/ip4/127.0.0.1/tcp/4001'],
+      );
 
   @override
   Future<bool> dialPeer(String peerId, {List<String>? addresses}) async => true;
@@ -437,15 +520,18 @@ class _FlakyDiscoverP2PService implements P2PService {
 
   @override
   Future<SendMessageResult> sendMessageWithReply(
-          String peerId, String message) async =>
-      const SendMessageResult(sent: true, reply: 'received: ok');
+    String peerId,
+    String message,
+  ) async => const SendMessageResult(sent: true, reply: 'received: ok');
 
   @override
   Future<DiscoveredPeer?> discoverPeer(String peerId) async {
     discoverCallCount++;
     if (discoverCallCount == 1) return null;
     return const DiscoveredPeer(
-        id: 'target-peer', addresses: ['/ip4/127.0.0.1/tcp/4001']);
+      id: 'target-peer',
+      addresses: ['/ip4/127.0.0.1/tcp/4001'],
+    );
   }
 
   @override

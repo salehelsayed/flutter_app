@@ -1,4 +1,5 @@
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/core/utils/chat_console_logger.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
@@ -28,7 +29,7 @@ enum HandleChatMessageResult {
 /// message is non-null on chatMessage, updatedContact is non-null when
 /// the sender's username changed since last stored.
 Future<(HandleChatMessageResult, ConversationMessage?, ContactModel?)>
-    handleIncomingChatMessage({
+handleIncomingChatMessage({
   required ChatMessage message,
   required MessageRepository messageRepo,
   required ContactRepository contactRepo,
@@ -36,19 +37,20 @@ Future<(HandleChatMessageResult, ConversationMessage?, ContactModel?)>
   emitFlowEvent(
     layer: 'FL',
     event: 'CHAT_MSG_RECEIVE_START',
-    details: {'from': message.from.length > 10 ? message.from.substring(0, 10) : message.from},
+    details: {
+      'from': message.from.length > 10
+          ? message.from.substring(0, 10)
+          : message.from,
+    },
   );
 
   // 1. Parse as MessagePayload
   final payload = MessagePayload.fromJson(message.content);
   if (payload == null) {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'CHAT_MSG_RECEIVE_NOT_CHAT',
-      details: {},
-    );
+    emitFlowEvent(layer: 'FL', event: 'CHAT_MSG_RECEIVE_NOT_CHAT', details: {});
     return (HandleChatMessageResult.notChatMessage, null, null);
   }
+  final textPreview = buildTextPreview(payload.text);
 
   // 2. Check sender is a known contact
   final contact = await contactRepo.getContact(payload.senderPeerId);
@@ -110,7 +112,18 @@ Future<(HandleChatMessageResult, ConversationMessage?, ContactModel?)>
       'from': payload.senderPeerId.length > 10
           ? payload.senderPeerId.substring(0, 10)
           : payload.senderPeerId,
+      'textPreview': textPreview,
     },
   );
-  return (HandleChatMessageResult.chatMessage, conversationMessage, updatedContact);
+  logChatIncoming(
+    messageId: payload.id,
+    fromPeerId: payload.senderPeerId,
+    status: 'delivered',
+    text: payload.text,
+  );
+  return (
+    HandleChatMessageResult.chatMessage,
+    conversationMessage,
+    updatedContact,
+  );
 }

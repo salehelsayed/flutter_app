@@ -1,6 +1,7 @@
 import 'package:uuid/uuid.dart';
 
 import 'package:flutter_app/core/services/p2p_service.dart';
+import 'package:flutter_app/core/utils/chat_console_logger.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_payload.dart';
@@ -35,15 +36,18 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   required String text,
   required String senderPeerId,
   required String senderUsername,
+  String? messageId,
+  String? timestamp,
 }) async {
   final targetPrefix = targetPeerId.length > 10
       ? targetPeerId.substring(0, 10)
       : targetPeerId;
+  final textPreview = buildTextPreview(text);
 
   emitFlowEvent(
     layer: 'FL',
     event: 'CHAT_MSG_SEND_START',
-    details: {'targetPeerId': targetPrefix},
+    details: {'targetPeerId': targetPrefix, 'textPreview': textPreview},
   );
 
   // 1. Validate
@@ -67,15 +71,22 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   }
 
   // 3. Build payload
-  final messageId = _uuid.v4();
-  final timestamp = DateTime.now().toUtc().toIso8601String();
+  final resolvedMessageId = messageId ?? _uuid.v4();
+  final resolvedTimestamp =
+      timestamp ?? DateTime.now().toUtc().toIso8601String();
 
   final payload = MessagePayload(
-    id: messageId,
+    id: resolvedMessageId,
     text: text,
     senderPeerId: senderPeerId,
     senderUsername: senderUsername,
-    timestamp: timestamp,
+    timestamp: resolvedTimestamp,
+  );
+  logChatOutgoing(
+    messageId: resolvedMessageId,
+    toPeerId: targetPeerId,
+    status: 'queued',
+    text: text,
   );
 
   // 4. Serialize
@@ -161,10 +172,18 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
         layer: 'FL',
         event: 'CHAT_MSG_SEND_SUCCESS',
         details: {
-          'id': messageId.substring(0, 8),
+          'id': resolvedMessageId.substring(0, 8),
           'status': status,
           'attempts': attempt,
+          'textPreview': textPreview,
         },
+      );
+      logChatOutgoing(
+        messageId: resolvedMessageId,
+        toPeerId: targetPeerId,
+        status: status,
+        text: text,
+        attempt: attempt,
       );
       return (SendChatMessageResult.success, message);
     } catch (e) {
@@ -197,9 +216,17 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     layer: 'FL',
     event: 'CHAT_MSG_SEND_FAILED',
     details: {
-      'id': messageId.substring(0, 8),
+      'id': resolvedMessageId.substring(0, 8),
       'reason': lastFailureReason?.name ?? 'unknown',
+      'textPreview': textPreview,
     },
+  );
+  logChatOutgoing(
+    messageId: resolvedMessageId,
+    toPeerId: targetPeerId,
+    status: 'failed',
+    text: text,
+    attempt: maxAttempts,
   );
   return (lastFailureReason ?? SendChatMessageResult.sendFailed, failedMessage);
 }
