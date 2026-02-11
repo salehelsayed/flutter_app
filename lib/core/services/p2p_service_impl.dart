@@ -1,9 +1,11 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'p2p_service.dart';
 import '../bridge/webview_js_bridge.dart';
 import '../bridge/p2p_bridge_client.dart';
 import '../utils/key_conversion.dart';
+import '../utils/chat_console_logger.dart';
 import '../utils/flow_event_emitter.dart';
 import '../../features/p2p/domain/models/node_state.dart';
 import '../../features/p2p/domain/models/chat_message.dart';
@@ -179,7 +181,9 @@ class P2PServiceImpl implements P2PService {
 
   @override
   Future<SendMessageResult> sendMessageWithReply(
-      String peerId, String message) async {
+    String peerId,
+    String message,
+  ) async {
     emitFlowEvent(
       layer: 'FL',
       event: 'P2P_SERVICE_SEND_MESSAGE_WITH_REPLY_BEGIN',
@@ -228,10 +232,7 @@ class P2PServiceImpl implements P2PService {
     );
 
     try {
-      final response = await callP2PRendezvousDiscover(
-        _bridge,
-        peerId: peerId,
-      );
+      final response = await callP2PRendezvousDiscover(_bridge, peerId: peerId);
 
       if (response['ok'] == true) {
         final peers = response['peers'] as List<dynamic>?;
@@ -355,7 +356,8 @@ class P2PServiceImpl implements P2PService {
         final retryState = NodeState.fromJson(retryResponse);
 
         if (retryState.isStarted != _currentState.isStarted ||
-            retryState.circuitAddresses.length != _currentState.circuitAddresses.length ||
+            retryState.circuitAddresses.length !=
+                _currentState.circuitAddresses.length ||
             retryState.connections.length != _currentState.connections.length) {
           _currentState = retryState;
           _stateController.add(_currentState);
@@ -375,7 +377,8 @@ class P2PServiceImpl implements P2PService {
 
       // Normal path: only emit if something meaningful changed
       if (freshState.isStarted != _currentState.isStarted ||
-          freshState.circuitAddresses.length != _currentState.circuitAddresses.length ||
+          freshState.circuitAddresses.length !=
+              _currentState.circuitAddresses.length ||
           freshState.connections.length != _currentState.connections.length) {
         _currentState = freshState;
         _stateController.add(_currentState);
@@ -409,6 +412,22 @@ class P2PServiceImpl implements P2PService {
 
   /// Handle incoming chat message from bridge event.
   void _handleMessageReceived(ChatMessage message) {
+    String? envelopeType;
+    try {
+      final decoded = jsonDecode(message.content);
+      if (decoded is Map<String, dynamic>) {
+        envelopeType = decoded['type'] as String?;
+      }
+    } catch (_) {
+      envelopeType = null;
+    }
+    logChatTransportIncoming(
+      fromPeerId: message.from,
+      toPeerId: message.to,
+      contentLength: message.content.length,
+      isIncoming: message.isIncoming,
+      envelopeType: envelopeType,
+    );
     debugPrint('[P2PService] Message received from ${message.from}');
     _messageController.add(message);
   }
@@ -418,8 +437,9 @@ class P2PServiceImpl implements P2PService {
     debugPrint('[P2PService] Peer connected: ${conn.peerId}');
 
     // Update current state with new connection
-    final updatedConnections = List<ConnectionState>.from(_currentState.connections)
-      ..add(conn);
+    final updatedConnections = List<ConnectionState>.from(
+      _currentState.connections,
+    )..add(conn);
 
     _currentState = _currentState.copyWith(connections: updatedConnections);
     _stateController.add(_currentState);
@@ -482,7 +502,8 @@ class P2PServiceImpl implements P2PService {
     try {
       final response = await callP2PInboxRetrieve(_bridge);
       if (response['ok'] == true) {
-        final messages = (response['messages'] as List<dynamic>?)
+        final messages =
+            (response['messages'] as List<dynamic>?)
                 ?.cast<Map<String, dynamic>>() ??
             [];
         emitFlowEvent(

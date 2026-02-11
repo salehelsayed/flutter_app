@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
@@ -72,15 +73,15 @@ class FakeMessageRepository implements MessageRepository {
 
   @override
   Future<List<ConversationMessage>> getMessagesForContact(
-      String contactPeerId) async {
-    return saved
-        .where((m) => m.contactPeerId == contactPeerId)
-        .toList();
+    String contactPeerId,
+  ) async {
+    return saved.where((m) => m.contactPeerId == contactPeerId).toList();
   }
 
   @override
   Future<ConversationMessage?> getLatestMessageForContact(
-      String contactPeerId) async {
+    String contactPeerId,
+  ) async {
     return null;
   }
 
@@ -89,6 +90,19 @@ class FakeMessageRepository implements MessageRepository {
 
   @override
   Future<bool> messageExists(String id) async => existingIds.contains(id);
+}
+
+Future<List<String>> capturePrintedLines(Future<void> Function() action) async {
+  final printed = <String>[];
+  await runZoned(
+    action,
+    zoneSpecification: ZoneSpecification(
+      print: (_, __, ___, line) {
+        printed.add(line);
+      },
+    ),
+  );
+  return printed;
 }
 
 void main() {
@@ -188,27 +202,30 @@ void main() {
       expect(messageRepo.saved, isEmpty);
     });
 
-    test('returns chatMessage and persists valid message from known contact', () async {
-      final message = buildP2PMessage(buildValidChatJson());
+    test(
+      'returns chatMessage and persists valid message from known contact',
+      () async {
+        final message = buildP2PMessage(buildValidChatJson());
 
-      final (result, msg, _) = await handleIncomingChatMessage(
-        message: message,
-        messageRepo: messageRepo,
-        contactRepo: contactRepo,
-      );
+        final (result, msg, _) = await handleIncomingChatMessage(
+          message: message,
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+        );
 
-      expect(result, HandleChatMessageResult.chatMessage);
-      expect(msg, isNotNull);
-      expect(msg!.id, 'msg-uuid-001');
-      expect(msg.text, 'Hello from sender!');
-      expect(msg.senderPeerId, senderPeerId);
-      expect(msg.contactPeerId, senderPeerId);
-      expect(msg.isIncoming, true);
-      expect(msg.status, 'delivered');
+        expect(result, HandleChatMessageResult.chatMessage);
+        expect(msg, isNotNull);
+        expect(msg!.id, 'msg-uuid-001');
+        expect(msg.text, 'Hello from sender!');
+        expect(msg.senderPeerId, senderPeerId);
+        expect(msg.contactPeerId, senderPeerId);
+        expect(msg.isIncoming, true);
+        expect(msg.status, 'delivered');
 
-      expect(messageRepo.saved.length, 1);
-      expect(messageRepo.saved.first.id, 'msg-uuid-001');
-    });
+        expect(messageRepo.saved.length, 1);
+        expect(messageRepo.saved.first.id, 'msg-uuid-001');
+      },
+    );
 
     test('persisted message has correct fields', () async {
       final message = buildP2PMessage(
@@ -229,54 +246,84 @@ void main() {
       expect(saved.status, 'delivered');
     });
 
-    test('returns updatedContact when senderUsername differs from stored', () async {
-      // Contact stored as "Alice", but message comes with "Alice2"
-      final json = jsonEncode({
-        'type': 'chat_message',
-        'version': '1',
-        'payload': {
-          'id': 'msg-name-change-001',
-          'text': 'Hi with new name!',
-          'senderPeerId': senderPeerId,
-          'senderUsername': 'Alice2',
-          'timestamp': '2026-02-09T15:30:00.000Z',
-        },
+    test('logs CHAT_IN with delivered status and text preview', () async {
+      final message = buildP2PMessage(
+        buildValidChatJson(id: 'msg-log-001', text: 'Incoming log text'),
+      );
+
+      final lines = await capturePrintedLines(() async {
+        await handleIncomingChatMessage(
+          message: message,
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+        );
       });
-      final message = buildP2PMessage(json);
 
-      final (result, msg, updatedContact) = await handleIncomingChatMessage(
-        message: message,
-        messageRepo: messageRepo,
-        contactRepo: contactRepo,
+      expect(
+        lines.any(
+          (line) =>
+              line.contains('[CHAT_IN]') &&
+              line.contains('status=delivered') &&
+              line.contains('Incoming log text'),
+        ),
+        isTrue,
       );
-
-      expect(result, HandleChatMessageResult.chatMessage);
-      expect(msg, isNotNull);
-      expect(updatedContact, isNotNull);
-      expect(updatedContact!.username, 'Alice2');
-      expect(updatedContact.peerId, senderPeerId);
-
-      // Verify the contact was upserted
-      expect(contactRepo.upserted.length, 1);
-      expect(contactRepo.upserted.first.username, 'Alice2');
     });
 
-    test('returns null updatedContact when senderUsername matches stored', () async {
-      // Contact stored as "Alice", message also says "Alice"
-      final message = buildP2PMessage(buildValidChatJson());
+    test(
+      'returns updatedContact when senderUsername differs from stored',
+      () async {
+        // Contact stored as "Alice", but message comes with "Alice2"
+        final json = jsonEncode({
+          'type': 'chat_message',
+          'version': '1',
+          'payload': {
+            'id': 'msg-name-change-001',
+            'text': 'Hi with new name!',
+            'senderPeerId': senderPeerId,
+            'senderUsername': 'Alice2',
+            'timestamp': '2026-02-09T15:30:00.000Z',
+          },
+        });
+        final message = buildP2PMessage(json);
 
-      final (result, msg, updatedContact) = await handleIncomingChatMessage(
-        message: message,
-        messageRepo: messageRepo,
-        contactRepo: contactRepo,
-      );
+        final (result, msg, updatedContact) = await handleIncomingChatMessage(
+          message: message,
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+        );
 
-      expect(result, HandleChatMessageResult.chatMessage);
-      expect(msg, isNotNull);
-      expect(updatedContact, isNull);
+        expect(result, HandleChatMessageResult.chatMessage);
+        expect(msg, isNotNull);
+        expect(updatedContact, isNotNull);
+        expect(updatedContact!.username, 'Alice2');
+        expect(updatedContact.peerId, senderPeerId);
 
-      // No upsert should have happened
-      expect(contactRepo.upserted, isEmpty);
-    });
+        // Verify the contact was upserted
+        expect(contactRepo.upserted.length, 1);
+        expect(contactRepo.upserted.first.username, 'Alice2');
+      },
+    );
+
+    test(
+      'returns null updatedContact when senderUsername matches stored',
+      () async {
+        // Contact stored as "Alice", message also says "Alice"
+        final message = buildP2PMessage(buildValidChatJson());
+
+        final (result, msg, updatedContact) = await handleIncomingChatMessage(
+          message: message,
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+        );
+
+        expect(result, HandleChatMessageResult.chatMessage);
+        expect(msg, isNotNull);
+        expect(updatedContact, isNull);
+
+        // No upsert should have happened
+        expect(contactRepo.upserted, isEmpty);
+      },
+    );
   });
 }
