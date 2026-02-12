@@ -17,9 +17,10 @@ flutter_app/
 │       └── nav_remember.svg                         # Remember tab icon
 │
 ├── lib/
-│   ├── main.dart                               # App entry point, DB setup, DI
+│   ├── main.dart                               # App entry point, DB setup, DI (8 deps to MyApp)
 │   ├── smoke_test_main.dart                    # Smoke test entry point
 │   ├── smoke_test_restore.dart                 # Smoke test for identity restore
+│   ├── smoke_test_messages.dart                # Smoke test for messages DB layer
 │   │
 │   ├── core/
 │   │   ├── bridge/
@@ -32,15 +33,18 @@ flutter_app/
 │   │   │
 │   │   ├── database/
 │   │   │   ├── migrations/
-│   │   │   │   └── 001_identity_table.dart     # Schema migration (identity, contacts, contact_requests)
+│   │   │   │   ├── 001_identity_table.dart     # Schema v1 (identity, contacts, contact_requests)
+│   │   │   │   └── 002_messages_table.dart     # Schema v2 (messages table + indexes)
 │   │   │   └── helpers/
 │   │   │       ├── identity_db_helpers.dart     # Identity table CRUD
 │   │   │       ├── contacts_db_helpers.dart     # Contacts table CRUD
-│   │   │       └── contact_requests_db_helpers.dart  # Contact requests table CRUD
+│   │   │       ├── contact_requests_db_helpers.dart  # Contact requests table CRUD
+│   │   │       └── messages_db_helpers.dart     # Messages table CRUD (insert, load, update status)
 │   │   │
 │   │   ├── services/
 │   │   │   ├── p2p_service.dart                # P2PService abstract interface
-│   │   │   └── p2p_service_impl.dart           # P2PServiceImpl with reactive streams
+│   │   │   ├── p2p_service_impl.dart           # P2PServiceImpl with reactive streams
+│   │   │   └── incoming_message_router.dart    # Routes P2P messages by type to typed streams
 │   │   │
 │   │   ├── theme/
 │   │   │   ├── app_colors.dart                 # Color constants (dark theme)
@@ -51,7 +55,8 @@ flutter_app/
 │   │       ├── flow_event_emitter.dart         # Structured logging utility
 │   │       ├── key_conversion.dart             # base64 ↔ hex key conversion
 │   │       ├── ring_avatar_spec.dart           # Ring avatar constants + data models
-│   │       └── ring_avatar_generator.dart      # Deterministic avatar from peerId (DJB2 hash)
+│   │       ├── ring_avatar_generator.dart      # Deterministic avatar from peerId (DJB2 hash)
+│   │       └── chat_console_logger.dart        # Chat message debug logging with shortened IDs
 │   │
 │   └── features/
 │       ├── home/
@@ -70,20 +75,52 @@ flutter_app/
 │       │
 │       ├── feed/
 │       │   ├── domain/
-│       │   │   └── models/
-│       │   │       └── feed_item.dart                       # FeedItem base + ConnectionFeedItem
+│       │   │   ├── models/
+│       │   │   │   └── feed_item.dart                       # FeedItem base + ConnectionFeedItem + MessageFeedItem
+│       │   │   └── utils/
+│       │   │       └── format_message_time.dart             # Message timestamp formatting utility
+│       │   ├── application/
+│       │   │   └── load_feed_use_case.dart                  # Load initial feed from DB (contacts + latest messages)
 │       │   └── presentation/
 │       │       ├── screens/
 │       │       │   ├── feed_screen.dart                     # Pure UI feed display
-│       │       │   └── feed_wired.dart                      # Feed business logic + CR listener
+│       │       │   └── feed_wired.dart                      # Feed business logic + CR/chat listeners
 │       │       ├── widgets/
 │       │       │   ├── feed_header.dart                     # Sticky header (username + avatar)
 │       │       │   ├── feed_navigation_bar.dart             # Bottom glass nav bar (3 tabs)
 │       │       │   ├── nav_bar_button.dart                  # Individual nav button widget
 │       │       │   ├── connection_card.dart                 # Contact connection card (inline green badge)
+│       │       │   ├── message_feed_card.dart               # Incoming message card with reply button
 │       │       │   └── checkmark_burst_animation.dart       # Animated checkmark with rings (unused/orphaned)
 │       │       └── navigation/
 │       │           └── feed_route_transition.dart            # Slide-up route transition
+│       │
+│       ├── conversation/
+│       │   ├── domain/
+│       │   │   ├── models/
+│       │   │   │   ├── conversation_message.dart            # ConversationMessage (id, text, status, isIncoming)
+│       │   │   │   └── message_payload.dart                 # Wire-format envelope model (chat_message type)
+│       │   │   └── repositories/
+│       │   │       ├── message_repository.dart              # Abstract interface (save, load, update status)
+│       │   │       └── message_repository_impl.dart         # DB-backed implementation
+│       │   ├── application/
+│       │   │   ├── send_chat_message_use_case.dart          # Send message with 3x retry + optimistic persist
+│       │   │   ├── handle_incoming_chat_message_use_case.dart  # Parse, validate sender, detect name changes
+│       │   │   ├── load_conversation_use_case.dart          # Load all messages for a contact
+│       │   │   └── chat_message_listener.dart               # Background listener for chat_message stream
+│       │   └── presentation/
+│       │       ├── screens/
+│       │       │   ├── conversation_screen.dart             # Pure UI: header, letter cards, compose area
+│       │       │   └── conversation_wired.dart              # Business logic: load, send, listen, optimistic UI
+│       │       ├── widgets/
+│       │       │   ├── letter_card.dart                     # Full-width message card (left/right accent edge)
+│       │       │   ├── compose_area.dart                    # Auto-growing text field + send button
+│       │       │   ├── empty_conversation_state.dart        # Breathing glow avatar + connection info
+│       │       │   ├── conversation_header.dart             # Frosted-glass header with back + contact info
+│       │       │   ├── compact_origin_marker.dart           # Compact connection origin at conversation top
+│       │       │   └── date_separator.dart                  # Date divider between letter cards
+│       │       └── navigation/
+│       │           └── conversation_route_transition.dart    # Slide-up route transition (420ms)
 │       │
 │       ├── identity/
 │       │   ├── domain/
@@ -162,7 +199,8 @@ flutter_app/
 │           │       ├── node_state.dart                     # NodeState (isStarted, connections, addresses)
 │           │       ├── connection_state.dart                # ConnectionState (peerId, direction, status)
 │           │       ├── discovered_peer.dart                 # DiscoveredPeer (id, addresses)
-│           │       └── chat_message.dart                    # ChatMessage (from, to, content, isIncoming)
+│           │       ├── chat_message.dart                    # ChatMessage (from, to, content, isIncoming)
+│           │       └── send_message_result.dart             # SendMessageResult enum
 │           ├── application/
 │           │   ├── start_node_use_case.dart                 # Start P2P node with identity
 │           │   ├── stop_node_use_case.dart                  # Stop running node
@@ -204,7 +242,45 @@ flutter_app/
 │   └── smoke_test.dart                                    # Integration smoke test
 │
 ├── test/
-│   └── widget_test.dart                                   # Widget tests
+│   ├── widget_test.dart                                   # Widget tests
+│   ├── core/
+│   │   └── services/
+│   │       └── incoming_message_router_test.dart           # IncomingMessageRouter unit tests
+│   └── features/
+│       ├── feed/
+│       │   ├── application/
+│       │   │   └── load_feed_use_case_test.dart            # Feed loading tests
+│       │   ├── domain/
+│       │   │   ├── models/
+│       │   │   │   └── feed_item_test.dart                 # FeedItem model tests
+│       │   │   └── utils/
+│       │   │       └── format_message_time_test.dart       # Time formatting tests
+│       │   └── presentation/
+│       │       └── widgets/
+│       │           └── message_feed_card_test.dart         # Message feed card widget tests
+│       └── conversation/
+│           ├── two_user_message_exchange_test.dart         # Integration: full send/receive flow
+│           ├── application/
+│           │   ├── send_chat_message_use_case_test.dart
+│           │   ├── handle_incoming_chat_message_use_case_test.dart
+│           │   └── load_conversation_use_case_test.dart
+│           ├── domain/
+│           │   ├── models/
+│           │   │   ├── conversation_message_test.dart
+│           │   │   └── message_payload_test.dart
+│           │   └── repositories/
+│           │       └── message_repository_impl_test.dart
+│           └── presentation/
+│               ├── screens/
+│               │   ├── conversation_screen_test.dart
+│               │   └── conversation_wired_test.dart
+│               └── widgets/
+│                   ├── empty_conversation_state_test.dart
+│                   ├── compact_origin_marker_test.dart
+│                   ├── conversation_header_test.dart
+│                   ├── letter_card_test.dart
+│                   ├── date_separator_test.dart
+│                   └── compose_area_test.dart
 │
 ├── pubspec.yaml                                           # Flutter dependencies
 ├── C4_MODEL.md                                            # C4 architecture documentation
@@ -224,7 +300,7 @@ flutter_app/
 | Generate identity | `generate_identity_use_case.dart` | JS bridge call + DB save |
 | Restore identity | `restore_identity_use_case.dart` | Validate mnemonic + JS bridge + DB save |
 | Startup routing | `startup_decision.dart`, `startup_router.dart` | Check identity + contacts → route to feed, home, or onboarding |
-| DB migration | `001_identity_table.dart` | Creates all 3 tables |
+| DB migration | `001_identity_table.dart` | Creates identity, contacts, contact_requests tables |
 | DB helpers | `identity_db_helpers.dart` | Identity table CRUD |
 | Bridge | `js_bridge_client.dart`, `webview_js_bridge.dart` | Flutter ↔ JS communication |
 
@@ -247,10 +323,12 @@ flutter_app/
 |-----------|---------|-------------|
 | P2P service | `p2p_service.dart`, `p2p_service_impl.dart` | Reactive P2P interface + implementation |
 | P2P bridge | `p2p_bridge_client.dart` | Low-level JS bridge calls for P2P |
+| Message router | `incoming_message_router.dart` | Routes P2P messages by envelope type to typed streams |
 | Node state | `node_state.dart` | P2P node state model |
 | Connection state | `connection_state.dart` | Active connection model |
 | Discovered peer | `discovered_peer.dart` | Peer discovery result model |
 | Chat message | `chat_message.dart` | P2P message model |
+| Send result | `send_message_result.dart` | SendMessageResult enum |
 | Start node | `start_node_use_case.dart` | Start node with identity key |
 | Stop node | `stop_node_use_case.dart` | Stop running node |
 | Send message | `send_message_use_case.dart` | Send P2P message |
@@ -281,6 +359,29 @@ flutter_app/
 | Requests badge | `pending_requests_badge.dart` | Count badge widget |
 | DB helpers | `contact_requests_db_helpers.dart` | Contact requests table CRUD |
 
+### Conversation (UI-4)
+
+| Component | File(s) | Description |
+|-----------|---------|-------------|
+| Message model | `conversation_message.dart` | ConversationMessage (id, text, status, isIncoming, timestamps) |
+| Wire payload | `message_payload.dart` | MessagePayload envelope (chat_message type, version 1) |
+| Message repository | `message_repository.dart`, `message_repository_impl.dart` | Save, load, update status for messages |
+| Send message | `send_chat_message_use_case.dart` | Build payload, discover + dial peer, 3x retry, optimistic persist |
+| Handle incoming | `handle_incoming_chat_message_use_case.dart` | Parse envelope, validate sender, detect name changes, persist |
+| Load conversation | `load_conversation_use_case.dart` | Load all messages for a contact by timestamp ASC |
+| Chat listener | `chat_message_listener.dart` | Background listener on chatMessageStream, broadcasts to UI |
+| Conversation screen | `conversation_screen.dart` | Pure UI: header, letter cards, empty state, compose area |
+| Conversation logic | `conversation_wired.dart` | Business logic: load messages, optimistic send, listen for incoming |
+| Letter card | `letter_card.dart` | Full-width card with left accent (received) / right accent (sent) |
+| Compose area | `compose_area.dart` | Auto-growing text field + animated send button |
+| Empty state | `empty_conversation_state.dart` | Breathing glow avatar + "Connected!" + writing prompt |
+| Header | `conversation_header.dart` | Frosted-glass header with back button + contact info |
+| Origin marker | `compact_origin_marker.dart` | Compact connection origin at conversation top |
+| Date separator | `date_separator.dart` | Date divider between letter cards on different days |
+| Route transition | `conversation_route_transition.dart` | Slide-up transition (420ms easeOutCubic) |
+| DB migration | `002_messages_table.dart` | Creates messages table with contact + timestamp indexes |
+| DB helpers | `messages_db_helpers.dart` | Messages table CRUD (insert, load, update status, count) |
+
 ### Home / First-Time Experience
 
 | Component | File(s) | Description |
@@ -298,13 +399,16 @@ flutter_app/
 
 | Component | File(s) | Description |
 |-----------|---------|-------------|
-| Feed item model | `feed_item.dart` | FeedItem base class + ConnectionFeedItem |
-| Feed screen | `feed_screen.dart` | Pure UI feed display |
-| Feed logic | `feed_wired.dart` | Feed orchestration, identity load, CR listener |
+| Feed item model | `feed_item.dart` | FeedItem base + ConnectionFeedItem + MessageFeedItem |
+| Time formatting | `format_message_time.dart` | Message timestamp formatting utility |
+| Load feed | `load_feed_use_case.dart` | Load initial feed from DB (contacts + latest messages) |
+| Feed screen | `feed_screen.dart` | Pure UI feed display (connection + message cards) |
+| Feed logic | `feed_wired.dart` | Feed orchestration, identity load, CR/chat listeners |
 | Feed header | `feed_header.dart` | Sticky header with username + avatar |
 | Navigation bar | `feed_navigation_bar.dart` | Bottom glass nav bar (3 tabs) |
 | Nav button | `nav_bar_button.dart` | Individual tab button (active/inactive) |
 | Connection card | `connection_card.dart` | Contact connection display card (inline green checkmark badge) |
+| Message card | `message_feed_card.dart` | Incoming message card with reply button |
 | Checkmark anim | `checkmark_burst_animation.dart` | Animated checkmark with expanding rings (unused/orphaned) |
 | Route transition | `feed_route_transition.dart` | Slide-up page transition |
 
@@ -315,6 +419,7 @@ flutter_app/
 | Ring avatar gen | `ring_avatar_generator.dart`, `ring_avatar_spec.dart` | DJB2 hash → deterministic rings |
 | Key conversion | `key_conversion.dart` | base64 ↔ hex utilities |
 | Flow events | `flow_event_emitter.dart` | Structured logging (DB/FL/JS layers) |
+| Chat logger | `chat_console_logger.dart` | Debug logging for chat messages with shortened peer IDs |
 | Network constants | `network_constants.dart` | Rendezvous multiaddr |
 | Theme | `app_colors.dart`, `app_theme.dart`, `glassmorphism.dart` | Dark theme + glass effects |
 
@@ -322,13 +427,14 @@ flutter_app/
 
 ## Database Tables
 
-| Table | Primary Key | Description |
-|-------|-------------|-------------|
-| `identity` | `id` (always 1) | Single-row identity storage |
-| `contacts` | `peer_id` | Contacts added via QR scanning |
-| `contact_requests` | `peer_id` | Incoming P2P contact requests |
+| Table | Primary Key | Migration | Description |
+|-------|-------------|-----------|-------------|
+| `identity` | `id` (always 1) | v1 (`001`) | Single-row identity storage |
+| `contacts` | `peer_id` | v1 (`001`) | Contacts added via QR scanning |
+| `contact_requests` | `peer_id` | v1 (`001`) | Incoming P2P contact requests |
+| `messages` | `id` (UUID) | v2 (`002`) | Conversation messages (indexes on contact_peer_id, timestamp) |
 
-All tables are created in `001_identity_table.dart` migration.
+Database version: **2** (set in `main.dart` `openDatabase` call).
 
 ---
 
