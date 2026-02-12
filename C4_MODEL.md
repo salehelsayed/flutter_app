@@ -49,7 +49,7 @@
 | Element | Type | Description |
 |---------|------|-------------|
 | User | Person | End user who wants to create or restore their cryptographic identity, connect with peers, and manage contacts |
-| Mknoon Identity App | Software System | Mobile/desktop app for identity management, profile customization, peer discovery, contact requests, and P2P messaging using libp2p and BIP39 |
+| Mknoon Identity App | Software System | Mobile/desktop app for identity management, profile customization, peer discovery, contact requests, conversations, and P2P messaging using libp2p and BIP39 |
 | Rendezvous / Relay Server | External System | libp2p rendezvous server for peer discovery and circuit relay for NAT traversal |
 
 ### External Dependencies
@@ -99,8 +99,8 @@
 │  │  │  • BIP39 mnemonic gen       │   │  • identity table           │ │  │
 │     │  • Ed25519 keypair          │   │  • contacts table           │    │
 │  │  │  • libp2p peer ID           │   │  • contact_requests table   │ │  │
-│     │  • Payload signing          │   │  • Avatar path storage      │    │
-│  │  │  • P2P node management      │   │                             │ │  │
+│     │  • Payload signing          │   │  • messages table            │    │
+│  │  │  • P2P node management      │   │  • Avatar path storage      │ │  │
 │     │  • Peer discovery & relay   │   │                             │    │
 │  │  │  • Message send/receive     │   │                             │ │  │
 │     └──────────────┬──────────────┘   └─────────────────────────────┘    │
@@ -132,7 +132,7 @@
 |-----------|------------|-------------|
 | Flutter Application | Dart/Flutter | Main application with UI, business logic, P2P service, and data access |
 | JavaScript Runtime | WebView + esbuild bundle | Executes crypto operations and P2P networking using libp2p libraries |
-| SQLite Database | sqflite / sqflite_common_ffi | Persists identity, contacts, and contact requests locally |
+| SQLite Database | sqflite / sqflite_common_ffi | Persists identity, contacts, contact requests, and messages locally |
 | File System | path_provider | Stores avatar images in app documents directory |
 | Rendezvous / Relay Server | libp2p | External server for peer discovery and NAT traversal relay |
 
@@ -141,7 +141,7 @@
 | From | To | Protocol | Description |
 |------|-----|----------|-------------|
 | Flutter App | JS Runtime | JSON via JavaScriptChannel | Request/response for identity, signing, and P2P operations |
-| Flutter App | SQLite | SQL via sqflite | CRUD operations for identity, contacts, and contact requests |
+| Flutter App | SQLite | SQL via sqflite | CRUD operations for identity, contacts, contact requests, and messages |
 | Flutter App | File System | dart:io | Read/write avatar images |
 | JS Runtime | Rendezvous Server | WebSocket (libp2p) | Peer discovery, relay circuits, and messaging |
 
@@ -220,13 +220,29 @@
 │  │  │  │              FeedScreen [Widget]                          │   │  │ │
 │  │  │  │                                                           │   │  │ │
 │  │  │  │  ┌────────────────┐  ┌────────────────┐  ┌────────────┐  │   │  │ │
-│  │  │  │  │FeedHeader      │  │ConnectionCard  │                  │   │  │ │
-│  │  │  │  │(username+avatar)│  │(inline badge)  │                  │   │  │ │
-│  │  │  │  └────────────────┘  └────────────────┘                  │   │  │ │
+│  │  │  │  │FeedHeader      │  │ConnectionCard  │  │MessageFeed │  │   │  │ │
+│  │  │  │  │(username+avatar)│  │(inline badge)  │  │Card (reply)│  │   │  │ │
+│  │  │  │  └────────────────┘  └────────────────┘  └────────────┘  │   │  │ │
 │  │  │  │  ┌────────────────┐  ┌────────────────┐                  │   │  │ │
 │  │  │  │  │FeedNavBar      │  │NavBarButton    │                  │   │  │ │
 │  │  │  │  │(glass, 3 tabs) │  │(active/inactive)│                  │   │  │ │
 │  │  │  │  └────────────────┘  └────────────────┘                  │   │  │ │
+│  │  │  └──────────────────────────────────────────────────────────┘   │  │ │
+│  │  └─────────────────────────────────────────────────────────────────┘  │ │
+│  │                                                                        │ │
+│  │  ┌─────────────────────────────────────────────────────────────────┐  │ │
+│  │  │                  CONVERSATION FEATURE                           │  │ │
+│  │  │  ┌──────────────────────────────────────────────────────────┐   │  │ │
+│  │  │  │         ConversationScreen [Widget]                       │   │  │ │
+│  │  │  │                                                           │   │  │ │
+│  │  │  │  ┌────────────────┐  ┌────────────────┐  ┌────────────┐  │   │  │ │
+│  │  │  │  │Conversation    │  │LetterCard      │  │ComposeArea │  │   │  │ │
+│  │  │  │  │Header (glass)  │  │(full-width msg)│  │(text+send) │  │   │  │ │
+│  │  │  │  └────────────────┘  └────────────────┘  └────────────┘  │   │  │ │
+│  │  │  │  ┌────────────────┐  ┌────────────────┐  ┌────────────┐  │   │  │ │
+│  │  │  │  │EmptyConversatio│  │CompactOrigin   │  │DateSeparat.│  │   │  │ │
+│  │  │  │  │nState (glow)   │  │Marker          │  │(day divide)│  │   │  │ │
+│  │  │  │  └────────────────┘  └────────────────┘  └────────────┘  │   │  │ │
 │  │  │  └──────────────────────────────────────────────────────────┘   │  │ │
 │  │  └─────────────────────────────────────────────────────────────────┘  │ │
 │  │                                                                        │ │
@@ -282,6 +298,23 @@
 │  │  │ Message()        │  │ [Service: monitors P2P message stream]   │   │ │
 │  │  │ [Use Case]       │  │                                          │   │ │
 │  │  └──────────────────┘  └──────────────────────────────────────────┘   │ │
+│  │                                                                        │ │
+│  │  ── Conversation ─────────────────────────────────────────────────── │ │
+│  │  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────────┐ │ │
+│  │  │ sendChat         │  │ handleIncoming   │  │ loadConversation()   │ │ │
+│  │  │ Message()        │  │ ChatMessage()    │  │ [Use Case]           │ │ │
+│  │  │ [Use Case]       │  │ [Use Case]       │  │                      │ │ │
+│  │  └──────────────────┘  └──────────────────┘  └──────────────────────┘ │ │
+│  │  ┌──────────────────────────────────────────┐                         │ │
+│  │  │ ChatMessageListener                      │                         │ │
+│  │  │ [Service: monitors chatMessageStream]    │                         │ │
+│  │  └──────────────────────────────────────────┘                         │ │
+│  │                                                                        │ │
+│  │  ── Feed ─────────────────────────────────────────────────────────── │ │
+│  │  ┌──────────────────┐                                                 │ │
+│  │  │ loadFeed()       │                                                 │ │
+│  │  │ [Use Case]       │                                                 │ │
+│  │  └──────────────────┘                                                 │ │
 │  └────────────────────────────────────────────────────────────────────────┘ │
 │                                                                              │
 │  ┌────────────────────────────────────────────────────────────────────────┐ │
@@ -300,10 +333,14 @@
 │  │  │  ChatMessage     │  │ QRPayloadModel   │  │ FeedItem (abstract)  │ │ │
 │  │  │  [P2P Model]     │  │ [QR Model]       │  │ [Feed Model]         │ │ │
 │  │  └──────────────────┘  └──────────────────┘  └──────────────────────┘ │ │
-│  │  ┌──────────────────┐                                                 │ │
-│  │  │ ConnectionFeed   │  Extends FeedItem                               │ │
-│  │  │ Item [Feed Model]│                                                 │ │
-│  │  └──────────────────┘                                                 │ │
+│  │  ┌──────────────────┐  ┌──────────────────┐                           │ │
+│  │  │ ConnectionFeed   │  │ MessageFeedItem  │  Both extend FeedItem     │ │
+│  │  │ Item [Feed Model]│  │ [Feed Model]     │                           │ │
+│  │  └──────────────────┘  └──────────────────┘                           │ │
+│  │  ┌──────────────────┐  ┌──────────────────┐                           │ │
+│  │  │ Conversation     │  │ MessagePayload   │                           │ │
+│  │  │ Message [Model]  │  │ [Wire Model]     │                           │ │
+│  │  └──────────────────┘  └──────────────────┘                           │ │
 │  │                                                                        │ │
 │  │  ── Repositories ──────────────────────────────────────────────────── │ │
 │  │  ┌──────────────────────┐  ┌──────────────────────────────────────┐   │ │
@@ -312,6 +349,10 @@
 │  │  └──────────────────────┘  └──────────────────────────────────────┘   │ │
 │  │  ┌──────────────────────────────────────────┐                         │ │
 │  │  │  ContactRequestRepository                │                         │ │
+│  │  │  [Interface + Impl]                      │                         │ │
+│  │  └──────────────────────────────────────────┘                         │ │
+│  │  ┌──────────────────────────────────────────┐                         │ │
+│  │  │  MessageRepository                       │                         │ │
 │  │  │  [Interface + Impl]                      │                         │ │
 │  │  └──────────────────────────────────────────┘                         │ │
 │  └────────────────────────────────────────────────────────────────────────┘ │
@@ -334,14 +375,23 @@
 │  │  │   P2PService [Interface] → P2PServiceImpl│                         │ │
 │  │  │   Reactive streams for state + messages  │                         │ │
 │  │  └──────────────────────────────────────────┘                         │ │
+│  │  ┌──────────────────────────────────────────┐                         │ │
+│  │  │   IncomingMessageRouter                  │                         │ │
+│  │  │   Routes P2P msgs → typed streams        │                         │ │
+│  │  │   (contactRequest, chatMessage, unknown)  │                         │ │
+│  │  └──────────────────────────────────────────┘                         │ │
 │  │                                                                        │ │
 │  │  ── Database ──────────────────────────────────────────────────────── │ │
 │  │  ┌──────────────────────────┐  ┌──────────────────────────────────┐   │ │
 │  │  │  identity_db_helpers     │  │  contacts_db_helpers             │   │ │
 │  │  └──────────────────────────┘  └──────────────────────────────────┘   │ │
 │  │  ┌──────────────────────────┐  ┌──────────────────────────────────┐   │ │
-│  │  │  contact_requests_db_    │  │  001_identity_table migration    │   │ │
-│  │  │  helpers                 │  │  (creates all 3 tables)          │   │ │
+│  │  │  contact_requests_db_    │  │  messages_db_helpers             │   │ │
+│  │  │  helpers                 │  │                                  │   │ │
+│  │  └──────────────────────────┘  └──────────────────────────────────┘   │ │
+│  │  ┌──────────────────────────┐  ┌──────────────────────────────────┐   │ │
+│  │  │  001_identity_table      │  │  002_messages_table migration    │   │ │
+│  │  │  migration (3 tables)    │  │  (messages table + indexes)      │   │ │
 │  │  └──────────────────────────┘  └──────────────────────────────────┘   │ │
 │  │                                                                        │ │
 │  │  ── Utils ─────────────────────────────────────────────────────────── │ │
@@ -406,11 +456,23 @@
 │  │  Rendezvous register       │  │  │  │  DEFAULT 'pending'            │  │
 │  │  Rendezvous discover       │  │  │  └────────────────────────────────┘  │
 │  │  Peer dial/disconnect      │  │  │                                      │
-│  │  Message send/receive      │  │  └──────────────────────────────────────┘
-│  │                            │  │
-│  │  Uses:                     │  │
-│  │  • @libp2p/* suite         │  │
-│  └────────────────────────────┘  │
+│  │  Message send/receive      │  │  │  ┌────────────────────────────────┐  │
+│  │                            │  │  │  │        messages table          │  │
+│  │  Uses:                     │  │  │  │        (v2 migration)          │  │
+│  │  • @libp2p/* suite         │  │  │  │                                │  │
+│  └────────────────────────────┘  │  │  │  id TEXT PRIMARY KEY           │  │
+│                                  │  │  │  contact_peer_id TEXT NOT NULL │  │
+│                                  │  │  │  sender_peer_id TEXT NOT NULL  │  │
+│                                  │  │  │  text TEXT NOT NULL            │  │
+│                                  │  │  │  timestamp TEXT NOT NULL       │  │
+│                                  │  │  │  status TEXT DEFAULT 'sent'    │  │
+│                                  │  │  │  is_incoming INTEGER NOT NULL  │  │
+│                                  │  │  │  created_at TEXT NOT NULL      │  │
+│                                  │  │  │  INDEX idx_messages_contact    │  │
+│                                  │  │  │  INDEX idx_messages_ts         │  │
+│                                  │  │  └────────────────────────────────┘  │
+│                                  │  │                                      │
+│                                  │  └──────────────────────────────────────┘
 └──────────────────────────────────┘
 ```
 
@@ -442,14 +504,25 @@
 | ContactRequestDialog | Widget | Accept/Decline modal with RingAvatar |
 | PendingRequestsBadge | Widget | Circular count badge (shows 99+ max) |
 | **Feed Feature** | | |
-| FeedScreen | Widget | Main feed UI displaying connection cards |
-| FeedWired | Widget | Feed orchestration: loads identity, builds initial feed, listens for contact requests |
+| FeedScreen | Widget | Main feed UI displaying connection and message cards |
+| FeedWired | Widget | Feed orchestration: loads identity, builds initial feed, listens for contact requests and messages |
 | FeedHeader | Widget | Sticky header with username and ring avatar |
 | FeedNavigationBar | Widget | Bottom glassmorphic nav bar with 3 SVG tabs (feed, orbit, remember) |
 | NavBarButton | Widget | Individual nav bar tab button (active/inactive states) |
 | ConnectionCard | Widget | Card displaying a contact connection with ring avatar and inline green checkmark badge |
+| MessageFeedCard | Widget | Incoming message card with contact avatar, message preview, and reply button |
 | CheckmarkBurstAnimation | Widget | Animated checkmark with expanding ring burst effect (unused/orphaned) |
 | FeedRouteTransition | Route | Slide-up page transition for feed navigation |
+| **Conversation Feature** | | |
+| ConversationScreen | Widget | Pure UI: letter cards, empty state with breathing glow, compose area |
+| ConversationWired | Widget | Business logic: load messages, optimistic send, listen for incoming, scroll management |
+| LetterCard | Widget | Full-width message card with left accent (received) / right accent (sent) and delivery status |
+| ComposeArea | Widget | Auto-growing text field with glassmorphic styling and animated send button |
+| EmptyConversationState | Widget | Breathing glow avatar, "Connected!" label, connection date, writing prompt |
+| ConversationHeader | Widget | Frosted-glass sticky header with back button, contact avatar + name, connection status |
+| CompactOriginMarker | Widget | Compact connection origin marker at top of conversation (48px avatar) |
+| DateSeparator | Widget | Date divider between letter cards spanning different days with gradient lines |
+| ConversationRouteTransition | Route | Slide-up page transition (420ms easeOutCubic) |
 | **Shared Widgets** | | |
 | AmbientBackground | Widget | Animated green/red glow background |
 | GlassmorphicContainer | Widget | Frosted glass effect container |
@@ -474,7 +547,16 @@
 | acceptContactRequest() | Use Case | Converts request to contact, updates status |
 | declineContactRequest() | Use Case | Updates request status to declined |
 | handleIncomingMessage() | Use Case | Parses P2P message, validates signature, stores request |
-| ContactRequestListener | Service | Monitors P2P message stream, broadcasts new requests to UI |
+| ContactRequestListener | Service | Monitors contactRequestStream, broadcasts new requests to UI |
+| **Conversation Use Cases** | | |
+| sendChatMessage() | Use Case | Builds MessagePayload, discovers peer, dials, sends with 3x retry, persists optimistically |
+| handleIncomingChatMessage() | Use Case | Parses P2P message, validates sender is contact, detects name changes, persists |
+| loadConversation() | Use Case | Loads all messages for a contact, ordered by timestamp ASC |
+| ChatMessageListener | Service | Monitors chatMessageStream, broadcasts persisted ConversationMessages and contact updates to UI |
+| **Feed Use Cases** | | |
+| loadFeed() | Use Case | Loads initial feed from DB: contacts + latest messages per contact |
+| **Core Services** | | |
+| IncomingMessageRouter | Service | Routes P2P messages by envelope type to contactRequestStream, chatMessageStream, unknownStream |
 | **Domain** | | |
 | IdentityModel | Entity | Immutable data class for identity (peerId, keys, mnemonic, username, avatarPath) |
 | ContactModel | Entity | Contact from QR scan (peerId, publicKey, rendezvous, username, signature, scannedAt) |
@@ -485,20 +567,26 @@
 | ChatMessage | P2P Model | P2P message (from, to, content, timestamp, isIncoming) |
 | FeedItem | Abstract Entity | Base class for feed items (id, timestamp, type) |
 | ConnectionFeedItem | Entity | Feed item for new connections (extends FeedItem) |
-| FeedItemType | Enum | Feed item types: connection |
+| MessageFeedItem | Entity | Feed item for incoming messages (extends FeedItem, contactPeerId, messageText, messageTime) |
+| FeedItemType | Enum | Feed item types: connection, message |
+| ConversationMessage | Entity | Message in a conversation (id, contactPeerId, senderPeerId, text, status, isIncoming) |
+| MessagePayload | Wire Model | Chat message envelope: `{ "type": "chat_message", "version": "1", "payload": {...} }` |
 | IdentityRepository | Interface + Impl | Abstracts identity persistence |
 | ContactRepository | Interface + Impl | Abstracts contact persistence (add, get, getAll, delete, exists, count) |
 | ContactRequestRepository | Interface + Impl | Abstracts request persistence (add, get, getPending, updateStatus, delete, exists) |
+| MessageRepository | Interface + Impl | Abstracts message persistence (save, getForContact, getLatest, updateStatus, exists) |
 | **Core** | | |
 | WebViewJsBridge | Bridge Client | Sends requests to JS runtime, manages event handlers |
 | P2PBridgeClient | Bridge Client | P2P-specific bridge calls (start, stop, status, register, discover, dial, disconnect, send) |
 | JsBridgeClient | Bridge Helpers | Identity + signing bridge helper functions |
 | P2PService / P2PServiceImpl | Service | Reactive P2P service with state and message streams |
+| IncomingMessageRouter | Service | Routes P2P messages by JSON envelope type to typed broadcast streams |
 | RingAvatarGenerator | Utility | Deterministic avatar from peerId via DJB2 hash |
 | KeyConversion | Utility | base64ToHex, hexToBase64, bytesToHex, hexToBytes |
 | FlowEventEmitter | Utility | Structured logging across all layers |
 | NetworkConstants | Constants | Rendezvous address constant |
-| Database Helpers | DB Access | Low-level SQL operations for all 3 tables |
+| ChatConsoleLogger | Utility | Debug logging for chat messages with shortened peer IDs |
+| Database Helpers | DB Access | Low-level SQL operations for all 4 tables |
 | AppColors / AppTheme | Theme | Color constants and ThemeData for dark theme |
 | GlassmorphicContainer | Theme | Frosted glass effect widget |
 
@@ -837,6 +925,7 @@
   │         FeedItemType                │
   ├─────────────────────────────────────┤
   │ + connection                        │
+  │ + message                           │
   └─────────────────────────────────────┘
 
   ┌─────────────────────────────────────┐
@@ -860,6 +949,16 @@
   └─────────────────────────────────────┘
 
   ┌─────────────────────────────────────┐
+  │       MessageFeedItem               │
+  ├─────────────────────────────────────┤
+  │ + contactPeerId: String             │
+  │ + contactUsername: String            │
+  │ + messageId: String                 │
+  │ + messageText: String               │
+  │ + messageTime: String               │
+  └─────────────────────────────────────┘
+
+  ┌─────────────────────────────────────┐
   │    FeedWired                        │
   ├─────────────────────────────────────┤
   │ + repository: IdentityRepository    │
@@ -880,6 +979,106 @@
   │ + _onContactRequest(Model)          │
   │ + _acceptRequest(ctx, Model)        │
   │ + _declineRequest(ctx, Model)       │
+  └─────────────────────────────────────┘
+
+
+  ── Conversation Domain ─────────────────────────────────────────────────
+
+  ┌─────────────────────────────────────┐
+  │       ConversationMessage           │
+  ├─────────────────────────────────────┤
+  │ + id: String (UUID)                 │
+  │ + contactPeerId: String             │
+  │ + senderPeerId: String              │
+  │ + text: String                      │
+  │ + timestamp: String                 │
+  │ + status: String                    │
+  │   ('sending'|'sent'|'delivered'|    │
+  │    'failed')                        │
+  │ + isIncoming: bool                  │
+  │ + createdAt: String                 │
+  ├─────────────────────────────────────┤
+  │ + fromMap(Map): ConversationMessage │
+  │ + toMap(): Map                      │
+  │ + copyWith(): ConversationMessage   │
+  └─────────────────────────────────────┘
+
+  ┌─────────────────────────────────────┐
+  │       MessagePayload                │
+  ├─────────────────────────────────────┤
+  │ + id: String                        │
+  │ + text: String                      │
+  │ + senderPeerId: String              │
+  │ + senderUsername: String             │
+  │ + timestamp: String                 │
+  ├─────────────────────────────────────┤
+  │ + fromJson(String): MessagePayload? │
+  │ + toJson(): String                  │
+  │ + toConversationMessage(): Model    │
+  └─────────────────────────────────────┘
+
+  ┌─────────────────────────────────────┐
+  │         <<abstract>>                │
+  │       MessageRepository             │
+  ├─────────────────────────────────────┤
+  │ + saveMessage(Model): void          │
+  │ + getMessagesForContact(id): List   │
+  │ + getLatestMessageForContact(): Msg?│
+  │ + updateMessageStatus(id, s): void  │
+  │ + messageExists(id): bool           │
+  └──────────────────┬──────────────────┘
+                     │ implements
+                     ▼
+  ┌─────────────────────────────────────┐
+  │     MessageRepositoryImpl           │
+  ├─────────────────────────────────────┤
+  │ - dbInsertMessage: Function         │
+  │ - dbLoadMessagesForContact: Function│
+  │ - dbLoadLatestMessageForContact: Fn │
+  │ - dbUpdateMessageStatus: Function   │
+  │ - dbLoadMessage: Function           │
+  └─────────────────────────────────────┘
+
+
+  ── Conversation Services ──────────────────────────────────────────────
+
+  ┌─────────────────────────────────────┐
+  │     ChatMessageListener             │
+  ├─────────────────────────────────────┤
+  │ - chatMessageStream: Stream         │
+  │ - messageRepo: MessageRepository    │
+  │ - contactRepo: ContactRepository    │
+  │ - _subscription: StreamSubscription │
+  │ - _messageController: StreamCtrl    │
+  │ - _contactUpdatedController: Ctrl   │
+  ├─────────────────────────────────────┤
+  │ + incomingMessageStream: Stream     │
+  │ + contactUpdatedStream: Stream      │
+  │ + start(): void                     │
+  │ + stop(): void                      │
+  │ + dispose(): void                   │
+  │ - _onMessage(ChatMessage): void     │
+  └─────────────────────────────────────┘
+
+
+  ── Incoming Message Router ────────────────────────────────────────────
+
+  ┌─────────────────────────────────────┐
+  │     IncomingMessageRouter           │
+  ├─────────────────────────────────────┤
+  │ - p2pService: P2PService            │
+  │ - _subscription: StreamSubscription │
+  │ - _contactRequestCtrl: StreamCtrl   │
+  │ - _chatMessageCtrl: StreamCtrl      │
+  │ - _unknownCtrl: StreamCtrl          │
+  ├─────────────────────────────────────┤
+  │ + contactRequestStream: Stream      │
+  │ + chatMessageStream: Stream         │
+  │ + unknownMessageStream: Stream      │
+  │ + start(): void                     │
+  │ + stop(): void                      │
+  │ + dispose(): void                   │
+  │ - _route(ChatMessage): void         │
   └─────────────────────────────────────┘
 
 
@@ -986,6 +1185,18 @@
   │ + pending                           │
   │ + accepted                          │
   │ + declined                          │
+  └─────────────────────────────────────┘
+
+  ┌─────────────────────────────────────┐        ┌─────────────────────────┐
+  │         <<enum>>                    │        │      <<enum>>           │
+  │    SendChatMessageResult            │        │ HandleChatMessageResult │
+  ├─────────────────────────────────────┤        ├─────────────────────────┤
+  │ + success                           │        │ + chatMessage           │
+  │ + nodeNotRunning                    │        │ + notChatMessage        │
+  │ + invalidMessage                    │        │ + unknownSender         │
+  │ + peerNotFound                      │        │ + duplicate             │
+  │ + dialFailed                        │        └─────────────────────────┘
+  │ + sendFailed                        │
   └─────────────────────────────────────┘
 
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -1116,6 +1327,38 @@
   ): Future<bool>
 
 
+  FLUTTER USE CASES - CONVERSATION:
+  ──────────────────────────────────
+  sendChatMessage(
+    p2pService: P2PService,
+    messageRepo: MessageRepository,
+    targetPeerId: String,
+    text: String,
+    senderPeerId: String,
+    senderUsername: String,
+    {messageId?: String, timestamp?: String}
+  ): Future<(SendChatMessageResult, ConversationMessage?)>
+
+  handleIncomingChatMessage(
+    message: ChatMessage,
+    messageRepo: MessageRepository,
+    contactRepo: ContactRepository
+  ): Future<(HandleChatMessageResult, ConversationMessage?, ContactModel?)>
+
+  loadConversation(
+    messageRepo: MessageRepository,
+    contactPeerId: String
+  ): Future<List<ConversationMessage>>
+
+
+  FLUTTER USE CASES - FEED:
+  ─────────────────────────
+  loadFeed(
+    contactRepo: ContactRepository,
+    messageRepo: MessageRepository
+  ): Future<List<FeedItem>>
+
+
   FLUTTER USE CASES - CONTACTS:
   ─────────────────────────────
   addContact(
@@ -1197,6 +1440,17 @@
   dbUpdateRequestStatus(db: Database, peerId: String, status: String): Future<void>
   dbDeleteRequest(db: Database, peerId: String): Future<void>
   dbRequestExists(db: Database, peerId: String): Future<bool>
+
+
+  FLUTTER DB HELPERS - MESSAGES:
+  ──────────────────────────────
+  dbInsertMessage(db: Database, row: Map<String, Object?>): Future<void>
+  dbLoadMessagesForContact(db: Database, contactPeerId: String): Future<List<Map>>
+  dbLoadLatestMessageForContact(db: Database, contactPeerId: String): Future<Map?>
+  dbUpdateMessageStatus(db: Database, id: String, status: String): Future<void>
+  dbLoadMessage(db: Database, id: String): Future<Map?>
+  dbGetMessageCount(db: Database): Future<int>
+  runMessagesTableMigration(db: Database): Future<void>   ← creates messages table + indexes
 
 
   FLUTTER UTILS:
@@ -1335,9 +1589,20 @@
                                                                    └──────► ContactRequestRepo.updateStatus()
 
 
-  ContactRequestListener (background service)
+  IncomingMessageRouter (background service)
        │
        └──────► P2PService.messageStream (subscribe)
+                      │
+                      ├──────► contactRequestStream (type = "contact_request")
+                      │
+                      ├──────► chatMessageStream (type = "chat_message")
+                      │
+                      └──────► unknownMessageStream (other types)
+
+
+  ContactRequestListener (background service)
+       │
+       └──────► IncomingMessageRouter.contactRequestStream (subscribe)
                       │
                       └──────► handleIncomingMessage()
                                      │
@@ -1350,6 +1615,48 @@
                                      ├──────► ContactRequestRepo.requestExists()
                                      │
                                      └──────► ContactRequestRepo.addRequest()
+
+
+  ChatMessageListener (background service)
+       │
+       └──────► IncomingMessageRouter.chatMessageStream (subscribe)
+                      │
+                      └──────► handleIncomingChatMessage()
+                                     │
+                                     ├──────► Parse MessagePayload from JSON envelope
+                                     │
+                                     ├──────► ContactRepository.getContact() (validate sender)
+                                     │
+                                     ├──────► MessageRepository.messageExists() (duplicate check)
+                                     │
+                                     ├──────► ContactRepository.addContact() (if username changed)
+                                     │
+                                     └──────► MessageRepository.saveMessage()
+
+
+  ConversationWired
+       │
+       ├──────► loadConversation()
+       │              │
+       │              └──────► MessageRepository.getMessagesForContact()
+       │
+       ├──────► _onSend(text) → sendChatMessage()
+       │              │
+       │              ├──────► MessageRepository.saveMessage() (optimistic persist)
+       │              │
+       │              ├──────► P2PService.discoverPeer()
+       │              │
+       │              ├──────► P2PService.dialPeer()
+       │              │
+       │              └──────► P2PService.sendMessage() (3x retry)
+       │
+       ├──────► ChatMessageListener.incomingMessageStream (subscribe)
+       │              │
+       │              └──────► Filter by contactPeerId, update _messages
+       │
+       └──────► ChatMessageListener.contactUpdatedStream (subscribe)
+                      │
+                      └──────► Update _contact when username changes
 
 
   P2PServiceImpl
@@ -1374,9 +1681,10 @@
 
 ```
 lib/
-├── main.dart                                    # App entry point, DI setup
+├── main.dart                                    # App entry point, DB setup, DI (8 deps)
 ├── smoke_test_main.dart                         # Smoke test entry point
 ├── smoke_test_restore.dart                      # Smoke test for identity restore
+├── smoke_test_messages.dart                     # Smoke test for messages DB layer
 ├── core/
 │   ├── bridge/
 │   │   ├── js_bridge_client.dart               # JsBridge interface + identity/signing helpers
@@ -1386,14 +1694,17 @@ lib/
 │   │   └── network_constants.dart              # Rendezvous address
 │   ├── database/
 │   │   ├── migrations/
-│   │   │   └── 001_identity_table.dart         # Schema migration (all 3 tables)
+│   │   │   ├── 001_identity_table.dart         # Schema v1 (identity, contacts, contact_requests)
+│   │   │   └── 002_messages_table.dart         # Schema v2 (messages table + indexes)
 │   │   └── helpers/
 │   │       ├── identity_db_helpers.dart        # Identity DB CRUD
 │   │       ├── contacts_db_helpers.dart        # Contacts DB CRUD
-│   │       └── contact_requests_db_helpers.dart # Contact Requests DB CRUD
+│   │       ├── contact_requests_db_helpers.dart # Contact Requests DB CRUD
+│   │       └── messages_db_helpers.dart        # Messages DB CRUD
 │   ├── services/
 │   │   ├── p2p_service.dart                    # P2PService abstract interface
-│   │   └── p2p_service_impl.dart               # P2PServiceImpl with streams
+│   │   ├── p2p_service_impl.dart               # P2PServiceImpl with streams
+│   │   └── incoming_message_router.dart        # Routes P2P messages by type to streams
 │   ├── theme/
 │   │   ├── app_colors.dart                     # Color constants (Custom1 dark)
 │   │   ├── app_theme.dart                      # ThemeData configuration
@@ -1402,7 +1713,8 @@ lib/
 │       ├── flow_event_emitter.dart             # Logging utility
 │       ├── key_conversion.dart                 # base64 ↔ hex conversion
 │       ├── ring_avatar_spec.dart               # Ring avatar constants + data models
-│       └── ring_avatar_generator.dart          # Deterministic avatar from peerId
+│       ├── ring_avatar_generator.dart          # Deterministic avatar from peerId
+│       └── chat_console_logger.dart           # Chat message debug logging
 │
 ├── features/
 │   ├── home/
@@ -1421,8 +1733,12 @@ lib/
 │   │
 │   ├── feed/
 │   │   ├── domain/
-│   │   │   └── models/
-│   │   │       └── feed_item.dart              # FeedItem base + ConnectionFeedItem
+│   │   │   ├── models/
+│   │   │   │   └── feed_item.dart              # FeedItem base + ConnectionFeedItem + MessageFeedItem
+│   │   │   └── utils/
+│   │   │       └── format_message_time.dart    # Message timestamp formatting
+│   │   ├── application/
+│   │   │   └── load_feed_use_case.dart         # Load initial feed from DB
 │   │   └── presentation/
 │   │       ├── screens/
 │   │       │   ├── feed_screen.dart            # Pure UI feed display
@@ -1432,9 +1748,37 @@ lib/
 │   │       │   ├── feed_navigation_bar.dart    # Bottom glass nav bar (3 tabs)
 │   │       │   ├── nav_bar_button.dart         # Individual nav button widget
 │   │       │   ├── connection_card.dart        # Contact connection card
+│   │       │   ├── message_feed_card.dart     # Incoming message card with reply
 │   │       │   └── checkmark_burst_animation.dart  # Animated checkmark
 │   │       └── navigation/
 │   │           └── feed_route_transition.dart   # Slide-up route transition
+│   │
+│   ├── conversation/
+│   │   ├── domain/
+│   │   │   ├── models/
+│   │   │   │   ├── conversation_message.dart   # ConversationMessage model
+│   │   │   │   └── message_payload.dart        # Wire-format envelope model
+│   │   │   └── repositories/
+│   │   │       ├── message_repository.dart     # Abstract interface
+│   │   │       └── message_repository_impl.dart # DB-backed implementation
+│   │   ├── application/
+│   │   │   ├── send_chat_message_use_case.dart # Send with 3x retry
+│   │   │   ├── handle_incoming_chat_message_use_case.dart
+│   │   │   ├── load_conversation_use_case.dart # Load messages for contact
+│   │   │   └── chat_message_listener.dart      # Background chat listener
+│   │   └── presentation/
+│   │       ├── screens/
+│   │       │   ├── conversation_screen.dart    # Pure UI: letter cards, compose
+│   │       │   └── conversation_wired.dart     # Business logic + optimistic UI
+│   │       ├── widgets/
+│   │       │   ├── letter_card.dart            # Full-width message card
+│   │       │   ├── compose_area.dart           # Text field + send button
+│   │       │   ├── empty_conversation_state.dart # Breathing glow empty state
+│   │       │   ├── conversation_header.dart    # Frosted-glass header
+│   │       │   ├── compact_origin_marker.dart  # Connection origin marker
+│   │       │   └── date_separator.dart         # Date divider
+│   │       └── navigation/
+│   │           └── conversation_route_transition.dart
 │   │
 │   ├── identity/
 │   │   ├── domain/
@@ -1771,6 +2115,104 @@ assets/
    │                   │                │                 │                 │                │
 ```
 
+### Send Chat Message Flow
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│              SEND CHAT MESSAGE - DATA FLOW                                   │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+  User          Conv Wired      sendChatMsg UC   MessageRepo        P2PService
+   │                 │                │                │                 │
+   │  Type + Send    │                │                │                 │
+   │────────────────>│                │                │                 │
+   │                 │                │                │                 │
+   │  Optimistic UI  │  Build         │                │                 │
+   │  (status:       │  MessagePayload│                │                 │
+   │   sending)      │  {id,text,     │                │                 │
+   │<────────────────│  sender,ts}    │                │                 │
+   │                 │                │                │                 │
+   │                 │  sendChat      │                │                 │
+   │                 │  Message()     │                │                 │
+   │                 │───────────────>│                │                 │
+   │                 │                │                │                 │
+   │                 │                │  saveMessage() │                 │
+   │                 │                │  (status:sent) │                 │
+   │                 │                │───────────────>│                 │
+   │                 │                │                │                 │
+   │                 │                │  discoverPeer()│                 │
+   │                 │                │───────────────────────────────>│
+   │                 │                │  (3x retry)    │                 │
+   │                 │                │                │                 │
+   │                 │                │  dialPeer()    │                 │
+   │                 │                │───────────────────────────────>│
+   │                 │                │                │                 │
+   │                 │                │  sendMessage() │                 │
+   │                 │                │  (JSON envelope)                 │
+   │                 │                │───────────────────────────────>│
+   │                 │                │                │                 │
+   │                 │                │  updateStatus()│                 │
+   │                 │                │  (delivered)   │                 │
+   │                 │                │───────────────>│                 │
+   │                 │                │                │                 │
+   │                 │  Result +      │                │                 │
+   │                 │  status update │                │                 │
+   │                 │<───────────────│                │                 │
+   │                 │                │                │                 │
+   │  Update tick    │                │                │                 │
+   │  (delivered)    │                │                │                 │
+   │<────────────────│                │                │                 │
+   │                 │                │                │                 │
+```
+
+### Incoming Chat Message Flow
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│              INCOMING CHAT MESSAGE - DATA FLOW                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+  P2PService     Msg Router     Chat Listener    handleMsg UC     Conv Wired     User
+   │                │                │                │                │           │
+   │  messageStream │                │                │                │           │
+   │  (ChatMessage) │                │                │                │           │
+   │───────────────>│                │                │                │           │
+   │                │                │                │                │           │
+   │                │  _route():     │                │                │           │
+   │                │  type=chat_msg │                │                │           │
+   │                │  chatMessage   │                │                │           │
+   │                │  Stream.add()  │                │                │           │
+   │                │───────────────>│                │                │           │
+   │                │                │                │                │           │
+   │                │                │  handleIncoming│                │           │
+   │                │                │  ChatMessage() │                │           │
+   │                │                │───────────────>│                │           │
+   │                │                │                │                │           │
+   │                │                │                │  Parse payload │           │
+   │                │                │                │  Validate      │           │
+   │                │                │                │  sender is     │           │
+   │                │                │                │  contact       │           │
+   │                │                │                │  Check dup     │           │
+   │                │                │                │  Detect name   │           │
+   │                │                │                │  change        │           │
+   │                │                │                │  Save message  │           │
+   │                │                │                │                │           │
+   │                │                │  (chatMessage, │                │           │
+   │                │                │   Model)       │                │           │
+   │                │                │<───────────────│                │           │
+   │                │                │                │                │           │
+   │                │                │  incoming      │                │           │
+   │                │                │  MessageStream │                │           │
+   │                │                │  .add(msg)     │                │           │
+   │                │                │───────────────────────────────>│           │
+   │                │                │                │                │           │
+   │                │                │                │                │  New       │
+   │                │                │                │                │  letter    │
+   │                │                │                │                │  card      │
+   │                │                │                │                │──────────>│
+   │                │                │                │                │           │
+```
+
 ### Avatar Upload Flow
 
 ```
@@ -1873,13 +2315,20 @@ The application initialization sequence is defined in `lib/main.dart`. Understan
     │           databaseFactory = databaseFactoryFfi
     │           Desktop platforms require FFI for SQLite
     │
-    ├─► openDatabase('identity.db', version: 1)
+    ├─► openDatabase('identity.db', version: 2)
     │       │
-    │       └─► onCreate callback (first run only)
+    │       ├─► onCreate callback (first run only)
+    │       │       │
+    │       │       ├─► runIdentityTableMigration(db)
+    │       │       │       Creates identity, contacts, contact_requests
+    │       │       │
+    │       │       └─► runMessagesTableMigration(db)
+    │       │               Creates messages table + indexes
+    │       │
+    │       └─► onUpgrade callback (v1 → v2)
     │               │
-    │               └─► runIdentityTableMigration(db)
-    │                       Creates identity, contacts, and
-    │                       contact_requests tables
+    │               └─► runMessagesTableMigration(db)
+    │                       Creates messages table for existing installs
     │
     ├─► Repository instantiation (4 repositories)
     │       │
@@ -1887,7 +2336,9 @@ The application initialization sequence is defined in `lib/main.dart`. Understan
     │       │
     │       ├─► ContactRepositoryImpl (6 db helper functions)
     │       │
-    │       └─► ContactRequestRepositoryImpl (6 db helper functions)
+    │       ├─► ContactRequestRepositoryImpl (6 db helper functions)
+    │       │
+    │       └─► MessageRepositoryImpl (5 db helper functions)
     │
     ├─► WebViewJsBridge instantiation + initialize()
     │       │
@@ -1900,11 +2351,23 @@ The application initialization sequence is defined in `lib/main.dart`. Understan
     │       └─► Wraps WebViewJsBridge with reactive streams
     │           stateStream (NodeState) + messageStream (ChatMessage)
     │
-    ├─► ContactRequestListener instantiation + start()
+    ├─► IncomingMessageRouter instantiation + start()
     │       │
     │       └─► Subscribes to P2PService.messageStream
+    │           Routes to typed streams by envelope type
+    │           contactRequestStream, chatMessageStream, unknownStream
+    │
+    ├─► ContactRequestListener instantiation + start()
+    │       │
+    │       └─► Subscribes to messageRouter.contactRequestStream
     │           Monitors for incoming contact requests
     │           Broadcasts to requestStream for UI
+    │
+    ├─► ChatMessageListener instantiation + start()
+    │       │
+    │       └─► Subscribes to messageRouter.chatMessageStream
+    │           Monitors for incoming chat messages
+    │           Broadcasts to incomingMessageStream + contactUpdatedStream
     │
     └─► runApp(MyApp)
             │
@@ -1926,11 +2389,14 @@ The application initialization sequence is defined in `lib/main.dart`. Understan
 
 | File | Responsibility |
 |------|----------------|
-| `lib/main.dart` | Entry point, DB setup, repository + service + listener DI |
-| `lib/core/database/migrations/001_identity_table.dart` | Schema migration (3 tables) |
+| `lib/main.dart` | Entry point, DB setup, repository + service + listener DI (8 deps) |
+| `lib/core/database/migrations/001_identity_table.dart` | Schema v1 migration (3 tables) |
+| `lib/core/database/migrations/002_messages_table.dart` | Schema v2 migration (messages table) |
+| `lib/core/services/incoming_message_router.dart` | P2P message routing by type |
 | `lib/core/bridge/webview_js_bridge.dart` | JS runtime initialization + event handlers |
 | `lib/core/services/p2p_service_impl.dart` | P2P service initialization |
-| `lib/features/contact_request/application/contact_request_listener.dart` | Background listener startup |
+| `lib/features/contact_request/application/contact_request_listener.dart` | Background contact request listener startup |
+| `lib/features/conversation/application/chat_message_listener.dart` | Background chat message listener startup |
 | `lib/features/identity/presentation/startup_router.dart` | Route decision logic |
 | `lib/features/identity/application/startup_decision.dart` | Business logic for routing |
 
@@ -1940,7 +2406,7 @@ To add a new initialization step:
 1. Add async initialization code in `main()` before `runApp()`
 2. Inject dependencies into `MyApp` constructor
 3. Pass dependencies through `StartupRouter` to child widgets
-4. For new migrations, create `002_*.dart` and update `openDatabase` version
+4. For new migrations, create `003_*.dart` and update `openDatabase` version
 5. For new P2P event handlers, register on `WebViewJsBridge` in `P2PServiceImpl`
 
 ---
@@ -1969,6 +2435,7 @@ The application has **active P2P networking** via the JavaScript runtime. Identi
                          │   │  • Profile management       │   │
                          │   │  • SQLite persistence       │   │
                          │   │  • Contact management       │   │
+                         │   │  • Message persistence      │   │
                          │   │  • Ring avatar generation   │   │
                          │   └─────────────────────────────┘   │
                          │                                     │
@@ -1981,6 +2448,7 @@ The application has **active P2P networking** via the JavaScript runtime. Identi
                          │   │  • Peer dialing             │   │
                          │   │  • Message send/receive     │   │
                          │   │  • Contact request exchange │   │
+                         │   │  • Chat message exchange    │   │
                          │   └──────────────┬──────────────┘   │
                          │                  │                   │
                          └──────────────────┼───────────────────┘
@@ -2047,6 +2515,24 @@ Contact requests are sent as structured P2P messages:
     "ts": "<ISO8601-timestamp>",
     "un": "<username>",
     "sig": "<base64-signature>"
+  }
+}
+```
+
+### P2P Chat Message Protocol
+
+Chat messages are sent as structured P2P messages:
+
+```json
+{
+  "type": "chat_message",
+  "version": "1",
+  "payload": {
+    "id": "<uuid-v4>",
+    "text": "<message-text>",
+    "senderPeerId": "<sender-peer-id>",
+    "senderUsername": "<display-name>",
+    "timestamp": "<ISO8601-timestamp>"
   }
 }
 ```
