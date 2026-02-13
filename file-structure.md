@@ -6,10 +6,10 @@
 flutter_app/
 ├── assets/
 │   ├── js/
-│   │   ├── bridge.html                             # WebView HTML wrapper
+│   │   ├── bridge.html                             # WebView HTML wrapper (routes inbox:* commands)
 │   │   ├── core_lib.js                             # Bundled JS identity/signing (generated)
 │   │   ├── core_lib.js.map                         # Source map for core_lib.js
-│   │   ├── p2p_lib.js                              # Bundled JS P2P networking (generated)
+│   │   ├── p2p_lib.js                              # Bundled JS P2P networking + inbox (generated)
 │   │   └── test.html                               # Test HTML for bridge debugging
 │   └── icons/
 │       ├── nav_feed.svg                             # Feed tab icon
@@ -26,7 +26,7 @@ flutter_app/
 │   │   ├── bridge/
 │   │   │   ├── js_bridge_client.dart           # JsBridge interface + identity/signing helpers
 │   │   │   ├── webview_js_bridge.dart          # WebView implementation + event handlers
-│   │   │   └── p2p_bridge_client.dart          # P2P-specific bridge calls
+│   │   │   └── p2p_bridge_client.dart          # P2P-specific bridge calls + inbox store/retrieve
 │   │   │
 │   │   ├── constants/
 │   │   │   └── network_constants.dart          # Rendezvous address constant
@@ -42,8 +42,8 @@ flutter_app/
 │   │   │       └── messages_db_helpers.dart     # Messages table CRUD (insert, load, update status)
 │   │   │
 │   │   ├── services/
-│   │   │   ├── p2p_service.dart                # P2PService abstract interface
-│   │   │   ├── p2p_service_impl.dart           # P2PServiceImpl with reactive streams
+│   │   │   ├── p2p_service.dart                # P2PService abstract interface (incl. inbox)
+│   │   │   ├── p2p_service_impl.dart           # P2PServiceImpl with reactive streams + offline inbox
 │   │   │   └── incoming_message_router.dart    # Routes P2P messages by type to typed streams
 │   │   │
 │   │   ├── theme/
@@ -104,7 +104,7 @@ flutter_app/
 │       │   │       ├── message_repository.dart              # Abstract interface (save, load, update status)
 │       │   │       └── message_repository_impl.dart         # DB-backed implementation
 │       │   ├── application/
-│       │   │   ├── send_chat_message_use_case.dart          # Send message with 3x retry + optimistic persist
+│       │   │   ├── send_chat_message_use_case.dart          # Send message with 3x retry, inbox fallback + optimistic persist
 │       │   │   ├── handle_incoming_chat_message_use_case.dart  # Parse, validate sender, detect name changes
 │       │   │   ├── load_conversation_use_case.dart          # Load all messages for a contact
 │       │   │   └── chat_message_listener.dart               # Background listener for chat_message stream
@@ -113,7 +113,7 @@ flutter_app/
 │       │       │   ├── conversation_screen.dart             # Pure UI: header, letter cards, compose area
 │       │       │   └── conversation_wired.dart              # Business logic: load, send, listen, optimistic UI
 │       │       ├── widgets/
-│       │       │   ├── letter_card.dart                     # Full-width message card (left/right accent edge)
+│       │       │   ├── letter_card.dart                     # Full-width message card (left/right accent, queued/delivered status)
 │       │       │   ├── compose_area.dart                    # Auto-growing text field + send button
 │       │       │   ├── empty_conversation_state.dart        # Breathing glow avatar + connection info
 │       │       │   ├── conversation_header.dart             # Frosted-glass header with back + contact info
@@ -321,8 +321,8 @@ flutter_app/
 
 | Component | File(s) | Description |
 |-----------|---------|-------------|
-| P2P service | `p2p_service.dart`, `p2p_service_impl.dart` | Reactive P2P interface + implementation |
-| P2P bridge | `p2p_bridge_client.dart` | Low-level JS bridge calls for P2P |
+| P2P service | `p2p_service.dart`, `p2p_service_impl.dart` | Reactive P2P interface + implementation with offline inbox |
+| P2P bridge | `p2p_bridge_client.dart` | Low-level JS bridge calls for P2P + inbox store/retrieve |
 | Message router | `incoming_message_router.dart` | Routes P2P messages by envelope type to typed streams |
 | Node state | `node_state.dart` | P2P node state model |
 | Connection state | `connection_state.dart` | Active connection model |
@@ -366,13 +366,13 @@ flutter_app/
 | Message model | `conversation_message.dart` | ConversationMessage (id, text, status, isIncoming, timestamps) |
 | Wire payload | `message_payload.dart` | MessagePayload envelope (chat_message type, version 1) |
 | Message repository | `message_repository.dart`, `message_repository_impl.dart` | Save, load, update status for messages |
-| Send message | `send_chat_message_use_case.dart` | Build payload, discover + dial peer, 3x retry, optimistic persist |
+| Send message | `send_chat_message_use_case.dart` | Build payload, discover + dial peer, 3x retry, offline inbox fallback, optimistic persist |
 | Handle incoming | `handle_incoming_chat_message_use_case.dart` | Parse envelope, validate sender, detect name changes, persist |
 | Load conversation | `load_conversation_use_case.dart` | Load all messages for a contact by timestamp ASC |
 | Chat listener | `chat_message_listener.dart` | Background listener on chatMessageStream, broadcasts to UI |
 | Conversation screen | `conversation_screen.dart` | Pure UI: header, letter cards, empty state, compose area |
 | Conversation logic | `conversation_wired.dart` | Business logic: load messages, optimistic send, listen for incoming |
-| Letter card | `letter_card.dart` | Full-width card with left accent (received) / right accent (sent) |
+| Letter card | `letter_card.dart` | Full-width card with left accent (received) / right accent (sent), supports queued/delivered/failed status |
 | Compose area | `compose_area.dart` | Auto-growing text field + animated send button |
 | Empty state | `empty_conversation_state.dart` | Breathing glow avatar + "Connected!" + writing prompt |
 | Header | `conversation_header.dart` | Frosted-glass header with back button + contact info |
@@ -422,6 +422,12 @@ flutter_app/
 | Chat logger | `chat_console_logger.dart` | Debug logging for chat messages with shortened peer IDs |
 | Network constants | `network_constants.dart` | Rendezvous multiaddr |
 | Theme | `app_colors.dart`, `app_theme.dart`, `glassmorphism.dart` | Dark theme + glass effects |
+
+### Relay Server (Infrastructure)
+
+| Component | File(s) | Description |
+|-----------|---------|-------------|
+| Relay server v4 | `rendezvous-relay-server-inbox-v4.js` | libp2p relay + rendezvous + offline inbox (/mknoon/inbox/1.0.0 protocol) |
 
 ---
 

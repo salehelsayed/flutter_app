@@ -39,7 +39,8 @@
                         │   [External System]         │
                         │                             │
                         │   mknoun.xyz:4001            │
-                        │   Peer discovery & relay    │
+                        │   Peer discovery, relay,    │
+                        │   & offline message inbox   │
                         └─────────────────────────────┘
 
 ```
@@ -50,7 +51,7 @@
 |---------|------|-------------|
 | User | Person | End user who wants to create or restore their cryptographic identity, connect with peers, and manage contacts |
 | Mknoon Identity App | Software System | Mobile/desktop app for identity management, profile customization, peer discovery, contact requests, conversations, and P2P messaging using libp2p and BIP39 |
-| Rendezvous / Relay Server | External System | libp2p rendezvous server for peer discovery and circuit relay for NAT traversal |
+| Rendezvous / Relay Server | External System | libp2p rendezvous server for peer discovery, circuit relay for NAT traversal, and offline message inbox (`/mknoon/inbox/1.0.0`) |
 
 ### External Dependencies
 - Rendezvous/Relay server at `mknoun.xyz:4001` (WebSocket over TLS)
@@ -103,6 +104,8 @@
 │  │  │  • P2P node management      │   │  • Avatar path storage      │ │  │
 │     │  • Peer discovery & relay   │   │                             │    │
 │  │  │  • Message send/receive     │   │                             │ │  │
+│     │  • Offline inbox store/    │   │                             │    │
+│  │  │    retrieve                │   │                             │ │  │
 │     └──────────────┬──────────────┘   └─────────────────────────────┘    │
 │  │                 │                                                   │  │
 │                    │ WebSocket/libp2p                                     │
@@ -134,7 +137,7 @@
 | JavaScript Runtime | WebView + esbuild bundle | Executes crypto operations and P2P networking using libp2p libraries |
 | SQLite Database | sqflite / sqflite_common_ffi | Persists identity, contacts, contact requests, and messages locally |
 | File System | path_provider | Stores avatar images in app documents directory |
-| Rendezvous / Relay Server | libp2p | External server for peer discovery and NAT traversal relay |
+| Rendezvous / Relay Server | libp2p | External server for peer discovery, NAT traversal relay, and offline message inbox |
 
 ### Communication
 
@@ -143,7 +146,7 @@
 | Flutter App | JS Runtime | JSON via JavaScriptChannel | Request/response for identity, signing, and P2P operations |
 | Flutter App | SQLite | SQL via sqflite | CRUD operations for identity, contacts, contact requests, and messages |
 | Flutter App | File System | dart:io | Read/write avatar images |
-| JS Runtime | Rendezvous Server | WebSocket (libp2p) | Peer discovery, relay circuits, and messaging |
+| JS Runtime | Rendezvous Server | WebSocket (libp2p) | Peer discovery, relay circuits, messaging, and offline inbox protocol (`/mknoon/inbox/1.0.0`) |
 
 ---
 
@@ -374,6 +377,7 @@
 │  │  ┌──────────────────────────────────────────┐                         │ │
 │  │  │   P2PService [Interface] → P2PServiceImpl│                         │ │
 │  │  │   Reactive streams for state + messages  │                         │ │
+│  │  │   + offline inbox store/retrieve         │                         │ │
 │  │  └──────────────────────────────────────────┘                         │ │
 │  │  ┌──────────────────────────────────────────┐                         │ │
 │  │  │   IncomingMessageRouter                  │                         │ │
@@ -516,7 +520,7 @@
 | **Conversation Feature** | | |
 | ConversationScreen | Widget | Pure UI: letter cards, empty state with breathing glow, compose area |
 | ConversationWired | Widget | Business logic: load messages, optimistic send, listen for incoming, scroll management |
-| LetterCard | Widget | Full-width message card with left accent (received) / right accent (sent) and delivery status |
+| LetterCard | Widget | Full-width message card with left accent (received) / right accent (sent) and delivery status (sending/sent/delivered/queued/failed) |
 | ComposeArea | Widget | Auto-growing text field with glassmorphic styling and animated send button |
 | EmptyConversationState | Widget | Breathing glow avatar, "Connected!" label, connection date, writing prompt |
 | ConversationHeader | Widget | Frosted-glass sticky header with back button, contact avatar + name, connection status |
@@ -549,7 +553,7 @@
 | handleIncomingMessage() | Use Case | Parses P2P message, validates signature, stores request |
 | ContactRequestListener | Service | Monitors contactRequestStream, broadcasts new requests to UI |
 | **Conversation Use Cases** | | |
-| sendChatMessage() | Use Case | Builds MessagePayload, discovers peer, dials, sends with 3x retry, persists optimistically |
+| sendChatMessage() | Use Case | Builds MessagePayload, discovers peer, dials, sends with 3x retry, offline inbox fallback, persists optimistically |
 | handleIncomingChatMessage() | Use Case | Parses P2P message, validates sender is contact, detects name changes, persists |
 | loadConversation() | Use Case | Loads all messages for a contact, ordered by timestamp ASC |
 | ChatMessageListener | Service | Monitors chatMessageStream, broadcasts persisted ConversationMessages and contact updates to UI |
@@ -577,9 +581,9 @@
 | MessageRepository | Interface + Impl | Abstracts message persistence (save, getForContact, getLatest, updateStatus, exists) |
 | **Core** | | |
 | WebViewJsBridge | Bridge Client | Sends requests to JS runtime, manages event handlers |
-| P2PBridgeClient | Bridge Client | P2P-specific bridge calls (start, stop, status, register, discover, dial, disconnect, send) |
+| P2PBridgeClient | Bridge Client | P2P-specific bridge calls (start, stop, status, register, discover, dial, disconnect, send, inbox store/retrieve) |
 | JsBridgeClient | Bridge Helpers | Identity + signing bridge helper functions |
-| P2PService / P2PServiceImpl | Service | Reactive P2P service with state and message streams |
+| P2PService / P2PServiceImpl | Service | Reactive P2P service with state and message streams, with offline inbox fallback |
 | IncomingMessageRouter | Service | Routes P2P messages by JSON envelope type to typed broadcast streams |
 | RingAvatarGenerator | Utility | Deterministic avatar from peerId via DJB2 hash |
 | KeyConversion | Utility | base64ToHex, hexToBase64, bytesToHex, hexToBytes |
@@ -595,11 +599,12 @@
 | Component | Responsibility |
 |-----------|----------------|
 | Bridge Entry (entry.ts) | Routes incoming requests to handlers via command registry |
-| Handlers (handlers.ts) | Command map: `identity.generate`, `identity.restore`, `payload.sign` |
+| Handlers (handlers.ts) | Command map: `identity.generate`, `identity.restore`, `payload.sign`, `inbox:store`, `inbox:retrieve`, `inbox:check` |
 | generateIdentity() | Creates new BIP39 mnemonic + Ed25519 keypair |
 | restoreFromMnemonic() | Derives keypair from existing mnemonic |
 | signPayload() | Signs data with Ed25519 private key using @noble/ed25519 |
 | P2P Module | libp2p node management, rendezvous, relay, messaging |
+| Inbox Module | Offline message store/retrieve via relay server inbox protocol (`/mknoon/inbox/1.0.0`) |
 
 ---
 
@@ -843,6 +848,8 @@
   │ + sendMessage(peerId, msg): bool    │
   │ + discoverPeer(peerId): Discovered? │
   │ + dialPeer(peerId, {addrs}): bool   │
+  │ + storeInInbox(peerId, msg): bool  │
+  │ + retrieveInbox(): List<Map>       │
   │ + dispose(): void                   │
   └──────────────────┬──────────────────┘
                      │ implements
@@ -860,10 +867,13 @@
   │ + sendMessage(peerId, msg): bool    │
   │ + discoverPeer(peerId): Discovered? │
   │ + dialPeer(peerId, {addrs}): bool   │
+  │ + storeInInbox(peerId, msg): bool  │
+  │ + retrieveInbox(): List<Map>       │
   │ + dispose(): void                   │
   │ - _onMessageReceived(Map)           │
   │ - _onPeerConnected(Map)             │
   │ - _onPeerDisconnected(Map)          │
+  │ - _drainOfflineInbox(): void       │
   └─────────────────────────────────────┘
 
 
@@ -994,7 +1004,7 @@
   │ + timestamp: String                 │
   │ + status: String                    │
   │   ('sending'|'sent'|'delivered'|    │
-  │    'failed')                        │
+  │    'queued'|'failed')              │
   │ + isIncoming: bool                  │
   │ + createdAt: String                 │
   ├─────────────────────────────────────┤
@@ -1413,6 +1423,8 @@
   callP2PPeerDial(bridge, peerId, {addresses, timeoutMs}): Future<Map>
   callP2PPeerDisconnect(bridge, peerId): Future<Map>
   callP2PMessageSend(bridge, peerId, message, {timeoutMs}): Future<Map>
+  callP2PInboxStore(bridge, {toPeerId, message}): Future<Map>
+  callP2PInboxRetrieve(bridge): Future<Map>
 
 
   FLUTTER DB HELPERS - IDENTITY:
@@ -1469,6 +1481,8 @@
   restoreIdentityFromMnemonic(mnemonic12: string): Promise<IdentityJson>
   signPayload(dataToSign: string, privateKey: string): Promise<string>
   handleBridgeMessage(message: {cmd, requestId, payload}): Promise<any>
+  storeInInbox(node, relayPeerId, toPeerId, message, metadata): Promise<InboxResponse>
+  retrieveFromInbox(node, relayPeerId, options): Promise<InboxResponse>
 
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -1648,7 +1662,9 @@
        │              │
        │              ├──────► P2PService.dialPeer()
        │              │
-       │              └──────► P2PService.sendMessage() (3x retry)
+       │              ├──────► P2PService.sendMessage() (3x retry)
+       │              │
+       │              └──────► P2PService.storeInInbox() (offline fallback)
        │
        ├──────► ChatMessageListener.incomingMessageStream (subscribe)
        │              │
@@ -1671,7 +1687,17 @@
        │
        ├──────► stateStream (broadcast NodeState changes)
        │
-       └──────► messageStream (broadcast incoming ChatMessages)
+       ├──────► messageStream (broadcast incoming ChatMessages)
+       │
+       ├──────► _drainOfflineInbox() (on startNode, injects queued messages)
+       │              │
+       │              └──────► retrieveInbox()
+       │                             │
+       │                             └──────► callP2PInboxRetrieve()
+       │
+       └──────► storeInInbox() / retrieveInbox()
+                      │
+                      └──────► callP2PInboxStore() / callP2PInboxRetrieve()
 
 ```
 
