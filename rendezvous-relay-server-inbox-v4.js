@@ -415,7 +415,7 @@ function storeMessage(toPeerId, entry) {
 /**
  * Retrieve messages from a peer's inbox
  */
-function retrieveMessages(peerId, { limit = 50, peek = false } = {}) {
+function retrieveMessages(peerId, { limit = 50 } = {}) {
   let messages = inboxStore.get(peerId) || []
 
   // Prune expired
@@ -424,17 +424,19 @@ function retrieveMessages(peerId, { limit = 50, peek = false } = {}) {
 
   const result = messages.slice(0, limit)
 
-  if (!peek && result.length > 0) {
-    // Remove retrieved messages
+  if (result.length > 0) {
+    // Delete retrieved messages from memory
     const remaining = messages.slice(limit)
     if (remaining.length > 0) {
       inboxStore.set(peerId, remaining)
     } else {
       inboxStore.delete(peerId)
     }
+    console.log(`[INBOX] Retrieved ${result.length} message(s) for ${peerId.slice(0, 20)}... — deleted from memory (${remaining.length} remaining)`)
+  } else {
+    console.log(`[INBOX] No messages for ${peerId.slice(0, 20)}...`)
   }
 
-  console.log(`[INBOX] Retrieved ${result.length} messages for ${peerId.slice(0, 20)}...${peek ? ' (peek)' : ''}`)
   return result
 }
 
@@ -496,8 +498,7 @@ async function handleInboxStream({ stream, connection }) {
       }
     } else if (request.action === 'retrieve') {
       const messages = retrieveMessages(remotePeer, {
-        limit: request.limit || 50,
-        peek: request.peek || false
+        limit: request.limit || 50
       })
       response = {
         status: messages.length > 0 ? 'OK' : 'NO_MESSAGES',

@@ -68,6 +68,7 @@ class P2PServiceImpl implements P2PService {
       if (response['ok'] == true) {
         _currentState = NodeState.fromJson(response);
         _stateController.add(_currentState);
+        await _drainOfflineInbox();
         _startHealthCheck();
 
         emitFlowEvent(
@@ -95,6 +96,59 @@ class P2PServiceImpl implements P2PService {
         details: {'error': e.toString()},
       );
       return false;
+    }
+  }
+
+  /// Drain queued offline inbox messages and inject them into message stream.
+  Future<void> _drainOfflineInbox() async {
+    try {
+      final inboxMessages = await retrieveInbox();
+      if (inboxMessages.isEmpty) {
+        return;
+      }
+
+      final toPeerId = _currentState.peerId ?? '';
+      var emitted = 0;
+
+      for (final raw in inboxMessages) {
+        final from = raw['from']?.toString();
+        final content = raw['message']?.toString();
+        if (from == null || from.isEmpty || content == null || content.isEmpty) {
+          continue;
+        }
+
+        final ts = raw['timestamp'];
+        final timestamp = ts is int
+            ? DateTime.fromMillisecondsSinceEpoch(ts, isUtc: true)
+                  .toIso8601String()
+            : (ts as String?) ?? DateTime.now().toUtc().toIso8601String();
+
+        _handleMessageReceived(
+          ChatMessage(
+            from: from,
+            to: toPeerId,
+            content: content,
+            timestamp: timestamp,
+            isIncoming: true,
+          ),
+        );
+        emitted++;
+      }
+
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'P2P_SERVICE_INBOX_DRAIN_SUCCESS',
+        details: {
+          'count': emitted,
+          'note': 'messages consumed and deleted from relay memory',
+        },
+      );
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'P2P_SERVICE_INBOX_DRAIN_EXCEPTION',
+        details: {'error': e.toString()},
+      );
     }
   }
 
@@ -509,7 +563,10 @@ class P2PServiceImpl implements P2PService {
         emitFlowEvent(
           layer: 'FL',
           event: 'P2P_SERVICE_INBOX_RETRIEVE_SUCCESS',
-          details: {'count': messages.length},
+          details: {
+            'count': messages.length,
+            'note': 'server deleted retrieved messages from memory',
+          },
         );
         return messages;
       }

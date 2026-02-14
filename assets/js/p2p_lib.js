@@ -768,8 +768,8 @@ var CoreLib = (() => {
         throw Error("Can only multibase decode strings");
       }
     }
-    or(decoder2) {
-      return or(this, decoder2);
+    or(decoder3) {
+      return or(this, decoder3);
     }
   };
   var ComposedDecoder = class {
@@ -777,14 +777,14 @@ var CoreLib = (() => {
       __publicField(this, "decoders");
       this.decoders = decoders3;
     }
-    or(decoder2) {
-      return or(this, decoder2);
+    or(decoder3) {
+      return or(this, decoder3);
     }
     decode(input) {
       const prefix = input[0];
-      const decoder2 = this.decoders[prefix];
-      if (decoder2 != null) {
-        return decoder2.decode(input);
+      const decoder3 = this.decoders[prefix];
+      if (decoder3 != null) {
+        return decoder3.decode(input);
       } else {
         throw RangeError(`Unable to decode multibase string ${JSON.stringify(input)}, only inputs prefixed with ${Object.keys(this.decoders)} are supported`);
       }
@@ -1388,23 +1388,23 @@ var CoreLib = (() => {
     switch (source[0]) {
       // CIDv0 is parsed differently
       case "Q": {
-        const decoder2 = base3 ?? base58btc;
+        const decoder3 = base3 ?? base58btc;
         return [
           base58btc.prefix,
-          decoder2.decode(`${base58btc.prefix}${source}`)
+          decoder3.decode(`${base58btc.prefix}${source}`)
         ];
       }
       case base58btc.prefix: {
-        const decoder2 = base3 ?? base58btc;
-        return [base58btc.prefix, decoder2.decode(source)];
+        const decoder3 = base3 ?? base58btc;
+        return [base58btc.prefix, decoder3.decode(source)];
       }
       case base32.prefix: {
-        const decoder2 = base3 ?? base32;
-        return [base32.prefix, decoder2.decode(source)];
+        const decoder3 = base3 ?? base32;
+        return [base32.prefix, decoder3.decode(source)];
       }
       case base36.prefix: {
-        const decoder2 = base3 ?? base36;
-        return [base36.prefix, decoder2.decode(source)];
+        const decoder3 = base3 ?? base36;
+        return [base36.prefix, decoder3.decode(source)];
       }
       default: {
         if (base3 == null) {
@@ -2181,11 +2181,11 @@ var CoreLib = (() => {
     };
   }
   var string = createCodec("utf8", "u", (buf) => {
-    const decoder2 = new TextDecoder("utf8");
-    return "u" + decoder2.decode(buf);
+    const decoder3 = new TextDecoder("utf8");
+    return "u" + decoder3.decode(buf);
   }, (str) => {
-    const encoder2 = new TextEncoder();
-    return encoder2.encode(str.substring(1));
+    const encoder3 = new TextEncoder();
+    return encoder3.encode(str.substring(1));
   });
   var ascii = createCodec("ascii", "a", (buf) => {
     let string2 = "a";
@@ -8035,17 +8035,17 @@ var CoreLib = (() => {
   // node_modules/@libp2p/peer-id/dist/src/index.js
   var LIBP2P_KEY_CODE2 = 114;
   var TRANSPORT_IPFS_GATEWAY_HTTP_CODE2 = 2336;
-  function peerIdFromString(str, decoder2) {
+  function peerIdFromString(str, decoder3) {
     let multihash;
     if (str.charAt(0) === "1" || str.charAt(0) === "Q") {
       multihash = decode4(base58btc.decode(`z${str}`));
     } else if (str.startsWith("k51qzi5uqu5") || str.startsWith("kzwfwjn5ji4") || str.startsWith("k2k4r8") || str.startsWith("bafz")) {
       return peerIdFromCID(CID.parse(str));
     } else {
-      if (decoder2 == null) {
+      if (decoder3 == null) {
         throw new InvalidParametersError2('Please pass a multibase decoder for strings that do not start with "1" or "Q"');
       }
-      multihash = decode4(decoder2.decode(str));
+      multihash = decode4(decoder3.decode(str));
     }
     return peerIdFromMultihash(multihash);
   }
@@ -30120,17 +30120,17 @@ ${[...listenStats.errors.entries()].map(([addr, err]) => {
         return enumeration(__MessageTypeValues);
       };
     })(MessageType = Message4.MessageType || (Message4.MessageType = {}));
-    let ResponseStatus;
-    (function(ResponseStatus2) {
-      ResponseStatus2["OK"] = "OK";
-      ResponseStatus2["E_INVALID_NAMESPACE"] = "E_INVALID_NAMESPACE";
-      ResponseStatus2["E_INVALID_SIGNED_PEER_RECORD"] = "E_INVALID_SIGNED_PEER_RECORD";
-      ResponseStatus2["E_INVALID_TTL"] = "E_INVALID_TTL";
-      ResponseStatus2["E_INVALID_COOKIE"] = "E_INVALID_COOKIE";
-      ResponseStatus2["E_NOT_AUTHORIZED"] = "E_NOT_AUTHORIZED";
-      ResponseStatus2["E_INTERNAL_ERROR"] = "E_INTERNAL_ERROR";
-      ResponseStatus2["E_UNAVAILABLE"] = "E_UNAVAILABLE";
-    })(ResponseStatus = Message4.ResponseStatus || (Message4.ResponseStatus = {}));
+    let ResponseStatus2;
+    (function(ResponseStatus3) {
+      ResponseStatus3["OK"] = "OK";
+      ResponseStatus3["E_INVALID_NAMESPACE"] = "E_INVALID_NAMESPACE";
+      ResponseStatus3["E_INVALID_SIGNED_PEER_RECORD"] = "E_INVALID_SIGNED_PEER_RECORD";
+      ResponseStatus3["E_INVALID_TTL"] = "E_INVALID_TTL";
+      ResponseStatus3["E_INVALID_COOKIE"] = "E_INVALID_COOKIE";
+      ResponseStatus3["E_NOT_AUTHORIZED"] = "E_NOT_AUTHORIZED";
+      ResponseStatus3["E_INTERNAL_ERROR"] = "E_INTERNAL_ERROR";
+      ResponseStatus3["E_UNAVAILABLE"] = "E_UNAVAILABLE";
+    })(ResponseStatus2 = Message4.ResponseStatus || (Message4.ResponseStatus = {}));
     let __ResponseStatusValues;
     (function(__ResponseStatusValues2) {
       __ResponseStatusValues2[__ResponseStatusValues2["OK"] = 0] = "OK";
@@ -30142,11 +30142,11 @@ ${[...listenStats.errors.entries()].map(([addr, err]) => {
       __ResponseStatusValues2[__ResponseStatusValues2["E_INTERNAL_ERROR"] = 300] = "E_INTERNAL_ERROR";
       __ResponseStatusValues2[__ResponseStatusValues2["E_UNAVAILABLE"] = 400] = "E_UNAVAILABLE";
     })(__ResponseStatusValues || (__ResponseStatusValues = {}));
-    (function(ResponseStatus2) {
-      ResponseStatus2.codec = () => {
+    (function(ResponseStatus3) {
+      ResponseStatus3.codec = () => {
         return enumeration(__ResponseStatusValues);
       };
-    })(ResponseStatus = Message4.ResponseStatus || (Message4.ResponseStatus = {}));
+    })(ResponseStatus2 = Message4.ResponseStatus || (Message4.ResponseStatus = {}));
     let Register;
     (function(Register2) {
       let _codec2;
@@ -30237,7 +30237,7 @@ ${[...listenStats.errors.entries()].map(([addr, err]) => {
             }
           }, (reader, length3, opts = {}) => {
             const obj = {
-              status: ResponseStatus.OK,
+              status: ResponseStatus2.OK,
               statusText: "",
               ttl: 0n
             };
@@ -30419,7 +30419,7 @@ ${[...listenStats.errors.entries()].map(([addr, err]) => {
             const obj = {
               registrations: [],
               cookie: alloc(0),
-              status: ResponseStatus.OK,
+              status: ResponseStatus2.OK,
               statusText: ""
             };
             const end = length3 == null ? reader.len : reader.pos + length3;
@@ -31217,6 +31217,64 @@ ${[...listenStats.errors.entries()].map(([addr, err]) => {
     });
   }
 
+  // src/inbox.ts
+  var INBOX_PROTOCOL = "/mknoon/inbox/1.0.0";
+  var encoder2 = new TextEncoder();
+  var decoder2 = new TextDecoder();
+  async function storeInInbox(node, relayPeerId, toPeerId, message2, metadata) {
+    const stream = await node.dialProtocol(relayPeerId, INBOX_PROTOCOL, {
+      runOnLimitedConnection: true
+    });
+    try {
+      const request = JSON.stringify({
+        action: "store",
+        to: toPeerId,
+        from: node.peerId.toString(),
+        message: message2,
+        metadata: metadata || {}
+      });
+      await writeOneFrame(stream, encoder2.encode(request));
+      const responseBytes = await readOneFrame(stream);
+      const response = JSON.parse(decoder2.decode(responseBytes));
+      return {
+        status: response.status === "OK" ? "OK" /* OK */ : "ERROR" /* ERROR */,
+        messages: [],
+        error: response.error
+      };
+    } finally {
+      try {
+        await stream.close();
+      } catch {
+      }
+    }
+  }
+  async function retrieveFromInbox(node, relayPeerId, options) {
+    const stream = await node.dialProtocol(relayPeerId, INBOX_PROTOCOL, {
+      runOnLimitedConnection: true
+    });
+    try {
+      const request = JSON.stringify({
+        action: "retrieve",
+        limit: options?.limit ?? 50
+      });
+      await writeOneFrame(stream, encoder2.encode(request));
+      const responseBytes = await readOneFrame(stream);
+      const response = JSON.parse(decoder2.decode(responseBytes));
+      if (response.status === "OK") {
+        return { status: "OK" /* OK */, messages: response.messages || [] };
+      } else if (response.status === "NO_MESSAGES") {
+        return { status: "NO_MESSAGES" /* NO_MESSAGES */, messages: [] };
+      } else {
+        return { status: "ERROR" /* ERROR */, messages: [], error: response.error };
+      }
+    } finally {
+      try {
+        await stream.close();
+      } catch {
+      }
+    }
+  }
+
   // src/bridge/entry-browser.ts
   var globalNode = null;
   function setNode(node) {
@@ -31275,6 +31333,13 @@ ${[...listenStats.errors.entries()].map(([addr, err]) => {
           break;
         case "message:send":
           data = await handleMessageSend(params);
+          break;
+        case "inbox:store":
+          data = await handleInboxStore(params);
+          break;
+        case "inbox:retrieve":
+        case "inbox:check":
+          data = await handleInboxRetrieve(params);
           break;
         default:
           sendToFlutter({
@@ -31470,6 +31535,38 @@ ${[...listenStats.errors.entries()].map(([addr, err]) => {
     if (!message2) throw new Error("message is required");
     const reply = await sendMessage(globalNode, peerId, message2, params.timeoutMs);
     return { sent: true, reply, storedInInbox: false };
+  }
+  async function handleInboxStore(params) {
+    if (!globalNode) throw new Error("Node not started");
+    const toPeerId = params.toPeerId;
+    const message2 = params.message;
+    if (!toPeerId) throw new Error("toPeerId is required");
+    if (!message2) throw new Error("message is required");
+    const relayPeerId = params.relayPeerId || globalNode._relayPeerId;
+    if (!relayPeerId) throw new Error("No relay peer ID available");
+    const response = await storeInInbox(
+      globalNode,
+      peerIdFromString(relayPeerId),
+      toPeerId,
+      message2,
+      params.metadata
+    );
+    if (response.status !== "OK" /* OK */) {
+      throw new Error(response.error || "Failed to store message");
+    }
+    return { stored: true };
+  }
+  async function handleInboxRetrieve(params) {
+    if (!globalNode) throw new Error("Node not started");
+    const relayPeerId = params.relayPeerId || globalNode._relayPeerId;
+    if (!relayPeerId) throw new Error("No relay peer ID available");
+    const response = await retrieveFromInbox(globalNode, peerIdFromString(relayPeerId), {
+      limit: params.limit
+    });
+    if (response.status === "OK" /* OK */ || response.status === "NO_MESSAGES" /* NO_MESSAGES */) {
+      return { messages: response.messages || [] };
+    }
+    throw new Error(response.error || "Failed to retrieve messages");
   }
   globalThis.handleRequest = handleRequest;
   globalThis.getNode = getNode;
