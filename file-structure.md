@@ -17,7 +17,7 @@ flutter_app/
 │       └── nav_remember.svg                         # Remember tab icon
 │
 ├── lib/
-│   ├── main.dart                               # App entry point, DB setup, DI (8 deps to MyApp)
+│   ├── main.dart                               # App entry point, SecureKeyStore + encrypted DB setup, secrets migration, DI (8 deps to MyApp)
 │   ├── smoke_test_main.dart                    # Smoke test entry point
 │   ├── smoke_test_restore.dart                 # Smoke test for identity restore
 │   ├── smoke_test_messages.dart                # Smoke test for messages DB layer
@@ -32,10 +32,13 @@ flutter_app/
 │   │   │   └── network_constants.dart          # Rendezvous address constant
 │   │   │
 │   │   ├── database/
+│   │   │   ├── encrypted_db_opener.dart        # SQLCipher DB open + plaintext→encrypted migration
 │   │   │   ├── migrations/
 │   │   │   │   ├── 001_identity_table.dart     # Schema v1 (identity, contacts, contact_requests)
 │   │   │   │   ├── 002_messages_table.dart     # Schema v2 (messages table + indexes)
-│   │   │   │   └── 003_mlkem_keys.dart         # Schema v3 (ML-KEM key columns on identity, contacts, contact_requests)
+│   │   │   │   ├── 003_mlkem_keys.dart         # Schema v3 (ML-KEM key columns on identity, contacts, contact_requests)
+│   │   │   │   ├── 004_nullify_secret_columns.dart  # Schema v4 (nullable secret columns)
+│   │   │   │   └── 005_secret_null_checks.dart      # Schema v5 (CHECK constraints + avatar_blob BLOB)
 │   │   │   └── helpers/
 │   │   │       ├── identity_db_helpers.dart     # Identity table CRUD
 │   │   │       ├── contacts_db_helpers.dart     # Contacts table CRUD
@@ -52,6 +55,11 @@ flutter_app/
 │   │   │   ├── app_theme.dart                  # ThemeData configuration
 │   │   │   └── glassmorphism.dart              # GlassmorphicContainer widget
 │   │   │
+│   │   ├── secure_storage/
+│   │   │   ├── secure_key_store.dart           # SecureKeyStore abstract interface (read, write, delete, containsKey)
+│   │   │   ├── flutter_secure_key_store.dart   # Production impl (iOS Keychain / Android EncryptedSharedPreferences)
+│   │   │   └── migrate_secrets_to_secure_storage.dart  # One-time DB→secure storage migration with sentinel
+│   │   │
 │   │   └── utils/
 │   │       ├── flow_event_emitter.dart         # Structured logging utility
 │   │       ├── key_conversion.dart             # base64 ↔ hex key conversion
@@ -64,9 +72,9 @@ flutter_app/
 │       │   └── presentation/
 │       │       ├── screens/
 │       │       │   ├── first_time_experience_screen.dart   # Pure UI (staggered animations)
-│       │       │   └── first_time_experience_wired.dart    # Business logic + CR listener
+│       │       │   └── first_time_experience_wired.dart    # Business logic + CR listener + avatar blob storage
 │       │       └── widgets/
-│       │           ├── profile_avatar_widget.dart           # Avatar display + camera button
+│       │           ├── profile_avatar_widget.dart           # Avatar display (Image.memory) + camera button
 │       │           ├── editable_username_widget.dart        # Tap-to-edit username
 │       │           ├── qr_code_section.dart                 # QR code with green glow
 │       │           ├── scan_friend_card.dart                # Glassmorphic scan action card
@@ -87,7 +95,7 @@ flutter_app/
 │       │       │   ├── feed_screen.dart                     # Pure UI feed display
 │       │       │   └── feed_wired.dart                      # Feed business logic + CR/chat listeners
 │       │       ├── widgets/
-│       │       │   ├── feed_header.dart                     # Sticky header (username + avatar)
+│       │       │   ├── feed_header.dart                     # Sticky header (username + avatar from memory bytes)
 │       │       │   ├── feed_navigation_bar.dart             # Bottom glass nav bar (3 tabs)
 │       │       │   ├── nav_bar_button.dart                  # Individual nav button widget
 │       │       │   ├── connection_card.dart                 # Contact connection card (inline green badge)
@@ -126,10 +134,10 @@ flutter_app/
 │       ├── identity/
 │       │   ├── domain/
 │       │   │   ├── models/
-│       │   │   │   └── identity_model.dart                 # IdentityModel (peerId, keys, mnemonic, etc.)
+│       │   │   │   └── identity_model.dart                 # IdentityModel (peerId, keys, mnemonic, avatarBlob, etc.)
 │       │   │   └── repositories/
 │       │   │       ├── identity_repository.dart            # Abstract interface
-│       │   │       └── identity_repository_impl.dart       # DB-backed implementation
+│       │   │       └── identity_repository_impl.dart       # DB-backed impl + SecureKeyStore for secrets
 │       │   ├── application/
 │       │   │   ├── startup_decision.dart                   # decideStartupRoute() use case (3-way)
 │       │   │   ├── generate_identity_use_case.dart         # generateNewIdentity() use case
@@ -250,8 +258,11 @@ flutter_app/
 ├── test/
 │   ├── widget_test.dart                                   # Widget tests
 │   ├── core/
-│   │   └── services/
-│   │       └── incoming_message_router_test.dart           # IncomingMessageRouter unit tests
+│   │   ├── services/
+│   │   │   └── incoming_message_router_test.dart           # IncomingMessageRouter unit tests
+│   │   └── secure_storage/
+│   │       ├── fake_secure_key_store.dart                  # In-memory test fake
+│   │       └── migrate_secrets_to_secure_storage_test.dart # Migration unit tests
 │   └── features/
 │       ├── feed/
 │       │   ├── application/
@@ -289,7 +300,16 @@ flutter_app/
 │                   ├── date_separator_test.dart
 │                   └── compose_area_test.dart
 │
-├── pubspec.yaml                                           # Flutter dependencies
+├── android/
+│   └── app/
+│       └── src/
+│           └── main/
+│               └── res/
+│                   └── xml/
+│                       ├── backup_rules.xml               # Android <12 backup rules (exclude all)
+│                       └── data_extraction_rules.xml      # Android 12+ extraction rules (exclude all)
+│
+├── pubspec.yaml                                           # Flutter dependencies (sqflite_sqlcipher, sqlcipher_flutter_libs, flutter_secure_storage)
 ├── C4_MODEL.md                                            # C4 architecture documentation
 └── file-structure.md                                      # This file
 ```
@@ -302,11 +322,14 @@ flutter_app/
 
 | Component | File(s) | Description |
 |-----------|---------|-------------|
-| Identity model | `identity_model.dart` | Immutable data class (peerId, keys, mnemonic, username, avatarPath, mlKemPublicKey?, mlKemSecretKey?) |
-| Identity repository | `identity_repository.dart`, `identity_repository_impl.dart` | Load/save identity |
+| Identity model | `identity_model.dart` | Immutable data class (peerId, keys, mnemonic, username, avatarBlob, mlKemPublicKey?, mlKemSecretKey?) |
+| Identity repository | `identity_repository.dart`, `identity_repository_impl.dart` | Load/save identity, SecureKeyStore for secrets |
 | Generate identity | `generate_identity_use_case.dart` | JS bridge call + DB save |
 | Restore identity | `restore_identity_use_case.dart` | Validate mnemonic + JS bridge + DB save |
 | Startup routing | `startup_decision.dart`, `startup_router.dart` | Check identity + contacts → route to feed, home, or onboarding |
+| Encrypted DB opener | `encrypted_db_opener.dart` | SQLCipher DB open + plaintext→encrypted migration |
+| Secure key store | `secure_key_store.dart`, `flutter_secure_key_store.dart` | Abstract interface + production impl (iOS Keychain / Android EncryptedSharedPreferences) |
+| Secrets migration | `migrate_secrets_to_secure_storage.dart` | One-time DB→secure storage migration with sentinel |
 | DB migration | `001_identity_table.dart` | Creates identity, contacts, contact_requests tables |
 | DB helpers | `identity_db_helpers.dart` | Identity table CRUD |
 | Bridge | `js_bridge_client.dart`, `webview_js_bridge.dart` | Flutter ↔ JS communication (identity, signing, ML-KEM encryption/decryption) |
@@ -388,6 +411,8 @@ flutter_app/
 | Route transition | `conversation_route_transition.dart` | Slide-up transition (420ms easeOutCubic) |
 | DB migration | `002_messages_table.dart` | Creates messages table with contact + timestamp indexes |
 | DB migration | `003_mlkem_keys.dart` | Adds ml_kem_public_key, ml_kem_secret_key columns to identity; ml_kem_public_key to contacts and contact_requests |
+| DB migration | `004_nullify_secret_columns.dart` | Schema v4: makes secret columns nullable for secure storage migration |
+| DB migration | `005_secret_null_checks.dart` | Schema v5: CHECK constraints on secret columns + avatar_blob BLOB column |
 | DB helpers | `messages_db_helpers.dart` | Messages table CRUD (insert, load, update status, count) |
 
 ### Home / First-Time Experience
@@ -395,8 +420,8 @@ flutter_app/
 | Component | File(s) | Description |
 |-----------|---------|-------------|
 | Home screen | `first_time_experience_screen.dart` | Animated home UI |
-| Home logic | `first_time_experience_wired.dart` | QR build, username edit, avatar, scan, CR listener |
-| Profile avatar | `profile_avatar_widget.dart` | Avatar + camera button |
+| Home logic | `first_time_experience_wired.dart` | QR build, username edit, avatar blob storage, scan, CR listener |
+| Profile avatar | `profile_avatar_widget.dart` | Avatar display (Image.memory) + camera button |
 | Username edit | `editable_username_widget.dart` | Tap-to-edit username |
 | QR section | `qr_code_section.dart` | QR code with glow |
 | Scan card | `scan_friend_card.dart` | Glassmorphic scan action |
@@ -412,7 +437,7 @@ flutter_app/
 | Load feed | `load_feed_use_case.dart` | Load initial feed from DB (contacts + latest messages) |
 | Feed screen | `feed_screen.dart` | Pure UI feed display (connection + message cards) |
 | Feed logic | `feed_wired.dart` | Feed orchestration, identity load, CR/chat listeners |
-| Feed header | `feed_header.dart` | Sticky header with username + avatar |
+| Feed header | `feed_header.dart` | Sticky header with username + avatar from memory bytes |
 | Navigation bar | `feed_navigation_bar.dart` | Bottom glass nav bar (3 tabs) |
 | Nav button | `nav_bar_button.dart` | Individual tab button (active/inactive) |
 | Connection card | `connection_card.dart` | Contact connection display card (inline green checkmark badge) |
@@ -443,12 +468,12 @@ flutter_app/
 
 | Table | Primary Key | Migration | Description |
 |-------|-------------|-----------|-------------|
-| `identity` | `id` (always 1) | v1 (`001`), v3 (`003`: ml_kem_public_key, ml_kem_secret_key) | Single-row identity storage |
+| `identity` | `id` (always 1) | v1 (`001`), v3 (`003`: ml_kem_public_key, ml_kem_secret_key), v4 (`004`: nullable secret columns), v5 (`005`: CHECK constraints + avatar_blob) | Single-row identity storage, secrets in secure storage (DB columns always NULL via CHECK), avatar as BLOB |
 | `contacts` | `peer_id` | v1 (`001`), v3 (`003`: ml_kem_public_key) | Contacts added via QR scanning |
 | `contact_requests` | `peer_id` | v1 (`001`), v3 (`003`: ml_kem_public_key) | Incoming P2P contact requests |
 | `messages` | `id` (UUID) | v2 (`002`) | Conversation messages (indexes on contact_peer_id, timestamp) |
 
-Database version: **3** (set in `main.dart` `openDatabase` call).
+Database version: **5** (set in `main.dart` `openDatabase` call). Migrations v4 (`004_nullify_secret_columns.dart`: makes secret columns nullable) and v5 (`005_secret_null_checks.dart`: CHECK constraints ensuring secret columns stay NULL + avatar_blob BLOB column).
 
 ---
 

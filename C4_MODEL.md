@@ -51,7 +51,7 @@
 | Element | Type | Description |
 |---------|------|-------------|
 | User | Person | End user who wants to create or restore their cryptographic identity, connect with peers, manage contacts, and exchange encrypted messages |
-| Mknoon Identity App | Software System | Mobile/desktop app for identity management, profile customization, peer discovery, contact requests, E2E encrypted conversations (ML-KEM-768 + AES-256-GCM), offline inbox, and P2P messaging using libp2p and BIP39 |
+| Mknoon Identity App | Software System | Mobile/desktop app for identity management, profile customization, peer discovery, contact requests, E2E encrypted conversations (ML-KEM-768 + AES-256-GCM), offline inbox, and P2P messaging using libp2p and BIP39. Data at rest encrypted via SQLCipher + OS-backed secure storage |
 | Rendezvous / Relay Server | External System | libp2p rendezvous server for peer discovery, circuit relay for NAT traversal, and offline message inbox (`/mknoon/inbox/1.0.0`) for store-and-forward delivery |
 
 ### External Dependencies
@@ -89,43 +89,38 @@
 │  │  │  • P2P service layer                                           │  │  │
 │     │  • Ring avatar generation                                      │     │
 │  │  │  • Image picker for avatars                                    │  │  │
-│     └───────────────────────┬───────────────────┬───────────────────┘     │
-│  │                          │                   │                      │  │
-│                             │ JSON/WebView      │ SQL queries            │
-│  │                          │ Channel           │                      │  │
-│                             ▼                   ▼                        │
-│  │  ┌─────────────────────────────┐   ┌─────────────────────────────┐ │  │
-│     │   JavaScript Runtime        │   │      SQLite Database        │    │
-│  │  │   [Container: WebView]      │   │      [Container: sqflite]   │ │  │
-│     │                             │   │                             │    │
-│  │  │  • BIP39 mnemonic gen       │   │  • identity table           │ │  │
-│     │  • Ed25519 keypair          │   │  • contacts table           │    │
-│  │  │  • ML-KEM-768 keygen       │   │  • contact_requests table   │ │  │
-│     │  • libp2p peer ID           │   │  • messages table            │    │
-│  │  │  • Payload signing          │   │                             │ │  │
-│     │  • Message encrypt/decrypt  │   │                             │    │
-│  │  │  • P2P node management      │   │  • Avatar path storage      │ │  │
-│     │  • Peer discovery & relay   │   │                             │    │
-│  │  │  • Message send/receive     │   │                             │ │  │
-│     │  • Offline inbox store/    │   │                             │    │
-│  │  │    retrieve                │   │                             │ │  │
-│     └──────────────┬──────────────┘   └─────────────────────────────┘    │
+│     └──────────────┬──────────────────┬──────────────┬──────────────┘     │
+│  │                 │                  │              │                 │  │
+│                    │ JSON/WebView     │ SQL queries  │ Keychain/        │
+│  │                 │ Channel          │              │ Keystore        │  │
+│                    ▼                  ▼              ▼                   │
+│  │  ┌─────────────────────────┐ ┌─────────────────────┐ ┌────────────┐│  │
+│     │  JavaScript Runtime     │ │  SQLCipher Database  │ │  Secure    │   │
+│  │  │  [Container: WebView]   │ │  [Container:         │ │  Storage   ││  │
+│     │                         │ │  sqflite_sqlcipher]  │ │  [Container│   │
+│  │  │  • BIP39 mnemonic gen   │ │                      │ │  flutter_  ││  │
+│     │  • Ed25519 keypair      │ │  • identity table    │ │  secure_   │   │
+│  │  │  • ML-KEM-768 keygen   │ │  • contacts table    │ │  storage]  ││  │
+│     │  • libp2p peer ID       │ │  • contact_requests  │ │            │   │
+│  │  │  • Payload signing      │ │  • messages table    │ │ • private  ││  │
+│     │  • Message encrypt/     │ │  • avatar BLOB store │ │   _key     │   │
+│  │  │    decrypt              │ │  • 256-bit AES       │ │ • mnemonic ││  │
+│     │  • P2P node management  │ │    encrypted         │ │   12       │   │
+│  │  │  • Peer discovery &     │ │                      │ │ • ml_kem_  ││  │
+│     │    relay                │ │                      │ │   secret   │   │
+│  │  │  • Message send/receive │ │                      │ │ • db_enc   ││  │
+│     │  • Offline inbox store/ │ │                      │ │   _key     │   │
+│  │  │    retrieve             │ │                      │ │            ││  │
+│     └──────────────┬──────────┘ └──────────────────────┘ └────────────┘   │
 │  │                 │                                                   │  │
 │                    │ WebSocket/libp2p                                     │
 │  │                 │                                                   │  │
 │  └ ─ ─ ─ ─ ─ ─ ─ ─┼─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘  │
 │                    │                                                      │
-│  ┌─────────────────┴───────────────┐                                     │
-│  │      File System                │                                     │
-│  │  [Container: Documents]         │                                     │
-│  │                                 │                                     │
-│  │  • Avatar images                │                                     │
-│  │  • Documents/avatars/           │                                     │
-│  └─────────────────────────────────┘                                     │
-└───────────────────────────┬──────────────────────────────────────────────┘
-                            │
-                            │ WebSocket (libp2p relay)
-                            ▼
+└────────────────────┼─────────────────────────────────────────────────────┘
+                     │
+                     │ WebSocket (libp2p relay)
+                     ▼
               ┌─────────────────────────────┐
               │   Rendezvous / Relay Server │
               │   mknoun.xyz:4001           │
@@ -138,8 +133,8 @@
 |-----------|------------|-------------|
 | Flutter Application | Dart/Flutter | Main application with UI, business logic, P2P service, and data access |
 | JavaScript Runtime | WebView + esbuild bundle | Executes crypto operations and P2P networking using libp2p libraries |
-| SQLite Database | sqflite / sqflite_common_ffi | Persists identity, contacts, contact requests, and messages locally |
-| File System | path_provider | Stores avatar images in app documents directory |
+| SQLCipher Database | sqflite_sqlcipher | 256-bit AES encrypted SQLite database; persists identity, contacts, contact requests, messages, and avatar BLOBs locally |
+| Secure Storage | flutter_secure_storage | OS-backed secret storage: iOS Keychain (device-bound, kSecAttrAccessibleWhenUnlockedThisDeviceOnly), Android EncryptedSharedPreferences; holds identity secrets and DB encryption key |
 | Rendezvous / Relay Server | libp2p | External server for peer discovery, NAT traversal relay, and offline message inbox |
 
 ### Communication
@@ -147,8 +142,8 @@
 | From | To | Protocol | Description |
 |------|-----|----------|-------------|
 | Flutter App | JS Runtime | JSON via JavaScriptChannel | Request/response for identity, signing, and P2P operations |
-| Flutter App | SQLite | SQL via sqflite | CRUD operations for identity, contacts, contact requests, and messages |
-| Flutter App | File System | dart:io | Read/write avatar images |
+| Flutter App | SQLCipher DB | SQL via sqflite_sqlcipher | CRUD operations for identity, contacts, contact requests, messages, and avatar BLOBs (256-bit AES encrypted at rest) |
+| Flutter App | Secure Storage | flutter_secure_storage API | Read/write identity secrets (private_key, mnemonic12, ml_kem_secret_key) and DB encryption key |
 | JS Runtime | Rendezvous Server | WebSocket (libp2p) | Peer discovery, relay circuits, messaging, and offline inbox protocol (`/mknoon/inbox/1.0.0`) |
 
 ---
@@ -404,6 +399,30 @@
 │  │  │  003_mlkem_keys          │  ML-KEM key columns on identity,       │ │
 │  │  │  migration (v3)          │  contacts, contact_requests            │ │
 │  │  └──────────────────────────┘                                         │ │
+│  │  ┌──────────────────────────┐  ┌──────────────────────────────────┐   │ │
+│  │  │  004_nullify_secret_     │  │  005_secret_null_checks          │   │ │
+│  │  │  columns migration (v4)  │  │  migration (v5)                  │   │ │
+│  │  │  Makes private_key,      │  │  CHECK constraints: private_key, │   │ │
+│  │  │  mnemonic12 nullable     │  │  mnemonic12, ml_kem_secret_key   │   │ │
+│  │  └──────────────────────────┘  │  must be NULL + avatar_blob BLOB │   │ │
+│  │                                └──────────────────────────────────┘   │ │
+│  │  ┌──────────────────────────┐                                         │ │
+│  │  │  encrypted_db_opener     │  Opens SQLCipher DB with key from      │ │
+│  │  │                          │  secure storage; handles plaintext→    │ │
+│  │  │                          │  encrypted migration                   │ │
+│  │  └──────────────────────────┘                                         │ │
+│  │                                                                        │ │
+│  │  ── Secure Storage ───────────────────────────────────────────────── │ │
+│  │  ┌──────────────────────────┐  ┌──────────────────────────────────┐   │ │
+│  │  │  SecureKeyStore          │  │  FlutterSecureKeyStore           │   │ │
+│  │  │  [Interface]             │  │  [Impl: flutter_secure_storage]  │   │ │
+│  │  │  read/write/delete/      │  │  iOS Keychain (device-bound)    │   │ │
+│  │  │  containsKey             │  │  Android EncryptedSharedPrefs    │   │ │
+│  │  └──────────────────────────┘  └──────────────────────────────────┘   │ │
+│  │  ┌──────────────────────────┐                                         │ │
+│  │  │  migrate_secrets_to_     │  One-time DB→secure storage migration  │ │
+│  │  │  secure_storage          │  with secrets_migrated sentinel        │ │
+│  │  └──────────────────────────┘                                         │ │
 │  │                                                                        │ │
 │  │  ── Utils ─────────────────────────────────────────────────────────── │ │
 │  │  ┌──────────────────────────┐  ┌──────────────────────────────────┐   │ │
@@ -424,8 +443,8 @@
                    │                                 │
                    ▼                                 ▼
 ┌──────────────────────────────────┐  ┌──────────────────────────────────────┐
-│     JAVASCRIPT RUNTIME           │  │         SQLITE DATABASE              │
-│     [WebView Container]          │  │         [sqflite Container]          │
+│     JAVASCRIPT RUNTIME           │  │      SQLCIPHER DATABASE              │
+│     [WebView Container]          │  │    [sqflite_sqlcipher Container]     │
 │                                  │  │                                      │
 │  ┌────────────────────────────┐  │  │  ┌────────────────────────────────┐  │
 │  │      Bridge Entry          │  │  │  │        identity table          │  │
@@ -433,59 +452,65 @@
 │  │                            │  │  │  │  id INTEGER PRIMARY KEY        │  │
 │  │  handleBridgeMessage()     │  │  │  │  peer_id TEXT NOT NULL         │  │
 │  │  sendToFlutter(response)   │  │  │  │  public_key TEXT NOT NULL      │  │
-│  └──────────┬─────────────────┘  │  │  │  private_key TEXT NOT NULL     │  │
-│             │                    │  │  │  mnemonic12 TEXT NOT NULL      │  │
-│  ┌──────────┴─────────────────┐  │  │  │  username TEXT NOT NULL        │  │
-│  │    Handlers                │  │  │  │  avatar_path TEXT              │  │
-│  │                            │  │  │  │  created_at TEXT NOT NULL      │  │
-│  │  identity.generate         │  │  │  │  updated_at TEXT NOT NULL      │  │
-│  │  identity.restore          │  │  │  │  ml_kem_public_key TEXT (v3)  │  │
-│  │  payload.sign              │  │  │  │  ml_kem_secret_key TEXT (v3)  │  │
-│  │  mlkem.keygen              │  │  │  │  Constraint: id = 1 always     │  │
-│  │  message.encrypt           │  │  │  └────────────────────────────────┘  │
-│  │  message.decrypt           │  │  │                                      │
-│                                  │  │  ┌────────────────────────────────┐  │
-│  ┌────────────────────────────┐  │  │  │        contacts table          │  │
-│  │    Identity Module         │  │  │  │                                │  │
-│  │                            │  │  │  │  peer_id TEXT PRIMARY KEY      │  │
-│  │  generateIdentity()        │  │  │  │  public_key TEXT NOT NULL      │  │
-│  │  restoreFromMnemonic()     │  │  │  │  rendezvous TEXT NOT NULL      │  │
-│  └────────────────────────────┘  │  │  │  username TEXT NOT NULL        │  │
-│                                  │  │  │  signature TEXT NOT NULL       │  │
-│  ┌────────────────────────────┐  │  │  │  scanned_at TEXT NOT NULL      │  │
-│  │    Signing Module          │  │  │  │  avatar_path TEXT              │  │
-│  │                            │  │  │  │  ml_kem_public_key TEXT (v3)  │  │
-│  │  signPayload()             │  │  │  └────────────────────────────────┘  │
-│  │                            │  │  │                                      │
-│  │  Uses:                     │  │  │  ┌────────────────────────────────┐  │
-│  │  • @noble/ed25519          │  │  │  │    contact_requests table      │  │
-│  └────────────────────────────┘  │  │  │                                │  │
-│                                  │  │  │  peer_id TEXT PRIMARY KEY      │  │
-│  ┌────────────────────────────┐  │  │  │  public_key TEXT NOT NULL      │  │
-│  │    Crypto Module           │  │  │  │  rendezvous TEXT NOT NULL      │  │
+│  └──────────┬─────────────────┘  │  │  │  private_key TEXT              │  │
+│             │                    │  │  │   CHECK(private_key IS NULL)  │  │
+│  ┌──────────┴─────────────────┐  │  │  │  mnemonic12 TEXT              │  │
+│  │    Handlers                │  │  │  │   CHECK(mnemonic12 IS NULL)   │  │
 │  │                            │  │  │  │  username TEXT NOT NULL        │  │
-│  │  ML-KEM-768 keygen         │  │  │  │  signature TEXT NOT NULL       │  │
-│  │  encryptMessage()          │  │  │  │  received_at TEXT NOT NULL     │  │
-│  │  decryptMessage()          │  │  │  │  status TEXT NOT NULL          │  │
-│  │                            │  │  │  │  DEFAULT 'pending'            │  │
-│  │  Uses:                     │  │  │  │  ml_kem_public_key TEXT (v3)  │  │
-│  │  • @noble/post-quantum    │  │  │  └────────────────────────────────┘  │
-│  │  • crypto.subtle (AES)    │  │  │                                      │
+│  │  identity.generate         │  │  │  │  avatar_path TEXT              │  │
+│  │  identity.restore          │  │  │  │  avatar_blob BLOB (v5)       │  │
+│  │  payload.sign              │  │  │  │  created_at TEXT NOT NULL      │  │
+│  │  mlkem.keygen              │  │  │  │  updated_at TEXT NOT NULL      │  │
+│  │  message.encrypt           │  │  │  │  ml_kem_public_key TEXT (v3)  │  │
+│  │  message.decrypt           │  │  │  │  ml_kem_secret_key TEXT       │  │
+│                                  │  │  │   CHECK(..IS NULL) (v5)      │  │
+│  ┌────────────────────────────┐  │  │  │  Constraint: id = 1 always     │  │
+│  │    Identity Module         │  │  │  │  Secrets → Secure Storage      │  │
+│  │                            │  │  │  └────────────────────────────────┘  │
+│  │  generateIdentity()        │  │  │                                      │
+│  │  restoreFromMnemonic()     │  │  │                                      │
 │  └────────────────────────────┘  │  │  ┌────────────────────────────────┐  │
-│                                  │  │  │        messages table          │  │
-│  ┌────────────────────────────┐  │  │  │        (v2 migration)          │  │
-│  │    P2P Module              │  │  │  │                                │  │
-│  │    (libp2p node)           │  │  │  │  id TEXT PRIMARY KEY           │  │
-│  │                            │  │  │  │                                │  │
-│  │  Node start/stop           │  │  │  │  contact_peer_id TEXT NOT NULL │  │
-│  │  Rendezvous register       │  │  │  │  sender_peer_id TEXT NOT NULL  │  │
-│  │  Rendezvous discover       │  │  │  │  text TEXT NOT NULL            │  │
-│  │  Peer dial/disconnect      │  │  │  │  timestamp TEXT NOT NULL       │  │
-│  │  Message send/receive      │  │  │  │  status TEXT DEFAULT 'sent'    │  │
-│  │                            │  │  │  │  is_incoming INTEGER NOT NULL  │  │
-│  │  Uses:                     │  │  │  │  created_at TEXT NOT NULL      │  │
-│  │  • @libp2p/* suite         │  │  │  │  INDEX idx_messages_contact    │  │
-│  └────────────────────────────┘  │  │  │  INDEX idx_messages_ts         │  │
+│                                  │  │  │        contacts table          │  │
+│                                  │  │  │                                │  │
+│  ┌────────────────────────────┐  │  │  │  peer_id TEXT PRIMARY KEY      │  │
+│  │    Signing Module          │  │  │  │  public_key TEXT NOT NULL      │  │
+│  │                            │  │  │  │  rendezvous TEXT NOT NULL      │  │
+│  │  signPayload()             │  │  │  │  username TEXT NOT NULL        │  │
+│  │                            │  │  │  │  signature TEXT NOT NULL       │  │
+│  │  Uses:                     │  │  │  │  scanned_at TEXT NOT NULL      │  │
+│  │  • @noble/ed25519          │  │  │  │  avatar_path TEXT              │  │
+│  └────────────────────────────┘  │  │  │  ml_kem_public_key TEXT (v3)  │  │
+│                                  │  │  └────────────────────────────────┘  │
+│  ┌────────────────────────────┐  │  │                                      │
+│  │    Crypto Module           │  │  │  ┌────────────────────────────────┐  │
+│  │                            │  │  │  │    contact_requests table      │  │
+│  │  ML-KEM-768 keygen         │  │  │  │                                │  │
+│  │  encryptMessage()          │  │  │  │  peer_id TEXT PRIMARY KEY      │  │
+│  │  decryptMessage()          │  │  │  │  public_key TEXT NOT NULL      │  │
+│  │                            │  │  │  │  rendezvous TEXT NOT NULL      │  │
+│  │  Uses:                     │  │  │  │  username TEXT NOT NULL        │  │
+│  │  • @noble/post-quantum    │  │  │  │  signature TEXT NOT NULL       │  │
+│  │  • crypto.subtle (AES)    │  │  │  │  received_at TEXT NOT NULL     │  │
+│  └────────────────────────────┘  │  │  │  status TEXT NOT NULL          │  │
+│                                  │  │  │  DEFAULT 'pending'            │  │
+│  ┌────────────────────────────┐  │  │  │  ml_kem_public_key TEXT (v3)  │  │
+│  │    P2P Module              │  │  │  └────────────────────────────────┘  │
+│  │    (libp2p node)           │  │  │                                      │
+│  │                            │  │  │  ┌────────────────────────────────┐  │
+│  │  Node start/stop           │  │  │  │        messages table          │  │
+│  │  Rendezvous register       │  │  │  │        (v2 migration)          │  │
+│  │  Rendezvous discover       │  │  │  │                                │  │
+│  │  Peer dial/disconnect      │  │  │  │  id TEXT PRIMARY KEY           │  │
+│  │  Message send/receive      │  │  │  │                                │  │
+│  │                            │  │  │  │  contact_peer_id TEXT NOT NULL │  │
+│  │  Uses:                     │  │  │  │  sender_peer_id TEXT NOT NULL  │  │
+│  │  • @libp2p/* suite         │  │  │  │  text TEXT NOT NULL            │  │
+│  └────────────────────────────┘  │  │  │  timestamp TEXT NOT NULL       │  │
+│                                  │  │  │  status TEXT DEFAULT 'sent'    │  │
+│                                  │  │  │  is_incoming INTEGER NOT NULL  │  │
+│                                  │  │  │  created_at TEXT NOT NULL      │  │
+│                                  │  │  │  INDEX idx_messages_contact    │  │
+│                                  │  │  │  INDEX idx_messages_ts         │  │
 │                                  │  │  └────────────────────────────────┘  │
 │                                  │  │                                      │
 │                                  │  └──────────────────────────────────────┘
@@ -502,8 +527,8 @@
 | MnemonicInputScreen | Widget | UI for entering recovery phrase |
 | **Home Feature** | | |
 | FirstTimeExperienceScreen | Widget | Main home screen with profile, QR, scan, and empty state |
-| FirstTimeExperienceWired | Widget | Business logic: QR build, username edit, avatar, scan, contact request listening |
-| ProfileAvatarWidget | Widget | Avatar display with camera button and image picker |
+| FirstTimeExperienceWired | Widget | Business logic: QR build, username edit, avatar (BLOB in DB), scan, contact request listening |
+| ProfileAvatarWidget | Widget | Avatar display with camera button and image picker; uses Image.memory() from BLOB (no file on disk) |
 | EditableUsernameWidget | Widget | Tap-to-edit username display |
 | QRCodeSection | Widget | QR code display with green glow effect |
 | ScanFriendCard | Widget | Glassmorphic card for QR scanning action |
@@ -574,7 +599,7 @@
 | **Core Services** | | |
 | IncomingMessageRouter | Service | Routes P2P messages by envelope type to contactRequestStream, chatMessageStream, unknownStream |
 | **Domain** | | |
-| IdentityModel | Entity | Immutable data class for identity (peerId, keys, mnemonic, username, avatarPath, mlKemPublicKey?, mlKemSecretKey?) |
+| IdentityModel | Entity | Immutable data class for identity (peerId, keys, mnemonic, username, avatarBlob, mlKemPublicKey?, mlKemSecretKey?); secrets (privateKey, mnemonic12, mlKemSecretKey) stored in SecureKeyStore, DB columns always NULL |
 | ContactModel | Entity | Contact from QR scan (peerId, publicKey, rendezvous, username, signature, scannedAt, mlKemPublicKey?) |
 | ContactRequestModel | Entity | Incoming request (peerId, publicKey, rendezvous, username, signature, status, mlKemPublicKey?) |
 | NodeState | P2P Model | P2P node state (peerId, isStarted, listenAddresses, connections) |
@@ -587,7 +612,7 @@
 | FeedItemType | Enum | Feed item types: connection, message |
 | ConversationMessage | Entity | Message in a conversation (id, contactPeerId, senderPeerId, text, status, isIncoming) |
 | MessagePayload | Wire Model | Chat message envelope: v1 plaintext `{ "type": "chat_message", "version": "1", "payload": {...} }` or v2 encrypted `{ "type": "chat_message", "version": "2", "senderPeerId": "...", "encrypted": { "kem", "ciphertext", "nonce" } }` |
-| IdentityRepository | Interface + Impl | Abstracts identity persistence |
+| IdentityRepository | Interface + Impl | Abstracts identity persistence; IdentityRepositoryImpl takes SecureKeyStore, reads secrets from secure storage (falls back to DB for pre-migration), writes secrets only to secure storage |
 | ContactRepository | Interface + Impl | Abstracts contact persistence (add, get, getAll, delete, exists, count) |
 | ContactRequestRepository | Interface + Impl | Abstracts request persistence (add, get, getPending, updateStatus, delete, exists) |
 | MessageRepository | Interface + Impl | Abstracts message persistence (save, getForContact, getLatest, updateStatus, exists) |
@@ -602,7 +627,11 @@
 | FlowEventEmitter | Utility | Structured logging across all layers |
 | NetworkConstants | Constants | Rendezvous address constant |
 | ChatConsoleLogger | Utility | Debug logging for chat messages with shortened peer IDs |
-| Database Helpers | DB Access | Low-level SQL operations for all 4 tables |
+| SecureKeyStore | Interface | Abstract secure key-value storage (read, write, delete, containsKey) |
+| FlutterSecureKeyStore | Impl | iOS Keychain (kSecAttrAccessibleWhenUnlockedThisDeviceOnly, device-bound) / Android EncryptedSharedPreferences; stores identity_private_key, identity_mnemonic12, identity_ml_kem_secret_key, db_encryption_key |
+| encrypted_db_opener | DB Setup | Opens SQLCipher-encrypted database with key from SecureKeyStore; handles plaintext-to-encrypted migration |
+| migrate_secrets_to_secure_storage | Migration | One-time migration of secrets from DB columns to SecureKeyStore with secrets_migrated sentinel |
+| Database Helpers | DB Access | Low-level SQL operations for all 4 tables (via sqflite_sqlcipher) |
 | AppColors / AppTheme | Theme | Color constants and ThemeData for dark theme |
 | GlassmorphicContainer | Theme | Frosted glass effect widget |
 
@@ -610,7 +639,7 @@
 
 | Component | Responsibility |
 |-----------|----------------|
-| Bridge Entry (entry.ts) | Routes incoming requests to handlers via command registry |
+| Bridge Entry (entry.ts) | Routes incoming requests to handlers via command registry; log sanitization prevents secret payloads in fallback console output |
 | Handlers (handlers.ts) | Command map: `identity.generate`, `identity.restore`, `payload.sign`, `inbox:store`, `inbox:retrieve`, `inbox:check` |
 | generateIdentity() | Creates new BIP39 mnemonic + Ed25519 keypair + ML-KEM-768 keypair |
 | restoreFromMnemonic() | Derives Ed25519 keypair from existing mnemonic + generates fresh ML-KEM-768 keypair |
@@ -670,10 +699,10 @@
   ├─────────────────────────────────────┤
   │ + peerId: String                    │
   │ + publicKey: String                 │
-  │ + privateKey: String                │
-  │ + mnemonic12: String                │
+  │ + privateKey: String?               │
+  │ + mnemonic12: String?               │
   │ + username: String                  │
-  │ + avatarPath: String?               │
+  │ + avatarBlob: Uint8List?            │
   │ + createdAt: String                 │
   │ + updatedAt: String                 │
   │ + mlKemPublicKey: String?           │
@@ -697,9 +726,14 @@
   ├─────────────────────────────────────┤
   │ - dbLoadIdentityRow: Function       │
   │ - dbUpsertIdentityRow: Function     │
+  │ - secureKeyStore: SecureKeyStore    │
   ├─────────────────────────────────────┤
   │ + loadIdentity(): IdentityModel?    │
+  │   (reads secrets from SecureKeyStore│
+  │    falls back to DB for pre-migr.)  │
   │ + saveIdentity(IdentityModel): void │
+  │   (writes secrets ONLY to secure    │
+  │    storage, DB columns set to null) │
   └─────────────────────────────────────┘
 
 
@@ -930,7 +964,7 @@
   ├─────────────────────────────────────┤
   │ - _qrData: String?                  │
   │ - _username: String                 │
-  │ - _avatarPath: String?              │
+  │ - _avatarBlob: Uint8List?           │
   │ - _identity: IdentityModel?         │
   │ - _requestSubscription: StreamSub   │
   ├─────────────────────────────────────┤
@@ -1522,6 +1556,22 @@
   runMlKemKeysMigration(db: Database): Future<void>   ← adds ml_kem_* columns to identity, contacts, contact_requests
 
 
+  FLUTTER DB HELPERS - DATA-AT-REST HARDENING:
+  ─────────────────────────────────────────────
+  runNullifySecretColumnsMigration(db: Database): Future<void>   ← v4: makes private_key, mnemonic12 nullable
+  runSecretNullChecksMigration(db: Database): Future<void>       ← v5: CHECK constraints + avatar_blob BLOB
+
+
+  FLUTTER SECURE STORAGE:
+  ───────────────────────
+  SecureKeyStore.read(key: String): Future<String?>
+  SecureKeyStore.write(key: String, value: String): Future<void>
+  SecureKeyStore.delete(key: String): Future<void>
+  SecureKeyStore.containsKey(key: String): Future<bool>
+  openEncryptedDatabase(path, version, secureKeyStore): Future<Database>
+  migrateSecretsToSecureStorage(db, secureKeyStore): Future<void>
+
+
   JAVASCRIPT FUNCTIONS:
   ─────────────────────
   generateIdentity(): Promise<IdentityJson>           // now includes mlKemPublicKey, mlKemSecretKey
@@ -1606,9 +1656,10 @@
                       │              │
                       │              ├──────► ImagePicker.pickImage()
                       │              │
-                      │              ├──────► File.copy() to Documents/avatars/
+                      │              ├──────► Read bytes as Uint8List (no file copy to disk)
                       │              │
-                      │              └──────► IdentityRepository.saveIdentity()
+                      │              └──────► IdentityRepository.saveIdentity(avatarBlob: bytes)
+                      │                             (avatar BLOB stored in SQLCipher DB)
                       │
                       ├──────► _onScanPressed()
                       │              │
@@ -1769,7 +1820,7 @@
 
 ```
 lib/
-├── main.dart                                    # App entry point, DB setup, DI (8 deps)
+├── main.dart                                    # App entry point, SecureKeyStore + encrypted DB setup, secret migration, DI
 ├── smoke_test_main.dart                         # Smoke test entry point
 ├── smoke_test_restore.dart                      # Smoke test for identity restore
 ├── smoke_test_messages.dart                     # Smoke test for messages DB layer
@@ -1781,15 +1832,22 @@ lib/
 │   ├── constants/
 │   │   └── network_constants.dart              # Rendezvous address
 │   ├── database/
+│   │   ├── encrypted_db_opener.dart              # Opens SQLCipher DB with key from secure storage
+│   │   ├── migrate_secrets_to_secure_storage.dart # One-time DB→secure storage migration
 │   │   ├── migrations/
 │   │   │   ├── 001_identity_table.dart         # Schema v1 (identity, contacts, contact_requests)
 │   │   │   ├── 002_messages_table.dart         # Schema v2 (messages table + indexes)
-│   │   │   └── 003_mlkem_keys.dart             # Schema v3 (ML-KEM key columns on identity, contacts, contact_requests)
+│   │   │   ├── 003_mlkem_keys.dart             # Schema v3 (ML-KEM key columns on identity, contacts, contact_requests)
+│   │   │   ├── 004_nullify_secret_columns.dart # Schema v4 (makes private_key, mnemonic12 nullable)
+│   │   │   └── 005_secret_null_checks.dart     # Schema v5 (CHECK constraints + avatar_blob BLOB)
 │   │   └── helpers/
 │   │       ├── identity_db_helpers.dart        # Identity DB CRUD
 │   │       ├── contacts_db_helpers.dart        # Contacts DB CRUD
 │   │       ├── contact_requests_db_helpers.dart # Contact Requests DB CRUD
 │   │       └── messages_db_helpers.dart        # Messages DB CRUD
+│   ├── secure_storage/
+│   │   ├── secure_key_store.dart                 # SecureKeyStore abstract interface
+│   │   └── flutter_secure_key_store.dart         # FlutterSecureKeyStore impl (iOS Keychain / Android EncryptedSharedPrefs)
 │   ├── services/
 │   │   ├── p2p_service.dart                    # P2PService abstract interface (incl. inbox)
 │   │   ├── p2p_service_impl.dart               # P2PServiceImpl with streams + offline inbox drain
@@ -1980,7 +2038,7 @@ core_lib_js/
     ├── signing/
     │   └── sign_payload.ts                     # signPayload() using @noble/ed25519
     ├── bridge/
-    │   ├── entry.ts                            # WebView entry point (incl. mlkem.keygen, message.encrypt/decrypt)
+    │   ├── entry.ts                            # WebView entry point (incl. mlkem.keygen, message.encrypt/decrypt); log sanitization
     │   └── handlers.ts                         # Command map: identity.*, payload.sign
     ├── utils/
     │   ├── flow_events.ts                      # JS-side flow event emitter
@@ -2365,43 +2423,43 @@ assets/
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                    AVATAR UPLOAD - DATA FLOW                                 │
+│              (No file written to disk — avatar stored as BLOB in DB)         │
 └─────────────────────────────────────────────────────────────────────────────┘
 
-  User                FTE Wired           ImagePicker          File System          Database
-   │                      │                   │                    │                   │
-   │  Tap camera button   │                   │                    │                   │
-   │─────────────────────>│                   │                    │                   │
-   │                      │                   │                    │                   │
-   │                      │  Show bottom      │                    │                   │
-   │                      │  sheet picker     │                    │                   │
-   │                      │                   │                    │                   │
-   │  Select "Gallery"    │                   │                    │                   │
-   │─────────────────────>│                   │                    │                   │
-   │                      │                   │                    │                   │
-   │                      │  pickImage()      │                    │                   │
-   │                      │──────────────────>│                    │                   │
-   │                      │                   │                    │                   │
-   │  Select photo        │                   │                    │                   │
-   │─────────────────────>│                   │                    │                   │
-   │                      │                   │                    │                   │
-   │                      │  XFile (temp)     │                    │                   │
-   │                      │<──────────────────│                    │                   │
-   │                      │                   │                    │                   │
-   │                      │  Copy to Documents/avatars/            │                   │
-   │                      │───────────────────────────────────────>│                   │
-   │                      │                   │                    │                   │
-   │                      │  Saved path       │                    │                   │
-   │                      │<──────────────────────────────────────│                   │
-   │                      │                   │                    │                   │
-   │                      │  Update identity with avatarPath       │                   │
-   │                      │  saveIdentity()                        │                   │
-   │                      │───────────────────────────────────────────────────────────>│
-   │                      │                   │                    │                   │
-   │                      │  setState()       │                    │                   │
-   │                      │                   │                    │                   │
-   │  Display avatar      │                   │                    │                   │
-   │<─────────────────────│                   │                    │                   │
-   │                      │                   │                    │                   │
+  User                FTE Wired           ImagePicker          SQLCipher Database
+   │                      │                   │                       │
+   │  Tap camera button   │                   │                       │
+   │─────────────────────>│                   │                       │
+   │                      │                   │                       │
+   │                      │  Show bottom      │                       │
+   │                      │  sheet picker     │                       │
+   │                      │                   │                       │
+   │  Select "Gallery"    │                   │                       │
+   │─────────────────────>│                   │                       │
+   │                      │                   │                       │
+   │                      │  pickImage()      │                       │
+   │                      │──────────────────>│                       │
+   │                      │                   │                       │
+   │  Select photo        │                   │                       │
+   │─────────────────────>│                   │                       │
+   │                      │                   │                       │
+   │                      │  XFile (temp)     │                       │
+   │                      │<──────────────────│                       │
+   │                      │                   │                       │
+   │                      │  Read bytes       │                       │
+   │                      │  (Uint8List)      │                       │
+   │                      │                   │                       │
+   │                      │  Update identity with avatarBlob          │
+   │                      │  saveIdentity()                           │
+   │                      │  (BLOB stored in encrypted DB)            │
+   │                      │──────────────────────────────────────────>│
+   │                      │                   │                       │
+   │                      │  setState()       │                       │
+   │                      │  Image.memory()   │                       │
+   │                      │                   │                       │
+   │  Display avatar      │                   │                       │
+   │<─────────────────────│                   │                       │
+   │                      │                   │                       │
 ```
 
 ---
@@ -2412,7 +2470,8 @@ assets/
 
 | Package | Purpose |
 |---------|---------|
-| sqflite | SQLite database access |
+| sqflite_sqlcipher | SQLCipher encrypted database access (replaces plain sqflite) |
+| flutter_secure_storage | OS-backed secure key-value storage (iOS Keychain / Android EncryptedSharedPreferences) |
 | webview_flutter | JavaScript runtime container |
 | qr_flutter | QR code generation widget |
 | mobile_scanner | Camera-based QR code scanning |
@@ -2424,7 +2483,7 @@ assets/
 
 | Package | Purpose |
 |---------|---------|
-| sqflite_common_ffi | SQLite FFI for desktop testing |
+| sqflite_common_ffi | SQLite/SQLCipher FFI for desktop testing |
 | flutter_test | Widget testing framework |
 | integration_test | Integration testing framework |
 | flutter_lints | Lint rules |
@@ -2457,13 +2516,15 @@ The application initialization sequence is defined in `lib/main.dart`. Understan
     ├─► WidgetsFlutterBinding.ensureInitialized()
     │       Ensures Flutter engine is ready before async operations
     │
-    ├─► Platform Check (Desktop: Linux/Windows/macOS)
-    │       │
-    │       └─► sqfliteFfiInit()
-    │           databaseFactory = databaseFactoryFfi
-    │           Desktop platforms require FFI for SQLite
+    ├─► SecureKeyStore instantiation (FlutterSecureKeyStore)
+    │       iOS Keychain (device-bound) / Android EncryptedSharedPreferences
     │
-    ├─► openDatabase('identity.db', version: 3)
+    ├─► openEncryptedDatabase('identity.db', version: 5, secureKeyStore)
+    │       │
+    │       ├─► Read/generate db_encryption_key from SecureKeyStore
+    │       │       Random 256-bit key, stored as base64 in secure storage
+    │       │
+    │       ├─► Open SQLCipher DB with encryption key (sqflite_sqlcipher)
     │       │
     │       ├─► onCreate callback (first run only)
     │       │       │
@@ -2473,20 +2534,38 @@ The application initialization sequence is defined in `lib/main.dart`. Understan
     │       │       ├─► runMessagesTableMigration(db)
     │       │       │       Creates messages table + indexes
     │       │       │
-    │       │       └─► runMlKemKeysMigration(db)
-    │       │               Adds ml_kem_* columns to identity, contacts, contact_requests
+    │       │       ├─► runMlKemKeysMigration(db)
+    │       │       │       Adds ml_kem_* columns to identity, contacts, contact_requests
+    │       │       │
+    │       │       ├─► runNullifySecretColumnsMigration(db)
+    │       │       │       Makes private_key, mnemonic12 nullable (v4)
+    │       │       │
+    │       │       └─► runSecretNullChecksMigration(db)
+    │       │               CHECK constraints + avatar_blob BLOB column (v5)
     │       │
-    │       └─► onUpgrade callback (v1→v2→v3)
+    │       └─► onUpgrade callback (v1→v2→v3→v4→v5)
     │               │
-    │               ├─► runMessagesTableMigration(db)       (v1 → v2)
+    │               ├─► runMessagesTableMigration(db)                (v1 → v2)
     │               │       Creates messages table for existing installs
     │               │
-    │               └─► runMlKemKeysMigration(db)           (v2 → v3)
-    │                       Adds ML-KEM key columns for E2E encryption
+    │               ├─► runMlKemKeysMigration(db)                    (v2 → v3)
+    │               │       Adds ML-KEM key columns for E2E encryption
+    │               │
+    │               ├─► runNullifySecretColumnsMigration(db)         (v3 → v4)
+    │               │       Makes private_key, mnemonic12 nullable
+    │               │
+    │               └─► runSecretNullChecksMigration(db)             (v4 → v5)
+    │                       CHECK constraints enforcing secret cols NULL
+    │                       + avatar_blob BLOB column
+    │
+    ├─► migrateSecretsToSecureStorage(db, secureKeyStore)
+    │       One-time migration: reads secrets from DB, writes to SecureKeyStore
+    │       Sets secrets_migrated sentinel in secure storage
+    │       Nullifies DB secret columns after successful migration
     │
     ├─► Repository instantiation (4 repositories)
     │       │
-    │       ├─► IdentityRepositoryImpl (dbLoad, dbUpsert)
+    │       ├─► IdentityRepositoryImpl (dbLoad, dbUpsert, secureKeyStore)
     │       │
     │       ├─► ContactRepositoryImpl (6 db helper functions)
     │       │
@@ -2543,10 +2622,16 @@ The application initialization sequence is defined in `lib/main.dart`. Understan
 
 | File | Responsibility |
 |------|----------------|
-| `lib/main.dart` | Entry point, DB setup, repository + service + listener DI (8 deps) |
+| `lib/main.dart` | Entry point, SecureKeyStore + encrypted DB setup, secret migration, repository + service + listener DI |
+| `lib/core/secure_storage/secure_key_store.dart` | SecureKeyStore abstract interface |
+| `lib/core/secure_storage/flutter_secure_key_store.dart` | FlutterSecureKeyStore production impl (iOS Keychain / Android EncryptedSharedPreferences) |
+| `lib/core/database/encrypted_db_opener.dart` | Opens SQLCipher DB with key from secure storage; handles plaintext-to-encrypted migration |
+| `lib/core/database/migrate_secrets_to_secure_storage.dart` | One-time DB-to-secure-storage secret migration with sentinel |
 | `lib/core/database/migrations/001_identity_table.dart` | Schema v1 migration (3 tables) |
 | `lib/core/database/migrations/002_messages_table.dart` | Schema v2 migration (messages table) |
 | `lib/core/database/migrations/003_mlkem_keys.dart` | Schema v3 migration (ML-KEM key columns on identity, contacts, contact_requests) |
+| `lib/core/database/migrations/004_nullify_secret_columns.dart` | Schema v4 migration (makes private_key, mnemonic12 nullable) |
+| `lib/core/database/migrations/005_secret_null_checks.dart` | Schema v5 migration (CHECK constraints enforcing secret columns NULL + avatar_blob BLOB) |
 | `lib/core/services/incoming_message_router.dart` | P2P message routing by type |
 | `lib/core/bridge/webview_js_bridge.dart` | JS runtime initialization + event handlers |
 | `lib/core/services/p2p_service_impl.dart` | P2P service initialization |
@@ -2561,8 +2646,9 @@ To add a new initialization step:
 1. Add async initialization code in `main()` before `runApp()`
 2. Inject dependencies into `MyApp` constructor
 3. Pass dependencies through `StartupRouter` to child widgets
-4. For new migrations, create `004_*.dart` and update `openDatabase` version
+4. For new migrations, create `006_*.dart` and update `openEncryptedDatabase` version (currently v5)
 5. For new P2P event handlers, register on `WebViewJsBridge` in `P2PServiceImpl`
+6. For new secrets, add read/write methods to `SecureKeyStore` and update `FlutterSecureKeyStore`
 
 ---
 
@@ -2590,7 +2676,7 @@ The application has **active P2P networking** via the JavaScript runtime. Identi
                          │   │  • QR code creation         │   │
                          │   │  • QR code scanning         │   │
                          │   │  • Profile management       │   │
-                         │   │  • SQLite persistence       │   │
+                         │   │  • SQLCipher persistence     │   │
                          │   │  • Contact management       │   │
                          │   │  • Message persistence      │   │
                          │   │  • Ring avatar generation   │   │
