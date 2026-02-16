@@ -248,6 +248,30 @@
 │  │  └─────────────────────────────────────────────────────────────────┘  │ │
 │  │                                                                        │ │
 │  │  ┌─────────────────────────────────────────────────────────────────┐  │ │
+│  │  │                      ORBIT FEATURE                              │  │ │
+│  │  │  ┌──────────────────────────────────────────────────────────┐   │  │ │
+│  │  │  │              OrbitScreen [Widget]                         │   │  │ │
+│  │  │  │                                                           │   │  │ │
+│  │  │  │  ┌────────────────┐  ┌────────────────┐  ┌────────────┐  │   │  │ │
+│  │  │  │  │OrbitalVisualiz.│  │OrbitalRing     │  │OrbitalAvat.│  │   │  │ │
+│  │  │  │  │(320x320 stack) │  │Painter (dashed)│  │(scale-in)  │  │   │  │ │
+│  │  │  │  └────────────────┘  └────────────────┘  └────────────┘  │   │  │ │
+│  │  │  │  ┌────────────────┐  ┌────────────────┐  ┌────────────┐  │   │  │ │
+│  │  │  │  │OverflowBadge   │  │OrbitHeader     │  │OrbitClose  │  │   │  │ │
+│  │  │  │  │("+N" delayed)  │  │(right avatar)  │  │Button (X)  │  │   │  │ │
+│  │  │  │  └────────────────┘  └────────────────┘  └────────────┘  │   │  │ │
+│  │  │  │  ┌────────────────┐  ┌────────────────┐  ┌────────────┐  │   │  │ │
+│  │  │  │  │FriendsListHead.│  │FriendRow +     │  │OrbitSearch │  │   │  │ │
+│  │  │  │  │(QR/Scan pills) │  │AnimatedFriend  │  │Trigger     │  │   │  │ │
+│  │  │  │  └────────────────┘  └────────────────┘  └────────────┘  │   │  │ │
+│  │  │  │  ┌────────────────┐                                      │   │  │ │
+│  │  │  │  │OrbitSearchDock │                                      │   │  │ │
+│  │  │  │  │(bottom search) │                                      │   │  │ │
+│  │  │  │  └────────────────┘                                      │   │  │ │
+│  │  │  └──────────────────────────────────────────────────────────┘   │  │ │
+│  │  └─────────────────────────────────────────────────────────────────┘  │ │
+│  │                                                                        │ │
+│  │  ┌─────────────────────────────────────────────────────────────────┐  │ │
 │  │  │                    SHARED WIDGETS                                │  │ │
 │  │  │  ┌──────────────────┐  ┌──────────────────┐  ┌────────────────┐ │  │ │
 │  │  │  │AmbientBackground │  │GlassmorphicCont. │  │ChoiceCard      │ │  │ │
@@ -316,6 +340,12 @@
 │  │  │ loadFeed()       │                                                 │ │
 │  │  │ [Use Case]       │                                                 │ │
 │  │  └──────────────────┘                                                 │ │
+│  │                                                                        │ │
+│  │  ── Orbit ────────────────────────────────────────────────────────── │ │
+│  │  ┌──────────────────┐                                                 │ │
+│  │  │ loadOrbitData()  │  Loads contacts + message counts, sorted by     │ │
+│  │  │ [Use Case]       │  messageCount descending                        │ │
+│  │  └──────────────────┘                                                 │ │
 │  └────────────────────────────────────────────────────────────────────────┘ │
 │                                                                              │
 │  ┌────────────────────────────────────────────────────────────────────────┐ │
@@ -342,6 +372,10 @@
 │  │  │ Conversation     │  │ MessagePayload   │                           │ │
 │  │  │ Message [Model]  │  │ [Wire Model]     │                           │ │
 │  │  └──────────────────┘  └──────────────────┘                           │ │
+│  │  ┌──────────────────┐                                                 │ │
+│  │  │ OrbitFriend       │  Composite: ContactModel + messageCount        │ │
+│  │  │ [Orbit Model]    │  + lastActivity + lastMessageTimestamp          │ │
+│  │  └──────────────────┘                                                 │ │
 │  │                                                                        │ │
 │  │  ── Repositories ──────────────────────────────────────────────────── │ │
 │  │  ┌──────────────────────┐  ┌──────────────────────────────────────┐   │ │
@@ -546,9 +580,9 @@
 | PendingRequestsBadge | Widget | Circular count badge (shows 99+ max) |
 | **Feed Feature** | | |
 | FeedScreen | Widget | Main feed UI displaying connection and message cards |
-| FeedWired | Widget | Feed orchestration: loads identity, builds initial feed, listens for contact requests and messages |
+| FeedWired | Widget | Feed orchestration: loads identity, builds initial feed, listens for contact requests and messages; orbit tab pushes OrbitWired via Navigator.push |
 | FeedHeader | Widget | Sticky header with username and ring avatar |
-| FeedNavigationBar | Widget | Bottom glassmorphic nav bar with 3 SVG tabs (feed, orbit, remember) |
+| FeedNavigationBar | Widget | Bottom glassmorphic nav bar with 3 SVG tabs (feed, orbit, remember); orbit tab triggers Navigator.push instead of tab swap |
 | NavBarButton | Widget | Individual nav bar tab button (active/inactive states) |
 | ConnectionCard | Widget | Card displaying a contact connection with ring avatar and inline green checkmark badge |
 | MessageFeedCard | Widget | Incoming message card with contact avatar, message preview, and reply button |
@@ -564,6 +598,20 @@
 | CompactOriginMarker | Widget | Compact connection origin marker at top of conversation (48px avatar) |
 | DateSeparator | Widget | Date divider between letter cards spanning different days with gradient lines |
 | ConversationRouteTransition | Route | Slide-up page transition (420ms easeOutCubic) |
+| **Orbit Feature** | | |
+| OrbitScreen | Widget | Pure UI: AmbientBackground, Scaffold, 4-layer Stack (scrollable content, close button, floating search trigger, search dock) |
+| OrbitWired | Widget | Orbit business logic: 3 AnimationControllers (collapse 580ms, searchDock 560ms, searchTrigger 340ms), subscribes to chatMessageListener + contactRequestListener streams |
+| OrbitalVisualization | Widget | 320x320 Stack with dashed ring painter, center RingAvatar, Ring 1 (top 5 friends, 62px, 38px avatars), Ring 2 (next 8, 108px, 30px avatars), overflow badge |
+| OrbitalRingPainter | CustomPainter | Draws 2 dashed concentric circles (teal + purple) |
+| OrbitalAvatar | Widget | Positioned avatar with staggered scale-in animation (globalIndex * 40ms) |
+| OverflowBadge | Widget | "+N" badge with delayed entrance (1000ms) |
+| OrbitCloseButton | Widget | 36x36 glass circle X button |
+| OrbitHeader | Widget | Right-aligned 44px user RingAvatar |
+| FriendsListHeader | Widget | "Friends" title + My QR / Scan pill buttons (hidden during search) |
+| FriendRow | Widget | Glassmorphic card with contact avatar, name, message count, and last activity |
+| AnimatedFriendRow | Widget | FriendRow wrapper with staggered slide-up animation (index * 20ms) |
+| OrbitSearchTrigger | Widget | Floating glass pill with search button + close button |
+| OrbitSearchDock | Widget | Bottom-docked search TextField with native keyboard |
 | **Shared Widgets** | | |
 | AmbientBackground | Widget | Animated green/red glow background |
 | GlassmorphicContainer | Widget | Frosted glass effect container |
@@ -596,6 +644,8 @@
 | ChatMessageListener | Service | Monitors chatMessageStream, resolves own ML-KEM secret key for decryption, broadcasts persisted ConversationMessages and contact updates to UI |
 | **Feed Use Cases** | | |
 | loadFeed() | Use Case | Loads initial feed from DB: contacts + latest messages per contact |
+| **Orbit Use Cases** | | |
+| loadOrbitData() | Use Case | Loads all contacts with message counts from MessageRepository, sorted by messageCount descending; returns List<OrbitFriend> |
 | **Core Services** | | |
 | IncomingMessageRouter | Service | Routes P2P messages by envelope type to contactRequestStream, chatMessageStream, unknownStream |
 | **Domain** | | |
@@ -612,10 +662,11 @@
 | FeedItemType | Enum | Feed item types: connection, message |
 | ConversationMessage | Entity | Message in a conversation (id, contactPeerId, senderPeerId, text, status, isIncoming) |
 | MessagePayload | Wire Model | Chat message envelope: v1 plaintext `{ "type": "chat_message", "version": "1", "payload": {...} }` or v2 encrypted `{ "type": "chat_message", "version": "2", "senderPeerId": "...", "encrypted": { "kem", "ciphertext", "nonce" } }` |
+| OrbitFriend | Composite Model | ContactModel + messageCount (int) + lastActivity (String) + lastMessageTimestamp (DateTime?); used by Orbit feature for ranking friends by conversation activity |
 | IdentityRepository | Interface + Impl | Abstracts identity persistence; IdentityRepositoryImpl takes SecureKeyStore, reads secrets from secure storage (falls back to DB for pre-migration), writes secrets only to secure storage |
 | ContactRepository | Interface + Impl | Abstracts contact persistence (add, get, getAll, delete, exists, count) |
 | ContactRequestRepository | Interface + Impl | Abstracts request persistence (add, get, getPending, updateStatus, delete, exists) |
-| MessageRepository | Interface + Impl | Abstracts message persistence (save, getForContact, getLatest, updateStatus, exists) |
+| MessageRepository | Interface + Impl | Abstracts message persistence (save, getForContact, getLatest, updateStatus, exists, getMessageCountForContact) |
 | **Core** | | |
 | WebViewJsBridge | Bridge Client | Sends requests to JS runtime, manages event handlers |
 | P2PBridgeClient | Bridge Client | P2P-specific bridge calls (start, stop, status, register, discover, dial, disconnect, send, inbox store/retrieve) |
@@ -627,6 +678,7 @@
 | FlowEventEmitter | Utility | Structured logging across all layers |
 | NetworkConstants | Constants | Rendezvous address constant |
 | ChatConsoleLogger | Utility | Debug logging for chat messages with shortened peer IDs |
+| formatRelativeTime() | Utility | Formats timestamps as relative "2m ago" strings for Orbit feature |
 | SecureKeyStore | Interface | Abstract secure key-value storage (read, write, delete, containsKey) |
 | FlutterSecureKeyStore | Impl | iOS Keychain (kSecAttrAccessibleWhenUnlockedThisDeviceOnly, device-bound) / Android EncryptedSharedPreferences; stores identity_private_key, identity_mnemonic12, identity_ml_kem_secret_key, db_encryption_key |
 | encrypted_db_opener | DB Setup | Opens SQLCipher-encrypted database with key from SecureKeyStore; handles plaintext-to-encrypted migration |
@@ -1041,6 +1093,52 @@
   │ + _onContactRequest(Model)          │
   │ + _acceptRequest(ctx, Model)        │
   │ + _declineRequest(ctx, Model)       │
+  │ + _onSwitchView('orbit')            │
+  │     → Navigator.push(OrbitWired)    │
+  └─────────────────────────────────────┘
+
+
+  ── Orbit Domain ───────────────────────────────────────────────────────
+
+  ┌─────────────────────────────────────┐
+  │       OrbitFriend                   │
+  ├─────────────────────────────────────┤
+  │ + contact: ContactModel             │
+  │ + messageCount: int                 │
+  │ + lastActivity: String              │
+  │ + lastMessageTimestamp: DateTime?   │
+  └─────────────────────────────────────┘
+
+  ┌─────────────────────────────────────┐
+  │    OrbitWired                        │
+  ├─────────────────────────────────────┤
+  │ + contactRepository: ContactRepo    │
+  │ + messageRepository: MessageRepo    │
+  │ + chatMessageListener: Listener     │
+  │ + contactRequestListener: Listener  │
+  │ + identityRepository: IdentityRepo  │
+  │ + p2pService: P2PService            │
+  │ + bridge: JsBridge                  │
+  │ + contactRequestRepository: CRRepo  │
+  ├─────────────────────────────────────┤
+  │ - _orbitFriends: List<OrbitFriend>  │
+  │ - _filteredFriends: List<OrbitFriend>│
+  │ - _identity: IdentityModel?         │
+  │ - _collapseController: AnimCtrl     │
+  │   (580ms)                           │
+  │ - _searchDockController: AnimCtrl   │
+  │   (560ms)                           │
+  │ - _searchTriggerController: AnimCtrl│
+  │   (340ms)                           │
+  │ - _isSearchActive: bool             │
+  │ - _searchQuery: String              │
+  ├─────────────────────────────────────┤
+  │ + _loadOrbitData()                  │
+  │ + _onSearch(String)                 │
+  │ + _onFriendTap(OrbitFriend)         │
+  │     → Navigator.push(ConvWired)     │
+  │ + _onClose()                        │
+  │     → Navigator.pop()              │
   └─────────────────────────────────────┘
 
 
@@ -1096,6 +1194,8 @@
   │ + getLatestMessageForContact(): Msg?│
   │ + updateMessageStatus(id, s): void  │
   │ + messageExists(id): bool           │
+  │ + getMessageCountForContact(        │
+  │ │   contactPeerId): Future<int>     │
   └──────────────────┬──────────────────┘
                      │ implements
                      ▼
@@ -1107,6 +1207,7 @@
   │ - dbLoadLatestMessageForContact: Fn │
   │ - dbUpdateMessageStatus: Function   │
   │ - dbLoadMessage: Function           │
+  │ - dbCountMessagesForContact: Fn     │
   └─────────────────────────────────────┘
 
 
@@ -1442,6 +1543,16 @@
   ): Future<List<FeedItem>>
 
 
+  FLUTTER USE CASES - ORBIT:
+  ──────────────────────────
+  loadOrbitData(
+    contactRepo: ContactRepository,
+    messageRepo: MessageRepository
+  ): Future<List<OrbitFriend>>
+  // Loads all contacts, queries message count per contact,
+  // sorts by messageCount descending
+
+
   FLUTTER USE CASES - CONTACTS:
   ─────────────────────────────
   addContact(
@@ -1538,6 +1649,7 @@
   dbUpdateMessageStatus(db: Database, id: String, status: String): Future<void>
   dbLoadMessage(db: Database, id: String): Future<Map?>
   dbGetMessageCount(db: Database): Future<int>
+  dbCountMessagesForContact(db: Database, contactPeerId: String): Future<int>
   runMessagesTableMigration(db: Database): Future<void>   ← creates messages table + indexes
 
 
@@ -1549,6 +1661,7 @@
   hexToBytes(String hex): Uint8List
   RingAvatarGenerator.generate(String peerId, double size): RingAvatarData
   RingAvatarGenerator.djb2Hash(String input): int
+  formatRelativeTime(DateTime timestamp): String   ← "2m ago", "3h ago", etc.
 
 
   FLUTTER DB HELPERS - ML-KEM KEYS:
@@ -1608,7 +1721,25 @@
        │              │
        │              ├──────► ContactRequestListener.requestStream
        │              │
-       │              └──────► ConnectionFeedItem.fromContact()
+       │              ├──────► ConnectionFeedItem.fromContact()
+       │              │
+       │              └──────► _onSwitchView('orbit')
+       │                             │
+       │                             └──────► Navigator.push(OrbitWired)
+       │                                            │
+       │                                            ├──────► loadOrbitData()
+       │                                            │              │
+       │                                            │              ├──────► ContactRepository.getAllContacts()
+       │                                            │              │
+       │                                            │              └──────► MessageRepository.getMessageCountForContact()
+       │                                            │
+       │                                            ├──────► ChatMessageListener.incomingMessageStream
+       │                                            │
+       │                                            ├──────► ContactRequestListener.requestStream
+       │                                            │
+       │                                            └──────► _onFriendTap()
+       │                                                           │
+       │                                                           └──────► Navigator.push(ConversationWired)
        │
        ├──────► FirstTimeExperienceWired (hasIdentityNoContacts)
        │
@@ -1883,7 +2014,7 @@ lib/
 │   │   │   ├── models/
 │   │   │   │   └── feed_item.dart              # FeedItem base + ConnectionFeedItem + MessageFeedItem
 │   │   │   └── utils/
-│   │   │       └── format_message_time.dart    # Message timestamp formatting
+│   │   │       └── format_message_time.dart    # Message timestamp formatting + formatRelativeTime()
 │   │   ├── application/
 │   │   │   └── load_feed_use_case.dart         # Load initial feed from DB
 │   │   └── presentation/
@@ -1926,6 +2057,29 @@ lib/
 │   │       │   └── date_separator.dart         # Date divider
 │   │       └── navigation/
 │   │           └── conversation_route_transition.dart
+│   │
+│   ├── orbit/
+│   │   ├── domain/
+│   │   │   └── models/
+│   │   │       └── orbit_friend.dart             # OrbitFriend composite model
+│   │   ├── application/
+│   │   │   └── load_orbit_data_use_case.dart     # Load contacts + message counts
+│   │   └── presentation/
+│   │       ├── screens/
+│   │       │   ├── orbit_screen.dart             # Pure UI: orbital viz, friend list, search
+│   │       │   └── orbit_wired.dart              # Business logic + 3 AnimationControllers
+│   │       └── widgets/
+│   │           ├── orbital_visualization.dart     # 320x320 Stack with ring painter + avatars
+│   │           ├── orbital_ring_painter.dart      # CustomPainter: 2 dashed concentric circles
+│   │           ├── orbital_avatar.dart            # Positioned avatar with staggered scale-in
+│   │           ├── overflow_badge.dart            # "+N" badge with delayed entrance
+│   │           ├── orbit_close_button.dart        # 36x36 glass circle X button
+│   │           ├── orbit_header.dart              # Right-aligned 44px user RingAvatar
+│   │           ├── friends_list_header.dart        # "Friends" title + QR/Scan pill buttons
+│   │           ├── friend_row.dart                # Glassmorphic friend card
+│   │           ├── animated_friend_row.dart        # Staggered slide-up wrapper (index * 20ms)
+│   │           ├── orbit_search_trigger.dart       # Floating glass pill search button
+│   │           └── orbit_search_dock.dart          # Bottom-docked search TextField
 │   │
 │   ├── identity/
 │   │   ├── domain/
@@ -2462,6 +2616,89 @@ assets/
    │                      │                   │                       │
 ```
 
+### Orbit Navigation Flow
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│              ORBIT NAVIGATION - DATA FLOW                                    │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+  User          FeedWired       OrbitWired       loadOrbitData UC   MessageRepo     ContactRepo
+   │                │                │                │                │               │
+   │  Tap "Orbit"   │                │                │                │               │
+   │  in nav bar    │                │                │                │               │
+   │───────────────>│                │                │                │               │
+   │                │                │                │                │               │
+   │                │  Navigator     │                │                │               │
+   │                │  .push(        │                │                │               │
+   │                │  OrbitWired)   │                │                │               │
+   │                │───────────────>│                │                │               │
+   │                │                │                │                │               │
+   │                │                │  loadOrbit     │                │               │
+   │                │                │  Data()        │                │               │
+   │                │                │───────────────>│                │               │
+   │                │                │                │                │               │
+   │                │                │                │  getAllContacts()               │
+   │                │                │                │───────────────────────────────>│
+   │                │                │                │                │               │
+   │                │                │                │  List<Contact> │               │
+   │                │                │                │<───────────────────────────────│
+   │                │                │                │                │               │
+   │                │                │                │  For each contact:             │
+   │                │                │                │  getMessageCount               │
+   │                │                │                │  ForContact()  │               │
+   │                │                │                │───────────────>│               │
+   │                │                │                │                │               │
+   │                │                │                │  count (int)   │               │
+   │                │                │                │<───────────────│               │
+   │                │                │                │                │               │
+   │                │                │                │  Sort by count │               │
+   │                │                │                │  desc, build   │               │
+   │                │                │                │  OrbitFriends  │               │
+   │                │                │                │                │               │
+   │                │                │  List<OrbitFriend>              │               │
+   │                │                │<───────────────│                │               │
+   │                │                │                │                │               │
+   │  Show orbital  │                │  Render:       │                │               │
+   │  visualization │                │  Ring 1 (top 5)│                │               │
+   │  + friend list │                │  Ring 2 (next 8)               │               │
+   │<────────────────────────────────│  Friend list   │                │               │
+   │                │                │                │                │               │
+   │                │                │                │                │               │
+   │  Tap friend    │                │                │                │               │
+   │───────────────────────────────>│                │                │               │
+   │                │                │                │                │               │
+   │                │                │  Navigator     │                │               │
+   │                │                │  .push(        │                │               │
+   │                │                │  ConvWired)    │                │               │
+   │                │                │───────────────>│                │               │
+   │                │                │                │                │               │
+   │                │                │                │                │               │
+   │  Type search   │                │                │                │               │
+   │  query         │                │                │                │               │
+   │───────────────────────────────>│                │                │               │
+   │                │                │                │                │               │
+   │                │                │  Filter        │                │               │
+   │                │                │  _orbitFriends │                │               │
+   │                │                │  by username   │                │               │
+   │                │                │  match         │                │               │
+   │                │                │                │                │               │
+   │  Filtered list │                │                │                │               │
+   │<────────────────────────────────│                │                │               │
+   │                │                │                │                │               │
+   │                │                │                │                │               │
+   │  Tap X button  │                │                │                │               │
+   │───────────────────────────────>│                │                │               │
+   │                │                │                │                │               │
+   │                │                │  Navigator     │                │               │
+   │                │                │  .pop()        │                │               │
+   │                │  <─────────────│                │                │               │
+   │                │                │                │                │               │
+   │  Back to Feed  │                │                │                │               │
+   │<───────────────│                │                │                │               │
+   │                │                │                │                │               │
+```
+
 ---
 
 ## Dependencies
@@ -2571,7 +2808,7 @@ The application initialization sequence is defined in `lib/main.dart`. Understan
     │       │
     │       ├─► ContactRequestRepositoryImpl (6 db helper functions)
     │       │
-    │       └─► MessageRepositoryImpl (5 db helper functions)
+    │       └─► MessageRepositoryImpl (6 db helper functions)
     │
     ├─► WebViewJsBridge instantiation + initialize()
     │       │

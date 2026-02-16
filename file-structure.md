@@ -17,7 +17,7 @@ flutter_app/
 │       └── nav_remember.svg                         # Remember tab icon
 │
 ├── lib/
-│   ├── main.dart                               # App entry point, SecureKeyStore + encrypted DB setup, secrets migration, DI (8 deps to MyApp)
+│   ├── main.dart                               # App entry point, SecureKeyStore + encrypted DB setup, secrets migration, DI (dbCountMessagesForContact wired to MessageRepositoryImpl)
 │   ├── smoke_test_main.dart                    # Smoke test entry point
 │   ├── smoke_test_restore.dart                 # Smoke test for identity restore
 │   ├── smoke_test_messages.dart                # Smoke test for messages DB layer
@@ -43,7 +43,7 @@ flutter_app/
 │   │   │       ├── identity_db_helpers.dart     # Identity table CRUD
 │   │   │       ├── contacts_db_helpers.dart     # Contacts table CRUD
 │   │   │       ├── contact_requests_db_helpers.dart  # Contact requests table CRUD
-│   │   │       └── messages_db_helpers.dart     # Messages table CRUD (insert, load, update status)
+│   │   │       └── messages_db_helpers.dart     # Messages table CRUD (insert, load, update status, count for contact)
 │   │   │
 │   │   ├── services/
 │   │   │   ├── p2p_service.dart                # P2PService abstract interface (incl. inbox)
@@ -87,13 +87,13 @@ flutter_app/
 │       │   │   ├── models/
 │       │   │   │   └── feed_item.dart                       # FeedItem base + ConnectionFeedItem + MessageFeedItem
 │       │   │   └── utils/
-│       │   │       └── format_message_time.dart             # Message timestamp formatting utility
+│       │   │       └── format_message_time.dart             # Message timestamp formatting + relative time ("2m ago")
 │       │   ├── application/
 │       │   │   └── load_feed_use_case.dart                  # Load initial feed from DB (contacts + latest messages)
 │       │   └── presentation/
 │       │       ├── screens/
 │       │       │   ├── feed_screen.dart                     # Pure UI feed display
-│       │       │   └── feed_wired.dart                      # Feed business logic + CR/chat listeners
+│       │       │   └── feed_wired.dart                      # Feed business logic + CR/chat listeners + orbit navigation
 │       │       ├── widgets/
 │       │       │   ├── feed_header.dart                     # Sticky header (username + avatar from memory bytes)
 │       │       │   ├── feed_navigation_bar.dart             # Bottom glass nav bar (3 tabs)
@@ -110,8 +110,8 @@ flutter_app/
 │       │   │   │   ├── conversation_message.dart            # ConversationMessage (id, text, status, isIncoming)
 │       │   │   │   └── message_payload.dart                 # Wire-format envelope model (chat_message type)
 │       │   │   └── repositories/
-│       │   │       ├── message_repository.dart              # Abstract interface (save, load, update status)
-│       │   │       └── message_repository_impl.dart         # DB-backed implementation
+│       │   │       ├── message_repository.dart              # Abstract interface (save, load, update status, count for contact)
+│       │   │       └── message_repository_impl.dart         # DB-backed implementation (incl. getMessageCountForContact)
 │       │   ├── application/
 │       │   │   ├── send_chat_message_use_case.dart          # Send message with 3x retry, inbox fallback + optimistic persist
 │       │   │   ├── handle_incoming_chat_message_use_case.dart  # Parse, validate sender, detect name changes
@@ -130,6 +130,31 @@ flutter_app/
 │       │       │   └── date_separator.dart                  # Date divider between letter cards
 │       │       └── navigation/
 │       │           └── conversation_route_transition.dart    # Slide-up route transition (420ms)
+│       │
+│       ├── orbit/
+│       │   ├── domain/
+│       │   │   └── models/
+│       │   │       └── orbit_friend.dart                    # Composite model: contact + messageCount + lastActivity
+│       │   ├── application/
+│       │   │   └── load_orbit_data_use_case.dart            # Top-level function: loads contacts with message counts, sorted desc
+│       │   └── presentation/
+│       │       ├── screens/
+│       │       │   ├── orbit_screen.dart                    # StatelessWidget: pure UI layout with 4-layer Stack
+│       │       │   └── orbit_wired.dart                     # StatefulWidget: state, 3 animation controllers, streams, DI (8 deps)
+│       │       ├── widgets/
+│       │       │   ├── orbital_visualization.dart           # 320x320 Stack: rings + center + friend avatars + overflow badge
+│       │       │   ├── orbital_ring_painter.dart            # CustomPainter: 2 dashed concentric circles (teal + purple)
+│       │       │   ├── orbital_avatar.dart                  # Positioned avatar on ring with staggered scale-in animation
+│       │       │   ├── overflow_badge.dart                  # "+N" circle badge on outer ring (1000ms delayed entrance)
+│       │       │   ├── orbit_close_button.dart              # 36x36 glass circle X button with BackdropFilter
+│       │       │   ├── orbit_header.dart                    # Right-aligned user avatar (44px)
+│       │       │   ├── friends_list_header.dart             # "Friends" title + My QR / Scan pill buttons
+│       │       │   ├── friend_row.dart                      # Glassmorphic tappable friend card + AnimatedFriendRow wrapper
+│       │       │   ├── qr_action_cards.dart                 # Two side-by-side bottom QR cards (unused/created but removed from screen)
+│       │       │   ├── orbit_search_trigger.dart            # Floating glass pill at bottom (search + close)
+│       │       │   └── orbit_search_dock.dart               # Bottom-docked search input panel with native keyboard
+│       │       └── navigation/
+│       │           └── orbit_route_transition.dart           # Slide-up route (matches conversation pattern, 420ms)
 │       │
 │       ├── identity/
 │       │   ├── domain/
@@ -167,7 +192,7 @@ flutter_app/
 │       │   │   └── parse_qr_payload_use_case.dart          # Validate scanned QR (sig, expiry, self)
 │       │   └── presentation/
 │       │       ├── screens/
-│       │       │   ├── qr_display_screen.dart              # Full-screen QR display
+│       │       │   ├── qr_display_screen.dart              # Full-screen QR display + long-press copy (debug)
 │       │       │   ├── qr_display_wired.dart               # QR display business logic
 │       │       │   ├── qr_scanner_screen.dart              # Camera scanner UI (mobile_scanner)
 │       │       │   └── qr_scanner_wired.dart               # Scanner logic: parse, add, send request
@@ -341,7 +366,7 @@ flutter_app/
 | QR payload model | `qr_payload_model.dart` | Dart model for QR JSON |
 | Build QR | `build_qr_payload_use_case.dart` | Create signed QR payload |
 | Parse QR | `parse_qr_payload_use_case.dart` | Validate scanned QR (sig, expiry, self-scan) |
-| QR display | `qr_display_screen.dart`, `qr_display_wired.dart` | Show QR code UI |
+| QR display | `qr_display_screen.dart`, `qr_display_wired.dart` | Show QR code UI + long-press copy (debug) |
 | QR scanner | `qr_scanner_screen.dart`, `qr_scanner_wired.dart` | Camera scan + process |
 | Scan overlay | `scan_overlay.dart` | Canvas overlay with corner markers |
 | JS signing | `sign_payload.ts`, `handlers.ts` | `payload.sign` handler |
@@ -395,7 +420,7 @@ flutter_app/
 |-----------|---------|-------------|
 | Message model | `conversation_message.dart` | ConversationMessage (id, text, status, isIncoming, timestamps) |
 | Wire payload | `message_payload.dart` | MessagePayload envelope: v1 plaintext or v2 encrypted (ML-KEM-768 + AES-256-GCM) |
-| Message repository | `message_repository.dart`, `message_repository_impl.dart` | Save, load, update status for messages |
+| Message repository | `message_repository.dart`, `message_repository_impl.dart` | Save, load, update status, count for contact |
 | Send message | `send_chat_message_use_case.dart` | Build payload, encrypt with ML-KEM if available (v2) or plaintext (v1), discover + dial peer, 3x retry, offline inbox fallback, optimistic persist |
 | Handle incoming | `handle_incoming_chat_message_use_case.dart` | Detect v2 encrypted envelope and decrypt, or parse v1 plaintext, validate sender, detect name changes, persist |
 | Load conversation | `load_conversation_use_case.dart` | Load all messages for a contact by timestamp ASC |
@@ -413,7 +438,28 @@ flutter_app/
 | DB migration | `003_mlkem_keys.dart` | Adds ml_kem_public_key, ml_kem_secret_key columns to identity; ml_kem_public_key to contacts and contact_requests |
 | DB migration | `004_nullify_secret_columns.dart` | Schema v4: makes secret columns nullable for secure storage migration |
 | DB migration | `005_secret_null_checks.dart` | Schema v5: CHECK constraints on secret columns + avatar_blob BLOB column |
-| DB helpers | `messages_db_helpers.dart` | Messages table CRUD (insert, load, update status, count) |
+| DB helpers | `messages_db_helpers.dart` | Messages table CRUD (insert, load, update status, count for contact) |
+
+### Orbit (UI-5)
+
+| Component | File(s) | Description |
+|-----------|---------|-------------|
+| Orbit friend model | `orbit_friend.dart` | Composite model: contact + messageCount + lastActivity |
+| Load orbit data | `load_orbit_data_use_case.dart` | Top-level function: loads contacts with message counts, sorted desc |
+| Orbit screen | `orbit_screen.dart` | Pure UI: 4-layer Stack layout (header, visualization, friends list, search) |
+| Orbit logic | `orbit_wired.dart` | State management: 3 animation controllers, streams, DI (8 deps) |
+| Orbital visualization | `orbital_visualization.dart` | 320x320 Stack: rings + center avatar + friend avatars + overflow badge |
+| Ring painter | `orbital_ring_painter.dart` | CustomPainter: 2 dashed concentric circles (teal + purple) |
+| Orbital avatar | `orbital_avatar.dart` | Positioned avatar on ring with staggered scale-in animation |
+| Overflow badge | `overflow_badge.dart` | "+N" circle badge on outer ring (1000ms delayed entrance) |
+| Close button | `orbit_close_button.dart` | 36x36 glass circle X button with BackdropFilter |
+| Orbit header | `orbit_header.dart` | Right-aligned user avatar (44px) |
+| Friends list header | `friends_list_header.dart` | "Friends" title + My QR / Scan pill buttons |
+| Friend row | `friend_row.dart` | Glassmorphic tappable friend card + AnimatedFriendRow wrapper |
+| QR action cards | `qr_action_cards.dart` | Two side-by-side bottom QR cards (unused/created but removed from screen) |
+| Search trigger | `orbit_search_trigger.dart` | Floating glass pill at bottom (search + close) |
+| Search dock | `orbit_search_dock.dart` | Bottom-docked search input panel with native keyboard |
+| Route transition | `orbit_route_transition.dart` | Slide-up route (matches conversation pattern, 420ms) |
 
 ### Home / First-Time Experience
 
@@ -433,10 +479,10 @@ flutter_app/
 | Component | File(s) | Description |
 |-----------|---------|-------------|
 | Feed item model | `feed_item.dart` | FeedItem base + ConnectionFeedItem + MessageFeedItem |
-| Time formatting | `format_message_time.dart` | Message timestamp formatting utility |
+| Time formatting | `format_message_time.dart` | Message timestamp formatting + relative time ("2m ago") |
 | Load feed | `load_feed_use_case.dart` | Load initial feed from DB (contacts + latest messages) |
 | Feed screen | `feed_screen.dart` | Pure UI feed display (connection + message cards) |
-| Feed logic | `feed_wired.dart` | Feed orchestration, identity load, CR/chat listeners |
+| Feed logic | `feed_wired.dart` | Feed orchestration, identity load, CR/chat listeners, orbit navigation |
 | Feed header | `feed_header.dart` | Sticky header with username + avatar from memory bytes |
 | Navigation bar | `feed_navigation_bar.dart` | Bottom glass nav bar (3 tabs) |
 | Nav button | `nav_bar_button.dart` | Individual tab button (active/inactive) |
