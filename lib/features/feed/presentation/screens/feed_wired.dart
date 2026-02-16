@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/bridge/js_bridge_client.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
@@ -56,7 +57,7 @@ class FeedWired extends StatefulWidget {
 
 class _FeedWiredState extends State<FeedWired> {
   String _username = 'Username';
-  String? _avatarPath;
+  Uint8List? _avatarBytes;
   String? _peerId;
   IdentityModel? _identity;
   String _activeTab = 'feed';
@@ -85,7 +86,7 @@ class _FeedWiredState extends State<FeedWired> {
       setState(() {
         _identity = identity;
         _username = identity.username;
-        _avatarPath = identity.avatarPath;
+        _avatarBytes = identity.avatarBlob;
         _peerId = identity.peerId;
       });
     } catch (e) {
@@ -326,7 +327,7 @@ class _FeedWiredState extends State<FeedWired> {
       mlKemPublicKey: identity.mlKemPublicKey,
       mlKemSecretKey: identity.mlKemSecretKey,
       username: newUsername,
-      avatarPath: identity.avatarPath,
+      avatarBlob: identity.avatarBlob,
       createdAt: identity.createdAt,
       updatedAt: DateTime.now().toUtc().toIso8601String(),
     );
@@ -376,7 +377,7 @@ class _FeedWiredState extends State<FeedWired> {
     return Scaffold(
       body: FeedScreen(
         username: _username,
-        userAvatarPath: _avatarPath,
+        userAvatarBytes: _avatarBytes,
         userPeerId: _peerId,
         feedItems: _feedItems,
         onUsernameChanged: _onUsernameChanged,

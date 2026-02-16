@@ -10,6 +10,7 @@ import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/contact_requests_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository_impl.dart';
+import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository_impl.dart';
 import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository_impl.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
@@ -20,6 +21,18 @@ import 'package:flutter_app/core/bridge/webview_js_bridge.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'dart:io';
+
+class _FakeSecureKeyStore implements SecureKeyStore {
+  final Map<String, String> _store = {};
+  @override
+  Future<String?> read(String key) async => _store[key];
+  @override
+  Future<void> write(String key, String value) async => _store[key] = value;
+  @override
+  Future<void> delete(String key) async => _store.remove(key);
+  @override
+  Future<bool> containsKey(String key) async => _store.containsKey(key);
+}
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
@@ -59,6 +72,7 @@ void main() {
     final repository = IdentityRepositoryImpl(
       dbLoadIdentityRow: () => dbLoadIdentityRow(db),
       dbUpsertIdentityRow: (row) => dbUpsertIdentityRow(db, row),
+      secureKeyStore: _FakeSecureKeyStore(),
     );
     final contactRepository = ContactRepositoryImpl(
       dbLoadAllContacts: () => dbLoadAllContacts(db),

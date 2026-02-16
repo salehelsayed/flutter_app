@@ -3,10 +3,15 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:flutter_app/core/database/migrations/001_identity_table.dart';
 import 'package:flutter_app/core/database/migrations/002_messages_table.dart';
 import 'package:flutter_app/core/database/migrations/003_mlkem_keys.dart';
+import 'package:flutter_app/core/database/migrations/004_nullify_secret_columns.dart';
+import 'package:flutter_app/core/database/migrations/005_secret_null_checks.dart';
+import 'package:flutter_app/core/database/encrypted_db_opener.dart';
 import 'package:flutter_app/core/database/helpers/identity_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/contact_requests_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
+import 'package:flutter_app/core/secure_storage/flutter_secure_key_store.dart';
+import 'package:flutter_app/core/secure_storage/migrate_secrets_to_secure_storage.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository_impl.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository_impl.dart';
 import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository_impl.dart';
@@ -31,14 +36,20 @@ void main() async {
     databaseFactory = databaseFactoryFfi;
   }
 
-  // Open or create the database
-  final db = await openDatabase(
-    'identity.db',
-    version: 3,
+  // 1. Create secure key store
+  final secureKeyStore = FlutterSecureKeyStore();
+
+  // 2. Open encrypted database (handles plaintext→encrypted migration)
+  final db = await openEncryptedDatabase(
+    secureKeyStore: secureKeyStore,
+    dbName: 'identity.db',
+    version: 5,
     onCreate: (db, version) async {
       await runIdentityTableMigration(db);
       await runMessagesTableMigration(db);
       await runMlKemKeysMigration(db);
+      // Fresh install: skip 004 (nullable) — 005 already has nullable + CHECK
+      await runSecretNullChecksMigration(db);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) {
@@ -47,13 +58,29 @@ void main() async {
       if (oldVersion < 3) {
         await runMlKemKeysMigration(db);
       }
+      if (oldVersion < 4) {
+        await runNullifySecretColumnsMigration(db);
+      }
+      // Migration 005 is deferred — runs after secrets migration below
     },
   );
 
-  // Create repository with database helpers
+  // 3. Run one-time secrets migration (DB → secure storage)
+  //    Must run BEFORE migration 005 so CHECK constraints don't reject
+  //    existing non-null secret values during the table rebuild.
+  await migrateSecretsToSecureStorage(
+    db: db,
+    secureKeyStore: secureKeyStore,
+  );
+
+  // 4. Apply CHECK constraints now that secret columns are guaranteed NULL
+  await runSecretNullChecksMigration(db);
+
+  // 5. Create repository with database helpers + secure key store
   final repository = IdentityRepositoryImpl(
     dbLoadIdentityRow: () => dbLoadIdentityRow(db),
     dbUpsertIdentityRow: (row) => dbUpsertIdentityRow(db, row),
+    secureKeyStore: secureKeyStore,
   );
 
   // Create contact repository

@@ -1,4 +1,5 @@
-import 'dart:io';
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/home/presentation/widgets/editable_username_widget.dart';
@@ -8,7 +9,7 @@ import 'package:flutter_app/features/p2p/presentation/widgets/connection_status_
 /// Feed header showing the handle and user avatar.
 class FeedHeader extends StatelessWidget {
   final String username;
-  final String? avatarPath;
+  final Uint8List? avatarBytes;
   final String? peerId;
   final ValueChanged<String>? onUsernameChanged;
   final P2PService? p2pService;
@@ -16,7 +17,7 @@ class FeedHeader extends StatelessWidget {
   const FeedHeader({
     super.key,
     required this.username,
-    this.avatarPath,
+    this.avatarBytes,
     this.peerId,
     this.onUsernameChanged,
     this.p2pService,
@@ -45,7 +46,7 @@ class FeedHeader extends StatelessWidget {
               ConnectionStatusIndicator(p2pService: p2pService!),
               const SizedBox(width: 8),
             ],
-            _HeaderAvatar(peerId: peerId, avatarPath: avatarPath),
+            _HeaderAvatar(peerId: peerId, avatarBytes: avatarBytes),
           ],
         ),
       ],
@@ -55,9 +56,9 @@ class FeedHeader extends StatelessWidget {
 
 class _HeaderAvatar extends StatelessWidget {
   final String? peerId;
-  final String? avatarPath;
+  final Uint8List? avatarBytes;
 
-  const _HeaderAvatar({required this.peerId, required this.avatarPath});
+  const _HeaderAvatar({required this.peerId, required this.avatarBytes});
 
   @override
   Widget build(BuildContext context) {
@@ -73,29 +74,22 @@ class _HeaderAvatar extends StatelessWidget {
         border: Border.all(color: const Color.fromRGBO(255, 255, 255, 0.35)),
         color: const Color.fromRGBO(22, 24, 30, 0.7),
       ),
-      child: avatarPath != null
-          ? ClipOval(child: _buildAvatarImage())
+      child: avatarBytes != null
+          ? ClipOval(
+              child: Image.memory(
+                avatarBytes!,
+                fit: BoxFit.cover,
+                errorBuilder: (context, error, stackTrace) => const Icon(
+                  Icons.person_outline_rounded,
+                  color: Color.fromRGBO(255, 255, 255, 0.8),
+                ),
+              ),
+            )
           : const Icon(
               Icons.person_outline_rounded,
               color: Color.fromRGBO(255, 255, 255, 0.8),
               size: 20,
             ),
-    );
-  }
-
-  Widget _buildAvatarImage() {
-    final imagePath = avatarPath!;
-    final imageProvider = imagePath.startsWith('/')
-        ? FileImage(File(imagePath))
-        : AssetImage(imagePath) as ImageProvider;
-
-    return Image(
-      image: imageProvider,
-      fit: BoxFit.cover,
-      errorBuilder: (context, error, stackTrace) => const Icon(
-        Icons.person_outline_rounded,
-        color: Color.fromRGBO(255, 255, 255, 0.8),
-      ),
     );
   }
 }

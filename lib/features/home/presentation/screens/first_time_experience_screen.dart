@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
@@ -12,7 +14,7 @@ import '../widgets/empty_circle_state.dart';
 class FirstTimeExperienceScreen extends StatefulWidget {
   final String? qrData;
   final String username;
-  final String? avatarPath;
+  final Uint8List? avatarBytes;
   final String? peerId;
   final VoidCallback? onCameraPressed;
   final ValueChanged<String>? onUsernameChanged;
@@ -23,7 +25,7 @@ class FirstTimeExperienceScreen extends StatefulWidget {
     super.key,
     this.qrData,
     required this.username,
-    this.avatarPath,
+    this.avatarBytes,
     this.peerId,
     this.onCameraPressed,
     this.onUsernameChanged,
@@ -235,7 +237,7 @@ class _FirstTimeExperienceScreenState extends State<FirstTimeExperienceScreen>
     return Column(
       children: [
         ProfileAvatarWidget(
-          avatarPath: widget.avatarPath,
+          avatarBytes: widget.avatarBytes,
           peerId: widget.peerId,
           onCameraPressed: widget.onCameraPressed,
         ),

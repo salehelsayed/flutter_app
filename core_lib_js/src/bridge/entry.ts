@@ -44,7 +44,8 @@ function sendToFlutter(response: BridgeResponse): void {
   if ((window as any).FlutterChannel) {
     (window as any).FlutterChannel.postMessage(json);
   } else {
-    console.log('[bridge] FlutterChannel not available, response:', json);
+    console.log('[bridge] FlutterChannel not available, response: ok=' + response.ok +
+      (response.errorCode ? ' error=' + response.errorCode : ''));
   }
 }
 

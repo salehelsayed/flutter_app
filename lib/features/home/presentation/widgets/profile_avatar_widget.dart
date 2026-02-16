@@ -1,16 +1,17 @@
-import 'dart:io';
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/app_colors.dart';
 import 'ring_avatar.dart';
 
 /// Profile avatar with ring avatar default and camera button.
 ///
-/// When [avatarPath] is provided, displays the user's photo.
-/// When [avatarPath] is null but [peerId] is provided, displays
+/// When [avatarBytes] is provided, displays the user's photo from memory.
+/// When [avatarBytes] is null but [peerId] is provided, displays
 /// a unique ring avatar generated from the peerId.
 class ProfileAvatarWidget extends StatelessWidget {
-  /// Path to the user's avatar image file.
-  final String? avatarPath;
+  /// Raw image bytes for the user's avatar (stored in encrypted DB).
+  final Uint8List? avatarBytes;
 
   /// The user's peer ID for generating the default ring avatar.
   final String? peerId;
@@ -23,7 +24,7 @@ class ProfileAvatarWidget extends StatelessWidget {
 
   const ProfileAvatarWidget({
     super.key,
-    this.avatarPath,
+    this.avatarBytes,
     this.peerId,
     this.onCameraPressed,
     this.size = 80,
@@ -47,7 +48,7 @@ class ProfileAvatarWidget extends StatelessWidget {
 
   Widget _buildAvatar() {
     // Priority 1: User's photo
-    if (avatarPath != null) {
+    if (avatarBytes != null) {
       return _buildImageAvatar();
     }
 
@@ -72,8 +73,8 @@ class ProfileAvatarWidget extends StatelessWidget {
         ),
       ),
       child: ClipOval(
-        child: Image.file(
-          File(avatarPath!),
+        child: Image.memory(
+          avatarBytes!,
           width: size,
           height: size,
           fit: BoxFit.cover,
