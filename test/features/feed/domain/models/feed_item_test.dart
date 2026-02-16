@@ -68,4 +68,116 @@ void main() {
       expect(item.messageTime, '3:30 PM');
     });
   });
+
+  group('ThreadFeedItem', () {
+    test('has type thread', () {
+      final item = ThreadFeedItem(
+        id: 'thread_unread_peer1',
+        timestamp: DateTime.now(),
+        contactPeerId: 'peer1',
+        contactUsername: 'Alice',
+        messages: [
+          ThreadMessage(
+            id: 'msg-1',
+            text: 'Hello',
+            time: '3:30 PM',
+            timestamp: DateTime(2026, 2, 9, 15, 30),
+          ),
+        ],
+      );
+      expect(item.type, FeedItemType.thread);
+    });
+
+    test('isMultiMessage returns true for multiple messages', () {
+      final item = ThreadFeedItem(
+        id: 'thread_unread_peer1',
+        timestamp: DateTime(2026, 2, 9, 15, 30),
+        contactPeerId: 'peer1',
+        contactUsername: 'Alice',
+        messages: [
+          ThreadMessage(
+            id: 'msg-1',
+            text: 'First',
+            time: '3:00 PM',
+            timestamp: DateTime(2026, 2, 9, 15, 0),
+          ),
+          ThreadMessage(
+            id: 'msg-2',
+            text: 'Second',
+            time: '3:30 PM',
+            timestamp: DateTime(2026, 2, 9, 15, 30),
+          ),
+        ],
+      );
+
+      expect(item.isMultiMessage, isTrue);
+      expect(item.additionalCount, 1);
+      expect(item.latestMessage.text, 'Second');
+    });
+
+    test('isMultiMessage returns false for single message', () {
+      final item = ThreadFeedItem(
+        id: 'thread_unread_peer1',
+        timestamp: DateTime(2026, 2, 9, 15, 30),
+        contactPeerId: 'peer1',
+        contactUsername: 'Alice',
+        messages: [
+          ThreadMessage(
+            id: 'msg-1',
+            text: 'Only one',
+            time: '3:30 PM',
+            timestamp: DateTime(2026, 2, 9, 15, 30),
+          ),
+        ],
+      );
+
+      expect(item.isMultiMessage, isFalse);
+      expect(item.additionalCount, 0);
+    });
+
+    test('stores unread metadata correctly', () {
+      final item = ThreadFeedItem(
+        id: 'thread_unread_peer1',
+        timestamp: DateTime(2026, 2, 9),
+        contactPeerId: 'peer1',
+        contactUsername: 'Alice',
+        messages: const [],
+        unreadCount: 3,
+        isUnreadCard: true,
+      );
+
+      expect(item.unreadCount, 3);
+      expect(item.isUnreadCard, isTrue);
+    });
+  });
+
+  group('ThreadMessage', () {
+    test('stores all fields', () {
+      final ts = DateTime(2026, 2, 9, 15, 30);
+      final msg = ThreadMessage(
+        id: 'msg-1',
+        text: 'Hello world',
+        time: '3:30 PM',
+        timestamp: ts,
+        isUnread: true,
+      );
+
+      expect(msg.id, 'msg-1');
+      expect(msg.text, 'Hello world');
+      expect(msg.time, '3:30 PM');
+      expect(msg.timestamp, ts);
+      expect(msg.isUnread, isTrue);
+    });
+
+    test('isUnread defaults to false', () {
+      final msg = ThreadMessage(
+        id: 'msg-1',
+        text: 'Hello',
+        time: '3:30 PM',
+        timestamp: DateTime(2026, 2, 9, 15, 30),
+      );
+
+      expect(msg.isUnread, isFalse);
+    });
+  });
 }
