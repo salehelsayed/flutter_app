@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:flutter_app/core/database/migrations/001_identity_table.dart';
 import 'package:flutter_app/core/database/migrations/002_messages_table.dart';
+import 'package:flutter_app/core/database/migrations/003_mlkem_keys.dart';
 import 'package:flutter_app/core/database/helpers/identity_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/contact_requests_db_helpers.dart';
@@ -33,14 +34,18 @@ void main() async {
   // Open or create the database
   final db = await openDatabase(
     'identity.db',
-    version: 2,
+    version: 3,
     onCreate: (db, version) async {
       await runIdentityTableMigration(db);
       await runMessagesTableMigration(db);
+      await runMlKemKeysMigration(db);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) {
         await runMessagesTableMigration(db);
+      }
+      if (oldVersion < 3) {
+        await runMlKemKeysMigration(db);
       }
     },
   );
@@ -110,6 +115,11 @@ void main() async {
     chatMessageStream: messageRouter.chatMessageStream,
     messageRepo: messageRepository,
     contactRepo: contactRepository,
+    bridge: bridge,
+    getOwnMlKemSecretKey: () async {
+      final identity = await repository.loadIdentity();
+      return identity?.mlKemSecretKey;
+    },
   );
 
   // Start router first, then listeners

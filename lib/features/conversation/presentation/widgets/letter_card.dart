@@ -198,6 +198,7 @@ class LetterCard extends StatelessWidget {
 
   static IconData _statusIcon(String status) {
     if (status == 'delivered') return Icons.done_all_rounded;
+    if (status == 'queued') return Icons.done_all_rounded;
     if (status == 'failed') return Icons.error_outline_rounded;
     return Icons.done_rounded;
   }
@@ -206,12 +207,16 @@ class LetterCard extends StatelessWidget {
     if (status == 'delivered') {
       return const Color.fromRGBO(255, 255, 255, 0.45);
     }
+    if (status == 'queued') {
+      return const Color.fromRGBO(255, 255, 255, 0.45);
+    }
     if (status == 'failed') return const Color.fromRGBO(255, 100, 100, 0.60);
     return const Color.fromRGBO(255, 255, 255, 0.25);
   }
 
   static String _statusSemantic(String status) {
     if (status == 'delivered') return 'delivered';
+    if (status == 'queued') return 'delivered';
     if (status == 'failed') return 'failed';
     if (status == 'sending') return 'sending';
     if (status == 'sent') return 'sent';

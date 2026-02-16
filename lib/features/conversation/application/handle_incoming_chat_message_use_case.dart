@@ -1,3 +1,4 @@
+import 'package:flutter_app/core/bridge/js_bridge_client.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/chat_console_logger.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
@@ -33,6 +34,8 @@ handleIncomingChatMessage({
   required ChatMessage message,
   required MessageRepository messageRepo,
   required ContactRepository contactRepo,
+  JsBridge? bridge,
+  String? ownMlKemSecretKey,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -44,8 +47,65 @@ handleIncomingChatMessage({
     },
   );
 
-  // 1. Parse as MessagePayload
-  final payload = MessagePayload.fromJson(message.content);
+  // Log raw wire envelope
+  logChatWireEnvelope(
+    direction: 'IN',
+    messageId: '',
+    wireJson: message.content,
+  );
+
+  // 1. Try v2 encrypted envelope first, then fall back to v1 plaintext
+  MessagePayload? payload;
+
+  final v2Envelope = MessagePayload.parseEncryptedEnvelope(message.content);
+  if (v2Envelope != null) {
+    // v2 encrypted message
+    if (bridge == null || ownMlKemSecretKey == null) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CHAT_MSG_RECEIVE_V2_NO_KEY',
+        details: {},
+      );
+      return (HandleChatMessageResult.notChatMessage, null, null);
+    }
+
+    final encrypted = v2Envelope['encrypted'] as Map<String, dynamic>;
+    try {
+      final decryptResult = await callJsDecryptMessage(
+        bridge: bridge,
+        ownMlKemSecretKey: ownMlKemSecretKey,
+        kem: encrypted['kem'] as String,
+        ciphertext: encrypted['ciphertext'] as String,
+        nonce: encrypted['nonce'] as String,
+      );
+
+      if (decryptResult['ok'] != true) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'CHAT_MSG_RECEIVE_DECRYPT_FAILED',
+          details: {
+            'errorCode': decryptResult['errorCode'],
+          },
+        );
+        return (HandleChatMessageResult.notChatMessage, null, null);
+      }
+
+      payload = MessagePayload.fromDecryptedJson(
+        decryptResult['plaintext'] as String,
+      );
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CHAT_MSG_RECEIVE_DECRYPT_ERROR',
+        details: {'error': e.toString()},
+      );
+      return (HandleChatMessageResult.notChatMessage, null, null);
+    }
+  } else {
+    // v1 plaintext envelope
+    payload = MessagePayload.fromJson(message.content);
+  }
+
   if (payload == null) {
     emitFlowEvent(layer: 'FL', event: 'CHAT_MSG_RECEIVE_NOT_CHAT', details: {});
     return (HandleChatMessageResult.notChatMessage, null, null);

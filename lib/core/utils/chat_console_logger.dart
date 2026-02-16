@@ -42,6 +42,19 @@ void logChatIncoming({
   );
 }
 
+void logChatWireEnvelope({
+  required String direction,
+  required String messageId,
+  required String wireJson,
+}) {
+  final idPart = messageId.isEmpty ? '' : ' id=${shortenMessageId(messageId)}';
+  // Truncate to first 300 chars for readability
+  final preview = wireJson.length > 300
+      ? '${wireJson.substring(0, 300)}...(${wireJson.length} chars)'
+      : wireJson;
+  print('[CHAT_WIRE_$direction]$idPart envelope=$preview');
+}
+
 void logChatTransportIncoming({
   required String fromPeerId,
   required String toPeerId,

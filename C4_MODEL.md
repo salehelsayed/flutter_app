@@ -15,7 +15,8 @@
                                       │ Uses app to create/restore
                                       │ cryptographic identity, share
                                       │ QR codes, discover peers,
-                                      │ and exchange contact requests
+                                      │ exchange contact requests,
+                                      │ and send encrypted messages
                                       ▼
                         ┌─────────────────────────────┐
                         │                             │
@@ -49,9 +50,9 @@
 
 | Element | Type | Description |
 |---------|------|-------------|
-| User | Person | End user who wants to create or restore their cryptographic identity, connect with peers, and manage contacts |
-| Mknoon Identity App | Software System | Mobile/desktop app for identity management, profile customization, peer discovery, contact requests, conversations, and P2P messaging using libp2p and BIP39 |
-| Rendezvous / Relay Server | External System | libp2p rendezvous server for peer discovery, circuit relay for NAT traversal, and offline message inbox (`/mknoon/inbox/1.0.0`) |
+| User | Person | End user who wants to create or restore their cryptographic identity, connect with peers, manage contacts, and exchange encrypted messages |
+| Mknoon Identity App | Software System | Mobile/desktop app for identity management, profile customization, peer discovery, contact requests, E2E encrypted conversations (ML-KEM-768 + AES-256-GCM), offline inbox, and P2P messaging using libp2p and BIP39 |
+| Rendezvous / Relay Server | External System | libp2p rendezvous server for peer discovery, circuit relay for NAT traversal, and offline message inbox (`/mknoon/inbox/1.0.0`) for store-and-forward delivery |
 
 ### External Dependencies
 - Rendezvous/Relay server at `mknoun.xyz:4001` (WebSocket over TLS)
@@ -99,8 +100,10 @@
 │     │                             │   │                             │    │
 │  │  │  • BIP39 mnemonic gen       │   │  • identity table           │ │  │
 │     │  • Ed25519 keypair          │   │  • contacts table           │    │
-│  │  │  • libp2p peer ID           │   │  • contact_requests table   │ │  │
-│     │  • Payload signing          │   │  • messages table            │    │
+│  │  │  • ML-KEM-768 keygen       │   │  • contact_requests table   │ │  │
+│     │  • libp2p peer ID           │   │  • messages table            │    │
+│  │  │  • Payload signing          │   │                             │ │  │
+│     │  • Message encrypt/decrypt  │   │                             │    │
 │  │  │  • P2P node management      │   │  • Avatar path storage      │ │  │
 │     │  • Peer discovery & relay   │   │                             │    │
 │  │  │  • Message send/receive     │   │                             │ │  │
@@ -397,6 +400,10 @@
 │  │  │  001_identity_table      │  │  002_messages_table migration    │   │ │
 │  │  │  migration (3 tables)    │  │  (messages table + indexes)      │   │ │
 │  │  └──────────────────────────┘  └──────────────────────────────────┘   │ │
+│  │  ┌──────────────────────────┐                                         │ │
+│  │  │  003_mlkem_keys          │  ML-KEM key columns on identity,       │ │
+│  │  │  migration (v3)          │  contacts, contact_requests            │ │
+│  │  └──────────────────────────┘                                         │ │
 │  │                                                                        │ │
 │  │  ── Utils ─────────────────────────────────────────────────────────── │ │
 │  │  ┌──────────────────────────┐  ┌──────────────────────────────────┐   │ │
@@ -432,9 +439,11 @@
 │  │    Handlers                │  │  │  │  avatar_path TEXT              │  │
 │  │                            │  │  │  │  created_at TEXT NOT NULL      │  │
 │  │  identity.generate         │  │  │  │  updated_at TEXT NOT NULL      │  │
-│  │  identity.restore          │  │  │  │  Constraint: id = 1 always     │  │
-│  │  payload.sign              │  │  │  └────────────────────────────────┘  │
-│  └────────────────────────────┘  │  │                                      │
+│  │  identity.restore          │  │  │  │  ml_kem_public_key TEXT (v3)  │  │
+│  │  payload.sign              │  │  │  │  ml_kem_secret_key TEXT (v3)  │  │
+│  │  mlkem.keygen              │  │  │  │  Constraint: id = 1 always     │  │
+│  │  message.encrypt           │  │  │  └────────────────────────────────┘  │
+│  │  message.decrypt           │  │  │                                      │
 │                                  │  │  ┌────────────────────────────────┐  │
 │  ┌────────────────────────────┐  │  │  │        contacts table          │  │
 │  │    Identity Module         │  │  │  │                                │  │
@@ -445,35 +454,38 @@
 │                                  │  │  │  signature TEXT NOT NULL       │  │
 │  ┌────────────────────────────┐  │  │  │  scanned_at TEXT NOT NULL      │  │
 │  │    Signing Module          │  │  │  │  avatar_path TEXT              │  │
-│  │                            │  │  │  └────────────────────────────────┘  │
-│  │  signPayload()             │  │  │                                      │
-│  │                            │  │  │  ┌────────────────────────────────┐  │
-│  │  Uses:                     │  │  │  │    contact_requests table      │  │
-│  │  • @noble/ed25519          │  │  │  │                                │  │
-│  └────────────────────────────┘  │  │  │  peer_id TEXT PRIMARY KEY      │  │
-│                                  │  │  │  public_key TEXT NOT NULL      │  │
-│  ┌────────────────────────────┐  │  │  │  rendezvous TEXT NOT NULL      │  │
-│  │    P2P Module              │  │  │  │  username TEXT NOT NULL        │  │
-│  │    (libp2p node)           │  │  │  │  signature TEXT NOT NULL       │  │
-│  │                            │  │  │  │  received_at TEXT NOT NULL     │  │
-│  │  Node start/stop           │  │  │  │  status TEXT NOT NULL          │  │
-│  │  Rendezvous register       │  │  │  │  DEFAULT 'pending'            │  │
-│  │  Rendezvous discover       │  │  │  └────────────────────────────────┘  │
-│  │  Peer dial/disconnect      │  │  │                                      │
-│  │  Message send/receive      │  │  │  ┌────────────────────────────────┐  │
-│  │                            │  │  │  │        messages table          │  │
-│  │  Uses:                     │  │  │  │        (v2 migration)          │  │
-│  │  • @libp2p/* suite         │  │  │  │                                │  │
-│  └────────────────────────────┘  │  │  │  id TEXT PRIMARY KEY           │  │
-│                                  │  │  │  contact_peer_id TEXT NOT NULL │  │
-│                                  │  │  │  sender_peer_id TEXT NOT NULL  │  │
-│                                  │  │  │  text TEXT NOT NULL            │  │
-│                                  │  │  │  timestamp TEXT NOT NULL       │  │
-│                                  │  │  │  status TEXT DEFAULT 'sent'    │  │
-│                                  │  │  │  is_incoming INTEGER NOT NULL  │  │
-│                                  │  │  │  created_at TEXT NOT NULL      │  │
-│                                  │  │  │  INDEX idx_messages_contact    │  │
-│                                  │  │  │  INDEX idx_messages_ts         │  │
+│  │                            │  │  │  │  ml_kem_public_key TEXT (v3)  │  │
+│  │  signPayload()             │  │  │  └────────────────────────────────┘  │
+│  │                            │  │  │                                      │
+│  │  Uses:                     │  │  │  ┌────────────────────────────────┐  │
+│  │  • @noble/ed25519          │  │  │  │    contact_requests table      │  │
+│  └────────────────────────────┘  │  │  │                                │  │
+│                                  │  │  │  peer_id TEXT PRIMARY KEY      │  │
+│  ┌────────────────────────────┐  │  │  │  public_key TEXT NOT NULL      │  │
+│  │    Crypto Module           │  │  │  │  rendezvous TEXT NOT NULL      │  │
+│  │                            │  │  │  │  username TEXT NOT NULL        │  │
+│  │  ML-KEM-768 keygen         │  │  │  │  signature TEXT NOT NULL       │  │
+│  │  encryptMessage()          │  │  │  │  received_at TEXT NOT NULL     │  │
+│  │  decryptMessage()          │  │  │  │  status TEXT NOT NULL          │  │
+│  │                            │  │  │  │  DEFAULT 'pending'            │  │
+│  │  Uses:                     │  │  │  │  ml_kem_public_key TEXT (v3)  │  │
+│  │  • @noble/post-quantum    │  │  │  └────────────────────────────────┘  │
+│  │  • crypto.subtle (AES)    │  │  │                                      │
+│  └────────────────────────────┘  │  │  ┌────────────────────────────────┐  │
+│                                  │  │  │        messages table          │  │
+│  ┌────────────────────────────┐  │  │  │        (v2 migration)          │  │
+│  │    P2P Module              │  │  │  │                                │  │
+│  │    (libp2p node)           │  │  │  │  id TEXT PRIMARY KEY           │  │
+│  │                            │  │  │  │                                │  │
+│  │  Node start/stop           │  │  │  │  contact_peer_id TEXT NOT NULL │  │
+│  │  Rendezvous register       │  │  │  │  sender_peer_id TEXT NOT NULL  │  │
+│  │  Rendezvous discover       │  │  │  │  text TEXT NOT NULL            │  │
+│  │  Peer dial/disconnect      │  │  │  │  timestamp TEXT NOT NULL       │  │
+│  │  Message send/receive      │  │  │  │  status TEXT DEFAULT 'sent'    │  │
+│  │                            │  │  │  │  is_incoming INTEGER NOT NULL  │  │
+│  │  Uses:                     │  │  │  │  created_at TEXT NOT NULL      │  │
+│  │  • @libp2p/* suite         │  │  │  │  INDEX idx_messages_contact    │  │
+│  └────────────────────────────┘  │  │  │  INDEX idx_messages_ts         │  │
 │                                  │  │  └────────────────────────────────┘  │
 │                                  │  │                                      │
 │                                  │  └──────────────────────────────────────┘
@@ -553,18 +565,18 @@
 | handleIncomingMessage() | Use Case | Parses P2P message, validates signature, stores request |
 | ContactRequestListener | Service | Monitors contactRequestStream, broadcasts new requests to UI |
 | **Conversation Use Cases** | | |
-| sendChatMessage() | Use Case | Builds MessagePayload, discovers peer, dials, sends with 3x retry, offline inbox fallback, persists optimistically |
-| handleIncomingChatMessage() | Use Case | Parses P2P message, validates sender is contact, detects name changes, persists |
+| sendChatMessage() | Use Case | Builds MessagePayload, encrypts with ML-KEM-768 + AES-256-GCM if recipient has ML-KEM key (v2 envelope) or falls back to v1 plaintext, discovers peer, dials, sends with 3x retry, offline inbox fallback, persists optimistically |
+| handleIncomingChatMessage() | Use Case | Detects v2 encrypted envelope (decrypts via ML-KEM decapsulate + AES-256-GCM) or v1 plaintext, validates sender is contact, detects name changes, persists |
 | loadConversation() | Use Case | Loads all messages for a contact, ordered by timestamp ASC |
-| ChatMessageListener | Service | Monitors chatMessageStream, broadcasts persisted ConversationMessages and contact updates to UI |
+| ChatMessageListener | Service | Monitors chatMessageStream, resolves own ML-KEM secret key for decryption, broadcasts persisted ConversationMessages and contact updates to UI |
 | **Feed Use Cases** | | |
 | loadFeed() | Use Case | Loads initial feed from DB: contacts + latest messages per contact |
 | **Core Services** | | |
 | IncomingMessageRouter | Service | Routes P2P messages by envelope type to contactRequestStream, chatMessageStream, unknownStream |
 | **Domain** | | |
-| IdentityModel | Entity | Immutable data class for identity (peerId, keys, mnemonic, username, avatarPath) |
-| ContactModel | Entity | Contact from QR scan (peerId, publicKey, rendezvous, username, signature, scannedAt) |
-| ContactRequestModel | Entity | Incoming request (peerId, publicKey, rendezvous, username, signature, status) |
+| IdentityModel | Entity | Immutable data class for identity (peerId, keys, mnemonic, username, avatarPath, mlKemPublicKey?, mlKemSecretKey?) |
+| ContactModel | Entity | Contact from QR scan (peerId, publicKey, rendezvous, username, signature, scannedAt, mlKemPublicKey?) |
+| ContactRequestModel | Entity | Incoming request (peerId, publicKey, rendezvous, username, signature, status, mlKemPublicKey?) |
 | NodeState | P2P Model | P2P node state (peerId, isStarted, listenAddresses, connections) |
 | DiscoveredPeer | P2P Model | Discovered peer (id, addresses) |
 | ConnectionState | P2P Model | Active connection (peerId, multiaddrs, direction, status) |
@@ -574,7 +586,7 @@
 | MessageFeedItem | Entity | Feed item for incoming messages (extends FeedItem, contactPeerId, messageText, messageTime) |
 | FeedItemType | Enum | Feed item types: connection, message |
 | ConversationMessage | Entity | Message in a conversation (id, contactPeerId, senderPeerId, text, status, isIncoming) |
-| MessagePayload | Wire Model | Chat message envelope: `{ "type": "chat_message", "version": "1", "payload": {...} }` |
+| MessagePayload | Wire Model | Chat message envelope: v1 plaintext `{ "type": "chat_message", "version": "1", "payload": {...} }` or v2 encrypted `{ "type": "chat_message", "version": "2", "senderPeerId": "...", "encrypted": { "kem", "ciphertext", "nonce" } }` |
 | IdentityRepository | Interface + Impl | Abstracts identity persistence |
 | ContactRepository | Interface + Impl | Abstracts contact persistence (add, get, getAll, delete, exists, count) |
 | ContactRequestRepository | Interface + Impl | Abstracts request persistence (add, get, getPending, updateStatus, delete, exists) |
@@ -582,7 +594,7 @@
 | **Core** | | |
 | WebViewJsBridge | Bridge Client | Sends requests to JS runtime, manages event handlers |
 | P2PBridgeClient | Bridge Client | P2P-specific bridge calls (start, stop, status, register, discover, dial, disconnect, send, inbox store/retrieve) |
-| JsBridgeClient | Bridge Helpers | Identity + signing bridge helper functions |
+| JsBridgeClient | Bridge Helpers | Identity + signing + ML-KEM encryption/decryption bridge helper functions |
 | P2PService / P2PServiceImpl | Service | Reactive P2P service with state and message streams, with offline inbox fallback |
 | IncomingMessageRouter | Service | Routes P2P messages by JSON envelope type to typed broadcast streams |
 | RingAvatarGenerator | Utility | Deterministic avatar from peerId via DJB2 hash |
@@ -600,9 +612,11 @@
 |-----------|----------------|
 | Bridge Entry (entry.ts) | Routes incoming requests to handlers via command registry |
 | Handlers (handlers.ts) | Command map: `identity.generate`, `identity.restore`, `payload.sign`, `inbox:store`, `inbox:retrieve`, `inbox:check` |
-| generateIdentity() | Creates new BIP39 mnemonic + Ed25519 keypair |
-| restoreFromMnemonic() | Derives keypair from existing mnemonic |
+| generateIdentity() | Creates new BIP39 mnemonic + Ed25519 keypair + ML-KEM-768 keypair |
+| restoreFromMnemonic() | Derives Ed25519 keypair from existing mnemonic + generates fresh ML-KEM-768 keypair |
 | signPayload() | Signs data with Ed25519 private key using @noble/ed25519 |
+| Crypto Module (crypto/) | ML-KEM-768 keygen, message encrypt (KEM encapsulate + AES-256-GCM), message decrypt (KEM decapsulate + AES-256-GCM) using @noble/post-quantum |
+| Bridge Commands | `mlkem.keygen` → ML-KEM keypair, `message.encrypt` → {kem, ciphertext, nonce}, `message.decrypt` → {plaintext} |
 | P2P Module | libp2p node management, rendezvous, relay, messaging |
 | Inbox Module | Offline message store/retrieve via relay server inbox protocol (`/mknoon/inbox/1.0.0`) |
 
@@ -662,6 +676,8 @@
   │ + avatarPath: String?               │
   │ + createdAt: String                 │
   │ + updatedAt: String                 │
+  │ + mlKemPublicKey: String?           │
+  │ + mlKemSecretKey: String?           │
   ├─────────────────────────────────────┤
   │ + fromJson(Map): IdentityModel      │
   │ + toJson(): Map                     │
@@ -699,6 +715,7 @@
   │ + signature: String                 │
   │ + scannedAt: String                 │
   │ + avatarPath: String?               │
+  │ + mlKemPublicKey: String?           │
   ├─────────────────────────────────────┤
   │ + fromQRPayload(Map): ContactModel  │
   │ + fromMap(Map): ContactModel        │
@@ -743,6 +760,7 @@
   │ + signature: String                 │
   │ + receivedAt: String                │
   │ + status: ContactRequestStatus      │
+  │ + mlKemPublicKey: String?           │
   ├─────────────────────────────────────┤
   │ + fromP2PPayload(Map): Model        │
   │ + fromMap(Map): Model               │
@@ -1023,8 +1041,16 @@
   │ + timestamp: String                 │
   ├─────────────────────────────────────┤
   │ + fromJson(String): MessagePayload? │
-  │ + toJson(): String                  │
+  │ + toJson(): String (v1 envelope)    │
+  │ + toInnerJson(): String (payload)   │
   │ + toConversationMessage(): Model    │
+  │ + buildEncryptedEnvelope(           │
+  │ │   kem, ciphertext, nonce,         │
+  │ │   senderPeerId): String (v2)      │
+  │ + parseEncryptedEnvelope(           │
+  │ │   json): Map? (v2 detection)      │
+  │ + fromDecryptedJson(                │
+  │ │   json): MessagePayload?          │
   └─────────────────────────────────────┘
 
   ┌─────────────────────────────────────┐
@@ -1058,6 +1084,8 @@
   │ - chatMessageStream: Stream         │
   │ - messageRepo: MessageRepository    │
   │ - contactRepo: ContactRepository    │
+  │ - bridge: JsBridge?                 │
+  │ - getOwnMlKemSecretKey: Fn?        │
   │ - _subscription: StreamSubscription │
   │ - _messageController: StreamCtrl    │
   │ - _contactUpdatedController: Ctrl   │
@@ -1226,6 +1254,8 @@
   │ + mnemonic12: string                │
   │ + createdAt: string                 │
   │ + updatedAt: string                 │
+  │ + mlKemPublicKey?: string           │
+  │ + mlKemSecretKey?: string           │
   └─────────────────────────────────────┘
 
   ┌─────────────────────────────────────┐
@@ -1346,14 +1376,23 @@
     text: String,
     senderPeerId: String,
     senderUsername: String,
-    {messageId?: String, timestamp?: String}
+    {messageId?: String, timestamp?: String,
+     bridge?: JsBridge,
+     recipientMlKemPublicKey?: String}
   ): Future<(SendChatMessageResult, ConversationMessage?)>
+  // If bridge + recipientMlKemPublicKey present → encrypt (v2 envelope)
+  // Otherwise → plaintext (v1 envelope)
+  // On send failure after 3x retry → storeInInbox() fallback
 
   handleIncomingChatMessage(
     message: ChatMessage,
     messageRepo: MessageRepository,
-    contactRepo: ContactRepository
+    contactRepo: ContactRepository,
+    {bridge?: JsBridge,
+     ownMlKemSecretKey?: String}
   ): Future<(HandleChatMessageResult, ConversationMessage?, ContactModel?)>
+  // Detects v2 encrypted envelope → decrypts via ML-KEM + AES-256-GCM
+  // Falls back to v1 plaintext parsing
 
   loadConversation(
     messageRepo: MessageRepository,
@@ -1411,6 +1450,9 @@
   callJsIdentityGenerate(bridge: JsBridge): Future<Map<String, dynamic>>
   callJsIdentityRestore(bridge: JsBridge, mnemonic12: String): Future<Map<String, dynamic>>
   callJsSignPayload(bridge: JsBridge, dataToSign: String, privateKey: String): Future<Map<String, dynamic>>
+  callJsMlKemKeygen(bridge: JsBridge): Future<Map<String, dynamic>>
+  callJsEncryptMessage({bridge, recipientMlKemPublicKey, plaintext, timeout?}): Future<Map<String, dynamic>>
+  callJsDecryptMessage({bridge, ownMlKemSecretKey, kem, ciphertext, nonce, timeout?}): Future<Map<String, dynamic>>
 
 
   FLUTTER BRIDGE CLIENTS - P2P:
@@ -1475,11 +1517,19 @@
   RingAvatarGenerator.djb2Hash(String input): int
 
 
+  FLUTTER DB HELPERS - ML-KEM KEYS:
+  ─────────────────────────────────
+  runMlKemKeysMigration(db: Database): Future<void>   ← adds ml_kem_* columns to identity, contacts, contact_requests
+
+
   JAVASCRIPT FUNCTIONS:
   ─────────────────────
-  generateIdentity(): Promise<IdentityJson>
-  restoreIdentityFromMnemonic(mnemonic12: string): Promise<IdentityJson>
+  generateIdentity(): Promise<IdentityJson>           // now includes mlKemPublicKey, mlKemSecretKey
+  restoreIdentityFromMnemonic(mnemonic12: string): Promise<IdentityJson>  // fresh ML-KEM keypair (not from mnemonic)
   signPayload(dataToSign: string, privateKey: string): Promise<string>
+  generateMlKemKeyPair(): Promise<{publicKey, secretKey}>
+  encryptMessage(recipientMlKemPublicKey, plaintext): Promise<{kem, ciphertext, nonce}>
+  decryptMessage(ownMlKemSecretKey, kem, ciphertext, nonce): Promise<{plaintext}>
   handleBridgeMessage(message: {cmd, requestId, payload}): Promise<any>
   storeInInbox(node, relayPeerId, toPeerId, message, metadata): Promise<InboxResponse>
   retrieveFromInbox(node, relayPeerId, options): Promise<InboxResponse>
@@ -1633,11 +1683,19 @@
 
   ChatMessageListener (background service)
        │
+       ├──────► bridge: JsBridge? (for ML-KEM decryption)
+       │
+       ├──────► getOwnMlKemSecretKey: () => Future<String?> (from identity repo)
+       │
        └──────► IncomingMessageRouter.chatMessageStream (subscribe)
                       │
-                      └──────► handleIncomingChatMessage()
+                      └──────► handleIncomingChatMessage(bridge, ownMlKemSecretKey)
                                      │
-                                     ├──────► Parse MessagePayload from JSON envelope
+                                     ├──────► Detect v2 encrypted envelope
+                                     │              │
+                                     │              └──────► callJsDecryptMessage() (ML-KEM + AES-256-GCM)
+                                     │
+                                     ├──────► [else] Parse v1 plaintext MessagePayload
                                      │
                                      ├──────► ContactRepository.getContact() (validate sender)
                                      │
@@ -1654,9 +1712,13 @@
        │              │
        │              └──────► MessageRepository.getMessagesForContact()
        │
-       ├──────► _onSend(text) → sendChatMessage()
+       ├──────► _onSend(text) → sendChatMessage(bridge, recipientMlKemPublicKey)
        │              │
        │              ├──────► MessageRepository.saveMessage() (optimistic persist)
+       │              │
+       │              ├──────► [if ML-KEM key] callJsEncryptMessage() → v2 envelope
+       │              │
+       │              ├──────► [else] Build v1 plaintext envelope
        │              │
        │              ├──────► P2PService.discoverPeer()
        │              │
@@ -1713,23 +1775,24 @@ lib/
 ├── smoke_test_messages.dart                     # Smoke test for messages DB layer
 ├── core/
 │   ├── bridge/
-│   │   ├── js_bridge_client.dart               # JsBridge interface + identity/signing helpers
+│   │   ├── js_bridge_client.dart               # JsBridge interface + identity/signing/encryption helpers
 │   │   ├── webview_js_bridge.dart              # WebView implementation + event handlers
-│   │   └── p2p_bridge_client.dart              # P2P-specific bridge calls
+│   │   └── p2p_bridge_client.dart              # P2P-specific bridge calls + inbox store/retrieve
 │   ├── constants/
 │   │   └── network_constants.dart              # Rendezvous address
 │   ├── database/
 │   │   ├── migrations/
 │   │   │   ├── 001_identity_table.dart         # Schema v1 (identity, contacts, contact_requests)
-│   │   │   └── 002_messages_table.dart         # Schema v2 (messages table + indexes)
+│   │   │   ├── 002_messages_table.dart         # Schema v2 (messages table + indexes)
+│   │   │   └── 003_mlkem_keys.dart             # Schema v3 (ML-KEM key columns on identity, contacts, contact_requests)
 │   │   └── helpers/
 │   │       ├── identity_db_helpers.dart        # Identity DB CRUD
 │   │       ├── contacts_db_helpers.dart        # Contacts DB CRUD
 │   │       ├── contact_requests_db_helpers.dart # Contact Requests DB CRUD
 │   │       └── messages_db_helpers.dart        # Messages DB CRUD
 │   ├── services/
-│   │   ├── p2p_service.dart                    # P2PService abstract interface
-│   │   ├── p2p_service_impl.dart               # P2PServiceImpl with streams
+│   │   ├── p2p_service.dart                    # P2PService abstract interface (incl. inbox)
+│   │   ├── p2p_service_impl.dart               # P2PServiceImpl with streams + offline inbox drain
 │   │   └── incoming_message_router.dart        # Routes P2P messages by type to streams
 │   ├── theme/
 │   │   ├── app_colors.dart                     # Color constants (Custom1 dark)
@@ -1740,7 +1803,7 @@ lib/
 │       ├── key_conversion.dart                 # base64 ↔ hex conversion
 │       ├── ring_avatar_spec.dart               # Ring avatar constants + data models
 │       ├── ring_avatar_generator.dart          # Deterministic avatar from peerId
-│       └── chat_console_logger.dart           # Chat message debug logging
+│       └── chat_console_logger.dart           # Chat message debug logging + wire envelope logging
 │
 ├── features/
 │   ├── home/
@@ -1788,10 +1851,10 @@ lib/
 │   │   │       ├── message_repository.dart     # Abstract interface
 │   │   │       └── message_repository_impl.dart # DB-backed implementation
 │   │   ├── application/
-│   │   │   ├── send_chat_message_use_case.dart # Send with 3x retry
-│   │   │   ├── handle_incoming_chat_message_use_case.dart
+│   │   │   ├── send_chat_message_use_case.dart # Send: encrypt (v2) or plaintext (v1), 3x retry, inbox fallback
+│   │   │   ├── handle_incoming_chat_message_use_case.dart  # Receive: decrypt v2 or parse v1
 │   │   │   ├── load_conversation_use_case.dart # Load messages for contact
-│   │   │   └── chat_message_listener.dart      # Background chat listener
+│   │   │   └── chat_message_listener.dart      # Background chat listener + ML-KEM decryption
 │   │   └── presentation/
 │   │       ├── screens/
 │   │       │   ├── conversation_screen.dart    # Pure UI: letter cards, compose
@@ -1899,27 +1962,32 @@ core_lib_js/
 ├── build.mjs                                   # esbuild config
 ├── build.sh                                    # Shell build script
 ├── tsconfig.json                               # TypeScript compiler options
-├── jest.config.js                              # Jest test runner config
+├── jest.config.cjs                             # Jest test runner config (CommonJS for ESM package)
 ├── test_identity.js                            # Standalone Node.js identity test
 ├── shims/
 │   └── buffer-shim.js                          # Node.js Buffer polyfill
 └── src/
     ├── types/
-    │   ├── identity.ts                         # IdentityJson interface
+    │   ├── identity.ts                         # IdentityJson interface (incl. mlKemPublicKey, mlKemSecretKey)
     │   └── qr_payload.ts                       # UnsignedQRPayload, SignedQRPayload
     ├── identity/
-    │   ├── generate.ts                         # generateIdentity()
-    │   └── restore.ts                          # restoreIdentityFromMnemonic()
+    │   ├── generate.ts                         # generateIdentity() (Ed25519 + ML-KEM-768)
+    │   └── restore.ts                          # restoreIdentityFromMnemonic() (Ed25519 + fresh ML-KEM-768)
+    ├── crypto/
+    │   ├── keygen_mlkem.ts                     # ML-KEM-768 keypair generation
+    │   ├── encrypt_message.ts                  # ML-KEM encapsulate + AES-256-GCM encrypt
+    │   └── decrypt_message.ts                  # ML-KEM decapsulate + AES-256-GCM decrypt
     ├── signing/
     │   └── sign_payload.ts                     # signPayload() using @noble/ed25519
     ├── bridge/
-    │   ├── entry.ts                            # WebView entry point
-    │   └── handlers.ts                         # Command map: identity.generate/restore, payload.sign
+    │   ├── entry.ts                            # WebView entry point (incl. mlkem.keygen, message.encrypt/decrypt)
+    │   └── handlers.ts                         # Command map: identity.*, payload.sign
     ├── utils/
-    │   ├── flow_events.ts
+    │   ├── flow_events.ts                      # JS-side flow event emitter
     │   └── base64.ts                           # Browser-compatible base64
     └── __test__/
-        └── identity.test.ts                    # Jest unit tests for identity gen/restore
+        ├── identity.test.ts                    # Jest unit tests for identity gen/restore
+        └── crypto.test.ts                      # Jest unit tests for ML-KEM keygen, encrypt/decrypt
 
 assets/
 ├── js/
@@ -2141,102 +2209,155 @@ assets/
    │                   │                │                 │                 │                │
 ```
 
-### Send Chat Message Flow
+### Send Chat Message Flow (with E2E Encryption + Offline Inbox)
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│              SEND CHAT MESSAGE - DATA FLOW                                   │
+│              SEND CHAT MESSAGE - DATA FLOW (v2 encrypted / v1 fallback)      │
 └─────────────────────────────────────────────────────────────────────────────┘
 
-  User          Conv Wired      sendChatMsg UC   MessageRepo        P2PService
-   │                 │                │                │                 │
-   │  Type + Send    │                │                │                 │
-   │────────────────>│                │                │                 │
-   │                 │                │                │                 │
-   │  Optimistic UI  │  Build         │                │                 │
-   │  (status:       │  MessagePayload│                │                 │
-   │   sending)      │  {id,text,     │                │                 │
-   │<────────────────│  sender,ts}    │                │                 │
-   │                 │                │                │                 │
-   │                 │  sendChat      │                │                 │
-   │                 │  Message()     │                │                 │
-   │                 │───────────────>│                │                 │
-   │                 │                │                │                 │
-   │                 │                │  saveMessage() │                 │
-   │                 │                │  (status:sent) │                 │
-   │                 │                │───────────────>│                 │
-   │                 │                │                │                 │
-   │                 │                │  discoverPeer()│                 │
-   │                 │                │───────────────────────────────>│
-   │                 │                │  (3x retry)    │                 │
-   │                 │                │                │                 │
-   │                 │                │  dialPeer()    │                 │
-   │                 │                │───────────────────────────────>│
-   │                 │                │                │                 │
-   │                 │                │  sendMessage() │                 │
-   │                 │                │  (JSON envelope)                 │
-   │                 │                │───────────────────────────────>│
-   │                 │                │                │                 │
-   │                 │                │  updateStatus()│                 │
-   │                 │                │  (delivered)   │                 │
-   │                 │                │───────────────>│                 │
-   │                 │                │                │                 │
-   │                 │  Result +      │                │                 │
-   │                 │  status update │                │                 │
-   │                 │<───────────────│                │                 │
-   │                 │                │                │                 │
-   │  Update tick    │                │                │                 │
-   │  (delivered)    │                │                │                 │
-   │<────────────────│                │                │                 │
-   │                 │                │                │                 │
+  User          Conv Wired      sendChatMsg UC   JS Bridge     MessageRepo     P2PService
+   │                 │                │              │              │                │
+   │  Type + Send    │                │              │              │                │
+   │────────────────>│                │              │              │                │
+   │                 │                │              │              │                │
+   │  Optimistic UI  │  Build         │              │              │                │
+   │  (status:       │  MessagePayload│              │              │                │
+   │   sending)      │  {id,text,     │              │              │                │
+   │<────────────────│  sender,ts}    │              │              │                │
+   │                 │                │              │              │                │
+   │                 │  sendChat      │              │              │                │
+   │                 │  Message()     │              │              │                │
+   │                 │───────────────>│              │              │                │
+   │                 │                │              │              │                │
+   │                 │                │  saveMessage()│              │                │
+   │                 │                │  (status:sent)│              │                │
+   │                 │                │──────────────────────────────>│                │
+   │                 │                │              │              │                │
+   │                 │                │  [if contact has ML-KEM key]  │                │
+   │                 │                │  callJsEncrypt│              │                │
+   │                 │                │  Message()   │              │                │
+   │                 │                │─────────────>│              │                │
+   │                 │                │              │  ML-KEM-768  │                │
+   │                 │                │              │  encapsulate │                │
+   │                 │                │              │  + AES-256-  │                │
+   │                 │                │              │  GCM encrypt │                │
+   │                 │                │  {kem,cipher │              │                │
+   │                 │                │   text,nonce}│              │                │
+   │                 │                │<─────────────│              │                │
+   │                 │                │              │              │                │
+   │                 │                │  Build v2 envelope            │                │
+   │                 │                │  (encrypted)  │              │                │
+   │                 │                │              │              │                │
+   │                 │                │  [else: no ML-KEM key]       │                │
+   │                 │                │  Build v1 envelope            │                │
+   │                 │                │  (plaintext)  │              │                │
+   │                 │                │              │              │                │
+   │                 │                │  discoverPeer()               │                │
+   │                 │                │──────────────────────────────────────────────>│
+   │                 │                │  (3x retry)  │              │                │
+   │                 │                │              │              │                │
+   │                 │                │  dialPeer()  │              │                │
+   │                 │                │──────────────────────────────────────────────>│
+   │                 │                │              │              │                │
+   │                 │                │  sendMessage()│              │                │
+   │                 │                │  (JSON envelope)             │                │
+   │                 │                │──────────────────────────────────────────────>│
+   │                 │                │              │              │                │
+   │                 │                │  [if send succeeds]          │                │
+   │                 │                │  updateStatus()              │                │
+   │                 │                │  (delivered) │              │                │
+   │                 │                │──────────────────────────────>│                │
+   │                 │                │              │              │                │
+   │                 │                │  [if send fails after 3x retry]               │
+   │                 │                │  storeInInbox()              │                │
+   │                 │                │──────────────────────────────────────────────>│
+   │                 │                │              │              │                │
+   │                 │                │  [if inbox store succeeds]   │                │
+   │                 │                │  updateStatus()              │                │
+   │                 │                │  (delivered) │              │                │
+   │                 │                │──────────────────────────────>│                │
+   │                 │                │              │              │                │
+   │                 │  Result +      │              │              │                │
+   │                 │  status update │              │              │                │
+   │                 │<───────────────│              │              │                │
+   │                 │                │              │              │                │
+   │  Update tick    │                │              │              │                │
+   │  (delivered)    │                │              │              │                │
+   │<────────────────│                │              │              │                │
+   │                 │                │              │              │                │
 ```
 
-### Incoming Chat Message Flow
+### Incoming Chat Message Flow (with E2E Decryption)
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│              INCOMING CHAT MESSAGE - DATA FLOW                               │
+│              INCOMING CHAT MESSAGE - DATA FLOW (v2 decrypt / v1 parse)        │
 └─────────────────────────────────────────────────────────────────────────────┘
 
-  P2PService     Msg Router     Chat Listener    handleMsg UC     Conv Wired     User
-   │                │                │                │                │           │
-   │  messageStream │                │                │                │           │
-   │  (ChatMessage) │                │                │                │           │
-   │───────────────>│                │                │                │           │
-   │                │                │                │                │           │
-   │                │  _route():     │                │                │           │
-   │                │  type=chat_msg │                │                │           │
-   │                │  chatMessage   │                │                │           │
-   │                │  Stream.add()  │                │                │           │
-   │                │───────────────>│                │                │           │
-   │                │                │                │                │           │
-   │                │                │  handleIncoming│                │           │
-   │                │                │  ChatMessage() │                │           │
-   │                │                │───────────────>│                │           │
-   │                │                │                │                │           │
-   │                │                │                │  Parse payload │           │
-   │                │                │                │  Validate      │           │
-   │                │                │                │  sender is     │           │
-   │                │                │                │  contact       │           │
-   │                │                │                │  Check dup     │           │
-   │                │                │                │  Detect name   │           │
-   │                │                │                │  change        │           │
-   │                │                │                │  Save message  │           │
-   │                │                │                │                │           │
-   │                │                │  (chatMessage, │                │           │
-   │                │                │   Model)       │                │           │
-   │                │                │<───────────────│                │           │
-   │                │                │                │                │           │
-   │                │                │  incoming      │                │           │
-   │                │                │  MessageStream │                │           │
-   │                │                │  .add(msg)     │                │           │
-   │                │                │───────────────────────────────>│           │
-   │                │                │                │                │           │
-   │                │                │                │                │  New       │
-   │                │                │                │                │  letter    │
-   │                │                │                │                │  card      │
-   │                │                │                │                │──────────>│
-   │                │                │                │                │           │
+  P2PService     Msg Router     Chat Listener    handleMsg UC    JS Bridge    Conv Wired     User
+   │                │                │                │              │            │           │
+   │  messageStream │                │                │              │            │           │
+   │  (ChatMessage) │                │                │              │            │           │
+   │───────────────>│                │                │              │            │           │
+   │                │                │                │              │            │           │
+   │                │  _route():     │                │              │            │           │
+   │                │  type=chat_msg │                │              │            │           │
+   │                │  chatMessage   │                │              │            │           │
+   │                │  Stream.add()  │                │              │            │           │
+   │                │───────────────>│                │              │            │           │
+   │                │                │                │              │            │           │
+   │                │                │  Resolve own   │              │            │           │
+   │                │                │  ML-KEM secret │              │            │           │
+   │                │                │  key from repo │              │            │           │
+   │                │                │                │              │            │           │
+   │                │                │  handleIncoming│              │            │           │
+   │                │                │  ChatMessage() │              │            │           │
+   │                │                │───────────────>│              │            │           │
+   │                │                │                │              │            │           │
+   │                │                │                │  Detect v2?  │            │           │
+   │                │                │                │  parseEncrypt│            │           │
+   │                │                │                │  edEnvelope()│            │           │
+   │                │                │                │              │            │           │
+   │                │                │                │  [if v2 encrypted]        │           │
+   │                │                │                │  callJsDecrypt            │           │
+   │                │                │                │  Message()   │            │           │
+   │                │                │                │─────────────>│            │           │
+   │                │                │                │              │ ML-KEM-768 │           │
+   │                │                │                │              │ decapsulate│           │
+   │                │                │                │              │ + AES-256- │           │
+   │                │                │                │              │ GCM decrypt│           │
+   │                │                │                │  {plaintext} │            │           │
+   │                │                │                │<─────────────│            │           │
+   │                │                │                │              │            │           │
+   │                │                │                │  fromDecrypt │            │           │
+   │                │                │                │  edJson()    │            │           │
+   │                │                │                │              │            │           │
+   │                │                │                │  [else: v1 plaintext]     │           │
+   │                │                │                │  fromJson()  │            │           │
+   │                │                │                │              │            │           │
+   │                │                │                │  Validate    │            │           │
+   │                │                │                │  sender is   │            │           │
+   │                │                │                │  contact     │            │           │
+   │                │                │                │  Check dup   │            │           │
+   │                │                │                │  Detect name │            │           │
+   │                │                │                │  change      │            │           │
+   │                │                │                │  Save message│            │           │
+   │                │                │                │              │            │           │
+   │                │                │  (chatMessage, │              │            │           │
+   │                │                │   Model)       │              │            │           │
+   │                │                │<───────────────│              │            │           │
+   │                │                │                │              │            │           │
+   │                │                │  incoming      │              │            │           │
+   │                │                │  MessageStream │              │            │           │
+   │                │                │  .add(msg)     │              │            │           │
+   │                │                │──────────────────────────────────────────>│           │
+   │                │                │                │              │            │           │
+   │                │                │                │              │            │  New       │
+   │                │                │                │              │            │  letter    │
+   │                │                │                │              │            │  card      │
+   │                │                │                │              │            │──────────>│
+   │                │                │                │              │            │           │
 ```
 
 ### Avatar Upload Flow
@@ -2316,6 +2437,7 @@ assets/
 | @libp2p/crypto | Ed25519 key generation |
 | @libp2p/peer-id | libp2p peer ID derivation |
 | @noble/ed25519 | Ed25519 signing & verification |
+| @noble/post-quantum | ML-KEM-768 (FIPS 203) key encapsulation for E2E message encryption |
 | esbuild | JavaScript bundling |
 | @libp2p/* suite | P2P networking (node, relay, rendezvous, messaging) |
 
@@ -2341,20 +2463,26 @@ The application initialization sequence is defined in `lib/main.dart`. Understan
     │           databaseFactory = databaseFactoryFfi
     │           Desktop platforms require FFI for SQLite
     │
-    ├─► openDatabase('identity.db', version: 2)
+    ├─► openDatabase('identity.db', version: 3)
     │       │
     │       ├─► onCreate callback (first run only)
     │       │       │
     │       │       ├─► runIdentityTableMigration(db)
     │       │       │       Creates identity, contacts, contact_requests
     │       │       │
-    │       │       └─► runMessagesTableMigration(db)
-    │       │               Creates messages table + indexes
+    │       │       ├─► runMessagesTableMigration(db)
+    │       │       │       Creates messages table + indexes
+    │       │       │
+    │       │       └─► runMlKemKeysMigration(db)
+    │       │               Adds ml_kem_* columns to identity, contacts, contact_requests
     │       │
-    │       └─► onUpgrade callback (v1 → v2)
+    │       └─► onUpgrade callback (v1→v2→v3)
     │               │
-    │               └─► runMessagesTableMigration(db)
-    │                       Creates messages table for existing installs
+    │               ├─► runMessagesTableMigration(db)       (v1 → v2)
+    │               │       Creates messages table for existing installs
+    │               │
+    │               └─► runMlKemKeysMigration(db)           (v2 → v3)
+    │                       Adds ML-KEM key columns for E2E encryption
     │
     ├─► Repository instantiation (4 repositories)
     │       │
@@ -2418,6 +2546,7 @@ The application initialization sequence is defined in `lib/main.dart`. Understan
 | `lib/main.dart` | Entry point, DB setup, repository + service + listener DI (8 deps) |
 | `lib/core/database/migrations/001_identity_table.dart` | Schema v1 migration (3 tables) |
 | `lib/core/database/migrations/002_messages_table.dart` | Schema v2 migration (messages table) |
+| `lib/core/database/migrations/003_mlkem_keys.dart` | Schema v3 migration (ML-KEM key columns on identity, contacts, contact_requests) |
 | `lib/core/services/incoming_message_router.dart` | P2P message routing by type |
 | `lib/core/bridge/webview_js_bridge.dart` | JS runtime initialization + event handlers |
 | `lib/core/services/p2p_service_impl.dart` | P2P service initialization |
@@ -2432,7 +2561,7 @@ To add a new initialization step:
 1. Add async initialization code in `main()` before `runApp()`
 2. Inject dependencies into `MyApp` constructor
 3. Pass dependencies through `StartupRouter` to child widgets
-4. For new migrations, create `003_*.dart` and update `openDatabase` version
+4. For new migrations, create `004_*.dart` and update `openDatabase` version
 5. For new P2P event handlers, register on `WebViewJsBridge` in `P2PServiceImpl`
 
 ---
@@ -2456,6 +2585,8 @@ The application has **active P2P networking** via the JavaScript runtime. Identi
                          │   │                             │   │
                          │   │  • Identity generation      │   │
                          │   │  • Mnemonic restore         │   │
+                         │   │  • ML-KEM-768 key mgmt     │   │
+                         │   │  • E2E message encryption   │   │
                          │   │  • QR code creation         │   │
                          │   │  • QR code scanning         │   │
                          │   │  • Profile management       │   │
@@ -2475,6 +2606,8 @@ The application has **active P2P networking** via the JavaScript runtime. Identi
                          │   │  • Message send/receive     │   │
                          │   │  • Contact request exchange │   │
                          │   │  • Chat message exchange    │   │
+                         │   │  • Offline inbox fallback   │   │
+                         │   │  • Inbox drain on startup   │   │
                          │   └──────────────┬──────────────┘   │
                          │                  │                   │
                          └──────────────────┼───────────────────┘
@@ -2487,6 +2620,7 @@ The application has **active P2P networking** via the JavaScript runtime. Identi
                          │                                     │
                          │   • Peer discovery (namespace)      │
                          │   • Circuit relay (NAT traversal)   │
+                         │   • Offline inbox (store/retrieve)  │
                          └──────────────────┬──────────────────┘
                                             │
                                             │ WebSocket relay
@@ -2540,6 +2674,7 @@ Contact requests are sent as structured P2P messages:
     "rv": "<rendezvous-multiaddr>",
     "ts": "<ISO8601-timestamp>",
     "un": "<username>",
+    "mlkem": "<base64-ml-kem-768-public-key>",
     "sig": "<base64-signature>"
   }
 }
@@ -2547,8 +2682,9 @@ Contact requests are sent as structured P2P messages:
 
 ### P2P Chat Message Protocol
 
-Chat messages are sent as structured P2P messages:
+Chat messages support two wire formats:
 
+**v1 (plaintext, backward compatible):**
 ```json
 {
   "type": "chat_message",
@@ -2563,6 +2699,28 @@ Chat messages are sent as structured P2P messages:
 }
 ```
 
+**v2 (E2E encrypted with ML-KEM-768 + AES-256-GCM):**
+```json
+{
+  "type": "chat_message",
+  "version": "2",
+  "senderPeerId": "<sender-peer-id>",
+  "encrypted": {
+    "kem": "<base64-ml-kem-768-ciphertext-1088-bytes>",
+    "ciphertext": "<base64-aes-256-gcm-encrypted-payload>",
+    "nonce": "<base64-12-byte-random-nonce>"
+  }
+}
+```
+
+Per-message encryption flow:
+1. Sender: `ml_kem768.encapsulate(recipientPublicKey)` -> `{kemCiphertext, sharedSecret}`
+2. Sender: `AES-256-GCM(plaintext, sharedSecret, nonce)` -> `aesCiphertext`
+3. Receiver: `ml_kem768.decapsulate(kemCiphertext, ownSecretKey)` -> `sharedSecret`
+4. Receiver: `AES-256-GCM-decrypt(aesCiphertext, sharedSecret, nonce)` -> `plaintext`
+
+Each message gets a fresh KEM encapsulation for forward secrecy. Falls back to v1 when contact has no ML-KEM public key.
+
 ### External Services
 
 | Service | URL | Status | Purpose |
@@ -2573,7 +2731,10 @@ Chat messages are sent as structured P2P messages:
 
 | Command | Handler | Description |
 |---------|---------|-------------|
-| `identity.generate` | Identity module | Generate new BIP39 mnemonic + Ed25519 keypair |
-| `identity.restore` | Identity module | Restore keypair from existing mnemonic |
+| `identity.generate` | Identity module | Generate new BIP39 mnemonic + Ed25519 keypair + ML-KEM-768 keypair |
+| `identity.restore` | Identity module | Restore Ed25519 keypair from mnemonic + generate fresh ML-KEM-768 keypair |
 | `payload.sign` | Signing module | Sign data with Ed25519 private key |
+| `mlkem.keygen` | Crypto module | Generate ML-KEM-768 keypair (publicKey + secretKey) |
+| `message.encrypt` | Crypto module | Encrypt message: ML-KEM-768 encapsulate + AES-256-GCM -> {kem, ciphertext, nonce} |
+| `message.decrypt` | Crypto module | Decrypt message: ML-KEM-768 decapsulate + AES-256-GCM -> {plaintext} |
 | P2P commands | P2P module | Node management, peer discovery, messaging |

@@ -113,6 +113,7 @@ Future<(ParseQRResult, ContactModel?)> parseQRPayload({
   // 5. Verify signature
   // Build the unsigned payload (same fields as signed, minus sig)
   final unsignedPayload = SplayTreeMap<String, dynamic>.from({
+    if (json['mlkem'] != null) 'mlkem': json['mlkem'],
     'ns': json['ns'],
     'pk': json['pk'],
     'rv': json['rv'],

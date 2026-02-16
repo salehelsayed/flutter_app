@@ -1,5 +1,6 @@
 import 'package:uuid/uuid.dart';
 
+import 'package:flutter_app/core/bridge/js_bridge_client.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/chat_console_logger.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -38,6 +39,8 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   required String senderUsername,
   String? messageId,
   String? timestamp,
+  JsBridge? bridge,
+  String? recipientMlKemPublicKey,
 }) async {
   final targetPrefix = targetPeerId.length > 10
       ? targetPeerId.substring(0, 10)
@@ -89,8 +92,50 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     text: text,
   );
 
-  // 4. Serialize
-  final jsonString = payload.toJson();
+  // 4. Serialize (v2 encrypted envelope if ML-KEM key available, v1 plaintext otherwise)
+  String jsonString;
+  if (bridge != null && recipientMlKemPublicKey != null) {
+    try {
+      final innerJson = payload.toInnerJson();
+      final encryptResult = await callJsEncryptMessage(
+        bridge: bridge,
+        recipientMlKemPublicKey: recipientMlKemPublicKey,
+        plaintext: innerJson,
+      );
+      if (encryptResult['ok'] != true) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'CHAT_MSG_SEND_ENCRYPT_FAILED',
+          details: {
+            'errorCode': encryptResult['errorCode'],
+            'errorMessage': encryptResult['errorMessage'],
+          },
+        );
+        return (SendChatMessageResult.sendFailed, null);
+      }
+      jsonString = MessagePayload.buildEncryptedEnvelope(
+        senderPeerId: senderPeerId,
+        kem: encryptResult['kem'] as String,
+        ciphertext: encryptResult['ciphertext'] as String,
+        nonce: encryptResult['nonce'] as String,
+      );
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CHAT_MSG_SEND_ENCRYPT_ERROR',
+        details: {'error': e.toString()},
+      );
+      return (SendChatMessageResult.sendFailed, null);
+    }
+  } else {
+    jsonString = payload.toJson();
+  }
+
+  logChatWireEnvelope(
+    direction: 'OUT',
+    messageId: resolvedMessageId,
+    wireJson: jsonString,
+  );
 
   // 5. Discover → Dial → Send (with 3x retries and exponential backoff)
   const maxAttempts = 3;
@@ -201,10 +246,49 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     }
   }
 
-  // All retries exhausted — persist with failed status
-  // TODO: When offline inbox is implemented, store message via
-  // p2pService.storeInInbox(targetPeerId, jsonString) here
-  // and change status from 'failed' to 'queued'.
+  // All retries exhausted — try offline inbox fallback first.
+  try {
+    final storedInInbox = await p2pService.storeInInbox(
+      targetPeerId,
+      jsonString,
+    );
+    if (storedInInbox) {
+      final deliveredMessage = payload.toConversationMessage(
+        contactPeerId: targetPeerId,
+        isIncoming: false,
+        status: 'delivered',
+      );
+      await messageRepo.saveMessage(deliveredMessage);
+
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CHAT_MSG_SEND_SUCCESS',
+        details: {
+          'id': resolvedMessageId.substring(0, 8),
+          'status': 'delivered',
+          'attempts': maxAttempts,
+          'via': 'inbox',
+          'textPreview': textPreview,
+        },
+      );
+      logChatOutgoing(
+        messageId: resolvedMessageId,
+        toPeerId: targetPeerId,
+        status: 'delivered',
+        text: text,
+        attempt: maxAttempts,
+      );
+      return (SendChatMessageResult.success, deliveredMessage);
+    }
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_SEND_INBOX_FALLBACK_ERROR',
+      details: {'error': e.toString()},
+    );
+  }
+
+  // Inbox fallback failed — persist with failed status.
   final failedMessage = payload.toConversationMessage(
     contactPeerId: targetPeerId,
     isIncoming: false,

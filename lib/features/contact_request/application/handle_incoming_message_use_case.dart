@@ -139,6 +139,7 @@ Future<(HandleMessageResult, ContactRequestModel?)> handleIncomingMessage({
 
   // 7. Verify signature
   final unsignedPayload = SplayTreeMap<String, dynamic>.from({
+    if (payload['mlkem'] != null) 'mlkem': payload['mlkem'],
     'ns': payload['ns'],
     'pk': payload['pk'],
     'rv': payload['rv'],

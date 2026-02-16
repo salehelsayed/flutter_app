@@ -37,6 +37,9 @@ class ContactRequestModel {
   /// Current status of the request.
   final ContactRequestStatus status;
 
+  /// Base64-encoded ML-KEM-768 public key for post-quantum encryption.
+  final String? mlKemPublicKey;
+
   const ContactRequestModel({
     required this.peerId,
     required this.publicKey,
@@ -45,6 +48,7 @@ class ContactRequestModel {
     required this.signature,
     required this.receivedAt,
     this.status = ContactRequestStatus.pending,
+    this.mlKemPublicKey,
   });
 
   /// Creates a ContactRequestModel from a P2P message payload.
@@ -59,6 +63,7 @@ class ContactRequestModel {
       signature: payload['sig'] as String,
       receivedAt: DateTime.now().toUtc().toIso8601String(),
       status: ContactRequestStatus.pending,
+      mlKemPublicKey: payload['mlkem'] as String?,
     );
   }
 
@@ -72,6 +77,7 @@ class ContactRequestModel {
       signature: map['signature'] as String,
       receivedAt: map['received_at'] as String,
       status: _statusFromString(map['status'] as String? ?? 'pending'),
+      mlKemPublicKey: map['ml_kem_public_key'] as String?,
     );
   }
 
@@ -107,6 +113,7 @@ class ContactRequestModel {
       'signature': signature,
       'received_at': receivedAt,
       'status': _statusToString(status),
+      'ml_kem_public_key': mlKemPublicKey,
     };
   }
 
@@ -119,6 +126,7 @@ class ContactRequestModel {
       username: username,
       signature: signature,
       scannedAt: DateTime.now().toUtc().toIso8601String(),
+      mlKemPublicKey: mlKemPublicKey,
     );
   }
 
@@ -131,6 +139,7 @@ class ContactRequestModel {
     String? signature,
     String? receivedAt,
     ContactRequestStatus? status,
+    String? mlKemPublicKey,
   }) {
     return ContactRequestModel(
       peerId: peerId ?? this.peerId,
@@ -140,6 +149,7 @@ class ContactRequestModel {
       signature: signature ?? this.signature,
       receivedAt: receivedAt ?? this.receivedAt,
       status: status ?? this.status,
+      mlKemPublicKey: mlKemPublicKey ?? this.mlKemPublicKey,
     );
   }
 

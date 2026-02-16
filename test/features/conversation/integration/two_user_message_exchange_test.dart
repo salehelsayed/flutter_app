@@ -31,9 +31,14 @@ import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart'
 // Routes messages between two FakeP2PService instances.
 class FakeP2PNetwork {
   final Map<String, FakeP2PService> _nodes = {};
+  final Map<String, List<Map<String, dynamic>>> _inboxes = {};
 
   void register(FakeP2PService node) {
     _nodes[node.peerId] = node;
+  }
+
+  void unregister(String peerId) {
+    _nodes.remove(peerId);
   }
 
   /// Delivers a message from [fromPeerId] to [toPeerId].
@@ -43,18 +48,37 @@ class FakeP2PNetwork {
     if (target == null) return false;
 
     // Simulate incoming message on the target node
-    target.injectIncomingMessage(ChatMessage(
-      from: fromPeerId,
-      to: toPeerId,
-      content: content,
-      timestamp: DateTime.now().toUtc().toIso8601String(),
-      isIncoming: true,
-    ));
+    target.injectIncomingMessage(
+      ChatMessage(
+        from: fromPeerId,
+        to: toPeerId,
+        content: content,
+        timestamp: DateTime.now().toUtc().toIso8601String(),
+        isIncoming: true,
+      ),
+    );
     return true;
   }
 
   /// Whether a peer is registered on this network.
   bool hasPeer(String peerId) => _nodes.containsKey(peerId);
+
+  /// Store message for offline delivery.
+  bool storeInInbox(String fromPeerId, String toPeerId, String content) {
+    final inbox = _inboxes.putIfAbsent(toPeerId, () => []);
+    inbox.add({
+      'from': fromPeerId,
+      'message': content,
+      'timestamp': DateTime.now().toUtc().millisecondsSinceEpoch,
+    });
+    return true;
+  }
+
+  /// Retrieve and clear inbox for a peer.
+  List<Map<String, dynamic>> retrieveInbox(String peerId) {
+    final messages = _inboxes.remove(peerId) ?? [];
+    return List<Map<String, dynamic>>.from(messages);
+  }
 }
 
 // ─── Fake P2P Service ───────────────────────────────────────────────
@@ -63,13 +87,46 @@ class FakeP2PService implements P2PService {
   final String peerId;
   final FakeP2PNetwork network;
   final _messageController = StreamController<ChatMessage>.broadcast();
+  bool _online = true;
 
   FakeP2PService({required this.peerId, required this.network}) {
     network.register(this);
   }
 
+  void setOnline(bool online) {
+    _online = online;
+    if (online) {
+      network.register(this);
+    } else {
+      network.unregister(peerId);
+    }
+  }
+
   void injectIncomingMessage(ChatMessage message) {
     _messageController.add(message);
+  }
+
+  Future<int> drainOfflineInbox() async {
+    final messages = await retrieveInbox();
+    for (final message in messages) {
+      final ts = message['timestamp'];
+      final timestamp = ts is int
+          ? DateTime.fromMillisecondsSinceEpoch(
+              ts,
+              isUtc: true,
+            ).toIso8601String()
+          : DateTime.now().toUtc().toIso8601String();
+      injectIncomingMessage(
+        ChatMessage(
+          from: message['from'] as String,
+          to: peerId,
+          content: message['message'] as String,
+          timestamp: timestamp,
+          isIncoming: true,
+        ),
+      );
+    }
+    return messages.length;
   }
 
   @override
@@ -88,7 +145,9 @@ class FakeP2PService implements P2PService {
 
   @override
   Future<SendMessageResult> sendMessageWithReply(
-      String targetPeerId, String message) async {
+    String targetPeerId,
+    String message,
+  ) async {
     final delivered = network.deliver(peerId, targetPeerId, message);
     return SendMessageResult(
       sent: delivered,
@@ -118,10 +177,14 @@ class FakeP2PService implements P2PService {
       network.hasPeer(peerId);
 
   @override
-  Future<bool> storeInInbox(String toPeerId, String message) async => false;
+  Future<bool> storeInInbox(String toPeerId, String message) async {
+    return network.storeInInbox(peerId, toPeerId, message);
+  }
 
   @override
-  Future<List<Map<String, dynamic>>> retrieveInbox() async => [];
+  Future<List<Map<String, dynamic>>> retrieveInbox() async {
+    return network.retrieveInbox(peerId);
+  }
 
   @override
   void dispose() {
@@ -140,17 +203,18 @@ class InMemoryMessageRepository implements MessageRepository {
 
   @override
   Future<List<ConversationMessage>> getMessagesForContact(
-      String contactPeerId) async {
-    final list = _messages.values
-        .where((m) => m.contactPeerId == contactPeerId)
-        .toList()
-      ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+    String contactPeerId,
+  ) async {
+    final list =
+        _messages.values.where((m) => m.contactPeerId == contactPeerId).toList()
+          ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
     return list;
   }
 
   @override
   Future<ConversationMessage?> getLatestMessageForContact(
-      String contactPeerId) async {
+    String contactPeerId,
+  ) async {
     final list = await getMessagesForContact(contactPeerId);
     return list.isNotEmpty ? list.last : null;
   }
@@ -186,7 +250,8 @@ class InMemoryContactRepository implements ContactRepository {
   Future<ContactModel?> getContact(String peerId) async => _contacts[peerId];
 
   @override
-  Future<List<ContactModel>> getAllContacts() async => _contacts.values.toList();
+  Future<List<ContactModel>> getAllContacts() async =>
+      _contacts.values.toList();
 
   @override
   Future<void> deleteContact(String peerId) async {
@@ -246,14 +311,16 @@ class TestUser {
 
   /// Adds another user as a contact (simulating QR scan exchange).
   void addContact(TestUser other) {
-    contactRepo.addTestContact(ContactModel(
-      peerId: other.peerId,
-      publicKey: 'pk-${other.peerId}',
-      rendezvous: '/dns4/relay/tcp/443/p2p/relay',
-      username: other.username,
-      signature: 'sig-${other.peerId}',
-      scannedAt: DateTime.now().toUtc().toIso8601String(),
-    ));
+    contactRepo.addTestContact(
+      ContactModel(
+        peerId: other.peerId,
+        publicKey: 'pk-${other.peerId}',
+        rendezvous: '/dns4/relay/tcp/443/p2p/relay',
+        username: other.username,
+        signature: 'sig-${other.peerId}',
+        scannedAt: DateTime.now().toUtc().toIso8601String(),
+      ),
+    );
   }
 
   /// Sends a message to the target peer.
@@ -272,8 +339,7 @@ class TestUser {
   }
 
   /// Loads the conversation with a contact.
-  Future<List<ConversationMessage>> loadConversation(
-      String contactPeerId) {
+  Future<List<ConversationMessage>> loadConversation(String contactPeerId) {
     return loadConversation2(
       messageRepo: messageRepo,
       contactPeerId: contactPeerId,
@@ -281,6 +347,10 @@ class TestUser {
   }
 
   void start() => chatListener.start();
+
+  void setOnline(bool online) => p2pService.setOnline(online);
+
+  Future<int> drainOfflineInbox() => p2pService.drainOfflineInbox();
 
   void dispose() {
     chatListener.dispose();
@@ -399,14 +469,20 @@ void main() {
       );
 
       // Alice → Bob: message 1
-      final (r1, _) = await alice.sendMessage(bob.peerId, 'Hey Bob, how are you?');
+      final (r1, _) = await alice.sendMessage(
+        bob.peerId,
+        'Hey Bob, how are you?',
+      );
       expect(r1, SendChatMessageResult.success);
 
       // Wait for delivery
       await Future.delayed(const Duration(milliseconds: 50));
 
       // Bob → Alice: message 2
-      final (r2, _) = await bob.sendMessage(alice.peerId, 'Great, thanks! You?');
+      final (r2, _) = await bob.sendMessage(
+        alice.peerId,
+        'Great, thanks! You?',
+      );
       expect(r2, SendChatMessageResult.success);
 
       await Future.delayed(const Duration(milliseconds: 50));
@@ -430,7 +506,9 @@ void main() {
 
       // Alice's conversation with Bob: should have 3 messages
       // (2 sent by Alice + 1 received from Bob)
-      final aliceConvo = await alice.messageRepo.getMessagesForContact(bob.peerId);
+      final aliceConvo = await alice.messageRepo.getMessagesForContact(
+        bob.peerId,
+      );
       expect(aliceConvo.length, 3);
       expect(aliceConvo[0].text, 'Hey Bob, how are you?');
       expect(aliceConvo[0].isIncoming, false);
@@ -441,7 +519,9 @@ void main() {
 
       // Bob's conversation with Alice: should have 3 messages
       // (2 received from Alice + 1 sent by Bob)
-      final bobConvo = await bob.messageRepo.getMessagesForContact(alice.peerId);
+      final bobConvo = await bob.messageRepo.getMessagesForContact(
+        alice.peerId,
+      );
       expect(bobConvo.length, 3);
       expect(bobConvo[0].text, 'Hey Bob, how are you?');
       expect(bobConvo[0].isIncoming, true);
@@ -493,7 +573,9 @@ void main() {
 
       // Simulate the same message arriving again (network retry)
       // We need to get the message ID from Bob's stored messages
-      final bobMessages = await bob.messageRepo.getMessagesForContact(alice.peerId);
+      final bobMessages = await bob.messageRepo.getMessagesForContact(
+        alice.peerId,
+      );
       expect(bobMessages.length, 1);
       final originalId = bobMessages.first.id;
 
@@ -510,18 +592,22 @@ void main() {
         },
       });
 
-      bob.p2pService.injectIncomingMessage(ChatMessage(
-        from: alice.peerId,
-        to: bob.peerId,
-        content: duplicateJson,
-        timestamp: DateTime.now().toUtc().toIso8601String(),
-        isIncoming: true,
-      ));
+      bob.p2pService.injectIncomingMessage(
+        ChatMessage(
+          from: alice.peerId,
+          to: bob.peerId,
+          content: duplicateJson,
+          timestamp: DateTime.now().toUtc().toIso8601String(),
+          isIncoming: true,
+        ),
+      );
 
       await Future.delayed(const Duration(milliseconds: 100));
 
       // Still only 1 message in Bob's DB (duplicate was rejected)
-      final afterDupe = await bob.messageRepo.getMessagesForContact(alice.peerId);
+      final afterDupe = await bob.messageRepo.getMessagesForContact(
+        alice.peerId,
+      );
       expect(afterDupe.length, 1);
 
       // Listener should have only fired once
@@ -532,8 +618,7 @@ void main() {
 
     test('Contact name propagates when sender changes username', () async {
       // Bob's contact for Alice currently has username "Alice"
-      final aliceContactBefore =
-          await bob.contactRepo.getContact(alice.peerId);
+      final aliceContactBefore = await bob.contactRepo.getContact(alice.peerId);
       expect(aliceContactBefore!.username, 'Alice');
 
       // Subscribe to Bob's contactUpdatedStream
@@ -557,19 +642,20 @@ void main() {
         },
       });
 
-      bob.p2pService.injectIncomingMessage(ChatMessage(
-        from: alice.peerId,
-        to: bob.peerId,
-        content: renamedJson,
-        timestamp: DateTime.now().toUtc().toIso8601String(),
-        isIncoming: true,
-      ));
+      bob.p2pService.injectIncomingMessage(
+        ChatMessage(
+          from: alice.peerId,
+          to: bob.peerId,
+          content: renamedJson,
+          timestamp: DateTime.now().toUtc().toIso8601String(),
+          isIncoming: true,
+        ),
+      );
 
       await Future.delayed(const Duration(milliseconds: 100));
 
       // Bob's stored contact should now have the updated name
-      final aliceContactAfter =
-          await bob.contactRepo.getContact(alice.peerId);
+      final aliceContactAfter = await bob.contactRepo.getContact(alice.peerId);
       expect(aliceContactAfter!.username, 'Alice Renamed');
 
       // contactUpdatedStream should have emitted
@@ -580,31 +666,55 @@ void main() {
       await contactSub.cancel();
     });
 
-    test('Messages to disconnected peer fail with peerNotFound', () async {
-      // Create a user who is NOT on the network
-      final offlineUser = TestUser.create(
-        peerId: '12D3KooWOfflineUser0000000004',
-        username: 'Offline',
-        network: FakeP2PNetwork(), // Separate network — unreachable
-      );
-      alice.addContact(offlineUser);
+    test(
+      'Messages to offline peer are marked delivered after inbox store',
+      () async {
+        final offlineUser = TestUser.create(
+          peerId: '12D3KooWOfflineUser0000000004',
+          username: 'Offline',
+          network: network,
+        );
+        alice.addContact(offlineUser);
+        offlineUser.addContact(alice);
+        offlineUser.start();
+        offlineUser.setOnline(false);
 
-      final (result, msg) = await alice.sendMessage(
-        offlineUser.peerId,
-        'Are you there?',
-      );
+        final offlineReceived =
+            offlineUser.chatListener.incomingMessageStream.first;
 
-      // Network can't find the peer → discover returns null → peerNotFound
-      expect(result, SendChatMessageResult.peerNotFound);
-      expect(msg, isNotNull);
-      expect(msg!.status, 'failed');
+        final (result, msg) = await alice.sendMessage(
+          offlineUser.peerId,
+          'Are you there?',
+        );
 
-      // Message is still persisted (with failed status) so user can retry
-      final convo = await alice.messageRepo.getMessagesForContact(offlineUser.peerId);
-      expect(convo.length, 1);
-      expect(convo.first.status, 'failed');
+        // Network can't find the peer, so send falls back to inbox storage.
+        expect(result, SendChatMessageResult.success);
+        expect(msg, isNotNull);
+        expect(msg!.status, 'delivered');
 
-      offlineUser.dispose();
-    });
+        // Sender persists delivered status (inbox accepted by relay).
+        final convo = await alice.messageRepo.getMessagesForContact(
+          offlineUser.peerId,
+        );
+        expect(convo.length, 1);
+        expect(convo.first.status, 'delivered');
+
+        // Peer comes back online and drains inbox.
+        offlineUser.setOnline(true);
+        final drained = await offlineUser.drainOfflineInbox();
+        expect(drained, 1);
+
+        final delivered = await offlineReceived.timeout(
+          const Duration(seconds: 2),
+          onTimeout: () =>
+              throw StateError('Offline peer never received inbox message'),
+        );
+        expect(delivered.text, 'Are you there?');
+        expect(delivered.isIncoming, true);
+        expect(delivered.senderPeerId, alice.peerId);
+
+        offlineUser.dispose();
+      },
+    );
   });
 }

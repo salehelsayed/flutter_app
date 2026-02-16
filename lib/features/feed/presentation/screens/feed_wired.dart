@@ -284,6 +284,7 @@ class _FeedWiredState extends State<FeedWired> {
           messageRepo: widget.messageRepository,
           chatMessageListener: widget.chatMessageListener,
           p2pService: widget.p2pService,
+          bridge: widget.bridge,
         ),
       ),
     );
@@ -301,6 +302,7 @@ class _FeedWiredState extends State<FeedWired> {
           messageRepo: widget.messageRepository,
           chatMessageListener: widget.chatMessageListener,
           p2pService: widget.p2pService,
+          bridge: widget.bridge,
         ),
       ),
     );
@@ -321,6 +323,8 @@ class _FeedWiredState extends State<FeedWired> {
       publicKey: identity.publicKey,
       privateKey: identity.privateKey,
       mnemonic12: identity.mnemonic12,
+      mlKemPublicKey: identity.mlKemPublicKey,
+      mlKemSecretKey: identity.mlKemSecretKey,
       username: newUsername,
       avatarPath: identity.avatarPath,
       createdAt: identity.createdAt,

@@ -75,9 +75,10 @@ Future<SendContactRequestResult> sendContactRequest({
     return SendContactRequestResult.noIdentity;
   }
 
-  // 3. Build unsigned payload (same format as QR)
+  // 3. Build unsigned payload (same format as QR, plus mlkem key)
   final timestamp = DateTime.now().toUtc().toIso8601String();
   final unsignedPayload = SplayTreeMap<String, dynamic>.from({
+    if (identity.mlKemPublicKey != null) 'mlkem': identity.mlKemPublicKey,
     'ns': identity.peerId,
     'pk': identity.publicKey,
     'rv': RENDEZVOUS_ADDRESS,

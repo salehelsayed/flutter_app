@@ -10,6 +10,9 @@ import { sha512 } from '@noble/hashes/sha2.js';
 import { generateIdentity } from '../identity/generate';
 import { restoreIdentityFromMnemonic } from '../identity/restore';
 import { signPayload } from '../signing/sign_payload';
+import { generateMlKemKeyPair } from '../crypto/keygen_mlkem';
+import { encryptMessage } from '../crypto/encrypt_message';
+import { decryptMessage } from '../crypto/decrypt_message';
 
 // Polyfill SHA-512 for environments without crypto.subtle (e.g. Flutter WebView)
 ed.hashes.sha512 = (msg: Uint8Array) => sha512(msg);
@@ -23,6 +26,8 @@ interface BridgeResponse {
     publicKey: string;
     privateKey: string;
     mnemonic12: string;
+    mlKemPublicKey?: string;
+    mlKemSecretKey?: string;
     createdAt: string;
     updatedAt: string;
   };
@@ -101,6 +106,92 @@ async function handleRequest(requestJson: string): Promise<void> {
       }
       const signature = await signPayload(dataToSign, privateKey);
       sendToFlutter({ ok: true, requestId, signature } as any);
+      return;
+    }
+
+    if (cmd === 'mlkem.keygen') {
+      const keyPair = generateMlKemKeyPair();
+      sendToFlutter({
+        ok: true,
+        requestId,
+        ...keyPair,
+      } as any);
+      return;
+    }
+
+    if (cmd === 'message.encrypt') {
+      const { recipientMlKemPublicKey, plaintext } = payload;
+      if (!recipientMlKemPublicKey || typeof recipientMlKemPublicKey !== 'string') {
+        sendToFlutter({
+          ok: false,
+          requestId,
+          errorCode: 'ENCRYPT_ERROR',
+          errorMessage: 'Missing or invalid recipientMlKemPublicKey',
+        });
+        return;
+      }
+      if (!plaintext || typeof plaintext !== 'string') {
+        sendToFlutter({
+          ok: false,
+          requestId,
+          errorCode: 'ENCRYPT_ERROR',
+          errorMessage: 'Missing or invalid plaintext',
+        });
+        return;
+      }
+      const result = await encryptMessage(recipientMlKemPublicKey, plaintext);
+      sendToFlutter({
+        ok: true,
+        requestId,
+        ...result,
+      } as any);
+      return;
+    }
+
+    if (cmd === 'message.decrypt') {
+      const { ownMlKemSecretKey, kem, ciphertext, nonce } = payload;
+      if (!ownMlKemSecretKey || typeof ownMlKemSecretKey !== 'string') {
+        sendToFlutter({
+          ok: false,
+          requestId,
+          errorCode: 'DECRYPT_ERROR',
+          errorMessage: 'Missing or invalid ownMlKemSecretKey',
+        });
+        return;
+      }
+      if (!kem || typeof kem !== 'string') {
+        sendToFlutter({
+          ok: false,
+          requestId,
+          errorCode: 'DECRYPT_ERROR',
+          errorMessage: 'Missing or invalid kem',
+        });
+        return;
+      }
+      if (!ciphertext || typeof ciphertext !== 'string') {
+        sendToFlutter({
+          ok: false,
+          requestId,
+          errorCode: 'DECRYPT_ERROR',
+          errorMessage: 'Missing or invalid ciphertext',
+        });
+        return;
+      }
+      if (!nonce || typeof nonce !== 'string') {
+        sendToFlutter({
+          ok: false,
+          requestId,
+          errorCode: 'DECRYPT_ERROR',
+          errorMessage: 'Missing or invalid nonce',
+        });
+        return;
+      }
+      const plaintext = await decryptMessage(ownMlKemSecretKey, kem, ciphertext, nonce);
+      sendToFlutter({
+        ok: true,
+        requestId,
+        plaintext,
+      } as any);
       return;
     }
 

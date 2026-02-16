@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter_app/core/bridge/js_bridge_client.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
@@ -17,6 +18,8 @@ class ChatMessageListener {
   final Stream<ChatMessage> chatMessageStream;
   final MessageRepository messageRepo;
   final ContactRepository contactRepo;
+  final JsBridge? bridge;
+  final Future<String?> Function()? getOwnMlKemSecretKey;
 
   StreamSubscription<ChatMessage>? _subscription;
   final _messageController = StreamController<ConversationMessage>.broadcast();
@@ -26,6 +29,8 @@ class ChatMessageListener {
     required this.chatMessageStream,
     required this.messageRepo,
     required this.contactRepo,
+    this.bridge,
+    this.getOwnMlKemSecretKey,
   });
 
   /// Stream of new incoming chat messages for the UI to listen to.
@@ -70,11 +75,17 @@ class ChatMessageListener {
 
   Future<void> _onMessage(ChatMessage message) async {
     try {
+      final ownSecretKey = getOwnMlKemSecretKey != null
+          ? await getOwnMlKemSecretKey!()
+          : null;
+
       final (result, conversationMessage, updatedContact) =
           await handleIncomingChatMessage(
         message: message,
         messageRepo: messageRepo,
         contactRepo: contactRepo,
+        bridge: bridge,
+        ownMlKemSecretKey: ownSecretKey,
       );
 
       if (updatedContact != null) {

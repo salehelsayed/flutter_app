@@ -15,6 +15,7 @@ class FakeP2PService implements P2PService {
   bool sendMessageResult;
   String? sendMessageReply;
   bool shouldThrow;
+  bool storeInInboxResult;
 
   DiscoveredPeer? discoverPeerResult;
   bool dialPeerResult;
@@ -22,9 +23,12 @@ class FakeP2PService implements P2PService {
   int discoverCallCount = 0;
   int dialCallCount = 0;
   int sendCallCount = 0;
+  int storeInInboxCallCount = 0;
 
   String? lastSentPeerId;
   String? lastSentMessage;
+  String? lastInboxPeerId;
+  String? lastInboxMessage;
 
   /// Use [useNullDiscover] to explicitly request null discoverPeer results.
   FakeP2PService({
@@ -32,6 +36,7 @@ class FakeP2PService implements P2PService {
     this.sendMessageResult = true,
     this.sendMessageReply = 'received: ok',
     this.shouldThrow = false,
+    this.storeInInboxResult = false,
     DiscoveredPeer? discoverPeerResult,
     bool useNullDiscover = false,
     this.dialPeerResult = true,
@@ -96,7 +101,12 @@ class FakeP2PService implements P2PService {
   }
 
   @override
-  Future<bool> storeInInbox(String toPeerId, String message) async => false;
+  Future<bool> storeInInbox(String toPeerId, String message) async {
+    storeInInboxCallCount++;
+    lastInboxPeerId = toPeerId;
+    lastInboxMessage = message;
+    return storeInInboxResult;
+  }
 
   @override
   Future<List<Map<String, dynamic>>> retrieveInbox() async => [];
@@ -310,6 +320,34 @@ void main() {
         expect(message!.status, 'failed');
         expect(messageRepo.saved.length, 1);
         expect(messageRepo.saved.first.status, 'failed');
+        expect(p2pService.storeInInboxCallCount, 1);
+      },
+    );
+
+    test(
+      'returns success and persists delivered status when inbox store succeeds',
+      () async {
+        p2pService.sendMessageResult = false;
+        p2pService.storeInInboxResult = true;
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Hello queued!',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message, isNotNull);
+        expect(message!.status, 'delivered');
+        expect(messageRepo.saved.length, 1);
+        expect(messageRepo.saved.first.status, 'delivered');
+        expect(p2pService.storeInInboxCallCount, 1);
+        expect(p2pService.lastInboxPeerId, 'target-peer');
+        expect(p2pService.lastInboxMessage, isNotNull);
+        expect(p2pService.lastInboxMessage, contains('"type":"chat_message"'));
       },
     );
 

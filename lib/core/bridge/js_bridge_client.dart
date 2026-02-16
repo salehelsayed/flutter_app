@@ -236,3 +236,163 @@ Future<Map<String, dynamic>> callJsSignPayload({
     };
   }
 }
+
+/// Calls the JS bridge to generate an ML-KEM-768 key pair.
+///
+/// Returns a map with:
+/// - On success: `{ "ok": true, "publicKey": "base64...", "secretKey": "base64..." }`
+/// - On error: `{ "ok": false, "errorCode": "...", "errorMessage": "..." }`
+Future<Map<String, dynamic>> callJsMlKemKeygen(JsBridge bridge) async {
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'MLKEM_FL_BRIDGE_KEYGEN_REQUEST',
+    details: {},
+  );
+
+  final request = {
+    'cmd': 'mlkem.keygen',
+    'payload': <String, dynamic>{},
+  };
+
+  final responseJson = await bridge.send(jsonEncode(request));
+  final response = jsonDecode(responseJson) as Map<String, dynamic>;
+
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'MLKEM_FL_BRIDGE_KEYGEN_RESPONSE',
+    details: {'ok': response['ok']},
+  );
+
+  return response;
+}
+
+/// Calls the JS bridge to encrypt a message using ML-KEM-768 + AES-256-GCM.
+///
+/// Returns a map with:
+/// - On success: `{ "ok": true, "kem": "base64...", "ciphertext": "base64...", "nonce": "base64..." }`
+/// - On error: `{ "ok": false, "errorCode": "...", "errorMessage": "..." }`
+Future<Map<String, dynamic>> callJsEncryptMessage({
+  required JsBridge bridge,
+  required String recipientMlKemPublicKey,
+  required String plaintext,
+  Duration timeout = const Duration(seconds: 10),
+}) async {
+  final correlationId = DateTime.now().microsecondsSinceEpoch.toString();
+
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'MLKEM_FL_BRIDGE_ENCRYPT_REQUEST',
+    details: {
+      'plaintextLength': plaintext.length,
+      'correlationId': correlationId,
+    },
+  );
+
+  final request = {
+    'cmd': 'message.encrypt',
+    'payload': {
+      'recipientMlKemPublicKey': recipientMlKemPublicKey,
+      'plaintext': plaintext,
+    },
+  };
+
+  try {
+    final responseJson = await bridge
+        .send(jsonEncode(request))
+        .timeout(timeout);
+    final response = jsonDecode(responseJson) as Map<String, dynamic>;
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'MLKEM_FL_BRIDGE_ENCRYPT_RESPONSE',
+      details: {
+        'ok': response['ok'] ?? false,
+        'correlationId': correlationId,
+      },
+    );
+
+    return response;
+  } on TimeoutException {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'MLKEM_FL_BRIDGE_ENCRYPT_RESPONSE',
+      details: {
+        'ok': false,
+        'errorCode': 'BRIDGE_TIMEOUT',
+        'correlationId': correlationId,
+      },
+    );
+
+    return {
+      'ok': false,
+      'errorCode': 'BRIDGE_TIMEOUT',
+      'errorMessage': 'Bridge call timed out after ${timeout.inSeconds}s',
+    };
+  }
+}
+
+/// Calls the JS bridge to decrypt a message using ML-KEM-768 + AES-256-GCM.
+///
+/// Returns a map with:
+/// - On success: `{ "ok": true, "plaintext": "..." }`
+/// - On error: `{ "ok": false, "errorCode": "...", "errorMessage": "..." }`
+Future<Map<String, dynamic>> callJsDecryptMessage({
+  required JsBridge bridge,
+  required String ownMlKemSecretKey,
+  required String kem,
+  required String ciphertext,
+  required String nonce,
+  Duration timeout = const Duration(seconds: 10),
+}) async {
+  final correlationId = DateTime.now().microsecondsSinceEpoch.toString();
+
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'MLKEM_FL_BRIDGE_DECRYPT_REQUEST',
+    details: {'correlationId': correlationId},
+  );
+
+  final request = {
+    'cmd': 'message.decrypt',
+    'payload': {
+      'ownMlKemSecretKey': ownMlKemSecretKey,
+      'kem': kem,
+      'ciphertext': ciphertext,
+      'nonce': nonce,
+    },
+  };
+
+  try {
+    final responseJson = await bridge
+        .send(jsonEncode(request))
+        .timeout(timeout);
+    final response = jsonDecode(responseJson) as Map<String, dynamic>;
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'MLKEM_FL_BRIDGE_DECRYPT_RESPONSE',
+      details: {
+        'ok': response['ok'] ?? false,
+        'correlationId': correlationId,
+      },
+    );
+
+    return response;
+  } on TimeoutException {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'MLKEM_FL_BRIDGE_DECRYPT_RESPONSE',
+      details: {
+        'ok': false,
+        'errorCode': 'BRIDGE_TIMEOUT',
+        'correlationId': correlationId,
+      },
+    );
+
+    return {
+      'ok': false,
+      'errorCode': 'BRIDGE_TIMEOUT',
+      'errorMessage': 'Bridge call timed out after ${timeout.inSeconds}s',
+    };
+  }
+}

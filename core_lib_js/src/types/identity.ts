@@ -48,6 +48,20 @@ export interface IdentityJson {
   mnemonic12: string;
 
   /**
+   * Base64-encoded ML-KEM-768 public key (1184 bytes when decoded).
+   * Used for post-quantum message encryption key exchange.
+   * Optional for backward compatibility with older identities.
+   */
+  mlKemPublicKey?: string;
+
+  /**
+   * Base64-encoded ML-KEM-768 secret key (2400 bytes when decoded).
+   * SENSITIVE: Used for decrypting incoming messages.
+   * Optional for backward compatibility with older identities.
+   */
+  mlKemSecretKey?: string;
+
+  /**
    * ISO-8601 UTC timestamp of identity creation.
    * Set once when the identity is first generated or restored.
    * @example "2025-11-28T12:34:56.000Z"
@@ -114,6 +128,8 @@ export const IDENTITY_JSON_FIELDS = [
   'publicKey',
   'privateKey',
   'mnemonic12',
+  'mlKemPublicKey',
+  'mlKemSecretKey',
   'createdAt',
   'updatedAt',
 ] as const;

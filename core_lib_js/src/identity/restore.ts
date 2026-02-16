@@ -14,6 +14,7 @@ import { peerIdFromPrivateKey } from '@libp2p/peer-id';
 import { IdentityJson } from '../types/identity';
 import { emitFlowEvent } from '../utils/flow_events';
 import { uint8ArrayToBase64 } from '../utils/base64';
+import { generateMlKemKeyPair } from '../crypto/keygen_mlkem';
 
 /**
  * Custom error class for identity restoration errors.
@@ -105,12 +106,17 @@ export async function restoreIdentityFromMnemonic(mnemonic12: string): Promise<I
     // Step 7: Set timestamps (same for both on restoration)
     const now = new Date().toISOString();
 
-    // Step 8: Build the complete identity object
+    // Step 8: Generate ML-KEM-768 keypair (random, not derived from mnemonic)
+    const mlKemKeys = generateMlKemKeyPair();
+
+    // Step 9: Build the complete identity object
     const identity: IdentityJson = {
       peerId: peerId.toString(),
       publicKey: publicKeyBase64,
       privateKey: privateKeyBase64,
       mnemonic12: normalizedMnemonic,
+      mlKemPublicKey: mlKemKeys.publicKey,
+      mlKemSecretKey: mlKemKeys.secretKey,
       createdAt: now,
       updatedAt: now,
     };
