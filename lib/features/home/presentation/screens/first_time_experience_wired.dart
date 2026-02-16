@@ -1,8 +1,7 @@
 import 'dart:async';
-import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:flutter_app/core/bridge/js_bridge_client.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -54,7 +53,7 @@ class FirstTimeExperienceWired extends StatefulWidget {
 class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
   String? _qrData;
   String _username = 'Username';
-  String? _avatarPath;
+  Uint8List? _avatarBytes;
   IdentityModel? _identity;
   StreamSubscription<ContactRequestModel>? _requestSubscription;
 
@@ -161,7 +160,7 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
 
       _identity = identity;
       _username = identity.username;
-      _avatarPath = identity.avatarPath;
+      _avatarBytes = identity.avatarBlob;
 
       await _buildQRPayload();
     } catch (e) {
@@ -217,7 +216,7 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
       mlKemPublicKey: _identity!.mlKemPublicKey,
       mlKemSecretKey: _identity!.mlKemSecretKey,
       username: newUsername,
-      avatarPath: _identity!.avatarPath,
+      avatarBlob: _identity!.avatarBlob,
       createdAt: _identity!.createdAt,
       updatedAt: DateTime.now().toUtc().toIso8601String(),
     );
@@ -307,18 +306,9 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
 
       if (pickedFile == null) return;
 
-      // Copy to app documents directory
-      final appDir = await getApplicationDocumentsDirectory();
-      final avatarsDir = Directory('${appDir.path}/avatars');
-      if (!await avatarsDir.exists()) {
-        await avatarsDir.create(recursive: true);
-      }
+      // Read image bytes and store in encrypted DB (no file on disk)
+      final bytes = await pickedFile.readAsBytes();
 
-      final fileName = 'profile_${DateTime.now().millisecondsSinceEpoch}.jpg';
-      final savedPath = '${avatarsDir.path}/$fileName';
-      await File(pickedFile.path).copy(savedPath);
-
-      // Update identity with new avatar path
       final updatedIdentity = IdentityModel(
         peerId: _identity!.peerId,
         publicKey: _identity!.publicKey,
@@ -327,7 +317,7 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
         mlKemPublicKey: _identity!.mlKemPublicKey,
         mlKemSecretKey: _identity!.mlKemSecretKey,
         username: _identity!.username,
-        avatarPath: savedPath,
+        avatarBlob: bytes,
         createdAt: _identity!.createdAt,
         updatedAt: DateTime.now().toUtc().toIso8601String(),
       );
@@ -337,7 +327,7 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
 
       if (mounted) {
         setState(() {
-          _avatarPath = savedPath;
+          _avatarBytes = bytes;
         });
       }
 
@@ -383,7 +373,7 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
       body: FirstTimeExperienceScreen(
         qrData: _qrData,
         username: _username,
-        avatarPath: _avatarPath,
+        avatarBytes: _avatarBytes,
         peerId: _identity?.peerId,
         onCameraPressed: _onCameraPressed,
         onUsernameChanged: _onUsernameChanged,

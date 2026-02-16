@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
@@ -13,7 +15,7 @@ import 'package:flutter_app/features/identity/presentation/widgets/ambient_backg
 /// navigation bar.
 class FeedScreen extends StatelessWidget {
   final String username;
-  final String? userAvatarPath;
+  final Uint8List? userAvatarBytes;
   final String? userPeerId;
   final List<FeedItem> feedItems;
   final ValueChanged<String>? onUsernameChanged;
@@ -26,7 +28,7 @@ class FeedScreen extends StatelessWidget {
   const FeedScreen({
     super.key,
     required this.username,
-    this.userAvatarPath,
+    this.userAvatarBytes,
     this.userPeerId,
     required this.feedItems,
     this.onUsernameChanged,
@@ -56,7 +58,7 @@ class FeedScreen extends StatelessWidget {
                   ),
                   child: FeedHeader(
                     username: username,
-                    avatarPath: userAvatarPath,
+                    avatarBytes: userAvatarBytes,
                     peerId: userPeerId,
                     onUsernameChanged: onUsernameChanged,
                     p2pService: p2pService,

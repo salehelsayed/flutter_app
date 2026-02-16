@@ -4,6 +4,7 @@ import 'package:flutter_app/core/database/migrations/001_identity_table.dart';
 import 'package:flutter_app/core/database/helpers/identity_db_helpers.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository_impl.dart';
+import 'test/core/secure_storage/fake_secure_key_store.dart';
 
 void main() {
   late Database db;
@@ -29,6 +30,7 @@ void main() {
     repo = IdentityRepositoryImpl(
       dbLoadIdentityRow: () => dbLoadIdentityRow(db),
       dbUpsertIdentityRow: (row) => dbUpsertIdentityRow(db, row),
+      secureKeyStore: FakeSecureKeyStore(),
     );
   });
 

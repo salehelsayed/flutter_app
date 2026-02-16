@@ -1,3 +1,7 @@
+import 'dart:typed_data';
+
+import 'package:flutter/foundation.dart' show listEquals;
+
 /// Identity model representing a user's cryptographic identity.
 ///
 /// This is an immutable data class that maps to the canonical IdentityJson
@@ -10,11 +14,11 @@ class IdentityModel {
   final String? mlKemPublicKey;
   final String? mlKemSecretKey;
   final String username;
-  final String? avatarPath;
+  final Uint8List? avatarBlob;
   final String createdAt;
   final String updatedAt;
 
-  const IdentityModel({
+  IdentityModel({
     required this.peerId,
     required this.publicKey,
     required this.privateKey,
@@ -22,7 +26,7 @@ class IdentityModel {
     this.mlKemPublicKey,
     this.mlKemSecretKey,
     this.username = 'Username',
-    this.avatarPath,
+    this.avatarBlob,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -36,7 +40,6 @@ class IdentityModel {
       mlKemPublicKey: json['mlKemPublicKey'] as String?,
       mlKemSecretKey: json['mlKemSecretKey'] as String?,
       username: json['username'] as String? ?? 'Username',
-      avatarPath: json['avatarPath'] as String?,
       createdAt: json['createdAt'] as String,
       updatedAt: json['updatedAt'] as String,
     );
@@ -51,7 +54,6 @@ class IdentityModel {
       'mlKemPublicKey': mlKemPublicKey,
       'mlKemSecretKey': mlKemSecretKey,
       'username': username,
-      'avatarPath': avatarPath,
       'createdAt': createdAt,
       'updatedAt': updatedAt,
     };
@@ -68,7 +70,7 @@ class IdentityModel {
         other.mlKemPublicKey == mlKemPublicKey &&
         other.mlKemSecretKey == mlKemSecretKey &&
         other.username == username &&
-        other.avatarPath == avatarPath &&
+        listEquals(other.avatarBlob, avatarBlob) &&
         other.createdAt == createdAt &&
         other.updatedAt == updatedAt;
   }
@@ -83,7 +85,7 @@ class IdentityModel {
       mlKemPublicKey,
       mlKemSecretKey,
       username,
-      avatarPath,
+      avatarBlob != null ? Object.hashAll(avatarBlob!) : null,
       createdAt,
       updatedAt,
     );
