@@ -20,7 +20,6 @@ import 'package:flutter_app/features/conversation/presentation/screens/conversat
 import 'package:flutter_app/features/conversation/application/mark_conversation_read_use_case.dart';
 import 'package:flutter_app/features/feed/application/load_feed_use_case.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
-import 'package:flutter_app/features/feed/domain/utils/format_message_time.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/orbit/presentation/navigation/orbit_route_transition.dart';
@@ -65,8 +64,8 @@ class _FeedWiredState extends State<FeedWired> {
   IdentityModel? _identity;
   String _activeTab = 'feed';
   final List<FeedItem> _feedItems = [];
-  final Set<String> _loadedMessageIds = {};
   int _totalUnreadCount = 0;
+  String? _expandedCardId;
   StreamSubscription<ContactRequestModel>? _requestSubscription;
   StreamSubscription<ConversationMessage>? _chatSubscription;
   StreamSubscription<ContactModel>? _contactUpdateSubscription;
@@ -111,13 +110,8 @@ class _FeedWiredState extends State<FeedWired> {
       );
       if (!mounted) return;
 
-      for (final item in items) {
-        if (item is MessageFeedItem) {
-          _loadedMessageIds.add(item.messageId);
-        }
-      }
-
       setState(() {
+        _feedItems.clear();
         _feedItems.addAll(items);
       });
     } catch (e) {
@@ -143,34 +137,9 @@ class _FeedWiredState extends State<FeedWired> {
     }
   }
 
-  Future<void> _refreshUnreadCounts() async {
+  Future<void> _refreshFeed() async {
     await _loadTotalUnreadCount();
-    // Reload feed to get updated per-contact unread counts
-    try {
-      final items = await loadFeed(
-        contactRepo: widget.contactRepository,
-        messageRepo: widget.messageRepository,
-      );
-      if (!mounted) return;
-
-      _loadedMessageIds.clear();
-      for (final item in items) {
-        if (item is MessageFeedItem) {
-          _loadedMessageIds.add(item.messageId);
-        }
-      }
-
-      setState(() {
-        _feedItems.clear();
-        _feedItems.addAll(items);
-      });
-    } catch (e) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'FEED_FL_REFRESH_ERROR',
-        details: {'error': e.toString()},
-      );
-    }
+    await _loadFeedFromDatabase();
   }
 
   void _startListeningForContactRequests() {
@@ -259,39 +228,7 @@ class _FeedWiredState extends State<FeedWired> {
 
   void _onIncomingChatMessage(ConversationMessage message) {
     if (!mounted) return;
-    if (_loadedMessageIds.contains(message.id)) return;
-
-    final displayTime = formatMessageTime(message.timestamp);
-
-    // Look up sender username from contacts
-    widget.contactRepository.getContact(message.senderPeerId).then((contact) async {
-      if (!mounted) return;
-
-      _loadedMessageIds.add(message.id);
-
-      // Get updated unread count for this contact
-      final unreadCount = await widget.messageRepository
-          .getUnreadCountForContact(message.contactPeerId);
-
-      if (!mounted) return;
-
-      final item = MessageFeedItem(
-        id: 'message_${message.id}',
-        timestamp: DateTime.tryParse(message.timestamp) ?? DateTime.now(),
-        contactPeerId: message.contactPeerId,
-        contactUsername: contact?.username ?? 'Unknown',
-        messageId: message.id,
-        messageText: message.text,
-        messageTime: displayTime,
-        unreadCount: unreadCount,
-      );
-
-      setState(() {
-        _feedItems.insert(0, item);
-      });
-
-      _loadTotalUnreadCount();
-    });
+    _refreshFeed();
   }
 
   void _startListeningForContactUpdates() {
@@ -314,6 +251,17 @@ class _FeedWiredState extends State<FeedWired> {
             contactPeerId: item.contactPeerId,
             contactUsername: contact.username,
             contactAvatarPath: item.contactAvatarPath,
+          );
+        } else if (item is ThreadFeedItem &&
+            item.contactPeerId == contact.peerId) {
+          _feedItems[i] = ThreadFeedItem(
+            id: item.id,
+            timestamp: item.timestamp,
+            contactPeerId: item.contactPeerId,
+            contactUsername: contact.username,
+            messages: item.messages,
+            unreadCount: item.unreadCount,
+            isUnreadCard: item.isUnreadCard,
           );
         } else if (item is MessageFeedItem &&
             item.contactPeerId == contact.peerId) {
@@ -353,7 +301,7 @@ class _FeedWiredState extends State<FeedWired> {
           bridge: widget.bridge,
         ),
       ),
-    ).then((_) => _refreshUnreadCounts());
+    ).then((_) => _refreshFeed());
   }
 
   void _onReplyToMessage(String contactPeerId) async {
@@ -378,7 +326,7 @@ class _FeedWiredState extends State<FeedWired> {
           bridge: widget.bridge,
         ),
       ),
-    ).then((_) => _refreshUnreadCounts());
+    ).then((_) => _refreshFeed());
   }
 
   void _onSwitchView(String tab) {
@@ -396,7 +344,7 @@ class _FeedWiredState extends State<FeedWired> {
             p2pService: widget.p2pService,
           ),
         ),
-      ).then((_) => _refreshUnreadCounts());
+      ).then((_) => _refreshFeed());
       return;
     }
     setState(() {
@@ -453,6 +401,12 @@ class _FeedWiredState extends State<FeedWired> {
     }
   }
 
+  void _onToggleExpand(String cardId) {
+    setState(() {
+      _expandedCardId = _expandedCardId == cardId ? null : cardId;
+    });
+  }
+
   @override
   void dispose() {
     _requestSubscription?.cancel();
@@ -476,6 +430,8 @@ class _FeedWiredState extends State<FeedWired> {
         onSendMessage: _onSendMessage,
         onReplyToMessage: _onReplyToMessage,
         totalUnreadCount: _totalUnreadCount,
+        expandedCardId: _expandedCardId,
+        onToggleExpand: _onToggleExpand,
       ),
     );
   }

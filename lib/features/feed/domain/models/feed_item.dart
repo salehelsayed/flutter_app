@@ -4,6 +4,7 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 enum FeedItemType {
   connection,
   message,
+  thread,
 }
 
 /// Base class for all feed items.
@@ -43,6 +44,49 @@ class ConnectionFeedItem extends FeedItem {
       contactAvatarPath: contact.avatarPath,
     );
   }
+}
+
+/// A single message within a thread group.
+class ThreadMessage {
+  final String id;
+  final String text;
+  final String time;
+  final DateTime timestamp;
+  final bool isUnread;
+
+  const ThreadMessage({
+    required this.id,
+    required this.text,
+    required this.time,
+    required this.timestamp,
+    this.isUnread = false,
+  });
+}
+
+/// A feed item representing a thread of messages from a contact.
+///
+/// Groups multiple messages from the same contact into a single card,
+/// separated by read/unread status.
+class ThreadFeedItem extends FeedItem {
+  final String contactPeerId;
+  final String contactUsername;
+  final List<ThreadMessage> messages;
+  final int unreadCount;
+  final bool isUnreadCard;
+
+  const ThreadFeedItem({
+    required super.id,
+    required super.timestamp,
+    required this.contactPeerId,
+    required this.contactUsername,
+    required this.messages,
+    this.unreadCount = 0,
+    this.isUnreadCard = false,
+  }) : super(type: FeedItemType.thread);
+
+  bool get isMultiMessage => messages.length > 1;
+  ThreadMessage get latestMessage => messages.last;
+  int get additionalCount => messages.length - 1;
 }
 
 /// A feed item representing an incoming message from a contact.

@@ -7,6 +7,8 @@ import 'package:flutter_app/features/feed/presentation/widgets/connection_card.d
 import 'package:flutter_app/features/feed/presentation/widgets/message_feed_card.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/feed_header.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/feed_navigation_bar.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/session_divider.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/thread_card.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
 
 /// Pure UI Feed screen.
@@ -25,6 +27,8 @@ class FeedScreen extends StatelessWidget {
   final void Function(ConnectionFeedItem)? onSendMessage;
   final void Function(String contactPeerId)? onReplyToMessage;
   final int totalUnreadCount;
+  final String? expandedCardId;
+  final void Function(String)? onToggleExpand;
 
   const FeedScreen({
     super.key,
@@ -39,6 +43,8 @@ class FeedScreen extends StatelessWidget {
     this.onSendMessage,
     this.onReplyToMessage,
     this.totalUnreadCount = 0,
+    this.expandedCardId,
+    this.onToggleExpand,
   });
 
   @override
@@ -145,6 +151,25 @@ class FeedScreen extends StatelessWidget {
             onSendMessage: onSendMessage != null
                 ? () => onSendMessage!(item)
                 : null,
+          ),
+        );
+      } else if (item is ThreadFeedItem) {
+        final isExpanded = expandedCardId == item.id;
+        widgets.add(
+          Padding(
+            padding: EdgeInsets.only(
+              bottom: item.isMultiMessage && !isExpanded ? 12 : 0,
+            ),
+            child: ThreadCard(
+              thread: item,
+              isExpanded: isExpanded,
+              onToggleExpand: onToggleExpand != null
+                  ? () => onToggleExpand!(item.id)
+                  : null,
+              onReply: onReplyToMessage != null
+                  ? () => onReplyToMessage!(item.contactPeerId)
+                  : null,
+            ),
           ),
         );
       } else if (item is MessageFeedItem) {

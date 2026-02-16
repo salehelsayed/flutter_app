@@ -1,12 +1,14 @@
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
+import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
-import 'package:flutter_app/features/feed/domain/utils/format_message_time.dart';
+import 'package:flutter_app/features/feed/domain/utils/group_messages_into_threads.dart';
 
-/// Loads the full feed from the database: all contacts + all incoming messages.
+/// Loads the full feed from the database: all contacts + thread-grouped messages.
 ///
-/// Returns items sorted newest-first.
+/// Returns ConnectionFeedItems sorted among ThreadFeedItems, with unread
+/// threads first, then a divider gap, then read threads.
 Future<List<FeedItem>> loadFeed({
   required ContactRepository contactRepo,
   required MessageRepository messageRepo,
@@ -15,39 +17,33 @@ Future<List<FeedItem>> loadFeed({
 
   try {
     final contacts = await contactRepo.getAllContacts();
-    final List<FeedItem> items = [];
 
-    // Add a ConnectionFeedItem for each contact
-    for (final contact in contacts) {
-      items.add(ConnectionFeedItem.fromContact(contact));
-    }
+    // Build contact username map
+    final contactUsernames = <String, String>{
+      for (final c in contacts) c.peerId: c.username,
+    };
 
-    // Add incoming MessageFeedItems for each contact's messages
+    // Collect all messages across all contacts
+    final List<ConversationMessage> allMessages = [];
     for (final contact in contacts) {
       final messages =
           await messageRepo.getMessagesForContact(contact.peerId);
-      final unreadCount =
-          await messageRepo.getUnreadCountForContact(contact.peerId);
-
-      for (final message in messages) {
-        if (!message.isIncoming) continue;
-
-        final displayTime = formatMessageTime(message.timestamp);
-        items.add(MessageFeedItem(
-          id: 'message_${message.id}',
-          timestamp:
-              DateTime.tryParse(message.timestamp) ?? DateTime.now(),
-          contactPeerId: message.contactPeerId,
-          contactUsername: contact.username,
-          messageId: message.id,
-          messageText: message.text,
-          messageTime: displayTime,
-          unreadCount: unreadCount,
-        ));
-      }
+      allMessages.addAll(messages);
     }
 
-    // Sort newest-first
+    // Group into thread items
+    final threadItems = groupMessagesIntoThreads(
+      allMessages: allMessages,
+      contactUsernames: contactUsernames,
+    );
+
+    // Create connection items
+    final connectionItems = contacts
+        .map((c) => ConnectionFeedItem.fromContact(c))
+        .toList();
+
+    // Merge: connection items sorted by timestamp among thread items
+    final List<FeedItem> items = [...connectionItems, ...threadItems];
     items.sort((a, b) => b.timestamp.compareTo(a.timestamp));
 
     emitFlowEvent(

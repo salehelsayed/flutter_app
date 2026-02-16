@@ -90,6 +90,7 @@ ConversationMessage _makeMessage({
   required String text,
   required String timestamp,
   required bool isIncoming,
+  String? readAt,
 }) {
   return ConversationMessage(
     id: id,
@@ -100,6 +101,7 @@ ConversationMessage _makeMessage({
     status: 'delivered',
     isIncoming: isIncoming,
     createdAt: timestamp,
+    readAt: readAt,
   );
 }
 
@@ -132,7 +134,7 @@ void main() {
       expect((result[1] as ConnectionFeedItem).contactUsername, 'Alice');
     });
 
-    test('includes only incoming messages as MessageFeedItems', () async {
+    test('groups incoming messages into ThreadFeedItems by contact', () async {
       final contacts = [
         _makeContact('peer-A', 'Alice', '2026-02-09T10:00:00.000Z'),
       ];
@@ -150,6 +152,14 @@ void main() {
           _makeMessage(
             id: 'msg-2',
             contactPeerId: 'peer-A',
+            senderPeerId: 'peer-A',
+            text: 'Second message',
+            timestamp: '2026-02-09T12:05:00.000Z',
+            isIncoming: true,
+          ),
+          _makeMessage(
+            id: 'msg-3',
+            contactPeerId: 'peer-A',
             senderPeerId: 'my-peer',
             text: 'My reply',
             timestamp: '2026-02-09T12:01:00.000Z',
@@ -163,10 +173,56 @@ void main() {
         messageRepo: FakeMessageRepository(messagesByContact: messages),
       );
 
-      final messageItems =
-          result.whereType<MessageFeedItem>().toList();
-      expect(messageItems.length, 1);
-      expect(messageItems[0].messageText, 'Hello from Alice');
+      final threadItems = result.whereType<ThreadFeedItem>().toList();
+      expect(threadItems.length, 1);
+      // Two incoming messages grouped into one thread
+      expect(threadItems[0].messages.length, 2);
+      expect(threadItems[0].messages[0].text, 'Hello from Alice');
+      expect(threadItems[0].messages[1].text, 'Second message');
+      expect(threadItems[0].contactUsername, 'Alice');
+    });
+
+    test('same contact produces separate unread and read stacks', () async {
+      final contacts = [
+        _makeContact('peer-A', 'Alice', '2026-02-09T10:00:00.000Z'),
+      ];
+
+      final messages = {
+        'peer-A': [
+          _makeMessage(
+            id: 'msg-1',
+            contactPeerId: 'peer-A',
+            senderPeerId: 'peer-A',
+            text: 'Read message',
+            timestamp: '2026-02-09T12:00:00.000Z',
+            isIncoming: true,
+            readAt: '2026-02-09T12:30:00.000Z',
+          ),
+          _makeMessage(
+            id: 'msg-2',
+            contactPeerId: 'peer-A',
+            senderPeerId: 'peer-A',
+            text: 'Unread message',
+            timestamp: '2026-02-09T13:00:00.000Z',
+            isIncoming: true,
+          ),
+        ],
+      };
+
+      final result = await loadFeed(
+        contactRepo: FakeContactRepository(contacts: contacts),
+        messageRepo: FakeMessageRepository(messagesByContact: messages),
+      );
+
+      final threadItems = result.whereType<ThreadFeedItem>().toList();
+      // Two stacks: unread + read
+      expect(threadItems.length, 2);
+      final unread = threadItems.where((t) => t.isUnreadCard).toList();
+      final read = threadItems.where((t) => !t.isUnreadCard).toList();
+      expect(unread.length, 1);
+      expect(unread[0].messages[0].text, 'Unread message');
+      expect(read.length, 1);
+      expect(read[0].messages[0].text, 'Read message');
     });
 
     test('sorts all items newest-first across types', () async {
@@ -194,11 +250,11 @@ void main() {
       );
 
       expect(result.length, 3);
-      // Bob connection at 14:00, msg at 12:00, Alice connection at 10:00
+      // Bob connection at 14:00, thread at 12:00, Alice connection at 10:00
       expect(result[0], isA<ConnectionFeedItem>());
       expect(
           (result[0] as ConnectionFeedItem).contactUsername, 'Bob');
-      expect(result[1], isA<MessageFeedItem>());
+      expect(result[1], isA<ThreadFeedItem>());
       expect(result[2], isA<ConnectionFeedItem>());
       expect(
           (result[2] as ConnectionFeedItem).contactUsername, 'Alice');
