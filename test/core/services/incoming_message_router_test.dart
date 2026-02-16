@@ -49,6 +49,9 @@ class FakeP2PService implements P2PService {
   Future<List<Map<String, dynamic>>> retrieveInbox() async => [];
 
   @override
+  Future<bool> registerPushToken(String token, String platform) async => true;
+
+  @override
   void dispose() => _messageController.close();
 }
 

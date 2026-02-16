@@ -42,6 +42,33 @@ void main() {
             .where((row) => row['contact_peer_id'] == contactPeerId)
             .length;
       },
+      dbMarkConversationAsRead: (contactPeerId) async {
+        var count = 0;
+        final now = DateTime.now().toUtc().toIso8601String();
+        for (final row in store.values) {
+          if (row['contact_peer_id'] == contactPeerId &&
+              row['is_incoming'] == 1 &&
+              row['read_at'] == null) {
+            row['read_at'] = now;
+            count++;
+          }
+        }
+        return count;
+      },
+      dbCountUnreadForContact: (contactPeerId) async {
+        return store.values
+            .where((row) =>
+                row['contact_peer_id'] == contactPeerId &&
+                row['is_incoming'] == 1 &&
+                row['read_at'] == null)
+            .length;
+      },
+      dbCountTotalUnread: () async {
+        return store.values
+            .where((row) =>
+                row['is_incoming'] == 1 && row['read_at'] == null)
+            .length;
+      },
     );
   });
 

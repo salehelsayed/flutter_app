@@ -12,7 +12,12 @@ import 'package:flutter_app/features/identity/application/startup_decision.dart'
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/identity/presentation/screens/identity_choice_wired.dart';
 import 'package:flutter_app/features/home/presentation/screens/first_time_experience_wired.dart';
+import 'dart:io' show Platform;
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_app/features/p2p/application/start_node_use_case.dart';
+import 'package:flutter_app/features/push/application/request_push_permission_use_case.dart';
+import 'package:flutter_app/features/push/application/register_push_token_use_case.dart';
 
 /// Router widget that handles app startup navigation.
 ///
@@ -216,6 +221,35 @@ class _StartupRouterState extends State<StartupRouter> {
       event: 'P2P_STARTUP_RESULT',
       details: {'result': result.name},
     );
+
+    if (result == StartNodeResult.success) {
+      _registerPushToken();
+    }
+  }
+
+  Future<void> _registerPushToken() async {
+    // Push notifications only available on mobile (iOS/Android)
+    if (kIsWeb || Platform.isLinux || Platform.isWindows || Platform.isMacOS) {
+      return;
+    }
+
+    try {
+      final granted = await requestPushPermission();
+      if (!granted) return;
+
+      await registerPushToken(p2pService: widget.p2pService);
+
+      // Re-register when FCM token refreshes
+      FirebaseMessaging.instance.onTokenRefresh.listen((_) {
+        registerPushToken(p2pService: widget.p2pService);
+      });
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'PUSH_REGISTER_TOKEN_ERROR',
+        details: {'error': e.toString()},
+      );
+    }
   }
 
   Future<void> _retry() async {

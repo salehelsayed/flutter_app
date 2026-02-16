@@ -9,12 +9,14 @@ class OrbitFriend {
   final int messageCount;
   final String? lastActivity;
   final String? lastMessageTimestamp;
+  final int unreadCount;
 
   const OrbitFriend({
     required this.contact,
     required this.messageCount,
     this.lastActivity,
     this.lastMessageTimestamp,
+    this.unreadCount = 0,
   });
 
   String get peerId => contact.peerId;

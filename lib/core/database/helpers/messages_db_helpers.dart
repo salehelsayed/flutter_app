@@ -209,6 +209,111 @@ Future<int> dbCountMessagesForContact(Database db, String contactPeerId) async {
   }
 }
 
+/// Marks all unread incoming messages for a contact as read.
+Future<int> dbMarkConversationAsRead(Database db, String contactPeerId) async {
+  emitFlowEvent(
+    layer: 'DB',
+    event: 'MESSAGES_DB_MARK_READ_START',
+    details: {
+      'contactPeerId':
+          contactPeerId.length > 10
+              ? contactPeerId.substring(0, 10)
+              : contactPeerId,
+    },
+  );
+
+  try {
+    final now = DateTime.now().toUtc().toIso8601String();
+    final count = await db.rawUpdate(
+      'UPDATE messages SET read_at = ? WHERE contact_peer_id = ? AND is_incoming = 1 AND read_at IS NULL',
+      [now, contactPeerId],
+    );
+
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'MESSAGES_DB_MARK_READ_SUCCESS',
+      details: {'count': count},
+    );
+
+    return count;
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'MESSAGES_DB_MARK_READ_ERROR',
+      details: {'error': e.toString()},
+    );
+    rethrow;
+  }
+}
+
+/// Returns the number of unread incoming messages for a specific contact.
+Future<int> dbCountUnreadForContact(Database db, String contactPeerId) async {
+  emitFlowEvent(
+    layer: 'DB',
+    event: 'MESSAGES_DB_COUNT_UNREAD_CONTACT_START',
+    details: {
+      'contactPeerId':
+          contactPeerId.length > 10
+              ? contactPeerId.substring(0, 10)
+              : contactPeerId,
+    },
+  );
+
+  try {
+    final result = await db.rawQuery(
+      'SELECT COUNT(*) as count FROM messages WHERE contact_peer_id = ? AND is_incoming = 1 AND read_at IS NULL',
+      [contactPeerId],
+    );
+    final count = Sqflite.firstIntValue(result) ?? 0;
+
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'MESSAGES_DB_COUNT_UNREAD_CONTACT_SUCCESS',
+      details: {'count': count},
+    );
+
+    return count;
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'MESSAGES_DB_COUNT_UNREAD_CONTACT_ERROR',
+      details: {'error': e.toString()},
+    );
+    rethrow;
+  }
+}
+
+/// Returns the total number of unread incoming messages across all contacts.
+Future<int> dbCountTotalUnread(Database db) async {
+  emitFlowEvent(
+    layer: 'DB',
+    event: 'MESSAGES_DB_COUNT_TOTAL_UNREAD_START',
+    details: {},
+  );
+
+  try {
+    final result = await db.rawQuery(
+      'SELECT COUNT(*) as count FROM messages WHERE is_incoming = 1 AND read_at IS NULL',
+    );
+    final count = Sqflite.firstIntValue(result) ?? 0;
+
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'MESSAGES_DB_COUNT_TOTAL_UNREAD_SUCCESS',
+      details: {'count': count},
+    );
+
+    return count;
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'MESSAGES_DB_COUNT_TOTAL_UNREAD_ERROR',
+      details: {'error': e.toString()},
+    );
+    rethrow;
+  }
+}
+
 /// Loads a single message by ID.
 Future<Map<String, Object?>?> dbLoadMessage(Database db, String id) async {
   try {

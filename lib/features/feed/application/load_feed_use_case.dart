@@ -26,6 +26,8 @@ Future<List<FeedItem>> loadFeed({
     for (final contact in contacts) {
       final messages =
           await messageRepo.getMessagesForContact(contact.peerId);
+      final unreadCount =
+          await messageRepo.getUnreadCountForContact(contact.peerId);
 
       for (final message in messages) {
         if (!message.isIncoming) continue;
@@ -40,6 +42,7 @@ Future<List<FeedItem>> loadFeed({
           messageId: message.id,
           messageText: message.text,
           messageTime: displayTime,
+          unreadCount: unreadCount,
         ));
       }
     }

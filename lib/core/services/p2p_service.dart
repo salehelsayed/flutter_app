@@ -81,6 +81,15 @@ abstract class P2PService {
   /// Returns a list of message maps from the inbox.
   Future<List<Map<String, dynamic>>> retrieveInbox();
 
+  /// Register an FCM push token with the relay server.
+  ///
+  /// Parameters:
+  ///   - [token]: The FCM device token
+  ///   - [platform]: The platform ('ios' or 'android')
+  ///
+  /// Returns true if the token was registered successfully.
+  Future<bool> registerPushToken(String token, String platform);
+
   /// Dispose of the service and clean up resources.
   void dispose();
 }

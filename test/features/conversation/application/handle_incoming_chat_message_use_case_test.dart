@@ -93,6 +93,15 @@ class FakeMessageRepository implements MessageRepository {
 
   @override
   Future<int> getMessageCountForContact(String contactPeerId) async => 0;
+
+  @override
+  Future<int> markConversationAsRead(String contactPeerId) async => 0;
+
+  @override
+  Future<int> getUnreadCountForContact(String contactPeerId) async => 0;
+
+  @override
+  Future<int> getTotalUnreadCount() async => 0;
 }
 
 Future<List<String>> capturePrintedLines(Future<void> Function() action) async {
