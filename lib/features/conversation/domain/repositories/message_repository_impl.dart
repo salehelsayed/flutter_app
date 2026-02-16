@@ -12,6 +12,7 @@ class MessageRepositoryImpl implements MessageRepository {
       dbLoadLatestMessageForContact;
   final Future<void> Function(String id, String status) dbUpdateMessageStatus;
   final Future<Map<String, Object?>?> Function(String id) dbLoadMessage;
+  final Future<int> Function(String contactPeerId) dbCountMessagesForContact;
 
   MessageRepositoryImpl({
     required this.dbInsertMessage,
@@ -19,6 +20,7 @@ class MessageRepositoryImpl implements MessageRepository {
     required this.dbLoadLatestMessageForContact,
     required this.dbUpdateMessageStatus,
     required this.dbLoadMessage,
+    required this.dbCountMessagesForContact,
   });
 
   @override
@@ -73,5 +75,10 @@ class MessageRepositoryImpl implements MessageRepository {
   Future<bool> messageExists(String id) async {
     final row = await dbLoadMessage(id);
     return row != null;
+  }
+
+  @override
+  Future<int> getMessageCountForContact(String contactPeerId) async {
+    return dbCountMessagesForContact(contactPeerId);
   }
 }

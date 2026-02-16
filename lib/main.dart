@@ -114,6 +114,8 @@ void main() async {
     dbUpdateMessageStatus: (id, status) =>
         dbUpdateMessageStatus(db, id, status),
     dbLoadMessage: (id) => dbLoadMessage(db, id),
+    dbCountMessagesForContact: (contactPeerId) =>
+        dbCountMessagesForContact(db, contactPeerId),
   );
 
   // Create and initialize the WebView JS bridge

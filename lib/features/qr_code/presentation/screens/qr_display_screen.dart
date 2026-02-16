@@ -1,4 +1,6 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 /// Screen that displays the user's QR code for identity sharing.
@@ -34,6 +36,16 @@ class QRDisplayScreen extends StatelessWidget {
     return '${id.substring(0, 8)}...${id.substring(id.length - 4)}';
   }
 
+  void _copyQRData(BuildContext context) {
+    Clipboard.setData(ClipboardData(text: qrData));
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('QR data copied to clipboard!'),
+        duration: Duration(seconds: 2),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -59,31 +71,42 @@ class QRDisplayScreen extends StatelessWidget {
               const SizedBox(height: 24),
 
               // QR Code Container
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(16),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.1),
-                      blurRadius: 10,
-                      offset: const Offset(0, 4),
+              GestureDetector(
+                onLongPress: kDebugMode ? () => _copyQRData(context) : null,
+                child: Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(16),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.1),
+                        blurRadius: 10,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: Semantics(
+                    label: 'QR code for sharing your identity',
+                    child: QrImageView(
+                      data: qrData,
+                      version: QrVersions.auto,
+                      size: qrSize,
+                      backgroundColor: Colors.white,
+                      errorCorrectionLevel: QrErrorCorrectLevel.M,
+                      padding: const EdgeInsets.all(8),
                     ),
-                  ],
-                ),
-                child: Semantics(
-                  label: 'QR code for sharing your identity',
-                  child: QrImageView(
-                    data: qrData,
-                    version: QrVersions.auto,
-                    size: qrSize,
-                    backgroundColor: Colors.white,
-                    errorCorrectionLevel: QrErrorCorrectLevel.M,
-                    padding: const EdgeInsets.all(8),
                   ),
                 ),
               ),
+              if (kDebugMode)
+                const Padding(
+                  padding: EdgeInsets.only(top: 8),
+                  child: Text(
+                    'Long-press QR to copy data',
+                    style: TextStyle(color: Colors.white38, fontSize: 10),
+                  ),
+                ),
 
               const SizedBox(height: 32),
 

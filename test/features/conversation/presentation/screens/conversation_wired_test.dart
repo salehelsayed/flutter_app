@@ -87,6 +87,13 @@ class FakeMessageRepository implements MessageRepository {
     if (message == null) return;
     store[id] = message.copyWith(status: status);
   }
+
+  @override
+  Future<int> getMessageCountForContact(String contactPeerId) async {
+    return store.values
+        .where((m) => m.contactPeerId == contactPeerId)
+        .length;
+  }
 }
 
 class FakeP2PService implements P2PService {

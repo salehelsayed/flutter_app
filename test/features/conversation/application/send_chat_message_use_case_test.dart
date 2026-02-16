@@ -139,6 +139,9 @@ class FakeMessageRepository implements MessageRepository {
 
   @override
   Future<bool> messageExists(String id) async => false;
+
+  @override
+  Future<int> getMessageCountForContact(String contactPeerId) async => 0;
 }
 
 Future<List<String>> capturePrintedLines(Future<void> Function() action) async {
