@@ -81,38 +81,35 @@ class _MessageFeedCardState extends State<MessageFeedCard>
     return GestureDetector(
       onTap: widget.onTap ?? widget.onReply,
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(28),
+        borderRadius: BorderRadius.circular(24),
         child: BackdropFilter(
           filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
           child: Container(
             decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(28),
-              color: const Color.fromRGBO(255, 255, 255, 0.08),
+              borderRadius: BorderRadius.circular(24),
+              color: const Color.fromRGBO(255, 255, 255, 0.06),
               border: Border.all(
-                color: const Color.fromRGBO(255, 255, 255, 0.12),
+                color: const Color.fromRGBO(255, 255, 255, 0.10),
               ),
             ),
             child: Stack(
               children: [
-                // Card glow
+                // Subtle side glow
                 Positioned(
-                  top: 0,
                   left: 0,
-                  right: 0,
-                  height: 200,
+                  top: 0,
+                  bottom: 0,
+                  width: 60,
                   child: IgnorePointer(
-                    child: Opacity(
-                      opacity: 0.15,
-                      child: Container(
-                        decoration: const BoxDecoration(
-                          gradient: LinearGradient(
-                            begin: Alignment(-0.5, -0.5),
-                            end: Alignment(0.5, 0.5),
-                            colors: [
-                              Color(0xFFa8edea),
-                              Color(0xFFfed6e3),
-                            ],
-                          ),
+                    child: DecoratedBox(
+                      decoration: const BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.centerLeft,
+                          end: Alignment.centerRight,
+                          colors: [
+                            Color.fromRGBO(78, 205, 196, 0.08),
+                            Colors.transparent,
+                          ],
                         ),
                       ),
                     ),
@@ -143,7 +140,7 @@ class _MessageFeedCardState extends State<MessageFeedCard>
                                   style: const TextStyle(
                                     fontSize: 16,
                                     fontWeight: FontWeight.w600,
-                                    color: Color.fromRGBO(255, 255, 255, 0.95),
+                                    color: Color.fromRGBO(255, 255, 255, 0.9),
                                   ),
                                 ),
                                 const SizedBox(height: 2),
@@ -167,10 +164,10 @@ class _MessageFeedCardState extends State<MessageFeedCard>
                       child: Text(
                         widget.messageText,
                         style: const TextStyle(
-                          fontSize: 16,
+                          fontSize: 15,
                           fontWeight: FontWeight.w400,
-                          color: Color.fromRGBO(255, 255, 255, 0.95),
-                          height: 1.6,
+                          color: Color.fromRGBO(255, 255, 255, 0.90),
+                          height: 1.65,
                           letterSpacing: 0.2,
                         ),
                       ),
