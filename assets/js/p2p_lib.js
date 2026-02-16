@@ -31248,6 +31248,31 @@ ${[...listenStats.errors.entries()].map(([addr, err]) => {
       }
     }
   }
+  async function registerInboxToken(node, relayPeerId, token, platform) {
+    const stream = await node.dialProtocol(relayPeerId, INBOX_PROTOCOL, {
+      runOnLimitedConnection: true
+    });
+    try {
+      const request = JSON.stringify({
+        action: "register_token",
+        token,
+        platform
+      });
+      await writeOneFrame(stream, encoder2.encode(request));
+      const responseBytes = await readOneFrame(stream);
+      const response = JSON.parse(decoder2.decode(responseBytes));
+      return {
+        status: response.status === "OK" ? "OK" /* OK */ : "ERROR" /* ERROR */,
+        messages: [],
+        error: response.error
+      };
+    } finally {
+      try {
+        await stream.close();
+      } catch {
+      }
+    }
+  }
   async function retrieveFromInbox(node, relayPeerId, options) {
     const stream = await node.dialProtocol(relayPeerId, INBOX_PROTOCOL, {
       runOnLimitedConnection: true
@@ -31336,6 +31361,9 @@ ${[...listenStats.errors.entries()].map(([addr, err]) => {
           break;
         case "inbox:store":
           data = await handleInboxStore(params);
+          break;
+        case "inbox:register_token":
+          data = await handleInboxRegisterToken(params);
           break;
         case "inbox:retrieve":
         case "inbox:check":
@@ -31555,6 +31583,25 @@ ${[...listenStats.errors.entries()].map(([addr, err]) => {
       throw new Error(response.error || "Failed to store message");
     }
     return { stored: true };
+  }
+  async function handleInboxRegisterToken(params) {
+    if (!globalNode) throw new Error("Node not started");
+    const token = params.token;
+    const platform = params.platform;
+    if (!token) throw new Error("token is required");
+    if (!platform) throw new Error("platform is required");
+    const relayPeerId = params.relayPeerId || globalNode._relayPeerId;
+    if (!relayPeerId) throw new Error("No relay peer ID available");
+    const response = await registerInboxToken(
+      globalNode,
+      peerIdFromString(relayPeerId),
+      token,
+      platform
+    );
+    if (response.status !== "OK" /* OK */) {
+      throw new Error(response.error || "Failed to register token");
+    }
+    return { registered: true };
   }
   async function handleInboxRetrieve(params) {
     if (!globalNode) throw new Error("Node not started");

@@ -13,6 +13,9 @@ class MessageRepositoryImpl implements MessageRepository {
   final Future<void> Function(String id, String status) dbUpdateMessageStatus;
   final Future<Map<String, Object?>?> Function(String id) dbLoadMessage;
   final Future<int> Function(String contactPeerId) dbCountMessagesForContact;
+  final Future<int> Function(String contactPeerId) dbMarkConversationAsRead;
+  final Future<int> Function(String contactPeerId) dbCountUnreadForContact;
+  final Future<int> Function() dbCountTotalUnread;
 
   MessageRepositoryImpl({
     required this.dbInsertMessage,
@@ -21,6 +24,9 @@ class MessageRepositoryImpl implements MessageRepository {
     required this.dbUpdateMessageStatus,
     required this.dbLoadMessage,
     required this.dbCountMessagesForContact,
+    required this.dbMarkConversationAsRead,
+    required this.dbCountUnreadForContact,
+    required this.dbCountTotalUnread,
   });
 
   @override
@@ -80,5 +86,29 @@ class MessageRepositoryImpl implements MessageRepository {
   @override
   Future<int> getMessageCountForContact(String contactPeerId) async {
     return dbCountMessagesForContact(contactPeerId);
+  }
+
+  @override
+  Future<int> markConversationAsRead(String contactPeerId) async {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'MESSAGE_REPO_MARK_READ_START',
+      details: {
+        'contactPeerId': contactPeerId.length > 10
+            ? contactPeerId.substring(0, 10)
+            : contactPeerId,
+      },
+    );
+    return dbMarkConversationAsRead(contactPeerId);
+  }
+
+  @override
+  Future<int> getUnreadCountForContact(String contactPeerId) async {
+    return dbCountUnreadForContact(contactPeerId);
+  }
+
+  @override
+  Future<int> getTotalUnreadCount() async {
+    return dbCountTotalUnread();
   }
 }

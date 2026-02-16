@@ -100,6 +100,13 @@ void main() {
       dbUpdateMessageStatus: (id, status) =>
           dbUpdateMessageStatus(db, id, status),
       dbLoadMessage: (id) => dbLoadMessage(db, id),
+      dbCountMessagesForContact: (contactPeerId) =>
+          dbCountMessagesForContact(db, contactPeerId),
+      dbMarkConversationAsRead: (contactPeerId) =>
+          dbMarkConversationAsRead(db, contactPeerId),
+      dbCountUnreadForContact: (contactPeerId) =>
+          dbCountUnreadForContact(db, contactPeerId),
+      dbCountTotalUnread: () => dbCountTotalUnread(db),
     );
 
     print('[TEST] Step 3: Initialize WebView bridge...');

@@ -17,6 +17,7 @@ import 'package:flutter_app/features/conversation/domain/models/conversation_mes
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/conversation/presentation/navigation/conversation_route_transition.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
+import 'package:flutter_app/features/conversation/application/mark_conversation_read_use_case.dart';
 import 'package:flutter_app/features/feed/application/load_feed_use_case.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
 import 'package:flutter_app/features/feed/domain/utils/format_message_time.dart';
@@ -65,6 +66,7 @@ class _FeedWiredState extends State<FeedWired> {
   String _activeTab = 'feed';
   final List<FeedItem> _feedItems = [];
   final Set<String> _loadedMessageIds = {};
+  int _totalUnreadCount = 0;
   StreamSubscription<ContactRequestModel>? _requestSubscription;
   StreamSubscription<ConversationMessage>? _chatSubscription;
   StreamSubscription<ContactModel>? _contactUpdateSubscription;
@@ -75,6 +77,7 @@ class _FeedWiredState extends State<FeedWired> {
     emitFlowEvent(layer: 'FL', event: 'FEED_FL_SCREEN_INIT', details: {});
     _loadIdentity();
     _loadFeedFromDatabase();
+    _loadTotalUnreadCount();
     _startListeningForContactRequests();
     _startListeningForChatMessages();
     _startListeningForContactUpdates();
@@ -121,6 +124,50 @@ class _FeedWiredState extends State<FeedWired> {
       emitFlowEvent(
         layer: 'FL',
         event: 'FEED_FL_DB_LOAD_ERROR',
+        details: {'error': e.toString()},
+      );
+    }
+  }
+
+  Future<void> _loadTotalUnreadCount() async {
+    try {
+      final count = await widget.messageRepository.getTotalUnreadCount();
+      if (!mounted) return;
+      setState(() => _totalUnreadCount = count);
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'FEED_FL_UNREAD_COUNT_ERROR',
+        details: {'error': e.toString()},
+      );
+    }
+  }
+
+  Future<void> _refreshUnreadCounts() async {
+    await _loadTotalUnreadCount();
+    // Reload feed to get updated per-contact unread counts
+    try {
+      final items = await loadFeed(
+        contactRepo: widget.contactRepository,
+        messageRepo: widget.messageRepository,
+      );
+      if (!mounted) return;
+
+      _loadedMessageIds.clear();
+      for (final item in items) {
+        if (item is MessageFeedItem) {
+          _loadedMessageIds.add(item.messageId);
+        }
+      }
+
+      setState(() {
+        _feedItems.clear();
+        _feedItems.addAll(items);
+      });
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'FEED_FL_REFRESH_ERROR',
         details: {'error': e.toString()},
       );
     }
@@ -217,10 +264,16 @@ class _FeedWiredState extends State<FeedWired> {
     final displayTime = formatMessageTime(message.timestamp);
 
     // Look up sender username from contacts
-    widget.contactRepository.getContact(message.senderPeerId).then((contact) {
+    widget.contactRepository.getContact(message.senderPeerId).then((contact) async {
       if (!mounted) return;
 
       _loadedMessageIds.add(message.id);
+
+      // Get updated unread count for this contact
+      final unreadCount = await widget.messageRepository
+          .getUnreadCountForContact(message.contactPeerId);
+
+      if (!mounted) return;
 
       final item = MessageFeedItem(
         id: 'message_${message.id}',
@@ -230,11 +283,14 @@ class _FeedWiredState extends State<FeedWired> {
         messageId: message.id,
         messageText: message.text,
         messageTime: displayTime,
+        unreadCount: unreadCount,
       );
 
       setState(() {
         _feedItems.insert(0, item);
       });
+
+      _loadTotalUnreadCount();
     });
   }
 
@@ -279,6 +335,13 @@ class _FeedWiredState extends State<FeedWired> {
     final contact = await widget.contactRepository.getContact(item.contactPeerId);
     if (contact == null || !mounted) return;
 
+    await markConversationRead(
+      messageRepo: widget.messageRepository,
+      contactPeerId: item.contactPeerId,
+    );
+
+    if (!mounted) return;
+
     Navigator.of(context).push(
       buildConversationSlideUpRoute(
         builder: (_) => ConversationWired(
@@ -290,13 +353,20 @@ class _FeedWiredState extends State<FeedWired> {
           bridge: widget.bridge,
         ),
       ),
-    );
+    ).then((_) => _refreshUnreadCounts());
   }
 
   void _onReplyToMessage(String contactPeerId) async {
     final contact = await widget.contactRepository.getContact(contactPeerId);
     if (contact == null || !mounted) return;
 
+    await markConversationRead(
+      messageRepo: widget.messageRepository,
+      contactPeerId: contactPeerId,
+    );
+
+    if (!mounted) return;
+
     Navigator.of(context).push(
       buildConversationSlideUpRoute(
         builder: (_) => ConversationWired(
@@ -308,7 +378,7 @@ class _FeedWiredState extends State<FeedWired> {
           bridge: widget.bridge,
         ),
       ),
-    );
+    ).then((_) => _refreshUnreadCounts());
   }
 
   void _onSwitchView(String tab) {
@@ -326,7 +396,7 @@ class _FeedWiredState extends State<FeedWired> {
             p2pService: widget.p2pService,
           ),
         ),
-      );
+      ).then((_) => _refreshUnreadCounts());
       return;
     }
     setState(() {
@@ -405,6 +475,7 @@ class _FeedWiredState extends State<FeedWired> {
         activeTab: _activeTab,
         onSendMessage: _onSendMessage,
         onReplyToMessage: _onReplyToMessage,
+        totalUnreadCount: _totalUnreadCount,
       ),
     );
   }

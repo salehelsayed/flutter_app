@@ -1,5 +1,6 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/unread_count_badge.dart';
 import 'package:flutter_app/features/home/presentation/widgets/ring_avatar.dart';
 
 /// A glassmorphic feed card showing an incoming message from a contact.
@@ -12,6 +13,7 @@ class MessageFeedCard extends StatefulWidget {
   final String messageTime;
   final VoidCallback? onReply;
   final VoidCallback? onTap;
+  final int unreadCount;
 
   const MessageFeedCard({
     super.key,
@@ -21,6 +23,7 @@ class MessageFeedCard extends StatefulWidget {
     required this.messageTime,
     this.onReply,
     this.onTap,
+    this.unreadCount = 0,
   });
 
   @override
@@ -78,7 +81,12 @@ class _MessageFeedCardState extends State<MessageFeedCard>
   }
 
   Widget _buildCard() {
-    return GestureDetector(
+    final hasUnread = widget.unreadCount > 0;
+
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        GestureDetector(
       onTap: widget.onTap ?? widget.onReply,
       child: ClipRRect(
         borderRadius: BorderRadius.circular(24),
@@ -89,7 +97,9 @@ class _MessageFeedCardState extends State<MessageFeedCard>
               borderRadius: BorderRadius.circular(24),
               color: const Color.fromRGBO(255, 255, 255, 0.06),
               border: Border.all(
-                color: const Color.fromRGBO(255, 255, 255, 0.10),
+                color: hasUnread
+                    ? const Color.fromRGBO(255, 255, 255, 0.25)
+                    : const Color.fromRGBO(255, 255, 255, 0.10),
               ),
             ),
             child: Stack(
@@ -232,6 +242,14 @@ class _MessageFeedCardState extends State<MessageFeedCard>
           ),
         ),
       ),
+    ),
+        if (hasUnread)
+          Positioned(
+            top: -8,
+            right: 12,
+            child: UnreadCountBadge(count: widget.unreadCount),
+          ),
+      ],
     );
   }
 }

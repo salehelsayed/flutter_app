@@ -22,6 +22,8 @@ class P2PServiceImpl implements P2PService {
 
   NodeState _currentState = NodeState.stopped;
   Timer? _healthCheckTimer;
+  String? _lastFcmToken;
+  String? _lastFcmPlatform;
 
   /// How often the health check polls node:status.
   static const healthCheckInterval = Duration(seconds: 30);
@@ -425,6 +427,13 @@ class P2PServiceImpl implements P2PService {
               'connections': retryState.connections.length,
             },
           );
+
+          // Re-register push token after relay reconnection
+          if (retryState.circuitAddresses.isNotEmpty &&
+              _lastFcmToken != null &&
+              _lastFcmPlatform != null) {
+            registerPushToken(_lastFcmToken!, _lastFcmPlatform!);
+          }
         }
         return;
       }
@@ -583,6 +592,43 @@ class P2PServiceImpl implements P2PService {
         details: {'error': e.toString()},
       );
       return [];
+    }
+  }
+
+  @override
+  Future<bool> registerPushToken(String token, String platform) async {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'P2P_SERVICE_REGISTER_PUSH_TOKEN_BEGIN',
+      details: {'platform': platform},
+    );
+
+    try {
+      final response = await callP2PInboxRegisterToken(
+        _bridge,
+        token: token,
+        platform: platform,
+      );
+      final ok = response['ok'] == true;
+      if (ok) {
+        _lastFcmToken = token;
+        _lastFcmPlatform = platform;
+      }
+      emitFlowEvent(
+        layer: 'FL',
+        event: ok
+            ? 'P2P_SERVICE_REGISTER_PUSH_TOKEN_SUCCESS'
+            : 'P2P_SERVICE_REGISTER_PUSH_TOKEN_ERROR',
+        details: {'platform': platform},
+      );
+      return ok;
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'P2P_SERVICE_REGISTER_PUSH_TOKEN_EXCEPTION',
+        details: {'error': e.toString()},
+      );
+      return false;
     }
   }
 

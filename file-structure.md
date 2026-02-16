@@ -17,7 +17,7 @@ flutter_app/
 │       └── nav_remember.svg                         # Remember tab icon
 │
 ├── lib/
-│   ├── main.dart                               # App entry point, SecureKeyStore + encrypted DB setup, secrets migration, DI (dbCountMessagesForContact wired to MessageRepositoryImpl)
+│   ├── main.dart                               # App entry point, SecureKeyStore + encrypted DB setup, secrets migration, Firebase init, background message handler, DI (dbCountMessagesForContact, dbMarkConversationAsRead, dbCountUnreadForContact, dbCountTotalUnread wired to MessageRepositoryImpl)
 │   ├── smoke_test_main.dart                    # Smoke test entry point
 │   ├── smoke_test_restore.dart                 # Smoke test for identity restore
 │   ├── smoke_test_messages.dart                # Smoke test for messages DB layer
@@ -26,7 +26,7 @@ flutter_app/
 │   │   ├── bridge/
 │   │   │   ├── js_bridge_client.dart           # JsBridge interface + identity/signing/encryption helpers
 │   │   │   ├── webview_js_bridge.dart          # WebView implementation + event handlers
-│   │   │   └── p2p_bridge_client.dart          # P2P-specific bridge calls + inbox store/retrieve
+│   │   │   └── p2p_bridge_client.dart          # P2P-specific bridge calls + inbox store/retrieve + callP2PInboxRegisterToken
 │   │   │
 │   │   ├── constants/
 │   │   │   └── network_constants.dart          # Rendezvous address constant
@@ -38,16 +38,17 @@ flutter_app/
 │   │   │   │   ├── 002_messages_table.dart     # Schema v2 (messages table + indexes)
 │   │   │   │   ├── 003_mlkem_keys.dart         # Schema v3 (ML-KEM key columns on identity, contacts, contact_requests)
 │   │   │   │   ├── 004_nullify_secret_columns.dart  # Schema v4 (nullable secret columns)
-│   │   │   │   └── 005_secret_null_checks.dart      # Schema v5 (CHECK constraints + avatar_blob BLOB)
+│   │   │   │   ├── 005_secret_null_checks.dart      # Schema v5 (CHECK constraints + avatar_blob BLOB)
+│   │   │   │   └── 006_read_at_column.dart          # Schema v6 (read_at column on messages table)
 │   │   │   └── helpers/
 │   │   │       ├── identity_db_helpers.dart     # Identity table CRUD
 │   │   │       ├── contacts_db_helpers.dart     # Contacts table CRUD
 │   │   │       ├── contact_requests_db_helpers.dart  # Contact requests table CRUD
-│   │   │       └── messages_db_helpers.dart     # Messages table CRUD (insert, load, update status, count for contact)
+│   │   │       └── messages_db_helpers.dart     # Messages table CRUD (insert, load, update status, count for contact, mark conversation read, count unread per contact, count total unread)
 │   │   │
 │   │   ├── services/
-│   │   │   ├── p2p_service.dart                # P2PService abstract interface (incl. inbox)
-│   │   │   ├── p2p_service_impl.dart           # P2PServiceImpl with reactive streams + offline inbox
+│   │   │   ├── p2p_service.dart                # P2PService abstract interface (incl. inbox, registerInboxToken)
+│   │   │   ├── p2p_service_impl.dart           # P2PServiceImpl with reactive streams + offline inbox + registerInboxToken
 │   │   │   └── incoming_message_router.dart    # Routes P2P messages by type to typed streams
 │   │   │
 │   │   ├── theme/
@@ -85,21 +86,22 @@ flutter_app/
 │       ├── feed/
 │       │   ├── domain/
 │       │   │   ├── models/
-│       │   │   │   └── feed_item.dart                       # FeedItem base + ConnectionFeedItem + MessageFeedItem
+│       │   │   │   └── feed_item.dart                       # FeedItem base + ConnectionFeedItem + MessageFeedItem (unreadCount on MessageFeedItem)
 │       │   │   └── utils/
 │       │   │       └── format_message_time.dart             # Message timestamp formatting + relative time ("2m ago")
 │       │   ├── application/
-│       │   │   └── load_feed_use_case.dart                  # Load initial feed from DB (contacts + latest messages)
+│       │   │   └── load_feed_use_case.dart                  # Load initial feed from DB (contacts + latest messages + unread counts per contact)
 │       │   └── presentation/
 │       │       ├── screens/
 │       │       │   ├── feed_screen.dart                     # Pure UI feed display
-│       │       │   └── feed_wired.dart                      # Feed business logic + CR/chat listeners + orbit navigation
+│       │       │   └── feed_wired.dart                      # Feed business logic + CR/chat listeners + orbit navigation + passes unread counts, total unread badge on nav bar
 │       │       ├── widgets/
 │       │       │   ├── feed_header.dart                     # Sticky header (username + avatar from memory bytes)
-│       │       │   ├── feed_navigation_bar.dart             # Bottom glass nav bar (3 tabs)
-│       │       │   ├── nav_bar_button.dart                  # Individual nav button widget
+│       │       │   ├── feed_navigation_bar.dart             # Bottom glass nav bar (3 tabs) + total unread badge on feed tab
+│       │       │   ├── nav_bar_button.dart                  # Individual nav button widget + badge overlay support
 │       │       │   ├── connection_card.dart                 # Contact connection card (inline green badge)
-│       │       │   ├── message_feed_card.dart               # Incoming message card with reply button
+│       │       │   ├── message_feed_card.dart               # Incoming message card with reply button + unread count badge
+│       │       │   ├── unread_count_badge.dart              # Circular unread count badge widget
 │       │       │   └── checkmark_burst_animation.dart       # Animated checkmark with rings (unused/orphaned)
 │       │       └── navigation/
 │       │           └── feed_route_transition.dart            # Slide-up route transition
@@ -107,20 +109,21 @@ flutter_app/
 │       ├── conversation/
 │       │   ├── domain/
 │       │   │   ├── models/
-│       │   │   │   ├── conversation_message.dart            # ConversationMessage (id, text, status, isIncoming)
+│       │   │   │   ├── conversation_message.dart            # ConversationMessage (id, text, status, isIncoming, readAt)
 │       │   │   │   └── message_payload.dart                 # Wire-format envelope model (chat_message type)
 │       │   │   └── repositories/
-│       │   │       ├── message_repository.dart              # Abstract interface (save, load, update status, count for contact)
-│       │   │       └── message_repository_impl.dart         # DB-backed implementation (incl. getMessageCountForContact)
+│       │   │       ├── message_repository.dart              # Abstract interface (save, load, update status, count for contact, markConversationAsRead, getUnreadCountForContact, getTotalUnreadCount)
+│       │   │       └── message_repository_impl.dart         # DB-backed implementation (incl. getMessageCountForContact, markConversationAsRead, getUnreadCountForContact, getTotalUnreadCount)
 │       │   ├── application/
 │       │   │   ├── send_chat_message_use_case.dart          # Send message with 3x retry, inbox fallback + optimistic persist
 │       │   │   ├── handle_incoming_chat_message_use_case.dart  # Parse, validate sender, detect name changes
 │       │   │   ├── load_conversation_use_case.dart          # Load all messages for a contact
+│       │   │   ├── mark_conversation_read_use_case.dart     # Mark all unread messages for a contact as read
 │       │   │   └── chat_message_listener.dart               # Background listener for chat_message stream
 │       │   └── presentation/
 │       │       ├── screens/
 │       │       │   ├── conversation_screen.dart             # Pure UI: header, letter cards, compose area
-│       │       │   └── conversation_wired.dart              # Business logic: load, send, listen, optimistic UI
+│       │       │   └── conversation_wired.dart              # Business logic: load, send, listen, optimistic UI, marks conversation as read on load and on incoming messages
 │       │       ├── widgets/
 │       │       │   ├── letter_card.dart                     # Full-width message card (left/right accent, queued/delivered status)
 │       │       │   ├── compose_area.dart                    # Auto-growing text field + send button
@@ -134,9 +137,9 @@ flutter_app/
 │       ├── orbit/
 │       │   ├── domain/
 │       │   │   └── models/
-│       │   │       └── orbit_friend.dart                    # Composite model: contact + messageCount + lastActivity
+│       │   │       └── orbit_friend.dart                    # Composite model: contact + messageCount + lastActivity + unreadCount
 │       │   ├── application/
-│       │   │   └── load_orbit_data_use_case.dart            # Top-level function: loads contacts with message counts, sorted desc
+│       │   │   └── load_orbit_data_use_case.dart            # Top-level function: loads contacts with message counts + unread counts, sorted desc
 │       │   └── presentation/
 │       │       ├── screens/
 │       │       │   ├── orbit_screen.dart                    # StatelessWidget: pure UI layout with 4-layer Stack
@@ -149,12 +152,18 @@ flutter_app/
 │       │       │   ├── orbit_close_button.dart              # 36x36 glass circle X button with BackdropFilter
 │       │       │   ├── orbit_header.dart                    # Right-aligned user avatar (44px)
 │       │       │   ├── friends_list_header.dart             # "Friends" title + My QR / Scan pill buttons
-│       │       │   ├── friend_row.dart                      # Glassmorphic tappable friend card + AnimatedFriendRow wrapper
+│       │       │   ├── friend_row.dart                      # Glassmorphic tappable friend card + AnimatedFriendRow wrapper + unread count badge
 │       │       │   ├── qr_action_cards.dart                 # Two side-by-side bottom QR cards (unused/created but removed from screen)
 │       │       │   ├── orbit_search_trigger.dart            # Floating glass pill at bottom (search + close)
 │       │       │   └── orbit_search_dock.dart               # Bottom-docked search input panel with native keyboard
 │       │       └── navigation/
 │       │           └── orbit_route_transition.dart           # Slide-up route (matches conversation pattern, 420ms)
+│       │
+│       ├── push/
+│       │   └── application/
+│       │       ├── background_message_handler.dart          # Firebase background message handler (@pragma('vm:entry-point'))
+│       │       ├── request_push_permission.dart             # Push permission request utility
+│       │       └── register_push_token.dart                 # Register FCM token with relay server via P2P inbox protocol
 │       │
 │       ├── identity/
 │       │   ├── domain/
@@ -168,7 +177,7 @@ flutter_app/
 │       │   │   ├── generate_identity_use_case.dart         # generateNewIdentity() use case
 │       │   │   └── restore_identity_use_case.dart          # restoreIdentityFromMnemonic() use case
 │       │   └── presentation/
-│       │       ├── startup_router.dart                     # Routes to feed, home, or onboarding
+│       │       ├── startup_router.dart                     # Routes to feed, home, or onboarding + push token registration after P2P node starts
 │       │       ├── screens/
 │       │       │   ├── identity_choice_screen.dart         # "I'm new" / "Load my key" UI
 │       │       │   ├── identity_choice_wired.dart          # Choice screen business logic
@@ -281,7 +290,6 @@ flutter_app/
 │   └── smoke_test.dart                                    # Integration smoke test
 │
 ├── test/
-│   ├── widget_test.dart                                   # Widget tests
 │   ├── core/
 │   │   ├── services/
 │   │   │   └── incoming_message_router_test.dart           # IncomingMessageRouter unit tests
@@ -334,7 +342,7 @@ flutter_app/
 │                       ├── backup_rules.xml               # Android <12 backup rules (exclude all)
 │                       └── data_extraction_rules.xml      # Android 12+ extraction rules (exclude all)
 │
-├── pubspec.yaml                                           # Flutter dependencies (sqflite_sqlcipher, sqlcipher_flutter_libs, flutter_secure_storage)
+├── pubspec.yaml                                           # Flutter dependencies (sqflite_sqlcipher, sqlcipher_flutter_libs, flutter_secure_storage, firebase_core, firebase_messaging)
 ├── C4_MODEL.md                                            # C4 architecture documentation
 └── file-structure.md                                      # This file
 ```
@@ -351,7 +359,7 @@ flutter_app/
 | Identity repository | `identity_repository.dart`, `identity_repository_impl.dart` | Load/save identity, SecureKeyStore for secrets |
 | Generate identity | `generate_identity_use_case.dart` | JS bridge call + DB save |
 | Restore identity | `restore_identity_use_case.dart` | Validate mnemonic + JS bridge + DB save |
-| Startup routing | `startup_decision.dart`, `startup_router.dart` | Check identity + contacts → route to feed, home, or onboarding |
+| Startup routing | `startup_decision.dart`, `startup_router.dart` | Check identity + contacts → route to feed, home, or onboarding + push token registration after P2P node starts |
 | Encrypted DB opener | `encrypted_db_opener.dart` | SQLCipher DB open + plaintext→encrypted migration |
 | Secure key store | `secure_key_store.dart`, `flutter_secure_key_store.dart` | Abstract interface + production impl (iOS Keychain / Android EncryptedSharedPreferences) |
 | Secrets migration | `migrate_secrets_to_secure_storage.dart` | One-time DB→secure storage migration with sentinel |
@@ -376,8 +384,8 @@ flutter_app/
 
 | Component | File(s) | Description |
 |-----------|---------|-------------|
-| P2P service | `p2p_service.dart`, `p2p_service_impl.dart` | Reactive P2P interface + implementation with offline inbox |
-| P2P bridge | `p2p_bridge_client.dart` | Low-level JS bridge calls for P2P + inbox store/retrieve |
+| P2P service | `p2p_service.dart`, `p2p_service_impl.dart` | Reactive P2P interface + implementation with offline inbox + registerInboxToken |
+| P2P bridge | `p2p_bridge_client.dart` | Low-level JS bridge calls for P2P + inbox store/retrieve + callP2PInboxRegisterToken |
 | Message router | `incoming_message_router.dart` | Routes P2P messages by envelope type to typed streams |
 | Node state | `node_state.dart` | P2P node state model |
 | Connection state | `connection_state.dart` | Active connection model |
@@ -418,15 +426,16 @@ flutter_app/
 
 | Component | File(s) | Description |
 |-----------|---------|-------------|
-| Message model | `conversation_message.dart` | ConversationMessage (id, text, status, isIncoming, timestamps) |
+| Message model | `conversation_message.dart` | ConversationMessage (id, text, status, isIncoming, readAt, timestamps) |
 | Wire payload | `message_payload.dart` | MessagePayload envelope: v1 plaintext or v2 encrypted (ML-KEM-768 + AES-256-GCM) |
-| Message repository | `message_repository.dart`, `message_repository_impl.dart` | Save, load, update status, count for contact |
+| Message repository | `message_repository.dart`, `message_repository_impl.dart` | Save, load, update status, count for contact, markConversationAsRead, getUnreadCountForContact, getTotalUnreadCount |
 | Send message | `send_chat_message_use_case.dart` | Build payload, encrypt with ML-KEM if available (v2) or plaintext (v1), discover + dial peer, 3x retry, offline inbox fallback, optimistic persist |
 | Handle incoming | `handle_incoming_chat_message_use_case.dart` | Detect v2 encrypted envelope and decrypt, or parse v1 plaintext, validate sender, detect name changes, persist |
 | Load conversation | `load_conversation_use_case.dart` | Load all messages for a contact by timestamp ASC |
+| Mark read | `mark_conversation_read_use_case.dart` | Mark all unread incoming messages for a contact as read |
 | Chat listener | `chat_message_listener.dart` | Background listener on chatMessageStream, resolves ML-KEM secret key for decryption, broadcasts to UI |
 | Conversation screen | `conversation_screen.dart` | Pure UI: header, letter cards, empty state, compose area |
-| Conversation logic | `conversation_wired.dart` | Business logic: load messages, optimistic send, listen for incoming |
+| Conversation logic | `conversation_wired.dart` | Business logic: load messages, optimistic send, listen for incoming, marks conversation as read on load and on incoming messages |
 | Letter card | `letter_card.dart` | Full-width card with left accent (received) / right accent (sent), supports queued/delivered/failed status |
 | Compose area | `compose_area.dart` | Auto-growing text field + animated send button |
 | Empty state | `empty_conversation_state.dart` | Breathing glow avatar + "Connected!" + writing prompt |
@@ -438,14 +447,15 @@ flutter_app/
 | DB migration | `003_mlkem_keys.dart` | Adds ml_kem_public_key, ml_kem_secret_key columns to identity; ml_kem_public_key to contacts and contact_requests |
 | DB migration | `004_nullify_secret_columns.dart` | Schema v4: makes secret columns nullable for secure storage migration |
 | DB migration | `005_secret_null_checks.dart` | Schema v5: CHECK constraints on secret columns + avatar_blob BLOB column |
-| DB helpers | `messages_db_helpers.dart` | Messages table CRUD (insert, load, update status, count for contact) |
+| DB migration | `006_read_at_column.dart` | Schema v6: adds read_at TEXT column to messages table |
+| DB helpers | `messages_db_helpers.dart` | Messages table CRUD (insert, load, update status, count for contact, mark conversation read, count unread per contact, count total unread) |
 
 ### Orbit (UI-5)
 
 | Component | File(s) | Description |
 |-----------|---------|-------------|
-| Orbit friend model | `orbit_friend.dart` | Composite model: contact + messageCount + lastActivity |
-| Load orbit data | `load_orbit_data_use_case.dart` | Top-level function: loads contacts with message counts, sorted desc |
+| Orbit friend model | `orbit_friend.dart` | Composite model: contact + messageCount + lastActivity + unreadCount |
+| Load orbit data | `load_orbit_data_use_case.dart` | Top-level function: loads contacts with message counts + unread counts, sorted desc |
 | Orbit screen | `orbit_screen.dart` | Pure UI: 4-layer Stack layout (header, visualization, friends list, search) |
 | Orbit logic | `orbit_wired.dart` | State management: 3 animation controllers, streams, DI (8 deps) |
 | Orbital visualization | `orbital_visualization.dart` | 320x320 Stack: rings + center avatar + friend avatars + overflow badge |
@@ -455,7 +465,7 @@ flutter_app/
 | Close button | `orbit_close_button.dart` | 36x36 glass circle X button with BackdropFilter |
 | Orbit header | `orbit_header.dart` | Right-aligned user avatar (44px) |
 | Friends list header | `friends_list_header.dart` | "Friends" title + My QR / Scan pill buttons |
-| Friend row | `friend_row.dart` | Glassmorphic tappable friend card + AnimatedFriendRow wrapper |
+| Friend row | `friend_row.dart` | Glassmorphic tappable friend card + AnimatedFriendRow wrapper + unread count badge |
 | QR action cards | `qr_action_cards.dart` | Two side-by-side bottom QR cards (unused/created but removed from screen) |
 | Search trigger | `orbit_search_trigger.dart` | Floating glass pill at bottom (search + close) |
 | Search dock | `orbit_search_dock.dart` | Bottom-docked search input panel with native keyboard |
@@ -478,18 +488,27 @@ flutter_app/
 
 | Component | File(s) | Description |
 |-----------|---------|-------------|
-| Feed item model | `feed_item.dart` | FeedItem base + ConnectionFeedItem + MessageFeedItem |
+| Feed item model | `feed_item.dart` | FeedItem base + ConnectionFeedItem + MessageFeedItem (unreadCount on MessageFeedItem) |
 | Time formatting | `format_message_time.dart` | Message timestamp formatting + relative time ("2m ago") |
-| Load feed | `load_feed_use_case.dart` | Load initial feed from DB (contacts + latest messages) |
+| Load feed | `load_feed_use_case.dart` | Load initial feed from DB (contacts + latest messages + unread counts per contact) |
 | Feed screen | `feed_screen.dart` | Pure UI feed display (connection + message cards) |
-| Feed logic | `feed_wired.dart` | Feed orchestration, identity load, CR/chat listeners, orbit navigation |
+| Feed logic | `feed_wired.dart` | Feed orchestration, identity load, CR/chat listeners, orbit navigation, passes unread counts, total unread badge on nav bar |
 | Feed header | `feed_header.dart` | Sticky header with username + avatar from memory bytes |
-| Navigation bar | `feed_navigation_bar.dart` | Bottom glass nav bar (3 tabs) |
-| Nav button | `nav_bar_button.dart` | Individual tab button (active/inactive) |
+| Navigation bar | `feed_navigation_bar.dart` | Bottom glass nav bar (3 tabs) + total unread badge on feed tab |
+| Nav button | `nav_bar_button.dart` | Individual tab button (active/inactive) + badge overlay support |
 | Connection card | `connection_card.dart` | Contact connection display card (inline green checkmark badge) |
-| Message card | `message_feed_card.dart` | Incoming message card with reply button |
+| Message card | `message_feed_card.dart` | Incoming message card with reply button + unread count badge |
+| Unread badge | `unread_count_badge.dart` | Circular unread count badge widget |
 | Checkmark anim | `checkmark_burst_animation.dart` | Animated checkmark with expanding rings (unused/orphaned) |
 | Route transition | `feed_route_transition.dart` | Slide-up page transition |
+
+### Push Notifications
+
+| Component | File(s) | Description |
+|-----------|---------|-------------|
+| Background handler | `background_message_handler.dart` | Firebase background message handler (`@pragma('vm:entry-point')`) |
+| Push permission | `request_push_permission.dart` | Request notification permission from user |
+| Token registration | `register_push_token.dart` | Register FCM token with relay server via P2P inbox protocol |
 
 ### Core Utilities
 
@@ -517,9 +536,9 @@ flutter_app/
 | `identity` | `id` (always 1) | v1 (`001`), v3 (`003`: ml_kem_public_key, ml_kem_secret_key), v4 (`004`: nullable secret columns), v5 (`005`: CHECK constraints + avatar_blob) | Single-row identity storage, secrets in secure storage (DB columns always NULL via CHECK), avatar as BLOB |
 | `contacts` | `peer_id` | v1 (`001`), v3 (`003`: ml_kem_public_key) | Contacts added via QR scanning |
 | `contact_requests` | `peer_id` | v1 (`001`), v3 (`003`: ml_kem_public_key) | Incoming P2P contact requests |
-| `messages` | `id` (UUID) | v2 (`002`) | Conversation messages (indexes on contact_peer_id, timestamp) |
+| `messages` | `id` (UUID) | v2 (`002`), v6 (`006`: read_at TEXT) | Conversation messages (indexes on contact_peer_id, timestamp), read_at column for unread tracking |
 
-Database version: **5** (set in `main.dart` `openDatabase` call). Migrations v4 (`004_nullify_secret_columns.dart`: makes secret columns nullable) and v5 (`005_secret_null_checks.dart`: CHECK constraints ensuring secret columns stay NULL + avatar_blob BLOB column).
+Database version: **6** (set in `main.dart` `openDatabase` call). Migrations v4 (`004_nullify_secret_columns.dart`: makes secret columns nullable), v5 (`005_secret_null_checks.dart`: CHECK constraints ensuring secret columns stay NULL + avatar_blob BLOB column), and v6 (`006_read_at_column.dart`: adds read_at TEXT column to messages table).
 
 ---
 

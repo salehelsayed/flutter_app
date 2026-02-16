@@ -52,6 +52,7 @@ class MessageFeedItem extends FeedItem {
   final String messageId;
   final String messageText;
   final String messageTime;
+  final int unreadCount;
 
   const MessageFeedItem({
     required super.id,
@@ -61,5 +62,6 @@ class MessageFeedItem extends FeedItem {
     required this.messageId,
     required this.messageText,
     required this.messageTime,
+    this.unreadCount = 0,
   }) : super(type: FeedItemType.message);
 }

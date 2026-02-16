@@ -6,11 +6,13 @@ import 'nav_bar_button.dart';
 class FeedNavigationBar extends StatelessWidget {
   final String activeTab;
   final void Function(String) onSwitchView;
+  final int feedBadgeCount;
 
   const FeedNavigationBar({
     super.key,
     required this.activeTab,
     required this.onSwitchView,
+    this.feedBadgeCount = 0,
   });
 
   @override
@@ -52,6 +54,7 @@ class FeedNavigationBar extends StatelessWidget {
                   svgAsset: 'assets/icons/nav_feed.svg',
                   isActive: activeTab == 'feed',
                   onTap: () => onSwitchView('feed'),
+                  badgeCount: feedBadgeCount,
                 ),
                 const SizedBox(width: 7),
                 NavBarButton(

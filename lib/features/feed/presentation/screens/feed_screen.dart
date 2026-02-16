@@ -24,6 +24,7 @@ class FeedScreen extends StatelessWidget {
   final String activeTab;
   final void Function(ConnectionFeedItem)? onSendMessage;
   final void Function(String contactPeerId)? onReplyToMessage;
+  final int totalUnreadCount;
 
   const FeedScreen({
     super.key,
@@ -37,6 +38,7 @@ class FeedScreen extends StatelessWidget {
     required this.activeTab,
     this.onSendMessage,
     this.onReplyToMessage,
+    this.totalUnreadCount = 0,
   });
 
   @override
@@ -110,6 +112,7 @@ class FeedScreen extends StatelessWidget {
                   child: FeedNavigationBar(
                     activeTab: activeTab,
                     onSwitchView: onSwitchView,
+                    feedBadgeCount: totalUnreadCount,
                   ),
                 ),
               ],
@@ -151,6 +154,7 @@ class FeedScreen extends StatelessWidget {
             contactUsername: item.contactUsername,
             messageText: item.messageText,
             messageTime: item.messageTime,
+            unreadCount: item.unreadCount,
             onReply: onReplyToMessage != null
                 ? () => onReplyToMessage!(item.contactPeerId)
                 : null,

@@ -94,6 +94,15 @@ class FakeMessageRepository implements MessageRepository {
         .where((m) => m.contactPeerId == contactPeerId)
         .length;
   }
+
+  @override
+  Future<int> markConversationAsRead(String contactPeerId) async => 0;
+
+  @override
+  Future<int> getUnreadCountForContact(String contactPeerId) async => 0;
+
+  @override
+  Future<int> getTotalUnreadCount() async => 0;
 }
 
 class FakeP2PService implements P2PService {
@@ -135,6 +144,9 @@ class FakeP2PService implements P2PService {
 
   @override
   Future<bool> storeInInbox(String toPeerId, String message) async => false;
+
+  @override
+  Future<bool> registerPushToken(String token, String platform) async => true;
 }
 
 void main() {
@@ -150,7 +162,7 @@ void main() {
   }
 
   IdentityModel makeIdentity() {
-    return const IdentityModel(
+    return IdentityModel(
       peerId: '12D3KooWMyPeer123',
       publicKey: 'pub',
       privateKey: 'priv',

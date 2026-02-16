@@ -187,6 +187,9 @@ class FakeP2PService implements P2PService {
   }
 
   @override
+  Future<bool> registerPushToken(String token, String platform) async => true;
+
+  @override
   void dispose() {
     _messageController.close();
   }
@@ -236,6 +239,15 @@ class InMemoryMessageRepository implements MessageRepository {
         .where((m) => m.contactPeerId == contactPeerId)
         .length;
   }
+
+  @override
+  Future<int> markConversationAsRead(String contactPeerId) async => 0;
+
+  @override
+  Future<int> getUnreadCountForContact(String contactPeerId) async => 0;
+
+  @override
+  Future<int> getTotalUnreadCount() async => 0;
 
   int get count => _messages.length;
 }

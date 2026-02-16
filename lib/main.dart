@@ -5,6 +5,7 @@ import 'package:flutter_app/core/database/migrations/002_messages_table.dart';
 import 'package:flutter_app/core/database/migrations/003_mlkem_keys.dart';
 import 'package:flutter_app/core/database/migrations/004_nullify_secret_columns.dart';
 import 'package:flutter_app/core/database/migrations/005_secret_null_checks.dart';
+import 'package:flutter_app/core/database/migrations/006_read_at_column.dart';
 import 'package:flutter_app/core/database/encrypted_db_opener.dart';
 import 'package:flutter_app/core/database/helpers/identity_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
@@ -25,12 +26,31 @@ import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/core/theme/app_theme.dart';
 import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter_app/features/push/application/background_message_handler.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // Initialize Firebase (mobile only — not available on desktop)
+  final bool isDesktop = !kIsWeb && (Platform.isLinux || Platform.isWindows || Platform.isMacOS);
+  if (!isDesktop) {
+    try {
+      await Firebase.initializeApp();
+      FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+      await FirebaseMessaging.instance.setForegroundNotificationPresentationOptions(
+        alert: false,
+        badge: false,
+        sound: false,
+      );
+    } catch (e) {
+      debugPrint('Firebase init skipped: $e');
+    }
+  }
+
   // Initialize database based on platform
-  if (!kIsWeb && (Platform.isLinux || Platform.isWindows || Platform.isMacOS)) {
+  if (isDesktop) {
     // Desktop platforms need FFI
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
@@ -43,13 +63,14 @@ void main() async {
   final db = await openEncryptedDatabase(
     secureKeyStore: secureKeyStore,
     dbName: 'identity.db',
-    version: 5,
+    version: 6,
     onCreate: (db, version) async {
       await runIdentityTableMigration(db);
       await runMessagesTableMigration(db);
       await runMlKemKeysMigration(db);
       // Fresh install: skip 004 (nullable) — 005 already has nullable + CHECK
       await runSecretNullChecksMigration(db);
+      await runReadAtColumnMigration(db);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) {
@@ -62,6 +83,9 @@ void main() async {
         await runNullifySecretColumnsMigration(db);
       }
       // Migration 005 is deferred — runs after secrets migration below
+      if (oldVersion < 6) {
+        await runReadAtColumnMigration(db);
+      }
     },
   );
 
@@ -116,6 +140,11 @@ void main() async {
     dbLoadMessage: (id) => dbLoadMessage(db, id),
     dbCountMessagesForContact: (contactPeerId) =>
         dbCountMessagesForContact(db, contactPeerId),
+    dbMarkConversationAsRead: (contactPeerId) =>
+        dbMarkConversationAsRead(db, contactPeerId),
+    dbCountUnreadForContact: (contactPeerId) =>
+        dbCountUnreadForContact(db, contactPeerId),
+    dbCountTotalUnread: () => dbCountTotalUnread(db),
   );
 
   // Create and initialize the WebView JS bridge

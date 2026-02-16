@@ -29,4 +29,13 @@ abstract class MessageRepository {
 
   /// Returns the total number of messages for a contact.
   Future<int> getMessageCountForContact(String contactPeerId);
+
+  /// Marks all unread incoming messages for a contact as read.
+  Future<int> markConversationAsRead(String contactPeerId);
+
+  /// Returns the number of unread incoming messages for a contact.
+  Future<int> getUnreadCountForContact(String contactPeerId);
+
+  /// Returns the total number of unread incoming messages across all contacts.
+  Future<int> getTotalUnreadCount();
 }

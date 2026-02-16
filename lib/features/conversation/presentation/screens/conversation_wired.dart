@@ -7,6 +7,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/application/load_conversation_use_case.dart';
+import 'package:flutter_app/features/conversation/application/mark_conversation_read_use_case.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
@@ -72,7 +73,7 @@ class _ConversationWiredState extends State<ConversationWired> {
     _contact = widget.contact;
     emitFlowEvent(layer: 'FL', event: 'CONV_FL_SCREEN_INIT', details: {});
     _loadIdentity();
-    _loadMessages();
+    _loadMessages().then((_) => _markAsRead());
     _startListeningForMessages();
     _startListeningForContactUpdates();
   }
@@ -116,6 +117,21 @@ class _ConversationWiredState extends State<ConversationWired> {
     }
   }
 
+  Future<void> _markAsRead() async {
+    try {
+      await markConversationRead(
+        messageRepo: widget.messageRepo,
+        contactPeerId: _contact.peerId,
+      );
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONV_FL_MARK_READ_ERROR',
+        details: {'error': e.toString()},
+      );
+    }
+  }
+
   void _startListeningForMessages() {
     _incomingSubscription = widget.chatMessageListener.incomingMessageStream
         .where((msg) => msg.contactPeerId == _contact.peerId)
@@ -128,6 +144,7 @@ class _ConversationWiredState extends State<ConversationWired> {
       _upsertMessageById(message);
     });
     _scrollToBottom();
+    _markAsRead();
   }
 
   void _startListeningForContactUpdates() {

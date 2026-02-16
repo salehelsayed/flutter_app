@@ -12,6 +12,7 @@ import 'package:flutter_app/features/contact_request/presentation/widgets/contac
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
+import 'package:flutter_app/features/conversation/application/mark_conversation_read_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/conversation/presentation/navigation/conversation_route_transition.dart';
@@ -259,7 +260,14 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         .toList();
   }
 
-  void _onFriendTap(OrbitFriend friend) {
+  void _onFriendTap(OrbitFriend friend) async {
+    await markConversationRead(
+      messageRepo: widget.messageRepo,
+      contactPeerId: friend.peerId,
+    );
+
+    if (!mounted) return;
+
     Navigator.of(context).push(
       buildConversationSlideUpRoute(
         builder: (_) => ConversationWired(
@@ -271,7 +279,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           bridge: widget.bridge,
         ),
       ),
-    );
+    ).then((_) => _loadOrbitData());
   }
 
   void _onMyQR() {

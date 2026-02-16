@@ -112,6 +112,9 @@ class FakeP2PService implements P2PService {
   Future<List<Map<String, dynamic>>> retrieveInbox() async => [];
 
   @override
+  Future<bool> registerPushToken(String token, String platform) async => true;
+
+  @override
   void dispose() {}
 }
 
@@ -142,6 +145,15 @@ class FakeMessageRepository implements MessageRepository {
 
   @override
   Future<int> getMessageCountForContact(String contactPeerId) async => 0;
+
+  @override
+  Future<int> markConversationAsRead(String contactPeerId) async => 0;
+
+  @override
+  Future<int> getUnreadCountForContact(String contactPeerId) async => 0;
+
+  @override
+  Future<int> getTotalUnreadCount() async => 0;
 }
 
 Future<List<String>> capturePrintedLines(Future<void> Function() action) async {
@@ -534,6 +546,9 @@ class _ThrowOnSendP2PService implements P2PService {
   Future<List<Map<String, dynamic>>> retrieveInbox() async => [];
 
   @override
+  Future<bool> registerPushToken(String token, String platform) async => true;
+
+  @override
   void dispose() {}
 }
 
@@ -583,6 +598,9 @@ class _FlakyDiscoverP2PService implements P2PService {
 
   @override
   Future<List<Map<String, dynamic>>> retrieveInbox() async => [];
+
+  @override
+  Future<bool> registerPushToken(String token, String platform) async => true;
 
   @override
   void dispose() {}

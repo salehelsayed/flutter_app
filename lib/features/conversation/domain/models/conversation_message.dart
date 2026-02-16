@@ -27,6 +27,9 @@ class ConversationMessage {
   /// ISO-8601 timestamp when the row was created locally.
   final String createdAt;
 
+  /// ISO-8601 timestamp when the message was read. NULL means unread.
+  final String? readAt;
+
   const ConversationMessage({
     required this.id,
     required this.contactPeerId,
@@ -36,6 +39,7 @@ class ConversationMessage {
     required this.status,
     required this.isIncoming,
     required this.createdAt,
+    this.readAt,
   });
 
   /// Creates a ConversationMessage from a database row map.
@@ -49,6 +53,7 @@ class ConversationMessage {
       status: map['status'] as String? ?? 'sent',
       isIncoming: (map['is_incoming'] as int? ?? 0) == 1,
       createdAt: map['created_at'] as String,
+      readAt: map['read_at'] as String?,
     );
   }
 
@@ -63,6 +68,7 @@ class ConversationMessage {
       'status': status,
       'is_incoming': isIncoming ? 1 : 0,
       'created_at': createdAt,
+      'read_at': readAt,
     };
   }
 
@@ -76,6 +82,7 @@ class ConversationMessage {
     String? status,
     bool? isIncoming,
     String? createdAt,
+    String? readAt,
   }) {
     return ConversationMessage(
       id: id ?? this.id,
@@ -86,6 +93,7 @@ class ConversationMessage {
       status: status ?? this.status,
       isIncoming: isIncoming ?? this.isIncoming,
       createdAt: createdAt ?? this.createdAt,
+      readAt: readAt ?? this.readAt,
     );
   }
 

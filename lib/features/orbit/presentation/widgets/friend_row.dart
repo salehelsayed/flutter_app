@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_app/features/feed/domain/utils/format_message_time.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/unread_count_badge.dart';
 import 'package:flutter_app/features/home/presentation/widgets/ring_avatar.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_friend.dart';
 
@@ -118,11 +119,14 @@ class FriendRow extends StatelessWidget {
                     ),
                   ),
                 const SizedBox(height: 4),
-                const Icon(
-                  Icons.chevron_right,
-                  size: 16,
-                  color: Color(0x66FFFFFF),
-                ),
+                if (friend.unreadCount > 0)
+                  UnreadCountBadge(count: friend.unreadCount)
+                else
+                  const Icon(
+                    Icons.chevron_right,
+                    size: 16,
+                    color: Color(0x66FFFFFF),
+                  ),
               ],
             ),
           ],

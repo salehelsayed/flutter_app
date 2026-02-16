@@ -8,6 +8,8 @@
  *   node rendezvous-relay-server-inbox-v4.js
  */
 
+import admin from 'firebase-admin'
+import { readFileSync } from 'fs'
 import { createLibp2p } from 'libp2p'
 import { noise } from '@chainsafe/libp2p-noise'
 import { yamux } from '@chainsafe/libp2p-yamux'
@@ -274,6 +276,86 @@ async function handleRendezvousStream({ stream, connection }) {
 }
 
 // ============================================================================
+// Push Notifications (FCM)
+// ============================================================================
+
+const FIREBASE_SERVICE_ACCOUNT_PATH = process.env.FIREBASE_SERVICE_ACCOUNT || './firebase-service-account.json'
+let firebaseInitialized = false
+
+try {
+  const serviceAccount = JSON.parse(readFileSync(FIREBASE_SERVICE_ACCOUNT_PATH, 'utf8'))
+  admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount)
+  })
+  firebaseInitialized = true
+  console.log('[PUSH] Firebase Admin SDK initialized')
+} catch (err) {
+  console.warn('[PUSH] Firebase not initialized — push notifications disabled:', err.message)
+}
+
+// Device token store: Map<peerId, { token, platform, updatedAt }>
+const tokenStore = new Map()
+
+function registerToken(peerId, token, platform) {
+  tokenStore.set(peerId, { token, platform, updatedAt: Date.now() })
+  console.log(`[PUSH] Token registered for ${peerId.slice(0, 20)}... (${platform})`)
+}
+
+function unregisterToken(peerId) {
+  tokenStore.delete(peerId)
+  console.log(`[PUSH] Token unregistered for ${peerId.slice(0, 20)}...`)
+}
+
+async function sendPushNotification(toPeerId, fromPeerId) {
+  if (!firebaseInitialized) return
+
+  const entry = tokenStore.get(toPeerId)
+  if (!entry) return
+
+  const message = {
+    token: entry.token,
+    notification: {
+      title: 'New Message',
+      body: 'You have a new message',
+    },
+    data: {
+      type: 'new_message',
+      from: fromPeerId,
+    },
+    android: {
+      priority: 'high',
+    },
+    apns: {
+      headers: {
+        'apns-priority': '10',
+        'apns-push-type': 'alert',
+      },
+      payload: {
+        aps: {
+          'content-available': 1,
+          alert: {
+            title: 'New Message',
+            body: 'You have a new message',
+          },
+        },
+      },
+    },
+  }
+
+  try {
+    await admin.messaging().send(message)
+    console.log(`[PUSH] Notification sent to ${toPeerId.slice(0, 20)}...`)
+  } catch (err) {
+    console.error(`[PUSH] Failed to send to ${toPeerId.slice(0, 20)}...:`, err.message)
+    if (err.code === 'messaging/invalid-registration-token' ||
+        err.code === 'messaging/registration-token-not-registered') {
+      tokenStore.delete(toPeerId)
+      console.log(`[PUSH] Removed invalid token for ${toPeerId.slice(0, 20)}...`)
+    }
+  }
+}
+
+// ============================================================================
 // Inline Inbox Implementation
 // ============================================================================
 
@@ -410,6 +492,9 @@ function storeMessage(toPeerId, entry) {
   inboxStore.set(toPeerId, messages)
 
   console.log(`[INBOX] Stored message for ${toPeerId.slice(0, 20)}... from ${entry.from.slice(0, 20)}... (total: ${messages.length})`)
+
+  // Fire push notification (non-blocking)
+  sendPushNotification(toPeerId, entry.from).catch(() => {})
 }
 
 /**
@@ -496,6 +581,16 @@ async function handleInboxStream({ stream, connection }) {
         })
         response = { status: 'OK' }
       }
+    } else if (request.action === 'register_token') {
+      if (!request.token || !request.platform) {
+        response = { status: 'ERROR', error: 'Missing required fields: token, platform' }
+      } else {
+        registerToken(remotePeer, request.token, request.platform)
+        response = { status: 'OK' }
+      }
+    } else if (request.action === 'unregister_token') {
+      unregisterToken(remotePeer)
+      response = { status: 'OK' }
     } else if (request.action === 'retrieve') {
       const messages = retrieveMessages(remotePeer, {
         limit: request.limit || 50
@@ -650,13 +745,14 @@ async function main() {
 
   console.log('Protocols:')
   console.log(`  Rendezvous: ${RENDEZVOUS_PROTOCOL}`)
-  console.log(`  Inbox:      ${INBOX_PROTOCOL}\n`)
+  console.log(`  Inbox:      ${INBOX_PROTOCOL}`)
+  console.log(`  Push:       ${firebaseInitialized ? 'enabled' : 'disabled (no service account)'}\n`)
 
   // Log inbox stats periodically
   setInterval(() => {
     const stats = getStats()
-    if (stats.totalMessages > 0) {
-      console.log(`[INBOX] Stats: ${stats.totalPeers} peers, ${stats.totalMessages} messages`)
+    if (stats.totalMessages > 0 || tokenStore.size > 0) {
+      console.log(`[INBOX] Stats: ${stats.totalPeers} peers, ${stats.totalMessages} messages | [PUSH] ${tokenStore.size} registered tokens`)
     }
   }, 60000)
 

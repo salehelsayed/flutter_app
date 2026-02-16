@@ -310,6 +310,45 @@ Future<Map<String, dynamic>> callP2PInboxStore(
   return response;
 }
 
+/// Calls the JS bridge to register an FCM push token with the relay.
+///
+/// Parameters:
+///   - [bridge]: The JsBridge instance
+///   - [token]: The FCM device token
+///   - [platform]: The platform ('ios' or 'android')
+///
+/// Returns: `{ "ok": true, "registered": true }`
+Future<Map<String, dynamic>> callP2PInboxRegisterToken(
+  JsBridge bridge, {
+  required String token,
+  required String platform,
+}) async {
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'P2P_INBOX_REGISTER_TOKEN_REQUEST',
+    details: {'platform': platform},
+  );
+
+  final request = {
+    'cmd': 'inbox:register_token',
+    'payload': {
+      'token': token,
+      'platform': platform,
+    },
+  };
+
+  final responseJson = await bridge.send(jsonEncode(request));
+  final response = jsonDecode(responseJson) as Map<String, dynamic>;
+
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'P2P_INBOX_REGISTER_TOKEN_RESPONSE',
+    details: {'ok': response['ok']},
+  );
+
+  return response;
+}
+
 /// Calls the JS bridge to retrieve messages from the offline inbox.
 ///
 /// Returns: `{ "ok": true, "messages": [...] }` (stub — JS not yet implemented)

@@ -27,12 +27,16 @@ Future<List<OrbitFriend>> loadOrbitData({
       final latestMessage = await messageRepo.getLatestMessageForContact(
         contact.peerId,
       );
+      final unreadCount = await messageRepo.getUnreadCountForContact(
+        contact.peerId,
+      );
 
       friends.add(OrbitFriend(
         contact: contact,
         messageCount: messageCount,
         lastActivity: latestMessage?.text,
         lastMessageTimestamp: latestMessage?.timestamp,
+        unreadCount: unreadCount,
       ));
     }
 

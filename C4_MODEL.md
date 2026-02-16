@@ -51,11 +51,12 @@
 | Element | Type | Description |
 |---------|------|-------------|
 | User | Person | End user who wants to create or restore their cryptographic identity, connect with peers, manage contacts, and exchange encrypted messages |
-| Mknoon Identity App | Software System | Mobile/desktop app for identity management, profile customization, peer discovery, contact requests, E2E encrypted conversations (ML-KEM-768 + AES-256-GCM), offline inbox, and P2P messaging using libp2p and BIP39. Data at rest encrypted via SQLCipher + OS-backed secure storage |
+| Mknoon Identity App | Software System | Mobile/desktop app for identity management, profile customization, peer discovery, contact requests, E2E encrypted conversations (ML-KEM-768 + AES-256-GCM), offline inbox, push notifications (Firebase Cloud Messaging), and P2P messaging using libp2p and BIP39. Data at rest encrypted via SQLCipher + OS-backed secure storage |
 | Rendezvous / Relay Server | External System | libp2p rendezvous server for peer discovery, circuit relay for NAT traversal, and offline message inbox (`/mknoon/inbox/1.0.0`) for store-and-forward delivery |
 
 ### External Dependencies
 - Rendezvous/Relay server at `mknoun.xyz:4001` (WebSocket over TLS)
+- Firebase Cloud Messaging (FCM) for push notifications
 
 ---
 
@@ -136,6 +137,7 @@
 | SQLCipher Database | sqflite_sqlcipher | 256-bit AES encrypted SQLite database; persists identity, contacts, contact requests, messages, and avatar BLOBs locally |
 | Secure Storage | flutter_secure_storage | OS-backed secret storage: iOS Keychain (device-bound, kSecAttrAccessibleWhenUnlockedThisDeviceOnly), Android EncryptedSharedPreferences; holds identity secrets and DB encryption key |
 | Rendezvous / Relay Server | libp2p | External server for peer discovery, NAT traversal relay, and offline message inbox |
+| Firebase Cloud Messaging | Firebase SDK | External push notification service; relay server sends FCM push when storing offline inbox messages |
 
 ### Communication
 
@@ -145,6 +147,7 @@
 | Flutter App | SQLCipher DB | SQL via sqflite_sqlcipher | CRUD operations for identity, contacts, contact requests, messages, and avatar BLOBs (256-bit AES encrypted at rest) |
 | Flutter App | Secure Storage | flutter_secure_storage API | Read/write identity secrets (private_key, mnemonic12, ml_kem_secret_key) and DB encryption key |
 | JS Runtime | Rendezvous Server | WebSocket (libp2p) | Peer discovery, relay circuits, messaging, and offline inbox protocol (`/mknoon/inbox/1.0.0`) |
+| Flutter App | Firebase Cloud Messaging | HTTPS (FCM SDK) | Registers device token, receives push notifications for offline inbox messages |
 
 ---
 
@@ -224,10 +227,10 @@
 │  │  │  │  │FeedHeader      │  │ConnectionCard  │  │MessageFeed │  │   │  │ │
 │  │  │  │  │(username+avatar)│  │(inline badge)  │  │Card (reply)│  │   │  │ │
 │  │  │  │  └────────────────┘  └────────────────┘  └────────────┘  │   │  │ │
-│  │  │  │  ┌────────────────┐  ┌────────────────┐                  │   │  │ │
-│  │  │  │  │FeedNavBar      │  │NavBarButton    │                  │   │  │ │
-│  │  │  │  │(glass, 3 tabs) │  │(active/inactive)│                  │   │  │ │
-│  │  │  │  └────────────────┘  └────────────────┘                  │   │  │ │
+│  │  │  │  ┌────────────────┐  ┌────────────────┐  ┌────────────┐  │   │  │ │
+│  │  │  │  │FeedNavBar      │  │NavBarButton    │  │UnreadCount │  │   │  │ │
+│  │  │  │  │(glass, 3 tabs) │  │(badge overlay) │  │Badge (count)│  │   │  │ │
+│  │  │  │  └────────────────┘  └────────────────┘  └────────────┘  │   │  │ │
 │  │  │  └──────────────────────────────────────────────────────────┘   │  │ │
 │  │  └─────────────────────────────────────────────────────────────────┘  │ │
 │  │                                                                        │ │
@@ -334,18 +337,32 @@
 │  │  │ ChatMessageListener                      │                         │ │
 │  │  │ [Service: monitors chatMessageStream]    │                         │ │
 │  │  └──────────────────────────────────────────┘                         │ │
+│  │  ┌──────────────────────────────────────────┐                         │ │
+│  │  │ markConversationRead()                   │                         │ │
+│  │  │ [Use Case]                               │                         │ │
+│  │  └──────────────────────────────────────────┘                         │ │
 │  │                                                                        │ │
 │  │  ── Feed ─────────────────────────────────────────────────────────── │ │
 │  │  ┌──────────────────┐                                                 │ │
-│  │  │ loadFeed()       │                                                 │ │
-│  │  │ [Use Case]       │                                                 │ │
+│  │  │ loadFeed()       │  Loads contacts + latest messages + unread     │ │
+│  │  │ [Use Case]       │  counts per contact                            │ │
 │  │  └──────────────────┘                                                 │ │
 │  │                                                                        │ │
 │  │  ── Orbit ────────────────────────────────────────────────────────── │ │
 │  │  ┌──────────────────┐                                                 │ │
-│  │  │ loadOrbitData()  │  Loads contacts + message counts, sorted by     │ │
-│  │  │ [Use Case]       │  messageCount descending                        │ │
+│  │  │ loadOrbitData()  │  Loads contacts + message counts + unread       │ │
+│  │  │ [Use Case]       │  counts, sorted by messageCount descending      │ │
 │  │  └──────────────────┘                                                 │ │
+│  │                                                                        │ │
+│  │  ── Push Notifications ──────────────────────────────────────────── │ │
+│  │  ┌──────────────────────────────────────────┐                         │ │
+│  │  │ requestPushPermission()                  │                         │ │
+│  │  │ [Use Case]                               │                         │ │
+│  │  └──────────────────────────────────────────┘                         │ │
+│  │  ┌──────────────────────────────────────────┐                         │ │
+│  │  │ registerPushToken()                      │                         │ │
+│  │  │ [Use Case]                               │                         │ │
+│  │  └──────────────────────────────────────────┘                         │ │
 │  └────────────────────────────────────────────────────────────────────────┘ │
 │                                                                              │
 │  ┌────────────────────────────────────────────────────────────────────────┐ │
@@ -375,6 +392,7 @@
 │  │  ┌──────────────────┐                                                 │ │
 │  │  │ OrbitFriend       │  Composite: ContactModel + messageCount        │ │
 │  │  │ [Orbit Model]    │  + lastActivity + lastMessageTimestamp          │ │
+│  │  │                  │  + unreadCount (default 0)                      │ │
 │  │  └──────────────────┘                                                 │ │
 │  │                                                                        │ │
 │  │  ── Repositories ──────────────────────────────────────────────────── │ │
@@ -410,6 +428,7 @@
 │  │  │   P2PService [Interface] → P2PServiceImpl│                         │ │
 │  │  │   Reactive streams for state + messages  │                         │ │
 │  │  │   + offline inbox store/retrieve         │                         │ │
+│  │  │   + registerInboxToken (FCM push)        │                         │ │
 │  │  └──────────────────────────────────────────┘                         │ │
 │  │  ┌──────────────────────────────────────────┐                         │ │
 │  │  │   IncomingMessageRouter                  │                         │ │
@@ -440,6 +459,10 @@
 │  │  │  mnemonic12 nullable     │  │  mnemonic12, ml_kem_secret_key   │   │ │
 │  │  └──────────────────────────┘  │  must be NULL + avatar_blob BLOB │   │ │
 │  │                                └──────────────────────────────────┘   │ │
+│  │  ┌──────────────────────────┐                                         │ │
+│  │  │  006_read_at_column      │  Adds read_at TEXT column to           │ │
+│  │  │  migration (v6)          │  messages table for unread tracking    │ │
+│  │  └──────────────────────────┘                                         │ │
 │  │  ┌──────────────────────────┐                                         │ │
 │  │  │  encrypted_db_opener     │  Opens SQLCipher DB with key from      │ │
 │  │  │                          │  secure storage; handles plaintext→    │ │
@@ -543,6 +566,7 @@
 │                                  │  │  │  status TEXT DEFAULT 'sent'    │  │
 │                                  │  │  │  is_incoming INTEGER NOT NULL  │  │
 │                                  │  │  │  created_at TEXT NOT NULL      │  │
+│                                  │  │  │  read_at TEXT (v6)            │  │
 │                                  │  │  │  INDEX idx_messages_contact    │  │
 │                                  │  │  │  INDEX idx_messages_ts         │  │
 │                                  │  │  └────────────────────────────────┘  │
@@ -582,15 +606,16 @@
 | FeedScreen | Widget | Main feed UI displaying connection and message cards |
 | FeedWired | Widget | Feed orchestration: loads identity, builds initial feed, listens for contact requests and messages; orbit tab pushes OrbitWired via Navigator.push |
 | FeedHeader | Widget | Sticky header with username and ring avatar |
-| FeedNavigationBar | Widget | Bottom glassmorphic nav bar with 3 SVG tabs (feed, orbit, remember); orbit tab triggers Navigator.push instead of tab swap |
-| NavBarButton | Widget | Individual nav bar tab button (active/inactive states) |
+| FeedNavigationBar | Widget | Bottom glassmorphic nav bar with 3 SVG tabs (feed, orbit, remember); orbit tab triggers Navigator.push instead of tab swap; shows total unread badge on feed tab |
+| NavBarButton | Widget | Individual nav bar tab button (active/inactive states) with optional badge overlay |
+| UnreadCountBadge | Widget | Circular count badge for unread messages (shows 99+ max) |
 | ConnectionCard | Widget | Card displaying a contact connection with ring avatar and inline green checkmark badge |
 | MessageFeedCard | Widget | Incoming message card with contact avatar, message preview, and reply button |
 | CheckmarkBurstAnimation | Widget | Animated checkmark with expanding ring burst effect (unused/orphaned) |
 | FeedRouteTransition | Route | Slide-up page transition for feed navigation |
 | **Conversation Feature** | | |
 | ConversationScreen | Widget | Pure UI: letter cards, empty state with breathing glow, compose area |
-| ConversationWired | Widget | Business logic: load messages, optimistic send, listen for incoming, scroll management |
+| ConversationWired | Widget | Business logic: load messages, optimistic send, listen for incoming, scroll management; marks conversation read on load + incoming messages |
 | LetterCard | Widget | Full-width message card with left accent (received) / right accent (sent) and delivery status (sending/sent/delivered/queued/failed) |
 | ComposeArea | Widget | Auto-growing text field with glassmorphic styling and animated send button |
 | EmptyConversationState | Widget | Breathing glow avatar, "Connected!" label, connection date, writing prompt |
@@ -608,10 +633,14 @@
 | OrbitCloseButton | Widget | 36x36 glass circle X button |
 | OrbitHeader | Widget | Right-aligned 44px user RingAvatar |
 | FriendsListHeader | Widget | "Friends" title + My QR / Scan pill buttons (hidden during search) |
-| FriendRow | Widget | Glassmorphic card with contact avatar, name, message count, and last activity |
+| FriendRow | Widget | Glassmorphic card with contact avatar, name, message count, last activity, and unread badge |
 | AnimatedFriendRow | Widget | FriendRow wrapper with staggered slide-up animation (index * 20ms) |
 | OrbitSearchTrigger | Widget | Floating glass pill with search button + close button |
 | OrbitSearchDock | Widget | Bottom-docked search TextField with native keyboard |
+| **Push Notifications Feature** | | |
+| requestPushPermission() | Use Case | Requests notification permission from user |
+| registerPushToken() | Use Case | Registers FCM token with relay server via P2P inbox protocol |
+| firebaseMessagingBackgroundHandler | Service | Firebase background message handler (@pragma entry-point) |
 | **Shared Widgets** | | |
 | AmbientBackground | Widget | Animated green/red glow background |
 | GlassmorphicContainer | Widget | Frosted glass effect container |
@@ -642,10 +671,11 @@
 | handleIncomingChatMessage() | Use Case | Detects v2 encrypted envelope (decrypts via ML-KEM decapsulate + AES-256-GCM) or v1 plaintext, validates sender is contact, detects name changes, persists |
 | loadConversation() | Use Case | Loads all messages for a contact, ordered by timestamp ASC |
 | ChatMessageListener | Service | Monitors chatMessageStream, resolves own ML-KEM secret key for decryption, broadcasts persisted ConversationMessages and contact updates to UI |
+| markConversationRead() | Use Case | Marks all unread messages for a contact as read (sets read_at timestamp) |
 | **Feed Use Cases** | | |
-| loadFeed() | Use Case | Loads initial feed from DB: contacts + latest messages per contact |
+| loadFeed() | Use Case | Loads initial feed from DB: contacts + latest messages per contact + unread counts |
 | **Orbit Use Cases** | | |
-| loadOrbitData() | Use Case | Loads all contacts with message counts from MessageRepository, sorted by messageCount descending; returns List<OrbitFriend> |
+| loadOrbitData() | Use Case | Loads all contacts with message counts + unread counts from MessageRepository, sorted by messageCount descending; returns List<OrbitFriend> |
 | **Core Services** | | |
 | IncomingMessageRouter | Service | Routes P2P messages by envelope type to contactRequestStream, chatMessageStream, unknownStream |
 | **Domain** | | |
@@ -658,20 +688,20 @@
 | ChatMessage | P2P Model | P2P message (from, to, content, timestamp, isIncoming) |
 | FeedItem | Abstract Entity | Base class for feed items (id, timestamp, type) |
 | ConnectionFeedItem | Entity | Feed item for new connections (extends FeedItem) |
-| MessageFeedItem | Entity | Feed item for incoming messages (extends FeedItem, contactPeerId, messageText, messageTime) |
+| MessageFeedItem | Entity | Feed item for incoming messages (extends FeedItem, contactPeerId, messageText, messageTime, unreadCount) |
 | FeedItemType | Enum | Feed item types: connection, message |
-| ConversationMessage | Entity | Message in a conversation (id, contactPeerId, senderPeerId, text, status, isIncoming) |
+| ConversationMessage | Entity | Message in a conversation (id, contactPeerId, senderPeerId, text, status, isIncoming, readAt?) |
 | MessagePayload | Wire Model | Chat message envelope: v1 plaintext `{ "type": "chat_message", "version": "1", "payload": {...} }` or v2 encrypted `{ "type": "chat_message", "version": "2", "senderPeerId": "...", "encrypted": { "kem", "ciphertext", "nonce" } }` |
-| OrbitFriend | Composite Model | ContactModel + messageCount (int) + lastActivity (String) + lastMessageTimestamp (DateTime?); used by Orbit feature for ranking friends by conversation activity |
+| OrbitFriend | Composite Model | ContactModel + messageCount (int) + lastActivity (String) + lastMessageTimestamp (DateTime?) + unreadCount (int, default 0); used by Orbit feature for ranking friends by conversation activity |
 | IdentityRepository | Interface + Impl | Abstracts identity persistence; IdentityRepositoryImpl takes SecureKeyStore, reads secrets from secure storage (falls back to DB for pre-migration), writes secrets only to secure storage |
 | ContactRepository | Interface + Impl | Abstracts contact persistence (add, get, getAll, delete, exists, count) |
 | ContactRequestRepository | Interface + Impl | Abstracts request persistence (add, get, getPending, updateStatus, delete, exists) |
-| MessageRepository | Interface + Impl | Abstracts message persistence (save, getForContact, getLatest, updateStatus, exists, getMessageCountForContact) |
+| MessageRepository | Interface + Impl | Abstracts message persistence (save, getForContact, getLatest, updateStatus, exists, getMessageCountForContact, markConversationAsRead, getUnreadCountForContact, getTotalUnreadCount) |
 | **Core** | | |
 | WebViewJsBridge | Bridge Client | Sends requests to JS runtime, manages event handlers |
-| P2PBridgeClient | Bridge Client | P2P-specific bridge calls (start, stop, status, register, discover, dial, disconnect, send, inbox store/retrieve) |
+| P2PBridgeClient | Bridge Client | P2P-specific bridge calls (start, stop, status, register, discover, dial, disconnect, send, inbox store/retrieve, inbox register token) |
 | JsBridgeClient | Bridge Helpers | Identity + signing + ML-KEM encryption/decryption bridge helper functions |
-| P2PService / P2PServiceImpl | Service | Reactive P2P service with state and message streams, with offline inbox fallback |
+| P2PService / P2PServiceImpl | Service | Reactive P2P service with state and message streams, with offline inbox fallback + registerInboxToken for FCM push notifications |
 | IncomingMessageRouter | Service | Routes P2P messages by JSON envelope type to typed broadcast streams |
 | RingAvatarGenerator | Utility | Deterministic avatar from peerId via DJB2 hash |
 | KeyConversion | Utility | base64ToHex, hexToBase64, bytesToHex, hexToBytes |
@@ -699,7 +729,7 @@
 | Crypto Module (crypto/) | ML-KEM-768 keygen, message encrypt (KEM encapsulate + AES-256-GCM), message decrypt (KEM decapsulate + AES-256-GCM) using @noble/post-quantum |
 | Bridge Commands | `mlkem.keygen` → ML-KEM keypair, `message.encrypt` → {kem, ciphertext, nonce}, `message.decrypt` → {plaintext} |
 | P2P Module | libp2p node management, rendezvous, relay, messaging |
-| Inbox Module | Offline message store/retrieve via relay server inbox protocol (`/mknoon/inbox/1.0.0`) |
+| Inbox Module | Offline message store/retrieve/register token via relay server inbox protocol (`/mknoon/inbox/1.0.0`) |
 
 ---
 
@@ -954,6 +984,7 @@
   │ + dialPeer(peerId, {addrs}): bool   │
   │ + storeInInbox(peerId, msg): bool  │
   │ + retrieveInbox(): List<Map>       │
+  │ + registerInboxToken(token, platform): bool │
   │ + dispose(): void                   │
   └──────────────────┬──────────────────┘
                      │ implements
@@ -973,6 +1004,7 @@
   │ + dialPeer(peerId, {addrs}): bool   │
   │ + storeInInbox(peerId, msg): bool  │
   │ + retrieveInbox(): List<Map>       │
+  │ + registerInboxToken(token, platform): bool │
   │ + dispose(): void                   │
   │ - _onMessageReceived(Map)           │
   │ - _onPeerConnected(Map)             │
@@ -1070,6 +1102,7 @@
   │ + messageId: String                 │
   │ + messageText: String               │
   │ + messageTime: String               │
+  │ + unreadCount: int                  │
   └─────────────────────────────────────┘
 
   ┌─────────────────────────────────────┐
@@ -1079,12 +1112,14 @@
   │ + contactRepository: ContactRepo    │
   │ + contactRequestRepository: CRRepo  │
   │ + contactRequestListener: Listener  │
+  │ + messageRepository: MessageRepo    │
   │ + bridge: JsBridge                  │
   │ + p2pService: P2PService            │
   │ + initialContact: ContactModel      │
   ├─────────────────────────────────────┤
   │ - _identity: IdentityModel?         │
   │ - _feedItems: List<FeedItem>        │
+  │ - _totalUnreadCount: int            │
   │ - _requestSubscription: StreamSub   │
   ├─────────────────────────────────────┤
   │ + _loadIdentity()                   │
@@ -1107,6 +1142,7 @@
   │ + messageCount: int                 │
   │ + lastActivity: String              │
   │ + lastMessageTimestamp: DateTime?   │
+  │ + unreadCount: int (default 0)     │
   └─────────────────────────────────────┘
 
   ┌─────────────────────────────────────┐
@@ -1157,6 +1193,7 @@
   │    'queued'|'failed')              │
   │ + isIncoming: bool                  │
   │ + createdAt: String                 │
+  │ + readAt: String?                   │
   ├─────────────────────────────────────┤
   │ + fromMap(Map): ConversationMessage │
   │ + toMap(): Map                      │
@@ -1196,6 +1233,11 @@
   │ + messageExists(id): bool           │
   │ + getMessageCountForContact(        │
   │ │   contactPeerId): Future<int>     │
+  │ + markConversationAsRead(           │
+  │ │   contactPeerId): Future<int>     │
+  │ + getUnreadCountForContact(         │
+  │ │   contactPeerId): Future<int>     │
+  │ + getTotalUnreadCount(): Future<int>│
   └──────────────────┬──────────────────┘
                      │ implements
                      ▼
@@ -1208,6 +1250,9 @@
   │ - dbUpdateMessageStatus: Function   │
   │ - dbLoadMessage: Function           │
   │ - dbCountMessagesForContact: Fn     │
+  │ - dbMarkConversationAsRead: Function│
+  │ - dbCountUnreadForContact: Function │
+  │ - dbCountTotalUnread: Function      │
   └─────────────────────────────────────┘
 
 
@@ -1534,6 +1579,11 @@
     contactPeerId: String
   ): Future<List<ConversationMessage>>
 
+  markConversationRead(
+    messageRepo: MessageRepository,
+    contactPeerId: String
+  ): Future<int>
+
 
   FLUTTER USE CASES - FEED:
   ─────────────────────────
@@ -1541,6 +1591,7 @@
     contactRepo: ContactRepository,
     messageRepo: MessageRepository
   ): Future<List<FeedItem>>
+  // Also queries unread counts per contact for MessageFeedItems
 
 
   FLUTTER USE CASES - ORBIT:
@@ -1549,8 +1600,17 @@
     contactRepo: ContactRepository,
     messageRepo: MessageRepository
   ): Future<List<OrbitFriend>>
-  // Loads all contacts, queries message count per contact,
+  // Loads all contacts, queries message count + unread count per contact,
   // sorts by messageCount descending
+
+
+  FLUTTER USE CASES - PUSH NOTIFICATIONS:
+  ────────────────────────────────────────
+  requestPushPermission(): Future<bool>
+
+  registerPushToken(
+    p2pService: P2PService
+  ): Future<void>
 
 
   FLUTTER USE CASES - CONTACTS:
@@ -1612,6 +1672,7 @@
   callP2PMessageSend(bridge, peerId, message, {timeoutMs}): Future<Map>
   callP2PInboxStore(bridge, {toPeerId, message}): Future<Map>
   callP2PInboxRetrieve(bridge): Future<Map>
+  callP2PInboxRegisterToken(bridge, {token, platform}): Future<Map>
 
 
   FLUTTER DB HELPERS - IDENTITY:
@@ -1650,7 +1711,11 @@
   dbLoadMessage(db: Database, id: String): Future<Map?>
   dbGetMessageCount(db: Database): Future<int>
   dbCountMessagesForContact(db: Database, contactPeerId: String): Future<int>
+  dbMarkConversationAsRead(db: Database, contactPeerId: String): Future<int>
+  dbCountUnreadForContact(db: Database, contactPeerId: String): Future<int>
+  dbCountTotalUnread(db: Database): Future<int>
   runMessagesTableMigration(db: Database): Future<void>   ← creates messages table + indexes
+  runReadAtColumnMigration(db: Database): Future<void>    ← adds read_at TEXT to messages (v6)
 
 
   FLUTTER UTILS:
@@ -1696,6 +1761,7 @@
   handleBridgeMessage(message: {cmd, requestId, payload}): Promise<any>
   storeInInbox(node, relayPeerId, toPeerId, message, metadata): Promise<InboxResponse>
   retrieveFromInbox(node, relayPeerId, options): Promise<InboxResponse>
+  registerInboxToken(node, relayPeerId, {token, platform}): Promise<InboxResponse>
 
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -1951,7 +2017,7 @@
 
 ```
 lib/
-├── main.dart                                    # App entry point, SecureKeyStore + encrypted DB setup, secret migration, DI
+├── main.dart                                    # App entry point, Firebase init, SecureKeyStore + encrypted DB setup (v6), secret migration, DI
 ├── smoke_test_main.dart                         # Smoke test entry point
 ├── smoke_test_restore.dart                      # Smoke test for identity restore
 ├── smoke_test_messages.dart                     # Smoke test for messages DB layer
@@ -1970,7 +2036,8 @@ lib/
 │   │   │   ├── 002_messages_table.dart         # Schema v2 (messages table + indexes)
 │   │   │   ├── 003_mlkem_keys.dart             # Schema v3 (ML-KEM key columns on identity, contacts, contact_requests)
 │   │   │   ├── 004_nullify_secret_columns.dart # Schema v4 (makes private_key, mnemonic12 nullable)
-│   │   │   └── 005_secret_null_checks.dart     # Schema v5 (CHECK constraints + avatar_blob BLOB)
+│   │   │   ├── 005_secret_null_checks.dart     # Schema v5 (CHECK constraints + avatar_blob BLOB)
+│   │   │   └── 006_read_at_column.dart         # Schema v6 (read_at TEXT on messages table)
 │   │   └── helpers/
 │   │       ├── identity_db_helpers.dart        # Identity DB CRUD
 │   │       ├── contacts_db_helpers.dart        # Contacts DB CRUD
@@ -2027,6 +2094,7 @@ lib/
 │   │       │   ├── nav_bar_button.dart         # Individual nav button widget
 │   │       │   ├── connection_card.dart        # Contact connection card
 │   │       │   ├── message_feed_card.dart     # Incoming message card with reply
+│   │       │   ├── unread_count_badge.dart   # Circular unread count badge
 │   │       │   └── checkmark_burst_animation.dart  # Animated checkmark
 │   │       └── navigation/
 │   │           └── feed_route_transition.dart   # Slide-up route transition
@@ -2043,6 +2111,7 @@ lib/
 │   │   │   ├── send_chat_message_use_case.dart # Send: encrypt (v2) or plaintext (v1), 3x retry, inbox fallback
 │   │   │   ├── handle_incoming_chat_message_use_case.dart  # Receive: decrypt v2 or parse v1
 │   │   │   ├── load_conversation_use_case.dart # Load messages for contact
+│   │   │   ├── mark_conversation_read_use_case.dart # Mark unread messages as read
 │   │   │   └── chat_message_listener.dart      # Background chat listener + ML-KEM decryption
 │   │   └── presentation/
 │   │       ├── screens/
@@ -2080,6 +2149,11 @@ lib/
 │   │           ├── animated_friend_row.dart        # Staggered slide-up wrapper (index * 20ms)
 │   │           ├── orbit_search_trigger.dart       # Floating glass pill search button
 │   │           └── orbit_search_dock.dart          # Bottom-docked search TextField
+│   │
+│   ├── push/
+│   │   ├── background_message_handler.dart         # @pragma('vm:entry-point') Firebase handler
+│   │   ├── request_push_permission.dart            # Requests notification permission
+│   │   └── register_push_token.dart                # Registers FCM token via P2P inbox protocol
 │   │
 │   ├── identity/
 │   │   ├── domain/
@@ -2715,6 +2789,8 @@ assets/
 | image_picker | Camera/gallery image selection |
 | path_provider | App documents directory access |
 | cupertino_icons | iOS-style icons |
+| firebase_core | Firebase initialization |
+| firebase_messaging | Push notifications (FCM) |
 
 ### Flutter Dev Packages
 
@@ -2753,10 +2829,16 @@ The application initialization sequence is defined in `lib/main.dart`. Understan
     ├─► WidgetsFlutterBinding.ensureInitialized()
     │       Ensures Flutter engine is ready before async operations
     │
+    ├─► Firebase.initializeApp()
+    │       Initializes Firebase SDK for push notifications
+    │
+    ├─► FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler)
+    │       Registers background message handler (@pragma entry-point)
+    │
     ├─► SecureKeyStore instantiation (FlutterSecureKeyStore)
     │       iOS Keychain (device-bound) / Android EncryptedSharedPreferences
     │
-    ├─► openEncryptedDatabase('identity.db', version: 5, secureKeyStore)
+    ├─► openEncryptedDatabase('identity.db', version: 6, secureKeyStore)
     │       │
     │       ├─► Read/generate db_encryption_key from SecureKeyStore
     │       │       Random 256-bit key, stored as base64 in secure storage
@@ -2777,10 +2859,13 @@ The application initialization sequence is defined in `lib/main.dart`. Understan
     │       │       ├─► runNullifySecretColumnsMigration(db)
     │       │       │       Makes private_key, mnemonic12 nullable (v4)
     │       │       │
-    │       │       └─► runSecretNullChecksMigration(db)
-    │       │               CHECK constraints + avatar_blob BLOB column (v5)
+    │       │       ├─► runSecretNullChecksMigration(db)
+    │       │       │       CHECK constraints + avatar_blob BLOB column (v5)
+    │       │       │
+    │       │       └─► runReadAtColumnMigration(db)
+    │       │               Adds read_at TEXT column to messages (v6)
     │       │
-    │       └─► onUpgrade callback (v1→v2→v3→v4→v5)
+    │       └─► onUpgrade callback (v1→v2→v3→v4→v5→v6)
     │               │
     │               ├─► runMessagesTableMigration(db)                (v1 → v2)
     │               │       Creates messages table for existing installs
@@ -2791,9 +2876,12 @@ The application initialization sequence is defined in `lib/main.dart`. Understan
     │               ├─► runNullifySecretColumnsMigration(db)         (v3 → v4)
     │               │       Makes private_key, mnemonic12 nullable
     │               │
-    │               └─► runSecretNullChecksMigration(db)             (v4 → v5)
-    │                       CHECK constraints enforcing secret cols NULL
-    │                       + avatar_blob BLOB column
+    │               ├─► runSecretNullChecksMigration(db)             (v4 → v5)
+    │               │       CHECK constraints enforcing secret cols NULL
+    │               │       + avatar_blob BLOB column
+    │               │
+    │               └─► runReadAtColumnMigration(db)                (v5 → v6)
+    │                       Adds read_at TEXT column to messages table
     │
     ├─► migrateSecretsToSecureStorage(db, secureKeyStore)
     │       One-time migration: reads secrets from DB, writes to SecureKeyStore
@@ -2808,7 +2896,7 @@ The application initialization sequence is defined in `lib/main.dart`. Understan
     │       │
     │       ├─► ContactRequestRepositoryImpl (6 db helper functions)
     │       │
-    │       └─► MessageRepositoryImpl (6 db helper functions)
+    │       └─► MessageRepositoryImpl (9 db helper functions)
     │
     ├─► WebViewJsBridge instantiation + initialize()
     │       │
@@ -2852,6 +2940,13 @@ The application initialization sequence is defined in `lib/main.dart`. Understan
                     │       │
                     │       └─► Subscribes to ContactRequestListener.requestStream
                     │
+                    ├─► _registerPushToken() (after P2P node starts successfully)
+                    │       │
+                    │       ├─► requestPushPermission()
+                    │       │
+                    │       └─► registerPushToken(p2pService)
+                    │               Registers FCM token with relay server
+                    │
                     └─► [needsIdentity] → Navigate to IdentityChoiceWired
 ```
 
@@ -2859,7 +2954,7 @@ The application initialization sequence is defined in `lib/main.dart`. Understan
 
 | File | Responsibility |
 |------|----------------|
-| `lib/main.dart` | Entry point, SecureKeyStore + encrypted DB setup, secret migration, repository + service + listener DI |
+| `lib/main.dart` | Entry point, Firebase init, SecureKeyStore + encrypted DB setup (v6), secret migration, repository + service + listener DI |
 | `lib/core/secure_storage/secure_key_store.dart` | SecureKeyStore abstract interface |
 | `lib/core/secure_storage/flutter_secure_key_store.dart` | FlutterSecureKeyStore production impl (iOS Keychain / Android EncryptedSharedPreferences) |
 | `lib/core/database/encrypted_db_opener.dart` | Opens SQLCipher DB with key from secure storage; handles plaintext-to-encrypted migration |
@@ -2869,13 +2964,17 @@ The application initialization sequence is defined in `lib/main.dart`. Understan
 | `lib/core/database/migrations/003_mlkem_keys.dart` | Schema v3 migration (ML-KEM key columns on identity, contacts, contact_requests) |
 | `lib/core/database/migrations/004_nullify_secret_columns.dart` | Schema v4 migration (makes private_key, mnemonic12 nullable) |
 | `lib/core/database/migrations/005_secret_null_checks.dart` | Schema v5 migration (CHECK constraints enforcing secret columns NULL + avatar_blob BLOB) |
+| `lib/core/database/migrations/006_read_at_column.dart` | Schema v6 migration (read_at TEXT column on messages table) |
 | `lib/core/services/incoming_message_router.dart` | P2P message routing by type |
 | `lib/core/bridge/webview_js_bridge.dart` | JS runtime initialization + event handlers |
 | `lib/core/services/p2p_service_impl.dart` | P2P service initialization |
 | `lib/features/contact_request/application/contact_request_listener.dart` | Background contact request listener startup |
 | `lib/features/conversation/application/chat_message_listener.dart` | Background chat message listener startup |
-| `lib/features/identity/presentation/startup_router.dart` | Route decision logic |
+| `lib/features/identity/presentation/startup_router.dart` | Route decision logic + push token registration |
 | `lib/features/identity/application/startup_decision.dart` | Business logic for routing |
+| `lib/features/push/background_message_handler.dart` | Firebase background message handler |
+| `lib/features/push/request_push_permission.dart` | Push notification permission request |
+| `lib/features/push/register_push_token.dart` | FCM token registration via P2P inbox protocol |
 
 ### Adding New Initialization Steps
 
@@ -2883,7 +2982,7 @@ To add a new initialization step:
 1. Add async initialization code in `main()` before `runApp()`
 2. Inject dependencies into `MyApp` constructor
 3. Pass dependencies through `StartupRouter` to child widgets
-4. For new migrations, create `006_*.dart` and update `openEncryptedDatabase` version (currently v5)
+4. For new migrations, create `007_*.dart` and update `openEncryptedDatabase` version (currently v6)
 5. For new P2P event handlers, register on `WebViewJsBridge` in `P2PServiceImpl`
 6. For new secrets, add read/write methods to `SecureKeyStore` and update `FlutterSecureKeyStore`
 
@@ -2931,6 +3030,7 @@ The application has **active P2P networking** via the JavaScript runtime. Identi
                          │   │  • Chat message exchange    │   │
                          │   │  • Offline inbox fallback   │   │
                          │   │  • Inbox drain on startup   │   │
+                         │   │  • Push token registration  │   │
                          │   └──────────────┬──────────────┘   │
                          │                  │                   │
                          └──────────────────┼───────────────────┘
@@ -3049,6 +3149,7 @@ Each message gets a fresh KEM encapsulation for forward secrecy. Falls back to v
 | Service | URL | Status | Purpose |
 |---------|-----|--------|---------|
 | Rendezvous/Relay Server | `mknoun.xyz:4001` | Active | P2P peer discovery and circuit relay |
+| Firebase Cloud Messaging | Google FCM | Active | Push notifications for offline inbox messages |
 
 ### JS Bridge Command Registry
 
@@ -3060,4 +3161,5 @@ Each message gets a fresh KEM encapsulation for forward secrecy. Falls back to v
 | `mlkem.keygen` | Crypto module | Generate ML-KEM-768 keypair (publicKey + secretKey) |
 | `message.encrypt` | Crypto module | Encrypt message: ML-KEM-768 encapsulate + AES-256-GCM -> {kem, ciphertext, nonce} |
 | `message.decrypt` | Crypto module | Decrypt message: ML-KEM-768 decapsulate + AES-256-GCM -> {plaintext} |
+| `inbox:register_token` | Inbox module | Register FCM device token for push notifications |
 | P2P commands | P2P module | Node management, peer discovery, messaging |
