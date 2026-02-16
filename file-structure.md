@@ -24,7 +24,7 @@ flutter_app/
 │   │
 │   ├── core/
 │   │   ├── bridge/
-│   │   │   ├── js_bridge_client.dart           # JsBridge interface + identity/signing helpers
+│   │   │   ├── js_bridge_client.dart           # JsBridge interface + identity/signing/encryption helpers
 │   │   │   ├── webview_js_bridge.dart          # WebView implementation + event handlers
 │   │   │   └── p2p_bridge_client.dart          # P2P-specific bridge calls + inbox store/retrieve
 │   │   │
@@ -34,7 +34,8 @@ flutter_app/
 │   │   ├── database/
 │   │   │   ├── migrations/
 │   │   │   │   ├── 001_identity_table.dart     # Schema v1 (identity, contacts, contact_requests)
-│   │   │   │   └── 002_messages_table.dart     # Schema v2 (messages table + indexes)
+│   │   │   │   ├── 002_messages_table.dart     # Schema v2 (messages table + indexes)
+│   │   │   │   └── 003_mlkem_keys.dart         # Schema v3 (ML-KEM key columns on identity, contacts, contact_requests)
 │   │   │   └── helpers/
 │   │   │       ├── identity_db_helpers.dart     # Identity table CRUD
 │   │   │       ├── contacts_db_helpers.dart     # Contacts table CRUD
@@ -216,27 +217,32 @@ flutter_app/
 │   ├── build.mjs                                          # esbuild config (core_lib.js)
 │   ├── build.sh                                           # Shell build script (npm install + build)
 │   ├── tsconfig.json                                      # TypeScript compiler options
-│   ├── jest.config.js                                     # Jest test runner config
+│   ├── jest.config.cjs                                    # Jest test runner config (CommonJS for ESM package)
 │   ├── test_identity.js                                   # Standalone Node.js identity test
 │   ├── shims/
 │   │   └── buffer-shim.js                                 # Node.js Buffer polyfill
 │   └── src/
 │       ├── types/
-│       │   ├── identity.ts                                # IdentityJson interface
+│       │   ├── identity.ts                                # IdentityJson interface (incl. mlKemPublicKey, mlKemSecretKey)
 │       │   └── qr_payload.ts                              # UnsignedQRPayload, SignedQRPayload
 │       ├── identity/
-│       │   ├── generate.ts                                # generateIdentity()
-│       │   └── restore.ts                                 # restoreIdentityFromMnemonic()
+│       │   ├── generate.ts                                # generateIdentity() (Ed25519 + ML-KEM-768)
+│       │   └── restore.ts                                 # restoreIdentityFromMnemonic() (Ed25519 + fresh ML-KEM-768)
+│       ├── crypto/
+│       │   ├── keygen_mlkem.ts                            # ML-KEM-768 keypair generation
+│       │   ├── encrypt_message.ts                         # ML-KEM encapsulate + AES-256-GCM encrypt
+│       │   └── decrypt_message.ts                         # ML-KEM decapsulate + AES-256-GCM decrypt
 │       ├── signing/
 │       │   └── sign_payload.ts                            # signPayload() using @noble/ed25519
 │       ├── bridge/
-│       │   ├── entry.ts                                   # WebView entry point
+│       │   ├── entry.ts                                   # WebView entry point (incl. mlkem.keygen, message.encrypt/decrypt)
 │       │   └── handlers.ts                                # Command registry (identity.*, payload.sign)
 │       ├── utils/
 │       │   ├── flow_events.ts                             # JS-side flow event emitter
 │       │   └── base64.ts                                  # Browser-compatible base64
 │       └── __test__/
-│           └── identity.test.ts                           # Jest unit tests for identity gen/restore
+│           ├── identity.test.ts                           # Jest unit tests for identity gen/restore
+│           └── crypto.test.ts                             # Jest unit tests for ML-KEM keygen, encrypt/decrypt
 │
 ├── integration_test/
 │   └── smoke_test.dart                                    # Integration smoke test
@@ -259,7 +265,8 @@ flutter_app/
 │       │       └── widgets/
 │       │           └── message_feed_card_test.dart         # Message feed card widget tests
 │       └── conversation/
-│           ├── two_user_message_exchange_test.dart         # Integration: full send/receive flow
+│           ├── integration/
+│           │   └── two_user_message_exchange_test.dart    # Integration: full send/receive flow
 │           ├── application/
 │           │   ├── send_chat_message_use_case_test.dart
 │           │   ├── handle_incoming_chat_message_use_case_test.dart
@@ -295,14 +302,14 @@ flutter_app/
 
 | Component | File(s) | Description |
 |-----------|---------|-------------|
-| Identity model | `identity_model.dart` | Immutable data class (peerId, keys, mnemonic, username, avatarPath) |
+| Identity model | `identity_model.dart` | Immutable data class (peerId, keys, mnemonic, username, avatarPath, mlKemPublicKey?, mlKemSecretKey?) |
 | Identity repository | `identity_repository.dart`, `identity_repository_impl.dart` | Load/save identity |
 | Generate identity | `generate_identity_use_case.dart` | JS bridge call + DB save |
 | Restore identity | `restore_identity_use_case.dart` | Validate mnemonic + JS bridge + DB save |
 | Startup routing | `startup_decision.dart`, `startup_router.dart` | Check identity + contacts → route to feed, home, or onboarding |
 | DB migration | `001_identity_table.dart` | Creates identity, contacts, contact_requests tables |
 | DB helpers | `identity_db_helpers.dart` | Identity table CRUD |
-| Bridge | `js_bridge_client.dart`, `webview_js_bridge.dart` | Flutter ↔ JS communication |
+| Bridge | `js_bridge_client.dart`, `webview_js_bridge.dart` | Flutter ↔ JS communication (identity, signing, ML-KEM encryption/decryption) |
 
 ### QR Code (M2)
 
@@ -339,7 +346,7 @@ flutter_app/
 
 | Component | File(s) | Description |
 |-----------|---------|-------------|
-| Contact model | `contact_model.dart` | Contact data (from QR scan or P2P) |
+| Contact model | `contact_model.dart` | Contact data (from QR scan or P2P, incl. mlKemPublicKey?) |
 | Contact repository | `contact_repository.dart`, `contact_repository_impl.dart` | CRUD for contacts |
 | Add contact | `add_contact_use_case.dart` | Add with duplicate check |
 | DB helpers | `contacts_db_helpers.dart` | Contacts table CRUD |
@@ -348,7 +355,7 @@ flutter_app/
 
 | Component | File(s) | Description |
 |-----------|---------|-------------|
-| Request model | `contact_request_model.dart` | Request data + status enum |
+| Request model | `contact_request_model.dart` | Request data + status enum (incl. mlKemPublicKey?) |
 | Request repository | `contact_request_repository.dart`, `contact_request_repository_impl.dart` | CRUD for requests |
 | Send request | `send_contact_request_use_case.dart` | Build, sign, discover, dial, send (3x retry) |
 | Accept request | `accept_contact_request_use_case.dart` | Convert request → contact |
@@ -364,12 +371,12 @@ flutter_app/
 | Component | File(s) | Description |
 |-----------|---------|-------------|
 | Message model | `conversation_message.dart` | ConversationMessage (id, text, status, isIncoming, timestamps) |
-| Wire payload | `message_payload.dart` | MessagePayload envelope (chat_message type, version 1) |
+| Wire payload | `message_payload.dart` | MessagePayload envelope: v1 plaintext or v2 encrypted (ML-KEM-768 + AES-256-GCM) |
 | Message repository | `message_repository.dart`, `message_repository_impl.dart` | Save, load, update status for messages |
-| Send message | `send_chat_message_use_case.dart` | Build payload, discover + dial peer, 3x retry, offline inbox fallback, optimistic persist |
-| Handle incoming | `handle_incoming_chat_message_use_case.dart` | Parse envelope, validate sender, detect name changes, persist |
+| Send message | `send_chat_message_use_case.dart` | Build payload, encrypt with ML-KEM if available (v2) or plaintext (v1), discover + dial peer, 3x retry, offline inbox fallback, optimistic persist |
+| Handle incoming | `handle_incoming_chat_message_use_case.dart` | Detect v2 encrypted envelope and decrypt, or parse v1 plaintext, validate sender, detect name changes, persist |
 | Load conversation | `load_conversation_use_case.dart` | Load all messages for a contact by timestamp ASC |
-| Chat listener | `chat_message_listener.dart` | Background listener on chatMessageStream, broadcasts to UI |
+| Chat listener | `chat_message_listener.dart` | Background listener on chatMessageStream, resolves ML-KEM secret key for decryption, broadcasts to UI |
 | Conversation screen | `conversation_screen.dart` | Pure UI: header, letter cards, empty state, compose area |
 | Conversation logic | `conversation_wired.dart` | Business logic: load messages, optimistic send, listen for incoming |
 | Letter card | `letter_card.dart` | Full-width card with left accent (received) / right accent (sent), supports queued/delivered/failed status |
@@ -380,6 +387,7 @@ flutter_app/
 | Date separator | `date_separator.dart` | Date divider between letter cards on different days |
 | Route transition | `conversation_route_transition.dart` | Slide-up transition (420ms easeOutCubic) |
 | DB migration | `002_messages_table.dart` | Creates messages table with contact + timestamp indexes |
+| DB migration | `003_mlkem_keys.dart` | Adds ml_kem_public_key, ml_kem_secret_key columns to identity; ml_kem_public_key to contacts and contact_requests |
 | DB helpers | `messages_db_helpers.dart` | Messages table CRUD (insert, load, update status, count) |
 
 ### Home / First-Time Experience
@@ -435,12 +443,12 @@ flutter_app/
 
 | Table | Primary Key | Migration | Description |
 |-------|-------------|-----------|-------------|
-| `identity` | `id` (always 1) | v1 (`001`) | Single-row identity storage |
-| `contacts` | `peer_id` | v1 (`001`) | Contacts added via QR scanning |
-| `contact_requests` | `peer_id` | v1 (`001`) | Incoming P2P contact requests |
+| `identity` | `id` (always 1) | v1 (`001`), v3 (`003`: ml_kem_public_key, ml_kem_secret_key) | Single-row identity storage |
+| `contacts` | `peer_id` | v1 (`001`), v3 (`003`: ml_kem_public_key) | Contacts added via QR scanning |
+| `contact_requests` | `peer_id` | v1 (`001`), v3 (`003`: ml_kem_public_key) | Incoming P2P contact requests |
 | `messages` | `id` (UUID) | v2 (`002`) | Conversation messages (indexes on contact_peer_id, timestamp) |
 
-Database version: **2** (set in `main.dart` `openDatabase` call).
+Database version: **3** (set in `main.dart` `openDatabase` call).
 
 ---
 

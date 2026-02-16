@@ -13,6 +13,7 @@ import { peerIdFromPrivateKey } from '@libp2p/peer-id';
 import { IdentityJson } from '../types/identity';
 import { emitFlowEvent } from '../utils/flow_events';
 import { uint8ArrayToBase64 } from '../utils/base64';
+import { generateMlKemKeyPair } from '../crypto/keygen_mlkem';
 
 /**
  * Generates a new identity with fresh cryptographic credentials.
@@ -68,12 +69,17 @@ export async function generateIdentity(): Promise<IdentityJson> {
     // 6. Set timestamps (same for both on creation)
     const now = new Date().toISOString();
 
-    // 7. Build the complete identity object
+    // 7. Generate ML-KEM-768 keypair for post-quantum message encryption
+    const mlKemKeys = generateMlKemKeyPair();
+
+    // 8. Build the complete identity object
     const identity: IdentityJson = {
       peerId: peerId.toString(),
       publicKey: publicKeyBase64,
       privateKey: privateKeyBase64,
       mnemonic12: mnemonic,
+      mlKemPublicKey: mlKemKeys.publicKey,
+      mlKemSecretKey: mlKemKeys.secretKey,
       createdAt: now,
       updatedAt: now,
     };

@@ -23,6 +23,9 @@ class ContactModel {
   /// Optional path to a custom avatar image.
   final String? avatarPath;
 
+  /// Base64-encoded ML-KEM-768 public key for post-quantum encryption.
+  final String? mlKemPublicKey;
+
   const ContactModel({
     required this.peerId,
     required this.publicKey,
@@ -31,6 +34,7 @@ class ContactModel {
     required this.signature,
     required this.scannedAt,
     this.avatarPath,
+    this.mlKemPublicKey,
   });
 
   /// Creates a ContactModel from a QR payload JSON map.
@@ -44,6 +48,7 @@ class ContactModel {
       username: json['un'] as String? ?? 'Unknown',
       signature: json['sig'] as String,
       scannedAt: DateTime.now().toUtc().toIso8601String(),
+      mlKemPublicKey: json['mlkem'] as String?,
     );
   }
 
@@ -57,6 +62,7 @@ class ContactModel {
       signature: map['signature'] as String,
       scannedAt: map['scanned_at'] as String,
       avatarPath: map['avatar_path'] as String?,
+      mlKemPublicKey: map['ml_kem_public_key'] as String?,
     );
   }
 
@@ -70,6 +76,7 @@ class ContactModel {
       'signature': signature,
       'scanned_at': scannedAt,
       'avatar_path': avatarPath,
+      'ml_kem_public_key': mlKemPublicKey,
     };
   }
 
@@ -82,6 +89,7 @@ class ContactModel {
     String? signature,
     String? scannedAt,
     String? avatarPath,
+    String? mlKemPublicKey,
   }) {
     return ContactModel(
       peerId: peerId ?? this.peerId,
@@ -91,6 +99,7 @@ class ContactModel {
       signature: signature ?? this.signature,
       scannedAt: scannedAt ?? this.scannedAt,
       avatarPath: avatarPath ?? this.avatarPath,
+      mlKemPublicKey: mlKemPublicKey ?? this.mlKemPublicKey,
     );
   }
 

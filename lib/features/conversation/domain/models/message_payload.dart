@@ -81,6 +81,96 @@ class MessagePayload {
     return jsonEncode(envelope);
   }
 
+  /// Builds a v2 encrypted envelope JSON string.
+  ///
+  /// The envelope contains the KEM ciphertext, AES ciphertext, and nonce
+  /// alongside the sender's peer ID (cleartext for routing).
+  static String buildEncryptedEnvelope({
+    required String senderPeerId,
+    required String kem,
+    required String ciphertext,
+    required String nonce,
+  }) {
+    final envelope = {
+      'type': 'chat_message',
+      'version': '2',
+      'senderPeerId': senderPeerId,
+      'encrypted': {
+        'kem': kem,
+        'ciphertext': ciphertext,
+        'nonce': nonce,
+      },
+    };
+    return jsonEncode(envelope);
+  }
+
+  /// Attempts to parse a JSON string as a v2 encrypted envelope.
+  ///
+  /// Returns the parsed envelope map if it's a v2 chat_message with
+  /// encrypted block, or null otherwise.
+  static Map<String, dynamic>? parseEncryptedEnvelope(String jsonString) {
+    try {
+      final json = jsonDecode(jsonString) as Map<String, dynamic>;
+      if (json['type'] != 'chat_message') return null;
+      if (json['version'] != '2') return null;
+      final encrypted = json['encrypted'] as Map<String, dynamic>?;
+      if (encrypted == null) return null;
+      if (encrypted['kem'] == null ||
+          encrypted['ciphertext'] == null ||
+          encrypted['nonce'] == null) {
+        return null;
+      }
+      return json;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Creates a MessagePayload from decrypted inner JSON string.
+  ///
+  /// The inner JSON contains: id, text, senderPeerId, senderUsername, timestamp.
+  static MessagePayload? fromDecryptedJson(String innerJson) {
+    try {
+      final payload = jsonDecode(innerJson) as Map<String, dynamic>;
+      final id = payload['id'] as String?;
+      final text = payload['text'] as String?;
+      final senderPeerId = payload['senderPeerId'] as String?;
+      final senderUsername = payload['senderUsername'] as String?;
+      final timestamp = payload['timestamp'] as String?;
+
+      if (id == null ||
+          text == null ||
+          senderPeerId == null ||
+          senderUsername == null ||
+          timestamp == null) {
+        return null;
+      }
+
+      return MessagePayload(
+        id: id,
+        text: text,
+        senderPeerId: senderPeerId,
+        senderUsername: senderUsername,
+        timestamp: timestamp,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Serializes only the inner payload fields (without envelope wrapper).
+  ///
+  /// Used as plaintext input for encryption in v2 flow.
+  String toInnerJson() {
+    return jsonEncode({
+      'id': id,
+      'text': text,
+      'senderPeerId': senderPeerId,
+      'senderUsername': senderUsername,
+      'timestamp': timestamp,
+    });
+  }
+
   /// Converts this wire-format payload to a local ConversationMessage.
   ///
   /// [contactPeerId] is the peer ID of the contact the conversation is with.

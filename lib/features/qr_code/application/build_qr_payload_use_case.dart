@@ -55,6 +55,7 @@ Future<(BuildQRPayloadResult, String?)> buildQRPayload({
   // Step 5: Build unsigned payload with sorted keys
   final timestamp = DateTime.now().toUtc().toIso8601String();
   final unsignedPayload = SplayTreeMap<String, dynamic>.from({
+    if (identity.mlKemPublicKey != null) 'mlkem': identity.mlKemPublicKey,
     'ns': identity.peerId,
     'pk': identity.publicKey,
     'rv': RENDEZVOUS_ADDRESS,

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
+import 'package:flutter_app/core/bridge/js_bridge_client.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
@@ -23,6 +24,8 @@ typedef SendChatMessageFn =
       required String senderUsername,
       String? messageId,
       String? timestamp,
+      JsBridge? bridge,
+      String? recipientMlKemPublicKey,
     });
 
 /// Wired widget that connects ConversationScreen to business logic.
@@ -35,6 +38,7 @@ class ConversationWired extends StatefulWidget {
   final MessageRepository messageRepo;
   final ChatMessageListener chatMessageListener;
   final P2PService p2pService;
+  final JsBridge? bridge;
   final SendChatMessageFn sendChatMessageFn;
 
   const ConversationWired({
@@ -44,6 +48,7 @@ class ConversationWired extends StatefulWidget {
     required this.messageRepo,
     required this.chatMessageListener,
     required this.p2pService,
+    this.bridge,
     this.sendChatMessageFn = sendChatMessage,
   });
 
@@ -182,6 +187,8 @@ class _ConversationWiredState extends State<ConversationWired> {
       senderUsername: identity.username,
       messageId: optimisticMessage.id,
       timestamp: optimisticMessage.timestamp,
+      bridge: widget.bridge,
+      recipientMlKemPublicKey: _contact.mlKemPublicKey,
     );
 
     if (!mounted) return;
@@ -192,9 +199,10 @@ class _ConversationWiredState extends State<ConversationWired> {
       });
       _scrollToBottom();
     } else {
-      final fallbackStatus = result == SendChatMessageResult.success
-          ? 'sent'
-          : 'failed';
+      final fallbackStatus = switch (result) {
+        SendChatMessageResult.success => 'sent',
+        _ => 'failed',
+      };
       _updateLocalMessageStatus(optimisticMessage.id, fallbackStatus);
       await _persistMessageStatus(optimisticMessage.id, fallbackStatus);
     }

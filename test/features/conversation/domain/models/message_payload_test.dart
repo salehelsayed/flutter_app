@@ -142,5 +142,122 @@ void main() {
         expect(message.status, 'sent');
       });
     });
+
+    group('v2 encrypted envelope', () {
+      const kem = 'base64kem==';
+      const ciphertext = 'base64ct==';
+      const nonce = 'base64nonce==';
+      const senderPeerId = '12D3KooWSender123';
+
+      test('buildEncryptedEnvelope produces correct structure', () {
+        final envelope = MessagePayload.buildEncryptedEnvelope(
+          senderPeerId: senderPeerId,
+          kem: kem,
+          ciphertext: ciphertext,
+          nonce: nonce,
+        );
+
+        final parsed = jsonDecode(envelope) as Map<String, dynamic>;
+        expect(parsed['type'], 'chat_message');
+        expect(parsed['version'], '2');
+        expect(parsed['senderPeerId'], senderPeerId);
+        expect(parsed['encrypted']['kem'], kem);
+        expect(parsed['encrypted']['ciphertext'], ciphertext);
+        expect(parsed['encrypted']['nonce'], nonce);
+      });
+
+      test('parseEncryptedEnvelope returns map for valid v2', () {
+        final envelope = MessagePayload.buildEncryptedEnvelope(
+          senderPeerId: senderPeerId,
+          kem: kem,
+          ciphertext: ciphertext,
+          nonce: nonce,
+        );
+
+        final result = MessagePayload.parseEncryptedEnvelope(envelope);
+        expect(result, isNotNull);
+        expect(result!['version'], '2');
+        expect(result['encrypted']['kem'], kem);
+      });
+
+      test('parseEncryptedEnvelope returns null for v1 envelope', () {
+        expect(
+          MessagePayload.parseEncryptedEnvelope(testPayload.toJson()),
+          isNull,
+        );
+      });
+
+      test('parseEncryptedEnvelope returns null for non-chat_message', () {
+        final json = jsonEncode({
+          'type': 'contact_request',
+          'version': '2',
+          'encrypted': {'kem': 'x', 'ciphertext': 'y', 'nonce': 'z'},
+        });
+        expect(MessagePayload.parseEncryptedEnvelope(json), isNull);
+      });
+
+      test('parseEncryptedEnvelope returns null for missing encrypted fields',
+          () {
+        final json = jsonEncode({
+          'type': 'chat_message',
+          'version': '2',
+          'encrypted': {'kem': 'x'},
+        });
+        expect(MessagePayload.parseEncryptedEnvelope(json), isNull);
+      });
+
+      test('parseEncryptedEnvelope returns null for missing encrypted block',
+          () {
+        final json = jsonEncode({
+          'type': 'chat_message',
+          'version': '2',
+          'senderPeerId': senderPeerId,
+        });
+        expect(MessagePayload.parseEncryptedEnvelope(json), isNull);
+      });
+
+      test('parseEncryptedEnvelope returns null for invalid JSON', () {
+        expect(MessagePayload.parseEncryptedEnvelope('not json'), isNull);
+      });
+    });
+
+    group('fromDecryptedJson', () {
+      test('parses inner payload JSON', () {
+        final inner = testPayload.toInnerJson();
+        final parsed = MessagePayload.fromDecryptedJson(inner);
+
+        expect(parsed, isNotNull);
+        expect(parsed!.id, testPayload.id);
+        expect(parsed.text, testPayload.text);
+        expect(parsed.senderPeerId, testPayload.senderPeerId);
+        expect(parsed.senderUsername, testPayload.senderUsername);
+        expect(parsed.timestamp, testPayload.timestamp);
+      });
+
+      test('returns null for missing fields', () {
+        final json = jsonEncode({'id': 'x', 'text': 'y'});
+        expect(MessagePayload.fromDecryptedJson(json), isNull);
+      });
+
+      test('returns null for invalid JSON', () {
+        expect(MessagePayload.fromDecryptedJson('not json'), isNull);
+      });
+    });
+
+    group('toInnerJson', () {
+      test('produces JSON without envelope wrapper', () {
+        final inner =
+            jsonDecode(testPayload.toInnerJson()) as Map<String, dynamic>;
+
+        expect(inner.containsKey('type'), isFalse);
+        expect(inner.containsKey('version'), isFalse);
+        expect(inner.containsKey('payload'), isFalse);
+        expect(inner['id'], testPayload.id);
+        expect(inner['text'], testPayload.text);
+        expect(inner['senderPeerId'], testPayload.senderPeerId);
+        expect(inner['senderUsername'], testPayload.senderUsername);
+        expect(inner['timestamp'], testPayload.timestamp);
+      });
+    });
   });
 }

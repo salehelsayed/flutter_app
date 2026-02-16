@@ -9,6 +9,7 @@ import 'dart:convert';
 /// - [rv]: Rendezvous point multiaddr
 /// - [ts]: ISO-8601 timestamp of generation
 /// - [sig]: Base64-encoded Ed25519 signature
+/// - [mlkem]: (optional) Base64-encoded ML-KEM-768 public key for E2E encryption
 class QRPayloadModel {
   /// Base64-encoded public key
   final String pk;
@@ -25,12 +26,16 @@ class QRPayloadModel {
   /// Base64-encoded Ed25519 signature
   final String sig;
 
+  /// Base64-encoded ML-KEM-768 public key (optional, for E2E encryption)
+  final String? mlkem;
+
   const QRPayloadModel({
     required this.pk,
     required this.ns,
     required this.rv,
     required this.ts,
     required this.sig,
+    this.mlkem,
   });
 
   /// Creates a QRPayloadModel from a JSON map.
@@ -41,12 +46,14 @@ class QRPayloadModel {
       rv: json['rv'] as String,
       ts: json['ts'] as String,
       sig: json['sig'] as String,
+      mlkem: json['mlkem'] as String?,
     );
   }
 
   /// Converts the model to a JSON map.
   Map<String, dynamic> toJson() {
     return {
+      if (mlkem != null) 'mlkem': mlkem,
       'pk': pk,
       'ns': ns,
       'rv': rv,
@@ -71,8 +78,10 @@ class QRPayloadModel {
     required String ns,
     required String rv,
     required String ts,
+    String? mlkem,
   }) {
     return SplayTreeMap<String, dynamic>.from({
+      if (mlkem != null) 'mlkem': mlkem,
       'ns': ns,
       'pk': pk,
       'rv': rv,
@@ -99,11 +108,12 @@ class QRPayloadModel {
         other.ns == ns &&
         other.rv == rv &&
         other.ts == ts &&
-        other.sig == sig;
+        other.sig == sig &&
+        other.mlkem == mlkem;
   }
 
   @override
   int get hashCode {
-    return Object.hash(pk, ns, rv, ts, sig);
+    return Object.hash(pk, ns, rv, ts, sig, mlkem);
   }
 }

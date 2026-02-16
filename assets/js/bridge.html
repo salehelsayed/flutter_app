@@ -53,7 +53,8 @@
       'node:start', 'node:stop', 'node:status',
       'rendezvous:register', 'rendezvous:discover',
       'peer:dial', 'peer:disconnect',
-      'message:send'
+      'message:send',
+      'inbox:store', 'inbox:retrieve', 'inbox:check'
     ];
 
     // Commands handled directly in bridge (using identity crypto)
@@ -67,7 +68,8 @@
              cmd.startsWith('node:') ||
              cmd.startsWith('rendezvous:') ||
              cmd.startsWith('peer:') ||
-             cmd.startsWith('message:');
+             cmd.startsWith('message:') ||
+             cmd.startsWith('inbox:');
     }
 
     /**
