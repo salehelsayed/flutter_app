@@ -172,6 +172,43 @@ Future<int> dbGetMessageCount(Database db) async {
   }
 }
 
+/// Returns the total number of messages for a specific contact.
+Future<int> dbCountMessagesForContact(Database db, String contactPeerId) async {
+  emitFlowEvent(
+    layer: 'DB',
+    event: 'MESSAGES_DB_COUNT_FOR_CONTACT_START',
+    details: {
+      'contactPeerId':
+          contactPeerId.length > 10
+              ? contactPeerId.substring(0, 10)
+              : contactPeerId,
+    },
+  );
+
+  try {
+    final result = await db.rawQuery(
+      'SELECT COUNT(*) as count FROM messages WHERE contact_peer_id = ?',
+      [contactPeerId],
+    );
+    final count = Sqflite.firstIntValue(result) ?? 0;
+
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'MESSAGES_DB_COUNT_FOR_CONTACT_SUCCESS',
+      details: {'count': count},
+    );
+
+    return count;
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'MESSAGES_DB_COUNT_FOR_CONTACT_ERROR',
+      details: {'error': e.toString()},
+    );
+    rethrow;
+  }
+}
+
 /// Loads a single message by ID.
 Future<Map<String, Object?>?> dbLoadMessage(Database db, String id) async {
   try {

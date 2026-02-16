@@ -37,6 +37,11 @@ void main() {
       dbLoadMessage: (id) async {
         return store[id];
       },
+      dbCountMessagesForContact: (contactPeerId) async {
+        return store.values
+            .where((row) => row['contact_peer_id'] == contactPeerId)
+            .length;
+      },
     );
   });
 

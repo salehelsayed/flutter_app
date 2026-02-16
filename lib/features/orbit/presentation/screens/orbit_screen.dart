@@ -1,0 +1,261 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
+import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
+import 'package:flutter_app/features/orbit/domain/models/orbit_friend.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/orbit_close_button.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/orbit_header.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/orbital_visualization.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/friends_list_header.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/friend_row.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/orbit_search_trigger.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/orbit_search_dock.dart';
+
+/// Pure UI layout for the Orbit screen.
+///
+/// Receives all state and callbacks from OrbitWired.
+class OrbitScreen extends StatelessWidget {
+  final IdentityModel? identity;
+  final List<OrbitFriend> allFriends;
+  final List<OrbitFriend> displayedFriends;
+  final bool searchActive;
+  final String searchQuery;
+  final ScrollController scrollController;
+  final TextEditingController searchController;
+  final FocusNode searchFocusNode;
+  final Animation<double> collapseAnimation;
+  final Animation<double> searchDockAnimation;
+  final Animation<double> searchTriggerAnimation;
+  final VoidCallback onClose;
+  final void Function(OrbitFriend) onFriendTap;
+  final VoidCallback onMyQR;
+  final VoidCallback onScanQR;
+  final VoidCallback onSearchOpen;
+  final VoidCallback onSearchClose;
+  final void Function(String) onSearchChanged;
+  final VoidCallback onSearchClear;
+
+  const OrbitScreen({
+    super.key,
+    required this.identity,
+    required this.allFriends,
+    required this.displayedFriends,
+    required this.searchActive,
+    required this.searchQuery,
+    required this.scrollController,
+    required this.searchController,
+    required this.searchFocusNode,
+    required this.collapseAnimation,
+    required this.searchDockAnimation,
+    required this.searchTriggerAnimation,
+    required this.onClose,
+    required this.onFriendTap,
+    required this.onMyQR,
+    required this.onScanQR,
+    required this.onSearchOpen,
+    required this.onSearchClose,
+    required this.onSearchChanged,
+    required this.onSearchClear,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final userPeerId = identity?.peerId;
+
+    return AmbientBackground(
+      child: Scaffold(
+        backgroundColor: Colors.transparent,
+        resizeToAvoidBottomInset: false,
+        body: Stack(
+          children: [
+            // Layer 1: Scrollable content
+            SafeArea(
+              child: Column(
+                children: [
+                  // Collapsible header + orbital
+                  AnimatedBuilder(
+                    animation: collapseAnimation,
+                    builder: (context, child) {
+                      final t = collapseAnimation.value;
+                      return Align(
+                        heightFactor: t,
+                        child: Opacity(
+                          opacity: t.clamp(0.0, 1.0),
+                          child: Transform.translate(
+                            offset: Offset(0, (1 - t) * -16),
+                            child: Transform.scale(
+                              scale: 0.985 + 0.015 * t,
+                              alignment: Alignment.topCenter,
+                              child: child,
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                    child: Column(
+                      children: [
+                        OrbitHeader(userPeerId: userPeerId),
+                        OrbitalVisualization(
+                          userPeerId: userPeerId,
+                          friends: allFriends,
+                        ),
+                        const Padding(
+                          padding: EdgeInsets.only(top: 20),
+                          child: Text(
+                            'Close Friends',
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: Color(0x99FFFFFF),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  // Scrollable friends list
+                  Expanded(
+                    child: SingleChildScrollView(
+                      controller: scrollController,
+                      padding: EdgeInsets.only(
+                        left: 16,
+                        right: 16,
+                        top: 8,
+                        bottom: searchActive ? 320 : 100,
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          FriendsListHeader(
+                            onMyQR: onMyQR,
+                            onScanQR: onScanQR,
+                            searchActive: searchActive,
+                          ),
+                          const SizedBox(height: 8),
+
+                          // Friend rows
+                          if (searchActive &&
+                              searchQuery.isNotEmpty &&
+                              displayedFriends.isEmpty)
+                            _buildNoResults()
+                          else
+                            ...List.generate(displayedFriends.length, (index) {
+                              final friend = displayedFriends[index];
+                              final isInnerCircle =
+                                  allFriends.indexOf(friend) < 13;
+                              return Padding(
+                                padding: const EdgeInsets.only(bottom: 8),
+                                child: AnimatedFriendRow(
+                                  index: index,
+                                  child: FriendRow(
+                                    friend: friend,
+                                    showInnerCircleBadge:
+                                        searchActive && isInnerCircle,
+                                    onTap: () => onFriendTap(friend),
+                                  ),
+                                ),
+                              );
+                            }),
+
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            // Layer 2: Close button (top-left)
+            Positioned(
+              top: MediaQuery.of(context).padding.top + 8,
+              left: 16,
+              child: OrbitCloseButton(onTap: onClose),
+            ),
+
+            // Layer 3: Floating search trigger
+            AnimatedBuilder(
+              animation: searchTriggerAnimation,
+              builder: (context, child) {
+                final t = searchTriggerAnimation.value;
+                return Positioned(
+                  bottom: 40,
+                  left: 0,
+                  right: 0,
+                  child: Opacity(
+                    opacity: t,
+                    child: Transform.scale(
+                      scale: 0.985 + 0.015 * t,
+                      child: Transform.translate(
+                        offset: Offset(0, (1 - t) * 14),
+                        child: IgnorePointer(
+                          ignoring: t < 0.5,
+                          child: child,
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              },
+              child: OrbitSearchTrigger(
+                onSearchTap: onSearchOpen,
+                onCloseTap: onClose,
+              ),
+            ),
+
+            // Layer 4: Search dock (slides up from bottom)
+            AnimatedBuilder(
+              animation: searchDockAnimation,
+              builder: (context, child) {
+                final t = searchDockAnimation.value;
+                return Positioned(
+                  bottom: 0,
+                  left: 0,
+                  right: 0,
+                  child: Transform.translate(
+                    offset: Offset(0, (1 - t) * 300),
+                    child: IgnorePointer(
+                      ignoring: t < 0.1,
+                      child: child,
+                    ),
+                  ),
+                );
+              },
+              child: OrbitSearchDock(
+                controller: searchController,
+                focusNode: searchFocusNode,
+                onChanged: onSearchChanged,
+                onClear: onSearchClear,
+                onClose: onSearchClose,
+                query: searchQuery,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNoResults() {
+    return Padding(
+      padding: const EdgeInsets.only(top: 60),
+      child: Center(
+        child: Column(
+          children: [
+            Icon(
+              Icons.search,
+              size: 40,
+              color: Colors.white.withValues(alpha: 0.25),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'No friends matching "$searchQuery"',
+              style: TextStyle(
+                fontSize: 15,
+                color: Colors.white.withValues(alpha: 0.3),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}

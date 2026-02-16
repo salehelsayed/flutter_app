@@ -26,4 +26,7 @@ abstract class MessageRepository {
 
   /// Checks if a message with the given ID exists.
   Future<bool> messageExists(String id);
+
+  /// Returns the total number of messages for a contact.
+  Future<int> getMessageCountForContact(String contactPeerId);
 }

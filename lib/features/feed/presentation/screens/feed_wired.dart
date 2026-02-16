@@ -22,6 +22,8 @@ import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
 import 'package:flutter_app/features/feed/domain/utils/format_message_time.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
+import 'package:flutter_app/features/orbit/presentation/navigation/orbit_route_transition.dart';
+import 'package:flutter_app/features/orbit/presentation/screens/orbit_wired.dart';
 import 'feed_screen.dart';
 
 /// Wired widget that connects FeedScreen to business logic.
@@ -310,6 +312,23 @@ class _FeedWiredState extends State<FeedWired> {
   }
 
   void _onSwitchView(String tab) {
+    if (tab == 'orbit') {
+      Navigator.of(context).push(
+        buildOrbitSlideUpRoute(
+          builder: (_) => OrbitWired(
+            identityRepo: widget.repository,
+            contactRepo: widget.contactRepository,
+            contactRequestRepo: widget.contactRequestRepository,
+            contactRequestListener: widget.contactRequestListener,
+            messageRepo: widget.messageRepository,
+            chatMessageListener: widget.chatMessageListener,
+            bridge: widget.bridge,
+            p2pService: widget.p2pService,
+          ),
+        ),
+      );
+      return;
+    }
     setState(() {
       _activeTab = tab;
     });

@@ -230,6 +230,13 @@ class InMemoryMessageRepository implements MessageRepository {
   @override
   Future<bool> messageExists(String id) async => _messages.containsKey(id);
 
+  @override
+  Future<int> getMessageCountForContact(String contactPeerId) async {
+    return _messages.values
+        .where((m) => m.contactPeerId == contactPeerId)
+        .length;
+  }
+
   int get count => _messages.length;
 }
 
