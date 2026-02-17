@@ -68,6 +68,12 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
   void _startListeningForContactRequests() {
     _requestSubscription = widget.contactRequestListener.requestStream.listen(
       _onContactRequest,
+      onError: (error) {
+        emitFlowEvent(layer: 'FL', event: 'FTE_REQUEST_STREAM_ERROR', details: {'error': error.toString()});
+      },
+      onDone: () {
+        emitFlowEvent(layer: 'FL', event: 'FTE_REQUEST_STREAM_DONE', details: {});
+      },
     );
   }
 

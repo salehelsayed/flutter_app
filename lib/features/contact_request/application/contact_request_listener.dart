@@ -45,7 +45,15 @@ class ContactRequestListener {
       details: {},
     );
 
-    _subscription = contactRequestStream.listen(_onMessage);
+    _subscription = contactRequestStream.listen(
+      _onMessage,
+      onError: (error) {
+        emitFlowEvent(layer: 'FL', event: 'CONTACT_REQUEST_LISTENER_STREAM_ERROR', details: {'error': error.toString()});
+      },
+      onDone: () {
+        emitFlowEvent(layer: 'FL', event: 'CONTACT_REQUEST_LISTENER_STREAM_DONE', details: {});
+      },
+    );
   }
 
   /// Stops listening and cleans up resources.

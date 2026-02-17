@@ -90,6 +90,12 @@ abstract class P2PService {
   /// Returns true if the token was registered successfully.
   Future<bool> registerPushToken(String token, String platform);
 
+  /// Trigger an immediate health check (re-dials relay, re-registers FCM).
+  Future<void> performImmediateHealthCheck();
+
+  /// Drain any queued offline inbox messages into the message stream.
+  Future<void> drainOfflineInbox();
+
   /// Dispose of the service and clean up resources.
   void dispose();
 }

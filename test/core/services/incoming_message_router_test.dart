@@ -52,6 +52,12 @@ class FakeP2PService implements P2PService {
   Future<bool> registerPushToken(String token, String platform) async => true;
 
   @override
+  Future<void> performImmediateHealthCheck() async {}
+
+  @override
+  Future<void> drainOfflineInbox() async {}
+
+  @override
   void dispose() => _messageController.close();
 }
 

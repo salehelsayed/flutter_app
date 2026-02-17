@@ -24,6 +24,7 @@ import 'package:flutter_app/features/identity/presentation/startup_router.dart';
 import 'package:flutter_app/core/bridge/webview_js_bridge.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/core/theme/app_theme.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:firebase_core/firebase_core.dart';
@@ -192,20 +193,24 @@ void main() async {
     contactRequestListener: contactRequestListener,
     messageRepository: messageRepository,
     chatMessageListener: chatMessageListener,
+    messageRouter: messageRouter,
     bridge: bridge,
     p2pService: p2pService,
+    isDesktop: isDesktop,
   ));
 }
 
-class MyApp extends StatelessWidget {
+class MyApp extends StatefulWidget {
   final IdentityRepositoryImpl repository;
   final ContactRepositoryImpl contactRepository;
   final ContactRequestRepositoryImpl contactRequestRepository;
   final ContactRequestListener contactRequestListener;
   final MessageRepositoryImpl messageRepository;
   final ChatMessageListener chatMessageListener;
+  final IncomingMessageRouter messageRouter;
   final WebViewJsBridge bridge;
   final P2PServiceImpl p2pService;
+  final bool isDesktop;
 
   const MyApp({
     Key? key,
@@ -215,9 +220,121 @@ class MyApp extends StatelessWidget {
     required this.contactRequestListener,
     required this.messageRepository,
     required this.chatMessageListener,
+    required this.messageRouter,
     required this.bridge,
     required this.p2pService,
+    required this.isDesktop,
   }) : super(key: key);
+
+  @override
+  State<MyApp> createState() => _MyAppState();
+}
+
+class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
+  bool _isResuming = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _setupForegroundPushListener();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+
+    // Orderly teardown: listeners → router → service → bridge
+    widget.chatMessageListener.dispose();
+    widget.contactRequestListener.dispose();
+    widget.messageRouter.dispose();
+    widget.p2pService.dispose();
+    widget.bridge.dispose();
+
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'APP_LIFECYCLE_STATE_CHANGED',
+      details: {'state': state.name},
+    );
+
+    if (state == AppLifecycleState.resumed) {
+      _onResumed();
+    }
+  }
+
+  Future<void> _onResumed() async {
+    if (_isResuming) return;
+    _isResuming = true;
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'APP_LIFECYCLE_RESUME_BEGIN',
+      details: {},
+    );
+
+    try {
+      // 1. Check bridge health — reinitialize if dead
+      final bridgeOk = await widget.bridge.checkHealth();
+      if (!bridgeOk) {
+        await widget.bridge.reinitialize();
+      }
+
+      // 2. Immediate health check (re-dials relay, re-registers FCM)
+      await widget.p2pService.performImmediateHealthCheck();
+
+      // 3. Drain offline inbox (messages queued while backgrounded)
+      await widget.p2pService.drainOfflineInbox();
+
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'APP_LIFECYCLE_RESUME_COMPLETE',
+        details: {'bridgeWasHealthy': bridgeOk},
+      );
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'APP_LIFECYCLE_RESUME_ERROR',
+        details: {'error': e.toString()},
+      );
+    } finally {
+      _isResuming = false;
+    }
+  }
+
+  void _setupForegroundPushListener() {
+    if (widget.isDesktop) return;
+
+    try {
+      FirebaseMessaging.onMessage.listen((message) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'PUSH_FOREGROUND_MESSAGE_RECEIVED',
+          details: {'messageId': message.messageId},
+        );
+        widget.p2pService.drainOfflineInbox();
+      });
+
+      FirebaseMessaging.onMessageOpenedApp.listen((message) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'PUSH_MESSAGE_OPENED_APP',
+          details: {'messageId': message.messageId},
+        );
+        widget.p2pService.drainOfflineInbox();
+      });
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'PUSH_FOREGROUND_LISTENER_ERROR',
+        details: {'error': e.toString()},
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -226,14 +343,14 @@ class MyApp extends StatelessWidget {
       theme: AppTheme.darkTheme,
       themeMode: ThemeMode.dark,
       home: StartupRouter(
-        repository: repository,
-        contactRepository: contactRepository,
-        contactRequestRepository: contactRequestRepository,
-        contactRequestListener: contactRequestListener,
-        messageRepository: messageRepository,
-        chatMessageListener: chatMessageListener,
-        bridge: bridge,
-        p2pService: p2pService,
+        repository: widget.repository,
+        contactRepository: widget.contactRepository,
+        contactRequestRepository: widget.contactRequestRepository,
+        contactRequestListener: widget.contactRequestListener,
+        messageRepository: widget.messageRepository,
+        chatMessageListener: widget.chatMessageListener,
+        bridge: widget.bridge,
+        p2pService: widget.p2pService,
       ),
       debugShowCheckedModeBanner: false,
     );

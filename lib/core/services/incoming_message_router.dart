@@ -39,7 +39,15 @@ class IncomingMessageRouter {
       details: {},
     );
 
-    _subscription = p2pService.messageStream.listen(_route);
+    _subscription = p2pService.messageStream.listen(
+      _route,
+      onError: (error) {
+        emitFlowEvent(layer: 'FL', event: 'MESSAGE_ROUTER_STREAM_ERROR', details: {'error': error.toString()});
+      },
+      onDone: () {
+        emitFlowEvent(layer: 'FL', event: 'MESSAGE_ROUTER_STREAM_DONE', details: {});
+      },
+    );
   }
 
   void _route(ChatMessage message) {

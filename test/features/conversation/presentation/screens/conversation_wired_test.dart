@@ -147,6 +147,12 @@ class FakeP2PService implements P2PService {
 
   @override
   Future<bool> registerPushToken(String token, String platform) async => true;
+
+  @override
+  Future<void> performImmediateHealthCheck() async {}
+
+  @override
+  Future<void> drainOfflineInbox() async {}
 }
 
 void main() {

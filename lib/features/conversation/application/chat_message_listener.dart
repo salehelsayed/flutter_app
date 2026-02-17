@@ -51,7 +51,15 @@ class ChatMessageListener {
       details: {},
     );
 
-    _subscription = chatMessageStream.listen(_onMessage);
+    _subscription = chatMessageStream.listen(
+      _onMessage,
+      onError: (error) {
+        emitFlowEvent(layer: 'FL', event: 'CHAT_LISTENER_STREAM_ERROR', details: {'error': error.toString()});
+      },
+      onDone: () {
+        emitFlowEvent(layer: 'FL', event: 'CHAT_LISTENER_STREAM_DONE', details: {});
+      },
+    );
   }
 
   /// Stops listening and cleans up resources.

@@ -9,6 +9,7 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     details: {
       'messageId': message.messageId,
       'dataKeys': message.data.keys.toList(),
+      'note': 'inbox drain deferred to next app resume',
     },
   );
 }

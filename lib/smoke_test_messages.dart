@@ -91,7 +91,7 @@ void main() async {
         await dbLoadLatestMessageForContact(db, '12D3KooWSmokeContact');
     assert(latest != null, 'Latest message should not be null');
     assert(latest!['id'] == 'smoke-msg-002', 'Latest should be msg-002');
-    print('[SMOKE] PASS: Latest message is ${latest['id']}');
+    print('[SMOKE] PASS: Latest message is ${latest!['id']}');
 
     // Step 7: Update status
     print('[SMOKE] Step 7: Update message status...');
@@ -99,7 +99,7 @@ void main() async {
     final updated = await dbLoadMessage(db, 'smoke-msg-001');
     assert(updated != null, 'Updated message should exist');
     assert(updated!['status'] == 'delivered', 'Status should be delivered');
-    print('[SMOKE] PASS: Status updated to ${updated['status']}');
+    print('[SMOKE] PASS: Status updated to ${updated!['status']}');
 
     // Step 8: Get message count
     print('[SMOKE] Step 8: Get message count...');
@@ -112,7 +112,7 @@ void main() async {
     final single = await dbLoadMessage(db, 'smoke-msg-001');
     assert(single != null, 'Should find message by ID');
     assert(single!['text'] == 'Hello from smoke test!', 'Text should match');
-    print('[SMOKE] PASS: Loaded message with text: "${single['text']}"');
+    print('[SMOKE] PASS: Loaded message with text: "${single!['text']}"');
 
     // Step 10: Load non-existent
     print('[SMOKE] Step 10: Load non-existent message...');

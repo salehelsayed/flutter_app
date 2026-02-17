@@ -115,6 +115,12 @@ class FakeP2PService implements P2PService {
   Future<bool> registerPushToken(String token, String platform) async => true;
 
   @override
+  Future<void> performImmediateHealthCheck() async {}
+
+  @override
+  Future<void> drainOfflineInbox() async {}
+
+  @override
   void dispose() {}
 }
 
@@ -549,6 +555,12 @@ class _ThrowOnSendP2PService implements P2PService {
   Future<bool> registerPushToken(String token, String platform) async => true;
 
   @override
+  Future<void> performImmediateHealthCheck() async {}
+
+  @override
+  Future<void> drainOfflineInbox() async {}
+
+  @override
   void dispose() {}
 }
 
@@ -601,6 +613,12 @@ class _FlakyDiscoverP2PService implements P2PService {
 
   @override
   Future<bool> registerPushToken(String token, String platform) async => true;
+
+  @override
+  Future<void> performImmediateHealthCheck() async {}
+
+  @override
+  Future<void> drainOfflineInbox() async {}
 
   @override
   void dispose() {}

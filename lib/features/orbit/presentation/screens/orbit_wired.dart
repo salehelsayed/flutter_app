@@ -137,21 +137,41 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
 
   void _startListeningForChatMessages() {
     _chatSubscription =
-        widget.chatMessageListener.incomingMessageStream.listen((_) {
-      _loadOrbitData();
-    });
+        widget.chatMessageListener.incomingMessageStream.listen(
+      (_) { _loadOrbitData(); },
+      onError: (error) {
+        emitFlowEvent(layer: 'FL', event: 'ORBIT_CHAT_STREAM_ERROR', details: {'error': error.toString()});
+      },
+      onDone: () {
+        emitFlowEvent(layer: 'FL', event: 'ORBIT_CHAT_STREAM_DONE', details: {});
+      },
+    );
   }
 
   void _startListeningForContactUpdates() {
     _contactUpdateSubscription =
-        widget.chatMessageListener.contactUpdatedStream.listen((_) {
-      _loadOrbitData();
-    });
+        widget.chatMessageListener.contactUpdatedStream.listen(
+      (_) { _loadOrbitData(); },
+      onError: (error) {
+        emitFlowEvent(layer: 'FL', event: 'ORBIT_CONTACT_UPDATE_STREAM_ERROR', details: {'error': error.toString()});
+      },
+      onDone: () {
+        emitFlowEvent(layer: 'FL', event: 'ORBIT_CONTACT_UPDATE_STREAM_DONE', details: {});
+      },
+    );
   }
 
   void _startListeningForContactRequests() {
     _requestSubscription =
-        widget.contactRequestListener.requestStream.listen(_onContactRequest);
+        widget.contactRequestListener.requestStream.listen(
+      _onContactRequest,
+      onError: (error) {
+        emitFlowEvent(layer: 'FL', event: 'ORBIT_REQUEST_STREAM_ERROR', details: {'error': error.toString()});
+      },
+      onDone: () {
+        emitFlowEvent(layer: 'FL', event: 'ORBIT_REQUEST_STREAM_DONE', details: {});
+      },
+    );
   }
 
   void _onContactRequest(ContactRequestModel request) {
