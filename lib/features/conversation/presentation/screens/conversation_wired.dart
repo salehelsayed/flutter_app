@@ -41,6 +41,7 @@ class ConversationWired extends StatefulWidget {
   final P2PService p2pService;
   final JsBridge? bridge;
   final SendChatMessageFn sendChatMessageFn;
+  final List<ConversationMessage>? initialMessages;
 
   const ConversationWired({
     super.key,
@@ -51,6 +52,7 @@ class ConversationWired extends StatefulWidget {
     required this.p2pService,
     this.bridge,
     this.sendChatMessageFn = sendChatMessage,
+    this.initialMessages,
   });
 
   @override
@@ -73,7 +75,13 @@ class _ConversationWiredState extends State<ConversationWired> {
     _contact = widget.contact;
     emitFlowEvent(layer: 'FL', event: 'CONV_FL_SCREEN_INIT', details: {});
     _loadIdentity();
-    _loadMessages().then((_) => _markAsRead());
+    if (widget.initialMessages != null) {
+      _messages = widget.initialMessages!;
+      _scrollToBottom();
+      _markAsRead();
+    } else {
+      _loadMessages().then((_) => _markAsRead());
+    }
     _startListeningForMessages();
     _startListeningForContactUpdates();
   }
@@ -135,7 +143,15 @@ class _ConversationWiredState extends State<ConversationWired> {
   void _startListeningForMessages() {
     _incomingSubscription = widget.chatMessageListener.incomingMessageStream
         .where((msg) => msg.contactPeerId == _contact.peerId)
-        .listen(_onIncomingMessage);
+        .listen(
+          _onIncomingMessage,
+          onError: (error) {
+            emitFlowEvent(layer: 'FL', event: 'CONV_CHAT_STREAM_ERROR', details: {'error': error.toString()});
+          },
+          onDone: () {
+            emitFlowEvent(layer: 'FL', event: 'CONV_CHAT_STREAM_DONE', details: {});
+          },
+        );
   }
 
   void _onIncomingMessage(ConversationMessage message) {
@@ -150,10 +166,18 @@ class _ConversationWiredState extends State<ConversationWired> {
   void _startListeningForContactUpdates() {
     _contactUpdateSubscription = widget.chatMessageListener.contactUpdatedStream
         .where((c) => c.peerId == _contact.peerId)
-        .listen((updatedContact) {
-          if (!mounted) return;
-          setState(() => _contact = updatedContact);
-        });
+        .listen(
+          (updatedContact) {
+            if (!mounted) return;
+            setState(() => _contact = updatedContact);
+          },
+          onError: (error) {
+            emitFlowEvent(layer: 'FL', event: 'CONV_CONTACT_UPDATE_STREAM_ERROR', details: {'error': error.toString()});
+          },
+          onDone: () {
+            emitFlowEvent(layer: 'FL', event: 'CONV_CONTACT_UPDATE_STREAM_DONE', details: {});
+          },
+        );
   }
 
   Future<void> _onSend(String text) async {

@@ -35,6 +35,58 @@ class WebViewJsBridge extends JsBridge {
   /// The WebView controller (for embedding in widget tree if needed).
   WebViewController? get controller => _controller;
 
+  /// Check if the bridge WebView is still responsive.
+  ///
+  /// Sends a `node:status` command with a short timeout. Returns `true` if
+  /// the bridge responds, `false` on timeout or error.
+  Future<bool> checkHealth() async {
+    if (!_initialized || _controller == null) return false;
+
+    try {
+      final response = await send(jsonEncode({'cmd': 'node:status'}))
+          .timeout(const Duration(seconds: 5));
+      final data = jsonDecode(response);
+      return data['ok'] == true || data['errorCode'] != 'BRIDGE_DEAD';
+    } catch (_) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'ID_BRIDGE_HEALTH_CHECK_FAILED',
+        details: {},
+      );
+      return false;
+    }
+  }
+
+  /// Tear down and recreate the WebView bridge.
+  ///
+  /// Preserves callback references so listeners stay connected after
+  /// the new WebView loads.
+  Future<void> reinitialize() async {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'ID_BRIDGE_REINIT_START',
+      details: {},
+    );
+
+    // Preserve callbacks
+    final savedOnMessage = onMessageReceived;
+    final savedOnConnect = onPeerConnected;
+    final savedOnDisconnect = onPeerDisconnected;
+
+    // Tear down current state
+    _controller = null;
+    _initialized = false;
+    _pendingRequests.clear();
+
+    // Restore callbacks
+    onMessageReceived = savedOnMessage;
+    onPeerConnected = savedOnConnect;
+    onPeerDisconnected = savedOnDisconnect;
+
+    // Re-create WebView
+    await initialize();
+  }
+
   /// Initialize the WebView and load the bridge HTML.
   Future<void> initialize() async {
     if (_initialized) {
@@ -222,7 +274,24 @@ class WebViewJsBridge extends JsBridge {
           .replaceAll('\r', '\\r');
 
       // Call the JavaScript handler
-      await _controller!.runJavaScript("handleRequest('$escapedJson')");
+      try {
+        await _controller!.runJavaScript("handleRequest('$escapedJson')");
+      } on PlatformException catch (pe) {
+        _initialized = false;
+        _pendingRequests.remove(requestId);
+
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'ID_BRIDGE_WEBVIEW_DEAD',
+          details: {'error': pe.toString()},
+        );
+
+        return jsonEncode({
+          'ok': false,
+          'errorCode': 'BRIDGE_DEAD',
+          'errorMessage': pe.toString(),
+        });
+      }
 
       // Wait for response with timeout
       final response = await completer.future.timeout(

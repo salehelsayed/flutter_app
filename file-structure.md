@@ -17,15 +17,15 @@ flutter_app/
 │       └── nav_remember.svg                         # Remember tab icon
 │
 ├── lib/
-│   ├── main.dart                               # App entry point, SecureKeyStore + encrypted DB setup, secrets migration, Firebase init, background message handler, DI (dbCountMessagesForContact, dbMarkConversationAsRead, dbCountUnreadForContact, dbCountTotalUnread wired to MessageRepositoryImpl)
+│   ├── main.dart                               # App entry point (StatefulWidget + WidgetsBindingObserver), SecureKeyStore + encrypted DB setup, secrets migration, Firebase init, background message handler, DI (dbCountMessagesForContact, dbMarkConversationAsRead, dbCountUnreadForContact, dbCountTotalUnread wired to MessageRepositoryImpl), app lifecycle (resume → bridge health check → P2P health check → inbox drain), foreground push listeners (Firebase onMessage/onMessageOpenedApp → inbox drain), orderly dispose chain (chatMessageListener → contactRequestListener → messageRouter → p2pService → bridge), params: messageRouter, isDesktop
 │   ├── smoke_test_main.dart                    # Smoke test entry point
 │   ├── smoke_test_restore.dart                 # Smoke test for identity restore
-│   ├── smoke_test_messages.dart                # Smoke test for messages DB layer
+│   ├── smoke_test_messages.dart                # Smoke test for messages DB layer (null-safety fix for nullable map access)
 │   │
 │   ├── core/
 │   │   ├── bridge/
 │   │   │   ├── js_bridge_client.dart           # JsBridge interface + identity/signing/encryption helpers
-│   │   │   ├── webview_js_bridge.dart          # WebView implementation + event handlers
+│   │   │   ├── webview_js_bridge.dart          # WebView implementation + event handlers + checkHealth() (5s timeout liveness), reinitialize() (recreate WebView), BRIDGE_DEAD detection in send()
 │   │   │   └── p2p_bridge_client.dart          # P2P-specific bridge calls + inbox store/retrieve + callP2PInboxRegisterToken
 │   │   │
 │   │   ├── constants/
@@ -47,9 +47,9 @@ flutter_app/
 │   │   │       └── messages_db_helpers.dart     # Messages table CRUD (insert, load, update status, count for contact, mark conversation read, count unread per contact, count total unread)
 │   │   │
 │   │   ├── services/
-│   │   │   ├── p2p_service.dart                # P2PService abstract interface (incl. inbox, registerInboxToken)
-│   │   │   ├── p2p_service_impl.dart           # P2PServiceImpl with reactive streams + offline inbox + registerInboxToken
-│   │   │   └── incoming_message_router.dart    # Routes P2P messages by type to typed streams
+│   │   │   ├── p2p_service.dart                # P2PService abstract interface (incl. inbox, registerInboxToken, performImmediateHealthCheck, drainOfflineInbox)
+│   │   │   ├── p2p_service_impl.dart           # P2PServiceImpl with reactive streams + offline inbox + registerInboxToken + performImmediateHealthCheck + drainOfflineInbox
+│   │   │   └── incoming_message_router.dart    # Routes P2P messages by type to typed streams + onError/onDone stream handlers
 │   │   │
 │   │   ├── theme/
 │   │   │   ├── app_colors.dart                 # Color constants (dark theme)
@@ -73,7 +73,7 @@ flutter_app/
 │       │   └── presentation/
 │       │       ├── screens/
 │       │       │   ├── first_time_experience_screen.dart   # Pure UI (staggered animations)
-│       │       │   └── first_time_experience_wired.dart    # Business logic + CR listener + avatar blob storage
+│       │       │   └── first_time_experience_wired.dart    # Business logic + CR listener + avatar blob storage + onError/onDone stream handlers
 │       │       └── widgets/
 │       │           ├── profile_avatar_widget.dart           # Avatar display (Image.memory) + camera button
 │       │           ├── editable_username_widget.dart        # Tap-to-edit username
@@ -94,7 +94,7 @@ flutter_app/
 │       │   └── presentation/
 │       │       ├── screens/
 │       │       │   ├── feed_screen.dart                     # Pure UI feed display
-│       │       │   └── feed_wired.dart                      # Feed business logic + CR/chat listeners + orbit navigation + passes unread counts, total unread badge on nav bar
+│       │       │   └── feed_wired.dart                      # Feed business logic + CR/chat listeners + orbit navigation + passes unread counts, total unread badge on nav bar + onError/onDone stream handlers
 │       │       ├── widgets/
 │       │       │   ├── feed_header.dart                     # Sticky header (username + avatar from memory bytes)
 │       │       │   ├── feed_navigation_bar.dart             # Bottom glass nav bar (3 tabs) + total unread badge on feed tab
@@ -119,11 +119,11 @@ flutter_app/
 │       │   │   ├── handle_incoming_chat_message_use_case.dart  # Parse, validate sender, detect name changes
 │       │   │   ├── load_conversation_use_case.dart          # Load all messages for a contact
 │       │   │   ├── mark_conversation_read_use_case.dart     # Mark all unread messages for a contact as read
-│       │   │   └── chat_message_listener.dart               # Background listener for chat_message stream
+│       │   │   └── chat_message_listener.dart               # Background listener for chat_message stream + onError/onDone stream handlers
 │       │   └── presentation/
 │       │       ├── screens/
 │       │       │   ├── conversation_screen.dart             # Pure UI: header, letter cards, compose area
-│       │       │   └── conversation_wired.dart              # Business logic: load, send, listen, optimistic UI, marks conversation as read on load and on incoming messages
+│       │       │   └── conversation_wired.dart              # Business logic: load, send, listen, optimistic UI, marks conversation as read on load and on incoming messages + onError/onDone stream handlers
 │       │       ├── widgets/
 │       │       │   ├── letter_card.dart                     # Full-width message card (left/right accent, queued/delivered status)
 │       │       │   ├── compose_area.dart                    # Auto-growing text field + send button
@@ -143,7 +143,7 @@ flutter_app/
 │       │   └── presentation/
 │       │       ├── screens/
 │       │       │   ├── orbit_screen.dart                    # StatelessWidget: pure UI layout with 4-layer Stack
-│       │       │   └── orbit_wired.dart                     # StatefulWidget: state, 3 animation controllers, streams, DI (8 deps)
+│       │       │   └── orbit_wired.dart                     # StatefulWidget: state, 3 animation controllers, streams, DI (8 deps) + onError/onDone stream handlers
 │       │       ├── widgets/
 │       │       │   ├── orbital_visualization.dart           # 320x320 Stack: rings + center + friend avatars + overflow badge
 │       │       │   ├── orbital_ring_painter.dart            # CustomPainter: 2 dashed concentric circles (teal + purple)
@@ -161,7 +161,7 @@ flutter_app/
 │       │
 │       ├── push/
 │       │   └── application/
-│       │       ├── background_message_handler.dart          # Firebase background message handler (@pragma('vm:entry-point'))
+│       │       ├── background_message_handler.dart          # Firebase background message handler (@pragma('vm:entry-point')) + inbox drain deferral note
 │       │       ├── request_push_permission.dart             # Push permission request utility
 │       │       └── register_push_token.dart                 # Register FCM token with relay server via P2P inbox protocol
 │       │
@@ -187,10 +187,6 @@ flutter_app/
 │       │           ├── ambient_background.dart             # Animated glow background
 │       │           ├── brand_header.dart                   # Logo/title header
 │       │           └── choice_card.dart                    # Glassmorphic tappable card
-│       │
-│       ├── identity_onboard/
-│       │   └── presentation/
-│       │       └── welcome_screen.dart                     # Onboarding welcome screen
 │       │
 │       ├── qr_code/
 │       │   ├── domain/
@@ -230,7 +226,7 @@ flutter_app/
 │       │   │   ├── accept_contact_request_use_case.dart    # Convert request → contact
 │       │   │   ├── decline_contact_request_use_case.dart   # Update status to declined
 │       │   │   ├── handle_incoming_message_use_case.dart   # Parse, validate sig, store request
-│       │   │   └── contact_request_listener.dart           # Background P2P message listener service
+│       │   │   └── contact_request_listener.dart           # Background P2P message listener service + onError/onDone stream handlers
 │       │   └── presentation/
 │       │       └── widgets/
 │       │           ├── contact_request_dialog.dart          # Accept/Decline modal with RingAvatar
@@ -365,7 +361,7 @@ flutter_app/
 | Secrets migration | `migrate_secrets_to_secure_storage.dart` | One-time DB→secure storage migration with sentinel |
 | DB migration | `001_identity_table.dart` | Creates identity, contacts, contact_requests tables |
 | DB helpers | `identity_db_helpers.dart` | Identity table CRUD |
-| Bridge | `js_bridge_client.dart`, `webview_js_bridge.dart` | Flutter ↔ JS communication (identity, signing, ML-KEM encryption/decryption) |
+| Bridge | `js_bridge_client.dart`, `webview_js_bridge.dart` | Flutter ↔ JS communication (identity, signing, ML-KEM encryption/decryption) + checkHealth(), reinitialize(), BRIDGE_DEAD detection |
 
 ### QR Code (M2)
 
@@ -384,9 +380,9 @@ flutter_app/
 
 | Component | File(s) | Description |
 |-----------|---------|-------------|
-| P2P service | `p2p_service.dart`, `p2p_service_impl.dart` | Reactive P2P interface + implementation with offline inbox + registerInboxToken |
+| P2P service | `p2p_service.dart`, `p2p_service_impl.dart` | Reactive P2P interface + implementation with offline inbox + registerInboxToken + performImmediateHealthCheck + drainOfflineInbox |
 | P2P bridge | `p2p_bridge_client.dart` | Low-level JS bridge calls for P2P + inbox store/retrieve + callP2PInboxRegisterToken |
-| Message router | `incoming_message_router.dart` | Routes P2P messages by envelope type to typed streams |
+| Message router | `incoming_message_router.dart` | Routes P2P messages by envelope type to typed streams + onError/onDone stream handlers |
 | Node state | `node_state.dart` | P2P node state model |
 | Connection state | `connection_state.dart` | Active connection model |
 | Discovered peer | `discovered_peer.dart` | Peer discovery result model |
@@ -417,7 +413,7 @@ flutter_app/
 | Accept request | `accept_contact_request_use_case.dart` | Convert request → contact |
 | Decline request | `decline_contact_request_use_case.dart` | Update status to declined |
 | Handle incoming | `handle_incoming_message_use_case.dart` | Parse P2P message, validate, store |
-| Listener service | `contact_request_listener.dart` | Background P2P message monitor |
+| Listener service | `contact_request_listener.dart` | Background P2P message monitor + onError/onDone stream handlers |
 | Request dialog | `contact_request_dialog.dart` | Accept/Decline modal UI |
 | Requests badge | `pending_requests_badge.dart` | Count badge widget |
 | DB helpers | `contact_requests_db_helpers.dart` | Contact requests table CRUD |
@@ -433,9 +429,9 @@ flutter_app/
 | Handle incoming | `handle_incoming_chat_message_use_case.dart` | Detect v2 encrypted envelope and decrypt, or parse v1 plaintext, validate sender, detect name changes, persist |
 | Load conversation | `load_conversation_use_case.dart` | Load all messages for a contact by timestamp ASC |
 | Mark read | `mark_conversation_read_use_case.dart` | Mark all unread incoming messages for a contact as read |
-| Chat listener | `chat_message_listener.dart` | Background listener on chatMessageStream, resolves ML-KEM secret key for decryption, broadcasts to UI |
+| Chat listener | `chat_message_listener.dart` | Background listener on chatMessageStream, resolves ML-KEM secret key for decryption, broadcasts to UI + onError/onDone stream handlers |
 | Conversation screen | `conversation_screen.dart` | Pure UI: header, letter cards, empty state, compose area |
-| Conversation logic | `conversation_wired.dart` | Business logic: load messages, optimistic send, listen for incoming, marks conversation as read on load and on incoming messages |
+| Conversation logic | `conversation_wired.dart` | Business logic: load messages, optimistic send, listen for incoming, marks conversation as read on load and on incoming messages + onError/onDone stream handlers |
 | Letter card | `letter_card.dart` | Full-width card with left accent (received) / right accent (sent), supports queued/delivered/failed status |
 | Compose area | `compose_area.dart` | Auto-growing text field + animated send button |
 | Empty state | `empty_conversation_state.dart` | Breathing glow avatar + "Connected!" + writing prompt |
@@ -457,7 +453,7 @@ flutter_app/
 | Orbit friend model | `orbit_friend.dart` | Composite model: contact + messageCount + lastActivity + unreadCount |
 | Load orbit data | `load_orbit_data_use_case.dart` | Top-level function: loads contacts with message counts + unread counts, sorted desc |
 | Orbit screen | `orbit_screen.dart` | Pure UI: 4-layer Stack layout (header, visualization, friends list, search) |
-| Orbit logic | `orbit_wired.dart` | State management: 3 animation controllers, streams, DI (8 deps) |
+| Orbit logic | `orbit_wired.dart` | State management: 3 animation controllers, streams, DI (8 deps) + onError/onDone stream handlers |
 | Orbital visualization | `orbital_visualization.dart` | 320x320 Stack: rings + center avatar + friend avatars + overflow badge |
 | Ring painter | `orbital_ring_painter.dart` | CustomPainter: 2 dashed concentric circles (teal + purple) |
 | Orbital avatar | `orbital_avatar.dart` | Positioned avatar on ring with staggered scale-in animation |
@@ -476,7 +472,7 @@ flutter_app/
 | Component | File(s) | Description |
 |-----------|---------|-------------|
 | Home screen | `first_time_experience_screen.dart` | Animated home UI |
-| Home logic | `first_time_experience_wired.dart` | QR build, username edit, avatar blob storage, scan, CR listener |
+| Home logic | `first_time_experience_wired.dart` | QR build, username edit, avatar blob storage, scan, CR listener + onError/onDone stream handlers |
 | Profile avatar | `profile_avatar_widget.dart` | Avatar display (Image.memory) + camera button |
 | Username edit | `editable_username_widget.dart` | Tap-to-edit username |
 | QR section | `qr_code_section.dart` | QR code with glow |
@@ -492,7 +488,7 @@ flutter_app/
 | Time formatting | `format_message_time.dart` | Message timestamp formatting + relative time ("2m ago") |
 | Load feed | `load_feed_use_case.dart` | Load initial feed from DB (contacts + latest messages + unread counts per contact) |
 | Feed screen | `feed_screen.dart` | Pure UI feed display (connection + message cards) |
-| Feed logic | `feed_wired.dart` | Feed orchestration, identity load, CR/chat listeners, orbit navigation, passes unread counts, total unread badge on nav bar |
+| Feed logic | `feed_wired.dart` | Feed orchestration, identity load, CR/chat listeners, orbit navigation, passes unread counts, total unread badge on nav bar + onError/onDone stream handlers |
 | Feed header | `feed_header.dart` | Sticky header with username + avatar from memory bytes |
 | Navigation bar | `feed_navigation_bar.dart` | Bottom glass nav bar (3 tabs) + total unread badge on feed tab |
 | Nav button | `nav_bar_button.dart` | Individual tab button (active/inactive) + badge overlay support |
@@ -506,7 +502,7 @@ flutter_app/
 
 | Component | File(s) | Description |
 |-----------|---------|-------------|
-| Background handler | `background_message_handler.dart` | Firebase background message handler (`@pragma('vm:entry-point')`) |
+| Background handler | `background_message_handler.dart` | Firebase background message handler (`@pragma('vm:entry-point')`) + inbox drain deferral note |
 | Push permission | `request_push_permission.dart` | Request notification permission from user |
 | Token registration | `register_push_token.dart` | Register FCM token with relay server via P2P inbox protocol |
 

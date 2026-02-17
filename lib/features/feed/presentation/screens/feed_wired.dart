@@ -13,6 +13,7 @@ import 'package:flutter_app/features/contact_request/presentation/widgets/contac
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
+import 'package:flutter_app/features/conversation/application/load_conversation_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/conversation/presentation/navigation/conversation_route_transition.dart';
@@ -145,6 +146,12 @@ class _FeedWiredState extends State<FeedWired> {
   void _startListeningForContactRequests() {
     _requestSubscription = widget.contactRequestListener.requestStream.listen(
       _onContactRequest,
+      onError: (error) {
+        emitFlowEvent(layer: 'FL', event: 'FEED_REQUEST_STREAM_ERROR', details: {'error': error.toString()});
+      },
+      onDone: () {
+        emitFlowEvent(layer: 'FL', event: 'FEED_REQUEST_STREAM_DONE', details: {});
+      },
     );
   }
 
@@ -223,6 +230,12 @@ class _FeedWiredState extends State<FeedWired> {
     _chatSubscription =
         widget.chatMessageListener.incomingMessageStream.listen(
       _onIncomingChatMessage,
+      onError: (error) {
+        emitFlowEvent(layer: 'FL', event: 'FEED_CHAT_STREAM_ERROR', details: {'error': error.toString()});
+      },
+      onDone: () {
+        emitFlowEvent(layer: 'FL', event: 'FEED_CHAT_STREAM_DONE', details: {});
+      },
     );
   }
 
@@ -235,6 +248,12 @@ class _FeedWiredState extends State<FeedWired> {
     _contactUpdateSubscription =
         widget.chatMessageListener.contactUpdatedStream.listen(
       _onContactUpdated,
+      onError: (error) {
+        emitFlowEvent(layer: 'FL', event: 'FEED_CONTACT_UPDATE_STREAM_ERROR', details: {'error': error.toString()});
+      },
+      onDone: () {
+        emitFlowEvent(layer: 'FL', event: 'FEED_CONTACT_UPDATE_STREAM_DONE', details: {});
+      },
     );
   }
 
@@ -305,15 +324,17 @@ class _FeedWiredState extends State<FeedWired> {
   }
 
   void _onReplyToMessage(String contactPeerId) async {
-    final contact = await widget.contactRepository.getContact(contactPeerId);
+    final results = await Future.wait([
+      widget.contactRepository.getContact(contactPeerId),
+      loadConversation(
+        messageRepo: widget.messageRepository,
+        contactPeerId: contactPeerId,
+      ),
+    ]);
+
+    final contact = results[0] as ContactModel?;
+    final messages = results[1] as List<ConversationMessage>;
     if (contact == null || !mounted) return;
-
-    await markConversationRead(
-      messageRepo: widget.messageRepository,
-      contactPeerId: contactPeerId,
-    );
-
-    if (!mounted) return;
 
     Navigator.of(context).push(
       buildConversationSlideUpRoute(
@@ -324,6 +345,7 @@ class _FeedWiredState extends State<FeedWired> {
           chatMessageListener: widget.chatMessageListener,
           p2pService: widget.p2pService,
           bridge: widget.bridge,
+          initialMessages: messages,
         ),
       ),
     ).then((_) => _refreshFeed());

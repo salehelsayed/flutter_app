@@ -106,7 +106,12 @@ class FakeP2PService implements P2PService {
     _messageController.add(message);
   }
 
-  Future<int> drainOfflineInbox() async {
+  @override
+  Future<void> drainOfflineInbox() async {
+    await drainOfflineInboxCount();
+  }
+
+  Future<int> drainOfflineInboxCount() async {
     final messages = await retrieveInbox();
     for (final message in messages) {
       final ts = message['timestamp'];
@@ -188,6 +193,9 @@ class FakeP2PService implements P2PService {
 
   @override
   Future<bool> registerPushToken(String token, String platform) async => true;
+
+  @override
+  Future<void> performImmediateHealthCheck() async {}
 
   @override
   void dispose() {
@@ -369,7 +377,7 @@ class TestUser {
 
   void setOnline(bool online) => p2pService.setOnline(online);
 
-  Future<int> drainOfflineInbox() => p2pService.drainOfflineInbox();
+  Future<int> drainOfflineInbox() => p2pService.drainOfflineInboxCount();
 
   void dispose() {
     chatListener.dispose();

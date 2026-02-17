@@ -429,6 +429,8 @@
 │  │  │   Reactive streams for state + messages  │                         │ │
 │  │  │   + offline inbox store/retrieve         │                         │ │
 │  │  │   + registerInboxToken (FCM push)        │                         │ │
+│  │  │   + performImmediateHealthCheck()        │                         │ │
+│  │  │   + drainOfflineInbox()                  │                         │ │
 │  │  └──────────────────────────────────────────┘                         │ │
 │  │  ┌──────────────────────────────────────────┐                         │ │
 │  │  │   IncomingMessageRouter                  │                         │ │
@@ -677,7 +679,8 @@
 | **Orbit Use Cases** | | |
 | loadOrbitData() | Use Case | Loads all contacts with message counts + unread counts from MessageRepository, sorted by messageCount descending; returns List<OrbitFriend> |
 | **Core Services** | | |
-| IncomingMessageRouter | Service | Routes P2P messages by envelope type to contactRequestStream, chatMessageStream, unknownStream |
+| IncomingMessageRouter | Service | Routes P2P messages by envelope type to contactRequestStream, chatMessageStream, unknownStream; stream subscription has onError/onDone handlers |
+| **Stream Error Handling** | Convention | All `.listen()` calls across IncomingMessageRouter (1), ContactRequestListener (1), ChatMessageListener (1), FeedWired (3), ConversationWired (2), FirstTimeExperienceWired (1), OrbitWired (3) include `onError` and `onDone` callbacks for resilience |
 | **Domain** | | |
 | IdentityModel | Entity | Immutable data class for identity (peerId, keys, mnemonic, username, avatarBlob, mlKemPublicKey?, mlKemSecretKey?); secrets (privateKey, mnemonic12, mlKemSecretKey) stored in SecureKeyStore, DB columns always NULL |
 | ContactModel | Entity | Contact from QR scan (peerId, publicKey, rendezvous, username, signature, scannedAt, mlKemPublicKey?) |
@@ -698,10 +701,10 @@
 | ContactRequestRepository | Interface + Impl | Abstracts request persistence (add, get, getPending, updateStatus, delete, exists) |
 | MessageRepository | Interface + Impl | Abstracts message persistence (save, getForContact, getLatest, updateStatus, exists, getMessageCountForContact, markConversationAsRead, getUnreadCountForContact, getTotalUnreadCount) |
 | **Core** | | |
-| WebViewJsBridge | Bridge Client | Sends requests to JS runtime, manages event handlers |
+| WebViewJsBridge | Bridge Client | Sends requests to JS runtime, manages event handlers; checkHealth() probes bridge liveness (node:status, 5s timeout); reinitialize() tears down and recreates WebView preserving callbacks; send() catches PlatformException and returns `{errorCode: 'BRIDGE_DEAD'}` |
 | P2PBridgeClient | Bridge Client | P2P-specific bridge calls (start, stop, status, register, discover, dial, disconnect, send, inbox store/retrieve, inbox register token) |
 | JsBridgeClient | Bridge Helpers | Identity + signing + ML-KEM encryption/decryption bridge helper functions |
-| P2PService / P2PServiceImpl | Service | Reactive P2P service with state and message streams, with offline inbox fallback + registerInboxToken for FCM push notifications |
+| P2PService / P2PServiceImpl | Service | Reactive P2P service with state and message streams, with offline inbox fallback + registerInboxToken for FCM push notifications; public performImmediateHealthCheck() and drainOfflineInbox() wrappers for app-resume lifecycle |
 | IncomingMessageRouter | Service | Routes P2P messages by JSON envelope type to typed broadcast streams |
 | RingAvatarGenerator | Utility | Deterministic avatar from peerId via DJB2 hash |
 | KeyConversion | Utility | base64ToHex, hexToBase64, bytesToHex, hexToBytes |
@@ -767,6 +770,14 @@
   ├─────────────────────────────────────┤
   │ + initialize(): Future<void>        │
   │ + send(message: String): String     │
+  │   (catches PlatformException →      │
+  │    marks bridge dead, returns       │
+  │    {errorCode: 'BRIDGE_DEAD'})      │
+  │ + checkHealth(): Future<bool>       │
+  │   (sends node:status, 5s timeout)   │
+  │ + reinitialize(): Future<void>      │
+  │   (tears down + recreates WebView,  │
+  │    preserves callback references)   │
   │ + onMessageReceived(callback)       │
   │ + onPeerConnected(callback)         │
   │ + onPeerDisconnected(callback)      │
@@ -985,6 +996,8 @@
   │ + storeInInbox(peerId, msg): bool  │
   │ + retrieveInbox(): List<Map>       │
   │ + registerInboxToken(token, platform): bool │
+  │ + performImmediateHealthCheck(): void │
+  │ + drainOfflineInbox(): void          │
   │ + dispose(): void                   │
   └──────────────────┬──────────────────┘
                      │ implements
@@ -1005,10 +1018,15 @@
   │ + storeInInbox(peerId, msg): bool  │
   │ + retrieveInbox(): List<Map>       │
   │ + registerInboxToken(token, platform): bool │
+  │ + performImmediateHealthCheck(): void │
+  │   (public wrapper → _performHealthCheck) │
+  │ + drainOfflineInbox(): void          │
+  │   (public wrapper → _drainOfflineInbox)  │
   │ + dispose(): void                   │
   │ - _onMessageReceived(Map)           │
   │ - _onPeerConnected(Map)             │
   │ - _onPeerDisconnected(Map)          │
+  │ - _performHealthCheck(): void      │
   │ - _drainOfflineInbox(): void       │
   └─────────────────────────────────────┘
 
@@ -2017,7 +2035,7 @@
 
 ```
 lib/
-├── main.dart                                    # App entry point, Firebase init, SecureKeyStore + encrypted DB setup (v6), secret migration, DI
+├── main.dart                                    # App entry point, Firebase init, SecureKeyStore + encrypted DB setup (v6), secret migration, DI; MyApp = StatefulWidget + WidgetsBindingObserver (lifecycle, push listeners, orderly dispose)
 ├── smoke_test_main.dart                         # Smoke test entry point
 ├── smoke_test_restore.dart                      # Smoke test for identity restore
 ├── smoke_test_messages.dart                     # Smoke test for messages DB layer
@@ -2151,7 +2169,7 @@ lib/
 │   │           └── orbit_search_dock.dart          # Bottom-docked search TextField
 │   │
 │   ├── push/
-│   │   ├── background_message_handler.dart         # @pragma('vm:entry-point') Firebase handler
+│   │   ├── background_message_handler.dart         # @pragma('vm:entry-point') Firebase handler; defers inbox drain to next app resume
 │   │   ├── request_push_permission.dart            # Requests notification permission
 │   │   └── register_push_token.dart                # Registers FCM token via P2P inbox protocol
 │   │
@@ -2177,10 +2195,6 @@ lib/
 │   │           ├── ambient_background.dart     # Animated glow background
 │   │           ├── brand_header.dart           # Logo/title header
 │   │           └── choice_card.dart            # Glassmorphic tap card
-│   │
-│   ├── identity_onboard/
-│   │   └── presentation/
-│   │       └── welcome_screen.dart             # Onboarding welcome screen
 │   │
 │   ├── qr_code/
 │   │   ├── domain/
@@ -2927,7 +2941,29 @@ The application initialization sequence is defined in `lib/main.dart`. Understan
     │           Monitors for incoming chat messages
     │           Broadcasts to incomingMessageStream + contactUpdatedStream
     │
-    └─► runApp(MyApp)
+    └─► runApp(MyApp) — StatefulWidget + WidgetsBindingObserver
+            │
+            ├─► Constructor params: messageRouter, isDesktop, + all existing deps
+            │
+            ├─► _onResumed() lifecycle handler (app foreground):
+            │       │
+            │       ├─► bridge.checkHealth()
+            │       │
+            │       ├─► [dead] bridge.reinitialize()
+            │       │
+            │       ├─► p2pService.performImmediateHealthCheck()
+            │       │
+            │       └─► p2pService.drainOfflineInbox()
+            │
+            ├─► _setupForegroundPushListener():
+            │       │
+            │       ├─► FirebaseMessaging.onMessage → drainOfflineInbox()
+            │       │
+            │       └─► FirebaseMessaging.onMessageOpenedApp → drainOfflineInbox()
+            │
+            ├─► dispose() orderly teardown:
+            │       chatMessageListener → contactRequestListener →
+            │       messageRouter → p2pService → bridge
             │
             └─► StartupRouter widget
                     │
@@ -2954,7 +2990,7 @@ The application initialization sequence is defined in `lib/main.dart`. Understan
 
 | File | Responsibility |
 |------|----------------|
-| `lib/main.dart` | Entry point, Firebase init, SecureKeyStore + encrypted DB setup (v6), secret migration, repository + service + listener DI |
+| `lib/main.dart` | Entry point, Firebase init, SecureKeyStore + encrypted DB setup (v6), secret migration, repository + service + listener DI; MyApp is StatefulWidget + WidgetsBindingObserver with app-resume lifecycle (bridge health check → reinitialize if dead → P2P health check → drain inbox), foreground push listeners (Firebase onMessage/onMessageOpenedApp → inbox drain), and orderly dispose chain (chatMessageListener → contactRequestListener → messageRouter → p2pService → bridge) |
 | `lib/core/secure_storage/secure_key_store.dart` | SecureKeyStore abstract interface |
 | `lib/core/secure_storage/flutter_secure_key_store.dart` | FlutterSecureKeyStore production impl (iOS Keychain / Android EncryptedSharedPreferences) |
 | `lib/core/database/encrypted_db_opener.dart` | Opens SQLCipher DB with key from secure storage; handles plaintext-to-encrypted migration |
@@ -2972,7 +3008,7 @@ The application initialization sequence is defined in `lib/main.dart`. Understan
 | `lib/features/conversation/application/chat_message_listener.dart` | Background chat message listener startup |
 | `lib/features/identity/presentation/startup_router.dart` | Route decision logic + push token registration |
 | `lib/features/identity/application/startup_decision.dart` | Business logic for routing |
-| `lib/features/push/background_message_handler.dart` | Firebase background message handler |
+| `lib/features/push/background_message_handler.dart` | Firebase background message handler; logs with `note: 'inbox drain deferred to next app resume'` |
 | `lib/features/push/request_push_permission.dart` | Push notification permission request |
 | `lib/features/push/register_push_token.dart` | FCM token registration via P2P inbox protocol |
 

@@ -633,6 +633,28 @@ class P2PServiceImpl implements P2PService {
   }
 
   @override
+  Future<void> performImmediateHealthCheck() async {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'P2P_SERVICE_IMMEDIATE_HEALTH_CHECK_BEGIN',
+      details: {},
+    );
+    await _performHealthCheck();
+  }
+
+  @override
+  Future<void> drainOfflineInbox() async {
+    if (!_currentState.isStarted) return;
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'P2P_SERVICE_DRAIN_OFFLINE_INBOX_BEGIN',
+      details: {},
+    );
+    await _drainOfflineInbox();
+  }
+
+  @override
   void dispose() {
     _stopHealthCheck();
     _stateController.close();
