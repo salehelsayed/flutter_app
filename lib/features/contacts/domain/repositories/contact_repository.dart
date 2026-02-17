@@ -25,4 +25,22 @@ abstract class ContactRepository {
 
   /// Returns the total number of contacts.
   Future<int> getContactCount();
+
+  /// Archives a contact by peer ID.
+  Future<void> archiveContact(String peerId);
+
+  /// Unarchives a contact by peer ID.
+  Future<void> unarchiveContact(String peerId);
+
+  /// Retrieves only active (non-archived) contacts.
+  Future<List<ContactModel>> getActiveContacts();
+
+  /// Retrieves only archived contacts.
+  Future<List<ContactModel>> getArchivedContacts();
+
+  /// Blocks a contact by peer ID.
+  Future<void> blockContact(String peerId);
+
+  /// Unblocks a contact by peer ID.
+  Future<void> unblockContact(String peerId);
 }

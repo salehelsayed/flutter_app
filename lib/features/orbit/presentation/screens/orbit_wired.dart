@@ -19,6 +19,12 @@ import 'package:flutter_app/features/conversation/presentation/navigation/conver
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
+import 'package:flutter_app/features/contacts/application/archive_contact_use_case.dart';
+import 'package:flutter_app/features/contacts/application/block_contact_use_case.dart';
+import 'package:flutter_app/features/contacts/application/delete_contact_use_case.dart';
+import 'package:flutter_app/features/contacts/application/unarchive_contact_use_case.dart';
+import 'package:flutter_app/features/contacts/application/unblock_contact_use_case.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/confirmation_dialog.dart';
 import 'package:flutter_app/features/orbit/application/load_orbit_data_use_case.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_friend.dart';
 import 'package:flutter_app/features/qr_code/presentation/screens/qr_display_wired.dart';
@@ -56,10 +62,13 @@ class OrbitWired extends StatefulWidget {
 
 class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   IdentityModel? _identity;
-  List<OrbitFriend> _allFriends = [];
+  List<OrbitFriend> _activeFriends = [];
+  List<OrbitFriend> _archivedFriends = [];
+  String _filterTab = 'all';
   bool _searchActive = false;
   String _searchQuery = '';
   bool _isSearchTriggerVisible = true;
+  final ValueNotifier<Key?> _openRowNotifier = ValueNotifier(null);
 
   final ScrollController _scrollController = ScrollController();
   final TextEditingController _searchController = TextEditingController();
@@ -120,12 +129,20 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
 
   Future<void> _loadOrbitData() async {
     try {
-      final friends = await loadOrbitData(
+      final active = await loadOrbitData(
         contactRepo: widget.contactRepo,
         messageRepo: widget.messageRepo,
       );
+      final archived = await loadOrbitData(
+        contactRepo: widget.contactRepo,
+        messageRepo: widget.messageRepo,
+        includeArchived: true,
+      );
       if (!mounted) return;
-      setState(() => _allFriends = friends);
+      setState(() {
+        _activeFriends = active;
+        _archivedFriends = archived;
+      });
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -270,14 +287,124 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     _searchFocusNode.requestFocus();
   }
 
+  List<OrbitFriend> get _currentTabFriends =>
+      _filterTab == 'archived' ? _archivedFriends : _activeFriends;
+
   List<OrbitFriend> get _displayedFriends {
-    if (_searchQuery.isEmpty) return _allFriends;
+    final base = _currentTabFriends;
+    if (_searchQuery.isEmpty) return base;
     final q = _searchQuery.toLowerCase().trim();
-    return _allFriends
+    return base
         .where(
           (f) => f.username.toLowerCase().contains(q),
         )
         .toList();
+  }
+
+  void _onFilterChanged(String tab) {
+    _openRowNotifier.value = null;
+    setState(() => _filterTab = tab);
+  }
+
+  Future<void> _onArchiveFriend(OrbitFriend friend) async {
+    try {
+      await archiveContact(
+        contactRepo: widget.contactRepo,
+        peerId: friend.peerId,
+      );
+      _loadOrbitData();
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'ORBIT_FL_ARCHIVE_ERROR',
+        details: {'error': e.toString()},
+      );
+    }
+  }
+
+  Future<void> _onUnarchiveFriend(OrbitFriend friend) async {
+    try {
+      await unarchiveContact(
+        contactRepo: widget.contactRepo,
+        peerId: friend.peerId,
+      );
+      _loadOrbitData();
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'ORBIT_FL_UNARCHIVE_ERROR',
+        details: {'error': e.toString()},
+      );
+    }
+  }
+
+  Future<void> _onBlockFriend(OrbitFriend friend) async {
+    final confirmed = await showConfirmationDialog(
+      context: context,
+      title: 'Block ${friend.username}?',
+      description:
+          'They won\'t be able to send you messages. You can unblock them later.',
+      confirmLabel: 'Block',
+    );
+    if (!confirmed || !mounted) return;
+
+    try {
+      await blockContact(
+        contactRepo: widget.contactRepo,
+        peerId: friend.peerId,
+      );
+      _openRowNotifier.value = null;
+      _loadOrbitData();
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'ORBIT_FL_BLOCK_ERROR',
+        details: {'error': e.toString()},
+      );
+    }
+  }
+
+  Future<void> _onUnblockFriend(OrbitFriend friend) async {
+    try {
+      await unblockContact(
+        contactRepo: widget.contactRepo,
+        peerId: friend.peerId,
+      );
+      _loadOrbitData();
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'ORBIT_FL_UNBLOCK_ERROR',
+        details: {'error': e.toString()},
+      );
+    }
+  }
+
+  Future<void> _onDeleteFriend(OrbitFriend friend) async {
+    final confirmed = await showConfirmationDialog(
+      context: context,
+      title: 'Delete chat?',
+      description:
+          'This will permanently remove ${friend.username} and all messages. This cannot be undone.',
+      confirmLabel: 'Delete',
+    );
+    if (!confirmed || !mounted) return;
+
+    try {
+      await deleteContactAndMessages(
+        contactRepo: widget.contactRepo,
+        messageRepo: widget.messageRepo,
+        peerId: friend.peerId,
+      );
+      _openRowNotifier.value = null;
+      _loadOrbitData();
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'ORBIT_FL_DELETE_ERROR',
+        details: {'error': e.toString()},
+      );
+    }
   }
 
   void _onFriendTap(OrbitFriend friend) async {
@@ -297,6 +424,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           chatMessageListener: widget.chatMessageListener,
           p2pService: widget.p2pService,
           bridge: widget.bridge,
+          contactRepo: widget.contactRepo,
         ),
       ),
     ).then((_) => _loadOrbitData());
@@ -347,6 +475,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     _scrollController.dispose();
     _searchController.dispose();
     _searchFocusNode.dispose();
+    _openRowNotifier.dispose();
     super.dispose();
   }
 
@@ -354,7 +483,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   Widget build(BuildContext context) {
     return OrbitScreen(
       identity: _identity,
-      allFriends: _allFriends,
+      allFriends: _activeFriends,
       displayedFriends: _displayedFriends,
       searchActive: _searchActive,
       searchQuery: _searchQuery,
@@ -381,6 +510,16 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       onSearchClose: _onSearchClose,
       onSearchChanged: _onSearchChanged,
       onSearchClear: _onSearchClear,
+      filterTab: _filterTab,
+      activeCount: _activeFriends.length,
+      archivedCount: _archivedFriends.length,
+      onFilterChanged: _onFilterChanged,
+      onArchiveFriend: _onArchiveFriend,
+      onUnarchiveFriend: _onUnarchiveFriend,
+      onBlockFriend: _onBlockFriend,
+      onUnblockFriend: _onUnblockFriend,
+      onDeleteFriend: _onDeleteFriend,
+      openRowNotifier: _openRowNotifier,
     );
   }
 }

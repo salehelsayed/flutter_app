@@ -173,7 +173,7 @@ class _ThreadCardState extends State<ThreadCard>
         // Unread badge
         if (widget.thread.unreadCount > 0)
           Positioned(
-            top: -8,
+            top: 8,
             right: 12,
             child: UnreadCountBadge(count: widget.thread.unreadCount),
           ),

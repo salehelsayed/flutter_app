@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/blocked_banner.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/compact_origin_marker.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/conversation_header.dart';
@@ -21,6 +22,9 @@ class ConversationScreen extends StatefulWidget {
   final ValueChanged<String> onSend;
   final VoidCallback onBack;
   final ScrollController? scrollController;
+  final bool isBlocked;
+  final VoidCallback? onUnblock;
+  final VoidCallback? onOverflow;
 
   const ConversationScreen({
     super.key,
@@ -32,6 +36,9 @@ class ConversationScreen extends StatefulWidget {
     required this.onSend,
     required this.onBack,
     this.scrollController,
+    this.isBlocked = false,
+    this.onUnblock,
+    this.onOverflow,
   });
 
   @override
@@ -60,6 +67,7 @@ class _ConversationScreenState extends State<ConversationScreen> {
             contactUsername: widget.contactUsername,
             connectionDate: widget.connectionDate,
             onBack: widget.onBack,
+            onOverflow: widget.onOverflow,
           ),
           // Body with animated transition
           Expanded(
@@ -74,8 +82,11 @@ class _ConversationScreenState extends State<ConversationScreen> {
                   : _buildMessageList(),
             ),
           ),
-          // Compose area
-          ComposeArea(onSend: widget.onSend),
+          // Compose area or blocked banner
+          if (widget.isBlocked)
+            BlockedBanner(onUnblock: widget.onUnblock)
+          else
+            ComposeArea(onSend: widget.onSend),
         ],
       ),
     );
@@ -114,13 +125,15 @@ class _ConversationScreenState extends State<ConversationScreen> {
         lastDateLabel = dateLabel;
       }
 
+      final isNew = i == widget.messages.length - 1 && _wasEmpty;
+
       widgets.add(
         Padding(
           padding: const EdgeInsets.only(bottom: 16),
           child: _AnimatedLetterCard(
             key: ValueKey(message.id),
-            delayMs: i * 50,
-            isNewMessage: i == widget.messages.length - 1 && _wasEmpty,
+            delayMs: 0,
+            isNewMessage: isNew,
             child: LetterCard(
               senderPeerId: message.senderPeerId,
               senderName: message.isIncoming

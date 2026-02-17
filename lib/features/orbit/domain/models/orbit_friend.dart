@@ -23,4 +23,6 @@ class OrbitFriend {
   String get username => contact.username;
   String get scannedAt => contact.scannedAt;
   String? get avatarPath => contact.avatarPath;
+  bool get isArchived => contact.isArchived;
+  bool get isBlocked => contact.isBlocked;
 }

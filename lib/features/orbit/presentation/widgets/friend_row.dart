@@ -8,6 +8,7 @@ import 'package:flutter_app/features/orbit/domain/models/orbit_friend.dart';
 class FriendRow extends StatelessWidget {
   final OrbitFriend friend;
   final bool showInnerCircleBadge;
+  final bool hideUnreadBadge;
   final VoidCallback onTap;
 
   const FriendRow({
@@ -15,6 +16,7 @@ class FriendRow extends StatelessWidget {
     required this.friend,
     required this.onTap,
     this.showInnerCircleBadge = false,
+    this.hideUnreadBadge = false,
   });
 
   @override
@@ -119,7 +121,7 @@ class FriendRow extends StatelessWidget {
                     ),
                   ),
                 const SizedBox(height: 4),
-                if (friend.unreadCount > 0)
+                if (!hideUnreadBadge && friend.unreadCount > 0)
                   UnreadCountBadge(count: friend.unreadCount)
                 else
                   const Icon(

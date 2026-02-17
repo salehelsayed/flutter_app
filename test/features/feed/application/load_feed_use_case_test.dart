@@ -30,6 +30,26 @@ class FakeContactRepository implements ContactRepository {
 
   @override
   Future<int> getContactCount() async => contacts.length;
+
+  @override
+  Future<void> archiveContact(String peerId) async {}
+
+  @override
+  Future<void> unarchiveContact(String peerId) async {}
+
+  @override
+  Future<void> blockContact(String peerId) async {}
+
+  @override
+  Future<void> unblockContact(String peerId) async {}
+
+  @override
+  Future<List<ContactModel>> getActiveContacts() async =>
+      contacts.where((c) => !c.isArchived).toList();
+
+  @override
+  Future<List<ContactModel>> getArchivedContacts() async =>
+      contacts.where((c) => c.isArchived).toList();
 }
 
 // -- Fake Message Repository --
@@ -70,6 +90,12 @@ class FakeMessageRepository implements MessageRepository {
 
   @override
   Future<int> getTotalUnreadCount() async => 0;
+
+  @override
+  Future<int> getTotalUnreadCountExcludingArchived() async => 0;
+
+  @override
+  Future<int> deleteMessagesForContact(String contactPeerId) async => 0;
 }
 
 ContactModel _makeContact(String peerId, String username, String scannedAt) {
@@ -258,6 +284,30 @@ void main() {
       expect(result[2], isA<ConnectionFeedItem>());
       expect(
           (result[2] as ConnectionFeedItem).contactUsername, 'Alice');
+    });
+
+    test('excludes blocked contacts from feed', () async {
+      final contacts = [
+        _makeContact('peer-A', 'Alice', '2026-02-01T10:00:00.000Z'),
+        ContactModel(
+          peerId: 'peer-B',
+          publicKey: 'pk-peer-B',
+          rendezvous: '/dns4/relay/tcp/443/p2p/relay',
+          username: 'BlockedBob',
+          signature: 'sig-peer-B',
+          scannedAt: '2026-02-01T14:00:00.000Z',
+          isBlocked: true,
+          blockedAt: '2026-02-15T00:00:00.000Z',
+        ),
+      ];
+
+      final result = await loadFeed(
+        contactRepo: FakeContactRepository(contacts: contacts),
+        messageRepo: FakeMessageRepository(),
+      );
+
+      expect(result.length, 1);
+      expect((result[0] as ConnectionFeedItem).contactUsername, 'Alice');
     });
   });
 }

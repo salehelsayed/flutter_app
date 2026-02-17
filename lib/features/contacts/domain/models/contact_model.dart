@@ -26,6 +26,18 @@ class ContactModel {
   /// Base64-encoded ML-KEM-768 public key for post-quantum encryption.
   final String? mlKemPublicKey;
 
+  /// Whether this contact is archived (hidden from active list).
+  final bool isArchived;
+
+  /// ISO-8601 timestamp when the contact was archived, null if active.
+  final String? archivedAt;
+
+  /// Whether this contact is blocked.
+  final bool isBlocked;
+
+  /// ISO-8601 timestamp when the contact was blocked, null if not blocked.
+  final String? blockedAt;
+
   const ContactModel({
     required this.peerId,
     required this.publicKey,
@@ -35,6 +47,10 @@ class ContactModel {
     required this.scannedAt,
     this.avatarPath,
     this.mlKemPublicKey,
+    this.isArchived = false,
+    this.archivedAt,
+    this.isBlocked = false,
+    this.blockedAt,
   });
 
   /// Creates a ContactModel from a QR payload JSON map.
@@ -63,6 +79,10 @@ class ContactModel {
       scannedAt: map['scanned_at'] as String,
       avatarPath: map['avatar_path'] as String?,
       mlKemPublicKey: map['ml_kem_public_key'] as String?,
+      isArchived: (map['is_archived'] as int? ?? 0) == 1,
+      archivedAt: map['archived_at'] as String?,
+      isBlocked: (map['is_blocked'] as int? ?? 0) == 1,
+      blockedAt: map['blocked_at'] as String?,
     );
   }
 
@@ -77,6 +97,10 @@ class ContactModel {
       'scanned_at': scannedAt,
       'avatar_path': avatarPath,
       'ml_kem_public_key': mlKemPublicKey,
+      'is_archived': isArchived ? 1 : 0,
+      'archived_at': archivedAt,
+      'is_blocked': isBlocked ? 1 : 0,
+      'blocked_at': blockedAt,
     };
   }
 
@@ -90,6 +114,12 @@ class ContactModel {
     String? scannedAt,
     String? avatarPath,
     String? mlKemPublicKey,
+    bool? isArchived,
+    String? archivedAt,
+    bool clearArchivedAt = false,
+    bool? isBlocked,
+    String? blockedAt,
+    bool clearBlockedAt = false,
   }) {
     return ContactModel(
       peerId: peerId ?? this.peerId,
@@ -100,6 +130,10 @@ class ContactModel {
       scannedAt: scannedAt ?? this.scannedAt,
       avatarPath: avatarPath ?? this.avatarPath,
       mlKemPublicKey: mlKemPublicKey ?? this.mlKemPublicKey,
+      isArchived: isArchived ?? this.isArchived,
+      archivedAt: clearArchivedAt ? null : (archivedAt ?? this.archivedAt),
+      isBlocked: isBlocked ?? this.isBlocked,
+      blockedAt: clearBlockedAt ? null : (blockedAt ?? this.blockedAt),
     );
   }
 

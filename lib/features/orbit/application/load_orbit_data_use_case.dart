@@ -9,6 +9,7 @@ import 'package:flutter_app/features/orbit/domain/models/orbit_friend.dart';
 Future<List<OrbitFriend>> loadOrbitData({
   required ContactRepository contactRepo,
   required MessageRepository messageRepo,
+  bool includeArchived = false,
 }) async {
   emitFlowEvent(
     layer: 'UC',
@@ -17,7 +18,9 @@ Future<List<OrbitFriend>> loadOrbitData({
   );
 
   try {
-    final contacts = await contactRepo.getAllContacts();
+    final contacts = includeArchived
+        ? await contactRepo.getArchivedContacts()
+        : await contactRepo.getActiveContacts();
     final friends = <OrbitFriend>[];
 
     for (final contact in contacts) {

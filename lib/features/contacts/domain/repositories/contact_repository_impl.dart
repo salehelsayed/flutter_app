@@ -11,6 +11,12 @@ class ContactRepositoryImpl implements ContactRepository {
   final Future<void> Function(String peerId) dbDeleteContact;
   final Future<int> Function() dbGetContactCount;
   final Future<bool> Function(String peerId) dbContactExists;
+  final Future<void> Function(String peerId) dbArchiveContact;
+  final Future<void> Function(String peerId) dbUnarchiveContact;
+  final Future<List<Map<String, Object?>>> Function() dbLoadActiveContacts;
+  final Future<List<Map<String, Object?>>> Function() dbLoadArchivedContacts;
+  final Future<void> Function(String peerId) dbBlockContact;
+  final Future<void> Function(String peerId) dbUnblockContact;
 
   ContactRepositoryImpl({
     required this.dbLoadAllContacts,
@@ -19,6 +25,12 @@ class ContactRepositoryImpl implements ContactRepository {
     required this.dbDeleteContact,
     required this.dbGetContactCount,
     required this.dbContactExists,
+    required this.dbArchiveContact,
+    required this.dbUnarchiveContact,
+    required this.dbLoadActiveContacts,
+    required this.dbLoadArchivedContacts,
+    required this.dbBlockContact,
+    required this.dbUnblockContact,
   });
 
   @override
@@ -73,5 +85,121 @@ class ContactRepositoryImpl implements ContactRepository {
   @override
   Future<int> getContactCount() async {
     return await dbGetContactCount();
+  }
+
+  @override
+  Future<void> archiveContact(String peerId) async {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CONTACTS_REPO_ARCHIVE_START',
+      details: {'peerId': peerId.substring(0, 10)},
+    );
+
+    try {
+      await dbArchiveContact(peerId);
+
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONTACTS_REPO_ARCHIVE_SUCCESS',
+        details: {'peerId': peerId.substring(0, 10)},
+      );
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONTACTS_REPO_ARCHIVE_ERROR',
+        details: {'error': e.toString()},
+      );
+      rethrow;
+    }
+  }
+
+  @override
+  Future<void> unarchiveContact(String peerId) async {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CONTACTS_REPO_UNARCHIVE_START',
+      details: {'peerId': peerId.substring(0, 10)},
+    );
+
+    try {
+      await dbUnarchiveContact(peerId);
+
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONTACTS_REPO_UNARCHIVE_SUCCESS',
+        details: {'peerId': peerId.substring(0, 10)},
+      );
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONTACTS_REPO_UNARCHIVE_ERROR',
+        details: {'error': e.toString()},
+      );
+      rethrow;
+    }
+  }
+
+  @override
+  Future<List<ContactModel>> getActiveContacts() async {
+    final rows = await dbLoadActiveContacts();
+    return rows.map((row) => ContactModel.fromMap(row)).toList();
+  }
+
+  @override
+  Future<List<ContactModel>> getArchivedContacts() async {
+    final rows = await dbLoadArchivedContacts();
+    return rows.map((row) => ContactModel.fromMap(row)).toList();
+  }
+
+  @override
+  Future<void> blockContact(String peerId) async {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CONTACTS_REPO_BLOCK_START',
+      details: {'peerId': peerId.substring(0, 10)},
+    );
+
+    try {
+      await dbBlockContact(peerId);
+
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONTACTS_REPO_BLOCK_SUCCESS',
+        details: {'peerId': peerId.substring(0, 10)},
+      );
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONTACTS_REPO_BLOCK_ERROR',
+        details: {'error': e.toString()},
+      );
+      rethrow;
+    }
+  }
+
+  @override
+  Future<void> unblockContact(String peerId) async {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CONTACTS_REPO_UNBLOCK_START',
+      details: {'peerId': peerId.substring(0, 10)},
+    );
+
+    try {
+      await dbUnblockContact(peerId);
+
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONTACTS_REPO_UNBLOCK_SUCCESS',
+        details: {'peerId': peerId.substring(0, 10)},
+      );
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONTACTS_REPO_UNBLOCK_ERROR',
+        details: {'error': e.toString()},
+      );
+      rethrow;
+    }
   }
 }

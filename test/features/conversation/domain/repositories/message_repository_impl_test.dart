@@ -69,6 +69,22 @@ void main() {
                 row['is_incoming'] == 1 && row['read_at'] == null)
             .length;
       },
+      dbCountTotalUnreadExcludingArchived: () async {
+        return store.values
+            .where((row) =>
+                row['is_incoming'] == 1 && row['read_at'] == null)
+            .length;
+      },
+      dbDeleteMessagesForContact: (contactPeerId) async {
+        final keysToRemove = store.entries
+            .where((e) => e.value['contact_peer_id'] == contactPeerId)
+            .map((e) => e.key)
+            .toList();
+        for (final key in keysToRemove) {
+          store.remove(key);
+        }
+        return keysToRemove.length;
+      },
     );
   });
 

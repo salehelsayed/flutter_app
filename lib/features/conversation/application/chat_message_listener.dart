@@ -83,6 +83,22 @@ class ChatMessageListener {
 
   Future<void> _onMessage(ChatMessage message) async {
     try {
+      // Check if sender is blocked — reject message entirely (don't persist)
+      final senderPeerId = message.from;
+      final senderContact = await contactRepo.getContact(senderPeerId);
+      if (senderContact != null && senderContact.isBlocked) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'CHAT_LISTENER_BLOCKED_REJECT',
+          details: {
+            'from': senderPeerId.length > 10
+                ? senderPeerId.substring(0, 10)
+                : senderPeerId,
+          },
+        );
+        return; // Message never persisted, never broadcast
+      }
+
       final ownSecretKey = getOwnMlKemSecretKey != null
           ? await getOwnMlKemSecretKey!()
           : null;
@@ -102,6 +118,26 @@ class ChatMessageListener {
 
       if (result == HandleChatMessageResult.chatMessage &&
           conversationMessage != null) {
+        // Check if sender is archived — suppress UI notification but message is already persisted
+        final contact = await contactRepo.getContact(
+          conversationMessage.contactPeerId,
+        );
+        if (contact != null && contact.isArchived) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'CHAT_LISTENER_ARCHIVED_SUPPRESS',
+            details: {
+              'id': conversationMessage.id.length > 8
+                  ? conversationMessage.id.substring(0, 8)
+                  : conversationMessage.id,
+              'from': conversationMessage.senderPeerId.length > 10
+                  ? conversationMessage.senderPeerId.substring(0, 10)
+                  : conversationMessage.senderPeerId,
+            },
+          );
+          return;
+        }
+
         emitFlowEvent(
           layer: 'FL',
           event: 'CHAT_LISTENER_NEW_MESSAGE',
