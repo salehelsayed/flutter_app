@@ -38,4 +38,10 @@ abstract class MessageRepository {
 
   /// Returns the total number of unread incoming messages across all contacts.
   Future<int> getTotalUnreadCount();
+
+  /// Returns the total unread count excluding archived contacts.
+  Future<int> getTotalUnreadCountExcludingArchived();
+
+  /// Deletes all messages for a contact. Returns the count of deleted rows.
+  Future<int> deleteMessagesForContact(String contactPeerId);
 }

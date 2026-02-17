@@ -314,6 +314,76 @@ Future<int> dbCountTotalUnread(Database db) async {
   }
 }
 
+/// Returns the total number of unread incoming messages excluding archived contacts.
+Future<int> dbCountTotalUnreadExcludingArchived(Database db) async {
+  emitFlowEvent(
+    layer: 'DB',
+    event: 'MESSAGES_DB_COUNT_TOTAL_UNREAD_EXCL_ARCHIVED_START',
+    details: {},
+  );
+
+  try {
+    final result = await db.rawQuery(
+      'SELECT COUNT(*) as count FROM messages m '
+      'JOIN contacts c ON m.contact_peer_id = c.peer_id '
+      'WHERE m.is_incoming = 1 AND m.read_at IS NULL AND c.is_archived = 0 AND c.is_blocked = 0',
+    );
+    final count = Sqflite.firstIntValue(result) ?? 0;
+
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'MESSAGES_DB_COUNT_TOTAL_UNREAD_EXCL_ARCHIVED_SUCCESS',
+      details: {'count': count},
+    );
+
+    return count;
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'MESSAGES_DB_COUNT_TOTAL_UNREAD_EXCL_ARCHIVED_ERROR',
+      details: {'error': e.toString()},
+    );
+    rethrow;
+  }
+}
+
+/// Deletes all messages for a contact.
+Future<int> dbDeleteMessagesForContact(Database db, String contactPeerId) async {
+  emitFlowEvent(
+    layer: 'DB',
+    event: 'MESSAGES_DB_DELETE_FOR_CONTACT_START',
+    details: {
+      'contactPeerId':
+          contactPeerId.length > 10
+              ? contactPeerId.substring(0, 10)
+              : contactPeerId,
+    },
+  );
+
+  try {
+    final count = await db.delete(
+      'messages',
+      where: 'contact_peer_id = ?',
+      whereArgs: [contactPeerId],
+    );
+
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'MESSAGES_DB_DELETE_FOR_CONTACT_SUCCESS',
+      details: {'count': count},
+    );
+
+    return count;
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'MESSAGES_DB_DELETE_FOR_CONTACT_ERROR',
+      details: {'error': e.toString()},
+    );
+    rethrow;
+  }
+}
+
 /// Loads a single message by ID.
 Future<Map<String, Object?>?> dbLoadMessage(Database db, String id) async {
   try {

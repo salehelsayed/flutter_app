@@ -80,7 +80,7 @@ class _EditableUsernameWidgetState extends State<EditableUsernameWidget> {
             'mknoon/',
             style: TextStyle(
               color: AppColors.textMuted,
-              fontSize: 18,
+              fontSize: 15,
               fontWeight: FontWeight.w400,
             ),
           ),
@@ -88,7 +88,7 @@ class _EditableUsernameWidgetState extends State<EditableUsernameWidget> {
             '@',
             style: TextStyle(
               color: AppColors.textPrimary,
-              fontSize: 18,
+              fontSize: 15,
               fontWeight: FontWeight.w600,
             ),
           ),
@@ -97,15 +97,17 @@ class _EditableUsernameWidgetState extends State<EditableUsernameWidget> {
             child: TextField(
               controller: _controller,
               focusNode: _focusNode,
+              maxLength: 20,
               style: const TextStyle(
                 color: AppColors.textPrimary,
-                fontSize: 18,
+                fontSize: 15,
                 fontWeight: FontWeight.w600,
               ),
               decoration: const InputDecoration(
                 isDense: true,
                 contentPadding: EdgeInsets.zero,
                 border: InputBorder.none,
+                counterText: '',
               ),
               onSubmitted: (_) => _finishEditing(),
             ),
@@ -123,7 +125,7 @@ class _EditableUsernameWidgetState extends State<EditableUsernameWidget> {
             'mknoon/',
             style: TextStyle(
               color: AppColors.textMuted,
-              fontSize: 18,
+              fontSize: 15,
               fontWeight: FontWeight.w400,
             ),
           ),
@@ -131,7 +133,7 @@ class _EditableUsernameWidgetState extends State<EditableUsernameWidget> {
             '@${widget.username}',
             style: const TextStyle(
               color: AppColors.textPrimary,
-              fontSize: 18,
+              fontSize: 15,
               fontWeight: FontWeight.w600,
             ),
           ),
@@ -139,7 +141,7 @@ class _EditableUsernameWidgetState extends State<EditableUsernameWidget> {
           Icon(
             Icons.edit,
             color: AppColors.textMuted,
-            size: 16,
+            size: 14,
           ),
         ],
       ),

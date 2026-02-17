@@ -50,6 +50,24 @@ class FakeContactRepository implements ContactRepository {
 
   @override
   Future<int> getContactCount() async => 0;
+
+  @override
+  Future<void> archiveContact(String peerId) async {}
+
+  @override
+  Future<void> unarchiveContact(String peerId) async {}
+
+  @override
+  Future<List<ContactModel>> getActiveContacts() async => [];
+
+  @override
+  Future<List<ContactModel>> getArchivedContacts() async => [];
+
+  @override
+  Future<void> blockContact(String peerId) async {}
+
+  @override
+  Future<void> unblockContact(String peerId) async {}
 }
 
 class FakeMessageRepository implements MessageRepository {
@@ -103,6 +121,12 @@ class FakeMessageRepository implements MessageRepository {
 
   @override
   Future<int> getTotalUnreadCount() async => 0;
+
+  @override
+  Future<int> getTotalUnreadCountExcludingArchived() async => 0;
+
+  @override
+  Future<int> deleteMessagesForContact(String contactPeerId) async => 0;
 }
 
 class FakeP2PService implements P2PService {

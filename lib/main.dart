@@ -6,6 +6,8 @@ import 'package:flutter_app/core/database/migrations/003_mlkem_keys.dart';
 import 'package:flutter_app/core/database/migrations/004_nullify_secret_columns.dart';
 import 'package:flutter_app/core/database/migrations/005_secret_null_checks.dart';
 import 'package:flutter_app/core/database/migrations/006_read_at_column.dart';
+import 'package:flutter_app/core/database/migrations/007_archive_columns.dart';
+import 'package:flutter_app/core/database/migrations/008_block_columns.dart';
 import 'package:flutter_app/core/database/encrypted_db_opener.dart';
 import 'package:flutter_app/core/database/helpers/identity_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
@@ -64,7 +66,7 @@ void main() async {
   final db = await openEncryptedDatabase(
     secureKeyStore: secureKeyStore,
     dbName: 'identity.db',
-    version: 6,
+    version: 8,
     onCreate: (db, version) async {
       await runIdentityTableMigration(db);
       await runMessagesTableMigration(db);
@@ -72,6 +74,8 @@ void main() async {
       // Fresh install: skip 004 (nullable) — 005 already has nullable + CHECK
       await runSecretNullChecksMigration(db);
       await runReadAtColumnMigration(db);
+      await runArchiveColumnsMigration(db);
+      await runBlockColumnsMigration(db);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) {
@@ -86,6 +90,12 @@ void main() async {
       // Migration 005 is deferred — runs after secrets migration below
       if (oldVersion < 6) {
         await runReadAtColumnMigration(db);
+      }
+      if (oldVersion < 7) {
+        await runArchiveColumnsMigration(db);
+      }
+      if (oldVersion < 8) {
+        await runBlockColumnsMigration(db);
       }
     },
   );
@@ -116,6 +126,12 @@ void main() async {
     dbDeleteContact: (peerId) => dbDeleteContact(db, peerId),
     dbGetContactCount: () => dbGetContactCount(db),
     dbContactExists: (peerId) => dbContactExists(db, peerId),
+    dbArchiveContact: (peerId) => dbArchiveContact(db, peerId),
+    dbUnarchiveContact: (peerId) => dbUnarchiveContact(db, peerId),
+    dbLoadActiveContacts: () => dbLoadActiveContacts(db),
+    dbLoadArchivedContacts: () => dbLoadArchivedContacts(db),
+    dbBlockContact: (peerId) => dbBlockContact(db, peerId),
+    dbUnblockContact: (peerId) => dbUnblockContact(db, peerId),
   );
 
   // Create contact request repository
@@ -146,6 +162,10 @@ void main() async {
     dbCountUnreadForContact: (contactPeerId) =>
         dbCountUnreadForContact(db, contactPeerId),
     dbCountTotalUnread: () => dbCountTotalUnread(db),
+    dbCountTotalUnreadExcludingArchived: () =>
+        dbCountTotalUnreadExcludingArchived(db),
+    dbDeleteMessagesForContact: (contactPeerId) =>
+        dbDeleteMessagesForContact(db, contactPeerId),
   );
 
   // Create and initialize the WebView JS bridge

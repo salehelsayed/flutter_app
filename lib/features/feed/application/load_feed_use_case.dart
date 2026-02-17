@@ -16,7 +16,9 @@ Future<List<FeedItem>> loadFeed({
   emitFlowEvent(layer: 'FL', event: 'FEED_LOAD_START', details: {});
 
   try {
-    final contacts = await contactRepo.getAllContacts();
+    final contacts = (await contactRepo.getActiveContacts())
+        .where((c) => !c.isBlocked)
+        .toList();
 
     // Build contact username map
     final contactUsernames = <String, String>{

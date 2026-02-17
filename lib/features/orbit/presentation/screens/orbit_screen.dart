@@ -9,6 +9,9 @@ import 'package:flutter_app/features/orbit/presentation/widgets/friends_list_hea
 import 'package:flutter_app/features/orbit/presentation/widgets/friend_row.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_search_trigger.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_search_dock.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/friends_filter_toggle.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/swipeable_friend_row.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/archived_empty_state.dart';
 
 /// Pure UI layout for the Orbit screen.
 ///
@@ -33,6 +36,16 @@ class OrbitScreen extends StatelessWidget {
   final VoidCallback onSearchClose;
   final void Function(String) onSearchChanged;
   final VoidCallback onSearchClear;
+  final String filterTab;
+  final int activeCount;
+  final int archivedCount;
+  final void Function(String) onFilterChanged;
+  final void Function(OrbitFriend) onArchiveFriend;
+  final void Function(OrbitFriend) onUnarchiveFriend;
+  final void Function(OrbitFriend) onBlockFriend;
+  final void Function(OrbitFriend) onUnblockFriend;
+  final void Function(OrbitFriend) onDeleteFriend;
+  final ValueNotifier<Key?> openRowNotifier;
 
   const OrbitScreen({
     super.key,
@@ -55,6 +68,16 @@ class OrbitScreen extends StatelessWidget {
     required this.onSearchClose,
     required this.onSearchChanged,
     required this.onSearchClear,
+    required this.filterTab,
+    required this.activeCount,
+    required this.archivedCount,
+    required this.onFilterChanged,
+    required this.onArchiveFriend,
+    required this.onUnarchiveFriend,
+    required this.onBlockFriend,
+    required this.onUnblockFriend,
+    required this.onDeleteFriend,
+    required this.openRowNotifier,
   });
 
   @override
@@ -96,7 +119,9 @@ class OrbitScreen extends StatelessWidget {
                         OrbitHeader(userPeerId: userPeerId),
                         OrbitalVisualization(
                           userPeerId: userPeerId,
-                          friends: allFriends,
+                          friends: allFriends
+                              .where((f) => !f.isBlocked)
+                              .toList(),
                         ),
                         const Padding(
                           padding: EdgeInsets.only(top: 20),
@@ -130,6 +155,18 @@ class OrbitScreen extends StatelessWidget {
                             onScanQR: onScanQR,
                             searchActive: searchActive,
                           ),
+
+                          // Filter toggle (hidden during search)
+                          if (!searchActive) ...[
+                            const SizedBox(height: 8),
+                            FriendsFilterToggle(
+                              activeFilter: filterTab,
+                              activeCount: activeCount,
+                              archivedCount: archivedCount,
+                              onFilterChanged: onFilterChanged,
+                            ),
+                          ],
+
                           const SizedBox(height: 8),
 
                           // Friend rows
@@ -137,20 +174,39 @@ class OrbitScreen extends StatelessWidget {
                               searchQuery.isNotEmpty &&
                               displayedFriends.isEmpty)
                             _buildNoResults()
+                          else if (filterTab == 'archived' &&
+                              displayedFriends.isEmpty &&
+                              !searchActive)
+                            const ArchivedEmptyState()
                           else
                             ...List.generate(displayedFriends.length, (index) {
                               final friend = displayedFriends[index];
                               final isInnerCircle =
                                   allFriends.indexOf(friend) < 13;
+                              final isArchived = friend.isArchived;
+                              final rowKey = ValueKey(friend.peerId);
                               return Padding(
                                 padding: const EdgeInsets.only(bottom: 8),
                                 child: AnimatedFriendRow(
                                   index: index,
-                                  child: FriendRow(
-                                    friend: friend,
-                                    showInnerCircleBadge:
-                                        searchActive && isInnerCircle,
-                                    onTap: () => onFriendTap(friend),
+                                  child: SwipeableFriendRow(
+                                    key: rowKey,
+                                    isArchived: isArchived,
+                                    isBlocked: friend.isBlocked,
+                                    openRowNotifier: openRowNotifier,
+                                    onArchive: () => onArchiveFriend(friend),
+                                    onUnarchive: () =>
+                                        onUnarchiveFriend(friend),
+                                    onBlock: () => onBlockFriend(friend),
+                                    onUnblock: () => onUnblockFriend(friend),
+                                    onDelete: () => onDeleteFriend(friend),
+                                    child: FriendRow(
+                                      friend: friend,
+                                      showInnerCircleBadge:
+                                          searchActive && isInnerCircle,
+                                      hideUnreadBadge: isArchived,
+                                      onTap: () => onFriendTap(friend),
+                                    ),
                                   ),
                                 ),
                               );

@@ -126,7 +126,7 @@ class _FeedWiredState extends State<FeedWired> {
 
   Future<void> _loadTotalUnreadCount() async {
     try {
-      final count = await widget.messageRepository.getTotalUnreadCount();
+      final count = await widget.messageRepository.getTotalUnreadCountExcludingArchived();
       if (!mounted) return;
       setState(() => _totalUnreadCount = count);
     } catch (e) {
@@ -318,6 +318,7 @@ class _FeedWiredState extends State<FeedWired> {
           chatMessageListener: widget.chatMessageListener,
           p2pService: widget.p2pService,
           bridge: widget.bridge,
+          contactRepo: widget.contactRepository,
         ),
       ),
     ).then((_) => _refreshFeed());
@@ -346,6 +347,7 @@ class _FeedWiredState extends State<FeedWired> {
           p2pService: widget.p2pService,
           bridge: widget.bridge,
           initialMessages: messages,
+          contactRepo: widget.contactRepository,
         ),
       ),
     ).then((_) => _refreshFeed());

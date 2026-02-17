@@ -137,7 +137,7 @@ class FeedScreen extends StatelessWidget {
       ];
     }
 
-    final widgets = <Widget>[const SizedBox(height: 6)];
+    final widgets = <Widget>[const SizedBox(height: 16)];
 
     for (var i = 0; i < feedItems.length; i++) {
       final item = feedItems[i];

@@ -257,6 +257,21 @@ class InMemoryMessageRepository implements MessageRepository {
   @override
   Future<int> getTotalUnreadCount() async => 0;
 
+  @override
+  Future<int> getTotalUnreadCountExcludingArchived() async => 0;
+
+  @override
+  Future<int> deleteMessagesForContact(String contactPeerId) async {
+    final keysToRemove = _messages.entries
+        .where((e) => e.value.contactPeerId == contactPeerId)
+        .map((e) => e.key)
+        .toList();
+    for (final key in keysToRemove) {
+      _messages.remove(key);
+    }
+    return keysToRemove.length;
+  }
+
   int get count => _messages.length;
 }
 
@@ -291,6 +306,26 @@ class InMemoryContactRepository implements ContactRepository {
 
   @override
   Future<int> getContactCount() async => _contacts.length;
+
+  @override
+  Future<void> archiveContact(String peerId) async {}
+
+  @override
+  Future<void> unarchiveContact(String peerId) async {}
+
+  @override
+  Future<List<ContactModel>> getActiveContacts() async =>
+      _contacts.values.where((c) => !c.isArchived).toList();
+
+  @override
+  Future<List<ContactModel>> getArchivedContacts() async =>
+      _contacts.values.where((c) => c.isArchived).toList();
+
+  @override
+  Future<void> blockContact(String peerId) async {}
+
+  @override
+  Future<void> unblockContact(String peerId) async {}
 }
 
 // ─── Test User ──────────────────────────────────────────────────────

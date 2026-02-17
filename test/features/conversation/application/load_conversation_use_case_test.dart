@@ -41,6 +41,12 @@ class FakeMessageRepository implements MessageRepository {
 
   @override
   Future<int> getTotalUnreadCount() async => 0;
+
+  @override
+  Future<int> getTotalUnreadCountExcludingArchived() async => 0;
+
+  @override
+  Future<int> deleteMessagesForContact(String contactPeerId) async => 0;
 }
 
 void main() {
