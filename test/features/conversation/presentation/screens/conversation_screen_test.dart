@@ -8,6 +8,9 @@ void main() {
     List<ConversationMessage> messages = const [],
     ValueChanged<String>? onSend,
     VoidCallback? onBack,
+    bool isLoadingMore = false,
+    bool hasMoreOlderMessages = true,
+    bool initialLoadDone = false,
   }) {
     return MaterialApp(
       home: Scaffold(
@@ -19,6 +22,9 @@ void main() {
           messages: messages,
           onSend: onSend ?? (_) {},
           onBack: onBack ?? () {},
+          isLoadingMore: isLoadingMore,
+          hasMoreOlderMessages: hasMoreOlderMessages,
+          initialLoadDone: initialLoadDone,
         ),
       ),
     );
@@ -101,14 +107,38 @@ void main() {
       expect(find.text('Alice'), findsOneWidget);
     });
 
-    testWidgets('shows origin marker when messages present', (tester) async {
+    testWidgets('shows origin marker when messages present and no more older', (tester) async {
       await tester.pumpWidget(buildTestWidget(
         messages: [makeMessage()],
+        hasMoreOlderMessages: false,
       ));
       await pumpFrames(tester);
 
       // Compact origin marker shows "Connected!" text
       expect(find.text('Connected!'), findsWidgets);
+    });
+
+    testWidgets('hides origin marker when hasMoreOlderMessages is true', (tester) async {
+      await tester.pumpWidget(buildTestWidget(
+        messages: [makeMessage()],
+        hasMoreOlderMessages: true,
+      ));
+      await pumpFrames(tester);
+
+      // Origin marker should not appear — more messages above
+      // Only the header has the connection info, not the origin marker
+      expect(find.text('Connected!'), findsNothing);
+    });
+
+    testWidgets('shows loading indicator when isLoadingMore is true', (tester) async {
+      await tester.pumpWidget(buildTestWidget(
+        messages: [makeMessage()],
+        isLoadingMore: true,
+        hasMoreOlderMessages: true,
+      ));
+      await pumpFrames(tester);
+
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
     });
 
     testWidgets('shows date separator for today\'s messages', (tester) async {

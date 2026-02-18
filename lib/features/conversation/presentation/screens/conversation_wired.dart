@@ -68,6 +68,7 @@ class ConversationWired extends StatefulWidget {
 
 class _ConversationWiredState extends State<ConversationWired> {
   static const _uuid = Uuid();
+  static const _pageSize = 50;
 
   IdentityModel? _identity;
   late ContactModel _contact;
@@ -76,18 +77,27 @@ class _ConversationWiredState extends State<ConversationWired> {
   StreamSubscription<ContactModel>? _contactUpdateSubscription;
   final _scrollController = ScrollController();
 
+  bool _hasMoreOlderMessages = true;
+  bool _isLoadingMore = false;
+  bool _initialLoadDone = false;
+
   @override
   void initState() {
     super.initState();
     _contact = widget.contact;
     emitFlowEvent(layer: 'FL', event: 'CONV_FL_SCREEN_INIT', details: {});
+    _scrollController.addListener(_onScroll);
     _loadIdentity();
     if (widget.initialMessages != null) {
       _messages = widget.initialMessages!;
+      _hasMoreOlderMessages = _messages.length >= _pageSize;
       _scrollToBottom();
       _markAsRead();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() => _initialLoadDone = true);
+      });
     } else {
-      _loadMessages().then((_) => _markAsRead());
+      _loadInitialPage().then((_) => _markAsRead());
     }
     _startListeningForMessages();
     _startListeningForContactUpdates();
@@ -108,25 +118,71 @@ class _ConversationWiredState extends State<ConversationWired> {
     }
   }
 
-  Future<void> _loadMessages() async {
+  Future<void> _loadInitialPage() async {
     try {
-      final messages = await loadConversation(
+      final messages = await loadConversationPage(
         messageRepo: widget.messageRepo,
         contactPeerId: _contact.peerId,
+        pageSize: _pageSize,
       );
       if (mounted) {
-        setState(() => _messages = messages);
+        setState(() {
+          _messages = messages;
+          _hasMoreOlderMessages = messages.length >= _pageSize;
+        });
         emitFlowEvent(
           layer: 'FL',
           event: 'CONV_FL_MESSAGES_LOADED',
           details: {'count': messages.length},
         );
         _scrollToBottom();
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) setState(() => _initialLoadDone = true);
+        });
       }
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
         event: 'CONV_FL_LOAD_ERROR',
+        details: {'error': e.toString()},
+      );
+    }
+  }
+
+  void _onScroll() {
+    if (!_hasMoreOlderMessages || _isLoadingMore) return;
+    if (!_scrollController.hasClients) return;
+    // In a reversed ListView, minScrollExtent is the "top" (oldest messages)
+    final position = _scrollController.position;
+    if (position.pixels <= position.minScrollExtent + 200) {
+      _loadOlderMessages();
+    }
+  }
+
+  Future<void> _loadOlderMessages() async {
+    if (_messages.isEmpty) return;
+    setState(() => _isLoadingMore = true);
+
+    try {
+      final cursor = _messages.first.timestamp;
+      final olderMessages = await loadConversationPage(
+        messageRepo: widget.messageRepo,
+        contactPeerId: _contact.peerId,
+        pageSize: _pageSize,
+        beforeTimestamp: cursor,
+      );
+      if (mounted) {
+        setState(() {
+          _messages = [...olderMessages, ..._messages];
+          _hasMoreOlderMessages = olderMessages.length >= _pageSize;
+          _isLoadingMore = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() => _isLoadingMore = false);
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONV_FL_LOAD_MORE_ERROR',
         details: {'error': e.toString()},
       );
     }
@@ -488,7 +544,7 @@ class _ConversationWiredState extends State<ConversationWired> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scrollController.hasClients) {
         _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
+          0.0,
           duration: const Duration(milliseconds: 300),
           curve: Curves.easeOut,
         );
@@ -521,6 +577,7 @@ class _ConversationWiredState extends State<ConversationWired> {
 
   @override
   void dispose() {
+    _scrollController.removeListener(_onScroll);
     _incomingSubscription?.cancel();
     _contactUpdateSubscription?.cancel();
     _scrollController.dispose();
@@ -542,6 +599,9 @@ class _ConversationWiredState extends State<ConversationWired> {
         isBlocked: _contact.isBlocked,
         onUnblock: _onUnblock,
         onOverflow: widget.contactRepo != null ? _onOverflow : null,
+        isLoadingMore: _isLoadingMore,
+        hasMoreOlderMessages: _hasMoreOlderMessages,
+        initialLoadDone: _initialLoadDone,
       ),
     );
   }

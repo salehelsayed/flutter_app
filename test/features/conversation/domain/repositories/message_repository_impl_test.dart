@@ -85,6 +85,17 @@ void main() {
         }
         return keysToRemove.length;
       },
+      dbLoadMessagesPage: (contactPeerId, {limit = 50, beforeTimestamp}) async {
+        var rows = store.values
+            .where((row) => row['contact_peer_id'] == contactPeerId)
+            .toList();
+        if (beforeTimestamp != null) {
+          rows = rows.where((row) => (row['timestamp'] as String).compareTo(beforeTimestamp) < 0).toList();
+        }
+        rows.sort((a, b) => (b['timestamp'] as String).compareTo(a['timestamp'] as String));
+        final page = rows.take(limit).toList();
+        return page.reversed.toList();
+      },
     );
   });
 
@@ -191,6 +202,39 @@ void main() {
 
     test('messageExists returns false for non-existing message', () async {
       expect(await repo.messageExists('nonexistent'), false);
+    });
+
+    test('getMessagesPage returns most recent page', () async {
+      for (var i = 1; i <= 5; i++) {
+        await repo.saveMessage(makeMessage(
+          id: 'msg-$i',
+          timestamp: '2026-02-09T${10 + i}:00:00.000Z',
+        ));
+      }
+
+      final page = await repo.getMessagesPage('contact-peer', limit: 3);
+      expect(page.length, 3);
+      expect(page[0].id, 'msg-3');
+      expect(page[1].id, 'msg-4');
+      expect(page[2].id, 'msg-5');
+    });
+
+    test('getMessagesPage returns older page with cursor', () async {
+      for (var i = 1; i <= 5; i++) {
+        await repo.saveMessage(makeMessage(
+          id: 'msg-$i',
+          timestamp: '2026-02-09T${10 + i}:00:00.000Z',
+        ));
+      }
+
+      final page = await repo.getMessagesPage(
+        'contact-peer',
+        limit: 3,
+        beforeTimestamp: '2026-02-09T13:00:00.000Z',
+      );
+      expect(page.length, 2);
+      expect(page[0].id, 'msg-1');
+      expect(page[1].id, 'msg-2');
     });
   });
 }

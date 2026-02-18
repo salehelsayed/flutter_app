@@ -44,4 +44,15 @@ abstract class MessageRepository {
 
   /// Deletes all messages for a contact. Returns the count of deleted rows.
   Future<int> deleteMessagesForContact(String contactPeerId);
+
+  /// Retrieves a page of messages for a contact, ordered by timestamp ASC.
+  ///
+  /// Returns at most [limit] messages. When [beforeTimestamp] is null,
+  /// returns the most recent page. When provided, returns messages older
+  /// than that cursor.
+  Future<List<ConversationMessage>> getMessagesPage(
+    String contactPeerId, {
+    int limit = 50,
+    String? beforeTimestamp,
+  });
 }

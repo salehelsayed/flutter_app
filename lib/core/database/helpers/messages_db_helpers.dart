@@ -34,6 +34,67 @@ Future<void> dbInsertMessage(Database db, Map<String, Object?> row) async {
   }
 }
 
+/// Loads a page of messages for a contact, ordered by timestamp ASC.
+///
+/// Returns at most [limit] messages. When [beforeTimestamp] is null,
+/// returns the most recent page. When provided, returns messages older
+/// than that cursor. Results are returned in chronological (ASC) order.
+Future<List<Map<String, Object?>>> dbLoadMessagesPage(
+  Database db,
+  String contactPeerId, {
+  int limit = 50,
+  String? beforeTimestamp,
+}) async {
+  emitFlowEvent(
+    layer: 'DB',
+    event: 'MESSAGES_DB_LOAD_PAGE_START',
+    details: {
+      'contactPeerId':
+          contactPeerId.length > 10
+              ? contactPeerId.substring(0, 10)
+              : contactPeerId,
+      'limit': limit,
+      'hasCursor': beforeTimestamp != null,
+    },
+  );
+
+  try {
+    final List<Map<String, Object?>> results;
+    if (beforeTimestamp != null) {
+      results = await db.query(
+        'messages',
+        where: 'contact_peer_id = ? AND timestamp < ?',
+        whereArgs: [contactPeerId, beforeTimestamp],
+        orderBy: 'timestamp DESC',
+        limit: limit,
+      );
+    } else {
+      results = await db.query(
+        'messages',
+        where: 'contact_peer_id = ?',
+        whereArgs: [contactPeerId],
+        orderBy: 'timestamp DESC',
+        limit: limit,
+      );
+    }
+
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'MESSAGES_DB_LOAD_PAGE_SUCCESS',
+      details: {'count': results.length},
+    );
+
+    return results.reversed.toList();
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'MESSAGES_DB_LOAD_PAGE_ERROR',
+      details: {'error': e.toString()},
+    );
+    rethrow;
+  }
+}
+
 /// Loads all messages for a contact, ordered by timestamp ASC.
 Future<List<Map<String, Object?>>> dbLoadMessagesForContact(
   Database db,

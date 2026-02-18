@@ -25,6 +25,9 @@ class ConversationScreen extends StatefulWidget {
   final bool isBlocked;
   final VoidCallback? onUnblock;
   final VoidCallback? onOverflow;
+  final bool isLoadingMore;
+  final bool hasMoreOlderMessages;
+  final bool initialLoadDone;
 
   const ConversationScreen({
     super.key,
@@ -39,6 +42,9 @@ class ConversationScreen extends StatefulWidget {
     this.isBlocked = false,
     this.onUnblock,
     this.onOverflow,
+    this.isLoadingMore = false,
+    this.hasMoreOlderMessages = true,
+    this.initialLoadDone = false,
   });
 
   @override
@@ -93,48 +99,44 @@ class _ConversationScreenState extends State<ConversationScreen> {
   }
 
   Widget _buildMessageList() {
-    return SingleChildScrollView(
+    final displayItems = _buildDisplayItems();
+
+    return ListView.builder(
       key: const ValueKey('messages'),
       controller: widget.scrollController,
+      reverse: true,
       physics: const BouncingScrollPhysics(),
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-      child: Column(
-        children: [
-          // Origin marker
-          CompactOriginMarker(
-            contactPeerId: widget.contactPeerId,
-            connectionDate: widget.connectionDate,
-          ),
-          // Messages with date separators and staggered animations
-          ..._buildMessagesWithSeparators(),
-        ],
-      ),
-    );
-  }
+      itemCount: displayItems.length,
+      itemBuilder: (context, index) {
+        final item = displayItems[index];
+        switch (item.type) {
+          case _ItemType.originMarker:
+            return CompactOriginMarker(
+              contactPeerId: widget.contactPeerId,
+              connectionDate: widget.connectionDate,
+            );
+          case _ItemType.dateSeparator:
+            return DateSeparator(label: item.dateLabel!);
+          case _ItemType.loadingIndicator:
+            return const Padding(
+              padding: EdgeInsets.symmetric(vertical: 16),
+              child: Center(
+                child: SizedBox(
+                  width: 24,
+                  height: 24,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Color.fromRGBO(255, 255, 255, 0.3),
+                  ),
+                ),
+              ),
+            );
+          case _ItemType.message:
+            final message = item.message!;
+            final isNew = item.isLastAndWasEmpty;
 
-  List<Widget> _buildMessagesWithSeparators() {
-    final widgets = <Widget>[];
-    String? lastDateLabel;
-
-    for (var i = 0; i < widget.messages.length; i++) {
-      final message = widget.messages[i];
-      final dateLabel = _formatDateLabel(message.timestamp);
-
-      if (dateLabel != lastDateLabel) {
-        widgets.add(DateSeparator(label: dateLabel));
-        lastDateLabel = dateLabel;
-      }
-
-      final isNew = i == widget.messages.length - 1 && _wasEmpty;
-
-      widgets.add(
-        Padding(
-          padding: const EdgeInsets.only(bottom: 16),
-          child: _AnimatedLetterCard(
-            key: ValueKey(message.id),
-            delayMs: 0,
-            isNewMessage: isNew,
-            child: LetterCard(
+            final letterCard = LetterCard(
               senderPeerId: message.senderPeerId,
               senderName: message.isIncoming
                   ? widget.contactUsername
@@ -143,10 +145,52 @@ class _ConversationScreenState extends State<ConversationScreen> {
               time: _formatTime(message.timestamp),
               isIncoming: message.isIncoming,
               status: message.isIncoming ? null : message.status,
-            ),
-          ),
-        ),
-      );
+            );
+
+            final shouldAnimate = !widget.initialLoadDone || isNew;
+
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 16),
+              child: shouldAnimate
+                  ? _AnimatedLetterCard(
+                      key: ValueKey(message.id),
+                      delayMs: 0,
+                      isNewMessage: isNew,
+                      child: letterCard,
+                    )
+                  : letterCard,
+            );
+        }
+      },
+    );
+  }
+
+  /// Builds display items in forward chronological order, then reverses
+  /// for the reversed ListView (index 0 = bottom = newest).
+  List<_DisplayItem> _buildDisplayItems() {
+    final items = <_DisplayItem>[];
+
+    // Top of conversation markers (will appear at scroll-top)
+    if (!widget.hasMoreOlderMessages) {
+      items.add(_DisplayItem.originMarker());
+    }
+    if (widget.isLoadingMore) {
+      items.add(_DisplayItem.loadingIndicator());
+    }
+
+    // Messages with date separators
+    String? lastDateLabel;
+    for (var i = 0; i < widget.messages.length; i++) {
+      final message = widget.messages[i];
+      final dateLabel = _formatDateLabel(message.timestamp);
+
+      if (dateLabel != lastDateLabel) {
+        items.add(_DisplayItem.dateSeparator(dateLabel));
+        lastDateLabel = dateLabel;
+      }
+
+      final isNew = i == widget.messages.length - 1 && _wasEmpty;
+      items.add(_DisplayItem.message(message, isLastAndWasEmpty: isNew));
     }
 
     // Reset transition state after build
@@ -156,7 +200,7 @@ class _ConversationScreenState extends State<ConversationScreen> {
       });
     }
 
-    return widgets;
+    return items.reversed.toList();
   }
 
   static const _months = [
@@ -274,4 +318,39 @@ class _AnimatedLetterCardState extends State<_AnimatedLetterCard>
       child: widget.child,
     );
   }
+}
+
+enum _ItemType { originMarker, dateSeparator, message, loadingIndicator }
+
+class _DisplayItem {
+  final _ItemType type;
+  final ConversationMessage? message;
+  final String? dateLabel;
+  final bool isLastAndWasEmpty;
+
+  const _DisplayItem._({
+    required this.type,
+    this.message,
+    this.dateLabel,
+    this.isLastAndWasEmpty = false,
+  });
+
+  factory _DisplayItem.originMarker() =>
+      const _DisplayItem._(type: _ItemType.originMarker);
+
+  factory _DisplayItem.dateSeparator(String label) =>
+      _DisplayItem._(type: _ItemType.dateSeparator, dateLabel: label);
+
+  factory _DisplayItem.loadingIndicator() =>
+      const _DisplayItem._(type: _ItemType.loadingIndicator);
+
+  factory _DisplayItem.message(
+    ConversationMessage msg, {
+    bool isLastAndWasEmpty = false,
+  }) =>
+      _DisplayItem._(
+        type: _ItemType.message,
+        message: msg,
+        isLastAndWasEmpty: isLastAndWasEmpty,
+      );
 }
