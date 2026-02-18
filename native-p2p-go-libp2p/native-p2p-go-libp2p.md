@@ -1,338 +1,397 @@
-# Native P2P Migration: WebView js-libp2p to go-libp2p via gomobile
+# Native P2P Migration: WebView → go-libp2p via gomobile
 
-## 1. Why
+## Overview
 
-The current architecture runs js-libp2p inside a Flutter WebView. This works but has fundamental limitations:
+Replace the WebView-hosted js-libp2p runtime with a native go-libp2p library compiled via gomobile. This unlocks QUIC transport, native mDNS local discovery, DCUtR hole-punching, and future BLE transport — none of which are possible inside a browser sandbox.
 
-| Limitation | Root cause |
-|------------|-----------|
-| No mDNS local discovery | Browsers lack UDP multicast sockets |
-| No QUIC transport | WebView only supports WebSocket and WebRTC |
-| No BLE transport | No Bluetooth API in WebView |
-| WebView startup overhead | ~2-3s cold start loading JS bundles |
-| file:// lacks crypto.subtle | Forced to use pure-JS crypto (@noble/ciphers) instead of native AES-NI |
-| iOS multicast entitlement | Apple requires special entitlement for raw UDP multicast |
+The Flutter web build retains js-libp2p + WebRTC unchanged.
 
-Moving to go-libp2p compiled via gomobile eliminates all of these.
+---
 
-## 2. Architecture Overview
-
-### Before
+## Architecture: Before & After
 
 ```
-Flutter App
-├── WebView (hidden)
-│   ├── js-libp2p node
-│   │   ├── WebSocket transport
-│   │   └── WebRTC transport (via relay)
-│   ├── @noble/post-quantum (ML-KEM-768)
-│   ├── @noble/ciphers (AES-256-GCM)
-│   ├── bip39 + @libp2p/crypto (identity)
-│   └── rendezvous client
-├── JsBridge (postMessage ↔ JSON)
-├── P2PServiceImpl → bridge
-├── Listeners (ChatMessage, ContactRequest)
-└── UI (Wired + Screen)
+BEFORE (current)                          AFTER (target)
+┌──────────────────────┐                 ┌──────────────────────┐
+│     Flutter UI        │                 │     Flutter UI        │
+│  (unchanged either    │                 │  (unchanged)          │
+│   way)                │                 │                       │
+├──────────────────────┤                 ├──────────────────────┤
+│  P2PServiceImpl       │                 │  P2PServiceImpl       │
+│  (same interface)     │                 │  (same interface)     │
+├──────────────────────┤                 ├──────────────────────┤
+│  WebViewJsBridge      │                 │  GoBridgeClient       │
+│  (JSON over postMsg)  │                 │  (JSON over platform  │
+│                       │                 │   channels)           │
+├──────────────────────┤                 ├──────────────────────┤
+│  WebView              │                 │  Go native library    │
+│  ├─ js-libp2p         │                 │  ├─ go-libp2p         │
+│  │  ├─ WebSocket      │                 │  │  ├─ QUIC (primary) │
+│  │  ├─ WebRTC         │                 │  │  ├─ WebSocket      │
+│  │  └─ Circuit Relay  │                 │  │  ├─ Circuit Relay  │
+│  ├─ @noble/post-      │                 │  │  ├─ DCUtR          │
+│  │   quantum (ML-KEM) │                 │  │  └─ TCP            │
+│  └─ bip39 + Ed25519   │                 │  ├─ circl (ML-KEM)   │
+│     identity gen      │                 │  └─ bip39 + Ed25519   │
+└──────────────────────┘                 │     identity gen      │
+                                          └──────────────────────┘
+                                          + bonsoir (Flutter mDNS)
 ```
 
-### After (Mobile)
+### What Stays the Same
 
-```
-Flutter App
-├── Go Library (.xcframework / .aar via gomobile)
-│   ├── go-libp2p node
-│   │   ├── QUIC transport (primary)
-│   │   ├── WebSocket transport (fallback)
-│   │   ├── Circuit Relay v2 (guaranteed fallback)
-│   │   ├── DCUtR (relay → direct upgrade)
-│   │   └── BLE transport (future, via Berty weshnet)
-│   ├── circl (ML-KEM-768)
-│   ├── crypto/aes (AES-256-GCM, hardware-accelerated)
-│   ├── bip39 + ed25519 (identity)
-│   └── rendezvous client
-├── GoBridgeClient (MethodChannel + EventChannel)
-├── Native mDNS (bonsoir → Bonjour/NSD)
-├── P2PServiceImpl → GoBridgeClient (same interface)
-├── Listeners (unchanged)
-└── UI (unchanged)
-```
+- `P2PService` interface — unchanged
+- `IncomingMessageRouter` — unchanged
+- `ChatMessageListener` / `ContactRequestListener` — unchanged
+- All UI code (Screen + Wired pairs) — unchanged
+- v1/v2 message envelope format — unchanged
+- Database schema — unchanged
+- Secure storage (SecureKeyStore) — unchanged
+- DI chain pattern — unchanged
 
-### After (Web — unchanged)
+### What Changes
 
-```
-Flutter Web
-├── js-libp2p node (same as today)
-│   ├── WebSocket transport
-│   └── WebRTC transport
-├── JsBridge (same postMessage protocol)
-└── Everything else identical
-```
+| Component        | Before                               | After                                        |
+|------------------|--------------------------------------|----------------------------------------------|
+| libp2p runtime   | WebView (js-libp2p)                  | Native (go-libp2p via gomobile)              |
+| Bridge           | WebViewJsBridge (JS message passing) | GoBridgeClient (platform channels)           |
+| Crypto           | JS (@noble/post-quantum + @noble/ciphers) | Go (circl ML-KEM-768 + stdlib AES-GCM) |
+| Identity         | JS (bip39 + @libp2p/crypto)          | Go (tyler-smith/go-bip39 + go-libp2p/crypto) |
+| Transports       | WebSocket + WebRTC                   | QUIC + WebSocket + Relay + DCUtR + TCP       |
+| Local discovery  | None                                 | Native mDNS via bonsoir (Bonjour/NSD)        |
+| Binary size      | ~0 (WebView is system-provided)      | +15–30 MB (Go runtime + libp2p)              |
+| Platform code    | None                                 | GoBridge.swift + GoBridge.kt (thin wrappers) |
 
-## 3. Transport Stack
+---
 
-### Priority order (mobile)
+## Current Bridge Commands (JS → Go port required)
 
-| Priority | Transport | When used |
-|----------|-----------|-----------|
-| 1 | QUIC (UDP) | Default for all connections — fast, multiplexed, 0-RTT |
-| 2 | WebSocket (TCP) | Fallback when UDP is blocked (corporate firewalls, some carriers) |
-| 3 | Circuit Relay v2 | When both peers are behind NAT and direct connection fails |
-| 4 | DCUtR | Upgrades relay connections to direct via coordinated hole-punch |
-| 5 | BLE | Future — proximity messaging without any network |
+All bridge communication uses JSON `{ "cmd": "...", "payload": {...} }` → `{ "ok": true, ... }` pattern.
 
-### Cross-platform interop
+### Identity Commands
 
-Mobile (go-libp2p) and browser (js-libp2p) peers interoperate through the relay server:
+| Command | Dart caller | JS handler | Purpose |
+|---------|-------------|------------|---------|
+| `identity.generate` | `callJsIdentityGenerate()` | `handleIdentityGenerate()` | Generate BIP39 mnemonic → Ed25519 keypair → peerId |
+| `identity.restore` | `callJsIdentityRestore()` | `handleIdentityRestore()` | Restore keypair from 12-word mnemonic |
 
-```
-Mobile A ──QUIC──► Relay Server ◄──WebSocket── Browser B
-                      │
-                Circuit Relay v2
-                      │
-              Mobile A ◄──────► Browser B
+**Identity response format:**
+```json
+{
+  "ok": true,
+  "identity": {
+    "peerId": "12D3KooW...",
+    "publicKey": "<base64 Ed25519 pub 32B>",
+    "privateKey": "<base64 Ed25519 priv 64B>",
+    "mnemonic12": "word1 word2 ... word12",
+    "createdAt": "2025-11-28T12:34:56.000Z",
+    "updatedAt": "2025-11-28T12:34:56.000Z"
+  }
+}
 ```
 
-Both connect to the same relay with the same Peer ID. The relay bridges protocols transparently.
+**Identity derivation chain (must be identical in Go):**
+1. BIP39 mnemonic (128 bits entropy → 12 words)
+2. `mnemonicToSeed(mnemonic)` → 64-byte seed
+3. Ed25519 keypair from `seed[0:32]`
+4. libp2p peerId from public key
 
-### Encryption layers (independent, transport-agnostic)
+### Crypto Commands
 
-| Layer | Protocol | Purpose |
+| Command | Dart caller | Purpose |
+|---------|-------------|---------|
+| `payload.verify` | `callJsVerifyPayload()` | Verify Ed25519 signature |
+| `payload.sign` | `callJsSignPayload()` | Sign data with Ed25519 |
+| `mlkem.keygen` | `callJsMlKemKeygen()` | Generate ML-KEM-768 keypair |
+| `message.encrypt` | `callJsEncryptMessage()` | ML-KEM-768 encapsulate + AES-256-GCM encrypt |
+| `message.decrypt` | `callJsDecryptMessage()` | ML-KEM-768 decapsulate + AES-256-GCM decrypt |
+
+**ML-KEM-768 key sizes:**
+- Public key: 1184 bytes
+- Secret key: 2400 bytes
+- KEM ciphertext: 1088 bytes
+
+**Encryption flow (must be identical in Go):**
+1. `ml_kem768.encapsulate(recipientPublicKey)` → `{ kemCiphertext, sharedSecret }`
+2. `AES-256-GCM(sharedSecret, randomNonce12B).encrypt(plaintext)` → `aesCiphertext`
+3. Return `{ kem: base64, ciphertext: base64, nonce: base64 }`
+
+**Decryption flow:**
+1. `ml_kem768.decapsulate(kemCiphertext, ownSecretKey)` → `sharedSecret`
+2. `AES-256-GCM(sharedSecret, nonce).decrypt(aesCiphertext)` → `plaintext`
+
+### P2P Node Commands
+
+| Command | Dart caller | Purpose |
+|---------|-------------|---------|
+| `node:start` | `callP2PNodeStart()` | Start libp2p node with private key, relay addresses, namespace |
+| `node:stop` | `callP2PNodeStop()` | Stop node |
+| `node:status` | `callP2PNodeStatus()` | Health check — returns peerId, isStarted, connections |
+
+### Rendezvous Commands
+
+| Command | Dart caller | Purpose |
+|---------|-------------|---------|
+| `rendezvous:register` | `callP2PRendezvousRegister()` | Register on `mknoon:chat:<peerId>` namespace |
+| `rendezvous:discover` | `callP2PRendezvousDiscover()` | Discover peer by namespace → returns addresses |
+
+### Peer Commands
+
+| Command | Dart caller | Purpose |
+|---------|-------------|---------|
+| `peer:dial` | `callP2PPeerDial()` | Connect to peer via discovered addresses |
+| `peer:disconnect` | `callP2PPeerDisconnect()` | Disconnect from peer |
+| `message:send` | `callP2PMessageSend()` | Send message to connected peer |
+
+### Inbox Commands
+
+| Command | Dart caller | Purpose |
+|---------|-------------|---------|
+| `inbox:store` | `callP2PInboxStore()` | Store offline message on relay for peer |
+| `inbox:retrieve` | `callP2PInboxRetrieve()` | Retrieve stored messages from relay |
+| `inbox:register_token` | `callP2PInboxRegisterToken()` | Register FCM push token with relay |
+
+### Push Events (JS → Dart, asynchronous)
+
+| Event | Callback | Purpose |
 |-------|----------|---------|
-| App-level | ML-KEM-768 + AES-256-GCM | E2E message encryption (v2 envelope) |
-| libp2p session | Noise protocol | Stream authentication + encryption |
-| Transport | TLS 1.3 (QUIC) / TLS (WSS) | Wire encryption |
+| `message:received` | `onMessageReceived(ChatMessage)` | Incoming P2P message |
+| `peer:connected` | `onPeerConnected(ConnectionState)` | Peer connected |
+| `peer:disconnected` | `onPeerDisconnected(ConnectionState)` | Peer disconnected |
 
-All three layers work independently. Changing transport does not affect app encryption.
+---
 
-## 4. Go Library Structure (go-mknoon/)
+## Transport Stack
+
+### Mobile (go-libp2p)
+
+```
+Priority  Transport          When used
+───────── ────────────────── ─────────────────────────────────────────
+1         QUIC (UDP)         Primary — fast 0-RTT, built-in encryption
+2         WebSocket (TCP)    Fallback for UDP-blocked networks
+3         Circuit Relay v2   NAT traversal — guaranteed connectivity
+4         DCUtR              Upgrades relay → direct (QUIC/TCP hole punch)
+5         TCP                Server-to-server or local network
+```
+
+### Browser (js-libp2p, unchanged)
+
+```
+Priority  Transport          When used
+───────── ────────────────── ─────────────────────────────────────────
+1         WebSocket          Primary browser transport
+2         WebRTC             Browser-to-browser (via relay signaling)
+3         Circuit Relay v2   NAT traversal
+```
+
+### Cross-Platform Interop
+
+Mobile (QUIC) and browser (WebSocket) peers communicate through the relay server, which speaks both transports. The relay server (`go-relay-server/`) already supports QUIC + WebSocket + TCP.
+
+---
+
+## Encryption Layers (Independent, Transport-Agnostic)
+
+```
+Layer 1: App-level (ML-KEM-768 + AES-256-GCM)
+  ↓ v2 encrypted envelope: { version: "2", encrypted: { kem, ciphertext, nonce } }
+Layer 2: libp2p session (Noise protocol)
+  ↓ authenticated encrypted stream
+Layer 3: Transport TLS
+  ↓ QUIC has TLS 1.3 built-in; WSS has TLS via nginx
+Wire
+```
+
+All three layers are independent. Changing the transport (WebSocket → QUIC) does not affect app-level or session encryption.
+
+---
+
+## Go Library Structure (go-mknoon/)
 
 ```
 go-mknoon/
 ├── go.mod
 ├── bridge/
-│   ├── bridge.go           # gomobile-exported API (all public functions)
-│   └── events.go           # EventCallback interface for Go → Flutter events
+│   ├── bridge.go           # gomobile-exported API (StartNode, StopNode, Send, etc.)
+│   └── events.go           # EventCallback interface for push events
 ├── node/
-│   ├── node.go             # go-libp2p host setup (QUIC + WS + Relay + DCUtR)
-│   ├── config.go           # Transport config, announce addrs, bootstrap peers
+│   ├── node.go             # go-libp2p host setup (QUIC + WS + TCP + Relay + DCUtR)
+│   ├── config.go           # Transport config, relay addresses
 │   └── rendezvous.go       # Rendezvous client (register, discover)
 ├── crypto/
-│   ├── mlkem.go            # ML-KEM-768 keygen, encapsulate, decapsulate (circl)
-│   ├── envelope.go         # v1/v2 envelope encrypt/decrypt
-│   └── aes_gcm.go          # AES-256-GCM encrypt/decrypt
-├── identity/
-│   ├── generate.go         # BIP39 mnemonic + Ed25519 keypair + PeerId
-│   └── restore.go          # Restore from mnemonic
+│   ├── identity.go         # BIP39 mnemonic → Ed25519 keypair → peerId
+│   ├── mlkem.go            # ML-KEM-768 keygen/encapsulate/decapsulate (via circl)
+│   ├── encrypt.go          # ML-KEM + AES-256-GCM encrypt
+│   ├── decrypt.go          # ML-KEM + AES-256-GCM decrypt
+│   └── sign.go             # Ed25519 sign/verify
 ├── inbox/
-│   └── client.go           # Inbox protocol client (store, retrieve)
-└── ble/                    # Future
-    ├── transport.go        # Wraps Berty weshnet BLE transport
-    ├── driver_ios.go       # iOS CoreBluetooth callbacks
-    └── driver_android.go   # Android BLE callbacks
+│   ├── client.go           # Inbox protocol client (store, retrieve, register_token)
+│   └── protocol.go         # 4-byte BE framing, JSON messages
+└── messaging/
+    ├── send.go             # Send message to peer (direct stream)
+    └── receive.go          # Incoming message handler → EventCallback
 ```
 
-### gomobile-exported API (bridge/bridge.go)
-
-Every function takes and returns JSON strings (gomobile constraint — no complex types across FFI boundary).
+### gomobile-Exported API (bridge/bridge.go)
 
 ```go
-// --- Identity ---
-func GenerateIdentity() string
-// Returns: { "ok": true, "identity": { "peerId", "publicKey", "privateKey", "mnemonic12", "createdAt", "updatedAt" } }
+package bridge
 
-func RestoreIdentity(mnemonic12JSON string) string
-// Input:  { "mnemonic12": "word1 word2 ... word12" }
-// Returns: same as GenerateIdentity
-
-// --- Crypto ---
-func MlKemKeygen() string
-// Returns: { "ok": true, "publicKey": "<base64>", "secretKey": "<base64>" }
-
-func EncryptMessage(paramsJSON string) string
-// Input:  { "recipientPublicKey": "<base64>", "plaintext": "..." }
-// Returns: { "ok": true, "kem": "<base64>", "ciphertext": "<base64>", "nonce": "<base64>" }
-
-func DecryptMessage(paramsJSON string) string
-// Input:  { "secretKey": "<base64>", "kem": "<base64>", "ciphertext": "<base64>", "nonce": "<base64>" }
-// Returns: { "ok": true, "plaintext": "..." }
-
-// --- P2P Node ---
-func StartNode(configJSON string) string
-// Input:  { "privateKey": "<base64>", "relayAddr": "/dns4/mknoun.xyz/...", "namespace": "mknoon" }
-// Returns: { "ok": true, "peerId": "12D3KooW..." }
-
-func StopNode() string
-
-func SendMessage(paramsJSON string) string
-// Input:  { "to": "<peerId>", "content": "<v1/v2 envelope JSON>" }
-// Returns: { "ok": true, "method": "direct|relay|inbox" }
-
-func ConnectPeer(multiaddr string) string
-// For local discovery: connect to a peer by multiaddr
-
-// --- Push ---
-func RegisterPushToken(paramsJSON string) string
-// Input:  { "token": "...", "platform": "ios|android" }
-
-// --- Lifecycle ---
-func HealthCheck() string
-// Returns: { "connected": true, "relayConnected": true, "peers": 3 }
-
-// --- Events (Go → Flutter) ---
+// EventCallback receives async events from Go → Flutter
 type EventCallback interface {
-    OnMessage(json string)          // incoming message
-    OnPeerConnected(json string)    // peer came online
-    OnPeerDisconnected(json string) // peer went offline
-    OnNodeStarted(json string)      // node ready
-    OnNodeError(json string)        // node error
-    OnFlowEvent(json string)        // structured logging
+    OnEvent(jsonEvent string)  // { "event": "message:received", "data": {...} }
 }
 
-func SetEventCallback(cb EventCallback)
+// Initialize must be called once at app startup
+func Initialize(callback EventCallback) string
+
+// Identity
+func IdentityGenerate() string         // → { ok, identity }
+func IdentityRestore(json string) string  // payload: { mnemonic12 }
+
+// Crypto
+func MlKemKeygen() string              // → { ok, publicKey, secretKey }
+func EncryptMessage(json string) string // payload: { recipientPublicKey, plaintext }
+func DecryptMessage(json string) string // payload: { secretKey, kem, ciphertext, nonce }
+func SignPayload(json string) string    // payload: { privateKey, data }
+func VerifyPayload(json string) string  // payload: { publicKey, data, signature }
+
+// Node
+func StartNode(json string) string     // payload: { privateKeyHex, relayAddresses, namespace }
+func StopNode() string
+func NodeStatus() string
+
+// Rendezvous
+func RendezvousRegister(json string) string
+func RendezvousDiscover(json string) string
+
+// Peer
+func DialPeer(json string) string
+func DisconnectPeer(json string) string
+func SendMessage(json string) string
+
+// Inbox
+func InboxStore(json string) string
+func InboxRetrieve() string
+func InboxRegisterToken(json string) string
 ```
 
-### Wire format compatibility
+### Go Dependencies
 
-The Go library MUST produce identical wire bytes as the JS library for:
+```
+github.com/libp2p/go-libp2p          # Core p2p (QUIC, WS, TCP, Relay, DCUtR, Noise)
+github.com/cloudflare/circl           # ML-KEM-768 (FIPS 203)
+github.com/tyler-smith/go-bip39       # BIP39 mnemonic generation/validation
+github.com/libp2p/go-libp2p/core/crypto  # Ed25519 keypair + peerId derivation
+```
 
-| Format | Spec |
-|--------|------|
-| v1 envelope | `{ "type": "chat", "version": "1", "payload": { "id", "content", "timestamp" } }` |
-| v2 envelope | `{ "version": "2", "encrypted": { "kem": "<b64>", "ciphertext": "<b64>", "nonce": "<b64>" } }` |
-| ML-KEM-768 | FIPS 203 — public key 1184 bytes, secret key 2400 bytes, ciphertext 1088 bytes |
-| BIP39 | 128-bit entropy → 12 English words, PBKDF2 seed derivation |
-| Ed25519 | RFC 8032 — same seed → same keypair |
-| PeerId | libp2p peer ID from Ed25519 public key (multihash + multicodec) |
-| Rendezvous | `/canvas/rendezvous/1.0.0` — protobuf over varint-prefixed framing |
-| Inbox | `/mknoon/inbox/1.0.0` — JSON over 4-byte BE length-prefixed framing |
+### Compile with gomobile
 
-### Go dependencies
+```bash
+# iOS — produces GoMknoon.xcframework
+gomobile bind -target=ios -o GoMknoon.xcframework ./bridge/
 
-| Dependency | Purpose |
-|-----------|---------|
-| `github.com/libp2p/go-libp2p` | P2P networking (QUIC, WS, Relay, DCUtR, Noise) |
-| `github.com/cloudflare/circl` | ML-KEM-768 (FIPS 203) |
-| `github.com/tyler-smith/go-bip39` | BIP39 mnemonic generation/validation |
-| `golang.org/x/mobile/cmd/gomobile` | Cross-compile to .xcframework / .aar |
-| `github.com/libp2p/go-msgio` | Varint-prefixed framing (rendezvous protocol) |
+# Android — produces gomknoon.aar
+gomobile bind -target=android -o gomknoon.aar ./bridge/
+```
 
-## 5. Flutter Integration
+---
+
+## Flutter Integration
 
 ### GoBridgeClient (Dart)
 
-Replaces `JsBridge` with platform channels to the Go library:
+`lib/core/bridge/go_bridge_client.dart` — implements `JsBridge` abstract interface:
 
 ```dart
-// lib/core/bridge/go_bridge_client.dart
+class GoBridgeClient extends JsBridge {
+  static const _channel = MethodChannel('com.mknoon/go_bridge');
+  static const _eventChannel = EventChannel('com.mknoon/go_bridge_events');
 
-class GoBridgeClient implements JsBridge {
-  static const _channel = MethodChannel('com.mknoon/go-bridge');
-  static const _eventChannel = EventChannel('com.mknoon/go-bridge-events');
+  // Callbacks (same as WebViewJsBridge)
+  void Function(ChatMessage)? onMessageReceived;
+  void Function(ConnectionState)? onPeerConnected;
+  void Function(ConnectionState)? onPeerDisconnected;
+
+  Future<void> initialize() async {
+    // Listen for push events from Go via EventChannel
+    _eventChannel.receiveBroadcastStream().listen(_handleEvent);
+    await _channel.invokeMethod('initialize');
+  }
 
   @override
   Future<String> send(String message) async {
-    // Route to appropriate Go function based on cmd
+    // Route to specific Go method based on cmd
     final request = jsonDecode(message);
-    final cmd = request['cmd'] as String;
+    final cmd = request['cmd'];
+    final payload = jsonEncode(request['payload'] ?? {});
 
-    switch (cmd) {
-      case 'identity.generate':
-        return await _channel.invokeMethod('GenerateIdentity', '{}');
-      case 'identity.restore':
-        return await _channel.invokeMethod('RestoreIdentity', jsonEncode(request['payload']));
-      case 'mlkem.keygen':
-        return await _channel.invokeMethod('MlKemKeygen', '{}');
-      case 'message.encrypt':
-        return await _channel.invokeMethod('EncryptMessage', jsonEncode(request['payload']));
-      case 'message.decrypt':
-        return await _channel.invokeMethod('DecryptMessage', jsonEncode(request['payload']));
-      default:
-        return jsonEncode({'ok': false, 'errorCode': 'UNKNOWN_COMMAND'});
-    }
+    final result = await _channel.invokeMethod(cmd, payload);
+    return result as String;
   }
-
-  // P2P operations (not part of JsBridge interface — used by P2PServiceImpl directly)
-  Future<String> startNode(String configJSON) => _channel.invokeMethod('StartNode', configJSON);
-  Future<String> stopNode() => _channel.invokeMethod('StopNode', '{}');
-  Future<String> sendMessage(String paramsJSON) => _channel.invokeMethod('SendMessage', paramsJSON);
-  Future<String> connectPeer(String multiaddr) => _channel.invokeMethod('ConnectPeer', multiaddr);
-  Future<String> registerPushToken(String paramsJSON) => _channel.invokeMethod('RegisterPushToken', paramsJSON);
-  Future<String> healthCheck() => _channel.invokeMethod('HealthCheck', '{}');
-
-  Stream<Map<String, dynamic>> get eventStream =>
-    _eventChannel.receiveBroadcastStream().map((e) => jsonDecode(e as String));
 }
 ```
 
-### Platform wrappers
+### Platform Wrappers
 
-**iOS — `ios/Runner/GoBridge.swift`**:
-```swift
-import Flutter
-import Gomknoon  // Generated .xcframework
+**iOS** — `ios/Runner/GoBridge.swift`:
+- Import `GoMknoon` framework
+- Register `FlutterMethodChannel("com.mknoon/go_bridge")`
+- Route method calls to `GoMknoon.Bridge*()` functions
+- Implement `EventCallback` protocol → send events to `FlutterEventChannel`
 
-class GoBridge: NSObject, FlutterPlugin, GomknoonEventCallbackProtocol {
-    static func register(with registrar: FlutterPluginRegistrar) { ... }
+**Android** — `android/app/src/main/kotlin/.../GoBridge.kt`:
+- Import `gomknoon.aar`
+- Register `MethodChannel("com.mknoon/go_bridge")`
+- Route method calls to `Bridge.*()` functions
+- Implement `EventCallback` interface → send events to `EventChannel`
 
-    func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
-        switch call.method {
-        case "GenerateIdentity": result(GomknoonGenerateIdentity())
-        case "RestoreIdentity": result(GomknoonRestoreIdentity(call.arguments as! String))
-        case "StartNode": result(GomknoonStartNode(call.arguments as! String))
-        // ... etc
-        }
-    }
-
-    // EventCallback — Go calls these, we push to EventChannel
-    func onMessage(_ json: String) { eventSink?(json) }
-    func onPeerConnected(_ json: String) { eventSink?(json) }
-    // ...
-}
-```
-
-**Android — `android/.../GoBridge.kt`**: Same pattern with `MethodChannel` + `EventChannel`.
-
-### DI chain changes
+### DI Chain Changes
 
 ```
-Before: ProductionJsBridge → main.dart → StartupRouter → IdentityChoiceWired
-After:  GoBridgeClient     → main.dart → StartupRouter → IdentityChoiceWired
+main.dart:
+  // BEFORE:
+  final bridge = WebViewJsBridge();
+  await bridge.initialize();
+
+  // AFTER:
+  final bridge = GoBridgeClient();
+  await bridge.initialize();
+
+  // Everything else identical — bridge is typed as JsBridge
 ```
 
-The `JsBridge` interface stays the same. Only `main.dart` changes which implementation it creates:
+The `JsBridge` abstract interface is the seam. `P2PServiceImpl` takes `WebViewJsBridge` directly — it needs to be updated to take `JsBridge` (the abstract type) instead. Then swapping implementations is a one-line change in `main.dart`.
 
-```dart
-// main.dart — the only line that changes
-final bridge = GoBridgeClient();  // was: ProductionJsBridge()
-```
+---
 
-For feature branches with P2PService (UI-4+), `P2PServiceImpl` would take `GoBridgeClient` directly for P2P operations (startNode, sendMessage, etc.) in addition to the `JsBridge` interface for crypto/identity.
+## Local Discovery (mDNS via bonsoir)
 
-## 6. Local Discovery (mDNS via bonsoir)
+### Why not go-libp2p's built-in mDNS?
 
-### Why bonsoir instead of go-libp2p's built-in mDNS
+go-libp2p's mDNS uses raw UDP multicast sockets. On iOS, this requires Apple's `com.apple.developer.networking.multicast` entitlement — a special request that Apple rarely approves for App Store apps.
 
-go-libp2p's mDNS uses raw UDP multicast sockets. On iOS, this requires Apple's `com.apple.developer.networking.multicast` entitlement — a special entitlement that requires justification to Apple and may be rejected. The `bonsoir` Flutter package uses platform-native APIs (Bonjour on iOS, NSD on Android) which don't need this entitlement.
+Instead, use Flutter's `bonsoir` package which wraps:
+- **iOS**: Bonjour APIs (no special entitlement needed)
+- **Android**: NSD (Network Service Discovery)
 
-### Service advertisement
+### Service Definition
 
-| Field | Value |
-|-------|-------|
-| Service type | `_mknoon._tcp` |
-| Port | Go node's QUIC listening port |
-| TXT record | `peerId=12D3KooW...` (full peer ID) |
+- **Service type**: `_mknoon._tcp`
+- **TXT record**: `peerId=12D3KooW...` (full peerId fits in 255-byte TXT limit)
+- **Port**: Go node's QUIC listen port
 
 ### Flow
 
-1. Go node starts → returns QUIC port
-2. Flutter starts `bonsoir` advertising with peerId + port
-3. `bonsoir` discovers peers on same WiFi
-4. Flutter calls `bridge.connectPeer("/ip4/$ip/udp/$port/quic-v1")` for discovered peers
-5. Direct QUIC connection established — no relay needed
+1. Go node starts → reports QUIC listen port to Flutter
+2. Flutter starts bonsoir advertising: `_mknoon._tcp` on that port with `peerId` TXT
+3. Peer discovered → Flutter calls `bridge.dialPeer(peerId, addresses: [localMultiaddr])`
+4. Direct QUIC connection on LAN — no relay needed
 
-### Platform config
+### Platform Config
 
-**iOS (Info.plist)**:
+**iOS** — `ios/Runner/Info.plist`:
 ```xml
 <key>NSLocalNetworkUsageDescription</key>
 <string>Discover contacts on your local WiFi network for faster messaging</string>
@@ -342,89 +401,77 @@ go-libp2p's mDNS uses raw UDP multicast sockets. On iOS, this requires Apple's `
 </array>
 ```
 
-**Android (AndroidManifest.xml)**:
+**Android** — `android/app/src/main/AndroidManifest.xml`:
 ```xml
 <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
 ```
 
-## 7. Relay Server (go-relay-server/ — DONE)
+---
 
-The JS relay server has been rewritten in Go. Located at `go-relay-server/`.
+## Relay Server (go-relay-server/) — DONE
 
-### What changed
-
-| Aspect | JS server | Go server |
-|--------|-----------|-----------|
-| Transports | WebSocket + TCP + WebRTC | **QUIC** + WebSocket + TCP |
-| Runtime | Node.js | Native binary |
-| Binary | ~0 (interpreted) | ~43 MB |
-| Same Peer ID | Yes (hardcoded Ed25519 key) | Yes (same key bytes) |
-
-### Ports
-
-| Port | Protocol | Notes |
-|------|----------|-------|
-| 4000 | WebSocket (WS) | nginx proxies WSS:4001 → WS:4000 |
-| 4001 | WSS (announced) | Via nginx TLS termination |
-| 4002 | QUIC (new) | Direct UDP — primary for mobile clients |
-| 4005 | TCP | Direct TCP connections |
-
-### Files
+Already rewritten in Go and committed. Located at `go-relay-server/` in this repo.
 
 | File | Description |
 |------|-------------|
-| `main.go` | Node setup with QUIC + WS + TCP, Circuit Relay v2, connection events |
-| `rendezvous.go` | `/canvas/rendezvous/1.0.0` — register/unregister/discover with in-memory store |
-| `inbox.go` | `/mknoon/inbox/1.0.0` — store/retrieve + FCM push notifications |
-| `pb.go` | Manual protobuf marshal/unmarshal (no protoc dependency) |
-| `proto/rendezvous.proto` | Reference proto definition |
+| `main.go` | libp2p node: QUIC (4002) + WS (4000) + TCP (4005) + Relay |
+| `rendezvous.go` | `/canvas/rendezvous/1.0.0` — protobuf over varint-prefixed framing |
+| `inbox.go` | `/mknoon/inbox/1.0.0` — JSON over 4-byte BE framing + FCM push |
+| `pb.go` | Manual protobuf encode/decode (no protoc dependency) |
 
-### Deployment
+Same Ed25519 private key as the JS server → same Peer ID → seamless migration.
 
-```bash
-GOOS=linux GOARCH=amd64 go build -o relay-server .
-scp relay-server ec2-user@13.60.15.36:~/
-# Run with systemd (see deployment docs)
-# Open UDP 4002 in AWS Security Group for QUIC
-```
+---
 
-## 8. BLE Transport (Future — Phase 5)
+## BLE Transport (Future — Phase 5)
 
-### Berty's weshnet
+### Berty's weshnet BLE Transport
 
 Berty built a production BLE transport for go-libp2p:
 - iOS: CoreBluetooth (GATT server/client), background BLE advertising
-- Android: Android BLE APIs, Nearby Connections as bonus transport
-- L2CAP channels for higher throughput than GATT characteristics
-- Stream multiplexing over BLE's tiny MTU (~20-512 bytes)
-- Noise protocol handshake over BLE
+- Android: Android BLE APIs, Nearby Connections API
+- L2CAP channels for higher throughput
+- Stream multiplexing over BLE's tiny MTU (~20–512 bytes)
+- libp2p Noise protocol handshake over BLE
 
-### How it fits
+### How It Fits
 
-BLE is just another go-libp2p transport:
+BLE is just another transport — go-libp2p treats it like QUIC or WebSocket:
 
 ```
 go-libp2p node
-├── QUIC transport         ← internet, same WiFi
-├── WebSocket transport    ← UDP-blocked networks
-├── Circuit Relay v2       ← NAT fallback
-├── DCUtR                  ← relay → direct upgrade
-└── BLE transport          ← no WiFi, no internet, proximity only
+├── QUIC transport        ← internet, same WiFi
+├── WebSocket transport   ← UDP-blocked networks
+├── Circuit Relay v2      ← NAT fallback
+├── DCUtR                 ← relay → direct upgrade
+└── BLE transport         ← no WiFi, no internet, proximity only
 ```
 
-### Discovery comparison
+Messages flow through the same pipeline regardless of transport.
 
-| Method | Range | Requires |
-|--------|-------|----------|
-| Rendezvous (relay) | Global | Internet |
-| mDNS (bonsoir) | Same WiFi | WiFi on |
-| BLE advertising | ~10-30 meters | Bluetooth on |
+### Discovery Complement
 
-All three feed discovered peers into go-libp2p. They complement each other.
+| Method          | Range             | Requires     |
+|-----------------|-------------------|--------------|
+| mDNS (bonsoir)  | Same WiFi network | WiFi on      |
+| BLE advertising | ~10–30 meters     | Bluetooth on |
 
-### Platform permissions
+Both on → both discover → go-libp2p picks best transport.
 
-**iOS (Info.plist)**:
+### Additional gomobile API for BLE
+
+```go
+func StartBLE() string    // Start BLE advertising + scanning
+func StopBLE() string     // Stop BLE
+
+// EventCallback additions:
+OnBLEPeerFound(json string)
+OnBLEStateChanged(json string)  // Bluetooth on/off
+```
+
+### Platform Permissions for BLE
+
+**iOS** — `Info.plist`:
 ```xml
 <key>NSBluetoothAlwaysUsageDescription</key>
 <string>Connect with nearby contacts via Bluetooth</string>
@@ -435,143 +482,158 @@ All three feed discovered peers into go-libp2p. They complement each other.
 </array>
 ```
 
-**Android (AndroidManifest.xml)**:
+**Android** — `AndroidManifest.xml`:
 ```xml
 <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
 <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
 <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 ```
 
-## 9. Migration Phases
+---
+
+## Migration Phases
 
 ### Phase 1: Go Library (go-mknoon/)
 
 1. Create `go-mknoon/` Go module
 2. Implement go-libp2p node with QUIC + WebSocket + Relay + DCUtR
-3. Port identity generation (BIP39 + Ed25519 + PeerId) from `core_lib_js/src/identity/`
-4. Port ML-KEM-768 keygen/encrypt/decrypt from `core_lib_js/src/crypto/`
-5. Port rendezvous client from `core_lib_js/src/p2p/`
-6. Port inbox client
-7. Define gomobile-exported API (`bridge/bridge.go`)
-8. Write Go unit tests for crypto wire-format compatibility
+3. Port identity generation: BIP39 → Ed25519 → peerId (must produce same keys from same mnemonic)
+4. Port ML-KEM-768 + AES-256-GCM encryption/decryption (must produce interoperable ciphertext)
+5. Port rendezvous client (register/discover on relay)
+6. Port inbox client (store/retrieve/register_token)
+7. Port message send/receive (direct stream protocol)
+8. Define gomobile-exported API (`bridge/bridge.go`)
 9. Compile with gomobile: `.xcframework` (iOS) + `.aar` (Android)
-10. **Verify**: Go-generated identity matches JS-generated identity for same mnemonic
+10. **Verify**: Go node can talk to existing JS relay at mknoun.xyz:4001
 
 ### Phase 2: Flutter Integration
 
-1. Create `GoBridgeClient` (Dart) with MethodChannel + EventChannel
-2. Create `GoBridge.swift` (iOS) platform wrapper
-3. Create `GoBridge.kt` (Android) platform wrapper
-4. Swap `ProductionJsBridge()` → `GoBridgeClient()` in `main.dart`
-5. **Verify**: existing tests pass with new bridge (same `JsBridge` interface)
+1. Create `GoBridgeClient` (Dart) with `MethodChannel` + `EventChannel`
+2. Create `GoBridge.swift` (iOS) + `GoBridge.kt` (Android) platform wrappers
+3. Update `P2PServiceImpl` to accept `JsBridge` (abstract) instead of `WebViewJsBridge` (concrete)
+4. Swap `WebViewJsBridge` → `GoBridgeClient` in `main.dart`
+5. **Verify**: existing tests pass with new bridge (same P2PService interface)
 
 ### Phase 3: Local Discovery
 
 1. Add `bonsoir` dependency to `pubspec.yaml`
-2. Create `LocalDiscoveryService` using Bonjour/NSD APIs
-3. Wire into startup: after Go node starts → get QUIC port → start advertising
-4. On peer discovered → `bridge.connectPeer(multiaddr)`
-5. Add iOS `Info.plist` entries (NSLocalNetworkUsageDescription + NSBonjourServices)
+2. Create `LocalDiscoveryService` using Bonjour/NSD
+3. Wire into startup: after go-libp2p starts → get QUIC port → start advertising
+4. On peer discovered → `bridge.dialPeer(peerId, addresses: [localMultiaddr])`
+5. iOS `Info.plist`: NSLocalNetworkUsageDescription + NSBonjourServices
 6. **Verify**: two devices on same WiFi discover and message directly
 
-### Phase 4: Relay Server Update (DONE)
+### Phase 4: Relay Server Deploy
 
-Go relay server written in `go-relay-server/` with QUIC support.
-
-1. ~~Rewrite relay server in Go~~ Done
-2. Deploy Go relay alongside JS relay (both produce same Peer ID)
-3. Open UDP 4002 in AWS Security Group
-4. **Verify**: mobile (QUIC) + browser (WebSocket) messaging works through relay
+1. Deploy `go-relay-server` on EC2 alongside (or replacing) JS relay
+2. Open UDP port 4002 in AWS Security Group for QUIC
+3. **Verify**: mobile (QUIC) ↔ browser (WebSocket) messaging works through relay
 
 ### Phase 5: BLE (Future)
 
-1. Add `berty.tech/weshnet` dependency to `go-mknoon/go.mod`
-2. Create BLE transport wrapper in `go-mknoon/ble/`
-3. Add BLE as transport in go-libp2p node config
-4. Add `StartBLE()` / `StopBLE()` to gomobile bridge
-5. Add `GoBridgeClient.startBLE()` / `stopBLE()` in Dart
-6. Add Bluetooth permission requests in Flutter
-7. Add BLE toggle in app settings UI
-8. **Verify**: messaging works with WiFi off, Bluetooth on
+1. Integrate Berty's weshnet BLE transport into `go-mknoon/`
+2. Add BLE as additional transport in go-libp2p config
+3. Add `StartBLE()` / `StopBLE()` to gomobile bridge
+4. Add Bluetooth permission requests in Flutter
+5. **Verify**: messaging works with WiFi off, Bluetooth on
 
-### Phase 6: Remove WebView
+### Phase 6: Remove WebView (Mobile Only)
 
 1. Confirm all mobile functionality works via Go bridge
-2. Remove `ProductionJsBridge`, JS bundles from mobile build
+2. Remove `WebViewJsBridge`, `bridge.html`, JS bundles from mobile build
 3. Keep JS bundles for Flutter web build only
 4. **Verify**: app size reduced, startup faster
 
-## 10. What Stays the Same
+---
 
-- `JsBridge` interface — unchanged (GoBridgeClient implements it)
-- `P2PService` interface — unchanged
-- `IncomingMessageRouter` — unchanged
-- `ChatMessageListener` — unchanged
-- `ContactRequestListener` — unchanged
-- All UI code (Wired + Screen) — unchanged
-- v1/v2 envelope format — unchanged
-- Database schema — unchanged
-- Secure storage — unchanged
-- DI chain pattern — unchanged
-- `emitFlowEvent()` structured logging — unchanged
+## File Impact Summary
 
-## 11. What Changes
-
-| Component | Before | After |
-|-----------|--------|-------|
-| libp2p runtime | WebView (js-libp2p) | Native (go-libp2p via gomobile) |
-| Bridge | JsBridge (JS postMessage) | GoBridgeClient (platform channels) |
-| Crypto | JS (@noble/post-quantum, @noble/ciphers) | Go (circl + crypto/aes) |
-| Identity | JS (bip39 + @libp2p/crypto) | Go (go-bip39 + ed25519) |
-| Transports | WebSocket + WebRTC | QUIC + WebSocket + Relay + DCUtR |
-| Local discovery | None | Native mDNS via bonsoir |
-| Binary size | ~0 (WebView is system) | +15-30 MB (Go runtime + libp2p) |
-| Platform code | None | GoBridge.swift + GoBridge.kt |
-
-## 12. File Impact Summary
-
-### New files
+### New Files
 
 | File | Description |
 |------|-------------|
-| `go-mknoon/` (entire module) | Go library: node, crypto, identity, bridge |
+| `go-mknoon/` (entire Go module) | go-libp2p node, crypto, gomobile bridge |
 | `lib/core/bridge/go_bridge_client.dart` | Dart platform channel client |
-| `ios/Runner/GoBridge.swift` | iOS platform wrapper |
-| `android/.../GoBridge.kt` | Android platform wrapper |
+| `ios/Runner/GoBridge.swift` | iOS platform channel → Go calls |
+| `android/.../GoBridge.kt` | Android platform channel → Go calls |
 | `lib/core/local_discovery/local_discovery_service.dart` | Native mDNS via bonsoir |
 
-### Modified files
+### Modified Files
 
 | File | Change |
 |------|--------|
-| `lib/main.dart` | `ProductionJsBridge()` → `GoBridgeClient()` |
+| `lib/main.dart` | Swap WebView init → Go bridge init |
+| `lib/core/services/p2p_service_impl.dart` | Accept `JsBridge` (abstract) instead of `WebViewJsBridge` (concrete) |
 | `pubspec.yaml` | Add `bonsoir` dependency |
-| `ios/Runner/Info.plist` | Local network + Bonjour service entries |
-| `android/.../AndroidManifest.xml` | Multicast permission |
-| `ios/Podfile` | Link Go `.xcframework` |
-| `android/app/build.gradle` | Link Go `.aar` |
+| `ios/Runner/Info.plist` | Local network + Bonjour service declarations |
+| `android/app/src/main/AndroidManifest.xml` | Multicast permission |
 
-### Removed files (Phase 6)
+### Removed Files (Phase 6)
 
 | File | Description |
 |------|-------------|
 | `assets/js/bridge.html` | No longer needed on mobile |
 | `assets/js/core_lib.js` | Replaced by Go crypto |
 | `assets/js/p2p_lib.js` | Replaced by go-libp2p |
-| `ProductionJsBridge` class in main.dart | Replaced by GoBridgeClient |
+| `lib/core/bridge/webview_js_bridge.dart` | Replaced by Go bridge |
 
-## 13. Security
+---
 
-### Threat model for local connections
+## Testing Strategy
 
-| Threat | Mitigation |
-|--------|-----------|
-| Spoofed `from` peerId | v2 ML-KEM encryption: attacker can't produce valid ciphertext without sender's key |
-| Unknown sender | `handleIncomingChatMessage` rejects senders not in contacts list |
-| Eavesdropping on local WiFi | v2 envelope is AES-256-GCM encrypted; Noise protocol on libp2p stream |
-| BLE sniffing | Same v2 encryption applies; Noise handshake over BLE |
-| WS flood/DoS (local) | Rate-limit connections per IP; max concurrent connections |
+### Phase 1 Tests (Go Library)
 
-### Key insight
+**Unit tests** (Go `_test.go` files):
+- `crypto/identity_test.go` — Generate identity, verify peerId format; restore from known mnemonic → must produce exact same peerId as JS
+- `crypto/mlkem_test.go` — Keygen, encrypt/decrypt round-trip; encrypt in Go → decrypt in JS (cross-platform interop vectors)
+- `crypto/encrypt_test.go` — Full envelope encrypt/decrypt; verify base64 encoding matches JS format
+- `crypto/sign_test.go` — Sign/verify round-trip; verify signature from JS can be verified in Go
+- `node/rendezvous_test.go` — Register/discover with mock store
+- `inbox/client_test.go` — Store/retrieve with mock server
 
-The v2 encrypted envelope + contact list check means that even over an unencrypted local transport, messages are safe. The encryption is at the application layer, not the transport layer.
+**Integration tests** (Go, against real relay):
+- `integration/relay_interop_test.go` — Go node connects to `mknoun.xyz:4001`, registers, discovers, sends message
+- `integration/crypto_interop_test.go` — Go encrypts → known JS test vectors decrypt correctly (and vice versa)
+
+### Phase 2 Tests (Flutter Integration)
+
+**Dart unit tests**:
+- `test/core/bridge/go_bridge_client_test.dart` — Mock MethodChannel, verify cmd routing
+- Update all existing tests that use `FakeP2PService` — should pass unchanged (interface didn't change)
+
+**Smoke tests** (on device):
+- Start app → identity generates via Go → node starts → connects to relay
+- Send message to known peer → message arrives
+- Receive message from known peer → appears in conversation
+
+### Phase 3 Tests (Local Discovery)
+
+**Dart unit tests**:
+- `test/core/local_discovery/local_discovery_service_test.dart` — Mock bonsoir, verify peer map updates
+
+**Manual device tests**:
+- Two devices on same WiFi → mDNS discovers peer → direct message without relay
+
+### Phase 4 Tests (Relay Server)
+
+**Go tests** (already partially covered by `go-relay-server/`):
+- Rendezvous register/discover round-trip
+- Inbox store/retrieve round-trip
+- Cross-transport: QUIC client ↔ WebSocket client via relay
+
+**Smoke test**:
+- Deploy Go relay alongside JS relay
+- Mobile app connects via QUIC → registers → browser app connects via WSS → discovers → message flows
+
+### Cross-Platform Interop Test Vectors
+
+Critical: Go and JS must produce identical outputs for identical inputs.
+
+| Test | Input | Expected |
+|------|-------|----------|
+| Identity from mnemonic | Known 12 words | Exact peerId match |
+| ML-KEM encrypt→decrypt | Go encrypts, JS decrypts | Plaintext matches |
+| ML-KEM encrypt→decrypt | JS encrypts, Go decrypts | Plaintext matches |
+| Ed25519 sign→verify | Go signs, JS verifies | Valid |
+| Ed25519 sign→verify | JS signs, Go verifies | Valid |
+| v2 envelope | Go builds envelope | JS parses correctly |
