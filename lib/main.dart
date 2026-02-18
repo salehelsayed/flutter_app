@@ -166,6 +166,9 @@ void main() async {
         dbCountTotalUnreadExcludingArchived(db),
     dbDeleteMessagesForContact: (contactPeerId) =>
         dbDeleteMessagesForContact(db, contactPeerId),
+    dbLoadMessagesPage: (contactPeerId, {limit = 50, beforeTimestamp}) =>
+        dbLoadMessagesPage(db, contactPeerId,
+            limit: limit, beforeTimestamp: beforeTimestamp),
   );
 
   // Create and initialize the WebView JS bridge

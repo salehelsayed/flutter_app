@@ -78,6 +78,13 @@ class FakeMessageRepository implements MessageRepository {
   Future<int> getTotalUnreadCountExcludingArchived() async => 0;
   @override
   Future<int> deleteMessagesForContact(String contactPeerId) async => 0;
+
+  @override
+  Future<List<ConversationMessage>> getMessagesPage(
+    String contactPeerId, {
+    int limit = 50,
+    String? beforeTimestamp,
+  }) async => [];
 }
 
 ContactModel _makeContact(String peerId, {bool isArchived = false}) {

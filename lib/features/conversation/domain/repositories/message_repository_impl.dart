@@ -18,6 +18,11 @@ class MessageRepositoryImpl implements MessageRepository {
   final Future<int> Function() dbCountTotalUnread;
   final Future<int> Function() dbCountTotalUnreadExcludingArchived;
   final Future<int> Function(String contactPeerId) dbDeleteMessagesForContact;
+  final Future<List<Map<String, Object?>>> Function(
+    String contactPeerId, {
+    int limit,
+    String? beforeTimestamp,
+  }) dbLoadMessagesPage;
 
   MessageRepositoryImpl({
     required this.dbInsertMessage,
@@ -31,6 +36,7 @@ class MessageRepositoryImpl implements MessageRepository {
     required this.dbCountTotalUnread,
     required this.dbCountTotalUnreadExcludingArchived,
     required this.dbDeleteMessagesForContact,
+    required this.dbLoadMessagesPage,
   });
 
   @override
@@ -119,6 +125,20 @@ class MessageRepositoryImpl implements MessageRepository {
   @override
   Future<int> getTotalUnreadCountExcludingArchived() async {
     return dbCountTotalUnreadExcludingArchived();
+  }
+
+  @override
+  Future<List<ConversationMessage>> getMessagesPage(
+    String contactPeerId, {
+    int limit = 50,
+    String? beforeTimestamp,
+  }) async {
+    final rows = await dbLoadMessagesPage(
+      contactPeerId,
+      limit: limit,
+      beforeTimestamp: beforeTimestamp,
+    );
+    return rows.map((row) => ConversationMessage.fromMap(row)).toList();
   }
 
   @override

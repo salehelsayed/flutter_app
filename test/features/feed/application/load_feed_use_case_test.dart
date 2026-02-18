@@ -96,6 +96,13 @@ class FakeMessageRepository implements MessageRepository {
 
   @override
   Future<int> deleteMessagesForContact(String contactPeerId) async => 0;
+
+  @override
+  Future<List<ConversationMessage>> getMessagesPage(
+    String contactPeerId, {
+    int limit = 50,
+    String? beforeTimestamp,
+  }) async => [];
 }
 
 ContactModel _makeContact(String peerId, String username, String scannedAt) {
