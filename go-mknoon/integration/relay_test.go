@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/rand"
+	"net"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -15,9 +17,54 @@ import (
 
 	"github.com/mknoon/go-mknoon/identity"
 	"github.com/mknoon/go-mknoon/node"
+	ma "github.com/multiformats/go-multiaddr"
 )
 
 // ---------- helpers ----------
+
+// requireRelay skips the test when SKIP_RELAY_TESTS is set or the relay
+// is known to be unreachable.
+func requireRelay(t *testing.T) {
+	t.Helper()
+	if os.Getenv("SKIP_RELAY_TESTS") != "" {
+		t.Skip("SKIP_RELAY_TESTS set — skipping relay integration test")
+	}
+
+	// Probe the relay host to skip early if unreachable.
+	addr := relayAddr()
+	maddr, err := ma.NewMultiaddr(addr)
+	if err != nil {
+		t.Skipf("cannot parse relay multiaddr %q: %v", addr, err)
+	}
+	host, _ := maddr.ValueForProtocol(ma.P_DNS4)
+	if host == "" {
+		host, _ = maddr.ValueForProtocol(ma.P_IP4)
+	}
+	// Try TCP first (more reliable for reachability check).
+	tcpPort, _ := maddr.ValueForProtocol(ma.P_TCP)
+	if tcpPort != "" {
+		conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, tcpPort), 5*time.Second)
+		if err != nil {
+			t.Skipf("relay unreachable at %s:%s (tcp): %v", host, tcpPort, err)
+		}
+		conn.Close()
+		return
+	}
+	// Fallback to UDP probe.
+	udpPort, _ := maddr.ValueForProtocol(ma.P_UDP)
+	if udpPort != "" {
+		conn, err := net.DialTimeout("udp", net.JoinHostPort(host, udpPort), 5*time.Second)
+		if err != nil {
+			t.Skipf("relay unreachable at %s:%s (udp): %v", host, udpPort, err)
+		}
+		conn.Close()
+	}
+}
+
+// relayAddr returns the relay multiaddr to use (env override or default).
+func relayAddr() string {
+	return node.RelayAddress()
+}
 
 // generatePrivateKeyHex creates a fresh identity and returns the hex-encoded
 // Ed25519 private key (suitable for NodeConfig.PrivateKeyHex) plus the peerId.
@@ -56,7 +103,7 @@ func startNodeWithCallback(t *testing.T, cb node.EventCallback) (*node.Node, str
 
 	cfg := node.NodeConfig{
 		PrivateKeyHex:  privHex,
-		RelayAddresses: []string{node.DefaultQUICRelay},
+		RelayAddresses: []string{relayAddr()},
 		ListenPort:     0,
 	}
 
@@ -77,10 +124,10 @@ func startNodeWithCallback(t *testing.T, cb node.EventCallback) (*node.Node, str
 		}
 	})
 
-	// Give the background relay-connect goroutine time to establish the
-	// connection before the test proceeds. The relay dial uses QUIC and
-	// typically completes well within this window.
-	time.Sleep(5 * time.Second)
+	// Wait for the relay connection to be established (replaces blind sleep).
+	if err := n.WaitForRelayConnection(15 * time.Second); err != nil {
+		t.Fatalf("relay connection not established: %v", err)
+	}
 
 	return n, state.PeerId
 }
@@ -131,13 +178,14 @@ func TestRelayConnect(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in -short mode")
 	}
+	requireRelay(t)
 
 	privHex, expectedPeerId := generatePrivateKeyHex(t)
 	n := node.NewNode()
 
 	cfg := node.NodeConfig{
 		PrivateKeyHex:  privHex,
-		RelayAddresses: []string{node.DefaultQUICRelay},
+		RelayAddresses: []string{relayAddr()},
 		ListenPort:     0,
 	}
 
@@ -163,8 +211,10 @@ func TestRelayConnect(t *testing.T) {
 		t.Errorf("PeerId() mismatch: got %s, want %s", n.PeerId(), expectedPeerId)
 	}
 
-	// Wait for relay connection to complete in background.
-	time.Sleep(5 * time.Second)
+	// Wait for relay connection to complete.
+	if err := n.WaitForRelayConnection(15 * time.Second); err != nil {
+		t.Fatalf("relay connection not established: %v", err)
+	}
 
 	// Verify the node reports a relay connection.
 	status := n.Status()
@@ -185,6 +235,7 @@ func TestRelayRendezvousRegister(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in -short mode")
 	}
+	requireRelay(t)
 
 	n, peerId := startNode(t)
 	ns := randomNamespace()
@@ -202,6 +253,7 @@ func TestRelayRendezvousDiscoverSelf(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in -short mode")
 	}
+	requireRelay(t)
 
 	n, peerId := startNode(t)
 	ns := randomNamespace()
@@ -213,29 +265,39 @@ func TestRelayRendezvousDiscoverSelf(t *testing.T) {
 	}
 	t.Log("register succeeded")
 
-	// Small delay to let registration propagate on the server.
-	time.Sleep(1 * time.Second)
+	// Retry discover up to 5 times with increasing delay to handle
+	// propagation latency on the relay server.
+	var found bool
+	for attempt := 1; attempt <= 5; attempt++ {
+		// Wait for registration to propagate.
+		delay := time.Duration(attempt) * 2 * time.Second
+		t.Logf("attempt %d: waiting %v for propagation...", attempt, delay)
+		time.Sleep(delay)
 
-	// Discover and expect to find our own peerId.
-	peers, err := n.RendezvousDiscover(ns, nil)
-	if err != nil {
-		t.Fatalf("RendezvousDiscover: %v", err)
-	}
+		peers, err := n.RendezvousDiscover(ns, nil)
+		if err != nil {
+			t.Logf("attempt %d: RendezvousDiscover error: %v", attempt, err)
+			continue
+		}
 
-	t.Logf("discovered %d peers", len(peers))
-	for i, p := range peers {
-		t.Logf("  peer[%d]: %s addrs=%v", i, p.ID.String(), p.Addrs)
-	}
+		t.Logf("attempt %d: discovered %d peers", attempt, len(peers))
+		for i, p := range peers {
+			t.Logf("  peer[%d]: %s addrs=%v", i, p.ID.String(), p.Addrs)
+		}
 
-	found := false
-	for _, p := range peers {
-		if p.ID.String() == peerId {
-			found = true
+		for _, p := range peers {
+			if p.ID.String() == peerId {
+				found = true
+				break
+			}
+		}
+		if found {
 			break
 		}
 	}
+
 	if !found {
-		t.Errorf("own peerId %s not found in discover results", peerId)
+		t.Errorf("own peerId %s not found in discover results after 5 attempts", peerId)
 	}
 }
 
@@ -243,6 +305,7 @@ func TestRelayNodeStatus(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in -short mode")
 	}
+	requireRelay(t)
 
 	n, peerId := startNode(t)
 
@@ -291,6 +354,7 @@ func TestRelayTwoNodesMessage(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in -short mode")
 	}
+	requireRelay(t)
 
 	ns := randomNamespace()
 	t.Logf("shared namespace: %s", ns)
@@ -335,9 +399,10 @@ func TestRelayTwoNodesMessage(t *testing.T) {
 	}
 
 	// Dial Node B (with discovered addresses or via relay circuit).
+	relay := relayAddr()
 	if err := nodeA.DialPeer(peerIdB, peerBAddrs); err != nil {
 		// If direct dial fails, try relay circuit address.
-		relayCircuitAddr := fmt.Sprintf("%s/p2p-circuit/p2p/%s", node.DefaultQUICRelay, peerIdB)
+		relayCircuitAddr := fmt.Sprintf("%s/p2p-circuit/p2p/%s", relay, peerIdB)
 		t.Logf("direct dial failed (%v), trying relay circuit: %s", err, relayCircuitAddr)
 		if err2 := nodeA.DialPeer(peerIdB, []string{relayCircuitAddr}); err2 != nil {
 			t.Fatalf("DialPeer (relay circuit) failed: %v", err2)
@@ -391,4 +456,124 @@ func TestRelayTwoNodesMessage(t *testing.T) {
 	}
 
 	t.Log("message exchange verified successfully")
+}
+
+// ---------- Inbox integration tests ----------
+
+func TestRelayInboxStoreRetrieve(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in -short mode")
+	}
+	requireRelay(t)
+
+	nodeA, peerIdA := startNode(t)
+	nodeB, peerIdB := startNode(t)
+
+	t.Logf("NodeA=%s  NodeB=%s", peerIdA, peerIdB)
+
+	// NodeA stores a message for NodeB in the relay inbox.
+	if err := nodeA.InboxStore(peerIdB, "hello from A"); err != nil {
+		t.Fatalf("InboxStore: %v", err)
+	}
+	t.Log("InboxStore succeeded")
+
+	// Wait for the relay to persist the message.
+	time.Sleep(2 * time.Second)
+
+	// NodeB retrieves pending messages.
+	msgs, err := nodeB.InboxRetrieve()
+	if err != nil {
+		t.Fatalf("InboxRetrieve: %v", err)
+	}
+
+	if len(msgs) == 0 {
+		t.Fatal("expected at least 1 inbox message, got 0")
+	}
+
+	t.Logf("retrieved %d messages", len(msgs))
+	found := false
+	for _, m := range msgs {
+		t.Logf("  from=%s message=%q ts=%d", m.From, m.Message, m.Timestamp)
+		if m.From == peerIdA && m.Message == "hello from A" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected message from NodeA with content 'hello from A'")
+	}
+
+	// Second retrieve should return no messages (cleared after first retrieve).
+	msgs2, err := nodeB.InboxRetrieve()
+	if err != nil {
+		t.Fatalf("InboxRetrieve (second): %v", err)
+	}
+	if len(msgs2) != 0 {
+		t.Errorf("expected 0 messages on second retrieve, got %d", len(msgs2))
+	}
+}
+
+func TestRelayInboxRegisterToken(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in -short mode")
+	}
+	requireRelay(t)
+
+	nodeA, _ := startNode(t)
+
+	// Register a push token.
+	if err := nodeA.InboxRegisterToken("fake-fcm-token-123", "ios"); err != nil {
+		t.Fatalf("InboxRegisterToken: %v", err)
+	}
+	t.Log("first token registration succeeded")
+
+	// Update with a different token — should also succeed.
+	if err := nodeA.InboxRegisterToken("updated-token-456", "android"); err != nil {
+		t.Fatalf("InboxRegisterToken (update): %v", err)
+	}
+	t.Log("token update succeeded")
+}
+
+func TestRelayInboxMultipleMessages(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in -short mode")
+	}
+	requireRelay(t)
+
+	nodeA, peerIdA := startNode(t)
+	nodeB, peerIdB := startNode(t)
+
+	t.Logf("NodeA=%s  NodeB=%s", peerIdA, peerIdB)
+
+	// NodeA stores 3 messages for NodeB.
+	for i := 1; i <= 3; i++ {
+		msg := fmt.Sprintf("message %d from A", i)
+		if err := nodeA.InboxStore(peerIdB, msg); err != nil {
+			t.Fatalf("InboxStore msg %d: %v", i, err)
+		}
+		t.Logf("stored message %d", i)
+	}
+
+	// Wait for relay to persist all messages.
+	time.Sleep(2 * time.Second)
+
+	// NodeB retrieves — expect all 3.
+	msgs, err := nodeB.InboxRetrieve()
+	if err != nil {
+		t.Fatalf("InboxRetrieve: %v", err)
+	}
+
+	if len(msgs) != 3 {
+		t.Fatalf("expected 3 messages, got %d", len(msgs))
+	}
+
+	for i, m := range msgs {
+		expected := fmt.Sprintf("message %d from A", i+1)
+		t.Logf("  msg[%d]: from=%s message=%q", i, m.From, m.Message)
+		if m.Message != expected {
+			t.Errorf("msg[%d]: got %q, want %q", i, m.Message, expected)
+		}
+		if m.From != peerIdA {
+			t.Errorf("msg[%d]: from=%s, want %s", i, m.From, peerIdA)
+		}
+	}
 }

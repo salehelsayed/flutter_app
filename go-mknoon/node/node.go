@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -40,6 +41,8 @@ type Node struct {
 	eventCallback   EventCallback
 	eventSub        event.Subscription
 	connections     map[string]connectionInfo
+	relayReady      chan struct{}
+	relayReadyOnce  sync.Once
 }
 
 type connectionInfo struct {
@@ -148,12 +151,15 @@ func (n *Node) Start(cfg NodeConfig) (*NodeState, error) {
 	}
 
 	n.isStarted = true
+	n.relayReady = make(chan struct{})
 
 	// Connect to relay in background
 	go func() {
 		for _, addr := range relayAddresses {
 			if err := n.connectToRelay(addr); err != nil {
 				log.Printf("[NODE] Relay connect failed: %v", err)
+			} else {
+				n.relayReadyOnce.Do(func() { close(n.relayReady) })
 			}
 		}
 
@@ -199,13 +205,18 @@ func (n *Node) Status() map[string]interface{} {
 	n.mu.RLock()
 	defer n.mu.RUnlock()
 
+	listenAddrs := []string{}
 	circuitAddrs := []string{}
 	conns := []map[string]interface{}{}
 
 	if n.host != nil && n.isStarted {
 		for _, addr := range n.host.Addrs() {
 			s := addr.String()
-			circuitAddrs = append(circuitAddrs, s)
+			if strings.Contains(s, "/p2p-circuit") {
+				circuitAddrs = append(circuitAddrs, s)
+			} else {
+				listenAddrs = append(listenAddrs, s)
+			}
 		}
 		for _, c := range n.connections {
 			conns = append(conns, map[string]interface{}{
@@ -220,6 +231,7 @@ func (n *Node) Status() map[string]interface{} {
 		"ok":               true,
 		"peerId":           n.peerId,
 		"isStarted":        n.isStarted,
+		"listenAddresses":  listenAddrs,
 		"circuitAddresses": circuitAddrs,
 		"connections":      conns,
 	}
@@ -245,6 +257,18 @@ func (n *Node) stateLocked() *NodeState {
 		IsStarted:   n.isStarted,
 		Addresses:   addrs,
 		Connections: len(n.connections),
+	}
+}
+
+// WaitForRelayConnection blocks until at least one relay connection succeeds or the timeout expires.
+func (n *Node) WaitForRelayConnection(timeout time.Duration) error {
+	select {
+	case <-n.relayReady:
+		return nil
+	case <-time.After(timeout):
+		return fmt.Errorf("relay connection timeout after %v", timeout)
+	case <-n.ctx.Done():
+		return n.ctx.Err()
 	}
 }
 
