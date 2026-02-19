@@ -1,54 +1,101 @@
-import 'dart:async';
+import '../../features/p2p/domain/models/node_state.dart';
+import '../../features/p2p/domain/models/chat_message.dart';
+import '../../features/p2p/domain/models/discovered_peer.dart';
+import '../../features/p2p/domain/models/send_message_result.dart';
 
-import 'package:flutter_app/core/services/chat_message.dart';
-
-/// Abstract P2P messaging service.
+/// Abstract interface for P2P networking service.
 ///
-/// Implementations receive messages from the Go libp2p node
-/// and optionally from local WiFi peers, merging them into a
-/// single [messageStream].
+/// This service manages the P2P node lifecycle, peer connections,
+/// and messaging. It provides streams for state changes and
+/// incoming messages.
 abstract class P2PService {
-  /// Stream of all incoming/outgoing messages (Go + local merged).
+  /// Current node state.
+  NodeState get currentState;
+
+  /// Stream of node state changes.
+  Stream<NodeState> get stateStream;
+
+  /// Stream of incoming chat messages.
   Stream<ChatMessage> get messageStream;
 
-  /// Start the P2P node with the given private key.
-  Future<void> startNode({
-    required String privateKeyHex,
-    String? namespace,
-    bool autoRegister = true,
-  });
+  /// Start the P2P node with the given identity.
+  ///
+  /// Parameters:
+  ///   - [privateKeyBase64]: Ed25519 private key in BASE64 format
+  ///   - [peerId]: The peer ID associated with this identity
+  ///
+  /// Returns true if the node started successfully.
+  Future<bool> startNode(String privateKeyBase64, String peerId);
 
   /// Stop the P2P node.
-  Future<void> stopNode();
+  ///
+  /// Returns true if the node stopped successfully.
+  Future<bool> stopNode();
 
-  /// Get current node status as a map.
-  Future<Map<String, dynamic>> nodeStatus();
+  /// Send a message to a peer.
+  ///
+  /// Parameters:
+  ///   - [peerId]: The target peer ID
+  ///   - [message]: The message content
+  ///
+  /// Returns true if the message was sent successfully.
+  Future<bool> sendMessage(String peerId, String message);
 
-  /// Send a message via the Go libp2p node.
-  /// Returns the reply string (may be empty).
-  Future<String> sendMessage(String peerId, String message);
+  /// Send a message to a peer and return the full result including reply.
+  ///
+  /// Parameters:
+  ///   - [peerId]: The target peer ID
+  ///   - [message]: The message content
+  ///
+  /// Returns a [SendMessageResult] with sent status and optional reply/ack.
+  Future<SendMessageResult> sendMessageWithReply(String peerId, String message);
 
-  /// Dial a peer with optional addresses.
-  Future<void> dialPeer(String peerId, {List<String>? addresses});
+  /// Discover a peer by their ID via rendezvous.
+  ///
+  /// Parameters:
+  ///   - [peerId]: The peer ID to discover
+  ///
+  /// Returns the discovered peer info, or null if not found.
+  Future<DiscoveredPeer?> discoverPeer(String peerId);
 
-  /// Disconnect from a peer.
-  Future<void> disconnectPeer(String peerId);
+  /// Dial (connect to) a peer.
+  ///
+  /// Parameters:
+  ///   - [peerId]: The peer ID to dial
+  ///   - [addresses]: Optional list of multiaddrs (discovers if not provided)
+  ///
+  /// Returns true if connection was established.
+  Future<bool> dialPeer(String peerId, {List<String>? addresses});
 
-  /// Discover peers on a rendezvous namespace.
-  Future<List<Map<String, dynamic>>> discoverPeers({String? namespace});
+  /// Store a message in the offline inbox for a peer.
+  ///
+  /// Parameters:
+  ///   - [toPeerId]: The target peer ID
+  ///   - [message]: The message content
+  ///
+  /// Returns true if the message was stored successfully.
+  Future<bool> storeInInbox(String toPeerId, String message);
 
-  /// Register on rendezvous.
-  Future<void> rendezvousRegister({String? namespace});
+  /// Retrieve messages from the offline inbox.
+  ///
+  /// Returns a list of message maps from the inbox.
+  Future<List<Map<String, dynamic>>> retrieveInbox();
 
-  /// Store a message in the offline inbox.
-  Future<void> inboxStore(String toPeerId, String message);
+  /// Register an FCM push token with the relay server.
+  ///
+  /// Parameters:
+  ///   - [token]: The FCM device token
+  ///   - [platform]: The platform ('ios' or 'android')
+  ///
+  /// Returns true if the token was registered successfully.
+  Future<bool> registerPushToken(String token, String platform);
 
-  /// Retrieve pending inbox messages.
-  Future<List<Map<String, dynamic>>> inboxRetrieve();
+  /// Trigger an immediate health check (re-dials relay, re-registers FCM).
+  Future<void> performImmediateHealthCheck();
 
-  /// Register push token.
-  Future<void> inboxRegisterToken(String token, String platform);
+  /// Drain any queued offline inbox messages into the message stream.
+  Future<void> drainOfflineInbox();
 
-  /// Release resources.
+  /// Dispose of the service and clean up resources.
   void dispose();
 }

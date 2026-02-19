@@ -7,6 +7,7 @@ import 'package:flutter_app/features/identity/domain/repositories/identity_repos
 import 'package:flutter_app/features/identity/application/startup_decision.dart';
 import 'package:flutter_app/features/identity/application/generate_identity_use_case.dart';
 import 'package:flutter_app/core/bridge/js_bridge_client.dart';
+import 'test/core/secure_storage/fake_secure_key_store.dart';
 import 'dart:convert';
 
 // Mock JsBridge for testing
@@ -50,6 +51,7 @@ void main() {
     repository = IdentityRepositoryImpl(
       dbLoadIdentityRow: () => dbLoadIdentityRow(db),
       dbUpsertIdentityRow: (row) => dbUpsertIdentityRow(db, row),
+      secureKeyStore: FakeSecureKeyStore(),
     );
 
     mockBridge = MockJsBridge();

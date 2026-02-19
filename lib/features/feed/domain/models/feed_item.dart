@@ -1,0 +1,111 @@
+import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+
+/// Types of feed items.
+enum FeedItemType {
+  connection,
+  message,
+  thread,
+}
+
+/// Base class for all feed items.
+abstract class FeedItem {
+  final String id;
+  final DateTime timestamp;
+  final FeedItemType type;
+
+  const FeedItem({
+    required this.id,
+    required this.timestamp,
+    required this.type,
+  });
+}
+
+/// A feed item representing a new connection with a contact.
+class ConnectionFeedItem extends FeedItem {
+  final String contactPeerId;
+  final String contactUsername;
+  final String? contactAvatarPath;
+
+  const ConnectionFeedItem({
+    required super.id,
+    required super.timestamp,
+    required this.contactPeerId,
+    required this.contactUsername,
+    this.contactAvatarPath,
+  }) : super(type: FeedItemType.connection);
+
+  /// Creates a ConnectionFeedItem from a ContactModel.
+  factory ConnectionFeedItem.fromContact(ContactModel contact) {
+    return ConnectionFeedItem(
+      id: 'connection_${contact.peerId}',
+      timestamp: DateTime.tryParse(contact.scannedAt) ?? DateTime.now(),
+      contactPeerId: contact.peerId,
+      contactUsername: contact.username,
+      contactAvatarPath: contact.avatarPath,
+    );
+  }
+}
+
+/// A single message within a thread group.
+class ThreadMessage {
+  final String id;
+  final String text;
+  final String time;
+  final DateTime timestamp;
+  final bool isUnread;
+
+  const ThreadMessage({
+    required this.id,
+    required this.text,
+    required this.time,
+    required this.timestamp,
+    this.isUnread = false,
+  });
+}
+
+/// A feed item representing a thread of messages from a contact.
+///
+/// Groups multiple messages from the same contact into a single card,
+/// separated by read/unread status.
+class ThreadFeedItem extends FeedItem {
+  final String contactPeerId;
+  final String contactUsername;
+  final List<ThreadMessage> messages;
+  final int unreadCount;
+  final bool isUnreadCard;
+
+  const ThreadFeedItem({
+    required super.id,
+    required super.timestamp,
+    required this.contactPeerId,
+    required this.contactUsername,
+    required this.messages,
+    this.unreadCount = 0,
+    this.isUnreadCard = false,
+  }) : super(type: FeedItemType.thread);
+
+  bool get isMultiMessage => messages.length > 1;
+  ThreadMessage get latestMessage => messages.last;
+  int get additionalCount => messages.length - 1;
+}
+
+/// A feed item representing an incoming message from a contact.
+class MessageFeedItem extends FeedItem {
+  final String contactPeerId;
+  final String contactUsername;
+  final String messageId;
+  final String messageText;
+  final String messageTime;
+  final int unreadCount;
+
+  const MessageFeedItem({
+    required super.id,
+    required super.timestamp,
+    required this.contactPeerId,
+    required this.contactUsername,
+    required this.messageId,
+    required this.messageText,
+    required this.messageTime,
+    this.unreadCount = 0,
+  }) : super(type: FeedItemType.message);
+}

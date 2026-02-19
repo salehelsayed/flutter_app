@@ -1,4 +1,4 @@
-import 'package:sqflite/sqflite.dart';
+import 'package:sqflite_sqlcipher/sqflite.dart';
 
 import '../../utils/flow_event_emitter.dart';
 
@@ -53,7 +53,7 @@ Future<Map<String, Object?>?> dbLoadIdentityRow(Database db) async {
 /// Upserts the identity row at id=1.
 ///
 /// The input [row] is expected to contain keys:
-/// "peer_id", "public_key", "private_key", "mnemonic12", "created_at", "updated_at"
+/// "peer_id", "public_key", "private_key", "mnemonic12", "username", "created_at", "updated_at"
 ///
 /// This function always writes to id=1, implementing INSERT OR REPLACE semantics.
 /// Any database errors are emitted as flow events and then rethrown.

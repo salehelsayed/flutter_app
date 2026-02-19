@@ -9,6 +9,7 @@ import 'package:flutter_app/features/identity/presentation/startup_router.dart';
 import 'package:flutter_app/features/identity/presentation/screens/identity_choice_screen.dart';
 import 'package:flutter_app/features/identity/presentation/screens/mnemonic_input_screen.dart';
 import 'package:flutter_app/core/bridge/js_bridge_client.dart';
+import 'test/core/secure_storage/fake_secure_key_store.dart';
 import 'dart:convert';
 
 // Mock JsBridge for testing
@@ -85,6 +86,7 @@ void main() {
     repository = IdentityRepositoryImpl(
       dbLoadIdentityRow: () => dbLoadIdentityRow(db),
       dbUpsertIdentityRow: (row) => dbUpsertIdentityRow(db, row),
+      secureKeyStore: FakeSecureKeyStore(),
     );
 
     // Create mock bridge
@@ -263,6 +265,7 @@ void main() {
           return await dbLoadIdentityRow(db);
         },
         dbUpsertIdentityRow: (row) => dbUpsertIdentityRow(db, row),
+        secureKeyStore: FakeSecureKeyStore(),
       );
 
       // Launch app with error-throwing repository

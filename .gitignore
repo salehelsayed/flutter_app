@@ -64,3 +64,46 @@ app.*.map.json
 
 # Heap dumps
 *.hprof
+
+# Node.js
+node_modules/
+package-lock.json
+
+# Generated JS build outputs
+core_lib_js/dist/
+core_lib_js/node_modules/
+m3-libp2p-1/core_lib_js/dist/
+m3-libp2p-1/core_lib_js/node_modules/
+
+# Local libp2p credentials
+m3-libp2p-1/Creds_User_*.txt
+
+# Source maps
+*.js.map
+
+# Temporary/working directories
+download/
+maker_workspace/
+
+# TypeScript source files (keeping compiled JS only)
+*.ts
+!*.d.ts
+
+# Screenshots (macOS naming pattern)
+Screenshot*.png
+
+# Root-level Node.js files (for non-JS projects)
+/package.json
+
+# QR generation test artifacts
+m2-qr-generation/
+
+# UI branch working directories
+UI-1-2/
+
+# Temporary maker scripts
+maker_*.sh
+
+# CocoaPods lock file (regenerated on pod install)
+macos/Podfile.lock
+ios/Podfile.lock

@@ -1,0 +1,336 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_app/core/bridge/js_bridge_client.dart';
+import 'package:flutter_app/core/services/p2p_service.dart';
+import 'package:flutter_app/core/theme/app_colors.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
+import 'package:flutter_app/features/contact_request/application/send_contact_request_use_case.dart';
+import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository.dart';
+import 'package:flutter_app/features/contacts/application/add_contact_use_case.dart';
+import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
+import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
+import 'package:flutter_app/features/feed/presentation/navigation/feed_route_transition.dart';
+import 'package:flutter_app/features/feed/presentation/screens/feed_wired.dart';
+import 'package:flutter_app/features/home/presentation/widgets/ring_avatar.dart';
+import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
+import 'package:flutter_app/features/qr_code/application/parse_qr_payload_use_case.dart';
+import 'qr_scanner_screen.dart';
+
+/// Wired widget that connects QR scanner to business logic.
+///
+/// Handles the full flow:
+/// 1. Opens scanner screen
+/// 2. Parses scanned QR code
+/// 3. Validates signature
+/// 4. Adds contact to database
+/// 5. Sends contact request via P2P (for bidirectional exchange)
+/// 6. Shows success/error feedback
+class QRScannerWired extends StatelessWidget {
+  final JsBridge bridge;
+  final ContactRepository contactRepository;
+  final ContactRequestRepository contactRequestRepository;
+  final ContactRequestListener contactRequestListener;
+  final MessageRepository messageRepository;
+  final ChatMessageListener chatMessageListener;
+  final IdentityRepository identityRepository;
+  final P2PService p2pService;
+  final String ownPeerId;
+
+  const QRScannerWired({
+    super.key,
+    required this.bridge,
+    required this.contactRepository,
+    required this.contactRequestRepository,
+    required this.contactRequestListener,
+    required this.messageRepository,
+    required this.chatMessageListener,
+    required this.identityRepository,
+    required this.p2pService,
+    required this.ownPeerId,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return QRScannerScreen(
+      onScanned: (qrData) => _handleScanned(context, qrData),
+    );
+  }
+
+  Future<void> _handleScanned(BuildContext context, String qrData) async {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'QR_SCAN_RECEIVED',
+      details: {'length': qrData.length},
+    );
+
+    // Parse and validate the QR payload
+    final (result, contact) = await parseQRPayload(
+      qrString: qrData,
+      bridge: bridge,
+      ownPeerId: ownPeerId,
+    );
+
+    if (!context.mounted) return;
+
+    switch (result) {
+      case ParseQRResult.success:
+        await _handleValidContact(context, contact!);
+        break;
+
+      case ParseQRResult.invalidJson:
+        _showError(
+          context,
+          'Invalid QR Code',
+          'This doesn\'t look like a valid contact QR code.',
+        );
+        break;
+
+      case ParseQRResult.missingFields:
+        _showError(
+          context,
+          'Incomplete QR Code',
+          'This QR code is missing required information.',
+        );
+        break;
+
+      case ParseQRResult.invalidSignature:
+        _showError(
+          context,
+          'Invalid Signature',
+          'This QR code could not be verified.',
+        );
+        break;
+
+      case ParseQRResult.expired:
+        _showError(
+          context,
+          'Expired QR Code',
+          'This QR code has expired. Ask your friend for a new one.',
+        );
+        break;
+
+      case ParseQRResult.selfScan:
+        _showError(
+          context,
+          'That\'s You!',
+          'You can\'t add yourself as a contact.',
+        );
+        break;
+    }
+  }
+
+  Future<void> _handleValidContact(
+    BuildContext context,
+    ContactModel contact,
+  ) async {
+    final addResult = await addContact(
+      repository: contactRepository,
+      contact: contact,
+    );
+
+    if (!context.mounted) return;
+
+    switch (addResult) {
+      case AddContactResult.success:
+        _showSuccessDialog(context, contact);
+        // Send contact request to the scanned peer (fire and forget)
+        _sendContactRequestInBackground(contact.peerId);
+        break;
+
+      case AddContactResult.alreadyExists:
+        _showAlreadyExistsDialog(context, contact);
+        break;
+
+      case AddContactResult.dbError:
+        _showError(
+          context,
+          'Error',
+          'Failed to add contact. Please try again.',
+        );
+        break;
+    }
+  }
+
+  /// Sends a contact request to the peer in the background.
+  ///
+  /// This enables bidirectional contact exchange - when Bob scans Alice's QR,
+  /// Bob automatically sends his info to Alice so she can add him back.
+  void _sendContactRequestInBackground(String targetPeerId) async {
+    final sendResult = await sendContactRequest(
+      p2pService: p2pService,
+      identityRepo: identityRepository,
+      bridge: bridge,
+      targetPeerId: targetPeerId,
+    );
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CONTACT_REQUEST_SENT',
+      details: {
+        'result': sendResult.name,
+        'targetPeerId': targetPeerId.length > 10
+            ? targetPeerId.substring(0, 10)
+            : targetPeerId,
+      },
+    );
+  }
+
+  void _showError(BuildContext context, String title, String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
+            Text(message),
+          ],
+        ),
+        backgroundColor: Colors.red[700],
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 4),
+      ),
+    );
+  }
+
+  void _showSuccessDialog(BuildContext context, ContactModel contact) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1A1A1A),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+          side: BorderSide(
+            color: AppColors.primaryAccent.withValues(alpha: 0.3),
+          ),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 16),
+            // Contact's ring avatar
+            RingAvatar(peerId: contact.peerId, size: 80),
+            const SizedBox(height: 16),
+            // Username
+            Text(
+              contact.username,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 20,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 8),
+            // Success message
+            Text(
+              'Added to your circle!',
+              style: TextStyle(color: AppColors.primaryAccent, fontSize: 14),
+            ),
+            const SizedBox(height: 24),
+            // OK button
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: () {
+                  Navigator.of(ctx).pushAndRemoveUntil(
+                    buildFeedSlideUpRoute(
+                      builder: (_) => FeedWired(
+                        repository: identityRepository,
+                        contactRepository: contactRepository,
+                        contactRequestRepository: contactRequestRepository,
+                        contactRequestListener: contactRequestListener,
+                        messageRepository: messageRepository,
+                        chatMessageListener: chatMessageListener,
+                        bridge: bridge,
+                        p2pService: p2pService,
+                      ),
+                    ),
+                    (route) => false,
+                  );
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primaryAccent,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                child: const Text(
+                  'OK',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showAlreadyExistsDialog(BuildContext context, ContactModel contact) {
+    showDialog(
+      context: context,
+      barrierDismissible: true,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1A1A1A),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+          side: BorderSide(color: Colors.amber.withValues(alpha: 0.3)),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 16),
+            // Contact's ring avatar
+            RingAvatar(peerId: contact.peerId, size: 80),
+            const SizedBox(height: 16),
+            // Username
+            Text(
+              contact.username,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 20,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 8),
+            // Already exists message
+            const Text(
+              'Already in your circle!',
+              style: TextStyle(color: Colors.amber, fontSize: 14),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'This contact was added previously',
+              style: TextStyle(color: AppColors.textMuted, fontSize: 12),
+            ),
+            const SizedBox(height: 24),
+            // OK button
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.amber,
+                  foregroundColor: Colors.black,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                child: const Text(
+                  'Got it',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
