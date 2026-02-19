@@ -1,41 +1,22 @@
+// core_lib_js/src/bridge/handlers.ts
+
 import { generateIdentity } from '../identity/generate';
 import { restoreIdentityFromMnemonic } from '../identity/restore';
-import { IdentityJson } from '../types/identity';
+import { signPayload } from '../signing/sign_payload';
 import { emitFlowEvent } from '../utils/flow_events';
 
-// Type definitions for bridge responses
-interface SuccessResponse {
-  ok: true;
-  identity: IdentityJson;
-}
+// Handler registry
+const handlers = new Map<string, (payload: any, requestId?: string) => Promise<any>>();
 
-interface ErrorResponse {
-  ok: false;
-  errorCode: 'INVALID_MNEMONIC' | 'INTERNAL_ERROR';
-  errorMessage: string;
-}
+// ============================================
+// M1 HANDLERS (existing)
+// ============================================
 
-type BridgeResponse = SuccessResponse | ErrorResponse;
-
-interface RestorePayload {
-  mnemonic12: string;
-}
-
-// Handler registration function type
-type HandlerFunction = (payload: unknown) => Promise<BridgeResponse>;
-
-// Assume this registration function is provided by the bridge infrastructure
-declare function registerHandler(cmd: string, handler: HandlerFunction): void;
-
-/**
- * Handler for identity.generate command
- * Generates a new identity with fresh keypair and mnemonic
- */
-async function handleIdentityGenerate(_payload: unknown): Promise<BridgeResponse> {
+handlers.set('identity.generate', async (_payload, requestId) => {
   emitFlowEvent({
     layer: 'JS',
-    event: 'ID_JS_BRIDGE_IDENTITY_GENERATE_RECEIVED',
-    details: {},
+    event: 'ID_JS_GENERATE_START',
+    details: { requestId },
   });
 
   try {
@@ -43,106 +24,173 @@ async function handleIdentityGenerate(_payload: unknown): Promise<BridgeResponse
 
     emitFlowEvent({
       layer: 'JS',
-      event: 'ID_JS_BRIDGE_IDENTITY_GENERATE_SUCCESS',
-      details: { peerId: identity.peerId },
+      event: 'ID_JS_GENERATE_SUCCESS',
+      details: { requestId },
     });
 
     return {
       ok: true,
+      requestId,
       identity,
     };
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error during identity generation';
+    const errorMessage = error instanceof Error ? error.message : String(error);
 
     emitFlowEvent({
       layer: 'JS',
-      event: 'ID_JS_BRIDGE_IDENTITY_GENERATE_ERROR',
-      details: { errorCode: 'INTERNAL_ERROR', errorMessage },
+      event: 'ID_JS_GENERATE_ERROR',
+      details: { error: errorMessage, requestId },
     });
 
     return {
       ok: false,
+      requestId,
       errorCode: 'INTERNAL_ERROR',
       errorMessage,
     };
   }
-}
+});
 
-/**
- * Handler for identity.restore command
- * Restores identity from existing 12-word mnemonic
- */
-async function handleIdentityRestore(payload: unknown): Promise<BridgeResponse> {
+handlers.set('identity.restore', async (payload, requestId) => {
   emitFlowEvent({
     layer: 'JS',
-    event: 'ID_JS_BRIDGE_IDENTITY_RESTORE_RECEIVED',
-    details: {},
+    event: 'ID_JS_RESTORE_START',
+    details: { requestId },
   });
 
   try {
-    const typedPayload = payload as RestorePayload;
-    const mnemonic12 = typedPayload?.mnemonic12;
-
-    if (!mnemonic12 || typeof mnemonic12 !== 'string') {
-      emitFlowEvent({
-        layer: 'JS',
-        event: 'ID_JS_BRIDGE_IDENTITY_RESTORE_ERROR',
-        details: { errorCode: 'INVALID_MNEMONIC', errorMessage: 'Missing or invalid mnemonic12 in payload' },
-      });
-
+    if (!payload.mnemonic || typeof payload.mnemonic !== 'string') {
       return {
         ok: false,
+        requestId,
         errorCode: 'INVALID_MNEMONIC',
-        errorMessage: 'Missing or invalid mnemonic12 in payload',
+        errorMessage: 'Missing or invalid mnemonic',
       };
     }
 
-    const identity = await restoreIdentityFromMnemonic(mnemonic12);
+    const identity = await restoreIdentityFromMnemonic(payload.mnemonic);
 
     emitFlowEvent({
       layer: 'JS',
-      event: 'ID_JS_BRIDGE_IDENTITY_RESTORE_SUCCESS',
-      details: { peerId: identity.peerId },
+      event: 'ID_JS_RESTORE_SUCCESS',
+      details: { requestId },
     });
 
     return {
       ok: true,
+      requestId,
       identity,
     };
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error during identity restoration';
-    
-    // Check if this is an INVALID_MNEMONIC error
-    const isInvalidMnemonic = 
-      error instanceof Error && 
-      (error.message.includes('invalid') || 
-       error.message.includes('mnemonic') ||
-       error.message.includes('checksum') ||
-       error.message.includes('word'));
-    
-    const errorCode = isInvalidMnemonic ? 'INVALID_MNEMONIC' : 'INTERNAL_ERROR';
+    const errorMessage = error instanceof Error ? error.message : String(error);
 
     emitFlowEvent({
       layer: 'JS',
-      event: 'ID_JS_BRIDGE_IDENTITY_RESTORE_ERROR',
-      details: { errorCode, errorMessage },
+      event: 'ID_JS_RESTORE_ERROR',
+      details: { error: errorMessage, requestId },
     });
 
     return {
       ok: false,
+      requestId,
+      errorCode: 'INTERNAL_ERROR',
+      errorMessage,
+    };
+  }
+});
+
+// ============================================
+// M2 HANDLERS (new)
+// ============================================
+
+handlers.set('payload.sign', async (payload: {
+  dataToSign?: string;
+  privateKey?: string;
+}, requestId?: string) => {
+  emitFlowEvent({
+    layer: 'JS',
+    event: 'QR_JS_BRIDGE_SIGN_RECEIVED',
+    details: { dataLength: payload.dataToSign?.length ?? 0, requestId },
+  });
+
+  try {
+    // Validate required fields
+    if (!payload.dataToSign || typeof payload.dataToSign !== 'string') {
+      return {
+        ok: false,
+        requestId,
+        errorCode: 'SIGNING_ERROR',
+        errorMessage: 'Missing or invalid dataToSign',
+      };
+    }
+    if (!payload.privateKey || typeof payload.privateKey !== 'string') {
+      return {
+        ok: false,
+        requestId,
+        errorCode: 'INVALID_PRIVATE_KEY',
+        errorMessage: 'Missing or invalid privateKey',
+      };
+    }
+
+    // Call signing function
+    const signature = await signPayload(payload.dataToSign, payload.privateKey);
+
+    emitFlowEvent({
+      layer: 'JS',
+      event: 'QR_JS_BRIDGE_SIGN_SUCCESS',
+      details: { requestId },
+    });
+
+    return {
+      ok: true,
+      requestId,
+      signature,
+    };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+
+    // Map error to appropriate error code
+    let errorCode = 'INTERNAL_ERROR';
+    if (errorMessage.includes('private key') || errorMessage.includes('key')) {
+      errorCode = 'INVALID_PRIVATE_KEY';
+    } else if (errorMessage.includes('sign')) {
+      errorCode = 'SIGNING_ERROR';
+    }
+
+    emitFlowEvent({
+      layer: 'JS',
+      event: 'QR_JS_BRIDGE_SIGN_ERROR',
+      details: { errorCode, error: errorMessage, requestId },
+    });
+
+    return {
+      ok: false,
+      requestId,
       errorCode,
       errorMessage,
     };
   }
+});
+
+// ============================================
+// DISPATCHER (existing)
+// ============================================
+
+export async function handleBridgeMessage(message: {
+  cmd: string;
+  requestId?: string;
+  payload: any;
+}): Promise<any> {
+  const handler = handlers.get(message.cmd);
+  if (!handler) {
+    return {
+      ok: false,
+      requestId: message.requestId,
+      errorCode: 'UNKNOWN_COMMAND',
+      errorMessage: `Unknown command: ${message.cmd}`,
+    };
+  }
+  return handler(message.payload, message.requestId);
 }
 
-/**
- * Registers all identity-related bridge handlers
- */
-export function registerIdentityHandlers(): void {
-  registerHandler('identity.generate', handleIdentityGenerate);
-  registerHandler('identity.restore', handleIdentityRestore);
-}
-
-// Export individual handlers for testing
-export { handleIdentityGenerate, handleIdentityRestore };
+export { handlers };

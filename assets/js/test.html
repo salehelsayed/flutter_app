@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>JS Bridge Test</title>
+  <style>
+    body { font-family: monospace; padding: 20px; background: #1a1a1a; color: #00ff00; }
+    #log { white-space: pre-wrap; font-size: 14px; }
+    button { margin: 10px; padding: 10px 20px; font-size: 16px; }
+    .error { color: #ff4444; }
+    .success { color: #44ff44; }
+  </style>
+</head>
+<body>
+  <h1>JS Bridge Test</h1>
+  <button onclick="testGenerate()">Test Generate Identity</button>
+  <hr>
+  <div id="log">Ready. Click button to test.</div>
+
+  <script src="core_lib.js"></script>
+  <script>
+    const logEl = document.getElementById('log');
+
+    function log(msg, isError = false) {
+      const line = document.createElement('div');
+      line.className = isError ? 'error' : '';
+      line.textContent = new Date().toISOString() + ' ' + msg;
+      logEl.appendChild(line);
+      console.log(msg);
+    }
+
+    function logSuccess(msg) {
+      const line = document.createElement('div');
+      line.className = 'success';
+      line.textContent = new Date().toISOString() + ' ' + msg;
+      logEl.appendChild(line);
+    }
+
+    // Mock FlutterChannel for testing
+    window.FlutterChannel = {
+      postMessage: function(msg) {
+        log('FlutterChannel received: ' + msg);
+        try {
+          const data = JSON.parse(msg);
+          if (data.ok) {
+            logSuccess('SUCCESS! Identity generated:');
+            logSuccess('  Peer ID: ' + data.identity.peerId);
+            logSuccess('  Mnemonic: ' + data.identity.mnemonic12);
+          } else {
+            log('ERROR: ' + data.errorCode + ' - ' + data.errorMessage, true);
+          }
+        } catch (e) {
+          log('Parse error: ' + e, true);
+        }
+      }
+    };
+
+    async function testGenerate() {
+      log('========================================');
+      log('Testing identity.generate...');
+      log('========================================');
+
+      try {
+        if (typeof handleRequest === 'undefined') {
+          log('ERROR: handleRequest is not defined!', true);
+          return;
+        }
+
+        const request = JSON.stringify({
+          cmd: 'identity.generate',
+          payload: {},
+          requestId: 'test_1'
+        });
+
+        log('Calling handleRequest...');
+        await handleRequest(request);
+        log('handleRequest completed');
+      } catch (e) {
+        log('Exception: ' + e.message, true);
+        log('Stack: ' + e.stack, true);
+      }
+    }
+
+    log('Page loaded. core_lib.js status: ' + (typeof handleRequest !== 'undefined' ? 'OK' : 'NOT LOADED'));
+  </script>
+</body>
+</html>

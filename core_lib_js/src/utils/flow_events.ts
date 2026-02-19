@@ -17,6 +17,8 @@ export interface FlowEventParams {
   event: string;
   /** Additional details about the event */
   details: Record<string, unknown>;
+  /** The milestone identifier (defaults to 'M1_IDENTITY_INIT') */
+  milestone?: string;
 }
 
 /**
@@ -39,10 +41,10 @@ export interface FlowEventParams {
  * });
  * ```
  */
-export function emitFlowEvent({ layer, event, details }: FlowEventParams): void {
+export function emitFlowEvent({ layer, event, details, milestone }: FlowEventParams): void {
   const payload = {
     ts: new Date().toISOString(),
-    milestone: 'M1_IDENTITY_INIT',
+    milestone: milestone ?? 'M1_IDENTITY_INIT',
     layer,
     event,
     details,
