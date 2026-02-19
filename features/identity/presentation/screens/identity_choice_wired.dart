@@ -7,15 +7,15 @@ import 'package:flutter_app/features/identity/presentation/screens/mnemonic_inpu
 
 class IdentityChoiceWired extends StatefulWidget {
   final IdentityRepository repository;
-  final Future<Map<String, dynamic>> Function() callJsIdentityGenerate;
-  final Future<Map<String, dynamic>> Function(String mnemonic) callJsIdentityRestore;
+  final Future<Map<String, dynamic>> Function() callIdentityGenerate;
+  final Future<Map<String, dynamic>> Function(String mnemonic) callIdentityRestore;
   final VoidCallback onNavigateToMain;
 
   const IdentityChoiceWired({
     super.key,
     required this.repository,
-    required this.callJsIdentityGenerate,
-    required this.callJsIdentityRestore,
+    required this.callIdentityGenerate,
+    required this.callIdentityRestore,
     required this.onNavigateToMain,
   });
 
@@ -41,7 +41,7 @@ class _IdentityChoiceWiredState extends State<IdentityChoiceWired> {
 
     try {
       final result = await generateNewIdentity(
-        callJsGenerate: widget.callJsIdentityGenerate,
+        callGenerate: widget.callIdentityGenerate,
         repo: widget.repository,
       );
 

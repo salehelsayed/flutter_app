@@ -3,6 +3,7 @@ import 'dart:collection';
 
 import 'package:flutter_app/core/constants/network_constants.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 
 /// Result of building a QR payload
@@ -21,9 +22,11 @@ enum BuildQRPayloadResult {
 ///
 /// Returns a tuple of (result, jsonString?).
 /// On success, jsonString contains the canonical JSON ready for QR encoding.
+/// Pass [cachedIdentity] to skip the redundant `repo.loadIdentity()` call.
 Future<(BuildQRPayloadResult, String?)> buildQRPayload({
   required IdentityRepository repo,
-  required Future<Map<String, dynamic>> Function(String, String) callJsSign,
+  required Future<Map<String, dynamic>> Function(String, String) callSign,
+  IdentityModel? cachedIdentity,
 }) async {
   // Step 1: Emit start event
   emitFlowEvent(
@@ -32,8 +35,8 @@ Future<(BuildQRPayloadResult, String?)> buildQRPayload({
     details: {},
   );
 
-  // Step 2: Load identity from repository
-  final identity = await repo.loadIdentity();
+  // Step 2: Use cached identity or load from repository
+  final identity = cachedIdentity ?? await repo.loadIdentity();
 
   // Step 3: Check if identity exists
   if (identity == null) {
@@ -53,9 +56,10 @@ Future<(BuildQRPayloadResult, String?)> buildQRPayload({
   );
 
   // Step 5: Build unsigned payload with sorted keys
+  // Note: ML-KEM public key is NOT included in QR — it's exchanged via
+  // contact request message to keep the QR code compact and scannable.
   final timestamp = DateTime.now().toUtc().toIso8601String();
   final unsignedPayload = SplayTreeMap<String, dynamic>.from({
-    if (identity.mlKemPublicKey != null) 'mlkem': identity.mlKemPublicKey,
     'ns': identity.peerId,
     'pk': identity.publicKey,
     'rv': RENDEZVOUS_ADDRESS,
@@ -73,8 +77,8 @@ Future<(BuildQRPayloadResult, String?)> buildQRPayload({
     details: {},
   );
 
-  // Step 8: Call JS bridge to sign
-  final signResponse = await callJsSign(dataToSign, identity.privateKey);
+  // Step 8: Call bridge to sign
+  final signResponse = await callSign(dataToSign, identity.privateKey);
 
   // Step 9: Check signing result
   if (signResponse['ok'] != true) {

@@ -1,7 +1,7 @@
 import 'dart:collection';
 import 'dart:convert';
 
-import 'package:flutter_app/core/bridge/js_bridge_client.dart';
+import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/constants/network_constants.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -41,7 +41,7 @@ enum SendContactRequestResult {
 Future<SendContactRequestResult> sendContactRequest({
   required P2PService p2pService,
   required IdentityRepository identityRepo,
-  required JsBridge bridge,
+  required Bridge bridge,
   required String targetPeerId,
 }) async {
   final targetPrefix = targetPeerId.length > 10
@@ -94,7 +94,7 @@ Future<SendContactRequestResult> sendContactRequest({
     details: {},
   );
 
-  final signResponse = await callJsSignPayload(
+  final signResponse = await callSignPayload(
     bridge: bridge,
     dataToSign: dataToSign,
     privateKey: identity.privateKey,
@@ -134,6 +134,31 @@ Future<SendContactRequestResult> sendContactRequest({
     details: {'targetPeerId': targetPrefix},
   );
 
+  // 7.5. Try local WiFi delivery first
+  if (p2pService.isLocalPeer(targetPeerId)) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CONTACT_REQUEST_SEND_LOCAL_ATTEMPT',
+      details: {'targetPeerId': targetPrefix},
+    );
+    final localSent = await p2pService.sendLocalMessage(
+      targetPeerId, messageJson, identity.peerId);
+    if (localSent) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONTACT_REQUEST_SEND_LOCAL_SUCCESS',
+        details: {'targetPeerId': targetPrefix},
+      );
+      return SendContactRequestResult.success;
+    }
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CONTACT_REQUEST_SEND_LOCAL_FAILED',
+      details: {'targetPeerId': targetPrefix},
+    );
+    // Fall through to relay path
+  }
+
   // Attempt to send with exponential backoff (3 attempts)
   const maxAttempts = 3;
   const baseDelay = Duration(milliseconds: 500);
@@ -153,7 +178,7 @@ Future<SendContactRequestResult> sendContactRequest({
           await Future.delayed(baseDelay * attempt);
           continue;
         }
-        return SendContactRequestResult.peerNotFound;
+        break;
       }
 
       // Dial and send
@@ -173,7 +198,7 @@ Future<SendContactRequestResult> sendContactRequest({
           await Future.delayed(baseDelay * attempt);
           continue;
         }
-        return SendContactRequestResult.sendFailed;
+        break;
       }
 
       final sent = await p2pService.sendMessage(targetPeerId, messageJson);
@@ -188,7 +213,7 @@ Future<SendContactRequestResult> sendContactRequest({
           await Future.delayed(baseDelay * attempt);
           continue;
         }
-        return SendContactRequestResult.sendFailed;
+        break;
       }
 
       // Success!
@@ -209,8 +234,39 @@ Future<SendContactRequestResult> sendContactRequest({
         await Future.delayed(baseDelay * attempt);
         continue;
       }
-      return SendContactRequestResult.sendFailed;
+      break;
     }
+  }
+
+  // All retries exhausted — try offline inbox fallback.
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'CONTACT_REQUEST_SEND_INBOX_FALLBACK_START',
+    details: {'targetPeerId': targetPrefix},
+  );
+
+  try {
+    final storedInInbox = await p2pService.storeInInbox(
+      targetPeerId,
+      messageJson,
+    );
+    if (storedInInbox) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONTACT_REQUEST_SEND_SUCCESS',
+        details: {
+          'targetPeerId': targetPrefix,
+          'via': 'inbox',
+        },
+      );
+      return SendContactRequestResult.success;
+    }
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CONTACT_REQUEST_SEND_INBOX_FALLBACK_ERROR',
+      details: {'error': e.toString()},
+    );
   }
 
   return SendContactRequestResult.sendFailed;

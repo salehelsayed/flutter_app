@@ -42,21 +42,19 @@ class IdentityRepositoryImpl implements IdentityRepository {
       return null;
     }
 
-    // Read secrets from secure storage, fall back to DB columns (pre-migration)
-    final ssPrivateKey = await _secureKeyStore.read(_kPrivateKey);
-    final ssMnemonic12 = await _secureKeyStore.read(_kMnemonic12);
-    final ssMlKemSecretKey = await _secureKeyStore.read(_kMlKemSecretKey);
+    // Read secrets from secure storage in parallel, fall back to DB columns (pre-migration)
+    final ssResults = await Future.wait([
+      _secureKeyStore.read(_kPrivateKey),
+      _secureKeyStore.read(_kMnemonic12),
+      _secureKeyStore.read(_kMlKemSecretKey),
+    ]);
+    final ssPrivateKey = ssResults[0];
+    final ssMnemonic12 = ssResults[1];
+    final ssMlKemSecretKey = ssResults[2];
 
     final privateKey = ssPrivateKey ?? row['private_key'] as String?;
     final mnemonic12 = ssMnemonic12 ?? row['mnemonic12'] as String?;
     final mlKemSecretKey = ssMlKemSecretKey ?? row['ml_kem_secret_key'] as String?;
-
-    print('[EAR] loadIdentity secret sources:');
-    print('[EAR]   private_key  from: ${ssPrivateKey != null ? "SECURE STORAGE" : (row['private_key'] != null ? "DB FALLBACK" : "MISSING")}');
-    print('[EAR]   mnemonic12   from: ${ssMnemonic12 != null ? "SECURE STORAGE" : (row['mnemonic12'] != null ? "DB FALLBACK" : "MISSING")}');
-    print('[EAR]   mlkem_secret from: ${ssMlKemSecretKey != null ? "SECURE STORAGE" : (row['ml_kem_secret_key'] != null ? "DB FALLBACK" : "n/a")}');
-    print('[EAR]   DB private_key column: ${row['private_key'] == null ? "NULL (good)" : "HAS VALUE (pre-migration)"}');
-    print('[EAR]   DB mnemonic12 column:  ${row['mnemonic12'] == null ? "NULL (good)" : "HAS VALUE (pre-migration)"}');
 
     if (privateKey == null || mnemonic12 == null) {
       emitFlowEvent(
@@ -103,12 +101,6 @@ class IdentityRepositoryImpl implements IdentityRepository {
     if (identity.mlKemSecretKey != null) {
       await _secureKeyStore.write(_kMlKemSecretKey, identity.mlKemSecretKey!);
     }
-
-    print('[EAR] saveIdentity: secrets written to SECURE STORAGE');
-    print('[EAR]   private_key  → secure storage: YES');
-    print('[EAR]   mnemonic12   → secure storage: YES');
-    print('[EAR]   mlkem_secret → secure storage: ${identity.mlKemSecretKey != null ? "YES" : "n/a"}');
-    print('[EAR]   DB columns will be: NULL (secrets NOT in DB)');
 
     // Write DB row with secret columns set to null
     final row = <String, Object?>{

@@ -135,6 +135,9 @@ class FakeMessageRepository implements MessageRepository {
     int limit = 50,
     String? beforeTimestamp,
   }) async => [];
+
+  @override
+  Future<List<ConversationMessage>> getFailedOutgoingMessages() async => [];
 }
 
 Future<List<String>> capturePrintedLines(Future<void> Function() action) async {

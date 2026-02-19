@@ -1,22 +1,22 @@
 import 'dart:convert';
 import '../utils/flow_event_emitter.dart';
 
-/// Abstract interface for JS bridge communication.
+/// Abstract interface for bridge communication.
 /// Implementations handle the actual message passing to JavaScript.
-abstract class JsBridge {
-  /// Sends a request to the JS layer and returns the raw response string.
+abstract class Bridge {
+  /// Sends a request to the native layer and returns the raw response string.
   Future<String> send(String message);
 }
 
-/// Calls the JS bridge to generate a new identity.
+/// Calls the bridge to generate a new identity.
 ///
-/// Sends the "identity.generate" command to the JS layer and returns
+/// Sends the "identity.generate" command to the native layer and returns
 /// the parsed response as a Map.
 ///
 /// Returns a Map containing:
 /// - On success: `{ "ok": true, "identity": {...} }`
 /// - On failure: `{ "ok": false, "errorCode": "...", "errorMessage": "..." }`
-Future<Map<String, dynamic>> callJsIdentityGenerate(JsBridge bridge) async {
+Future<Map<String, dynamic>> callIdentityGenerate(Bridge bridge) async {
   final request = {
     'cmd': 'identity.generate',
     'payload': <String, dynamic>{},
@@ -39,21 +39,21 @@ Future<Map<String, dynamic>> callJsIdentityGenerate(JsBridge bridge) async {
 
   return response;
 }
-/// Calls the JS bridge to restore an identity from a 12-word mnemonic.
+/// Calls the bridge to restore an identity from a 12-word mnemonic.
 ///
-/// Sends an `identity.restore` command to the JS core-lib and returns
+/// Sends an `identity.restore` command to the native core-lib and returns
 /// the raw response map containing either the restored identity or an error.
 ///
 /// Parameters:
-///   - [bridge]: The JsBridge instance to use for communication
+///   - [bridge]: The bridge instance to use for communication
 ///   - [mnemonic12]: A string containing 12 BIP39 words separated by spaces
 ///
 /// Returns:
-///   A Map containing the JS response with either:
+///   A Map containing the response with either:
 ///   - Success: `{ "ok": true, "identity": { ... } }`
 ///   - Error: `{ "ok": false, "errorCode": "...", "errorMessage": "..." }`
-Future<Map<String, dynamic>> callJsIdentityRestore(
-  JsBridge bridge,
+Future<Map<String, dynamic>> callIdentityRestore(
+  Bridge bridge,
   String mnemonic12,
 ) async {
   // Emit flow event before request

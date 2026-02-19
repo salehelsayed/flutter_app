@@ -8,12 +8,12 @@ import 'package:flutter_app/features/identity/domain/repositories/identity_repos
 import 'package:flutter_app/features/identity/presentation/startup_router.dart';
 import 'package:flutter_app/features/identity/presentation/screens/identity_choice_screen.dart';
 import 'package:flutter_app/features/identity/presentation/screens/mnemonic_input_screen.dart';
-import 'package:flutter_app/core/bridge/js_bridge_client.dart';
+import 'package:flutter_app/core/bridge/bridge.dart';
 import 'test/core/secure_storage/fake_secure_key_store.dart';
 import 'dart:convert';
 
-// Mock JsBridge for testing
-class MockJsBridge extends JsBridge {
+// Mock Bridge for testing
+class MockBridge extends Bridge {
   String? lastMessage;
   String nextResponse = '';
 
@@ -23,6 +23,17 @@ class MockJsBridge extends JsBridge {
     await Future.delayed(const Duration(milliseconds: 100)); // Simulate network delay
     return nextResponse;
   }
+
+  @override
+  Future<void> initialize() async {}
+  @override
+  Future<bool> checkHealth() async => true;
+  @override
+  Future<void> reinitialize() async {}
+  @override
+  void dispose() {}
+  @override
+  bool get isInitialized => true;
 
   void setGenerateResponse() {
     nextResponse = jsonEncode({
@@ -64,7 +75,7 @@ class MockJsBridge extends JsBridge {
 void main() {
   late Database db;
   late IdentityRepositoryImpl repository;
-  late MockJsBridge mockBridge;
+  late MockBridge mockBridge;
 
   setUpAll(() {
     // Initialize FFI for testing
@@ -90,7 +101,7 @@ void main() {
     );
 
     // Create mock bridge
-    mockBridge = MockJsBridge();
+    mockBridge = MockBridge();
   });
 
   tearDown(() async {
@@ -315,9 +326,9 @@ void main() {
 
       // Generate and save identity
       mockBridge.setGenerateResponse();
-      final generateResponse = await callJsIdentityGenerate(mockBridge);
+      final generateResponse = await callIdentityGenerate(mockBridge);
       expect(generateResponse['ok'], isTrue);
-      print('✓ JS bridge generate works');
+      print('✓ Bridge generate works');
 
       // Test with saved identity
       final identity = generateResponse['identity'] as Map<String, dynamic>;
@@ -328,12 +339,12 @@ void main() {
 
       // Test restore flow
       mockBridge.setRestoreResponse(true);
-      final restoreResponse = await callJsIdentityRestore(
+      final restoreResponse = await callIdentityRestore(
         mockBridge,
         'test mnemonic phrase'
       );
       expect(restoreResponse['ok'], isTrue);
-      print('✓ JS bridge restore works');
+      print('✓ Bridge restore works');
     });
 
     test('Flow events are emitted correctly throughout Phase 5', () async {

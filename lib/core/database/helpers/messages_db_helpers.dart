@@ -445,6 +445,45 @@ Future<int> dbDeleteMessagesForContact(Database db, String contactPeerId) async 
   }
 }
 
+/// Loads all outgoing messages with status='failed', ordered by timestamp ASC.
+///
+/// Returns at most [limit] rows (default 50).
+Future<List<Map<String, Object?>>> dbLoadFailedOutgoingMessages(
+  Database db, {
+  int limit = 50,
+}) async {
+  emitFlowEvent(
+    layer: 'DB',
+    event: 'MESSAGES_DB_LOAD_FAILED_OUTGOING_START',
+    details: {'limit': limit},
+  );
+
+  try {
+    final results = await db.query(
+      'messages',
+      where: "status = ? AND is_incoming = 0",
+      whereArgs: ['failed'],
+      orderBy: 'timestamp ASC',
+      limit: limit,
+    );
+
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'MESSAGES_DB_LOAD_FAILED_OUTGOING_SUCCESS',
+      details: {'count': results.length},
+    );
+
+    return results;
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'MESSAGES_DB_LOAD_FAILED_OUTGOING_ERROR',
+      details: {'error': e.toString()},
+    );
+    rethrow;
+  }
+}
+
 /// Loads a single message by ID.
 Future<Map<String, Object?>?> dbLoadMessage(Database db, String id) async {
   try {

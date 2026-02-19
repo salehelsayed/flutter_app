@@ -11,16 +11,16 @@ import UIKit
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
-#if canImport(GoMknoon)
-    if let flutterVC = self.window?.rootViewController as? FlutterViewController {
-      goBridge = GoBridge(messenger: flutterVC.binaryMessenger)
-    }
-#endif
-
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
+
+#if canImport(GoMknoon)
+    let messenger = engineBridge.applicationRegistrar.messenger()
+    goBridge = GoBridge(messenger: messenger)
+    NSLog("[GoBridge] Initialized via applicationRegistrar messenger")
+#endif
   }
 }

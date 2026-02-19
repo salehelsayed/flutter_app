@@ -8,7 +8,7 @@ import 'package:flutter_app/core/database/migrations/001_identity_table.dart';
 import 'package:flutter_app/core/database/helpers/identity_db_helpers.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository_impl.dart';
 import 'package:flutter_app/core/secure_storage/flutter_secure_key_store.dart';
-import 'package:flutter_app/core/bridge/webview_js_bridge.dart';
+import 'package:flutter_app/core/bridge/go_bridge_client.dart';
 import 'dart:io' show Platform, exit;
 import 'package:flutter/foundation.dart' show kIsWeb;
 
@@ -43,12 +43,12 @@ void main() async {
       secureKeyStore: FlutterSecureKeyStore(),
     );
 
-    print('[SMOKE] Step 3: Initialize WebView bridge...');
-    final bridge = WebViewJsBridge();
+    print('[SMOKE] Step 3: Initialize Go bridge...');
+    final bridge = GoBridgeClient();
     await bridge.initialize();
     print('[SMOKE] Bridge initialized successfully');
 
-    // Wait a bit for WebView to be fully ready
+    // Wait a bit for Go bridge to be fully ready
     await Future.delayed(const Duration(seconds: 2));
 
     print('[SMOKE] Step 4: Call identity.generate via bridge...');

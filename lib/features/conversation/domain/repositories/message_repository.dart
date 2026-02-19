@@ -45,6 +45,11 @@ abstract class MessageRepository {
   /// Deletes all messages for a contact. Returns the count of deleted rows.
   Future<int> deleteMessagesForContact(String contactPeerId);
 
+  /// Retrieves all outgoing messages with status='failed'.
+  ///
+  /// Used by the retry service to find messages that need re-sending.
+  Future<List<ConversationMessage>> getFailedOutgoingMessages();
+
   /// Retrieves a page of messages for a contact, ordered by timestamp ASC.
   ///
   /// Returns at most [limit] messages. When [beforeTimestamp] is null,

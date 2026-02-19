@@ -1,10 +1,16 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
+
+/// Whether flow event logging is enabled.
+/// Defaults to kDebugMode — disabled in profile/release builds.
+bool flowEventLoggingEnabled = kDebugMode;
 
 void emitFlowEvent({
   required String layer,
   required String event,
   required Map<String, dynamic> details,
 }) {
+  if (!flowEventLoggingEnabled) return;
   final payload = {
     'ts': DateTime.now().toUtc().toIso8601String(),
     'milestone': 'M1_IDENTITY_INIT',
@@ -12,5 +18,5 @@ void emitFlowEvent({
     'event': event,
     'details': details,
   };
-  print('[FLOW] ${jsonEncode(payload)}');
+  debugPrint('[FLOW] ${jsonEncode(payload)}');
 }

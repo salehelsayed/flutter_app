@@ -25,6 +25,8 @@ class GoBridge(flutterEngine: FlutterEngine) : MethodChannel.MethodCallHandler,
         "com.mknoon/go_bridge_events"
     )
     private var eventSink: EventChannel.EventSink? = null
+    private val executor = java.util.concurrent.Executors.newCachedThreadPool()
+    private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
 
     init {
         methodChannel.setMethodCallHandler(this)
@@ -34,39 +36,50 @@ class GoBridge(flutterEngine: FlutterEngine) : MethodChannel.MethodCallHandler,
         GoMknoon.initialize(this)
     }
 
+    private fun runOnBackground(work: () -> Any?, result: MethodChannel.Result) {
+        executor.execute {
+            try {
+                val value = work()
+                mainHandler.post { result.success(value) }
+            } catch (e: Exception) {
+                mainHandler.post { result.error("GO_ERROR", e.message, null) }
+            }
+        }
+    }
+
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         val args = call.arguments as? String
 
         when (call.method) {
             // Identity
-            "generateIdentity" -> result.success(GoMknoon.generateIdentity())
-            "restoreIdentity" -> result.success(GoMknoon.restoreIdentity(args ?: ""))
+            "generateIdentity" -> runOnBackground({ GoMknoon.generateIdentity() }, result)
+            "restoreIdentity" -> runOnBackground({ GoMknoon.restoreIdentity(args ?: "") }, result)
 
             // Crypto
-            "mlKemKeygen" -> result.success(GoMknoon.mlKemKeygen())
-            "encryptMessage" -> result.success(GoMknoon.encryptMessage(args ?: ""))
-            "decryptMessage" -> result.success(GoMknoon.decryptMessage(args ?: ""))
-            "signPayload" -> result.success(GoMknoon.signPayload(args ?: ""))
-            "verifyPayload" -> result.success(GoMknoon.verifyPayload(args ?: ""))
+            "mlKemKeygen" -> runOnBackground({ GoMknoon.mlKemKeygen() }, result)
+            "encryptMessage" -> runOnBackground({ GoMknoon.encryptMessage(args ?: "") }, result)
+            "decryptMessage" -> runOnBackground({ GoMknoon.decryptMessage(args ?: "") }, result)
+            "signPayload" -> runOnBackground({ GoMknoon.signPayload(args ?: "") }, result)
+            "verifyPayload" -> runOnBackground({ GoMknoon.verifyPayload(args ?: "") }, result)
 
             // Node lifecycle
-            "startNode" -> result.success(GoMknoon.startNode(args ?: ""))
-            "stopNode" -> result.success(GoMknoon.stopNode())
-            "nodeStatus" -> result.success(GoMknoon.nodeStatus())
+            "startNode" -> runOnBackground({ GoMknoon.startNode(args ?: "") }, result)
+            "stopNode" -> runOnBackground({ GoMknoon.stopNode() }, result)
+            "nodeStatus" -> runOnBackground({ GoMknoon.nodeStatus() }, result)
 
             // Rendezvous
-            "rendezvousRegister" -> result.success(GoMknoon.rendezvousRegister(args ?: ""))
-            "rendezvousDiscover" -> result.success(GoMknoon.rendezvousDiscover(args ?: ""))
+            "rendezvousRegister" -> runOnBackground({ GoMknoon.rendezvousRegister(args ?: "") }, result)
+            "rendezvousDiscover" -> runOnBackground({ GoMknoon.rendezvousDiscover(args ?: "") }, result)
 
             // Peer operations
-            "dialPeer" -> result.success(GoMknoon.dialPeer(args ?: ""))
-            "disconnectPeer" -> result.success(GoMknoon.disconnectPeer(args ?: ""))
-            "sendMessage" -> result.success(GoMknoon.sendMessage(args ?: ""))
+            "dialPeer" -> runOnBackground({ GoMknoon.dialPeer(args ?: "") }, result)
+            "disconnectPeer" -> runOnBackground({ GoMknoon.disconnectPeer(args ?: "") }, result)
+            "sendMessage" -> runOnBackground({ GoMknoon.sendMessage(args ?: "") }, result)
 
             // Inbox
-            "inboxStore" -> result.success(GoMknoon.inboxStore(args ?: ""))
-            "inboxRetrieve" -> result.success(GoMknoon.inboxRetrieve())
-            "inboxRegisterToken" -> result.success(GoMknoon.inboxRegisterToken(args ?: ""))
+            "inboxStore" -> runOnBackground({ GoMknoon.inboxStore(args ?: "") }, result)
+            "inboxRetrieve" -> runOnBackground({ GoMknoon.inboxRetrieve() }, result)
+            "inboxRegisterToken" -> runOnBackground({ GoMknoon.inboxRegisterToken(args ?: "") }, result)
 
             else -> result.notImplemented()
         }

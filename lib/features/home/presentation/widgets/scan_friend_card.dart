@@ -1,3 +1,5 @@
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/app_colors.dart';
 import 'package:flutter_app/core/theme/glassmorphism.dart';
@@ -6,10 +8,7 @@ import 'package:flutter_app/core/theme/glassmorphism.dart';
 class ScanFriendCard extends StatefulWidget {
   final VoidCallback? onTap;
 
-  const ScanFriendCard({
-    super.key,
-    this.onTap,
-  });
+  const ScanFriendCard({super.key, this.onTap});
 
   @override
   State<ScanFriendCard> createState() => _ScanFriendCardState();
@@ -25,9 +24,9 @@ class _ScanFriendCardState extends State<ScanFriendCard>
     super.initState();
     _scaleController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 100),
+      duration: const Duration(milliseconds: 120),
     );
-    _scaleAnimation = Tween<double>(begin: 1.0, end: 0.98).animate(
+    _scaleAnimation = Tween<double>(begin: 1.0, end: 0.985).animate(
       CurvedAnimation(parent: _scaleController, curve: Curves.easeInOut),
     );
   }
@@ -53,6 +52,14 @@ class _ScanFriendCardState extends State<ScanFriendCard>
 
   @override
   Widget build(BuildContext context) {
+    final screenHeight = MediaQuery.of(context).size.height;
+    final t = ((screenHeight - 650) / 250).clamp(0.0, 1.0);
+    final padding = lerpDouble(10, 16, t)!;
+    final iconContainer = lerpDouble(40, 48, t)!;
+    final iconSize = lerpDouble(20, 24, t)!;
+    final titleFont = lerpDouble(14, 16, t)!;
+    final subtitleFont = lerpDouble(11.5, 13, t)!;
+
     return GestureDetector(
       onTapDown: _onTapDown,
       onTapUp: _onTapUp,
@@ -60,32 +67,30 @@ class _ScanFriendCardState extends State<ScanFriendCard>
       child: AnimatedBuilder(
         animation: _scaleAnimation,
         builder: (context, child) {
-          return Transform.scale(
-            scale: _scaleAnimation.value,
-            child: child,
-          );
+          return Transform.scale(scale: _scaleAnimation.value, child: child);
         },
         child: GlassmorphicContainer(
-          padding: const EdgeInsets.all(16),
+          blurSigma: 6.0,
+          padding: EdgeInsets.all(padding),
           child: Row(
             children: [
               // Green icon container
               Container(
-                width: 48,
-                height: 48,
+                width: iconContainer,
+                height: iconContainer,
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(12),
                   color: AppColors.primaryAccent.withValues(alpha: 0.15),
                 ),
-                child: const Icon(
+                child: Icon(
                   Icons.crop_free,
                   color: AppColors.primaryAccent,
-                  size: 24,
+                  size: iconSize,
                 ),
               ),
               const SizedBox(width: 16),
               // Title and subtitle
-              const Expanded(
+              Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -93,16 +98,16 @@ class _ScanFriendCardState extends State<ScanFriendCard>
                       'Scan a friend\'s code',
                       style: TextStyle(
                         color: AppColors.textPrimary,
-                        fontSize: 16,
+                        fontSize: titleFont,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
-                    SizedBox(height: 2),
+                    const SizedBox(height: 2),
                     Text(
                       'Add someone to your circle',
                       style: TextStyle(
                         color: AppColors.textMuted,
-                        fontSize: 13,
+                        fontSize: subtitleFont,
                       ),
                     ),
                   ],

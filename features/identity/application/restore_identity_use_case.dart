@@ -6,26 +6,26 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 enum RestoreIdentityResult {
   success,
   invalidMnemonicFormat, // word count != 12
-  invalidMnemonicCore, // JS returned INVALID_MNEMONIC
-  coreLibError, // JS returned other error
+  invalidMnemonicCore, // Bridge returned INVALID_MNEMONIC
+  coreLibError, // Bridge returned other error
   dbError, // DB save failed
 }
 
 /// Use case: Restore identity from a 12-word BIP39 mnemonic
 ///
-/// This function validates the mnemonic format locally, calls the JS bridge
+/// This function validates the mnemonic format locally, calls the bridge
 /// to restore the identity, and saves it to the database.
 ///
 /// Parameters:
 /// - [input]: Raw mnemonic string from UI (may have extra spaces, wrong case)
-/// - [callJsRestore]: Injected bridge function that calls identity.restore
+/// - [callRestore]: Injected bridge function that calls identity.restore
 /// - [repo]: IdentityRepository for persisting the identity
 ///
 /// Returns:
 /// - [RestoreIdentityResult] indicating the outcome of the operation
 Future<RestoreIdentityResult> restoreIdentityFromMnemonic({
   required String input,
-  required Future<Map<String, dynamic>> Function(String) callJsRestore,
+  required Future<Map<String, dynamic>> Function(String) callRestore,
   required IdentityRepository repo,
 }) async {
   // Emit start event
@@ -49,7 +49,7 @@ Future<RestoreIdentityResult> restoreIdentityFromMnemonic({
     return RestoreIdentityResult.invalidMnemonicFormat;
   }
 
-  // Step 2: Call JS bridge to restore identity
+  // Step 2: Call bridge to restore identity
   emitFlowEvent(
     layer: 'FL',
     event: 'ID_M1_RESTORE_JS_CALL',
@@ -58,7 +58,7 @@ Future<RestoreIdentityResult> restoreIdentityFromMnemonic({
 
   final Map<String, dynamic> response;
   try {
-    response = await callJsRestore(normalizedMnemonic);
+    response = await callRestore(normalizedMnemonic);
   } catch (e) {
     emitFlowEvent(
       layer: 'FL',

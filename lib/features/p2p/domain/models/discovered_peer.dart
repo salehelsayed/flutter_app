@@ -10,7 +10,7 @@ class DiscoveredPeer {
 
   factory DiscoveredPeer.fromJson(Map<String, dynamic> json) {
     return DiscoveredPeer(
-      id: json['id'] as String,
+      id: (json['peerId'] ?? json['id']) as String,
       addresses: (json['addresses'] as List<dynamic>?)
               ?.map((e) => e as String)
               .toList() ??

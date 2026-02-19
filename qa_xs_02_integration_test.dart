@@ -6,14 +6,25 @@ import 'package:flutter_app/features/identity/domain/models/identity_model.dart'
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository_impl.dart';
 import 'package:flutter_app/features/identity/application/startup_decision.dart';
 import 'package:flutter_app/features/identity/application/restore_identity_use_case.dart';
-import 'package:flutter_app/core/bridge/js_bridge_client.dart';
+import 'package:flutter_app/core/bridge/bridge.dart';
 import 'test/core/secure_storage/fake_secure_key_store.dart';
 import 'dart:convert';
 
-// Mock JsBridge that simulates real identity restoration
-class MockJsBridge extends JsBridge {
+// Mock Bridge that simulates real identity restoration
+class MockBridge extends Bridge {
   final List<String> commandLog = [];
   int callCount = 0;
+
+  @override
+  Future<void> initialize() async {}
+  @override
+  Future<bool> checkHealth() async => true;
+  @override
+  Future<void> reinitialize() async {}
+  @override
+  void dispose() {}
+  @override
+  bool get isInitialized => true;
 
   @override
   Future<String> send(String message) async {
@@ -65,7 +76,7 @@ class MockJsBridge extends JsBridge {
 void main() {
   late Database db;
   late IdentityRepositoryImpl repository;
-  late MockJsBridge mockBridge;
+  late MockBridge mockBridge;
 
   setUpAll(() {
     sqfliteFfiInit();
@@ -83,7 +94,7 @@ void main() {
       secureKeyStore: FakeSecureKeyStore(),
     );
 
-    mockBridge = MockJsBridge();
+    mockBridge = MockBridge();
   });
 
   tearDown(() async {
@@ -148,7 +159,8 @@ void main() {
       // Execute identity restoration
       final restoreResult = await restoreIdentityFromMnemonic(
         input: testMnemonic,
-        callJsRestore: (mnemonic) => callJsIdentityRestore(mockBridge, mnemonic),
+        callRestore: (mnemonic) => callIdentityRestore(mockBridge, mnemonic),
+        callMlKemKeygen: () async => {'ok': true, 'publicKey': 'mockMlKemPub', 'secretKey': 'mockMlKemSec'},
         repo: repository,
       );
 
@@ -249,7 +261,8 @@ void main() {
       final tooFewWords = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon';
       final result1 = await restoreIdentityFromMnemonic(
         input: tooFewWords,
-        callJsRestore: (mnemonic) => callJsIdentityRestore(mockBridge, mnemonic),
+        callRestore: (mnemonic) => callIdentityRestore(mockBridge, mnemonic),
+        callMlKemKeygen: () async => {'ok': true, 'publicKey': 'mockMlKemPub', 'secretKey': 'mockMlKemSec'},
         repo: repository,
       );
 
@@ -271,7 +284,8 @@ void main() {
       final tooManyWords = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about extra';
       final result2 = await restoreIdentityFromMnemonic(
         input: tooManyWords,
-        callJsRestore: (mnemonic) => callJsIdentityRestore(mockBridge, mnemonic),
+        callRestore: (mnemonic) => callIdentityRestore(mockBridge, mnemonic),
+        callMlKemKeygen: () async => {'ok': true, 'publicKey': 'mockMlKemPub', 'secretKey': 'mockMlKemSec'},
         repo: repository,
       );
 
@@ -293,7 +307,8 @@ void main() {
       final invalidWords = 'invalid word phrase that is not valid bip39 mnemonic twelve words here';
       final result3 = await restoreIdentityFromMnemonic(
         input: invalidWords,
-        callJsRestore: (mnemonic) => callJsIdentityRestore(mockBridge, mnemonic),
+        callRestore: (mnemonic) => callIdentityRestore(mockBridge, mnemonic),
+        callMlKemKeygen: () async => {'ok': true, 'publicKey': 'mockMlKemPub', 'secretKey': 'mockMlKemSec'},
         repo: repository,
       );
 
@@ -337,7 +352,8 @@ void main() {
 
       final result = await restoreIdentityFromMnemonic(
         input: messyInput,
-        callJsRestore: (mnemonic) => callJsIdentityRestore(mockBridge, mnemonic),
+        callRestore: (mnemonic) => callIdentityRestore(mockBridge, mnemonic),
+        callMlKemKeygen: () async => {'ok': true, 'publicKey': 'mockMlKemPub', 'secretKey': 'mockMlKemSec'},
         repo: repository,
       );
 

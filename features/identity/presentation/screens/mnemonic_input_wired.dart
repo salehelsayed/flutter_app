@@ -6,13 +6,13 @@ import 'package:flutter_app/features/identity/presentation/screens/mnemonic_inpu
 
 class MnemonicInputWired extends StatelessWidget {
   final IdentityRepository repository;
-  final Future<Map<String, dynamic>> Function(String mnemonic) callJsIdentityRestore;
+  final Future<Map<String, dynamic>> Function(String mnemonic) callIdentityRestore;
   final VoidCallback onNavigateToMain;
 
   const MnemonicInputWired({
     super.key,
     required this.repository,
-    required this.callJsIdentityRestore,
+    required this.callIdentityRestore,
     required this.onNavigateToMain,
   });
 
@@ -32,7 +32,7 @@ class MnemonicInputWired extends StatelessWidget {
 
     final result = await restoreIdentityFromMnemonic(
       input: mnemonic,
-      callJsRestore: callJsIdentityRestore,
+      callRestore: callIdentityRestore,
       repo: repository,
     );
 

@@ -9,7 +9,7 @@ import 'package:flutter_app/features/conversation/application/chat_message_liste
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
-import 'package:flutter_app/core/bridge/js_bridge_client.dart';
+import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
@@ -144,6 +144,9 @@ class FakeMessageRepository implements MessageRepository {
     final page = messages.take(limit).toList();
     return page.reversed.toList();
   }
+
+  @override
+  Future<List<ConversationMessage>> getFailedOutgoingMessages() async => [];
 }
 
 class FakeP2PService implements P2PService {
@@ -194,6 +197,18 @@ class FakeP2PService implements P2PService {
 
   @override
   Future<void> drainOfflineInbox() async {}
+
+  @override
+  bool isLocalPeer(String peerId) => false;
+
+  @override
+  Future<bool> sendLocalMessage(String peerId, String message, String fromPeerId) async => false;
+
+  @override
+  Future<bool> startNodeCore(String privateKeyBase64, String peerId) async => false;
+
+  @override
+  Future<void> warmBackground() async {}
 }
 
 void main() {
@@ -268,7 +283,7 @@ void main() {
         required String senderUsername,
         String? messageId,
         String? timestamp,
-        JsBridge? bridge,
+        Bridge? bridge,
         String? recipientMlKemPublicKey,
       }) async {
         sentMessageId = messageId;
@@ -338,7 +353,7 @@ void main() {
         required String senderUsername,
         String? messageId,
         String? timestamp,
-        JsBridge? bridge,
+        Bridge? bridge,
         String? recipientMlKemPublicKey,
       }) async {
         sentMessageId = messageId;
@@ -392,7 +407,7 @@ void main() {
         required String senderUsername,
         String? messageId,
         String? timestamp,
-        JsBridge? bridge,
+        Bridge? bridge,
         String? recipientMlKemPublicKey,
       }) async {
         sentMessageId = messageId;

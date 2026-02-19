@@ -198,6 +198,18 @@ class FakeP2PService implements P2PService {
   Future<void> performImmediateHealthCheck() async {}
 
   @override
+  bool isLocalPeer(String peerId) => false;
+
+  @override
+  Future<bool> sendLocalMessage(String peerId, String message, String fromPeerId) async => false;
+
+  @override
+  Future<bool> startNodeCore(String privateKeyBase64, String peerId) async => false;
+
+  @override
+  Future<void> warmBackground() async {}
+
+  @override
   void dispose() {
     _messageController.close();
   }
@@ -287,6 +299,14 @@ class InMemoryMessageRepository implements MessageRepository {
     messages.sort((a, b) => b.timestamp.compareTo(a.timestamp));
     final page = messages.take(limit).toList();
     return page.reversed.toList();
+  }
+
+  @override
+  Future<List<ConversationMessage>> getFailedOutgoingMessages() async {
+    return _messages.values
+        .where((m) => m.status == 'failed' && !m.isIncoming)
+        .toList()
+      ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
   }
 
   int get count => _messages.length;

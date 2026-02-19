@@ -1,7 +1,7 @@
 import 'dart:collection';
 import 'dart:convert';
 
-import 'package:flutter_app/core/bridge/js_bridge_client.dart';
+import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 
@@ -32,13 +32,13 @@ enum ParseQRResult {
 /// 1. Parses the JSON string
 /// 2. Validates all required fields are present
 /// 3. Checks the payload isn't expired (optional, based on maxAge)
-/// 4. Verifies the signature using the JS bridge
+/// 4. Verifies the signature using the bridge
 /// 5. Checks the user isn't scanning their own QR code
 ///
 /// Returns a tuple of (result, contact) where contact is non-null on success.
 Future<(ParseQRResult, ContactModel?)> parseQRPayload({
   required String qrString,
-  required JsBridge bridge,
+  required Bridge bridge,
   required String ownPeerId,
   Duration maxAge = const Duration(hours: 24),
 }) async {
@@ -122,7 +122,7 @@ Future<(ParseQRResult, ContactModel?)> parseQRPayload({
   });
   final dataToVerify = jsonEncode(unsignedPayload);
 
-  final isValid = await callJsVerifyPayload(
+  final isValid = await callVerifyPayload(
     bridge: bridge,
     publicKey: publicKey,
     data: dataToVerify,

@@ -1,4 +1,4 @@
-import 'package:flutter_app/core/bridge/js_bridge_client.dart';
+import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/chat_console_logger.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
@@ -34,7 +34,7 @@ handleIncomingChatMessage({
   required ChatMessage message,
   required MessageRepository messageRepo,
   required ContactRepository contactRepo,
-  JsBridge? bridge,
+  Bridge? bridge,
   String? ownMlKemSecretKey,
 }) async {
   emitFlowEvent(
@@ -71,7 +71,7 @@ handleIncomingChatMessage({
 
     final encrypted = v2Envelope['encrypted'] as Map<String, dynamic>;
     try {
-      final decryptResult = await callJsDecryptMessage(
+      final decryptResult = await callDecryptMessage(
         bridge: bridge,
         ownMlKemSecretKey: ownMlKemSecretKey,
         kem: encrypted['kem'] as String,

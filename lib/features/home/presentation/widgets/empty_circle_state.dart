@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/app_colors.dart';
 
@@ -20,6 +21,7 @@ class _EmptyCircleStateState extends State<EmptyCircleState>
     _controller = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 4),
+      value: 0.22,
     )..repeat();
   }
 
@@ -31,11 +33,15 @@ class _EmptyCircleStateState extends State<EmptyCircleState>
 
   @override
   Widget build(BuildContext context) {
-    // Make the circle size responsive based on screen height
     final screenHeight = MediaQuery.of(context).size.height;
-    // Use smaller circles on compact screens (< 700px height)
-    final isCompact = screenHeight < 700;
-    final circleSize = isCompact ? 100.0 : 140.0;
+    // Continuous scaling: 0.0 at 650pt, 1.0 at 900pt
+    final t = ((screenHeight - 650) / 250).clamp(0.0, 1.0);
+    final circleSize = lerpDouble(80, 140, t)!;
+    final painterScale = lerpDouble(0.57, 1.0, t)!;
+    final gap = lerpDouble(4, 12, t)!;
+    final mainFontSize = lerpDouble(13, 15, t)!;
+    final subGap = lerpDouble(2, 4, t)!;
+    final subFontSize = lerpDouble(11, 13, t)!;
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -50,42 +56,44 @@ class _EmptyCircleStateState extends State<EmptyCircleState>
               return CustomPaint(
                 painter: _DashedCirclesPainter(
                   animation: _controller.value,
-                  scale: isCompact ? 0.71 : 1.0,
+                  scale: painterScale,
                 ),
                 child: Center(
-                  child: _buildCenterIcon(isCompact),
+                  child: _buildCenterIcon(scaleFactor: t),
                 ),
               );
             },
           ),
         ),
-        SizedBox(height: isCompact ? 8 : 12),
+        SizedBox(height: gap),
         // Main text
         Text(
           'Your circle is waiting to be filled',
           style: TextStyle(
             color: AppColors.textPrimary,
-            fontSize: isCompact ? 14 : 15,
+            fontSize: mainFontSize,
             fontWeight: FontWeight.w500,
           ),
           textAlign: TextAlign.center,
         ),
-        const SizedBox(height: 4),
+        SizedBox(height: subGap),
         // Secondary text
         Text(
           'Scan a friend\'s code or share yours to connect',
           style: TextStyle(
             color: AppColors.textMuted,
-            fontSize: isCompact ? 12 : 13,
+            fontSize: subFontSize,
           ),
           textAlign: TextAlign.center,
+          maxLines: 2,
         ),
       ],
     );
   }
 
-  Widget _buildCenterIcon(bool isCompact) {
-    final size = isCompact ? 28.0 : 36.0;
+  Widget _buildCenterIcon({required double scaleFactor}) {
+    final size = lerpDouble(24, 36, scaleFactor)!;
+    final dotScale = lerpDouble(0.68, 1.0, scaleFactor)!;
     return Container(
       width: size,
       height: size,
@@ -94,7 +102,9 @@ class _EmptyCircleStateState extends State<EmptyCircleState>
         color: AppColors.primaryAccent.withValues(alpha: 0.1),
       ),
       child: CustomPaint(
-        painter: _ConstellationDotsPainter(scale: isCompact ? 0.78 : 1.0),
+        painter: _ConstellationDotsPainter(
+          scale: dotScale,
+        ),
       ),
     );
   }

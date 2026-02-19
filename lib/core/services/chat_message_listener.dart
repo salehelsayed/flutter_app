@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter_app/core/services/chat_message.dart';
+import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/core/services/incoming_message_router.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
@@ -20,7 +20,7 @@ class ChatMessageListener {
 
   ChatMessageListener({required IncomingMessageRouter router})
       : _router = router {
-    _subscription = _router.chatMessages.listen(_handleChatMessage);
+    _subscription = _router.chatMessageStream.listen(_handleChatMessage);
   }
 
   /// Stream of processed chat messages for UI consumption.

@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter_app/core/bridge/js_bridge_client.dart';
+import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contact_request/application/accept_contact_request_use_case.dart';
@@ -41,7 +41,7 @@ class OrbitWired extends StatefulWidget {
   final ContactRequestListener contactRequestListener;
   final MessageRepository messageRepo;
   final ChatMessageListener chatMessageListener;
-  final JsBridge bridge;
+  final Bridge bridge;
   final P2PService p2pService;
 
   const OrbitWired({

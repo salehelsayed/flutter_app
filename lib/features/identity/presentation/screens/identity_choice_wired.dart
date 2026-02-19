@@ -4,18 +4,21 @@ import 'package:flutter_app/features/identity/domain/repositories/identity_repos
 import 'package:flutter_app/features/identity/application/generate_identity_use_case.dart';
 import 'package:flutter_app/features/identity/presentation/screens/identity_choice_screen.dart';
 import 'package:flutter_app/features/identity/presentation/screens/mnemonic_input_wired.dart';
+import 'package:flutter_app/features/identity/presentation/widgets/identity_loading_card.dart';
 
 class IdentityChoiceWired extends StatefulWidget {
   final IdentityRepository repository;
-  final Future<Map<String, dynamic>> Function() callJsIdentityGenerate;
-  final Future<Map<String, dynamic>> Function(String mnemonic) callJsIdentityRestore;
+  final Future<Map<String, dynamic>> Function() callIdentityGenerate;
+  final Future<Map<String, dynamic>> Function(String mnemonic) callIdentityRestore;
+  final Future<Map<String, dynamic>> Function() callMlKemKeygen;
   final VoidCallback onNavigateToMain;
 
   const IdentityChoiceWired({
     super.key,
     required this.repository,
-    required this.callJsIdentityGenerate,
-    required this.callJsIdentityRestore,
+    required this.callIdentityGenerate,
+    required this.callIdentityRestore,
+    required this.callMlKemKeygen,
     required this.onNavigateToMain,
   });
 
@@ -24,10 +27,10 @@ class IdentityChoiceWired extends StatefulWidget {
 }
 
 class _IdentityChoiceWiredState extends State<IdentityChoiceWired> {
-  bool _isLoading = false;
+  String? _loadingStage;
 
   Future<void> _handleNewHere() async {
-    if (_isLoading) return;
+    if (_loadingStage != null) return;
 
     emitFlowEvent(
       layer: 'FL',
@@ -36,20 +39,23 @@ class _IdentityChoiceWiredState extends State<IdentityChoiceWired> {
     );
 
     setState(() {
-      _isLoading = true;
+      _loadingStage = 'generating_keys';
     });
+
+    // Frame yield: let the loading UI paint before starting heavy crypto
+    await Future<void>.delayed(Duration.zero);
 
     try {
       final result = await generateNewIdentity(
-        callJsGenerate: widget.callJsIdentityGenerate,
+        callGenerate: widget.callIdentityGenerate,
+        callMlKemKeygen: widget.callMlKemKeygen,
         repo: widget.repository,
+        onProgress: (stage) {
+          if (mounted) setState(() { _loadingStage = stage; });
+        },
       );
 
       if (!mounted) return;
-
-      setState(() {
-        _isLoading = false;
-      });
 
       if (result == GenerateIdentityResult.success) {
         emitFlowEvent(
@@ -58,30 +64,35 @@ class _IdentityChoiceWiredState extends State<IdentityChoiceWired> {
           details: {},
         );
         widget.onNavigateToMain();
-      } else {
-        final errorMessage = result == GenerateIdentityResult.coreLibError
-            ? 'Failed to generate identity'
-            : 'Failed to save identity';
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'ID_GENERATE_ERROR_SHOWN',
-          details: {
-            'errorCode': result.name,
-            'errorMessage': errorMessage,
-          },
-        );
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(errorMessage),
-            backgroundColor: Colors.red,
-          ),
-        );
+        return;
       }
+
+      setState(() {
+        _loadingStage = null;
+      });
+
+      final errorMessage = result == GenerateIdentityResult.coreLibError
+          ? 'Failed to generate identity'
+          : 'Failed to save identity';
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'ID_GENERATE_ERROR_SHOWN',
+        details: {
+          'errorCode': result.name,
+          'errorMessage': errorMessage,
+        },
+      );
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(errorMessage),
+          backgroundColor: Colors.red,
+        ),
+      );
     } catch (e) {
       if (!mounted) return;
 
       setState(() {
-        _isLoading = false;
+        _loadingStage = null;
       });
 
       emitFlowEvent(
@@ -113,7 +124,8 @@ class _IdentityChoiceWiredState extends State<IdentityChoiceWired> {
       MaterialPageRoute(
         builder: (routeContext) => MnemonicInputWired(
           repository: widget.repository,
-          callJsIdentityRestore: widget.callJsIdentityRestore,
+          callIdentityRestore: widget.callIdentityRestore,
+          callMlKemKeygen: widget.callMlKemKeygen,
           onNavigateToMain: () {
             // Pop back to this screen first, then navigate to main
             Navigator.of(routeContext).pop();
@@ -135,16 +147,11 @@ class _IdentityChoiceWiredState extends State<IdentityChoiceWired> {
     return Stack(
       children: [
         IdentityChoiceScreen(
-          onNewHere: _isLoading ? () {} : _handleNewHere,
-          onLoadMyKey: _isLoading ? () {} : _handleLoadKey,
+          onNewHere: _loadingStage != null ? () {} : _handleNewHere,
+          onLoadMyKey: _loadingStage != null ? () {} : _handleLoadKey,
         ),
-        if (_isLoading)
-          Container(
-            color: Colors.black26,
-            child: const Center(
-              child: CircularProgressIndicator(),
-            ),
-          ),
+        if (_loadingStage != null)
+          IdentityLoadingCard(stage: _loadingStage!),
       ],
     );
   }

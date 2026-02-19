@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
-import 'package:flutter_app/core/bridge/js_bridge_client.dart';
+import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/features/identity/application/startup_decision.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/identity/presentation/screens/identity_choice_wired.dart';
@@ -38,8 +38,8 @@ class StartupRouter extends StatefulWidget {
   /// The repository used to check for existing identity.
   final IdentityRepository repository;
 
-  /// The JS bridge instance for identity operations.
-  final JsBridge bridge;
+  /// The bridge instance for identity operations.
+  final Bridge bridge;
 
   const StartupRouter({
     super.key,
@@ -97,9 +97,9 @@ class _StartupRouterState extends State<StartupRouter> {
             MaterialPageRoute(
               builder: (routeContext) => IdentityChoiceWired(
                 repository: repository,
-                callJsIdentityGenerate: () => callJsIdentityGenerate(bridge),
-                callJsIdentityRestore: (mnemonic) =>
-                    callJsIdentityRestore(bridge, mnemonic),
+                callIdentityGenerate: () => callIdentityGenerate(bridge),
+                callIdentityRestore: (mnemonic) =>
+                    callIdentityRestore(bridge, mnemonic),
                 onNavigateToMain: () {
                   // Use the route's context for navigation
                   Navigator.of(routeContext).pushReplacement(

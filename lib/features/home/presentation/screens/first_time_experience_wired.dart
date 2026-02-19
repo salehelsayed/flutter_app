@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:flutter_app/core/bridge/js_bridge_client.dart';
+import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contact_request/application/accept_contact_request_use_case.dart';
@@ -20,6 +20,7 @@ import 'package:flutter_app/features/qr_code/application/build_qr_payload_use_ca
 import 'package:flutter_app/features/qr_code/presentation/screens/qr_scanner_wired.dart';
 import 'package:flutter_app/features/feed/presentation/screens/feed_wired.dart';
 import 'package:flutter_app/features/feed/presentation/navigation/feed_route_transition.dart';
+import 'package:flutter_app/core/utils/startup_timing.dart';
 import 'first_time_experience_screen.dart';
 
 /// Wired widget that connects FirstTimeExperienceScreen to business logic.
@@ -30,7 +31,7 @@ class FirstTimeExperienceWired extends StatefulWidget {
   final ContactRequestListener contactRequestListener;
   final MessageRepository messageRepository;
   final ChatMessageListener chatMessageListener;
-  final JsBridge bridge;
+  final Bridge bridge;
   final P2PService p2pService;
 
   const FirstTimeExperienceWired({
@@ -61,8 +62,14 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
   void initState() {
     super.initState();
     emitFlowEvent(layer: 'FL', event: 'FTE_FL_SCREEN_INIT', details: {});
-    _loadIdentityAndBuildQR();
+    StartupTiming.instance.mark('fte_init_state');
+    // Start listening immediately (lightweight — just subscribes to a stream)
     _startListeningForContactRequests();
+    // Defer heavy async work (DB load + bridge call) to after first frame
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      StartupTiming.instance.mark('fte_first_frame');
+      _loadIdentityAndBuildQR();
+    });
   }
 
   void _startListeningForContactRequests() {
@@ -184,7 +191,7 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
         String dataToSign,
         String privateKey,
       ) {
-        return callJsSignPayload(
+        return callSignPayload(
           bridge: widget.bridge,
           dataToSign: dataToSign,
           privateKey: privateKey,
@@ -193,13 +200,15 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
 
       final (result, qrString) = await buildQRPayload(
         repo: widget.repository,
-        callJsSign: jsSign,
+        callSign: jsSign,
+        cachedIdentity: _identity,
       );
 
       if (result == BuildQRPayloadResult.success && mounted) {
         setState(() {
           _qrData = qrString;
         });
+        StartupTiming.instance.mark('fte_qr_ready');
         emitFlowEvent(layer: 'FL', event: 'FTE_FL_QR_GENERATED', details: {});
       }
     } catch (e) {

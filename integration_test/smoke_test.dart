@@ -17,7 +17,7 @@ import 'package:flutter_app/features/contact_request/application/contact_request
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository_impl.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/identity/presentation/startup_router.dart';
-import 'package:flutter_app/core/bridge/webview_js_bridge.dart';
+import 'package:flutter_app/core/bridge/go_bridge_client.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'dart:io';
@@ -107,10 +107,18 @@ void main() {
       dbCountUnreadForContact: (contactPeerId) =>
           dbCountUnreadForContact(db, contactPeerId),
       dbCountTotalUnread: () => dbCountTotalUnread(db),
+      dbCountTotalUnreadExcludingArchived: () =>
+          dbCountTotalUnreadExcludingArchived(db),
+      dbDeleteMessagesForContact: (contactPeerId) =>
+          dbDeleteMessagesForContact(db, contactPeerId),
+      dbLoadMessagesPage: (contactPeerId, {limit = 50, beforeTimestamp}) =>
+          dbLoadMessagesPage(db, contactPeerId,
+              limit: limit, beforeTimestamp: beforeTimestamp),
+      dbLoadFailedOutgoingMessages: () => dbLoadFailedOutgoingMessages(db),
     );
 
-    print('[TEST] Step 3: Initialize WebView bridge...');
-    final bridge = WebViewJsBridge();
+    print('[TEST] Step 3: Initialize Go bridge...');
+    final bridge = GoBridgeClient();
     try {
       await bridge.initialize();
       print('[TEST] Bridge initialized successfully');

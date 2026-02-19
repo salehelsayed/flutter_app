@@ -1,6 +1,6 @@
 import 'package:uuid/uuid.dart';
 
-import 'package:flutter_app/core/bridge/js_bridge_client.dart';
+import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/chat_console_logger.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -39,7 +39,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   required String senderUsername,
   String? messageId,
   String? timestamp,
-  JsBridge? bridge,
+  Bridge? bridge,
   String? recipientMlKemPublicKey,
 }) async {
   final targetPrefix = targetPeerId.length > 10
@@ -97,7 +97,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   if (bridge != null && recipientMlKemPublicKey != null) {
     try {
       final innerJson = payload.toInnerJson();
-      final encryptResult = await callJsEncryptMessage(
+      final encryptResult = await callEncryptMessage(
         bridge: bridge,
         recipientMlKemPublicKey: recipientMlKemPublicKey,
         plaintext: innerJson,
@@ -136,6 +136,46 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     messageId: resolvedMessageId,
     wireJson: jsonString,
   );
+
+  // 4.5. Try local WiFi delivery first
+  if (p2pService.isLocalPeer(targetPeerId)) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_SEND_LOCAL_ATTEMPT',
+      details: {'targetPeerId': targetPrefix},
+    );
+    final localSent = await p2pService.sendLocalMessage(
+      targetPeerId, jsonString, senderPeerId);
+    if (localSent) {
+      final message = payload.toConversationMessage(
+        contactPeerId: targetPeerId,
+        isIncoming: false,
+        status: 'delivered',
+      );
+      await messageRepo.saveMessage(message);
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CHAT_MSG_SEND_LOCAL_SUCCESS',
+        details: {
+          'id': resolvedMessageId.substring(0, 8),
+          'textPreview': textPreview,
+        },
+      );
+      logChatOutgoing(
+        messageId: resolvedMessageId,
+        toPeerId: targetPeerId,
+        status: 'delivered',
+        text: text,
+      );
+      return (SendChatMessageResult.success, message);
+    }
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_SEND_LOCAL_FAILED',
+      details: {'targetPeerId': targetPrefix},
+    );
+    // Fall through to relay path
+  }
 
   // 5. Discover → Dial → Send (with 3x retries and exponential backoff)
   const maxAttempts = 3;

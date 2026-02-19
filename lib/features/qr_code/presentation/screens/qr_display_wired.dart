@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../../../../core/bridge/js_bridge_client.dart';
+import '../../../../core/bridge/bridge.dart';
 import '../../../../core/utils/flow_event_emitter.dart';
 import '../../../identity/domain/repositories/identity_repository.dart';
 import '../../application/build_qr_payload_use_case.dart';
@@ -25,8 +25,8 @@ class QRDisplayWired extends StatefulWidget {
   /// Repository for loading identity data.
   final IdentityRepository repo;
 
-  /// Bridge client for JS communication (callJsSignPayload).
-  final JsBridge bridgeClient;
+  /// Bridge client for cryptographic signing (callSignPayload).
+  final Bridge bridgeClient;
 
   /// Called when user closes the screen.
   final VoidCallback onClose;
@@ -93,7 +93,7 @@ class _QRDisplayWiredState extends State<QRDisplayWired> {
       }
 
       Future<Map<String, dynamic>> jsSign(String dataToSign, String privateKey) {
-        return callJsSignPayload(
+        return callSignPayload(
           bridge: widget.bridgeClient,
           dataToSign: dataToSign,
           privateKey: privateKey,
@@ -102,7 +102,7 @@ class _QRDisplayWiredState extends State<QRDisplayWired> {
 
       final (result, qrString) = await buildQRPayload(
         repo: widget.repo,
-        callJsSign: jsSign,
+        callSign: jsSign,
       );
 
       switch (result) {

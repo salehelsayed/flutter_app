@@ -23,6 +23,8 @@ class MessageRepositoryImpl implements MessageRepository {
     int limit,
     String? beforeTimestamp,
   }) dbLoadMessagesPage;
+  final Future<List<Map<String, Object?>>> Function()
+      dbLoadFailedOutgoingMessages;
 
   MessageRepositoryImpl({
     required this.dbInsertMessage,
@@ -37,6 +39,7 @@ class MessageRepositoryImpl implements MessageRepository {
     required this.dbCountTotalUnreadExcludingArchived,
     required this.dbDeleteMessagesForContact,
     required this.dbLoadMessagesPage,
+    required this.dbLoadFailedOutgoingMessages,
   });
 
   @override
@@ -171,5 +174,11 @@ class MessageRepositoryImpl implements MessageRepository {
       );
       rethrow;
     }
+  }
+
+  @override
+  Future<List<ConversationMessage>> getFailedOutgoingMessages() async {
+    final rows = await dbLoadFailedOutgoingMessages();
+    return rows.map((row) => ConversationMessage.fromMap(row)).toList();
   }
 }
