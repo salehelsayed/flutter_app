@@ -120,85 +120,94 @@ class _IdentityChoiceScreenState extends State<IdentityChoiceScreen>
         child: SafeArea(
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 24.0),
-            child: Column(
-              children: [
-                const Spacer(flex: 2),
-                // Brand header with fade-in from top
-                FadeTransition(
-                  opacity: _headerFadeAnimation,
-                  child: SlideTransition(
-                    position: _headerSlideAnimation,
-                    child: const BrandHeader(),
-                  ),
-                ),
-                const Spacer(flex: 2),
-                // Choice cards
-                FadeTransition(
-                  opacity: _card1FadeAnimation,
-                  child: SlideTransition(
-                    position: _card1SlideAnimation,
-                    child: ChoiceCard(
-                      icon: Icons.add_circle_outline,
-                      title: "I'm new here",
-                      description: 'Generate a fresh identity',
-                      onTap: widget.onNewHere,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                FadeTransition(
-                  opacity: _card2FadeAnimation,
-                  child: SlideTransition(
-                    position: _card2SlideAnimation,
-                    child: ChoiceCard(
-                      icon: Icons.key_outlined,
-                      title: 'Load my key',
-                      description: 'Restore from recovery phrase',
-                      onTap: widget.onLoadMyKey,
-                    ),
-                  ),
-                ),
-                const Spacer(flex: 2),
-                // Privacy footer
-                FadeTransition(
-                  opacity: _footerFadeAnimation,
-                  child: Padding(
-                    padding: const EdgeInsets.only(bottom: 24),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                return SingleChildScrollView(
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(minHeight: constraints.maxHeight),
                     child: Column(
-                      mainAxisSize: MainAxisSize.min,
                       children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(
-                              Icons.lock_outline,
-                              size: 14,
-                              color: AppColors.textMuted.withValues(alpha: 0.6),
-                            ),
-                            const SizedBox(width: 6),
-                            Text(
-                              'Only you can read your messages',
-                              style: TextStyle(
-                                color: AppColors.textMuted.withValues(alpha: 0.6),
-                                fontSize: 12,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Everything stays on your phone. Nobody is watching.',
-                          style: TextStyle(
-                            color: AppColors.textMuted.withValues(alpha: 0.6),
-                            fontSize: 12,
+                        SizedBox(height: constraints.maxHeight * 0.12),
+                        // Brand header with fade-in from top
+                        FadeTransition(
+                          opacity: _headerFadeAnimation,
+                          child: SlideTransition(
+                            position: _headerSlideAnimation,
+                            child: const BrandHeader(),
                           ),
-                          textAlign: TextAlign.center,
+                        ),
+                        SizedBox(height: constraints.maxHeight * 0.12),
+                        // Choice cards
+                        FadeTransition(
+                          opacity: _card1FadeAnimation,
+                          child: SlideTransition(
+                            position: _card1SlideAnimation,
+                            child: ChoiceCard(
+                              icon: Icons.add_circle_outline,
+                              title: "I'm new here",
+                              description: 'Generate a fresh identity',
+                              onTap: widget.onNewHere,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        FadeTransition(
+                          opacity: _card2FadeAnimation,
+                          child: SlideTransition(
+                            position: _card2SlideAnimation,
+                            child: ChoiceCard(
+                              icon: Icons.key_outlined,
+                              title: 'Load my key',
+                              description: 'Restore from recovery phrase',
+                              onTap: widget.onLoadMyKey,
+                            ),
+                          ),
+                        ),
+                        SizedBox(height: constraints.maxHeight * 0.12),
+                        // Privacy footer
+                        FadeTransition(
+                          opacity: _footerFadeAnimation,
+                          child: Padding(
+                            padding: const EdgeInsets.only(bottom: 24),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(
+                                      Icons.lock_outline,
+                                      size: 14,
+                                      color: AppColors.textMuted.withValues(alpha: 0.6),
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      'Only you can read your messages',
+                                      style: TextStyle(
+                                        color: AppColors.textMuted.withValues(alpha: 0.6),
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  'Everything stays on your phone. Nobody is watching.',
+                                  style: TextStyle(
+                                    color: AppColors.textMuted.withValues(alpha: 0.6),
+                                    fontSize: 12,
+                                  ),
+                                  textAlign: TextAlign.center,
+                                ),
+                              ],
+                            ),
+                          ),
                         ),
                       ],
                     ),
                   ),
-                ),
-              ],
+                );
+              },
             ),
           ),
         ),

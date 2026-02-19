@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
-import 'package:flutter_app/core/bridge/js_bridge_client.dart';
+import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/application/block_contact_use_case.dart';
@@ -30,7 +30,7 @@ typedef SendChatMessageFn =
       required String senderUsername,
       String? messageId,
       String? timestamp,
-      JsBridge? bridge,
+      Bridge? bridge,
       String? recipientMlKemPublicKey,
     });
 
@@ -44,7 +44,7 @@ class ConversationWired extends StatefulWidget {
   final MessageRepository messageRepo;
   final ChatMessageListener chatMessageListener;
   final P2PService p2pService;
-  final JsBridge? bridge;
+  final Bridge? bridge;
   final SendChatMessageFn sendChatMessageFn;
   final List<ConversationMessage>? initialMessages;
   final ContactRepository? contactRepo;

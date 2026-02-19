@@ -1,9 +1,9 @@
 import 'package:test/test.dart';
 import 'dart:convert';
-import 'package:flutter_app/core/bridge/js_bridge_client.dart';
+import 'package:flutter_app/core/bridge/bridge.dart';
 
-// Mock implementation of JsBridge for testing
-class MockJsBridge extends JsBridge {
+// Mock implementation of Bridge for testing
+class MockBridge extends Bridge {
   String? lastMessage;
   String nextResponse = '';
 
@@ -12,17 +12,28 @@ class MockJsBridge extends JsBridge {
     lastMessage = message;
     return nextResponse;
   }
+
+  @override
+  Future<void> initialize() async {}
+  @override
+  Future<bool> checkHealth() async => true;
+  @override
+  Future<void> reinitialize() async {}
+  @override
+  void dispose() {}
+  @override
+  bool get isInitialized => true;
 }
 
 void main() {
   group('Bridge Functions Signature Test', () {
-    late MockJsBridge mockBridge;
+    late MockBridge mockBridge;
 
     setUp(() {
-      mockBridge = MockJsBridge();
+      mockBridge = MockBridge();
     });
 
-    test('FL_XS_08: callJsIdentityGenerate requires JsBridge parameter', () async {
+    test('FL_XS_08: callIdentityGenerate requires Bridge parameter', () async {
       // Set up mock response
       mockBridge.nextResponse = jsonEncode({
         'ok': true,
@@ -36,8 +47,8 @@ void main() {
         }
       });
 
-      // This should compile and work - function requires JsBridge parameter
-      final response = await callJsIdentityGenerate(mockBridge);
+      // This should compile and work - function requires Bridge parameter
+      final response = await callIdentityGenerate(mockBridge);
 
       // Verify the request was sent correctly
       final sentRequest = jsonDecode(mockBridge.lastMessage!);
@@ -49,10 +60,10 @@ void main() {
       expect(response['ok'], isTrue);
       expect(response['identity'], isNotNull);
 
-      print('✓ FL_XS_08: Function signature includes JsBridge parameter');
+      print('✓ FL_XS_08: Function signature includes Bridge parameter');
     });
 
-    test('FL_XS_09: callJsIdentityRestore requires JsBridge and mnemonic parameters', () async {
+    test('FL_XS_09: callIdentityRestore requires Bridge and mnemonic parameters', () async {
       // Set up mock response
       mockBridge.nextResponse = jsonEncode({
         'ok': true,
@@ -68,8 +79,8 @@ void main() {
 
       final testMnemonic = 'word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12';
 
-      // This should compile and work - function requires JsBridge and mnemonic parameters
-      final response = await callJsIdentityRestore(mockBridge, testMnemonic);
+      // This should compile and work - function requires Bridge and mnemonic parameters
+      final response = await callIdentityRestore(mockBridge, testMnemonic);
 
       // Verify the request was sent correctly
       final sentRequest = jsonDecode(mockBridge.lastMessage!);
@@ -81,23 +92,23 @@ void main() {
       expect(response['ok'], isTrue);
       expect(response['identity'], isNotNull);
 
-      print('✓ FL_XS_09: Function signature includes JsBridge and mnemonic parameters');
+      print('✓ FL_XS_09: Function signature includes Bridge and mnemonic parameters');
     });
 
     test('Signature consistency check', () {
       // This test verifies that both functions follow the same pattern
-      // Both require JsBridge as first parameter
+      // Both require Bridge as first parameter
 
       print('');
       print('SIGNATURE ANALYSIS:');
       print('===================');
-      print('FL_XS_08: callJsIdentityGenerate(JsBridge bridge)');
-      print('FL_XS_09: callJsIdentityRestore(JsBridge bridge, String mnemonic12)');
+      print('FL_XS_08: callIdentityGenerate(Bridge bridge)');
+      print('FL_XS_09: callIdentityRestore(Bridge bridge, String mnemonic12)');
       print('');
       print('CONCLUSION:');
-      print('- Both functions require JsBridge parameter (consistent pattern)');
+      print('- Both functions require Bridge parameter (consistent pattern)');
       print('- FL_XS_09 has additional mnemonic parameter (expected for restore)');
-      print('- Verification checklists are INCORRECT (missing JsBridge parameter)');
+      print('- Verification checklists are INCORRECT (missing Bridge parameter)');
       print('- Implementation follows the task specifications correctly');
     });
   });

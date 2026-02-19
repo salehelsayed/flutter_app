@@ -27,6 +27,16 @@ abstract class P2PService {
   /// Returns true if the node started successfully.
   Future<bool> startNode(String privateKeyBase64, String peerId);
 
+  /// Start the P2P node (core only — state + relay connection).
+  /// Does NOT perform warm tasks like inbox drain or local discovery.
+  /// Returns true if the node started successfully.
+  Future<bool> startNodeCore(String privateKeyBase64, String peerId);
+
+  /// Run background warm tasks (inbox drain, local discovery, health check).
+  /// Call after startNodeCore when the UI is ready.
+  /// Safe to call if node is not started (no-op).
+  Future<void> warmBackground();
+
   /// Stop the P2P node.
   ///
   /// Returns true if the node stopped successfully.
@@ -95,6 +105,13 @@ abstract class P2PService {
 
   /// Drain any queued offline inbox messages into the message stream.
   Future<void> drainOfflineInbox();
+
+  /// Returns true if the peer is visible on the local WiFi network.
+  bool isLocalPeer(String peerId);
+
+  /// Try to send a message to a local peer via WiFi WebSocket.
+  /// Returns true if the peer acknowledged receipt.
+  Future<bool> sendLocalMessage(String peerId, String message, String fromPeerId);
 
   /// Dispose of the service and clean up resources.
   void dispose();

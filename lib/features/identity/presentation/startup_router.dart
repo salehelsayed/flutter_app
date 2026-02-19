@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
-import 'package:flutter_app/core/bridge/js_bridge_client.dart';
+import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
 import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository.dart';
@@ -9,6 +9,7 @@ import 'package:flutter_app/features/conversation/application/chat_message_liste
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/feed/presentation/screens/feed_wired.dart';
 import 'package:flutter_app/features/identity/application/startup_decision.dart';
+import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/identity/presentation/screens/identity_choice_wired.dart';
 import 'package:flutter_app/features/home/presentation/screens/first_time_experience_wired.dart';
@@ -18,6 +19,8 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_app/features/p2p/application/start_node_use_case.dart';
 import 'package:flutter_app/features/push/application/request_push_permission_use_case.dart';
 import 'package:flutter_app/features/push/application/register_push_token_use_case.dart';
+import 'package:flutter_app/core/utils/startup_timing.dart';
+import 'package:flutter_app/core/config/startup_config.dart';
 
 /// Router widget that handles app startup navigation.
 ///
@@ -47,8 +50,8 @@ class StartupRouter extends StatefulWidget {
   /// The listener for incoming chat messages.
   final ChatMessageListener chatMessageListener;
 
-  /// The JS bridge instance for identity operations.
-  final JsBridge bridge;
+  /// The bridge instance for identity operations.
+  final Bridge bridge;
 
   /// The P2P service for networking operations.
   final P2PService p2pService;
@@ -102,6 +105,7 @@ class _StartupRouterState extends State<StartupRouter> {
 
       switch (decision) {
         case StartupDecision.hasIdentityWithContacts:
+          await _ensureMlKemKeys();
           final contactCount = await contactRepository.getContactCount();
           if (!mounted) return;
 
@@ -124,12 +128,14 @@ class _StartupRouterState extends State<StartupRouter> {
               ),
             ),
           );
+          StartupTiming.instance.mark('route_pushed');
 
           // Start P2P node in background after navigation
           _startP2PInBackground();
           break;
 
         case StartupDecision.hasIdentityNoContacts:
+          await _ensureMlKemKeys();
           emitFlowEvent(
             layer: 'FL',
             event: 'ID_STARTUP_ROUTE_MAIN_NO_CONTACTS',
@@ -145,6 +151,7 @@ class _StartupRouterState extends State<StartupRouter> {
             bridge: bridge,
             p2pService: p2pService,
           );
+          StartupTiming.instance.mark('route_pushed');
 
           // Start P2P node in background after navigation
           _startP2PInBackground();
@@ -160,9 +167,10 @@ class _StartupRouterState extends State<StartupRouter> {
             MaterialPageRoute(
               builder: (routeContext) => IdentityChoiceWired(
                 repository: repository,
-                callJsIdentityGenerate: () => callJsIdentityGenerate(bridge),
-                callJsIdentityRestore: (mnemonic) =>
-                    callJsIdentityRestore(bridge, mnemonic),
+                callIdentityGenerate: () => callIdentityGenerate(bridge),
+                callIdentityRestore: (mnemonic) =>
+                    callIdentityRestore(bridge, mnemonic),
+                callMlKemKeygen: () => callMlKemKeygen(bridge),
                 onNavigateToMain: () {
                   // Navigate and start P2P
                   Navigator.of(routeContext).pushReplacement(
@@ -179,6 +187,8 @@ class _StartupRouterState extends State<StartupRouter> {
                       ),
                     ),
                   );
+
+                  StartupTiming.instance.mark('route_pushed');
 
                   // Start P2P node in background after identity creation
                   _startP2PInBackground();
@@ -209,6 +219,18 @@ class _StartupRouterState extends State<StartupRouter> {
   /// This is called after navigating to the main screen, so failures
   /// don't block the user experience.
   Future<void> _startP2PInBackground() async {
+    if (StartupConfig.deferredStartupMode) {
+      // Defer P2P startup to next frame to avoid contending with UI rendering
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _doStartP2P();
+      });
+    } else {
+      _doStartP2P();
+    }
+  }
+
+  Future<void> _doStartP2P() async {
+    StartupTiming.instance.mark('p2p_startup_begin');
     emitFlowEvent(layer: 'FL', event: 'P2P_STARTUP_BEGIN', details: {});
 
     final result = await startP2PNode(
@@ -223,7 +245,64 @@ class _StartupRouterState extends State<StartupRouter> {
     );
 
     if (result == StartNodeResult.success) {
+      StartupTiming.instance.mark('p2p_startup_complete');
+      StartupTiming.instance.printSummary();
       _registerPushToken();
+    }
+  }
+
+  /// Ensure the current identity has ML-KEM keys.
+  ///
+  /// Existing users created before ML-KEM support won't have keys.
+  /// This generates and saves them. Non-fatal: if it fails, user
+  /// continues with plaintext messaging.
+  Future<void> _ensureMlKemKeys() async {
+    try {
+      final identity = await widget.repository.loadIdentity();
+      if (identity == null || identity.mlKemPublicKey != null) return;
+
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'MLKEM_MIGRATION_START',
+        details: {},
+      );
+
+      final mlKemResponse = await callMlKemKeygen(widget.bridge);
+      if (mlKemResponse['ok'] != true) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'MLKEM_MIGRATION_ERROR',
+          details: {'errorCode': mlKemResponse['errorCode']},
+        );
+        return;
+      }
+
+      final enriched = IdentityModel(
+        peerId: identity.peerId,
+        publicKey: identity.publicKey,
+        privateKey: identity.privateKey,
+        mnemonic12: identity.mnemonic12,
+        mlKemPublicKey: mlKemResponse['publicKey'] as String,
+        mlKemSecretKey: mlKemResponse['secretKey'] as String,
+        username: identity.username,
+        avatarBlob: identity.avatarBlob,
+        createdAt: identity.createdAt,
+        updatedAt: identity.updatedAt,
+      );
+
+      await widget.repository.saveIdentity(enriched);
+
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'MLKEM_MIGRATION_OK',
+        details: {},
+      );
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'MLKEM_MIGRATION_ERROR',
+        details: {'error': e.toString()},
+      );
     }
   }
 
@@ -267,7 +346,7 @@ class _StartupRouterState extends State<StartupRouter> {
     required ContactRequestListener contactRequestListener,
     required MessageRepository messageRepository,
     required ChatMessageListener chatMessageListener,
-    required JsBridge bridge,
+    required Bridge bridge,
     required P2PService p2pService,
   }) {
     Navigator.of(context).pushReplacement(

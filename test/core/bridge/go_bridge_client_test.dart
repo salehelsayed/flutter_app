@@ -42,9 +42,9 @@ void main() {
     final noPayloadCmds = <String, String>{
       'identity.generate': 'generateIdentity',
       'mlkem.keygen': 'mlKemKeygen',
-      'node.stop': 'stopNode',
-      'node.status': 'nodeStatus',
-      'node.inboxRetrieve': 'inboxRetrieve',
+      'node:stop': 'stopNode',
+      'node:status': 'nodeStatus',
+      'inbox:retrieve': 'inboxRetrieve',
     };
 
     for (final entry in noPayloadCmds.entries) {
@@ -73,16 +73,16 @@ void main() {
       'identity.restore': 'restoreIdentity',
       'message.encrypt': 'encryptMessage',
       'message.decrypt': 'decryptMessage',
-      'sign.payload': 'signPayload',
-      'sign.verify': 'verifyPayload',
-      'node.start': 'startNode',
-      'node.rendezvousRegister': 'rendezvousRegister',
-      'node.rendezvousDiscover': 'rendezvousDiscover',
-      'node.dialPeer': 'dialPeer',
-      'node.disconnectPeer': 'disconnectPeer',
-      'node.sendMessage': 'sendMessage',
-      'node.inboxStore': 'inboxStore',
-      'node.inboxRegisterToken': 'inboxRegisterToken',
+      'payload.sign': 'signPayload',
+      'payload.verify': 'verifyPayload',
+      'node:start': 'startNode',
+      'rendezvous:register': 'rendezvousRegister',
+      'rendezvous:discover': 'rendezvousDiscover',
+      'peer:dial': 'dialPeer',
+      'peer:disconnect': 'disconnectPeer',
+      'message:send': 'sendMessage',
+      'inbox:store': 'inboxStore',
+      'inbox:register_token': 'inboxRegisterToken',
     };
 
     for (final entry in payloadCmds.entries) {
@@ -184,7 +184,7 @@ void main() {
       );
 
       final request = jsonEncode({
-        'cmd': 'node.start',
+        'cmd': 'node:start',
         'payload': {'listenAddr': '/ip4/0.0.0.0/tcp/0'},
       });
 
@@ -209,7 +209,7 @@ void main() {
       );
 
       final request = jsonEncode({
-        'cmd': 'node.status',
+        'cmd': 'node:status',
         'payload': <String, dynamic>{},
       });
 
@@ -233,19 +233,19 @@ void main() {
       'mlkem.keygen',
       'message.encrypt',
       'message.decrypt',
-      'sign.payload',
-      'sign.verify',
-      'node.start',
-      'node.stop',
-      'node.status',
-      'node.rendezvousRegister',
-      'node.rendezvousDiscover',
-      'node.dialPeer',
-      'node.disconnectPeer',
-      'node.sendMessage',
-      'node.inboxStore',
-      'node.inboxRetrieve',
-      'node.inboxRegisterToken',
+      'payload.sign',
+      'payload.verify',
+      'node:start',
+      'node:stop',
+      'node:status',
+      'rendezvous:register',
+      'rendezvous:discover',
+      'peer:dial',
+      'peer:disconnect',
+      'message:send',
+      'inbox:store',
+      'inbox:retrieve',
+      'inbox:register_token',
     ];
 
     expect(allCmds, hasLength(18));

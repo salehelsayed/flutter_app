@@ -6,14 +6,25 @@ import 'package:flutter_app/features/identity/domain/models/identity_model.dart'
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository_impl.dart';
 import 'package:flutter_app/features/identity/application/startup_decision.dart';
 import 'package:flutter_app/features/identity/application/generate_identity_use_case.dart';
-import 'package:flutter_app/core/bridge/js_bridge_client.dart';
+import 'package:flutter_app/core/bridge/bridge.dart';
 import 'test/core/secure_storage/fake_secure_key_store.dart';
 import 'dart:convert';
 
-// Mock JsBridge that simulates real identity generation
-class MockJsBridge extends JsBridge {
+// Mock Bridge that simulates real identity generation
+class MockBridge extends Bridge {
   final List<String> commandLog = [];
   int callCount = 0;
+
+  @override
+  Future<void> initialize() async {}
+  @override
+  Future<bool> checkHealth() async => true;
+  @override
+  Future<void> reinitialize() async {}
+  @override
+  void dispose() {}
+  @override
+  bool get isInitialized => true;
 
   @override
   Future<String> send(String message) async {
@@ -44,7 +55,7 @@ class MockJsBridge extends JsBridge {
 void main() {
   late Database db;
   late IdentityRepositoryImpl repository;
-  late MockJsBridge mockBridge;
+  late MockBridge mockBridge;
 
   setUpAll(() {
     sqfliteFfiInit();
@@ -62,7 +73,7 @@ void main() {
       secureKeyStore: FakeSecureKeyStore(),
     );
 
-    mockBridge = MockJsBridge();
+    mockBridge = MockBridge();
   });
 
   tearDown(() async {
@@ -110,7 +121,8 @@ void main() {
 
       // Execute identity generation
       final generateResult = await generateNewIdentity(
-        callJsGenerate: () => callJsIdentityGenerate(mockBridge),
+        callGenerate: () => callIdentityGenerate(mockBridge),
+        callMlKemKeygen: () async => {'ok': true, 'publicKey': 'mockMlKemPub', 'secretKey': 'mockMlKemSec'},
         repo: repository,
       );
 

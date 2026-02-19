@@ -26,7 +26,16 @@ class GoBridge: NSObject {
         eventChannel.setStreamHandler(self)
 
         // Initialize the Go singleton with our event callback
-        GoMknoonInitialize(self)
+        BridgeInitialize(self)
+    }
+
+    private func runOnBackground(_ work: @escaping () -> Any?, result: @escaping FlutterResult) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let value = work()
+            DispatchQueue.main.async {
+                result(value)
+            }
+        }
     }
 
     private func handleMethodCall(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
@@ -35,51 +44,51 @@ class GoBridge: NSObject {
         switch call.method {
         // Identity
         case "generateIdentity":
-            result(GoMknoonGenerateIdentity())
+            runOnBackground({ BridgeGenerateIdentity() }, result: result)
         case "restoreIdentity":
-            result(GoMknoonRestoreIdentity(args ?? ""))
+            runOnBackground({ BridgeRestoreIdentity(args ?? "") }, result: result)
 
         // Crypto
         case "mlKemKeygen":
-            result(GoMknoonMlKemKeygen())
+            runOnBackground({ BridgeMlKemKeygen() }, result: result)
         case "encryptMessage":
-            result(GoMknoonEncryptMessage(args ?? ""))
+            runOnBackground({ BridgeEncryptMessage(args ?? "") }, result: result)
         case "decryptMessage":
-            result(GoMknoonDecryptMessage(args ?? ""))
+            runOnBackground({ BridgeDecryptMessage(args ?? "") }, result: result)
         case "signPayload":
-            result(GoMknoonSignPayload(args ?? ""))
+            runOnBackground({ BridgeSignPayload(args ?? "") }, result: result)
         case "verifyPayload":
-            result(GoMknoonVerifyPayload(args ?? ""))
+            runOnBackground({ BridgeVerifyPayload(args ?? "") }, result: result)
 
         // Node lifecycle
         case "startNode":
-            result(GoMknoonStartNode(args ?? ""))
+            runOnBackground({ BridgeStartNode(args ?? "") }, result: result)
         case "stopNode":
-            result(GoMknoonStopNode())
+            runOnBackground({ BridgeStopNode() }, result: result)
         case "nodeStatus":
-            result(GoMknoonNodeStatus())
+            runOnBackground({ BridgeNodeStatus() }, result: result)
 
         // Rendezvous
         case "rendezvousRegister":
-            result(GoMknoonRendezvousRegister(args ?? ""))
+            runOnBackground({ BridgeRendezvousRegister(args ?? "") }, result: result)
         case "rendezvousDiscover":
-            result(GoMknoonRendezvousDiscover(args ?? ""))
+            runOnBackground({ BridgeRendezvousDiscover(args ?? "") }, result: result)
 
         // Peer operations
         case "dialPeer":
-            result(GoMknoonDialPeer(args ?? ""))
+            runOnBackground({ BridgeDialPeer(args ?? "") }, result: result)
         case "disconnectPeer":
-            result(GoMknoonDisconnectPeer(args ?? ""))
+            runOnBackground({ BridgeDisconnectPeer(args ?? "") }, result: result)
         case "sendMessage":
-            result(GoMknoonSendMessage(args ?? ""))
+            runOnBackground({ BridgeSendMessage(args ?? "") }, result: result)
 
         // Inbox
         case "inboxStore":
-            result(GoMknoonInboxStore(args ?? ""))
+            runOnBackground({ BridgeInboxStore(args ?? "") }, result: result)
         case "inboxRetrieve":
-            result(GoMknoonInboxRetrieve())
+            runOnBackground({ BridgeInboxRetrieve() }, result: result)
         case "inboxRegisterToken":
-            result(GoMknoonInboxRegisterToken(args ?? ""))
+            runOnBackground({ BridgeInboxRegisterToken(args ?? "") }, result: result)
 
         default:
             result(FlutterMethodNotImplemented)
@@ -100,8 +109,8 @@ extension GoBridge: FlutterStreamHandler {
     }
 }
 
-// MARK: - GoMknoonEventCallbackProtocol (Go → Swift push events)
-extension GoBridge: GoMknoonEventCallbackProtocol {
+// MARK: - BridgeEventCallback (Go → Swift push events)
+extension GoBridge: BridgeEventCallbackProtocol {
     func onEvent(_ jsonString: String?) {
         guard let json = jsonString else { return }
         DispatchQueue.main.async { [weak self] in

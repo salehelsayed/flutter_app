@@ -301,18 +301,13 @@ func StartNode(paramsJSON string) (result string) {
 		ListenPort:     params.ListenPort,
 	}
 
-	state, err := n.Start(cfg)
+	_, err := n.Start(cfg)
 	if err != nil {
 		return errJSON("NODE_START_ERROR", err.Error())
 	}
 
-	return okJSON(map[string]interface{}{
-		"ok":          true,
-		"peerId":      state.PeerId,
-		"isStarted":   state.IsStarted,
-		"addresses":   state.Addresses,
-		"connections": state.Connections,
-	})
+	// Return same shape as NodeStatus so Dart can parse uniformly.
+	return okJSON(n.Status())
 }
 
 // StopNode stops the libp2p node.

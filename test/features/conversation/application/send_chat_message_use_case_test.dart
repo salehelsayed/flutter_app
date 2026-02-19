@@ -30,6 +30,11 @@ class FakeP2PService implements P2PService {
   String? lastInboxPeerId;
   String? lastInboxMessage;
 
+  // Local peer support
+  final Set<String> localPeers = {};
+  bool localSendResult = true;
+  int localSendCallCount = 0;
+
   /// Use [useNullDiscover] to explicitly request null discoverPeer results.
   FakeP2PService({
     NodeState? currentState,
@@ -121,6 +126,23 @@ class FakeP2PService implements P2PService {
   Future<void> drainOfflineInbox() async {}
 
   @override
+  bool isLocalPeer(String peerId) => localPeers.contains(peerId);
+
+  @override
+  Future<bool> sendLocalMessage(String peerId, String message, String fromPeerId) async {
+    localSendCallCount++;
+    lastSentPeerId = peerId;
+    lastSentMessage = message;
+    return localSendResult;
+  }
+
+  @override
+  Future<bool> startNodeCore(String privateKeyBase64, String peerId) async => false;
+
+  @override
+  Future<void> warmBackground() async {}
+
+  @override
   void dispose() {}
 }
 
@@ -173,6 +195,9 @@ class FakeMessageRepository implements MessageRepository {
     int limit = 50,
     String? beforeTimestamp,
   }) async => [];
+
+  @override
+  Future<List<ConversationMessage>> getFailedOutgoingMessages() async => [];
 }
 
 Future<List<String>> capturePrintedLines(Future<void> Function() action) async {
@@ -518,6 +543,71 @@ void main() {
       expect(result, SendChatMessageResult.success);
       expect(message!.status, 'sent');
     });
+
+    test('sends locally when peer is on local WiFi', () async {
+      p2pService.localPeers.add('target-peer');
+
+      final (result, message) = await sendChatMessage(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        targetPeerId: 'target-peer',
+        text: 'Hello local!',
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me',
+      );
+
+      expect(result, SendChatMessageResult.success);
+      expect(message, isNotNull);
+      expect(message!.status, 'delivered');
+      expect(p2pService.localSendCallCount, 1);
+      // Should NOT have attempted relay path
+      expect(p2pService.discoverCallCount, 0);
+      expect(p2pService.dialCallCount, 0);
+      expect(p2pService.sendCallCount, 0);
+    });
+
+    test('falls through to relay when local send fails', () async {
+      p2pService.localPeers.add('target-peer');
+      p2pService.localSendResult = false;
+
+      final (result, message) = await sendChatMessage(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        targetPeerId: 'target-peer',
+        text: 'Hello fallback!',
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me',
+      );
+
+      expect(result, SendChatMessageResult.success);
+      expect(message, isNotNull);
+      expect(message!.status, 'delivered');
+      // Local was attempted but failed
+      expect(p2pService.localSendCallCount, 1);
+      // Relay path was used
+      expect(p2pService.discoverCallCount, 1);
+      expect(p2pService.sendCallCount, 1);
+    });
+
+    test('skips local send when peer is not on local WiFi', () async {
+      // localPeers is empty by default
+      final (result, message) = await sendChatMessage(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        targetPeerId: 'target-peer',
+        text: 'Hello relay!',
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me',
+      );
+
+      expect(result, SendChatMessageResult.success);
+      expect(message, isNotNull);
+      // No local send attempted
+      expect(p2pService.localSendCallCount, 0);
+      // Relay path used directly
+      expect(p2pService.discoverCallCount, 1);
+      expect(p2pService.sendCallCount, 1);
+    });
   });
 }
 
@@ -572,6 +662,18 @@ class _ThrowOnSendP2PService implements P2PService {
 
   @override
   Future<void> drainOfflineInbox() async {}
+
+  @override
+  bool isLocalPeer(String peerId) => false;
+
+  @override
+  Future<bool> sendLocalMessage(String peerId, String message, String fromPeerId) async => false;
+
+  @override
+  Future<bool> startNodeCore(String privateKeyBase64, String peerId) async => false;
+
+  @override
+  Future<void> warmBackground() async {}
 
   @override
   void dispose() {}
@@ -632,6 +734,18 @@ class _FlakyDiscoverP2PService implements P2PService {
 
   @override
   Future<void> drainOfflineInbox() async {}
+
+  @override
+  bool isLocalPeer(String peerId) => false;
+
+  @override
+  Future<bool> sendLocalMessage(String peerId, String message, String fromPeerId) async => false;
+
+  @override
+  Future<bool> startNodeCore(String privateKeyBase64, String peerId) async => false;
+
+  @override
+  Future<void> warmBackground() async {}
 
   @override
   void dispose() {}

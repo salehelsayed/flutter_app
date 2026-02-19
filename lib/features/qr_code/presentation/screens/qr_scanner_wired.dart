@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_app/core/bridge/js_bridge_client.dart';
+import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/theme/app_colors.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -28,7 +28,7 @@ import 'qr_scanner_screen.dart';
 /// 5. Sends contact request via P2P (for bidirectional exchange)
 /// 6. Shows success/error feedback
 class QRScannerWired extends StatelessWidget {
-  final JsBridge bridge;
+  final Bridge bridge;
   final ContactRepository contactRepository;
   final ContactRequestRepository contactRequestRepository;
   final ContactRequestListener contactRequestListener;

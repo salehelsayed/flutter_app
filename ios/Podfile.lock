@@ -1,4 +1,7 @@
 PODS:
+  - bonsoir_darwin (0.0.1):
+    - Flutter
+    - FlutterMacOS
   - Firebase/CoreOnly (11.15.0):
     - FirebaseCore (~> 11.15.0)
   - Firebase/Messaging (11.15.0):
@@ -38,6 +41,7 @@ PODS:
   - FMDB/SQLCipher (2.7.12):
     - FMDB/Core
     - SQLCipher (~> 4.6)
+  - GoMknoon (0.1.0)
   - GoogleDataTransport (10.1.0):
     - nanopb (~> 3.30910.0)
     - PromisesObjC (~> 2.4)
@@ -90,21 +94,19 @@ PODS:
   - sqlcipher_flutter_libs (0.0.1):
     - Flutter
     - SQLCipher (~> 4.10.0)
-  - webview_flutter_wkwebview (0.0.1):
-    - Flutter
-    - FlutterMacOS
 
 DEPENDENCIES:
+  - bonsoir_darwin (from `.symlinks/plugins/bonsoir_darwin/darwin`)
   - firebase_core (from `.symlinks/plugins/firebase_core/ios`)
   - firebase_messaging (from `.symlinks/plugins/firebase_messaging/ios`)
   - Flutter (from `Flutter`)
   - flutter_secure_storage (from `.symlinks/plugins/flutter_secure_storage/ios`)
+  - GoMknoon (from `.`)
   - image_picker_ios (from `.symlinks/plugins/image_picker_ios/ios`)
   - integration_test (from `.symlinks/plugins/integration_test/ios`)
   - mobile_scanner (from `.symlinks/plugins/mobile_scanner/darwin`)
   - sqflite_sqlcipher (from `.symlinks/plugins/sqflite_sqlcipher/ios`)
   - sqlcipher_flutter_libs (from `.symlinks/plugins/sqlcipher_flutter_libs/ios`)
-  - webview_flutter_wkwebview (from `.symlinks/plugins/webview_flutter_wkwebview/darwin`)
 
 SPEC REPOS:
   trunk:
@@ -121,6 +123,8 @@ SPEC REPOS:
     - SQLCipher
 
 EXTERNAL SOURCES:
+  bonsoir_darwin:
+    :path: ".symlinks/plugins/bonsoir_darwin/darwin"
   firebase_core:
     :path: ".symlinks/plugins/firebase_core/ios"
   firebase_messaging:
@@ -129,6 +133,8 @@ EXTERNAL SOURCES:
     :path: Flutter
   flutter_secure_storage:
     :path: ".symlinks/plugins/flutter_secure_storage/ios"
+  GoMknoon:
+    :path: "."
   image_picker_ios:
     :path: ".symlinks/plugins/image_picker_ios/ios"
   integration_test:
@@ -139,10 +145,9 @@ EXTERNAL SOURCES:
     :path: ".symlinks/plugins/sqflite_sqlcipher/ios"
   sqlcipher_flutter_libs:
     :path: ".symlinks/plugins/sqlcipher_flutter_libs/ios"
-  webview_flutter_wkwebview:
-    :path: ".symlinks/plugins/webview_flutter_wkwebview/darwin"
 
 SPEC CHECKSUMS:
+  bonsoir_darwin: 29c7ccf356646118844721f36e1de4b61f6cbd0e
   Firebase: d99ac19b909cd2c548339c2241ecd0d1599ab02e
   firebase_core: 995454a784ff288be5689b796deb9e9fa3601818
   firebase_messaging: f4a41dd102ac18b840eba3f39d67e77922d3f707
@@ -153,6 +158,7 @@ SPEC CHECKSUMS:
   Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
   flutter_secure_storage: 1ed9476fba7e7a782b22888f956cce43e2c62f13
   FMDB: 728731dd336af3936ce00f91d9d8495f5718a0e6
+  GoMknoon: 4e5c0a4c6f50ada9d1d6a92652cce57cd97bd44e
   GoogleDataTransport: aae35b7ea0c09004c3797d53c8c41f66f219d6a7
   GoogleUtilities: 00c88b9a86066ef77f0da2fab05f65d7768ed8e1
   image_picker_ios: e0ece4aa2a75771a7de3fa735d26d90817041326
@@ -163,8 +169,7 @@ SPEC CHECKSUMS:
   sqflite_sqlcipher: 8e5bdaae6b2c254f8a277a564f07bc4e2a8642a3
   SQLCipher: eb79c64049cb002b4e9fcb30edb7979bf4706dfc
   sqlcipher_flutter_libs: ae224763b087bffb3a5955fe295a1c460d458cb1
-  webview_flutter_wkwebview: 8ebf4fded22593026f7dbff1fbff31ea98573c8d
 
-PODFILE CHECKSUM: 3c63482e143d1b91d2d2560aee9fb04ecc74ac7e
+PODFILE CHECKSUM: 7e54c2f26d27c88a4492d7c44df27fc83ea282dd
 
 COCOAPODS: 1.16.2

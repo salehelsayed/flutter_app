@@ -40,8 +40,8 @@ class MockIdentityRepository implements IdentityRepository {
   }
 }
 
-// Mock JS bridge functions
-Future<Map<String, dynamic>> mockJsIdentityGenerate() async {
+// Mock bridge functions
+Future<Map<String, dynamic>> mockIdentityGenerate() async {
   return {
     'ok': true,
     'identity': {
@@ -55,7 +55,7 @@ Future<Map<String, dynamic>> mockJsIdentityGenerate() async {
   };
 }
 
-Future<Map<String, dynamic>> mockJsIdentityRestore(String mnemonic) async {
+Future<Map<String, dynamic>> mockIdentityRestore(String mnemonic) async {
   if (mnemonic == 'invalid invalid invalid invalid invalid invalid invalid invalid invalid invalid invalid invalid') {
     return {
       'ok': false,
@@ -74,6 +74,10 @@ Future<Map<String, dynamic>> mockJsIdentityRestore(String mnemonic) async {
       'updatedAt': '2025-01-17T12:00:00.000Z',
     }
   };
+}
+
+Future<Map<String, dynamic>> mockMlKemKeygen() async {
+  return {'ok': true, 'publicKey': 'mockMlKemPub', 'secretKey': 'mockMlKemSec'};
 }
 
 void main() {
@@ -144,8 +148,9 @@ void main() {
           MaterialApp(
             home: IdentityChoiceWired(
               repository: mockRepo,
-              callJsIdentityGenerate: mockJsIdentityGenerate,
-              callJsIdentityRestore: mockJsIdentityRestore,
+              callIdentityGenerate: mockIdentityGenerate,
+              callIdentityRestore: mockIdentityRestore,
+              callMlKemKeygen: mockMlKemKeygen,
               onNavigateToMain: () {
                 navigateCalled = true;
               },
@@ -167,7 +172,8 @@ void main() {
           MaterialApp(
             home: MnemonicInputWired(
               repository: mockRepo,
-              callJsIdentityRestore: mockJsIdentityRestore,
+              callIdentityRestore: mockIdentityRestore,
+              callMlKemKeygen: mockMlKemKeygen,
               onNavigateToMain: () {
                 navigateCalled = true;
               },
@@ -259,8 +265,9 @@ void main() {
           MaterialApp(
             home: IdentityChoiceWired(
               repository: mockRepo,
-              callJsIdentityGenerate: mockJsIdentityGenerate,
-              callJsIdentityRestore: mockJsIdentityRestore,
+              callIdentityGenerate: mockIdentityGenerate,
+              callIdentityRestore: mockIdentityRestore,
+              callMlKemKeygen: mockMlKemKeygen,
               onNavigateToMain: () {
                 navigateCalled = true;
               },
@@ -285,7 +292,8 @@ void main() {
           MaterialApp(
             home: MnemonicInputWired(
               repository: mockRepo,
-              callJsIdentityRestore: mockJsIdentityRestore,
+              callIdentityRestore: mockIdentityRestore,
+              callMlKemKeygen: mockMlKemKeygen,
               onNavigateToMain: () {
                 navigateCalled = true;
               },
@@ -314,7 +322,8 @@ void main() {
           MaterialApp(
             home: MnemonicInputWired(
               repository: mockRepo,
-              callJsIdentityRestore: mockJsIdentityRestore,
+              callIdentityRestore: mockIdentityRestore,
+              callMlKemKeygen: mockMlKemKeygen,
               onNavigateToMain: () {},
             ),
           ),
@@ -339,8 +348,9 @@ void main() {
           MaterialApp(
             home: IdentityChoiceWired(
               repository: mockRepo,
-              callJsIdentityGenerate: mockJsIdentityGenerate,
-              callJsIdentityRestore: mockJsIdentityRestore,
+              callIdentityGenerate: mockIdentityGenerate,
+              callIdentityRestore: mockIdentityRestore,
+              callMlKemKeygen: mockMlKemKeygen,
               onNavigateToMain: () {},
             ),
           ),
@@ -361,8 +371,9 @@ void main() {
           MaterialApp(
             home: IdentityChoiceWired(
               repository: mockRepo,
-              callJsIdentityGenerate: mockJsIdentityGenerate,
-              callJsIdentityRestore: mockJsIdentityRestore,
+              callIdentityGenerate: mockIdentityGenerate,
+              callIdentityRestore: mockIdentityRestore,
+              callMlKemKeygen: mockMlKemKeygen,
               onNavigateToMain: () {},
             ),
           ),

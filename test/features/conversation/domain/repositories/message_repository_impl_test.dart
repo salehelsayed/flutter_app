@@ -96,6 +96,14 @@ void main() {
         final page = rows.take(limit).toList();
         return page.reversed.toList();
       },
+      dbLoadFailedOutgoingMessages: () async {
+        return store.values
+            .where((row) =>
+                row['status'] == 'failed' && row['is_incoming'] == 0)
+            .toList()
+          ..sort((a, b) => (a['timestamp'] as String)
+              .compareTo(b['timestamp'] as String));
+      },
     );
   });
 

@@ -63,6 +63,9 @@ class FakeMessageRepository implements MessageRepository {
     final page = filtered.take(limit).toList();
     return page.reversed.toList();
   }
+
+  @override
+  Future<List<ConversationMessage>> getFailedOutgoingMessages() async => [];
 }
 
 void main() {

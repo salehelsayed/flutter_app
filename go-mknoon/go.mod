@@ -1,6 +1,6 @@
 module github.com/mknoon/go-mknoon
 
-go 1.24
+go 1.25.0
 
 require (
 	github.com/cloudflare/circl v1.6.3
@@ -8,8 +8,13 @@ require (
 	github.com/libp2p/go-msgio v0.3.0
 	github.com/multiformats/go-multiaddr v0.14.0
 	github.com/tyler-smith/go-bip39 v1.1.0
+	golang.org/x/mobile v0.0.0-20241213221354-a87c1cf6cf46
 	google.golang.org/protobuf v1.36.0
 )
+
+// gosigar uses libproc.h which is macOS-only (not in iOS SDK).
+// Replace with a stub that returns zero-value memory stats.
+replace github.com/elastic/gosigar => ./stub/gosigar
 
 require (
 	github.com/benbjohnson/clock v1.3.5 // indirect
@@ -101,14 +106,15 @@ require (
 	go.uber.org/mock v0.5.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.27.0 // indirect
-	golang.org/x/crypto v0.31.0 // indirect
+	golang.org/x/crypto v0.48.0 // indirect
 	golang.org/x/exp v0.0.0-20241217172543-b2144cdd0a67 // indirect
-	golang.org/x/mod v0.22.0 // indirect
-	golang.org/x/net v0.32.0 // indirect
-	golang.org/x/sync v0.10.0 // indirect
-	golang.org/x/sys v0.28.0 // indirect
-	golang.org/x/text v0.21.0 // indirect
-	golang.org/x/tools v0.28.0 // indirect
+	golang.org/x/mod v0.33.0 // indirect
+	golang.org/x/net v0.50.0 // indirect
+	golang.org/x/sync v0.19.0 // indirect
+	golang.org/x/sys v0.41.0 // indirect
+	golang.org/x/telemetry v0.0.0-20260209163413-e7419c687ee4 // indirect
+	golang.org/x/text v0.34.0 // indirect
+	golang.org/x/tools v0.42.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	lukechampine.com/blake3 v1.3.0 // indirect
 )

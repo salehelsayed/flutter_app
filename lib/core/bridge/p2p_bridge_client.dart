@@ -1,15 +1,15 @@
 import 'dart:convert';
-import 'js_bridge_client.dart';
+import 'bridge.dart';
 import '../utils/flow_event_emitter.dart';
 
 /// Default rendezvous server address.
 const String defaultRendezvousAddress =
     '/dns4/mknoun.xyz/tcp/4001/wss/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g';
 
-/// Calls the JS bridge to start the P2P node.
+/// Calls the bridge to start the P2P node.
 ///
 /// Parameters:
-///   - [bridge]: The JsBridge instance to use for communication
+///   - [bridge]: The Bridge instance to use for communication
 ///   - [privateKeyHex]: The Ed25519 private key in HEX format
 ///   - [relayAddresses]: Optional list of relay server multiaddrs
 ///   - [autoRegister]: Whether to auto-register on rendezvous (default true)
@@ -18,7 +18,7 @@ const String defaultRendezvousAddress =
 /// Returns a map with node state on success:
 /// `{ "ok": true, "peerId": "...", "isStarted": true, ... }`
 Future<Map<String, dynamic>> callP2PNodeStart(
-  JsBridge bridge, {
+  Bridge bridge, {
   required String privateKeyHex,
   List<String>? relayAddresses,
   bool autoRegister = true,
@@ -52,10 +52,10 @@ Future<Map<String, dynamic>> callP2PNodeStart(
   return response;
 }
 
-/// Calls the JS bridge to stop the P2P node.
+/// Calls the bridge to stop the P2P node.
 ///
 /// Returns: `{ "ok": true, "stopped": true }` on success.
-Future<Map<String, dynamic>> callP2PNodeStop(JsBridge bridge) async {
+Future<Map<String, dynamic>> callP2PNodeStop(Bridge bridge) async {
   emitFlowEvent(
     layer: 'FL',
     event: 'P2P_NODE_STOP_REQUEST',
@@ -79,10 +79,10 @@ Future<Map<String, dynamic>> callP2PNodeStop(JsBridge bridge) async {
   return response;
 }
 
-/// Calls the JS bridge to get the current P2P node status.
+/// Calls the bridge to get the current P2P node status.
 ///
 /// Returns: Node state including peerId, isStarted, connections, etc.
-Future<Map<String, dynamic>> callP2PNodeStatus(JsBridge bridge) async {
+Future<Map<String, dynamic>> callP2PNodeStatus(Bridge bridge) async {
   emitFlowEvent(
     layer: 'FL',
     event: 'P2P_NODE_STATUS_REQUEST',
@@ -106,16 +106,16 @@ Future<Map<String, dynamic>> callP2PNodeStatus(JsBridge bridge) async {
   return response;
 }
 
-/// Calls the JS bridge to register on a rendezvous namespace.
+/// Calls the bridge to register on a rendezvous namespace.
 ///
 /// Parameters:
-///   - [bridge]: The JsBridge instance
+///   - [bridge]: The Bridge instance
 ///   - [namespace]: Optional namespace (defaults to mknoon:chat:<peerId>)
 ///   - [serverAddresses]: Optional list of rendezvous server addresses
 ///
 /// Returns: `{ "ok": true, "registered": true, "namespace": "..." }`
 Future<Map<String, dynamic>> callP2PRendezvousRegister(
-  JsBridge bridge, {
+  Bridge bridge, {
   String? namespace,
   List<String>? serverAddresses,
 }) async {
@@ -145,10 +145,10 @@ Future<Map<String, dynamic>> callP2PRendezvousRegister(
   return response;
 }
 
-/// Calls the JS bridge to discover peers on a rendezvous namespace.
+/// Calls the bridge to discover peers on a rendezvous namespace.
 ///
 /// Parameters:
-///   - [bridge]: The JsBridge instance
+///   - [bridge]: The Bridge instance
 ///   - [peerId]: Optional specific peer ID to discover
 ///   - [namespace]: Optional namespace (defaults to mknoon:chat:<peerId> if peerId provided)
 ///   - [serverAddresses]: Optional list of rendezvous server addresses
@@ -156,7 +156,7 @@ Future<Map<String, dynamic>> callP2PRendezvousRegister(
 ///
 /// Returns: `{ "ok": true, "peers": [{ "id": "...", "addresses": [...] }] }`
 Future<Map<String, dynamic>> callP2PRendezvousDiscover(
-  JsBridge bridge, {
+  Bridge bridge, {
   String? peerId,
   String? namespace,
   List<String>? serverAddresses,
@@ -193,17 +193,17 @@ Future<Map<String, dynamic>> callP2PRendezvousDiscover(
   return response;
 }
 
-/// Calls the JS bridge to dial (connect to) a peer.
+/// Calls the bridge to dial (connect to) a peer.
 ///
 /// Parameters:
-///   - [bridge]: The JsBridge instance
+///   - [bridge]: The Bridge instance
 ///   - [peerId]: The peer ID to dial
 ///   - [addresses]: Optional list of multiaddrs (discovers if not provided)
 ///   - [timeoutMs]: Optional dial timeout in milliseconds
 ///
 /// Returns: `{ "ok": true, "connected": true, "peerId": "..." }`
 Future<Map<String, dynamic>> callP2PPeerDial(
-  JsBridge bridge, {
+  Bridge bridge, {
   required String peerId,
   List<String>? addresses,
   int? timeoutMs,
@@ -235,15 +235,15 @@ Future<Map<String, dynamic>> callP2PPeerDial(
   return response;
 }
 
-/// Calls the JS bridge to disconnect from a peer.
+/// Calls the bridge to disconnect from a peer.
 ///
 /// Parameters:
-///   - [bridge]: The JsBridge instance
+///   - [bridge]: The Bridge instance
 ///   - [peerId]: The peer ID to disconnect from
 ///
 /// Returns: `{ "ok": true, "disconnected": true, "peerId": "..." }`
 Future<Map<String, dynamic>> callP2PPeerDisconnect(
-  JsBridge bridge, {
+  Bridge bridge, {
   required String peerId,
 }) async {
   emitFlowEvent(
@@ -271,16 +271,16 @@ Future<Map<String, dynamic>> callP2PPeerDisconnect(
   return response;
 }
 
-/// Calls the JS bridge to store a message in the offline inbox.
+/// Calls the bridge to store a message in the offline inbox.
 ///
 /// Parameters:
-///   - [bridge]: The JsBridge instance
+///   - [bridge]: The Bridge instance
 ///   - [toPeerId]: The target peer ID
 ///   - [message]: The message content
 ///
 /// Returns: `{ "ok": true, "stored": true }` (stub — JS not yet implemented)
 Future<Map<String, dynamic>> callP2PInboxStore(
-  JsBridge bridge, {
+  Bridge bridge, {
   required String toPeerId,
   required String message,
 }) async {
@@ -310,16 +310,16 @@ Future<Map<String, dynamic>> callP2PInboxStore(
   return response;
 }
 
-/// Calls the JS bridge to register an FCM push token with the relay.
+/// Calls the bridge to register an FCM push token with the relay.
 ///
 /// Parameters:
-///   - [bridge]: The JsBridge instance
+///   - [bridge]: The Bridge instance
 ///   - [token]: The FCM device token
 ///   - [platform]: The platform ('ios' or 'android')
 ///
 /// Returns: `{ "ok": true, "registered": true }`
 Future<Map<String, dynamic>> callP2PInboxRegisterToken(
-  JsBridge bridge, {
+  Bridge bridge, {
   required String token,
   required String platform,
 }) async {
@@ -349,10 +349,10 @@ Future<Map<String, dynamic>> callP2PInboxRegisterToken(
   return response;
 }
 
-/// Calls the JS bridge to retrieve messages from the offline inbox.
+/// Calls the bridge to retrieve messages from the offline inbox.
 ///
 /// Returns: `{ "ok": true, "messages": [...] }` (stub — JS not yet implemented)
-Future<Map<String, dynamic>> callP2PInboxRetrieve(JsBridge bridge) async {
+Future<Map<String, dynamic>> callP2PInboxRetrieve(Bridge bridge) async {
   emitFlowEvent(
     layer: 'FL',
     event: 'P2P_INBOX_RETRIEVE_REQUEST',
@@ -376,17 +376,17 @@ Future<Map<String, dynamic>> callP2PInboxRetrieve(JsBridge bridge) async {
   return response;
 }
 
-/// Calls the JS bridge to send a message to a peer.
+/// Calls the bridge to send a message to a peer.
 ///
 /// Parameters:
-///   - [bridge]: The JsBridge instance
+///   - [bridge]: The Bridge instance
 ///   - [peerId]: The peer ID to send the message to
 ///   - [message]: The message content
 ///   - [timeoutMs]: Optional send timeout in milliseconds
 ///
 /// Returns: `{ "ok": true, "sent": true, "reply": "..." }`
 Future<Map<String, dynamic>> callP2PMessageSend(
-  JsBridge bridge, {
+  Bridge bridge, {
   required String peerId,
   required String message,
   int? timeoutMs,

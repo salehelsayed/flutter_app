@@ -1,3 +1,5 @@
+import 'dart:ui';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -7,32 +9,35 @@ import 'package:qr_flutter/qr_flutter.dart';
 /// QR code display section with green glow effect.
 class QRCodeSection extends StatelessWidget {
   final String? qrData;
+  final double scaleFactor;
 
-  const QRCodeSection({
-    super.key,
-    this.qrData,
-  });
+  const QRCodeSection({super.key, this.qrData, this.scaleFactor = 1.0});
 
   @override
   Widget build(BuildContext context) {
-    // Calculate responsive QR size based on screen width
+    // Calculate responsive QR size based on both width and height.
     final screenWidth = MediaQuery.of(context).size.width;
-    // QR container is ~55% of screen width, clamped between 180 and 240
-    final qrContainerSize = (screenWidth * 0.55).clamp(180.0, 240.0);
+    final t = scaleFactor;
+    final qrRatio = lerpDouble(0.48, 0.55, t)!;
+    final minSize = lerpDouble(155, 170, t)!;
+    final maxSize = lerpDouble(195, 240, t)!;
+    final qrContainerSize = (screenWidth * qrRatio).clamp(minSize, maxSize);
     final qrImageSize = qrContainerSize - 24; // 12px padding on each side
+    final textSize = lerpDouble(12.5, 14, t)!;
+    final spacing = lerpDouble(8, 16, t)!;
 
     return Column(
       children: [
         // Description text
-        const Text(
+        Text(
           'Show this to someone you want in your circle...',
           style: TextStyle(
             color: AppColors.textMuted,
-            fontSize: 14,
+            fontSize: textSize,
           ),
           textAlign: TextAlign.center,
         ),
-        const SizedBox(height: 16),
+        SizedBox(height: spacing),
         // QR code container with glow
         GestureDetector(
           onLongPress: qrData != null && kDebugMode
@@ -74,7 +79,7 @@ class QRCodeSection extends StatelessWidget {
           ),
         ),
         // Debug hint
-        if (kDebugMode && qrData != null)
+        if (kDebugMode && qrData != null && t > 0.5)
           const Padding(
             padding: EdgeInsets.only(top: 8),
             child: Text(

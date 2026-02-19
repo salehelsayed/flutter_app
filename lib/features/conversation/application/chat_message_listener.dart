@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter_app/core/bridge/js_bridge_client.dart';
+import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
@@ -18,7 +18,7 @@ class ChatMessageListener {
   final Stream<ChatMessage> chatMessageStream;
   final MessageRepository messageRepo;
   final ContactRepository contactRepo;
-  final JsBridge? bridge;
+  final Bridge? bridge;
   final Future<String?> Function()? getOwnMlKemSecretKey;
 
   StreamSubscription<ChatMessage>? _subscription;

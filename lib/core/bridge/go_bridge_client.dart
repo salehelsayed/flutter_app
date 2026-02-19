@@ -1,50 +1,209 @@
+import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
-import 'js_bridge_client.dart';
+import 'bridge.dart';
+import '../../features/p2p/domain/models/chat_message.dart';
+import '../../features/p2p/domain/models/connection_state.dart';
 import '../utils/flow_event_emitter.dart';
 
 /// Dart bridge client that communicates with the Go native library
 /// via Flutter platform channels.
 ///
-/// Extends [JsBridge] so it can be used as a drop-in replacement
-/// for the JS WebView bridge. The [send] method translates the
+/// Extends [Bridge] so it can be used as a drop-in replacement
+/// for any bridge implementation. The [send] method translates the
 /// cmd-based protocol to MethodChannel calls.
 ///
 /// Push events from Go (message:received, peer:connected, etc.)
-/// are streamed via [eventStream].
-class GoBridgeClient extends JsBridge {
+/// are streamed via the EventChannel and routed to the inherited
+/// [onMessageReceived], [onPeerConnected], and [onPeerDisconnected]
+/// callbacks.
+class GoBridgeClient extends Bridge {
   static const _methodChannel = MethodChannel('com.mknoon/go_bridge');
   static const _eventChannel = EventChannel('com.mknoon/go_bridge_events');
 
-  /// Stream of push events from the Go layer as JSON strings.
-  ///
-  /// Events follow the format: `{ "event": "<name>", "data": { ... } }`
-  Stream<String> get eventStream =>
-      _eventChannel.receiveBroadcastStream().map((event) => event as String);
+  bool _initialized = false;
+  StreamSubscription<dynamic>? _eventSubscription;
+
+  @override
+  bool get isInitialized => _initialized;
 
   /// Map of cmd to (methodName, hasPayload).
+  ///
+  /// Keys match the command strings sent by [call*] and [callP2P*]
+  /// helper functions — identity/crypto use dots, P2P uses colons.
   static const _cmdMap = <String, _CmdSpec>{
+    // Identity
     'identity.generate': _CmdSpec('generateIdentity', false),
     'identity.restore': _CmdSpec('restoreIdentity', true),
+    // Crypto
     'mlkem.keygen': _CmdSpec('mlKemKeygen', false),
     'message.encrypt': _CmdSpec('encryptMessage', true),
     'message.decrypt': _CmdSpec('decryptMessage', true),
-    'sign.payload': _CmdSpec('signPayload', true),
-    'sign.verify': _CmdSpec('verifyPayload', true),
-    'node.start': _CmdSpec('startNode', true),
-    'node.stop': _CmdSpec('stopNode', false),
-    'node.status': _CmdSpec('nodeStatus', false),
-    'node.rendezvousRegister': _CmdSpec('rendezvousRegister', true),
-    'node.rendezvousDiscover': _CmdSpec('rendezvousDiscover', true),
-    'node.dialPeer': _CmdSpec('dialPeer', true),
-    'node.disconnectPeer': _CmdSpec('disconnectPeer', true),
-    'node.sendMessage': _CmdSpec('sendMessage', true),
-    'node.inboxStore': _CmdSpec('inboxStore', true),
-    'node.inboxRetrieve': _CmdSpec('inboxRetrieve', false),
-    'node.inboxRegisterToken': _CmdSpec('inboxRegisterToken', true),
+    'payload.sign': _CmdSpec('signPayload', true),
+    'payload.verify': _CmdSpec('verifyPayload', true),
+    // Node
+    'node:start': _CmdSpec('startNode', true),
+    'node:stop': _CmdSpec('stopNode', false),
+    'node:status': _CmdSpec('nodeStatus', false),
+    // Rendezvous
+    'rendezvous:register': _CmdSpec('rendezvousRegister', true),
+    'rendezvous:discover': _CmdSpec('rendezvousDiscover', true),
+    // Peer
+    'peer:dial': _CmdSpec('dialPeer', true),
+    'peer:disconnect': _CmdSpec('disconnectPeer', true),
+    // Messaging
+    'message:send': _CmdSpec('sendMessage', true),
+    // Inbox
+    'inbox:store': _CmdSpec('inboxStore', true),
+    'inbox:retrieve': _CmdSpec('inboxRetrieve', false),
+    'inbox:register_token': _CmdSpec('inboxRegisterToken', true),
   };
+
+  @override
+  Future<void> initialize() async {
+    if (_initialized) return;
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GO_BRIDGE_INIT_START',
+      details: {'type': 'native'},
+    );
+
+    // Subscribe to push events from the Go layer
+    _eventSubscription = _eventChannel.receiveBroadcastStream().listen(
+      _handleEvent,
+      onError: (error) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GO_BRIDGE_EVENT_STREAM_ERROR',
+          details: {'error': error.toString()},
+        );
+      },
+    );
+
+    _initialized = true;
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GO_BRIDGE_INIT_SUCCESS',
+      details: {'type': 'native'},
+    );
+  }
+
+  @override
+  Future<bool> checkHealth() async {
+    if (!_initialized) return false;
+
+    try {
+      final response = await send(jsonEncode({'cmd': 'node:status'}))
+          .timeout(const Duration(seconds: 5));
+      final data = jsonDecode(response);
+      return data['ok'] == true || data['errorCode'] != 'BRIDGE_DEAD';
+    } catch (_) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GO_BRIDGE_HEALTH_CHECK_FAILED',
+        details: {},
+      );
+      return false;
+    }
+  }
+
+  @override
+  Future<void> reinitialize() async {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GO_BRIDGE_REINIT_START',
+      details: {},
+    );
+
+    // Preserve callbacks
+    final savedOnMessage = onMessageReceived;
+    final savedOnConnect = onPeerConnected;
+    final savedOnDisconnect = onPeerDisconnected;
+
+    // Cancel existing subscription
+    await _eventSubscription?.cancel();
+    _eventSubscription = null;
+    _initialized = false;
+
+    // Restore callbacks
+    onMessageReceived = savedOnMessage;
+    onPeerConnected = savedOnConnect;
+    onPeerDisconnected = savedOnDisconnect;
+
+    // Re-initialize
+    await initialize();
+  }
+
+  @override
+  void dispose() {
+    _eventSubscription?.cancel();
+    _eventSubscription = null;
+    _initialized = false;
+    onMessageReceived = null;
+    onPeerConnected = null;
+    onPeerDisconnected = null;
+  }
+
+  /// Handle push events from the Go layer.
+  void _handleEvent(dynamic event) {
+    try {
+      final data = jsonDecode(event as String) as Map<String, dynamic>;
+      final eventName = data['event'] as String?;
+      final eventData = data['data'] as Map<String, dynamic>? ?? {};
+
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'P2P_PUSH_EVENT_RECEIVED',
+        details: {'event': eventName},
+      );
+
+      switch (eventName) {
+        case 'message:received':
+          if (onMessageReceived != null) {
+            try {
+              final chatMessage = ChatMessage.fromJson(eventData);
+              onMessageReceived!(chatMessage);
+            } catch (e) {
+              debugPrint('[GoBridgeClient] Error parsing chat message: $e');
+            }
+          }
+          break;
+
+        case 'peer:connected':
+          if (onPeerConnected != null) {
+            try {
+              final connState = ConnectionState.fromJson(eventData);
+              onPeerConnected!(connState);
+            } catch (e) {
+              debugPrint('[GoBridgeClient] Error parsing peer connected: $e');
+            }
+          }
+          break;
+
+        case 'peer:disconnected':
+          if (onPeerDisconnected != null) {
+            try {
+              final connState = ConnectionState.fromJson(eventData);
+              onPeerDisconnected!(connState);
+            } catch (e) {
+              debugPrint(
+                  '[GoBridgeClient] Error parsing peer disconnected: $e');
+            }
+          }
+          break;
+
+        default:
+          debugPrint('[GoBridgeClient] Unknown push event: $eventName');
+      }
+    } catch (e) {
+      debugPrint('[GoBridgeClient] Error handling event: $e');
+    }
+  }
 
   @override
   Future<String> send(String message) async {

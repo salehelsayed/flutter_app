@@ -2,8 +2,10 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'p2p_service.dart';
-import '../bridge/webview_js_bridge.dart';
+import '../bridge/bridge.dart';
 import '../bridge/p2p_bridge_client.dart';
+import '../local_discovery/local_discovery_service.dart';
+import '../local_discovery/local_p2p_service.dart';
 import '../utils/key_conversion.dart';
 import '../utils/chat_console_logger.dart';
 import '../utils/flow_event_emitter.dart';
@@ -13,9 +15,11 @@ import '../../features/p2p/domain/models/discovered_peer.dart';
 import '../../features/p2p/domain/models/send_message_result.dart';
 import '../../features/p2p/domain/models/connection_state.dart';
 
-/// Implementation of P2PService using WebViewJsBridge.
+/// Implementation of P2PService backed by the Go native bridge.
 class P2PServiceImpl implements P2PService {
-  final WebViewJsBridge _bridge;
+  final Bridge _bridge;
+  final LocalP2PService? _localP2P;
+  StreamSubscription<LocalChatMessage>? _localMessageSub;
 
   final _stateController = StreamController<NodeState>.broadcast();
   final _messageController = StreamController<ChatMessage>.broadcast();
@@ -24,15 +28,34 @@ class P2PServiceImpl implements P2PService {
   Timer? _healthCheckTimer;
   String? _lastFcmToken;
   String? _lastFcmPlatform;
+  bool _isStarting = false;
 
   /// How often the health check polls node:status.
   static const healthCheckInterval = Duration(seconds: 30);
 
-  P2PServiceImpl({required WebViewJsBridge bridge}) : _bridge = bridge {
+  /// Maximum time budget for warm background tasks during startup.
+  static const warmTaskTimeout = Duration(seconds: 5);
+
+  P2PServiceImpl({
+    required Bridge bridge,
+    LocalP2PService? localP2PService,
+  })  : _bridge = bridge,
+        _localP2P = localP2PService {
     // Register event handlers on the bridge
     _bridge.onMessageReceived = _handleMessageReceived;
     _bridge.onPeerConnected = _handlePeerConnected;
     _bridge.onPeerDisconnected = _handlePeerDisconnected;
+
+    // Merge local WiFi messages into the unified message stream
+    _localMessageSub = _localP2P?.localMessageStream.listen((localMsg) {
+      _handleMessageReceived(ChatMessage(
+        from: localMsg.from,
+        to: localMsg.to,
+        content: localMsg.content,
+        timestamp: localMsg.timestamp.toIso8601String(),
+        isIncoming: localMsg.isIncoming,
+      ));
+    });
   }
 
   @override
@@ -52,14 +75,28 @@ class P2PServiceImpl implements P2PService {
       details: {'peerId': peerId},
     );
 
-    try {
-      // Convert key format from BASE64 to HEX
-      final privateKeyHex = base64ToHex(privateKeyBase64);
+    final success = await startNodeCore(privateKeyBase64, peerId);
+    if (success) {
+      await warmBackground();
+    }
+    return success;
+  }
 
-      // Build the namespace for this peer
+  @override
+  Future<bool> startNodeCore(String privateKeyBase64, String peerId) async {
+    if (_isStarting) return false;
+    _isStarting = true;
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'P2P_SERVICE_START_NODE_CORE_BEGIN',
+      details: {'peerId': peerId},
+    );
+
+    try {
+      final privateKeyHex = base64ToHex(privateKeyBase64);
       final namespace = 'mknoon:chat:$peerId';
 
-      // Start the node via bridge
       final response = await callP2PNodeStart(
         _bridge,
         privateKeyHex: privateKeyHex,
@@ -70,35 +107,96 @@ class P2PServiceImpl implements P2PService {
       if (response['ok'] == true) {
         _currentState = NodeState.fromJson(response);
         _stateController.add(_currentState);
-        await _drainOfflineInbox();
-        _startHealthCheck();
 
         emitFlowEvent(
           layer: 'FL',
-          event: 'P2P_SERVICE_START_NODE_SUCCESS',
+          event: 'P2P_SERVICE_START_NODE_CORE_SUCCESS',
           details: {'peerId': _currentState.peerId},
         );
 
         return true;
-      } else {
+      }
+
+      // Handle hot restart: Go node is already running but Dart state was reset.
+      // Query node:status to sync Dart state with the running Go node.
+      final errorMsg = response['errorMessage']?.toString() ?? '';
+      if (errorMsg.contains('already started')) {
         emitFlowEvent(
           layer: 'FL',
-          event: 'P2P_SERVICE_START_NODE_ERROR',
-          details: {
-            'errorCode': response['errorCode'],
-            'errorMessage': response['errorMessage'],
-          },
+          event: 'P2P_SERVICE_START_NODE_CORE_ALREADY_RUNNING',
+          details: {},
         );
-        return false;
+
+        final statusResponse = await callP2PNodeStatus(_bridge);
+        if (statusResponse['ok'] == true) {
+          _currentState = NodeState.fromJson(statusResponse);
+          _stateController.add(_currentState);
+
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'P2P_SERVICE_START_NODE_CORE_RESYNCED',
+            details: {'peerId': _currentState.peerId},
+          );
+
+          return true;
+        }
       }
+
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'P2P_SERVICE_START_NODE_CORE_ERROR',
+        details: {
+          'errorCode': response['errorCode'],
+          'errorMessage': response['errorMessage'],
+        },
+      );
+      return false;
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
-        event: 'P2P_SERVICE_START_NODE_EXCEPTION',
+        event: 'P2P_SERVICE_START_NODE_CORE_EXCEPTION',
         details: {'error': e.toString()},
       );
       return false;
+    } finally {
+      _isStarting = false;
     }
+  }
+
+  @override
+  Future<void> warmBackground() async {
+    if (!_currentState.isStarted) return;
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'P2P_SERVICE_WARM_BACKGROUND_BEGIN',
+      details: {},
+    );
+
+    // Inbox drain — timeout to avoid blocking startup
+    try {
+      await _drainOfflineInbox().timeout(warmTaskTimeout);
+    } catch (e) {
+      debugPrint('[P2PService] Warm: inbox drain failed/timed out: $e');
+    }
+
+    _startHealthCheck();
+
+    // Local discovery — timeout to avoid slow mDNS
+    final localPeerId = _currentState.peerId;
+    if (_localP2P != null && localPeerId != null) {
+      try {
+        await _localP2P.start(localPeerId).timeout(warmTaskTimeout);
+      } catch (e) {
+        debugPrint('[P2PService] Warm: local P2P start failed/timed out: $e');
+      }
+    }
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'P2P_SERVICE_WARM_BACKGROUND_COMPLETE',
+      details: {},
+    );
   }
 
   /// Drain queued offline inbox messages and inject them into message stream.
@@ -163,6 +261,13 @@ class P2PServiceImpl implements P2PService {
     );
 
     try {
+      // Stop local WiFi discovery before stopping the relay node
+      try {
+        await _localP2P?.stop();
+      } catch (e) {
+        debugPrint('[P2PService] Local P2P stop failed: $e');
+      }
+
       _stopHealthCheck();
       final response = await callP2PNodeStop(_bridge);
 
@@ -210,7 +315,7 @@ class P2PServiceImpl implements P2PService {
         message: message,
       );
 
-      if (response['ok'] == true && response['sent'] == true) {
+      if (response['ok'] == true) {
         emitFlowEvent(
           layer: 'FL',
           event: 'P2P_SERVICE_SEND_MESSAGE_SUCCESS',
@@ -253,7 +358,7 @@ class P2PServiceImpl implements P2PService {
         message: message,
       );
 
-      if (response['ok'] == true && response['sent'] == true) {
+      if (response['ok'] == true) {
         final reply = response['reply'] as String?;
         emitFlowEvent(
           layer: 'FL',
@@ -288,7 +393,12 @@ class P2PServiceImpl implements P2PService {
     );
 
     try {
-      final response = await callP2PRendezvousDiscover(_bridge, peerId: peerId);
+      final namespace = 'mknoon:chat:$peerId';
+      final response = await callP2PRendezvousDiscover(
+        _bridge,
+        peerId: peerId,
+        namespace: namespace,
+      );
 
       if (response['ok'] == true) {
         final peers = response['peers'] as List<dynamic>?;
@@ -338,7 +448,7 @@ class P2PServiceImpl implements P2PService {
         addresses: addresses,
       );
 
-      if (response['ok'] == true && response['connected'] == true) {
+      if (response['ok'] == true) {
         emitFlowEvent(
           layer: 'FL',
           event: 'P2P_SERVICE_DIAL_PEER_SUCCESS',
@@ -437,6 +547,10 @@ class P2PServiceImpl implements P2PService {
         }
         return;
       }
+
+      // Drain offline inbox on each health check so we pick up
+      // messages stored while we were unreachable via direct dial.
+      await _drainOfflineInbox();
 
       // Normal path: only emit if something meaningful changed
       if (freshState.isStarted != _currentState.isStarted ||
@@ -640,6 +754,13 @@ class P2PServiceImpl implements P2PService {
       details: {},
     );
     await _performHealthCheck();
+
+    // Restart mDNS advertising (e.g. after iOS returns from background)
+    try {
+      await _localP2P?.restartAdvertising();
+    } catch (e) {
+      debugPrint('[P2PService] Local P2P restart advertising failed: $e');
+    }
   }
 
   @override
@@ -655,8 +776,19 @@ class P2PServiceImpl implements P2PService {
   }
 
   @override
+  bool isLocalPeer(String peerId) => _localP2P?.isLocalPeer(peerId) ?? false;
+
+  @override
+  Future<bool> sendLocalMessage(String peerId, String message, String fromPeerId) async {
+    if (_localP2P == null) return false;
+    return _localP2P.sendMessage(peerId, message, fromPeerId);
+  }
+
+  @override
   void dispose() {
     _stopHealthCheck();
+    _localMessageSub?.cancel();
+    _localP2P?.dispose();
     _stateController.close();
     _messageController.close();
 

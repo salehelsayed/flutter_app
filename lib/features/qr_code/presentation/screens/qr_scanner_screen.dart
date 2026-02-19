@@ -88,7 +88,7 @@ class _QRScannerScreenState extends State<QRScannerScreen> {
 
           // Instructions at bottom
           Positioned(
-            bottom: 100,
+            bottom: MediaQuery.of(context).padding.bottom + 80,
             left: 0,
             right: 0,
             child: Column(
@@ -117,7 +117,7 @@ class _QRScannerScreenState extends State<QRScannerScreen> {
           // Debug: Paste QR button (only in debug mode)
           if (kDebugMode)
             Positioned(
-              bottom: 40,
+              bottom: MediaQuery.of(context).padding.bottom + 16,
               left: 0,
               right: 0,
               child: Center(

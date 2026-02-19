@@ -7,7 +7,7 @@ enum GenerateIdentityResult {
   /// Identity was successfully generated and saved
   success,
 
-  /// Core library (JS bridge) returned an error
+  /// Core library (bridge) returned an error
   coreLibError,
 
   /// Database save operation failed
@@ -17,13 +17,13 @@ enum GenerateIdentityResult {
 /// Use case for generating a new identity.
 ///
 /// This function orchestrates the identity generation flow:
-/// 1. Calls the JS bridge to generate a new identity
+/// 1. Calls the bridge to generate a new identity
 /// 2. Maps the response to an IdentityModel
 /// 3. Persists the identity to the repository
 ///
 /// Dependencies are injected for testability.
 Future<GenerateIdentityResult> generateNewIdentity({
-  required Future<Map<String, dynamic>> Function() callJsGenerate,
+  required Future<Map<String, dynamic>> Function() callGenerate,
   required IdentityRepository repo,
 }) async {
   // Emit start event
@@ -40,10 +40,10 @@ Future<GenerateIdentityResult> generateNewIdentity({
     details: {},
   );
 
-  // Call JS bridge to generate identity
+  // Call bridge to generate identity
   final Map<String, dynamic> response;
   try {
-    response = await callJsGenerate();
+    response = await callGenerate();
   } catch (e) {
     emitFlowEvent(
       layer: 'FL',
@@ -53,7 +53,7 @@ Future<GenerateIdentityResult> generateNewIdentity({
     return GenerateIdentityResult.coreLibError;
   }
 
-  // Check if JS bridge returned an error
+  // Check if bridge returned an error
   final ok = response['ok'] as bool? ?? false;
   if (!ok) {
     final errorCode = response['errorCode'] as String? ?? 'UNKNOWN';

@@ -1,5 +1,5 @@
 import 'package:test/test.dart';
-import 'package:flutter_app/core/bridge/js_bridge_client.dart';
+import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/identity/application/startup_decision.dart';
@@ -7,8 +7,8 @@ import 'package:flutter_app/features/identity/application/generate_identity_use_
 import 'package:flutter_app/features/identity/application/restore_identity_use_case.dart';
 import 'dart:convert';
 
-// Mock JsBridge for testing
-class MockJsBridge extends JsBridge {
+// Mock Bridge for testing
+class MockBridge extends Bridge {
   String? lastMessage;
   String nextResponse = '';
   List<String> messageLog = [];
@@ -24,6 +24,17 @@ class MockJsBridge extends JsBridge {
     lastMessage = null;
     messageLog.clear();
   }
+
+  @override
+  Future<void> initialize() async {}
+  @override
+  Future<bool> checkHealth() async => true;
+  @override
+  Future<void> reinitialize() async {}
+  @override
+  void dispose() {}
+  @override
+  bool get isInitialized => true;
 }
 
 // Mock Repository for testing
@@ -74,17 +85,17 @@ class FlowEventCollector {
 
 void main() {
   group('Phase 3 Verification', () {
-    late MockJsBridge mockBridge;
+    late MockBridge mockBridge;
     late MockIdentityRepository mockRepo;
 
     setUp(() {
-      mockBridge = MockJsBridge();
+      mockBridge = MockBridge();
       mockRepo = MockIdentityRepository();
       FlowEventCollector.reset();
     });
 
     group('Bridge Functions', () {
-      test('FL_XS_08: callJsIdentityGenerate can call JS and receive responses', () async {
+      test('FL_XS_08: callIdentityGenerate can call JS and receive responses', () async {
         // Setup mock response for generate
         mockBridge.nextResponse = jsonEncode({
           'ok': true,
@@ -98,7 +109,7 @@ void main() {
           }
         });
 
-        final response = await callJsIdentityGenerate(mockBridge);
+        final response = await callIdentityGenerate(mockBridge);
 
         // Verify request was sent correctly
         final sentRequest = jsonDecode(mockBridge.lastMessage!);
@@ -115,7 +126,7 @@ void main() {
         print('✓ FL_XS_08: Bridge can call JS identity.generate and receive response');
       });
 
-      test('FL_XS_09: callJsIdentityRestore can call JS and receive responses', () async {
+      test('FL_XS_09: callIdentityRestore can call JS and receive responses', () async {
         // Setup mock response for restore
         mockBridge.nextResponse = jsonEncode({
           'ok': true,
@@ -130,7 +141,7 @@ void main() {
         });
 
         final testMnemonic = 'word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12';
-        final response = await callJsIdentityRestore(mockBridge, testMnemonic);
+        final response = await callIdentityRestore(mockBridge, testMnemonic);
 
         // Verify request was sent correctly
         final sentRequest = jsonDecode(mockBridge.lastMessage!);
@@ -155,7 +166,7 @@ void main() {
           'errorMessage': 'Invalid mnemonic phrase',
         });
 
-        final response = await callJsIdentityRestore(mockBridge, 'invalid mnemonic');
+        final response = await callIdentityRestore(mockBridge, 'invalid mnemonic');
 
         expect(response['ok'], isFalse);
         expect(response['errorCode'], equals('INVALID_MNEMONIC'));
@@ -205,7 +216,8 @@ void main() {
         });
 
         var result = await generateNewIdentity(
-          callJsGenerate: () => callJsIdentityGenerate(mockBridge),
+          callGenerate: () => callIdentityGenerate(mockBridge),
+          callMlKemKeygen: () async => {'ok': true, 'publicKey': 'mockMlKemPub', 'secretKey': 'mockMlKemSec'},
           repo: mockRepo,
         );
 
@@ -223,7 +235,8 @@ void main() {
         });
 
         result = await generateNewIdentity(
-          callJsGenerate: () => callJsIdentityGenerate(mockBridge),
+          callGenerate: () => callIdentityGenerate(mockBridge),
+          callMlKemKeygen: () async => {'ok': true, 'publicKey': 'mockMlKemPub', 'secretKey': 'mockMlKemSec'},
           repo: mockRepo,
         );
 
@@ -237,7 +250,8 @@ void main() {
         // Test invalid format (wrong word count)
         var result = await restoreIdentityFromMnemonic(
           input: 'only three words',
-          callJsRestore: (mnemonic) => callJsIdentityRestore(mockBridge, mnemonic),
+          callRestore: (mnemonic) => callIdentityRestore(mockBridge, mnemonic),
+          callMlKemKeygen: () async => {'ok': true, 'publicKey': 'mockMlKemPub', 'secretKey': 'mockMlKemSec'},
           repo: mockRepo,
         );
 
@@ -261,7 +275,8 @@ void main() {
 
         result = await restoreIdentityFromMnemonic(
           input: 'word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12',
-          callJsRestore: (mnemonic) => callJsIdentityRestore(mockBridge, mnemonic),
+          callRestore: (mnemonic) => callIdentityRestore(mockBridge, mnemonic),
+          callMlKemKeygen: () async => {'ok': true, 'publicKey': 'mockMlKemPub', 'secretKey': 'mockMlKemSec'},
           repo: mockRepo,
         );
 
@@ -280,7 +295,8 @@ void main() {
 
         result = await restoreIdentityFromMnemonic(
           input: 'wrong wrong wrong wrong wrong wrong wrong wrong wrong wrong wrong wrong',
-          callJsRestore: (mnemonic) => callJsIdentityRestore(mockBridge, mnemonic),
+          callRestore: (mnemonic) => callIdentityRestore(mockBridge, mnemonic),
+          callMlKemKeygen: () async => {'ok': true, 'publicKey': 'mockMlKemPub', 'secretKey': 'mockMlKemSec'},
           repo: mockRepo,
         );
 

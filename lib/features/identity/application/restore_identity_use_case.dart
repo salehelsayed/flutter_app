@@ -6,27 +6,31 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 enum RestoreIdentityResult {
   success,
   invalidMnemonicFormat, // word count != 12
-  invalidMnemonicCore, // JS returned INVALID_MNEMONIC
-  coreLibError, // JS returned other error
+  invalidMnemonicCore, // Bridge returned INVALID_MNEMONIC
+  coreLibError, // Bridge returned other error
   dbError, // DB save failed
 }
 
 /// Use case: Restore identity from a 12-word BIP39 mnemonic
 ///
-/// This function validates the mnemonic format locally, calls the JS bridge
+/// This function validates the mnemonic format locally, calls the bridge
 /// to restore the identity, and saves it to the database.
 ///
 /// Parameters:
 /// - [input]: Raw mnemonic string from UI (may have extra spaces, wrong case)
-/// - [callJsRestore]: Injected bridge function that calls identity.restore
+/// - [callRestore]: Injected bridge function that calls identity.restore
+/// - [callMlKemKeygen]: Injected bridge function for ML-KEM key generation
 /// - [repo]: IdentityRepository for persisting the identity
+/// - [onProgress]: Optional callback for UI progress updates
 ///
 /// Returns:
 /// - [RestoreIdentityResult] indicating the outcome of the operation
 Future<RestoreIdentityResult> restoreIdentityFromMnemonic({
   required String input,
-  required Future<Map<String, dynamic>> Function(String) callJsRestore,
+  required Future<Map<String, dynamic>> Function(String) callRestore,
+  required Future<Map<String, dynamic>> Function() callMlKemKeygen,
   required IdentityRepository repo,
+  void Function(String stage)? onProgress,
 }) async {
   // Emit start event
   emitFlowEvent(
@@ -49,17 +53,22 @@ Future<RestoreIdentityResult> restoreIdentityFromMnemonic({
     return RestoreIdentityResult.invalidMnemonicFormat;
   }
 
-  // Step 2: Call JS bridge to restore identity
+  // Step 2: Start both bridge calls in parallel (ML-KEM keygen is independent)
   emitFlowEvent(
     layer: 'FL',
     event: 'ID_M1_RESTORE_JS_CALL',
     details: {},
   );
 
+  onProgress?.call('generating_keys');
+
+  final mlKemFuture = callMlKemKeygen();
+
   final Map<String, dynamic> response;
   try {
-    response = await callJsRestore(normalizedMnemonic);
+    response = await callRestore(normalizedMnemonic);
   } catch (e) {
+    mlKemFuture.ignore();
     emitFlowEvent(
       layer: 'FL',
       event: 'ID_RESTORE_CORELIB_ERROR',
@@ -68,10 +77,11 @@ Future<RestoreIdentityResult> restoreIdentityFromMnemonic({
     return RestoreIdentityResult.coreLibError;
   }
 
-  // Step 3: Handle JS response
+  // Step 3: Handle bridge response
   final ok = response['ok'] as bool? ?? false;
 
   if (!ok) {
+    mlKemFuture.ignore();
     final errorCode = response['errorCode'] as String? ?? '';
 
     if (errorCode == 'INVALID_MNEMONIC') {
@@ -104,7 +114,50 @@ Future<RestoreIdentityResult> restoreIdentityFromMnemonic({
     details: {'peerId': peerId},
   );
 
-  final identity = IdentityModel.fromJson(identityJson);
+  var identity = IdentityModel.fromJson(identityJson);
+
+  // Await ML-KEM keygen — failure is fatal (no plaintext-only identities)
+  final Map<String, dynamic> mlKemResponse;
+  try {
+    mlKemResponse = await mlKemFuture;
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'ID_M1_MLKEM_KEYGEN_ERROR',
+      details: {'source': 'restore', 'error': e.toString()},
+    );
+    return RestoreIdentityResult.coreLibError;
+  }
+
+  if (mlKemResponse['ok'] != true) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'ID_M1_MLKEM_KEYGEN_ERROR',
+      details: {'source': 'restore', 'errorCode': mlKemResponse['errorCode']},
+    );
+    return RestoreIdentityResult.coreLibError;
+  }
+
+  identity = IdentityModel(
+    peerId: identity.peerId,
+    publicKey: identity.publicKey,
+    privateKey: identity.privateKey,
+    mnemonic12: identity.mnemonic12,
+    mlKemPublicKey: mlKemResponse['publicKey'] as String,
+    mlKemSecretKey: mlKemResponse['secretKey'] as String,
+    username: identity.username,
+    avatarBlob: identity.avatarBlob,
+    createdAt: identity.createdAt,
+    updatedAt: identity.updatedAt,
+  );
+
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'ID_M1_MLKEM_KEYGEN_OK',
+    details: {'source': 'restore'},
+  );
+
+  onProgress?.call('saving');
 
   // Step 5: Save to database
   try {

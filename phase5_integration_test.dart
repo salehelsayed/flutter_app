@@ -7,12 +7,12 @@ import 'package:flutter_app/features/identity/domain/repositories/identity_repos
 import 'package:flutter_app/features/identity/application/startup_decision.dart';
 import 'package:flutter_app/features/identity/application/generate_identity_use_case.dart';
 import 'package:flutter_app/features/identity/application/restore_identity_use_case.dart';
-import 'package:flutter_app/core/bridge/js_bridge_client.dart';
+import 'package:flutter_app/core/bridge/bridge.dart';
 import 'test/core/secure_storage/fake_secure_key_store.dart';
 import 'dart:convert';
 
-// Mock JsBridge for testing
-class MockJsBridge extends JsBridge {
+// Mock Bridge for testing
+class MockBridge extends Bridge {
   String? lastMessage;
   String nextResponse = '';
 
@@ -21,6 +21,17 @@ class MockJsBridge extends JsBridge {
     lastMessage = message;
     return nextResponse;
   }
+
+  @override
+  Future<void> initialize() async {}
+  @override
+  Future<bool> checkHealth() async => true;
+  @override
+  Future<void> reinitialize() async {}
+  @override
+  void dispose() {}
+  @override
+  bool get isInitialized => true;
 
   void setGenerateResponse() {
     nextResponse = jsonEncode({
@@ -62,7 +73,7 @@ class MockJsBridge extends JsBridge {
 void main() {
   late Database db;
   late IdentityRepositoryImpl repository;
-  late MockJsBridge mockBridge;
+  late MockBridge mockBridge;
 
   setUpAll(() {
     sqfliteFfiInit();
@@ -77,7 +88,7 @@ void main() {
       dbUpsertIdentityRow: (row) => dbUpsertIdentityRow(db, row),
       secureKeyStore: FakeSecureKeyStore(),
     );
-    mockBridge = MockJsBridge();
+    mockBridge = MockBridge();
   });
 
   tearDown(() async {
@@ -100,7 +111,8 @@ void main() {
       print('\n2. Generating new identity...');
       mockBridge.setGenerateResponse();
       final generateResult = await generateNewIdentity(
-        callJsGenerate: () => callJsIdentityGenerate(mockBridge),
+        callGenerate: () => callIdentityGenerate(mockBridge),
+        callMlKemKeygen: () async => {'ok': true, 'publicKey': 'mockMlKemPub', 'secretKey': 'mockMlKemSec'},
         repo: repository,
       );
       expect(generateResult, equals(GenerateIdentityResult.success));
@@ -140,7 +152,8 @@ void main() {
       mockBridge.setRestoreResponse(true);
       final restoreResult = await restoreIdentityFromMnemonic(
         input: 'word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12',
-        callJsRestore: (mnemonic) => callJsIdentityRestore(mockBridge, mnemonic),
+        callRestore: (mnemonic) => callIdentityRestore(mockBridge, mnemonic),
+        callMlKemKeygen: () async => {'ok': true, 'publicKey': 'mockMlKemPub', 'secretKey': 'mockMlKemSec'},
         repo: repository,
       );
       expect(restoreResult, equals(RestoreIdentityResult.success));
@@ -173,7 +186,8 @@ void main() {
       print('\n1. Setting up identity in database...');
       mockBridge.setGenerateResponse();
       await generateNewIdentity(
-        callJsGenerate: () => callJsIdentityGenerate(mockBridge),
+        callGenerate: () => callIdentityGenerate(mockBridge),
+        callMlKemKeygen: () async => {'ok': true, 'publicKey': 'mockMlKemPub', 'secretKey': 'mockMlKemSec'},
         repo: repository,
       );
       print('   ✓ Identity generated and saved');
@@ -206,7 +220,8 @@ void main() {
       print('\n1. Testing invalid word count...');
       final invalidCountResult = await restoreIdentityFromMnemonic(
         input: 'only three words',
-        callJsRestore: (mnemonic) => callJsIdentityRestore(mockBridge, mnemonic),
+        callRestore: (mnemonic) => callIdentityRestore(mockBridge, mnemonic),
+        callMlKemKeygen: () async => {'ok': true, 'publicKey': 'mockMlKemPub', 'secretKey': 'mockMlKemSec'},
         repo: repository,
       );
       expect(invalidCountResult, equals(RestoreIdentityResult.invalidMnemonicFormat));
@@ -217,7 +232,8 @@ void main() {
       mockBridge.setRestoreResponse(false);
       final invalidMnemonicResult = await restoreIdentityFromMnemonic(
         input: 'invalid invalid invalid invalid invalid invalid invalid invalid invalid invalid invalid invalid',
-        callJsRestore: (mnemonic) => callJsIdentityRestore(mockBridge, mnemonic),
+        callRestore: (mnemonic) => callIdentityRestore(mockBridge, mnemonic),
+        callMlKemKeygen: () async => {'ok': true, 'publicKey': 'mockMlKemPub', 'secretKey': 'mockMlKemSec'},
         repo: repository,
       );
       expect(invalidMnemonicResult, equals(RestoreIdentityResult.invalidMnemonicCore));

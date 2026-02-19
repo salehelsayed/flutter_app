@@ -22,11 +22,17 @@ import 'package:flutter_app/features/contact_request/application/contact_request
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository_impl.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/core/services/incoming_message_router.dart';
+import 'package:flutter_app/core/services/pending_message_retrier.dart';
 import 'package:flutter_app/features/identity/presentation/startup_router.dart';
-import 'package:flutter_app/core/bridge/webview_js_bridge.dart';
+import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/bridge/go_bridge_client.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
+import 'package:flutter_app/core/local_discovery/local_p2p_service.dart';
+import 'package:flutter_app/core/local_discovery/bonsoir_discovery_service.dart';
+import 'package:flutter_app/core/local_discovery/local_ws_server.dart';
 import 'package:flutter_app/core/theme/app_theme.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/core/utils/startup_timing.dart';
 import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:firebase_core/firebase_core.dart';
@@ -35,6 +41,7 @@ import 'package:flutter_app/features/push/application/background_message_handler
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  StartupTiming.instance.mark('app_start');
 
   // Initialize Firebase (mobile only — not available on desktop)
   final bool isDesktop = !kIsWeb && (Platform.isLinux || Platform.isWindows || Platform.isMacOS);
@@ -169,14 +176,27 @@ void main() async {
     dbLoadMessagesPage: (contactPeerId, {limit = 50, beforeTimestamp}) =>
         dbLoadMessagesPage(db, contactPeerId,
             limit: limit, beforeTimestamp: beforeTimestamp),
+    dbLoadFailedOutgoingMessages: () => dbLoadFailedOutgoingMessages(db),
   );
 
-  // Create and initialize the WebView JS bridge
-  final bridge = WebViewJsBridge();
+  // Create and initialize the bridge (Go native)
+  final Bridge bridge = GoBridgeClient();
   await bridge.initialize();
+  StartupTiming.instance.mark('bridge_initialized');
 
-  // Create P2P service (uses the same bridge)
-  final p2pService = P2PServiceImpl(bridge: bridge);
+  // Create local P2P service for WiFi-first delivery
+  final localDiscovery = BonsoirDiscoveryService();
+  final localWsServer = LocalWsServer();
+  final localP2PService = LocalP2PService(
+    discovery: localDiscovery,
+    wsServer: localWsServer,
+  );
+
+  // Create P2P service (uses the same bridge + local P2P)
+  final p2pService = P2PServiceImpl(
+    bridge: bridge,
+    localP2PService: localP2PService,
+  );
 
   // Create message router — single subscription, routes by type
   final messageRouter = IncomingMessageRouter(p2pService: p2pService);
@@ -204,10 +224,20 @@ void main() async {
     },
   );
 
-  // Start router first, then listeners
+  // Create pending message retrier
+  final pendingMessageRetrier = PendingMessageRetrier(
+    p2pService: p2pService,
+    messageRepo: messageRepository,
+    identityRepo: repository,
+    contactRepo: contactRepository,
+    bridge: bridge,
+  );
+
+  // Start router first, then listeners, then retrier
   messageRouter.start();
   contactRequestListener.start();
   chatMessageListener.start();
+  pendingMessageRetrier.start();
 
   runApp(MyApp(
     repository: repository,
@@ -217,10 +247,12 @@ void main() async {
     messageRepository: messageRepository,
     chatMessageListener: chatMessageListener,
     messageRouter: messageRouter,
+    pendingMessageRetrier: pendingMessageRetrier,
     bridge: bridge,
     p2pService: p2pService,
     isDesktop: isDesktop,
   ));
+  StartupTiming.instance.mark('run_app_called');
 }
 
 class MyApp extends StatefulWidget {
@@ -231,7 +263,8 @@ class MyApp extends StatefulWidget {
   final MessageRepositoryImpl messageRepository;
   final ChatMessageListener chatMessageListener;
   final IncomingMessageRouter messageRouter;
-  final WebViewJsBridge bridge;
+  final PendingMessageRetrier pendingMessageRetrier;
+  final Bridge bridge;
   final P2PServiceImpl p2pService;
   final bool isDesktop;
 
@@ -244,6 +277,7 @@ class MyApp extends StatefulWidget {
     required this.messageRepository,
     required this.chatMessageListener,
     required this.messageRouter,
+    required this.pendingMessageRetrier,
     required this.bridge,
     required this.p2pService,
     required this.isDesktop,
@@ -267,7 +301,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
 
-    // Orderly teardown: listeners → router → service → bridge
+    // Orderly teardown: retrier → listeners → router → service → bridge
+    widget.pendingMessageRetrier.dispose();
     widget.chatMessageListener.dispose();
     widget.contactRequestListener.dispose();
     widget.messageRouter.dispose();

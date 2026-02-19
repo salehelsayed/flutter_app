@@ -58,6 +58,18 @@ class FakeP2PService implements P2PService {
   Future<void> drainOfflineInbox() async {}
 
   @override
+  bool isLocalPeer(String peerId) => false;
+
+  @override
+  Future<bool> sendLocalMessage(String peerId, String message, String fromPeerId) async => false;
+
+  @override
+  Future<bool> startNodeCore(String privateKeyBase64, String peerId) async => false;
+
+  @override
+  Future<void> warmBackground() async {}
+
+  @override
   void dispose() => _messageController.close();
 }
 

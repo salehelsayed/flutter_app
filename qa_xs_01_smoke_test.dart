@@ -6,14 +6,25 @@ import 'package:flutter_app/core/database/helpers/identity_db_helpers.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository_impl.dart';
 import 'package:flutter_app/features/identity/presentation/startup_router.dart';
 import 'package:flutter_app/features/identity/presentation/screens/identity_choice_screen.dart';
-import 'package:flutter_app/core/bridge/js_bridge_client.dart';
+import 'package:flutter_app/core/bridge/bridge.dart';
 import 'test/core/secure_storage/fake_secure_key_store.dart';
 import 'dart:convert';
 
-// Mock JsBridge that simulates real identity generation
-class MockJsBridge extends JsBridge {
+// Mock Bridge that simulates real identity generation
+class MockBridge extends Bridge {
   final List<String> commandLog = [];
   int callCount = 0;
+
+  @override
+  Future<void> initialize() async {}
+  @override
+  Future<bool> checkHealth() async => true;
+  @override
+  Future<void> reinitialize() async {}
+  @override
+  void dispose() {}
+  @override
+  bool get isInitialized => true;
 
   @override
   Future<String> send(String message) async {
@@ -78,7 +89,7 @@ class FlowEventTracker {
 void main() {
   late Database db;
   late IdentityRepositoryImpl repository;
-  late MockJsBridge mockBridge;
+  late MockBridge mockBridge;
 
   setUpAll(() {
     // Initialize FFI for testing
@@ -109,7 +120,7 @@ void main() {
     );
 
     // Create mock bridge
-    mockBridge = MockJsBridge();
+    mockBridge = MockBridge();
 
     // Reset flow events
     FlowEventTracker.reset();
@@ -389,7 +400,7 @@ void main() {
     expect(mockBridge.callCount, equals(1));
     expect(mockBridge.commandLog.first, contains('identity.generate'));
     print('\nBridge Verification:');
-    print('  ✓ JS bridge called exactly once');
+    print('  ✓ Bridge called exactly once');
     print('  ✓ Command was identity.generate');
   });
 

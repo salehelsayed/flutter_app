@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+
 String shortenPeerId(String peerId, {int maxLength = 10}) {
   if (peerId.length <= maxLength) return peerId;
   return peerId.substring(0, maxLength);
@@ -23,10 +25,12 @@ void logChatOutgoing({
 }) {
   final attemptPart = attempt == null ? '' : ' attempt=$attempt';
   final preview = buildTextPreview(text);
-  print(
-    '[CHAT_OUT] id=${shortenMessageId(messageId)} to=${shortenPeerId(toPeerId)} '
-    'status=$status$attemptPart text="$preview"',
-  );
+  if (kDebugMode) {
+    debugPrint(
+      '[CHAT_OUT] id=${shortenMessageId(messageId)} to=${shortenPeerId(toPeerId)} '
+      'status=$status$attemptPart text="$preview"',
+    );
+  }
 }
 
 void logChatIncoming({
@@ -36,10 +40,12 @@ void logChatIncoming({
   required String text,
 }) {
   final preview = buildTextPreview(text);
-  print(
-    '[CHAT_IN] id=${shortenMessageId(messageId)} from=${shortenPeerId(fromPeerId)} '
-    'status=$status text="$preview"',
-  );
+  if (kDebugMode) {
+    debugPrint(
+      '[CHAT_IN] id=${shortenMessageId(messageId)} from=${shortenPeerId(fromPeerId)} '
+      'status=$status text="$preview"',
+    );
+  }
 }
 
 void logChatWireEnvelope({
@@ -52,7 +58,9 @@ void logChatWireEnvelope({
   final preview = wireJson.length > 300
       ? '${wireJson.substring(0, 300)}...(${wireJson.length} chars)'
       : wireJson;
-  print('[CHAT_WIRE_$direction]$idPart envelope=$preview');
+  if (kDebugMode) {
+    debugPrint('[CHAT_WIRE_$direction]$idPart envelope=$preview');
+  }
 }
 
 void logChatTransportIncoming({
@@ -63,8 +71,10 @@ void logChatTransportIncoming({
   String? envelopeType,
 }) {
   final type = envelopeType ?? 'unknown';
-  print(
-    '[CHAT_TRANSPORT_IN] from=${shortenPeerId(fromPeerId)} to=${shortenPeerId(toPeerId)} '
-    'incoming=$isIncoming contentLength=$contentLength type=$type',
-  );
+  if (kDebugMode) {
+    debugPrint(
+      '[CHAT_TRANSPORT_IN] from=${shortenPeerId(fromPeerId)} to=${shortenPeerId(toPeerId)} '
+      'incoming=$isIncoming contentLength=$contentLength type=$type',
+    );
+  }
 }

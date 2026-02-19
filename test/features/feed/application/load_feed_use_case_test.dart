@@ -103,6 +103,9 @@ class FakeMessageRepository implements MessageRepository {
     int limit = 50,
     String? beforeTimestamp,
   }) async => [];
+
+  @override
+  Future<List<ConversationMessage>> getFailedOutgoingMessages() async => [];
 }
 
 ContactModel _makeContact(String peerId, String username, String scannedAt) {

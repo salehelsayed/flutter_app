@@ -1,7 +1,7 @@
 import 'dart:collection';
 import 'dart:convert';
 
-import 'package:flutter_app/core/bridge/js_bridge_client.dart';
+import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart';
 import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository.dart';
@@ -40,7 +40,7 @@ enum HandleMessageResult {
 /// when result == contactRequest.
 Future<(HandleMessageResult, ContactRequestModel?)> handleIncomingMessage({
   required ChatMessage message,
-  required JsBridge bridge,
+  required Bridge bridge,
   required ContactRequestRepository requestRepo,
   required ContactRepository contactRepo,
   required String ownPeerId,
@@ -148,7 +148,7 @@ Future<(HandleMessageResult, ContactRequestModel?)> handleIncomingMessage({
   });
   final dataToVerify = jsonEncode(unsignedPayload);
 
-  final isValid = await callJsVerifyPayload(
+  final isValid = await callVerifyPayload(
     bridge: bridge,
     publicKey: publicKey,
     data: dataToVerify,

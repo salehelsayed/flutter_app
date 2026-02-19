@@ -31,6 +31,11 @@ target 'Runner' do
   use_frameworks!
 
   flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
+
+  # Go native library (built via: cd go-mknoon && make ios)
+  if File.exist?(File.join(__dir__, 'Runner', 'GoMknoon.xcframework'))
+    pod 'GoMknoon', :path => '.'
+  end
   target 'RunnerTests' do
     inherit! :search_paths
   end

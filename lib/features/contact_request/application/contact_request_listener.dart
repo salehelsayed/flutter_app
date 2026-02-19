@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter_app/core/bridge/js_bridge_client.dart';
+import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contact_request/application/handle_incoming_message_use_case.dart';
 import 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart';
@@ -16,7 +16,7 @@ class ContactRequestListener {
   final Stream<ChatMessage> contactRequestStream;
   final ContactRequestRepository requestRepo;
   final ContactRepository contactRepo;
-  final JsBridge bridge;
+  final Bridge bridge;
   final String Function() getOwnPeerId;
 
   StreamSubscription<ChatMessage>? _subscription;

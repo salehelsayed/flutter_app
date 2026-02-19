@@ -1,4 +1,5 @@
 import 'dart:typed_data';
+import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
@@ -47,84 +48,60 @@ class _FirstTimeExperienceScreenState extends State<FirstTimeExperienceScreen>
   late Animation<Offset> _qrSlide;
   late Animation<double> _scanOpacity;
   late Animation<Offset> _scanSlide;
-  late Animation<double> _emptyOpacity;
-  late Animation<Offset> _emptySlide;
 
   @override
   void initState() {
     super.initState();
     _controller = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 1200),
+      duration: const Duration(milliseconds: 850),
     );
+    const smoothCurve = Curves.easeOutCubic;
 
-    // Header: 0.0-0.4 (fadeInDown)
+    // Minimal stagger: all sections appear almost together.
     _headerOpacity = Tween<double>(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(
         parent: _controller,
-        curve: const Interval(0.0, 0.4, curve: Curves.easeOut),
+        curve: const Interval(0.00, 0.42, curve: smoothCurve),
       ),
     );
-    _headerSlide = Tween<Offset>(
-      begin: const Offset(0, -0.3),
-      end: Offset.zero,
-    ).animate(
-      CurvedAnimation(
-        parent: _controller,
-        curve: const Interval(0.0, 0.4, curve: Curves.easeOut),
-      ),
-    );
+    _headerSlide =
+        Tween<Offset>(begin: const Offset(0, -0.18), end: Offset.zero).animate(
+          CurvedAnimation(
+            parent: _controller,
+            curve: const Interval(0.00, 0.42, curve: smoothCurve),
+          ),
+        );
 
-    // QR: 0.15-0.55 (fadeInUp)
+    // QR follows almost immediately after header.
     _qrOpacity = Tween<double>(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(
         parent: _controller,
-        curve: const Interval(0.15, 0.55, curve: Curves.easeOut),
+        curve: const Interval(0.03, 0.45, curve: smoothCurve),
       ),
     );
-    _qrSlide = Tween<Offset>(
-      begin: const Offset(0, 0.3),
-      end: Offset.zero,
-    ).animate(
-      CurvedAnimation(
-        parent: _controller,
-        curve: const Interval(0.15, 0.55, curve: Curves.easeOut),
-      ),
-    );
+    _qrSlide = Tween<Offset>(begin: const Offset(0, 0.16), end: Offset.zero)
+        .animate(
+          CurvedAnimation(
+            parent: _controller,
+            curve: const Interval(0.03, 0.45, curve: smoothCurve),
+          ),
+        );
 
-    // Scan: 0.3-0.7 (fadeInUp)
+    // Scan appears with minimal delay from QR.
     _scanOpacity = Tween<double>(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(
         parent: _controller,
-        curve: const Interval(0.3, 0.7, curve: Curves.easeOut),
+        curve: const Interval(0.06, 0.48, curve: smoothCurve),
       ),
     );
-    _scanSlide = Tween<Offset>(
-      begin: const Offset(0, 0.3),
-      end: Offset.zero,
-    ).animate(
-      CurvedAnimation(
-        parent: _controller,
-        curve: const Interval(0.3, 0.7, curve: Curves.easeOut),
-      ),
-    );
-
-    // Empty: 0.45-0.85 (fadeInUp)
-    _emptyOpacity = Tween<double>(begin: 0.0, end: 1.0).animate(
-      CurvedAnimation(
-        parent: _controller,
-        curve: const Interval(0.45, 0.85, curve: Curves.easeOut),
-      ),
-    );
-    _emptySlide = Tween<Offset>(
-      begin: const Offset(0, 0.3),
-      end: Offset.zero,
-    ).animate(
-      CurvedAnimation(
-        parent: _controller,
-        curve: const Interval(0.45, 0.85, curve: Curves.easeOut),
-      ),
-    );
+    _scanSlide = Tween<Offset>(begin: const Offset(0, 0.16), end: Offset.zero)
+        .animate(
+          CurvedAnimation(
+            parent: _controller,
+            curve: const Interval(0.06, 0.48, curve: smoothCurve),
+          ),
+        );
 
     _controller.forward();
   }
@@ -137,92 +114,97 @@ class _FirstTimeExperienceScreenState extends State<FirstTimeExperienceScreen>
 
   @override
   Widget build(BuildContext context) {
+    final screenHeight = MediaQuery.of(context).size.height;
+    // Continuous scaling: 0.0 at 650pt (smallest), 1.0 at 900pt (largest)
+    final t = ((screenHeight - 650) / 250).clamp(0.0, 1.0);
+    final horizontalPadding = lerpDouble(20, 24, t)!;
+    final topGap = lerpDouble(4, 8, t)!;
+    final sectionGap = lerpDouble(8, 16, t)!;
+    final lowerGap = lerpDouble(8, 32, t)!;
+    final bottomGap = lerpDouble(4, 16, t)!;
+
     return AmbientBackground(
       child: SafeArea(
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24),
+          padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
           child: LayoutBuilder(
             builder: (context, constraints) {
               return SingleChildScrollView(
                 child: ConstrainedBox(
-                  constraints: BoxConstraints(
-                    minHeight: constraints.maxHeight,
-                  ),
-                  child: IntrinsicHeight(
-                    child: Column(
-                      children: [
-                        const SizedBox(height: 8),
-                        // Connection status indicator at the top
-                        if (widget.p2pService != null)
-                          Align(
-                            alignment: Alignment.topRight,
-                            child: ConnectionStatusIndicator(
-                              p2pService: widget.p2pService!,
-                            ),
+                  constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                  child: Column(
+                    children: [
+                      SizedBox(height: topGap),
+                      // Connection status indicator at the top
+                      if (widget.p2pService != null)
+                        Align(
+                          alignment: Alignment.topRight,
+                          child: ConnectionStatusIndicator(
+                            p2pService: widget.p2pService!,
                           ),
-                        const SizedBox(height: 8),
-                        // Header section (avatar + username)
-                        AnimatedBuilder(
-                          animation: _controller,
-                          builder: (context, child) {
-                            return Opacity(
-                              opacity: _headerOpacity.value,
-                              child: SlideTransition(
-                                position: _headerSlide,
-                                child: child,
-                              ),
-                            );
-                          },
-                          child: _buildHeader(),
                         ),
-                        const SizedBox(height: 16),
-                        // QR code section
-                        AnimatedBuilder(
-                          animation: _controller,
-                          builder: (context, child) {
-                            return Opacity(
-                              opacity: _qrOpacity.value,
-                              child: SlideTransition(
-                                position: _qrSlide,
-                                child: child,
-                              ),
-                            );
-                          },
-                          child: QRCodeSection(qrData: widget.qrData),
+                      SizedBox(height: topGap),
+                      // Header section (avatar + username)
+                      AnimatedBuilder(
+                        animation: _controller,
+                        builder: (context, child) {
+                          return Opacity(
+                            opacity: _headerOpacity.value,
+                            child: SlideTransition(
+                              position: _headerSlide,
+                              child: child,
+                            ),
+                          );
+                        },
+                        child: _buildHeader(scaleFactor: t),
+                      ),
+                      SizedBox(height: sectionGap),
+                      // QR code section
+                      AnimatedBuilder(
+                        animation: _controller,
+                        builder: (context, child) {
+                          return Opacity(
+                            opacity: _qrOpacity.value,
+                            child: SlideTransition(
+                              position: _qrSlide,
+                              child: child,
+                            ),
+                          );
+                        },
+                        child: RepaintBoundary(
+                          child: QRCodeSection(
+                            qrData: widget.qrData,
+                            scaleFactor: t,
+                          ),
                         ),
-                        const SizedBox(height: 16),
-                        // Scan friend card
-                        AnimatedBuilder(
-                          animation: _controller,
-                          builder: (context, child) {
-                            return Opacity(
-                              opacity: _scanOpacity.value,
-                              child: SlideTransition(
-                                position: _scanSlide,
-                                child: child,
-                              ),
-                            );
-                          },
+                      ),
+                      SizedBox(height: sectionGap),
+                      // Scan friend card
+                      AnimatedBuilder(
+                        animation: _controller,
+                        builder: (context, child) {
+                          return Opacity(
+                            opacity: _scanOpacity.value,
+                            child: SlideTransition(
+                              position: _scanSlide,
+                              child: child,
+                            ),
+                          );
+                        },
+                        child: RepaintBoundary(
                           child: ScanFriendCard(onTap: widget.onScanPressed),
                         ),
-                        const Spacer(),
-                        // Empty circle state
-                        AnimatedBuilder(
-                          animation: _controller,
-                          builder: (context, child) {
-                            return Opacity(
-                              opacity: _emptyOpacity.value,
-                              child: SlideTransition(
-                                position: _emptySlide,
-                                child: child,
-                              ),
-                            );
-                          },
-                          child: const EmptyCircleState(),
+                      ),
+                      SizedBox(height: lowerGap),
+                      // Empty circle state (visible immediately)
+                      const RepaintBoundary(
+                        child: TickerMode(
+                          enabled: true,
+                          child: EmptyCircleState(),
                         ),
-                        const SizedBox(height: 16),
-                      ],
-                    ),
+                      ),
+                      SizedBox(height: bottomGap),
+                    ],
                   ),
                 ),
               );
@@ -233,15 +215,18 @@ class _FirstTimeExperienceScreenState extends State<FirstTimeExperienceScreen>
     );
   }
 
-  Widget _buildHeader() {
+  Widget _buildHeader({required double scaleFactor}) {
+    final avatarSize = lerpDouble(64, 80, scaleFactor)!;
+    final gap = lerpDouble(6, 12, scaleFactor)!;
     return Column(
       children: [
         ProfileAvatarWidget(
           avatarBytes: widget.avatarBytes,
           peerId: widget.peerId,
           onCameraPressed: widget.onCameraPressed,
+          size: avatarSize,
         ),
-        const SizedBox(height: 12),
+        SizedBox(height: gap),
         EditableUsernameWidget(
           username: widget.username,
           onUsernameChanged: widget.onUsernameChanged,
