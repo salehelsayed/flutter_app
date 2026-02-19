@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/bridge/js_bridge_client.dart';
+import 'package:flutter_app/core/local_discovery/local_p2p_service.dart';
 import 'package:flutter_app/features/identity/application/startup_decision.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/identity/presentation/screens/identity_choice_wired.dart';
@@ -41,10 +42,14 @@ class StartupRouter extends StatefulWidget {
   /// The JS bridge instance for identity operations.
   final JsBridge bridge;
 
+  /// Local WiFi peer discovery and messaging service.
+  final LocalP2PService localP2PService;
+
   const StartupRouter({
     super.key,
     required this.repository,
     required this.bridge,
+    required this.localP2PService,
   });
 
   @override

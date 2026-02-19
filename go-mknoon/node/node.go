@@ -481,6 +481,13 @@ func (n *Node) PeerId() string {
 	return n.peerId
 }
 
+// Namespace returns the node's rendezvous namespace.
+func (n *Node) Namespace() string {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	return n.namespace
+}
+
 // --- Frame I/O (4-byte BE length prefix, matching relay server) ---
 
 func readFrame(r io.Reader) ([]byte, error) {

@@ -5,20 +5,26 @@ import 'package:flutter_app/core/database/helpers/identity_db_helpers.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository_impl.dart';
 import 'package:flutter_app/features/identity/presentation/startup_router.dart';
 import 'package:flutter_app/core/bridge/js_bridge_client.dart';
+import 'package:flutter_app/core/bridge/go_bridge_client.dart';
+import 'package:flutter_app/core/local_discovery/bonsoir_discovery_service.dart';
+import 'package:flutter_app/core/local_discovery/local_ws_server.dart';
+import 'package:flutter_app/core/local_discovery/local_p2p_service.dart';
+import 'package:flutter_app/core/services/p2p_service.dart';
+import 'package:flutter_app/core/services/p2p_service_impl.dart';
+import 'package:flutter_app/core/services/incoming_message_router.dart';
+import 'package:flutter_app/core/services/chat_message_listener.dart';
+import 'package:flutter_app/core/services/contact_request_listener.dart';
 import 'dart:convert';
 import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart' show kIsWeb;
 
-// Production JsBridge implementation
+/// Fallback bridge for desktop development (no native Go binary).
 class ProductionJsBridge extends JsBridge {
   @override
   Future<String> send(String message) async {
-    // In a real app, this would communicate with native platform code
-    // For now, we'll simulate responses for demo purposes
     final request = jsonDecode(message);
 
     if (request['cmd'] == 'identity.generate') {
-      // Simulate identity generation
       await Future.delayed(Duration(seconds: 1));
       return jsonEncode({
         'ok': true,
@@ -34,11 +40,9 @@ class ProductionJsBridge extends JsBridge {
     }
 
     if (request['cmd'] == 'identity.restore') {
-      // Simulate identity restoration
       await Future.delayed(Duration(seconds: 1));
       final mnemonic = request['payload']['mnemonic12'];
 
-      // Accept any 12-word mnemonic for demo
       if (mnemonic.split(' ').length == 12) {
         return jsonEncode({
           'ok': true,
@@ -73,7 +77,6 @@ void main() async {
 
   // Initialize database based on platform
   if (!kIsWeb && (Platform.isLinux || Platform.isWindows || Platform.isMacOS)) {
-    // Desktop platforms need FFI
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
   }
@@ -93,23 +96,68 @@ void main() async {
     dbUpsertIdentityRow: (row) => dbUpsertIdentityRow(db, row),
   );
 
-  // Create bridge
-  final bridge = ProductionJsBridge();
+  // Create bridge: GoBridgeClient on mobile, ProductionJsBridge on desktop
+  final bool isMobile = !kIsWeb && (Platform.isIOS || Platform.isAndroid);
+  final JsBridge bridge;
+  GoBridgeClient? goBridgeClient;
+
+  if (isMobile) {
+    goBridgeClient = GoBridgeClient();
+    bridge = goBridgeClient;
+  } else {
+    bridge = ProductionJsBridge();
+  }
+
+  // Create local P2P service for WiFi peer discovery
+  final localDiscovery = BonsoirDiscoveryService();
+  final localWsServer = LocalWsServer();
+  final localP2PService = LocalP2PService(
+    discovery: localDiscovery,
+    wsServer: localWsServer,
+  );
+
+  // Create P2P service backed by the bridge
+  final p2pServiceImpl = P2PServiceImpl(
+    bridge: bridge,
+    localP2PService: localP2PService,
+  );
+
+  // Wire Go push events to P2PServiceImpl (mobile only)
+  if (goBridgeClient != null) {
+    goBridgeClient.eventStream.listen(p2pServiceImpl.onGoEvent);
+  }
+
+  // Create the message routing pipeline
+  final messageRouter = IncomingMessageRouter(p2pService: p2pServiceImpl);
+  final chatMessageListener = ChatMessageListener(router: messageRouter);
+  final contactRequestListener = ContactRequestListener(router: messageRouter);
 
   runApp(MyApp(
     repository: repository,
     bridge: bridge,
+    localP2PService: localP2PService,
+    p2pService: p2pServiceImpl,
+    chatMessageListener: chatMessageListener,
+    contactRequestListener: contactRequestListener,
   ));
 }
 
 class MyApp extends StatelessWidget {
   final IdentityRepositoryImpl repository;
   final JsBridge bridge;
+  final LocalP2PService localP2PService;
+  final P2PService p2pService;
+  final ChatMessageListener chatMessageListener;
+  final ContactRequestListener contactRequestListener;
 
   const MyApp({
     Key? key,
     required this.repository,
     required this.bridge,
+    required this.localP2PService,
+    required this.p2pService,
+    required this.chatMessageListener,
+    required this.contactRequestListener,
   }) : super(key: key);
 
   @override
@@ -123,6 +171,7 @@ class MyApp extends StatelessWidget {
       home: StartupRouter(
         repository: repository,
         bridge: bridge,
+        localP2PService: localP2PService,
       ),
       debugShowCheckedModeBanner: false,
     );

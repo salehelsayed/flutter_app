@@ -279,3 +279,70 @@ func TestDecryptMessage_MissingFields(t *testing.T) {
 	m := parseJSON(t, result)
 	assertNotOk(t, m, "INVALID_INPUT")
 }
+
+// --- SignPayload + VerifyPayload ---
+
+func TestSignVerifyRoundTrip(t *testing.T) {
+	// Generate an identity to get a valid key pair
+	genResult := GenerateIdentity()
+	genMap := parseJSON(t, genResult)
+	assertOk(t, genMap)
+
+	identity := genMap["identity"].(map[string]interface{})
+	privateKey := identity["privateKey"].(string)
+	publicKey := identity["publicKey"].(string)
+
+	// Sign
+	data := "hello world"
+	signInput, _ := json.Marshal(map[string]string{
+		"privateKey": privateKey,
+		"data":       data,
+	})
+	signResult := SignPayload(string(signInput))
+	signMap := parseJSON(t, signResult)
+	assertOk(t, signMap)
+
+	signature := signMap["signature"].(string)
+	if signature == "" {
+		t.Fatal("signature is empty")
+	}
+
+	// Verify
+	verifyInput, _ := json.Marshal(map[string]string{
+		"publicKey": publicKey,
+		"data":      data,
+		"signature": signature,
+	})
+	verifyResult := VerifyPayload(string(verifyInput))
+	verifyMap := parseJSON(t, verifyResult)
+	assertOk(t, verifyMap)
+
+	valid, ok := verifyMap["valid"].(bool)
+	if !ok || !valid {
+		t.Errorf("expected valid=true, got %v", verifyMap["valid"])
+	}
+}
+
+func TestSignPayload_InvalidJSON(t *testing.T) {
+	result := SignPayload("not json")
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "INVALID_INPUT")
+}
+
+func TestVerifyPayload_InvalidJSON(t *testing.T) {
+	result := VerifyPayload("not json")
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "INVALID_INPUT")
+}
+
+func TestSignPayload_MissingFields(t *testing.T) {
+	result := SignPayload(`{"privateKey": "abc"}`)
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "INVALID_INPUT")
+}
+
+func TestVerifyPayload_MissingFields(t *testing.T) {
+	result := VerifyPayload(`{"publicKey": "abc"}`)
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "INVALID_INPUT")
+}

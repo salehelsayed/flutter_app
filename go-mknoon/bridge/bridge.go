@@ -13,10 +13,26 @@ package bridge
 import (
 	"encoding/json"
 	"fmt"
+	"sync"
 
 	mcrypto "github.com/mknoon/go-mknoon/crypto"
 	"github.com/mknoon/go-mknoon/identity"
+	"github.com/mknoon/go-mknoon/node"
 )
+
+var (
+	singletonNode *node.Node
+	nodeMu        sync.Mutex
+)
+
+// nodeCallbackAdapter adapts bridge.EventCallback to node.EventCallback.
+type nodeCallbackAdapter struct {
+	cb EventCallback
+}
+
+func (a *nodeCallbackAdapter) OnEvent(jsonString string) {
+	a.cb.OnEvent(jsonString)
+}
 
 // --- Identity ---
 
@@ -163,6 +179,515 @@ func DecryptMessage(paramsJSON string) (result string) {
 	return okJSON(map[string]interface{}{
 		"ok":        true,
 		"plaintext": plaintext,
+	})
+}
+
+// --- Crypto: Sign/Verify ---
+
+// SignPayload signs data with an Ed25519 private key.
+// Input JSON: { "privateKey": "<base64>", "data": "<string>" }
+// Returns JSON: { "ok": true, "signature": "<base64>" }
+func SignPayload(paramsJSON string) (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+		}
+	}()
+
+	var params struct {
+		PrivateKey string `json:"privateKey"`
+		Data       string `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
+		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
+	}
+	if params.PrivateKey == "" || params.Data == "" {
+		return errJSON("INVALID_INPUT", "missing privateKey or data")
+	}
+
+	sig, err := mcrypto.SignPayload(params.PrivateKey, params.Data)
+	if err != nil {
+		return errJSON("INTERNAL_ERROR", err.Error())
+	}
+
+	return okJSON(map[string]interface{}{
+		"ok":        true,
+		"signature": sig,
+	})
+}
+
+// VerifyPayload verifies an Ed25519 signature.
+// Input JSON: { "publicKey": "<base64>", "data": "<string>", "signature": "<base64>" }
+// Returns JSON: { "ok": true, "valid": true/false }
+func VerifyPayload(paramsJSON string) (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+		}
+	}()
+
+	var params struct {
+		PublicKey string `json:"publicKey"`
+		Data      string `json:"data"`
+		Signature string `json:"signature"`
+	}
+	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
+		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
+	}
+	if params.PublicKey == "" || params.Data == "" || params.Signature == "" {
+		return errJSON("INVALID_INPUT", "missing publicKey, data, or signature")
+	}
+
+	valid, err := mcrypto.VerifyPayload(params.PublicKey, params.Data, params.Signature)
+	if err != nil {
+		return errJSON("INTERNAL_ERROR", err.Error())
+	}
+
+	return okJSON(map[string]interface{}{
+		"ok":    true,
+		"valid": valid,
+	})
+}
+
+// --- Node Lifecycle ---
+
+// Initialize sets up the singleton node with an event callback.
+// Must be called before StartNode. Safe to call multiple times.
+func Initialize(cb EventCallback) {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+	if singletonNode == nil {
+		singletonNode = node.New(&nodeCallbackAdapter{cb: cb})
+	}
+}
+
+// StartNode starts the libp2p node.
+// Input JSON: { "privateKeyHex": "...", "relayAddresses": [...], "namespace": "...", "autoRegister": true, "listenPort": 0 }
+// Returns JSON: { "ok": true, "peerId": "...", "isStarted": true, "addresses": [...], "connections": 0 }
+func StartNode(paramsJSON string) (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+		}
+	}()
+
+	nodeMu.Lock()
+	n := singletonNode
+	nodeMu.Unlock()
+
+	if n == nil {
+		return errJSON("NOT_INITIALIZED", "call Initialize first")
+	}
+
+	var params struct {
+		PrivateKeyHex  string   `json:"privateKeyHex"`
+		RelayAddresses []string `json:"relayAddresses"`
+		Namespace      string   `json:"namespace"`
+		AutoRegister   bool     `json:"autoRegister"`
+		ListenPort     int      `json:"listenPort"`
+	}
+	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
+		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
+	}
+	if params.PrivateKeyHex == "" {
+		return errJSON("INVALID_INPUT", "missing privateKeyHex")
+	}
+
+	cfg := node.NodeConfig{
+		PrivateKeyHex:  params.PrivateKeyHex,
+		RelayAddresses: params.RelayAddresses,
+		Namespace:      params.Namespace,
+		AutoRegister:   params.AutoRegister,
+		ListenPort:     params.ListenPort,
+	}
+
+	state, err := n.Start(cfg)
+	if err != nil {
+		return errJSON("NODE_START_ERROR", err.Error())
+	}
+
+	return okJSON(map[string]interface{}{
+		"ok":          true,
+		"peerId":      state.PeerId,
+		"isStarted":   state.IsStarted,
+		"addresses":   state.Addresses,
+		"connections": state.Connections,
+	})
+}
+
+// StopNode stops the libp2p node.
+// Returns JSON: { "ok": true }
+func StopNode() (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+		}
+	}()
+
+	nodeMu.Lock()
+	n := singletonNode
+	nodeMu.Unlock()
+
+	if n == nil {
+		return errJSON("NOT_INITIALIZED", "call Initialize first")
+	}
+
+	if err := n.Stop(); err != nil {
+		return errJSON("NODE_STOP_ERROR", err.Error())
+	}
+
+	return okJSON(map[string]interface{}{
+		"ok": true,
+	})
+}
+
+// NodeStatus returns the current node state.
+// Returns JSON: { "ok": true, "peerId": "...", "isStarted": ..., "circuitAddresses": [...], "connections": [...] }
+func NodeStatus() (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+		}
+	}()
+
+	nodeMu.Lock()
+	n := singletonNode
+	nodeMu.Unlock()
+
+	if n == nil {
+		return errJSON("NOT_INITIALIZED", "call Initialize first")
+	}
+
+	return okJSON(n.Status())
+}
+
+// --- Rendezvous ---
+
+// RendezvousRegister registers on a rendezvous namespace.
+// Input JSON: { "namespace": "..." } (optional, defaults to node's namespace)
+// Returns JSON: { "ok": true }
+func RendezvousRegister(paramsJSON string) (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+		}
+	}()
+
+	nodeMu.Lock()
+	n := singletonNode
+	nodeMu.Unlock()
+
+	if n == nil {
+		return errJSON("NOT_INITIALIZED", "call Initialize first")
+	}
+
+	var params struct {
+		Namespace string `json:"namespace"`
+	}
+	if paramsJSON != "" {
+		if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
+			return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
+		}
+	}
+
+	ns := params.Namespace
+	if ns == "" {
+		ns = n.Namespace()
+	}
+
+	if err := n.RendezvousRegister(ns, nil); err != nil {
+		return errJSON("RENDEZVOUS_ERROR", err.Error())
+	}
+
+	return okJSON(map[string]interface{}{
+		"ok": true,
+	})
+}
+
+// RendezvousDiscover discovers peers on a rendezvous namespace.
+// Input JSON: { "namespace": "..." } (optional, defaults to node's namespace)
+// Returns JSON: { "ok": true, "peers": [{ "peerId": "...", "addresses": [...] }, ...] }
+func RendezvousDiscover(paramsJSON string) (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+		}
+	}()
+
+	nodeMu.Lock()
+	n := singletonNode
+	nodeMu.Unlock()
+
+	if n == nil {
+		return errJSON("NOT_INITIALIZED", "call Initialize first")
+	}
+
+	var params struct {
+		Namespace string `json:"namespace"`
+	}
+	if paramsJSON != "" {
+		if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
+			return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
+		}
+	}
+
+	ns := params.Namespace
+	if ns == "" {
+		ns = n.Namespace()
+	}
+
+	peers, err := n.RendezvousDiscover(ns, nil)
+	if err != nil {
+		return errJSON("RENDEZVOUS_ERROR", err.Error())
+	}
+
+	peerList := make([]map[string]interface{}, len(peers))
+	for i, p := range peers {
+		addrs := make([]string, len(p.Addrs))
+		for j, a := range p.Addrs {
+			addrs[j] = a.String()
+		}
+		peerList[i] = map[string]interface{}{
+			"peerId":    p.ID.String(),
+			"addresses": addrs,
+		}
+	}
+
+	return okJSON(map[string]interface{}{
+		"ok":    true,
+		"peers": peerList,
+	})
+}
+
+// --- Peer Operations ---
+
+// DialPeer connects to a peer.
+// Input JSON: { "peerId": "...", "addresses": [...] }
+// Returns JSON: { "ok": true }
+func DialPeer(paramsJSON string) (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+		}
+	}()
+
+	nodeMu.Lock()
+	n := singletonNode
+	nodeMu.Unlock()
+
+	if n == nil {
+		return errJSON("NOT_INITIALIZED", "call Initialize first")
+	}
+
+	var params struct {
+		PeerId    string   `json:"peerId"`
+		Addresses []string `json:"addresses"`
+	}
+	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
+		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
+	}
+	if params.PeerId == "" {
+		return errJSON("INVALID_INPUT", "missing peerId")
+	}
+
+	if err := n.DialPeer(params.PeerId, params.Addresses); err != nil {
+		return errJSON("DIAL_ERROR", err.Error())
+	}
+
+	return okJSON(map[string]interface{}{
+		"ok": true,
+	})
+}
+
+// DisconnectPeer disconnects from a peer.
+// Input JSON: { "peerId": "..." }
+// Returns JSON: { "ok": true }
+func DisconnectPeer(paramsJSON string) (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+		}
+	}()
+
+	nodeMu.Lock()
+	n := singletonNode
+	nodeMu.Unlock()
+
+	if n == nil {
+		return errJSON("NOT_INITIALIZED", "call Initialize first")
+	}
+
+	var params struct {
+		PeerId string `json:"peerId"`
+	}
+	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
+		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
+	}
+	if params.PeerId == "" {
+		return errJSON("INVALID_INPUT", "missing peerId")
+	}
+
+	if err := n.DisconnectPeer(params.PeerId); err != nil {
+		return errJSON("DISCONNECT_ERROR", err.Error())
+	}
+
+	return okJSON(map[string]interface{}{
+		"ok": true,
+	})
+}
+
+// SendMessage sends a message to a peer via the chat protocol.
+// Input JSON: { "peerId": "...", "message": "..." }
+// Returns JSON: { "ok": true, "reply": "..." }
+func SendMessage(paramsJSON string) (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+		}
+	}()
+
+	nodeMu.Lock()
+	n := singletonNode
+	nodeMu.Unlock()
+
+	if n == nil {
+		return errJSON("NOT_INITIALIZED", "call Initialize first")
+	}
+
+	var params struct {
+		PeerId  string `json:"peerId"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
+		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
+	}
+	if params.PeerId == "" || params.Message == "" {
+		return errJSON("INVALID_INPUT", "missing peerId or message")
+	}
+
+	reply, err := n.SendMessage(params.PeerId, params.Message)
+	if err != nil {
+		return errJSON("SEND_ERROR", err.Error())
+	}
+
+	return okJSON(map[string]interface{}{
+		"ok":    true,
+		"reply": reply,
+	})
+}
+
+// --- Inbox ---
+
+// InboxStore stores a message in the offline inbox.
+// Input JSON: { "toPeerId": "...", "message": "..." }
+// Returns JSON: { "ok": true }
+func InboxStore(paramsJSON string) (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+		}
+	}()
+
+	nodeMu.Lock()
+	n := singletonNode
+	nodeMu.Unlock()
+
+	if n == nil {
+		return errJSON("NOT_INITIALIZED", "call Initialize first")
+	}
+
+	var params struct {
+		ToPeerId string `json:"toPeerId"`
+		Message  string `json:"message"`
+	}
+	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
+		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
+	}
+	if params.ToPeerId == "" || params.Message == "" {
+		return errJSON("INVALID_INPUT", "missing toPeerId or message")
+	}
+
+	if err := n.InboxStore(params.ToPeerId, params.Message); err != nil {
+		return errJSON("INBOX_ERROR", err.Error())
+	}
+
+	return okJSON(map[string]interface{}{
+		"ok": true,
+	})
+}
+
+// InboxRetrieve retrieves pending messages from the offline inbox.
+// Returns JSON: { "ok": true, "messages": [{ "from": "...", "message": "...", "timestamp": ... }, ...] }
+func InboxRetrieve() (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+		}
+	}()
+
+	nodeMu.Lock()
+	n := singletonNode
+	nodeMu.Unlock()
+
+	if n == nil {
+		return errJSON("NOT_INITIALIZED", "call Initialize first")
+	}
+
+	msgs, err := n.InboxRetrieve()
+	if err != nil {
+		return errJSON("INBOX_ERROR", err.Error())
+	}
+
+	msgList := make([]map[string]interface{}, len(msgs))
+	for i, m := range msgs {
+		msgList[i] = map[string]interface{}{
+			"from":      m.From,
+			"message":   m.Message,
+			"timestamp": m.Timestamp,
+		}
+	}
+
+	return okJSON(map[string]interface{}{
+		"ok":       true,
+		"messages": msgList,
+	})
+}
+
+// InboxRegisterToken registers an FCM push token.
+// Input JSON: { "token": "...", "platform": "ios"|"android" }
+// Returns JSON: { "ok": true }
+func InboxRegisterToken(paramsJSON string) (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+		}
+	}()
+
+	nodeMu.Lock()
+	n := singletonNode
+	nodeMu.Unlock()
+
+	if n == nil {
+		return errJSON("NOT_INITIALIZED", "call Initialize first")
+	}
+
+	var params struct {
+		Token    string `json:"token"`
+		Platform string `json:"platform"`
+	}
+	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
+		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
+	}
+	if params.Token == "" || params.Platform == "" {
+		return errJSON("INVALID_INPUT", "missing token or platform")
+	}
+
+	if err := n.InboxRegisterToken(params.Token, params.Platform); err != nil {
+		return errJSON("INBOX_ERROR", err.Error())
+	}
+
+	return okJSON(map[string]interface{}{
+		"ok": true,
 	})
 }
 
