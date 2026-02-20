@@ -1,6 +1,9 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/home/presentation/widgets/ring_avatar.dart';
+import 'package:flutter_app/shared/widgets/media/audio_player_widget.dart';
+import 'package:flutter_app/shared/widgets/media/media_grid.dart';
 
 /// A full-width glassmorphic letter card for conversation messages.
 ///
@@ -16,6 +19,8 @@ class LetterCard extends StatelessWidget {
   final String? status;
   final String? quotedText;
   final bool isQuoteUnavailable;
+  final List<MediaAttachment> media;
+  final void Function(int index)? onMediaTap;
 
   const LetterCard({
     super.key,
@@ -27,7 +32,14 @@ class LetterCard extends StatelessWidget {
     this.status,
     this.quotedText,
     this.isQuoteUnavailable = false,
+    this.media = const [],
+    this.onMediaTap,
   });
+
+  List<MediaAttachment> get _imageVideoMedia =>
+      media.where((a) => a.mediaType == 'image' || a.mediaType == 'video').toList();
+  List<MediaAttachment> get _audioMedia =>
+      media.where((a) => a.mediaType == 'audio').toList();
 
   @override
   Widget build(BuildContext context) {
@@ -165,22 +177,37 @@ class LetterCard extends StatelessWidget {
                       padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
                       child: _buildQuoteBar(),
                     ),
-                  // Body text
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
-                    child: Text(
-                      text,
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w400,
-                        color: isIncoming
-                            ? const Color.fromRGBO(255, 255, 255, 0.90)
-                            : const Color.fromRGBO(255, 255, 255, 0.80),
-                        height: 1.65,
-                        letterSpacing: 0.2,
-                      ),
+                  // Media grid (images/videos)
+                  if (_imageVideoMedia.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(8, 0, 8, 4),
+                      child: MediaGrid(media: _imageVideoMedia, onTap: onMediaTap),
                     ),
-                  ),
+                  // Audio players
+                  for (final audio in _audioMedia)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+                      child: AudioPlayerWidget(attachment: audio),
+                    ),
+                  // Body text (only if non-empty)
+                  if (text.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+                      child: Text(
+                        text,
+                        style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w400,
+                          color: isIncoming
+                              ? const Color.fromRGBO(255, 255, 255, 0.90)
+                              : const Color.fromRGBO(255, 255, 255, 0.80),
+                          height: 1.65,
+                          letterSpacing: 0.2,
+                        ),
+                      ),
+                    )
+                  else if (media.isNotEmpty)
+                    const SizedBox(height: 12),
                   // Delivery note (sent cards only)
                   if (!isIncoming && status != null)
                     Padding(

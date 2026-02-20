@@ -1,6 +1,8 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/blocked_banner.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/attachment_preview_strip.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/compact_origin_marker.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/conversation_header.dart';
@@ -8,6 +10,8 @@ import 'package:flutter_app/features/conversation/presentation/widgets/date_sepa
 import 'package:flutter_app/features/conversation/presentation/widgets/empty_conversation_state.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/letter_card.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
+import 'package:flutter_app/shared/widgets/media/full_screen_image_viewer.dart';
+import 'package:flutter_app/shared/widgets/media/media_preview_text.dart';
 
 /// Pure UI conversation screen.
 ///
@@ -28,6 +32,10 @@ class ConversationScreen extends StatefulWidget {
   final bool isLoadingMore;
   final bool hasMoreOlderMessages;
   final bool initialLoadDone;
+  final VoidCallback? onAttach;
+  final List<File> pendingAttachments;
+  final bool isUploading;
+  final ValueChanged<int>? onRemoveAttachment;
 
   const ConversationScreen({
     super.key,
@@ -45,6 +53,10 @@ class ConversationScreen extends StatefulWidget {
     this.isLoadingMore = false,
     this.hasMoreOlderMessages = true,
     this.initialLoadDone = false,
+    this.onAttach,
+    this.pendingAttachments = const [],
+    this.isUploading = false,
+    this.onRemoveAttachment,
   });
 
   @override
@@ -88,11 +100,22 @@ class _ConversationScreenState extends State<ConversationScreen> {
                   : _buildMessageList(),
             ),
           ),
+          // Attachment preview strip
+          if (!widget.isBlocked && widget.pendingAttachments.isNotEmpty)
+            AttachmentPreviewStrip(
+              attachments: widget.pendingAttachments,
+              isUploading: widget.isUploading,
+              onRemove: widget.onRemoveAttachment,
+            ),
           // Compose area or blocked banner
           if (widget.isBlocked)
             BlockedBanner(onUnblock: widget.onUnblock)
           else
-            ComposeArea(onSend: widget.onSend),
+            ComposeArea(
+              onSend: widget.onSend,
+              onAttach: widget.onAttach,
+              hasAttachments: widget.pendingAttachments.isNotEmpty,
+            ),
         ],
       ),
     );
@@ -144,7 +167,11 @@ class _ConversationScreenState extends State<ConversationScreen> {
                   .where((m) => m.id == message.quotedMessageId)
                   .firstOrNull;
               if (quoted != null) {
-                quotedText = quoted.text;
+                if (quoted.text.isNotEmpty) {
+                  quotedText = quoted.text;
+                } else if (quoted.media.isNotEmpty) {
+                  quotedText = mediaPreviewText(quoted.media);
+                }
               } else {
                 isQuoteUnavailable = true;
               }
@@ -161,6 +188,27 @@ class _ConversationScreenState extends State<ConversationScreen> {
               status: message.isIncoming ? null : message.status,
               quotedText: quotedText,
               isQuoteUnavailable: isQuoteUnavailable,
+              media: message.media,
+              onMediaTap: (index) {
+                final visual = message.media
+                    .where((a) => a.mediaType == 'image' || a.mediaType == 'video')
+                    .toList();
+                if (index < visual.length && visual[index].localPath != null) {
+                  final allPaths = visual
+                      .where((a) => a.localPath != null && a.downloadStatus == 'done')
+                      .map((a) => a.localPath!)
+                      .toList();
+                  final tappedPath = visual[index].localPath!;
+                  final startIndex = allPaths.indexOf(tappedPath).clamp(0, allPaths.length - 1);
+                  Navigator.of(context).push(MaterialPageRoute(
+                    builder: (_) => FullScreenImageViewer(
+                      localPath: tappedPath,
+                      allPaths: allPaths,
+                      initialIndex: startIndex,
+                    ),
+                  ));
+                }
+              },
             );
 
             final shouldAnimate = !widget.initialLoadDone || isNew;

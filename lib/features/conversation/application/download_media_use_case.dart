@@ -27,8 +27,8 @@ Future<MediaAttachment?> downloadMedia({
   );
 
   try {
-    // 1. Resolve local path
-    final localPath = await mediaFileManager.localPathForAttachment(
+    // 1. Resolve absolute path for file I/O
+    final absolutePath = await mediaFileManager.localPathForAttachment(
       contactPeerId: contactPeerId,
       blobId: attachment.id,
       mime: attachment.mime,
@@ -42,7 +42,7 @@ Future<MediaAttachment?> downloadMedia({
     final result = await callP2PMediaDownload(
       bridge,
       id: attachment.id,
-      outputPath: localPath,
+      outputPath: absolutePath,
     );
 
     if (result['ok'] != true) {
@@ -57,8 +57,13 @@ Future<MediaAttachment?> downloadMedia({
       return null;
     }
 
-    // 4. Update DB with local path
-    await mediaAttachmentRepo.updateLocalPath(attachment.id, localPath);
+    // 4. Store relative path in DB (survives iOS container UUID changes)
+    final relativePath = mediaFileManager.relativePathForAttachment(
+      contactPeerId: contactPeerId,
+      blobId: attachment.id,
+      mime: attachment.mime,
+    );
+    await mediaAttachmentRepo.updateLocalPath(attachment.id, relativePath);
 
     emitFlowEvent(
       layer: 'FL',
@@ -66,8 +71,9 @@ Future<MediaAttachment?> downloadMedia({
       details: {'blobId': idPrefix},
     );
 
+    // Return absolute path for immediate UI display
     return attachment.copyWith(
-      localPath: localPath,
+      localPath: absolutePath,
       downloadStatus: 'done',
     );
   } catch (e) {

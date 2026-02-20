@@ -1,6 +1,9 @@
+import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
 import 'package:flutter_app/features/feed/domain/utils/group_messages_into_threads.dart';
@@ -12,6 +15,8 @@ import 'package:flutter_app/features/feed/domain/utils/group_messages_into_threa
 Future<List<FeedItem>> loadFeed({
   required ContactRepository contactRepo,
   required MessageRepository messageRepo,
+  MediaAttachmentRepository? mediaAttachmentRepo,
+  MediaFileManager? mediaFileManager,
 }) async {
   emitFlowEvent(layer: 'FL', event: 'FEED_LOAD_START', details: {});
 
@@ -27,11 +32,41 @@ Future<List<FeedItem>> loadFeed({
     };
 
     // Collect all messages across all contacts
-    final List<ConversationMessage> allMessages = [];
+    List<ConversationMessage> allMessages = [];
     for (final contact in contacts) {
       final messages =
           await messageRepo.getMessagesForContact(contact.peerId);
       allMessages.addAll(messages);
+    }
+
+    // Batch-attach media to messages, resolving relative paths
+    if (mediaAttachmentRepo != null && allMessages.isNotEmpty) {
+      final ids = allMessages.map((m) => m.id).toList();
+      final mediaMap = await mediaAttachmentRepo.getAttachmentsForMessages(ids);
+      if (mediaMap.isNotEmpty) {
+        // Resolve relative paths to absolute for display
+        final resolvedMap = <String, List<MediaAttachment>>{};
+        if (mediaFileManager != null) {
+          for (final entry in mediaMap.entries) {
+            final resolved = <MediaAttachment>[];
+            for (final a in entry.value) {
+              if (a.localPath != null) {
+                final absPath =
+                    await mediaFileManager.resolveStoredPath(a.localPath!);
+                resolved.add(a.copyWith(localPath: absPath));
+              } else {
+                resolved.add(a);
+              }
+            }
+            resolvedMap[entry.key] = resolved;
+          }
+        }
+
+        final effectiveMap = mediaFileManager != null ? resolvedMap : mediaMap;
+        allMessages = allMessages
+            .map((m) => m.copyWith(media: effectiveMap[m.id] ?? const []))
+            .toList();
+      }
     }
 
     // Group into thread items

@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contact_request/application/accept_contact_request_use_case.dart';
@@ -35,6 +36,7 @@ class FirstTimeExperienceWired extends StatefulWidget {
   final ChatMessageListener chatMessageListener;
   final Bridge bridge;
   final P2PService p2pService;
+  final MediaFileManager mediaFileManager;
 
   const FirstTimeExperienceWired({
     super.key,
@@ -47,6 +49,7 @@ class FirstTimeExperienceWired extends StatefulWidget {
     required this.chatMessageListener,
     required this.bridge,
     required this.p2pService,
+    required this.mediaFileManager,
   });
 
   @override
@@ -135,6 +138,7 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
             chatMessageListener: widget.chatMessageListener,
             bridge: widget.bridge,
             p2pService: widget.p2pService,
+            mediaFileManager: widget.mediaFileManager,
           ),
         ),
       );
@@ -381,6 +385,7 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
           chatMessageListener: widget.chatMessageListener,
           identityRepository: widget.repository,
           p2pService: widget.p2pService,
+          mediaFileManager: widget.mediaFileManager,
           ownPeerId: _identity!.peerId,
         ),
       ),

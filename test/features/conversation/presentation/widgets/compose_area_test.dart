@@ -6,6 +6,7 @@ void main() {
   Widget buildTestWidget({
     ValueChanged<String>? onSend,
     VoidCallback? onAttach,
+    bool hasAttachments = false,
   }) {
     return MaterialApp(
       home: Scaffold(
@@ -15,6 +16,7 @@ void main() {
             ComposeArea(
               onSend: onSend ?? (_) {},
               onAttach: onAttach,
+              hasAttachments: hasAttachments,
             ),
           ],
         ),
@@ -100,6 +102,78 @@ void main() {
 
       await tester.tap(find.byIcon(Icons.add_circle_outline));
       expect(attachPressed, true);
+    });
+
+    testWidgets('send button visible when hasAttachments is true and no text',
+        (tester) async {
+      await tester.pumpWidget(buildTestWidget(hasAttachments: true));
+      await tester.pumpAndSettle();
+
+      // Send button should be fully visible via the animation
+      final opacityWidgets = tester.widgetList<Opacity>(find.byType(Opacity));
+      final fullOpacity = opacityWidgets.where((o) => o.opacity == 1.0);
+      expect(fullOpacity, isNotEmpty);
+    });
+
+    testWidgets('media-only send fires onSend with empty string',
+        (tester) async {
+      String? sentText;
+      await tester.pumpWidget(buildTestWidget(
+        onSend: (text) => sentText = text,
+        hasAttachments: true,
+      ));
+      await tester.pumpAndSettle();
+
+      // Tap send without entering any text
+      await tester.tap(find.text('Send'));
+      await tester.pump();
+
+      expect(sentText, '');
+    });
+
+    testWidgets('send button hidden when no text and no attachments',
+        (tester) async {
+      await tester.pumpWidget(buildTestWidget(hasAttachments: false));
+      await tester.pump();
+
+      final opacityWidgets = tester.widgetList<Opacity>(find.byType(Opacity));
+      final zeroOpacity = opacityWidgets.where((o) => o.opacity == 0.0);
+      expect(zeroOpacity, isNotEmpty);
+    });
+
+    testWidgets('send button reacts to hasAttachments changing to true',
+        (tester) async {
+      // Start without attachments
+      await tester.pumpWidget(buildTestWidget(hasAttachments: false));
+      await tester.pump();
+
+      // Verify hidden
+      var opacityWidgets = tester.widgetList<Opacity>(find.byType(Opacity));
+      expect(opacityWidgets.where((o) => o.opacity == 0.0), isNotEmpty);
+
+      // Now rebuild with hasAttachments = true
+      await tester.pumpWidget(buildTestWidget(hasAttachments: true));
+      await tester.pumpAndSettle();
+
+      // Should now be visible
+      opacityWidgets = tester.widgetList<Opacity>(find.byType(Opacity));
+      expect(opacityWidgets.where((o) => o.opacity == 1.0), isNotEmpty);
+    });
+
+    testWidgets('does not fire onSend when no text and no attachments',
+        (tester) async {
+      String? sentText;
+      await tester.pumpWidget(buildTestWidget(
+        onSend: (text) => sentText = text,
+        hasAttachments: false,
+      ));
+      await tester.pumpAndSettle();
+
+      // Even though send button is in the tree, tapping it should not fire
+      await tester.tap(find.text('Send'));
+      await tester.pump();
+
+      expect(sentText, isNull);
     });
   });
 }

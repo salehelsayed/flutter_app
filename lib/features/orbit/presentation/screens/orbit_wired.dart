@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contact_request/application/accept_contact_request_use_case.dart';
@@ -45,6 +46,7 @@ class OrbitWired extends StatefulWidget {
   final ChatMessageListener chatMessageListener;
   final Bridge bridge;
   final P2PService p2pService;
+  final MediaFileManager mediaFileManager;
 
   const OrbitWired({
     super.key,
@@ -57,6 +59,7 @@ class OrbitWired extends StatefulWidget {
     required this.chatMessageListener,
     required this.bridge,
     required this.p2pService,
+    required this.mediaFileManager,
   });
 
   @override
@@ -428,6 +431,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           p2pService: widget.p2pService,
           bridge: widget.bridge,
           contactRepo: widget.contactRepo,
+          mediaAttachmentRepo: widget.mediaAttachmentRepo,
+          mediaFileManager: widget.mediaFileManager,
         ),
       ),
     ).then((_) => _loadOrbitData());
@@ -458,6 +463,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           chatMessageListener: widget.chatMessageListener,
           identityRepository: widget.identityRepo,
           p2pService: widget.p2pService,
+          mediaFileManager: widget.mediaFileManager,
           ownPeerId: _identity?.peerId ?? '',
         ),
       ),

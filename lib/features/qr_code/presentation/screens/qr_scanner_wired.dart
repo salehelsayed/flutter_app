@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/theme/app_colors.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -38,6 +39,7 @@ class QRScannerWired extends StatelessWidget {
   final ChatMessageListener chatMessageListener;
   final IdentityRepository identityRepository;
   final P2PService p2pService;
+  final MediaFileManager mediaFileManager;
   final String ownPeerId;
 
   const QRScannerWired({
@@ -51,6 +53,7 @@ class QRScannerWired extends StatelessWidget {
     required this.chatMessageListener,
     required this.identityRepository,
     required this.p2pService,
+    required this.mediaFileManager,
     required this.ownPeerId,
   });
 
@@ -250,6 +253,7 @@ class QRScannerWired extends StatelessWidget {
                         chatMessageListener: chatMessageListener,
                         bridge: bridge,
                         p2pService: p2pService,
+                        mediaFileManager: mediaFileManager,
                       ),
                     ),
                     (route) => false,

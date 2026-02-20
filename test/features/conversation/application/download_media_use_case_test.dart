@@ -201,6 +201,42 @@ void main() {
       expect(mediaRepo.localPathUpdates[0].$2, contains('.jpg'));
     });
 
+    test('stores relative path in DB for persistence', () async {
+      await downloadMedia(
+        bridge: bridge,
+        mediaAttachmentRepo: mediaRepo,
+        mediaFileManager: fileManager,
+        attachment: testAttachment,
+        contactPeerId: 'contact-A',
+      );
+
+      // Path stored in DB should be relative (starts with media/)
+      final storedPath = mediaRepo.localPathUpdates[0].$2;
+      expect(storedPath, startsWith('media/'));
+      expect(storedPath, contains('contact-A'));
+      expect(storedPath, contains('blob-download-001'));
+      expect(storedPath, endsWith('.jpg'));
+      // Should NOT be an absolute path
+      expect(storedPath, isNot(startsWith('/')));
+    });
+
+    test('returns absolute path for immediate UI display', () async {
+      final result = await downloadMedia(
+        bridge: bridge,
+        mediaAttachmentRepo: mediaRepo,
+        mediaFileManager: fileManager,
+        attachment: testAttachment,
+        contactPeerId: 'contact-A',
+      );
+
+      // Returned path for UI should be absolute
+      expect(result, isNotNull);
+      expect(result!.localPath, startsWith('/'));
+      expect(result.localPath, contains(tempDir.path));
+      expect(result.localPath, contains('contact-A'));
+      expect(result.localPath, endsWith('.jpg'));
+    });
+
     test('returns null and sets failed when bridge returns error', () async {
       bridge.downloadResponse = {
         'ok': false,

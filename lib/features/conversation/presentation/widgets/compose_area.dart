@@ -8,11 +8,13 @@ import 'package:flutter/material.dart';
 class ComposeArea extends StatefulWidget {
   final ValueChanged<String> onSend;
   final VoidCallback? onAttach;
+  final bool hasAttachments;
 
   const ComposeArea({
     super.key,
     required this.onSend,
     this.onAttach,
+    this.hasAttachments = false,
   });
 
   @override
@@ -48,17 +50,34 @@ class _ComposeAreaState extends State<ComposeArea>
 
     _controller.addListener(_onTextChanged);
     _focusNode.addListener(_onFocusChanged);
+
+    if (widget.hasAttachments) {
+      _sendButtonController.value = 1.0;
+    }
   }
 
   void _onTextChanged() {
     final hasText = _controller.text.trim().isNotEmpty;
     if (hasText != _hasText) {
       setState(() => _hasText = hasText);
-      if (hasText) {
-        _sendButtonController.forward();
-      } else {
-        _sendButtonController.reverse();
-      }
+      _updateSendButton();
+    }
+  }
+
+  void _updateSendButton() {
+    final shouldShow = _hasText || widget.hasAttachments;
+    if (shouldShow) {
+      _sendButtonController.forward();
+    } else {
+      _sendButtonController.reverse();
+    }
+  }
+
+  @override
+  void didUpdateWidget(ComposeArea oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.hasAttachments != widget.hasAttachments) {
+      _updateSendButton();
     }
   }
 
@@ -68,7 +87,7 @@ class _ComposeAreaState extends State<ComposeArea>
 
   void _onSendPressed() {
     final text = _controller.text.trim();
-    if (text.isEmpty) return;
+    if (text.isEmpty && !widget.hasAttachments) return;
     _controller.clear();
     widget.onSend(text);
   }
@@ -205,7 +224,7 @@ class _ComposeAreaState extends State<ComposeArea>
                       );
                     },
                     child: GestureDetector(
-                      onTap: _hasText ? _onSendPressed : null,
+                      onTap: (_hasText || widget.hasAttachments) ? _onSendPressed : null,
                       child: Container(
                         padding: const EdgeInsets.symmetric(
                           horizontal: 20,

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contact_request/application/accept_contact_request_use_case.dart';
@@ -44,6 +45,7 @@ class FeedWired extends StatefulWidget {
   final ChatMessageListener chatMessageListener;
   final Bridge bridge;
   final P2PService p2pService;
+  final MediaFileManager mediaFileManager;
 
   const FeedWired({
     super.key,
@@ -56,6 +58,7 @@ class FeedWired extends StatefulWidget {
     required this.chatMessageListener,
     required this.bridge,
     required this.p2pService,
+    required this.mediaFileManager,
   });
 
   @override
@@ -115,6 +118,8 @@ class _FeedWiredState extends State<FeedWired> {
       final items = await loadFeed(
         contactRepo: widget.contactRepository,
         messageRepo: widget.messageRepository,
+        mediaAttachmentRepo: widget.mediaAttachmentRepository,
+        mediaFileManager: widget.mediaFileManager,
       );
       if (!mounted) return;
 
@@ -319,6 +324,8 @@ class _FeedWiredState extends State<FeedWired> {
           p2pService: widget.p2pService,
           bridge: widget.bridge,
           contactRepo: widget.contactRepository,
+          mediaAttachmentRepo: widget.mediaAttachmentRepository,
+          mediaFileManager: widget.mediaFileManager,
         ),
       ),
     ).then((_) => _refreshFeed());
@@ -348,6 +355,8 @@ class _FeedWiredState extends State<FeedWired> {
           bridge: widget.bridge,
           initialMessages: messages,
           contactRepo: widget.contactRepository,
+          mediaAttachmentRepo: widget.mediaAttachmentRepository,
+          mediaFileManager: widget.mediaFileManager,
         ),
       ),
     ).then((_) => _refreshFeed());
@@ -430,6 +439,7 @@ class _FeedWiredState extends State<FeedWired> {
             chatMessageListener: widget.chatMessageListener,
             bridge: widget.bridge,
             p2pService: widget.p2pService,
+            mediaFileManager: widget.mediaFileManager,
           ),
         ),
       ).then((_) => _refreshFeed());

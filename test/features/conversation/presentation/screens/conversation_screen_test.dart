@@ -1,7 +1,10 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_screen.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/attachment_preview_strip.dart';
 
 void main() {
   Widget buildTestWidget({
@@ -11,6 +14,11 @@ void main() {
     bool isLoadingMore = false,
     bool hasMoreOlderMessages = true,
     bool initialLoadDone = false,
+    VoidCallback? onAttach,
+    List<File> pendingAttachments = const [],
+    bool isUploading = false,
+    ValueChanged<int>? onRemoveAttachment,
+    bool isBlocked = false,
   }) {
     return MaterialApp(
       home: Scaffold(
@@ -25,6 +33,11 @@ void main() {
           isLoadingMore: isLoadingMore,
           hasMoreOlderMessages: hasMoreOlderMessages,
           initialLoadDone: initialLoadDone,
+          onAttach: onAttach,
+          pendingAttachments: pendingAttachments,
+          isUploading: isUploading,
+          onRemoveAttachment: onRemoveAttachment,
+          isBlocked: isBlocked,
         ),
       ),
     );
@@ -141,5 +154,90 @@ void main() {
       expect(find.byType(CircularProgressIndicator), findsOneWidget);
     });
 
+  });
+
+  group('ConversationScreen attachments', () {
+    late Directory tempDir;
+    late List<File> testFiles;
+
+    setUp(() async {
+      tempDir = await Directory.systemTemp.createTemp('conv_screen_test_');
+      testFiles = [];
+      for (var i = 0; i < 2; i++) {
+        final file = File('${tempDir.path}/photo_$i.jpg');
+        await file.writeAsBytes([0xFF, 0xD8, 0xFF, 0xE0]);
+        testFiles.add(file);
+      }
+    });
+
+    tearDown(() async {
+      if (await tempDir.exists()) {
+        await tempDir.delete(recursive: true);
+      }
+    });
+
+    testWidgets('shows AttachmentPreviewStrip when pendingAttachments not empty',
+        (tester) async {
+      await tester.pumpWidget(buildTestWidget(
+        messages: [makeMessage()],
+        pendingAttachments: testFiles,
+        onRemoveAttachment: (_) {},
+        initialLoadDone: true,
+      ));
+      await pumpFrames(tester);
+
+      expect(find.byType(AttachmentPreviewStrip), findsOneWidget);
+      expect(find.byType(Image), findsNWidgets(2));
+    });
+
+    testWidgets('hides AttachmentPreviewStrip when pendingAttachments is empty',
+        (tester) async {
+      await tester.pumpWidget(buildTestWidget(
+        pendingAttachments: [],
+      ));
+      await tester.pump();
+
+      expect(find.byType(AttachmentPreviewStrip), findsNothing);
+    });
+
+    testWidgets('hides preview strip when blocked even if attachments exist',
+        (tester) async {
+      await tester.pumpWidget(buildTestWidget(
+        pendingAttachments: testFiles,
+        isBlocked: true,
+      ));
+      await tester.pump();
+
+      expect(find.byType(AttachmentPreviewStrip), findsNothing);
+    });
+
+    testWidgets('passes hasAttachments to ComposeArea', (tester) async {
+      await tester.pumpWidget(buildTestWidget(
+        messages: [makeMessage()],
+        pendingAttachments: testFiles,
+        initialLoadDone: true,
+      ));
+      // Use pumpFrames because AmbientBackground has repeating animation
+      await pumpFrames(tester);
+      await pumpFrames(tester);
+
+      // Send button should be visible because hasAttachments is derived
+      // from pendingAttachments.isNotEmpty
+      final opacityWidgets = tester.widgetList<Opacity>(find.byType(Opacity));
+      final fullOpacity = opacityWidgets.where((o) => o.opacity == 1.0);
+      expect(fullOpacity, isNotEmpty);
+    });
+
+    testWidgets('onAttach callback is passed through to ComposeArea',
+        (tester) async {
+      var attachCalled = false;
+      await tester.pumpWidget(buildTestWidget(
+        onAttach: () => attachCalled = true,
+      ));
+      await tester.pump();
+
+      await tester.tap(find.byIcon(Icons.add_circle_outline));
+      expect(attachCalled, true);
+    });
   });
 }

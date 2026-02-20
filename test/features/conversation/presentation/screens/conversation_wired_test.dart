@@ -13,6 +13,7 @@ import 'package:flutter_app/features/conversation/domain/repositories/media_atta
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/attachment_preview_strip.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
@@ -457,4 +458,198 @@ void main() {
       expect(messageRepo.store[sentMessageId!]!.status, 'delivered');
     });
   });
+
+  group('ConversationWired media props', () {
+    testWidgets('passes onAttach to screen — shows bottom sheet on tap',
+        (tester) async {
+      final identityRepo = FakeIdentityRepository(makeIdentity());
+      final messageRepo = FakeMessageRepository();
+      final chatListener = ChatMessageListener(
+        chatMessageStream: const Stream.empty(),
+        messageRepo: messageRepo,
+        contactRepo: FakeContactRepository(),
+      );
+
+      await pumpScreen(
+        tester,
+        identityRepo: identityRepo,
+        messageRepo: messageRepo,
+        chatListener: chatListener,
+        sendFn: _instantSuccessSendFn,
+      );
+
+      // Tap the attachment button
+      await tester.tap(find.byIcon(Icons.add_circle_outline));
+      // Use pump with duration instead of pumpAndSettle because
+      // AmbientBackground has a repeating 8s animation that never settles.
+      await tester.pump(const Duration(milliseconds: 500));
+
+      // Bottom sheet should show Photo Library and Camera options
+      expect(find.text('Photo Library'), findsOneWidget);
+      expect(find.text('Camera'), findsOneWidget);
+    });
+
+    testWidgets('does not show AttachmentPreviewStrip initially',
+        (tester) async {
+      final identityRepo = FakeIdentityRepository(makeIdentity());
+      final messageRepo = FakeMessageRepository();
+      final chatListener = ChatMessageListener(
+        chatMessageStream: const Stream.empty(),
+        messageRepo: messageRepo,
+        contactRepo: FakeContactRepository(),
+      );
+
+      await pumpScreen(
+        tester,
+        identityRepo: identityRepo,
+        messageRepo: messageRepo,
+        chatListener: chatListener,
+        sendFn: _instantSuccessSendFn,
+      );
+
+      expect(find.byType(AttachmentPreviewStrip), findsNothing);
+    });
+
+    testWidgets('text-only send works without bridge or media repos',
+        (tester) async {
+      final identityRepo = FakeIdentityRepository(makeIdentity());
+      final messageRepo = FakeMessageRepository();
+      final chatListener = ChatMessageListener(
+        chatMessageStream: const Stream.empty(),
+        messageRepo: messageRepo,
+        contactRepo: FakeContactRepository(),
+      );
+
+      List<MediaAttachment>? passedMedia;
+      MediaAttachmentRepository? passedMediaRepo;
+
+      Future<(SendChatMessageResult, ConversationMessage?)> sendFn({
+        required P2PService p2pService,
+        required MessageRepository messageRepo,
+        required String targetPeerId,
+        required String text,
+        required String senderPeerId,
+        required String senderUsername,
+        String? messageId,
+        String? timestamp,
+        Bridge? bridge,
+        String? recipientMlKemPublicKey,
+        List<MediaAttachment>? mediaAttachments,
+        MediaAttachmentRepository? mediaAttachmentRepo,
+      }) async {
+        passedMedia = mediaAttachments;
+        passedMediaRepo = mediaAttachmentRepo;
+
+        final delivered = ConversationMessage(
+          id: messageId!,
+          contactPeerId: targetPeerId,
+          senderPeerId: senderPeerId,
+          text: text,
+          timestamp: timestamp!,
+          status: 'delivered',
+          isIncoming: false,
+          createdAt: timestamp,
+        );
+        await messageRepo.saveMessage(delivered);
+        return (SendChatMessageResult.success, delivered);
+      }
+
+      await pumpScreen(
+        tester,
+        identityRepo: identityRepo,
+        messageRepo: messageRepo,
+        chatListener: chatListener,
+        sendFn: sendFn,
+      );
+
+      await tester.enterText(find.byType(TextField), 'Text only');
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.tap(find.text('Send'));
+      await tester.pump(const Duration(milliseconds: 50));
+
+      // No media should be passed for text-only sends
+      expect(passedMedia, isNull);
+      expect(passedMediaRepo, isNull);
+      expect(find.text('Text only'), findsOneWidget);
+
+      // Let scroll animation and post-frame callbacks complete
+      await tester.pump(const Duration(milliseconds: 500));
+    });
+
+    testWidgets('does not send when text is empty and no attachments',
+        (tester) async {
+      final identityRepo = FakeIdentityRepository(makeIdentity());
+      final messageRepo = FakeMessageRepository();
+      final chatListener = ChatMessageListener(
+        chatMessageStream: const Stream.empty(),
+        messageRepo: messageRepo,
+        contactRepo: FakeContactRepository(),
+      );
+
+      var sendCalled = false;
+
+      Future<(SendChatMessageResult, ConversationMessage?)> sendFn({
+        required P2PService p2pService,
+        required MessageRepository messageRepo,
+        required String targetPeerId,
+        required String text,
+        required String senderPeerId,
+        required String senderUsername,
+        String? messageId,
+        String? timestamp,
+        Bridge? bridge,
+        String? recipientMlKemPublicKey,
+        List<MediaAttachment>? mediaAttachments,
+        MediaAttachmentRepository? mediaAttachmentRepo,
+      }) async {
+        sendCalled = true;
+        return (SendChatMessageResult.success, null);
+      }
+
+      await pumpScreen(
+        tester,
+        identityRepo: identityRepo,
+        messageRepo: messageRepo,
+        chatListener: chatListener,
+        sendFn: sendFn,
+      );
+
+      // Tap send without entering text — the tap won't go through because
+      // GestureDetector's onTap is null when no text and no attachments
+      await tester.tap(find.text('Send'));
+      await tester.pump();
+
+      expect(sendCalled, false);
+      expect(messageRepo.store, isEmpty);
+    });
+  });
+}
+
+/// Convenience send function that returns success instantly.
+Future<(SendChatMessageResult, ConversationMessage?)> _instantSuccessSendFn({
+  required P2PService p2pService,
+  required MessageRepository messageRepo,
+  required String targetPeerId,
+  required String text,
+  required String senderPeerId,
+  required String senderUsername,
+  String? messageId,
+  String? timestamp,
+  Bridge? bridge,
+  String? recipientMlKemPublicKey,
+  List<MediaAttachment>? mediaAttachments,
+  MediaAttachmentRepository? mediaAttachmentRepo,
+}) async {
+  final delivered = ConversationMessage(
+    id: messageId ?? 'msg-default',
+    contactPeerId: targetPeerId,
+    senderPeerId: senderPeerId,
+    text: text,
+    timestamp: timestamp ?? DateTime.now().toUtc().toIso8601String(),
+    status: 'delivered',
+    isIncoming: false,
+    createdAt: timestamp ?? DateTime.now().toUtc().toIso8601String(),
+  );
+  await messageRepo.saveMessage(delivered);
+  return (SendChatMessageResult.success, delivered);
 }

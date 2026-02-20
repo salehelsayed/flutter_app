@@ -182,6 +182,11 @@ class P2PServiceImpl implements P2PService {
 
     _startHealthCheck();
 
+    // Early health check to catch AutoRelay reservation quickly
+    // (the periodic timer won't fire for 30s, but circuit addresses
+    // typically appear within a few seconds of relay connection).
+    Future.delayed(const Duration(seconds: 4), _performHealthCheck);
+
     // Local discovery — timeout to avoid slow mDNS
     final localPeerId = _currentState.peerId;
     if (_localP2P != null && localPeerId != null) {
