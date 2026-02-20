@@ -3,7 +3,7 @@ import 'package:flutter_app/features/contacts/domain/repositories/contact_reposi
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_friend.dart';
 
-/// Loads all contacts with their message counts, sorted by messageCount descending.
+/// Loads all contacts with their message activity, sorted by most recent message first.
 ///
 /// This drives the orbital ring placement: top 5 on ring 1, next 8 on ring 2.
 Future<List<OrbitFriend>> loadOrbitData({
@@ -43,7 +43,11 @@ Future<List<OrbitFriend>> loadOrbitData({
       ));
     }
 
-    friends.sort((a, b) => b.messageCount.compareTo(a.messageCount));
+    friends.sort((a, b) {
+      final aTime = a.lastMessageTimestamp ?? '';
+      final bTime = b.lastMessageTimestamp ?? '';
+      return bTime.compareTo(aTime);
+    });
 
     emitFlowEvent(
       layer: 'UC',

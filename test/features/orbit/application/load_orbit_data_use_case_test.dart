@@ -47,8 +47,12 @@ class FakeContactRepository implements ContactRepository {
 // -- Fake Message Repository --
 class FakeMessageRepository implements MessageRepository {
   final Map<String, int> messageCounts;
+  final Map<String, ConversationMessage?> latestMessages;
 
-  FakeMessageRepository({this.messageCounts = const {}});
+  FakeMessageRepository({
+    this.messageCounts = const {},
+    this.latestMessages = const {},
+  });
 
   @override
   Future<int> getMessageCountForContact(String contactPeerId) async =>
@@ -56,7 +60,7 @@ class FakeMessageRepository implements MessageRepository {
 
   @override
   Future<ConversationMessage?> getLatestMessageForContact(
-      String contactPeerId) async => null;
+      String contactPeerId) async => latestMessages[contactPeerId];
 
   @override
   Future<int> getUnreadCountForContact(String contactPeerId) async => 0;
@@ -138,23 +142,37 @@ void main() {
       expect(result[0].peerId, 'peer-C');
     });
 
-    test('sorts by messageCount descending', () async {
+    test('sorts by most recent message first', () async {
       final contacts = [
         _makeContact('peer-A'),
         _makeContact('peer-B'),
       ];
 
+      final msgA = ConversationMessage(
+        id: 'msg-a', contactPeerId: 'peer-A', senderPeerId: 'peer-A',
+        text: 'older', timestamp: '2026-01-01T00:00:00.000Z',
+        isIncoming: true, status: 'delivered',
+        createdAt: '2026-01-01T00:00:00.000Z',
+      );
+      final msgB = ConversationMessage(
+        id: 'msg-b', contactPeerId: 'peer-B', senderPeerId: 'peer-B',
+        text: 'newer', timestamp: '2026-02-01T00:00:00.000Z',
+        isIncoming: true, status: 'delivered',
+        createdAt: '2026-02-01T00:00:00.000Z',
+      );
+
       final result = await loadOrbitData(
         contactRepo: FakeContactRepository(contacts: contacts),
         messageRepo: FakeMessageRepository(
-          messageCounts: {'peer-A': 5, 'peer-B': 10},
+          messageCounts: {'peer-A': 10, 'peer-B': 5},
+          latestMessages: {'peer-A': msgA, 'peer-B': msgB},
         ),
       );
 
+      // peer-B has the more recent message, so it comes first
+      // even though peer-A has more total messages
       expect(result[0].peerId, 'peer-B');
-      expect(result[0].messageCount, 10);
       expect(result[1].peerId, 'peer-A');
-      expect(result[1].messageCount, 5);
     });
 
     test('returns empty list when no contacts', () async {
