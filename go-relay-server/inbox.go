@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/network"
@@ -22,8 +23,9 @@ const (
 	maxFrameLen         = 128 * 1024     // 128 KB
 	maxMessagesPerPeer  = 100
 	maxMessageAge       = 7 * 24 * time.Hour
-	statsLogInterval    = 60 * time.Second
 )
+
+var activeInboxStreams atomic.Int64
 
 // --- Push service ---
 
@@ -248,24 +250,6 @@ func (is *InboxStore) Stats() (totalPeers, totalMessages int) {
 	return
 }
 
-func (is *InboxStore) LogStatsPeriodically(ctx context.Context) {
-	ticker := time.NewTicker(statsLogInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ticker.C:
-			peers, msgs := is.Stats()
-			tokenCount := is.push.TokenCount()
-			if msgs > 0 || tokenCount > 0 {
-				log.Printf("[INBOX] Stats: %d peers, %d messages | [PUSH] %d registered tokens",
-					peers, msgs, tokenCount)
-			}
-		case <-ctx.Done():
-			return
-		}
-	}
-}
-
 func (is *InboxStore) pruneExpired(messages []inboxMessage) []inboxMessage {
 	if len(messages) == 0 {
 		return messages
@@ -333,10 +317,16 @@ type inboxResponse struct {
 }
 
 func HandleInboxStream(s network.Stream, inbox *InboxStore) {
+	start := time.Now()
+	current := activeInboxStreams.Add(1)
+	defer func() {
+		activeInboxStreams.Add(-1)
+		log.Printf("[INBOX] stream handled in %s", time.Since(start))
+	}()
 	defer s.Close()
 
 	remotePeer := s.Conn().RemotePeer().String()
-	log.Printf("[INBOX] Incoming stream from %s", remotePeer[:min(20, len(remotePeer))])
+	log.Printf("[INBOX] Incoming stream from %s (active=%d)", remotePeer[:min(20, len(remotePeer))], current)
 
 	requestBytes, err := readFrame(s)
 	if err != nil {

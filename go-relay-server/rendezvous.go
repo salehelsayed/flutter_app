@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/network"
@@ -20,6 +21,8 @@ const (
 	maxNamespaceLen    = 256
 	cleanupInterval    = 60 * time.Second
 )
+
+var activeRendezvousStreams atomic.Int64
 
 // --- In-memory store ---
 
@@ -130,13 +133,29 @@ func (s *RendezvousStore) Discover(ns string, requestingPeer string, limit uint6
 	return results
 }
 
+func (s *RendezvousStore) Stats() (namespaces, totalPeers int) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	namespaces = len(s.registrations)
+	for _, peers := range s.registrations {
+		totalPeers += len(peers)
+	}
+	return
+}
+
 // --- Stream handler ---
 
 func HandleRendezvousStream(s network.Stream, store *RendezvousStore) {
+	start := time.Now()
+	current := activeRendezvousStreams.Add(1)
+	defer func() {
+		activeRendezvousStreams.Add(-1)
+		log.Printf("[RENDEZVOUS] stream handled in %s", time.Since(start))
+	}()
 	defer s.Close()
 
 	remotePeer := s.Conn().RemotePeer()
-	log.Printf("[RENDEZVOUS] Incoming stream from %s", shortPeerId(remotePeer))
+	log.Printf("[RENDEZVOUS] Incoming stream from %s (active=%d)", shortPeerId(remotePeer), current)
 
 	// Read varint-prefixed request
 	reader := msgio.NewVarintReaderSize(s, 1<<20) // 1MB max

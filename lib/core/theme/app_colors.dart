@@ -22,4 +22,11 @@ class AppColors {
   // Ambient glow colors
   static const Color greenGlow = Color(0xFF1DB954);
   static const Color redGlow = Color(0xFFFF3232);
+
+  // Conversation state accents
+  static const Color tealAccent = Color(0xFF4ECDC4);
+  static const Color warmOrange = Color(0xFFFF6B6B);
+  static const Color warmOrangeGlow = Color(0x14FF6B6B); // 8%
+  static const Color tealBorderTint = Color(0x1F4ECDC4); // 12%
+  static const Color warmBorderTint = Color(0x1FFF6B6B); // 12%
 }

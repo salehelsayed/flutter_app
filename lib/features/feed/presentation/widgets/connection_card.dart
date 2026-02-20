@@ -8,6 +8,7 @@ class ConnectionCard extends StatefulWidget {
   final String contactUsername;
   final String? contactAvatarPath;
   final VoidCallback? onSendMessage;
+  final bool isBlocked;
 
   const ConnectionCard({
     super.key,
@@ -15,6 +16,7 @@ class ConnectionCard extends StatefulWidget {
     required this.contactUsername,
     this.contactAvatarPath,
     this.onSendMessage,
+    this.isBlocked = false,
   });
 
   @override
@@ -175,6 +177,36 @@ class _ConnectionCardState extends State<ConnectionCard>
                         },
                       ),
                     ),
+                    if (widget.isBlocked)
+                      Positioned.fill(
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(34),
+                            color: const Color.fromRGBO(0, 0, 0, 0.45),
+                          ),
+                          child: const Center(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.block,
+                                  size: 28,
+                                  color: Color.fromRGBO(255, 255, 255, 0.60),
+                                ),
+                                SizedBox(height: 8),
+                                Text(
+                                  'Blocked',
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w600,
+                                    color: Color.fromRGBO(255, 255, 255, 0.60),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
                   ],
                 ),
               ),
@@ -294,7 +326,7 @@ class _ConnectionCardState extends State<ConnectionCard>
       width: compact ? 182 : 198,
       height: 42,
       child: ElevatedButton(
-        onPressed: widget.onSendMessage,
+        onPressed: widget.isBlocked ? null : widget.onSendMessage,
         style: ElevatedButton.styleFrom(
           backgroundColor: const Color.fromRGBO(45, 155, 91, 0.26),
           foregroundColor: const Color(0xFF56C672),

@@ -4,8 +4,8 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
-import gomknoon.Bridge as GoMknoon
-import gomknoon.EventCallback as GoEventCallback
+import bridge.Bridge as GoMknoon
+import bridge.EventCallback as GoEventCallback
 
 /**
  * Bridges Flutter MethodChannel/EventChannel to the Go native library.

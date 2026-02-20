@@ -16,13 +16,14 @@ Future<List<FeedItem>> loadFeed({
   emitFlowEvent(layer: 'FL', event: 'FEED_LOAD_START', details: {});
 
   try {
-    final contacts = (await contactRepo.getActiveContacts())
-        .where((c) => !c.isBlocked)
-        .toList();
+    final contacts = await contactRepo.getActiveContacts();
 
-    // Build contact username map
+    // Build contact username map and blocked-status lookup
     final contactUsernames = <String, String>{
       for (final c in contacts) c.peerId: c.username,
+    };
+    final contactBlocked = <String, bool>{
+      for (final c in contacts) c.peerId: c.isBlocked,
     };
 
     // Collect all messages across all contacts
@@ -37,6 +38,7 @@ Future<List<FeedItem>> loadFeed({
     final threadItems = groupMessagesIntoThreads(
       allMessages: allMessages,
       contactUsernames: contactUsernames,
+      contactBlocked: contactBlocked,
     );
 
     // Create connection items

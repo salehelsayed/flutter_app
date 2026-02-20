@@ -8,7 +8,7 @@ IOS_OUT := ../ios/Runner/GoMknoon.xcframework
 ANDROID_OUT := ../android/app/libs/GoMknoon.aar
 
 # Android min API level (matches Flutter minSdk)
-ANDROID_API ?= 23
+ANDROID_API ?= 24
 
 # Go ≥1.23 restricts //go:linkname; wlynxg/anet needs the check disabled.
 ANDROID_LDFLAGS := -checklinkname=0

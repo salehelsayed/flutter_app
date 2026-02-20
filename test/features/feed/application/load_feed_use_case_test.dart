@@ -170,7 +170,7 @@ void main() {
       expect((result[1] as ConnectionFeedItem).contactUsername, 'Alice');
     });
 
-    test('groups incoming messages into ThreadFeedItems by contact', () async {
+    test('groups sent and received messages into ThreadFeedItems by contact', () async {
       final contacts = [
         _makeContact('peer-A', 'Alice', '2026-02-09T10:00:00.000Z'),
       ];
@@ -211,14 +211,15 @@ void main() {
 
       final threadItems = result.whereType<ThreadFeedItem>().toList();
       expect(threadItems.length, 1);
-      // Two incoming messages grouped into one thread
-      expect(threadItems[0].messages.length, 2);
+      // All 3 messages (sent + received) grouped into one thread
+      expect(threadItems[0].messages.length, 3);
       expect(threadItems[0].messages[0].text, 'Hello from Alice');
-      expect(threadItems[0].messages[1].text, 'Second message');
+      expect(threadItems[0].messages[1].text, 'My reply');
+      expect(threadItems[0].messages[2].text, 'Second message');
       expect(threadItems[0].contactUsername, 'Alice');
     });
 
-    test('same contact produces separate unread and read stacks', () async {
+    test('same contact with 24hr gap produces separate thread stacks', () async {
       final contacts = [
         _makeContact('peer-A', 'Alice', '2026-02-09T10:00:00.000Z'),
       ];
@@ -230,16 +231,17 @@ void main() {
             contactPeerId: 'peer-A',
             senderPeerId: 'peer-A',
             text: 'Read message',
-            timestamp: '2026-02-09T12:00:00.000Z',
+            timestamp: '2026-02-08T08:00:00.000Z',
             isIncoming: true,
-            readAt: '2026-02-09T12:30:00.000Z',
+            readAt: '2026-02-08T08:30:00.000Z',
           ),
+          // 26 hour gap → new thread
           _makeMessage(
             id: 'msg-2',
             contactPeerId: 'peer-A',
             senderPeerId: 'peer-A',
             text: 'Unread message',
-            timestamp: '2026-02-09T13:00:00.000Z',
+            timestamp: '2026-02-09T10:00:00.000Z',
             isIncoming: true,
           ),
         ],
@@ -251,7 +253,7 @@ void main() {
       );
 
       final threadItems = result.whereType<ThreadFeedItem>().toList();
-      // Two stacks: unread + read
+      // Two threads split by 24hr gap: unread + read
       expect(threadItems.length, 2);
       final unread = threadItems.where((t) => t.isUnreadCard).toList();
       final read = threadItems.where((t) => !t.isUnreadCard).toList();
@@ -296,7 +298,7 @@ void main() {
           (result[2] as ConnectionFeedItem).contactUsername, 'Alice');
     });
 
-    test('excludes blocked contacts from feed', () async {
+    test('includes blocked contacts with isBlocked flag', () async {
       final contacts = [
         _makeContact('peer-A', 'Alice', '2026-02-01T10:00:00.000Z'),
         ContactModel(
@@ -316,8 +318,14 @@ void main() {
         messageRepo: FakeMessageRepository(),
       );
 
-      expect(result.length, 1);
-      expect((result[0] as ConnectionFeedItem).contactUsername, 'Alice');
+      expect(result.length, 2);
+      // Both present, newest first: BlockedBob (14:00) then Alice (10:00)
+      final bob = result[0] as ConnectionFeedItem;
+      final alice = result[1] as ConnectionFeedItem;
+      expect(bob.contactUsername, 'BlockedBob');
+      expect(bob.isBlocked, isTrue);
+      expect(alice.contactUsername, 'Alice');
+      expect(alice.isBlocked, isFalse);
     });
   });
 }
