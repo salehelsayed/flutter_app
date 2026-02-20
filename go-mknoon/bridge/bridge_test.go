@@ -346,3 +346,107 @@ func TestVerifyPayload_MissingFields(t *testing.T) {
 	m := parseJSON(t, result)
 	assertNotOk(t, m, "INVALID_INPUT")
 }
+
+// --- Inbox: NOT_INITIALIZED (no singleton node) ---
+
+func TestInboxStore_NodeNotInitialized(t *testing.T) {
+	result := InboxStore(`{"toPeerId": "12D3KooWTest", "message": "hello"}`)
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "NOT_INITIALIZED")
+}
+
+func TestInboxRetrieve_NodeNotInitialized(t *testing.T) {
+	result := InboxRetrieve()
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "NOT_INITIALIZED")
+}
+
+func TestInboxRegisterToken_NodeNotInitialized(t *testing.T) {
+	result := InboxRegisterToken(`{"token": "fake-token", "platform": "ios"}`)
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "NOT_INITIALIZED")
+}
+
+// --- Inbox: JSON validation (requires initialized node) ---
+//
+// These tests temporarily set the singleton node so the bridge functions
+// reach the JSON-parsing and field-validation code paths. The node is not
+// started (no network), so valid params will fail at the node layer, but
+// invalid params are caught before that.
+
+// noopCallback satisfies node.EventCallback for test init.
+type noopCallback struct{}
+
+func (noopCallback) OnEvent(string) {}
+
+// withSingletonNode sets up a singleton for the duration of one test.
+func withSingletonNode(t *testing.T) {
+	t.Helper()
+	nodeMu.Lock()
+	prev := singletonNode
+	nodeMu.Unlock()
+
+	Initialize(&noopCallback{})
+
+	t.Cleanup(func() {
+		nodeMu.Lock()
+		singletonNode = prev
+		nodeMu.Unlock()
+	})
+}
+
+func TestInboxStore_InvalidJSON(t *testing.T) {
+	withSingletonNode(t)
+	result := InboxStore("not valid json")
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "INVALID_INPUT")
+}
+
+func TestInboxStore_MissingParams(t *testing.T) {
+	withSingletonNode(t)
+	result := InboxStore(`{}`)
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "INVALID_INPUT")
+}
+
+func TestInboxStore_MissingMessage(t *testing.T) {
+	withSingletonNode(t)
+	result := InboxStore(`{"toPeerId": "12D3KooWTest"}`)
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "INVALID_INPUT")
+}
+
+func TestInboxStore_MissingToPeerId(t *testing.T) {
+	withSingletonNode(t)
+	result := InboxStore(`{"message": "hello"}`)
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "INVALID_INPUT")
+}
+
+func TestInboxRegisterToken_InvalidJSON(t *testing.T) {
+	withSingletonNode(t)
+	result := InboxRegisterToken("not valid json")
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "INVALID_INPUT")
+}
+
+func TestInboxRegisterToken_MissingFields(t *testing.T) {
+	withSingletonNode(t)
+	result := InboxRegisterToken(`{}`)
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "INVALID_INPUT")
+}
+
+func TestInboxRegisterToken_MissingToken(t *testing.T) {
+	withSingletonNode(t)
+	result := InboxRegisterToken(`{"platform": "ios"}`)
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "INVALID_INPUT")
+}
+
+func TestInboxRegisterToken_MissingPlatform(t *testing.T) {
+	withSingletonNode(t)
+	result := InboxRegisterToken(`{"token": "fake-token"}`)
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "INVALID_INPUT")
+}

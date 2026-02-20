@@ -111,3 +111,4 @@ ios/Podfile.lock
 # Go mobile build outputs (regenerated via `make all`)
 ios/Runner/GoMknoon.xcframework/
 android/app/libs/*.aar
+android/app/libs/*.jar

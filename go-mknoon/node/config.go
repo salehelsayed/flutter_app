@@ -1,6 +1,9 @@
 package node
 
-import "time"
+import (
+	"os"
+	"time"
+)
 
 const (
 	// DefaultRelayAddress is the relay server multiaddr (WSS).
@@ -26,6 +29,15 @@ const (
 	// Inbox framing.
 	MaxFrameLen = 128 * 1024 // 128 KB, matches relay server
 )
+
+// RelayAddress returns the QUIC relay multiaddr, overridable via
+// MKNOON_RELAY_ADDR for testing against local or alternative relays.
+func RelayAddress() string {
+	if addr := os.Getenv("MKNOON_RELAY_ADDR"); addr != "" {
+		return addr
+	}
+	return DefaultQUICRelay
+}
 
 // NodeConfig holds the configuration for starting a Node.
 type NodeConfig struct {
