@@ -66,8 +66,11 @@ class FeedScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return AmbientBackground(
-      child: SafeArea(
+    return GestureDetector(
+      onTap: () => FocusScope.of(context).unfocus(),
+      behavior: HitTestBehavior.translucent,
+      child: AmbientBackground(
+        child: SafeArea(
         child: LayoutBuilder(
           builder: (context, constraints) {
             final horizontalPadding = constraints.maxWidth < 390 ? 14.0 : 18.0;
@@ -143,6 +146,7 @@ class FeedScreen extends StatelessWidget {
           },
         ),
       ),
+    ),
     );
   }
 
