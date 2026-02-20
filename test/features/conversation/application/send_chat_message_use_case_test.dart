@@ -608,6 +608,53 @@ void main() {
       expect(p2pService.discoverCallCount, 1);
       expect(p2pService.sendCallCount, 1);
     });
+
+    test('quotedMessageId is persisted in saved message', () async {
+      final (result, message) = await sendChatMessage(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        targetPeerId: 'target-peer',
+        text: 'This is a reply',
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me',
+        quotedMessageId: 'original-msg-001',
+      );
+
+      expect(result, SendChatMessageResult.success);
+      expect(message, isNotNull);
+      expect(message!.quotedMessageId, 'original-msg-001');
+      expect(messageRepo.saved.first.quotedMessageId, 'original-msg-001');
+    });
+
+    test('quotedMessageId included in wire JSON envelope', () async {
+      await sendChatMessage(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        targetPeerId: 'target-peer',
+        text: 'Reply text',
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me',
+        quotedMessageId: 'quoted-123',
+      );
+
+      expect(p2pService.lastSentMessage, contains('"quotedMessageId":"quoted-123"'));
+    });
+
+    test('quotedMessageId is null when not provided', () async {
+      final (_, message) = await sendChatMessage(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        targetPeerId: 'target-peer',
+        text: 'Normal message',
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me',
+      );
+
+      expect(message, isNotNull);
+      expect(message!.quotedMessageId, isNull);
+      // No quotedMessageId key in wire JSON
+      expect(p2pService.lastSentMessage, isNot(contains('quotedMessageId')));
+    });
   });
 }
 

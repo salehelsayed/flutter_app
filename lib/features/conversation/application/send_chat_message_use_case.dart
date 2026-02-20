@@ -41,6 +41,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   String? timestamp,
   Bridge? bridge,
   String? recipientMlKemPublicKey,
+  String? quotedMessageId,
 }) async {
   final targetPrefix = targetPeerId.length > 10
       ? targetPeerId.substring(0, 10)
@@ -84,6 +85,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     senderPeerId: senderPeerId,
     senderUsername: senderUsername,
     timestamp: resolvedTimestamp,
+    quotedMessageId: quotedMessageId,
   );
   logChatOutgoing(
     messageId: resolvedMessageId,

@@ -14,6 +14,8 @@ class LetterCard extends StatelessWidget {
   final String time;
   final bool isIncoming;
   final String? status;
+  final String? quotedText;
+  final bool isQuoteUnavailable;
 
   const LetterCard({
     super.key,
@@ -23,6 +25,8 @@ class LetterCard extends StatelessWidget {
     required this.time,
     required this.isIncoming,
     this.status,
+    this.quotedText,
+    this.isQuoteUnavailable = false,
   });
 
   @override
@@ -155,6 +159,12 @@ class LetterCard extends StatelessWidget {
                       ],
                     ),
                   ),
+                  // Quote bar (if quoting another message)
+                  if (quotedText != null || isQuoteUnavailable)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+                      child: _buildQuoteBar(),
+                    ),
                   // Body text
                   Padding(
                     padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
@@ -193,6 +203,44 @@ class LetterCard extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildQuoteBar() {
+    final displayText =
+        isQuoteUnavailable ? 'Message unavailable' : quotedText!;
+    return Row(
+      children: [
+        Container(
+          width: 2,
+          height: 16,
+          decoration: BoxDecoration(
+            color: const Color.fromRGBO(255, 255, 255, 0.15),
+            borderRadius: BorderRadius.circular(1),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            displayText,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w400,
+              fontStyle: isQuoteUnavailable
+                  ? FontStyle.italic
+                  : FontStyle.normal,
+              color: Color.fromRGBO(
+                255,
+                255,
+                255,
+                isQuoteUnavailable ? 0.20 : 0.35,
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 

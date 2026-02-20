@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/connection_card.dart';
-import 'package:flutter_app/features/feed/presentation/widgets/message_feed_card.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/feed_header.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/feed_navigation_bar.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/session_divider.dart';
@@ -29,6 +28,15 @@ class FeedScreen extends StatelessWidget {
   final int totalUnreadCount;
   final String? expandedCardId;
   final void Function(String)? onToggleExpand;
+  final void Function(String contactPeerId, String text)? onInlineSend;
+  final void Function(String contactPeerId)? onViewFullConversation;
+  final Map<String, String>? draftTexts;
+  final String? activeFocusPeerId;
+  final void Function(String contactPeerId, String text)? onDraftChanged;
+  final void Function(String contactPeerId, bool hasFocus)? onInputFocusChanged;
+  final Map<String, String>? activeQuoteMessageIds;
+  final void Function(String contactPeerId, String messageId)? onQuoteReply;
+  final void Function(String contactPeerId)? onClearQuote;
 
   const FeedScreen({
     super.key,
@@ -45,6 +53,15 @@ class FeedScreen extends StatelessWidget {
     this.totalUnreadCount = 0,
     this.expandedCardId,
     this.onToggleExpand,
+    this.onInlineSend,
+    this.onViewFullConversation,
+    this.draftTexts,
+    this.activeFocusPeerId,
+    this.onDraftChanged,
+    this.onInputFocusChanged,
+    this.activeQuoteMessageIds,
+    this.onQuoteReply,
+    this.onClearQuote,
   });
 
   @override
@@ -137,63 +154,110 @@ class FeedScreen extends StatelessWidget {
       ];
     }
 
+    // Partition into above/below divider
+    // Above: unread/active threads only
+    // Below: connections + read/replied threads (sorted by timestamp)
+    final aboveDivider = <FeedItem>[];
+    final belowDivider = <FeedItem>[];
+
+    for (final item in feedItems) {
+      if (item is ConnectionFeedItem) {
+        belowDivider.add(item);
+      } else if (item is ThreadFeedItem) {
+        if (item.conversationState == ConversationState.unread ||
+            item.conversationState == ConversationState.active) {
+          aboveDivider.add(item);
+        } else {
+          belowDivider.add(item);
+        }
+      }
+    }
+
     final widgets = <Widget>[const SizedBox(height: 16)];
 
-    for (var i = 0; i < feedItems.length; i++) {
-      final item = feedItems[i];
+    // Build above-divider cards (unread/active threads)
+    final aboveItems = [...aboveDivider];
+    aboveItems.sort((a, b) => b.timestamp.compareTo(a.timestamp));
 
-      if (item is ConnectionFeedItem) {
-        widgets.add(
-          ConnectionCard(
-            contactPeerId: item.contactPeerId,
-            contactUsername: item.contactUsername,
-            contactAvatarPath: item.contactAvatarPath,
-            onSendMessage: onSendMessage != null
-                ? () => onSendMessage!(item)
-                : null,
-          ),
-        );
-      } else if (item is ThreadFeedItem) {
-        final isExpanded = expandedCardId == item.id;
-        widgets.add(
-          Padding(
-            padding: EdgeInsets.only(
-              bottom: item.isMultiMessage && !isExpanded ? 12 : 0,
-            ),
-            child: ThreadCard(
-              thread: item,
-              isExpanded: isExpanded,
-              onToggleExpand: onToggleExpand != null
-                  ? () => onToggleExpand!(item.id)
-                  : null,
-              onReply: onReplyToMessage != null
-                  ? () => onReplyToMessage!(item.contactPeerId)
-                  : null,
-            ),
-          ),
-        );
-      } else if (item is MessageFeedItem) {
-        widgets.add(
-          MessageFeedCard(
-            contactPeerId: item.contactPeerId,
-            contactUsername: item.contactUsername,
-            messageText: item.messageText,
-            messageTime: item.messageTime,
-            unreadCount: item.unreadCount,
-            onReply: onReplyToMessage != null
-                ? () => onReplyToMessage!(item.contactPeerId)
-                : null,
-          ),
-        );
+    for (var i = 0; i < aboveItems.length; i++) {
+      _addCardWidget(widgets, aboveItems[i]);
+      if (i != aboveItems.length - 1 || belowDivider.isNotEmpty) {
+        widgets.add(const SizedBox(height: 16));
       }
+    }
 
-      if (i != feedItems.length - 1) {
+    // Insert session divider when both sections have content
+    if (aboveItems.isNotEmpty && belowDivider.isNotEmpty) {
+      widgets.add(const SessionDivider());
+    }
+
+    // Build below-divider cards (connections + read/replied threads)
+    belowDivider.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    for (var i = 0; i < belowDivider.length; i++) {
+      _addCardWidget(widgets, belowDivider[i]);
+      if (i != belowDivider.length - 1) {
         widgets.add(const SizedBox(height: 16));
       }
     }
 
     widgets.add(const SizedBox(height: 20));
     return widgets;
+  }
+
+  void _addCardWidget(List<Widget> widgets, FeedItem item) {
+    if (item is ConnectionFeedItem) {
+      widgets.add(
+        ConnectionCard(
+          contactPeerId: item.contactPeerId,
+          contactUsername: item.contactUsername,
+          contactAvatarPath: item.contactAvatarPath,
+          onSendMessage: onSendMessage != null
+              ? () => onSendMessage!(item)
+              : null,
+          isBlocked: item.isBlocked,
+        ),
+      );
+    } else if (item is ThreadFeedItem) {
+      final isExpanded = expandedCardId == item.id;
+      widgets.add(
+        Padding(
+          padding: EdgeInsets.only(
+            bottom: item.isMultiMessage && !isExpanded ? 12 : 0,
+          ),
+          child: ThreadCard(
+            thread: item,
+            isExpanded: isExpanded,
+            onToggleExpand: onToggleExpand != null
+                ? () => onToggleExpand!(item.id)
+                : null,
+            onReply: onReplyToMessage != null
+                ? () => onReplyToMessage!(item.contactPeerId)
+                : null,
+            onInlineSend: onInlineSend != null
+                ? (text) => onInlineSend!(item.contactPeerId, text)
+                : null,
+            onViewFullConversation: onViewFullConversation != null
+                ? () => onViewFullConversation!(item.contactPeerId)
+                : null,
+            initialText: draftTexts?[item.contactPeerId] ?? '',
+            shouldRequestFocus: activeFocusPeerId == item.contactPeerId,
+            onDraftChanged: onDraftChanged != null
+                ? (text) => onDraftChanged!(item.contactPeerId, text)
+                : null,
+            onInputFocusChanged: onInputFocusChanged != null
+                ? (hasFocus) => onInputFocusChanged!(item.contactPeerId, hasFocus)
+                : null,
+            activeQuoteMessageId: activeQuoteMessageIds?[item.contactPeerId],
+            onQuoteReply: onQuoteReply != null
+                ? (msgId) => onQuoteReply!(item.contactPeerId, msgId)
+                : null,
+            onClearQuote: onClearQuote != null
+                ? () => onClearQuote!(item.contactPeerId)
+                : null,
+          ),
+        ),
+      );
+    }
   }
 }
 

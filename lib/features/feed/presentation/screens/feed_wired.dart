@@ -14,11 +14,12 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/application/load_conversation_use_case.dart';
+import 'package:flutter_app/features/conversation/application/mark_conversation_read_use_case.dart';
+import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/conversation/presentation/navigation/conversation_route_transition.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
-import 'package:flutter_app/features/conversation/application/mark_conversation_read_use_case.dart';
 import 'package:flutter_app/features/feed/application/load_feed_use_case.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
@@ -67,6 +68,9 @@ class _FeedWiredState extends State<FeedWired> {
   final List<FeedItem> _feedItems = [];
   int _totalUnreadCount = 0;
   String? _expandedCardId;
+  final Map<String, String> _draftTexts = {};
+  final Map<String, String> _activeQuoteMessageIds = {};
+  String? _activeFocusPeerId;
   StreamSubscription<ContactRequestModel>? _requestSubscription;
   StreamSubscription<ConversationMessage>? _chatSubscription;
   StreamSubscription<ContactModel>? _contactUpdateSubscription;
@@ -270,6 +274,7 @@ class _FeedWiredState extends State<FeedWired> {
             contactPeerId: item.contactPeerId,
             contactUsername: contact.username,
             contactAvatarPath: item.contactAvatarPath,
+            isBlocked: contact.isBlocked,
           );
         } else if (item is ThreadFeedItem &&
             item.contactPeerId == contact.peerId) {
@@ -281,17 +286,9 @@ class _FeedWiredState extends State<FeedWired> {
             messages: item.messages,
             unreadCount: item.unreadCount,
             isUnreadCard: item.isUnreadCard,
-          );
-        } else if (item is MessageFeedItem &&
-            item.contactPeerId == contact.peerId) {
-          _feedItems[i] = MessageFeedItem(
-            id: item.id,
-            timestamp: item.timestamp,
-            contactPeerId: item.contactPeerId,
-            contactUsername: contact.username,
-            messageId: item.messageId,
-            messageText: item.messageText,
-            messageTime: item.messageTime,
+            conversationState: item.conversationState,
+            lastRepliedAt: item.lastRepliedAt,
+            isBlocked: contact.isBlocked,
           );
         }
       }
@@ -351,6 +348,69 @@ class _FeedWiredState extends State<FeedWired> {
         ),
       ),
     ).then((_) => _refreshFeed());
+  }
+
+  Future<void> _onInlineSend(String contactPeerId, String text) async {
+    final identity = _identity;
+    if (identity == null) return;
+
+    try {
+      final contact =
+          await widget.contactRepository.getContact(contactPeerId);
+      if (contact == null || !mounted) return;
+
+      final quotedMsgId = _activeQuoteMessageIds[contactPeerId];
+      final (result, _) = await sendChatMessage(
+        p2pService: widget.p2pService,
+        messageRepo: widget.messageRepository,
+        targetPeerId: contactPeerId,
+        text: text,
+        senderPeerId: identity.peerId,
+        senderUsername: identity.username,
+        bridge: widget.bridge,
+        recipientMlKemPublicKey: contact.mlKemPublicKey,
+        quotedMessageId: quotedMsgId,
+      );
+
+      if (!mounted) return;
+
+      if (result == SendChatMessageResult.success) {
+        _draftTexts.remove(contactPeerId);
+        _activeQuoteMessageIds.remove(contactPeerId);
+        // Mark as read on successful inline reply
+        await markConversationRead(
+          messageRepo: widget.messageRepository,
+          contactPeerId: contactPeerId,
+        );
+        await _refreshFeed();
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Message failed to send. Try again.'),
+            backgroundColor: Colors.red[700],
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'FEED_FL_INLINE_SEND_ERROR',
+        details: {'error': e.toString()},
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Message failed to send. Try again.'),
+          backgroundColor: Colors.red[700],
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
+  void _onViewFullConversation(String contactPeerId) {
+    _onReplyToMessage(contactPeerId);
   }
 
   void _onSwitchView(String tab) {
@@ -426,8 +486,57 @@ class _FeedWiredState extends State<FeedWired> {
   }
 
   void _onToggleExpand(String cardId) {
+    // Mark as read when expanding an unread/active card
+    final item = _feedItems.whereType<ThreadFeedItem>().where(
+      (t) => t.id == cardId,
+    ).firstOrNull;
+
+    if (item != null &&
+        _expandedCardId != cardId &&
+        (item.conversationState == ConversationState.unread ||
+            item.conversationState == ConversationState.active)) {
+      markConversationRead(
+        messageRepo: widget.messageRepository,
+        contactPeerId: item.contactPeerId,
+      ).then((_) {
+        if (mounted) _refreshFeed();
+      });
+    }
+
+    // Clear quote when collapsing
+    if (_expandedCardId == cardId) {
+      final collapsingItem = item;
+      if (collapsingItem != null) {
+        _activeQuoteMessageIds.remove(collapsingItem.contactPeerId);
+      }
+    }
+
     setState(() {
       _expandedCardId = _expandedCardId == cardId ? null : cardId;
+    });
+  }
+
+  void _onDraftChanged(String contactPeerId, String text) {
+    if (text.isEmpty) {
+      _draftTexts.remove(contactPeerId);
+    } else {
+      _draftTexts[contactPeerId] = text;
+    }
+  }
+
+  void _onInputFocusChanged(String contactPeerId, bool hasFocus) {
+    _activeFocusPeerId = hasFocus ? contactPeerId : null;
+  }
+
+  void _onQuoteReply(String contactPeerId, String messageId) {
+    setState(() {
+      _activeQuoteMessageIds[contactPeerId] = messageId;
+    });
+  }
+
+  void _onClearQuote(String contactPeerId) {
+    setState(() {
+      _activeQuoteMessageIds.remove(contactPeerId);
     });
   }
 
@@ -456,6 +565,15 @@ class _FeedWiredState extends State<FeedWired> {
         totalUnreadCount: _totalUnreadCount,
         expandedCardId: _expandedCardId,
         onToggleExpand: _onToggleExpand,
+        onInlineSend: _onInlineSend,
+        onViewFullConversation: _onViewFullConversation,
+        draftTexts: _draftTexts,
+        activeFocusPeerId: _activeFocusPeerId,
+        onDraftChanged: _onDraftChanged,
+        onInputFocusChanged: _onInputFocusChanged,
+        activeQuoteMessageIds: _activeQuoteMessageIds,
+        onQuoteReply: _onQuoteReply,
+        onClearQuote: _onClearQuote,
       ),
     );
   }

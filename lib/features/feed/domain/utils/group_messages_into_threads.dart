@@ -1,104 +1,113 @@
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
 import 'package:flutter_app/features/feed/domain/utils/format_message_time.dart';
+import 'package:flutter_app/features/feed/domain/utils/split_thread_by_time_gap.dart';
 
-/// Groups incoming messages into [ThreadFeedItem]s by contact and read session.
+/// Groups messages into [ThreadFeedItem]s by contact and 24-hour time gap.
 ///
-/// Each contact can have multiple stacks in the feed:
-/// - One **unread** stack (messages not yet read, with badge)
-/// - One stack per **read session** (messages read at the same time stay
-///   together — `markConversationAsRead` sets identical `readAt` values)
+/// Includes both sent and received messages. Each contact's messages are
+/// sorted by timestamp and split into thread chunks using [splitThreadByTimeGap].
+/// For each chunk, derives [ConversationState] from read status and direction.
 ///
-/// Unread stacks sort first (newest-first), then read stacks (newest-first).
+/// Sorting: unread/active first (newest-first), then read/replied (newest-first).
 List<ThreadFeedItem> groupMessagesIntoThreads({
   required List<ConversationMessage> allMessages,
   required Map<String, String> contactUsernames,
+  Map<String, bool> contactBlocked = const {},
 }) {
-  final incoming = allMessages.where((m) => m.isIncoming).toList();
-  if (incoming.isEmpty) return [];
+  if (allMessages.isEmpty) return [];
 
-  // Separate unread and read
-  final unread = incoming.where((m) => m.readAt == null).toList();
-  final read = incoming.where((m) => m.readAt != null).toList();
-
-  final List<ThreadFeedItem> unreadCards = [];
-  final List<ThreadFeedItem> readCards = [];
-
-  // --- Unread: group by contact ---
-  final Map<String, List<ConversationMessage>> unreadByContact = {};
-  for (final msg in unread) {
-    unreadByContact.putIfAbsent(msg.contactPeerId, () => []).add(msg);
+  // Group all messages by contact
+  final Map<String, List<ConversationMessage>> byContact = {};
+  for (final msg in allMessages) {
+    byContact.putIfAbsent(msg.contactPeerId, () => []).add(msg);
   }
 
-  for (final entry in unreadByContact.entries) {
+  final List<ThreadFeedItem> aboveDivider = []; // unread + active
+  final List<ThreadFeedItem> belowDivider = []; // read + replied
+
+  for (final entry in byContact.entries) {
     final peerId = entry.key;
     final msgs = entry.value
       ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
     final username = contactUsernames[peerId] ?? 'Unknown';
-    final latestTs =
-        DateTime.tryParse(msgs.last.timestamp) ?? DateTime.now();
 
-    unreadCards.add(ThreadFeedItem(
-      id: 'thread_unread_$peerId',
-      timestamp: latestTs,
-      contactPeerId: peerId,
-      contactUsername: username,
-      unreadCount: msgs.length,
-      isUnreadCard: true,
-      messages: msgs
+    // Split into thread chunks by 24-hour gap
+    final chunks = splitThreadByTimeGap(msgs);
+
+    for (var chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
+      final chunk = chunks[chunkIndex];
+      if (chunk.isEmpty) continue;
+
+      // Derive conversation state
+      final hasUnreadIncoming = chunk.any((m) => m.isIncoming && m.readAt == null);
+      final hasSentMessages = chunk.any((m) => !m.isIncoming);
+      final unreadIncomingCount =
+          chunk.where((m) => m.isIncoming && m.readAt == null).length;
+
+      final ConversationState state;
+      if (hasUnreadIncoming && hasSentMessages) {
+        state = ConversationState.active;
+      } else if (hasUnreadIncoming) {
+        state = ConversationState.unread;
+      } else if (hasSentMessages) {
+        state = ConversationState.replied;
+      } else {
+        state = ConversationState.read;
+      }
+
+      // Find last replied timestamp
+      DateTime? lastRepliedAt;
+      if (hasSentMessages) {
+        final sentMessages = chunk.where((m) => !m.isIncoming).toList();
+        sentMessages.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+        lastRepliedAt =
+            DateTime.tryParse(sentMessages.last.timestamp);
+      }
+
+      final latestTs =
+          DateTime.tryParse(chunk.last.timestamp) ?? DateTime.now();
+
+      final threadMessages = chunk
           .map((m) => ThreadMessage(
                 id: m.id,
                 text: m.text,
                 time: formatMessageTime(m.timestamp),
                 timestamp:
                     DateTime.tryParse(m.timestamp) ?? DateTime.now(),
-                isUnread: true,
+                isUnread: m.isIncoming && m.readAt == null,
+                isIncoming: m.isIncoming,
+                status: m.isIncoming ? null : m.status,
+                quotedMessageId: m.quotedMessageId,
               ))
-          .toList(),
-    ));
-  }
+          .toList();
 
-  // --- Read: group by (contact, readAt) to preserve read-session stacks ---
-  final Map<String, List<ConversationMessage>> readGroups = {};
-  for (final msg in read) {
-    // Key = contactPeerId + readAt timestamp
-    final key = '${msg.contactPeerId}::${msg.readAt}';
-    readGroups.putIfAbsent(key, () => []).add(msg);
-  }
+      final item = ThreadFeedItem(
+        id: 'thread_${peerId}_$chunkIndex',
+        timestamp: latestTs,
+        contactPeerId: peerId,
+        contactUsername: username,
+        unreadCount: unreadIncomingCount,
+        isUnreadCard: state == ConversationState.unread ||
+            state == ConversationState.active,
+        conversationState: state,
+        lastRepliedAt: lastRepliedAt,
+        messages: threadMessages,
+        isBlocked: contactBlocked[peerId] ?? false,
+      );
 
-  for (final entry in readGroups.entries) {
-    final msgs = entry.value
-      ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
-    final peerId = msgs.first.contactPeerId;
-    final username = contactUsernames[peerId] ?? 'Unknown';
-    final latestTs =
-        DateTime.tryParse(msgs.last.timestamp) ?? DateTime.now();
-    // Use readAt in the id so each session gets a unique card
-    final readAt = msgs.first.readAt!;
-
-    readCards.add(ThreadFeedItem(
-      id: 'thread_read_${peerId}_$readAt',
-      timestamp: latestTs,
-      contactPeerId: peerId,
-      contactUsername: username,
-      unreadCount: 0,
-      isUnreadCard: false,
-      messages: msgs
-          .map((m) => ThreadMessage(
-                id: m.id,
-                text: m.text,
-                time: formatMessageTime(m.timestamp),
-                timestamp:
-                    DateTime.tryParse(m.timestamp) ?? DateTime.now(),
-                isUnread: false,
-              ))
-          .toList(),
-    ));
+      if (state == ConversationState.unread ||
+          state == ConversationState.active) {
+        aboveDivider.add(item);
+      } else {
+        belowDivider.add(item);
+      }
+    }
   }
 
   // Sort each section newest-first
-  unreadCards.sort((a, b) => b.timestamp.compareTo(a.timestamp));
-  readCards.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+  aboveDivider.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+  belowDivider.sort((a, b) => b.timestamp.compareTo(a.timestamp));
 
-  return [...unreadCards, ...readCards];
+  return [...aboveDivider, ...belowDivider];
 }
