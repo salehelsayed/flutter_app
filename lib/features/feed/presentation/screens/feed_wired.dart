@@ -17,6 +17,7 @@ import 'package:flutter_app/features/conversation/application/load_conversation_
 import 'package:flutter_app/features/conversation/application/mark_conversation_read_use_case.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/conversation/presentation/navigation/conversation_route_transition.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
@@ -39,6 +40,7 @@ class FeedWired extends StatefulWidget {
   final ContactRequestRepository contactRequestRepository;
   final ContactRequestListener contactRequestListener;
   final MessageRepository messageRepository;
+  final MediaAttachmentRepository mediaAttachmentRepository;
   final ChatMessageListener chatMessageListener;
   final Bridge bridge;
   final P2PService p2pService;
@@ -50,6 +52,7 @@ class FeedWired extends StatefulWidget {
     required this.contactRequestRepository,
     required this.contactRequestListener,
     required this.messageRepository,
+    required this.mediaAttachmentRepository,
     required this.chatMessageListener,
     required this.bridge,
     required this.p2pService,
@@ -423,6 +426,7 @@ class _FeedWiredState extends State<FeedWired> {
             contactRequestRepo: widget.contactRequestRepository,
             contactRequestListener: widget.contactRequestListener,
             messageRepo: widget.messageRepository,
+            mediaAttachmentRepo: widget.mediaAttachmentRepository,
             chatMessageListener: widget.chatMessageListener,
             bridge: widget.bridge,
             p2pService: widget.p2pService,

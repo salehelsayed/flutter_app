@@ -9,11 +9,13 @@ import 'package:flutter_app/core/database/migrations/006_read_at_column.dart';
 import 'package:flutter_app/core/database/migrations/007_archive_columns.dart';
 import 'package:flutter_app/core/database/migrations/008_block_columns.dart';
 import 'package:flutter_app/core/database/migrations/009_quoted_message_id.dart';
+import 'package:flutter_app/core/database/migrations/010_media_attachments.dart';
 import 'package:flutter_app/core/database/encrypted_db_opener.dart';
 import 'package:flutter_app/core/database/helpers/identity_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/contact_requests_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart';
 import 'package:flutter_app/core/secure_storage/flutter_secure_key_store.dart';
 import 'package:flutter_app/core/secure_storage/migrate_secrets_to_secure_storage.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository_impl.dart';
@@ -21,6 +23,7 @@ import 'package:flutter_app/features/contacts/domain/repositories/contact_reposi
 import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository_impl.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository_impl.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository_impl.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/core/services/incoming_message_router.dart';
 import 'package:flutter_app/core/services/pending_message_retrier.dart';
@@ -74,7 +77,7 @@ void main() async {
   final db = await openEncryptedDatabase(
     secureKeyStore: secureKeyStore,
     dbName: 'identity.db',
-    version: 9,
+    version: 10,
     onCreate: (db, version) async {
       await runIdentityTableMigration(db);
       await runMessagesTableMigration(db);
@@ -85,6 +88,7 @@ void main() async {
       await runArchiveColumnsMigration(db);
       await runBlockColumnsMigration(db);
       await runQuotedMessageIdMigration(db);
+      await runMediaAttachmentsMigration(db);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) {
@@ -108,6 +112,9 @@ void main() async {
       }
       if (oldVersion < 9) {
         await runQuotedMessageIdMigration(db);
+      }
+      if (oldVersion < 10) {
+        await runMediaAttachmentsMigration(db);
       }
     },
   );
@@ -184,6 +191,24 @@ void main() async {
     dbLoadFailedOutgoingMessages: () => dbLoadFailedOutgoingMessages(db),
   );
 
+  // Create media attachment repository
+  final mediaAttachmentRepository = MediaAttachmentRepositoryImpl(
+    dbInsertMediaAttachment: (row) => dbInsertMediaAttachment(db, row),
+    dbLoadMediaForMessage: (messageId) =>
+        dbLoadMediaForMessage(db, messageId),
+    dbLoadMediaForMessages: (messageIds) =>
+        dbLoadMediaForMessages(db, messageIds),
+    dbUpdateMediaLocalPath: (id, localPath, downloadStatus) =>
+        dbUpdateMediaLocalPath(db, id, localPath, downloadStatus),
+    dbUpdateMediaDownloadStatus: (id, downloadStatus) =>
+        dbUpdateMediaDownloadStatus(db, id, downloadStatus),
+    dbDeleteMediaForMessage: (messageId) =>
+        dbDeleteMediaForMessage(db, messageId),
+    dbDeleteMediaForContact: (contactPeerId) =>
+        dbDeleteMediaForContact(db, contactPeerId),
+    dbLoadPendingMediaDownloads: () => dbLoadPendingMediaDownloads(db),
+  );
+
   // Create and initialize the bridge (Go native)
   final Bridge bridge = GoBridgeClient();
   await bridge.initialize();
@@ -227,6 +252,7 @@ void main() async {
       final identity = await repository.loadIdentity();
       return identity?.mlKemSecretKey;
     },
+    mediaAttachmentRepo: mediaAttachmentRepository,
   );
 
   // Create pending message retrier
@@ -250,6 +276,7 @@ void main() async {
     contactRequestRepository: contactRequestRepository,
     contactRequestListener: contactRequestListener,
     messageRepository: messageRepository,
+    mediaAttachmentRepository: mediaAttachmentRepository,
     chatMessageListener: chatMessageListener,
     messageRouter: messageRouter,
     pendingMessageRetrier: pendingMessageRetrier,
@@ -266,6 +293,7 @@ class MyApp extends StatefulWidget {
   final ContactRequestRepositoryImpl contactRequestRepository;
   final ContactRequestListener contactRequestListener;
   final MessageRepositoryImpl messageRepository;
+  final MediaAttachmentRepositoryImpl mediaAttachmentRepository;
   final ChatMessageListener chatMessageListener;
   final IncomingMessageRouter messageRouter;
   final PendingMessageRetrier pendingMessageRetrier;
@@ -280,6 +308,7 @@ class MyApp extends StatefulWidget {
     required this.contactRequestRepository,
     required this.contactRequestListener,
     required this.messageRepository,
+    required this.mediaAttachmentRepository,
     required this.chatMessageListener,
     required this.messageRouter,
     required this.pendingMessageRetrier,
@@ -411,6 +440,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         contactRequestRepository: widget.contactRequestRepository,
         contactRequestListener: widget.contactRequestListener,
         messageRepository: widget.messageRepository,
+        mediaAttachmentRepository: widget.mediaAttachmentRepository,
         chatMessageListener: widget.chatMessageListener,
         bridge: widget.bridge,
         p2pService: widget.p2pService,

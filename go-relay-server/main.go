@@ -89,6 +89,8 @@ func main() {
 	}
 	push := NewPushService(ctx, fcmPath)
 	inbox := NewInboxStore(push)
+	media := NewMediaStore(mediaDataDir)
+	media.StartCleanup(ctx)
 
 	// Register protocol handlers
 	h.SetStreamHandler(RendezvousProtocol, func(s network.Stream) {
@@ -96,6 +98,9 @@ func main() {
 	})
 	h.SetStreamHandler(InboxProtocol, func(s network.Stream) {
 		HandleInboxStream(s, inbox)
+	})
+	h.SetStreamHandler(MediaProtocol, func(s network.Stream) {
+		HandleMediaStream(s, media)
 	})
 
 	// Subscribe to connection events
@@ -137,11 +142,12 @@ func main() {
 	log.Printf("Protocols:")
 	log.Printf("  Rendezvous: %s", RendezvousProtocol)
 	log.Printf("  Inbox:      %s", InboxProtocol)
+	log.Printf("  Media:      %s", MediaProtocol)
 	log.Printf("  Push:       %s", push.Status())
 	log.Println()
 
 	// Periodic stats
-	go logStatsPeriodically(ctx, h, inbox, store)
+	go logStatsPeriodically(ctx, h, inbox, store, media)
 
 	// Wait for shutdown signal
 	sigCh := make(chan os.Signal, 1)
@@ -151,6 +157,7 @@ func main() {
 	log.Printf("Shutting down (%s)...", sig)
 	sub.Close()
 	store.StopCleanup()
+	media.StopCleanup()
 	if err := h.Close(); err != nil {
 		log.Printf("[NODE] Error during shutdown: %v", err)
 	}
@@ -166,7 +173,7 @@ func logPeerConnected(p peer.ID, inbox *InboxStore, total int64) {
 	}
 }
 
-func logStatsPeriodically(ctx context.Context, h host.Host, inbox *InboxStore, rz *RendezvousStore) {
+func logStatsPeriodically(ctx context.Context, h host.Host, inbox *InboxStore, rz *RendezvousStore, media *MediaStore) {
 	ticker := time.NewTicker(60 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -176,12 +183,14 @@ func logStatsPeriodically(ctx context.Context, h host.Host, inbox *InboxStore, r
 			rzNs, rzPeers := rz.Stats()
 			inboxPeers, inboxMsgs := inbox.Stats()
 			tokenCount := inbox.push.TokenCount()
+			mediaBlobs, mediaDiskMB := media.Stats()
 			var mem runtime.MemStats
 			runtime.ReadMemStats(&mem)
-			log.Printf("[STATS] conns=%d rz_ns=%d rz_peers=%d inbox_peers=%d inbox_msgs=%d push_tokens=%d heap_mb=%d goroutines=%d active_rz_streams=%d active_inbox_streams=%d",
+			log.Printf("[STATS] conns=%d rz_ns=%d rz_peers=%d inbox_peers=%d inbox_msgs=%d push_tokens=%d media_blobs=%d media_disk_mb=%d heap_mb=%d goroutines=%d active_rz_streams=%d active_inbox_streams=%d active_media_streams=%d",
 				conns, rzNs, rzPeers, inboxPeers, inboxMsgs, tokenCount,
+				mediaBlobs, mediaDiskMB,
 				mem.HeapAlloc/1024/1024, runtime.NumGoroutine(),
-				activeRendezvousStreams.Load(), activeInboxStreams.Load())
+				activeRendezvousStreams.Load(), activeInboxStreams.Load(), activeMediaStreams.Load())
 		case <-ctx.Done():
 			return
 		}

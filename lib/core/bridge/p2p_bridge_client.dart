@@ -376,6 +376,163 @@ Future<Map<String, dynamic>> callP2PInboxRetrieve(Bridge bridge) async {
   return response;
 }
 
+// --- Media ---
+
+/// Calls the bridge to upload a media blob to the relay.
+///
+/// Parameters:
+///   - [bridge]: The Bridge instance
+///   - [id]: Unique blob ID (UUID)
+///   - [toPeerId]: The recipient peer ID
+///   - [mime]: MIME type of the file
+///   - [filePath]: Absolute path to the local file
+///
+/// Returns: `{ "ok": true, "id": "..." }`
+Future<Map<String, dynamic>> callP2PMediaUpload(
+  Bridge bridge, {
+  required String id,
+  required String toPeerId,
+  required String mime,
+  required String filePath,
+}) async {
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'P2P_MEDIA_UPLOAD_REQUEST',
+    details: {'id': id, 'toPeerId': toPeerId, 'mime': mime},
+  );
+
+  final request = {
+    'cmd': 'media:upload',
+    'payload': {
+      'id': id,
+      'to': toPeerId,
+      'mime': mime,
+      'filePath': filePath,
+    },
+  };
+
+  final responseJson = await bridge
+      .send(jsonEncode(request))
+      .timeout(const Duration(minutes: 5));
+  final response = jsonDecode(responseJson) as Map<String, dynamic>;
+
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'P2P_MEDIA_UPLOAD_RESPONSE',
+    details: {'ok': response['ok'], 'id': response['id']},
+  );
+
+  return response;
+}
+
+/// Calls the bridge to download a media blob from the relay.
+///
+/// Parameters:
+///   - [bridge]: The Bridge instance
+///   - [id]: The blob ID to download
+///   - [outputPath]: Absolute path where the file will be written
+///
+/// Returns: `{ "ok": true, "id": "...", "mime": "...", "size": N }`
+Future<Map<String, dynamic>> callP2PMediaDownload(
+  Bridge bridge, {
+  required String id,
+  required String outputPath,
+}) async {
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'P2P_MEDIA_DOWNLOAD_REQUEST',
+    details: {'id': id},
+  );
+
+  final request = {
+    'cmd': 'media:download',
+    'payload': {
+      'id': id,
+      'outputPath': outputPath,
+    },
+  };
+
+  final responseJson = await bridge
+      .send(jsonEncode(request))
+      .timeout(const Duration(minutes: 5));
+  final response = jsonDecode(responseJson) as Map<String, dynamic>;
+
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'P2P_MEDIA_DOWNLOAD_RESPONSE',
+    details: {'ok': response['ok'], 'id': response['id']},
+  );
+
+  return response;
+}
+
+/// Calls the bridge to delete a media blob from the relay.
+///
+/// Parameters:
+///   - [bridge]: The Bridge instance
+///   - [id]: The blob ID to delete
+///
+/// Returns: `{ "ok": true }`
+Future<Map<String, dynamic>> callP2PMediaDelete(
+  Bridge bridge, {
+  required String id,
+}) async {
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'P2P_MEDIA_DELETE_REQUEST',
+    details: {'id': id},
+  );
+
+  final request = {
+    'cmd': 'media:delete',
+    'payload': {
+      'id': id,
+    },
+  };
+
+  final responseJson = await bridge
+      .send(jsonEncode(request))
+      .timeout(const Duration(seconds: 15));
+  final response = jsonDecode(responseJson) as Map<String, dynamic>;
+
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'P2P_MEDIA_DELETE_RESPONSE',
+    details: {'ok': response['ok']},
+  );
+
+  return response;
+}
+
+/// Calls the bridge to list media blobs available on the relay.
+///
+/// Returns: `{ "ok": true, "blobs": [...] }`
+Future<Map<String, dynamic>> callP2PMediaList(Bridge bridge) async {
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'P2P_MEDIA_LIST_REQUEST',
+    details: {},
+  );
+
+  final request = {
+    'cmd': 'media:list',
+    'payload': <String, dynamic>{},
+  };
+
+  final responseJson = await bridge
+      .send(jsonEncode(request))
+      .timeout(const Duration(seconds: 15));
+  final response = jsonDecode(responseJson) as Map<String, dynamic>;
+
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'P2P_MEDIA_LIST_RESPONSE',
+    details: {'ok': response['ok']},
+  );
+
+  return response;
+}
+
 /// Calls the bridge to send a message to a peer.
 ///
 /// Parameters:

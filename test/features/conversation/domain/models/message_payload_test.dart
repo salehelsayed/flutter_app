@@ -347,5 +347,133 @@ void main() {
         expect(msg.quotedMessageId, isNull);
       });
     });
+
+    group('media', () {
+      final mediaArray = [
+        {
+          'id': 'blob-001',
+          'mime': 'image/jpeg',
+          'size': 245000,
+          'mediaType': 'image',
+          'width': 1920,
+          'height': 1080,
+        },
+        {
+          'id': 'blob-002',
+          'mime': 'audio/mp3',
+          'size': 50000,
+          'mediaType': 'audio',
+          'durationMs': 30000,
+        },
+      ];
+
+      final payloadWithMedia = MessagePayload(
+        id: 'msg-media-001',
+        text: 'Check this out',
+        senderPeerId: '12D3KooWSender123',
+        senderUsername: 'Alice',
+        timestamp: '2026-02-20T10:00:00.000Z',
+        media: mediaArray,
+      );
+
+      test('v1 round-trip preserves media array', () {
+        final jsonString = payloadWithMedia.toJson();
+        final restored = MessagePayload.fromJson(jsonString);
+
+        expect(restored, isNotNull);
+        expect(restored!.media, isNotNull);
+        expect(restored.media!.length, 2);
+        expect(restored.media![0]['id'], 'blob-001');
+        expect(restored.media![0]['mime'], 'image/jpeg');
+        expect(restored.media![0]['width'], 1920);
+        expect(restored.media![1]['id'], 'blob-002');
+        expect(restored.media![1]['durationMs'], 30000);
+      });
+
+      test('v1 toJson includes media in payload', () {
+        final jsonString = payloadWithMedia.toJson();
+        final parsed = jsonDecode(jsonString) as Map<String, dynamic>;
+        final payload = parsed['payload'] as Map<String, dynamic>;
+
+        expect(payload['media'], isNotNull);
+        expect(payload['media'], isList);
+        expect((payload['media'] as List).length, 2);
+      });
+
+      test('v1 toJson omits media when null', () {
+        final jsonString = testPayload.toJson();
+        final parsed = jsonDecode(jsonString) as Map<String, dynamic>;
+        final payload = parsed['payload'] as Map<String, dynamic>;
+
+        expect(payload.containsKey('media'), isFalse);
+      });
+
+      test('v1 toJson omits media when empty list', () {
+        const emptyMedia = MessagePayload(
+          id: 'msg-empty-media',
+          text: 'No attachments',
+          senderPeerId: '12D3KooWSender123',
+          senderUsername: 'Alice',
+          timestamp: '2026-02-20T10:00:00.000Z',
+          media: [],
+        );
+        final jsonString = emptyMedia.toJson();
+        final parsed = jsonDecode(jsonString) as Map<String, dynamic>;
+        final payload = parsed['payload'] as Map<String, dynamic>;
+
+        expect(payload.containsKey('media'), isFalse);
+      });
+
+      test('v1 fromJson reads null when media absent (backward compat)', () {
+        final json = jsonEncode({
+          'type': 'chat_message',
+          'version': '1',
+          'payload': {
+            'id': 'old-msg',
+            'text': 'old message without media',
+            'senderPeerId': 'peer',
+            'senderUsername': 'user',
+            'timestamp': '2026-01-01T00:00:00.000Z',
+          },
+        });
+        final restored = MessagePayload.fromJson(json);
+        expect(restored, isNotNull);
+        expect(restored!.media, isNull);
+      });
+
+      test('v2 inner round-trip preserves media', () {
+        final innerJson = payloadWithMedia.toInnerJson();
+        final restored = MessagePayload.fromDecryptedJson(innerJson);
+
+        expect(restored, isNotNull);
+        expect(restored!.media, isNotNull);
+        expect(restored.media!.length, 2);
+        expect(restored.media![0]['id'], 'blob-001');
+        expect(restored.media![1]['id'], 'blob-002');
+      });
+
+      test('v2 toInnerJson includes media', () {
+        final inner = jsonDecode(payloadWithMedia.toInnerJson())
+            as Map<String, dynamic>;
+        expect(inner['media'], isNotNull);
+        expect((inner['media'] as List).length, 2);
+      });
+
+      test('v2 toInnerJson omits media when null', () {
+        final inner = jsonDecode(testPayload.toInnerJson())
+            as Map<String, dynamic>;
+        expect(inner.containsKey('media'), isFalse);
+      });
+
+      test('toConversationMessage does not include media (transient)', () {
+        final msg = payloadWithMedia.toConversationMessage(
+          contactPeerId: 'target',
+          isIncoming: true,
+          status: 'delivered',
+        );
+        // media is a transient field on ConversationMessage, not set by toConversationMessage
+        expect(msg.media, isEmpty);
+      });
+    });
   });
 }

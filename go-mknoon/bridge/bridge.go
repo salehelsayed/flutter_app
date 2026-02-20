@@ -686,6 +686,169 @@ func InboxRegisterToken(paramsJSON string) (result string) {
 	})
 }
 
+// --- Media ---
+
+// MediaUpload uploads a file to the relay's media store.
+// Input JSON: { "id": "...", "to": "...", "mime": "...", "filePath": "..." }
+// Returns JSON: { "ok": true, "id": "..." }
+func MediaUpload(paramsJSON string) (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+		}
+	}()
+
+	nodeMu.Lock()
+	n := singletonNode
+	nodeMu.Unlock()
+
+	if n == nil {
+		return errJSON("NOT_INITIALIZED", "call Initialize first")
+	}
+
+	var params struct {
+		ID       string `json:"id"`
+		To       string `json:"to"`
+		Mime     string `json:"mime"`
+		FilePath string `json:"filePath"`
+	}
+	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
+		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
+	}
+	if params.ID == "" || params.To == "" || params.FilePath == "" {
+		return errJSON("INVALID_INPUT", "missing id, to, or filePath")
+	}
+
+	if err := n.MediaUpload(params.ID, params.To, params.Mime, params.FilePath); err != nil {
+		return errJSON("MEDIA_ERROR", err.Error())
+	}
+
+	return okJSON(map[string]interface{}{
+		"ok": true,
+		"id": params.ID,
+	})
+}
+
+// MediaDownload downloads a blob from the relay's media store.
+// Input JSON: { "id": "...", "outputPath": "..." }
+// Returns JSON: { "ok": true, "id": "...", "mime": "...", "size": N }
+func MediaDownload(paramsJSON string) (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+		}
+	}()
+
+	nodeMu.Lock()
+	n := singletonNode
+	nodeMu.Unlock()
+
+	if n == nil {
+		return errJSON("NOT_INITIALIZED", "call Initialize first")
+	}
+
+	var params struct {
+		ID         string `json:"id"`
+		OutputPath string `json:"outputPath"`
+	}
+	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
+		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
+	}
+	if params.ID == "" || params.OutputPath == "" {
+		return errJSON("INVALID_INPUT", "missing id or outputPath")
+	}
+
+	mime, size, err := n.MediaDownload(params.ID, params.OutputPath)
+	if err != nil {
+		return errJSON("MEDIA_ERROR", err.Error())
+	}
+
+	return okJSON(map[string]interface{}{
+		"ok":   true,
+		"id":   params.ID,
+		"mime": mime,
+		"size": size,
+	})
+}
+
+// MediaDelete deletes a blob from the relay's media store.
+// Input JSON: { "id": "..." }
+// Returns JSON: { "ok": true }
+func MediaDelete(paramsJSON string) (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+		}
+	}()
+
+	nodeMu.Lock()
+	n := singletonNode
+	nodeMu.Unlock()
+
+	if n == nil {
+		return errJSON("NOT_INITIALIZED", "call Initialize first")
+	}
+
+	var params struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
+		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
+	}
+	if params.ID == "" {
+		return errJSON("INVALID_INPUT", "missing id")
+	}
+
+	if err := n.MediaDelete(params.ID); err != nil {
+		return errJSON("MEDIA_ERROR", err.Error())
+	}
+
+	return okJSON(map[string]interface{}{
+		"ok": true,
+	})
+}
+
+// MediaList lists blobs available for this peer on the relay.
+// Input JSON: {} (empty or no payload)
+// Returns JSON: { "ok": true, "blobs": [...] }
+func MediaList(paramsJSON string) (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+		}
+	}()
+
+	nodeMu.Lock()
+	n := singletonNode
+	nodeMu.Unlock()
+
+	if n == nil {
+		return errJSON("NOT_INITIALIZED", "call Initialize first")
+	}
+
+	blobs, err := n.MediaList()
+	if err != nil {
+		return errJSON("MEDIA_ERROR", err.Error())
+	}
+
+	blobList := make([]map[string]interface{}, len(blobs))
+	for i, b := range blobs {
+		blobList[i] = map[string]interface{}{
+			"id":         b.ID,
+			"from":       b.From,
+			"to":         b.To,
+			"mime":       b.Mime,
+			"size":       b.Size,
+			"created_at": b.CreatedAt,
+		}
+	}
+
+	return okJSON(map[string]interface{}{
+		"ok":    true,
+		"blobs": blobList,
+	})
+}
+
 // --- Helpers ---
 
 // identityMap converts an identity.Identity to the JSON-compatible map format.

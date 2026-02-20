@@ -19,6 +19,7 @@ class MessagePayload {
   final String senderUsername;
   final String timestamp;
   final String? quotedMessageId;
+  final List<Map<String, dynamic>>? media;
 
   const MessagePayload({
     required this.id,
@@ -27,6 +28,7 @@ class MessagePayload {
     required this.senderUsername,
     required this.timestamp,
     this.quotedMessageId,
+    this.media,
   });
 
   /// Parses a JSON string into a MessagePayload, or returns null if invalid.
@@ -57,6 +59,11 @@ class MessagePayload {
 
       final quotedMessageId = payload['quotedMessageId'] as String?;
 
+      final rawMedia = payload['media'] as List<dynamic>?;
+      final media = rawMedia
+          ?.map((e) => Map<String, dynamic>.from(e as Map))
+          .toList();
+
       return MessagePayload(
         id: id,
         text: text,
@@ -64,6 +71,7 @@ class MessagePayload {
         senderUsername: senderUsername,
         timestamp: timestamp,
         quotedMessageId: quotedMessageId,
+        media: media,
       );
     } catch (_) {
       return null;
@@ -79,6 +87,7 @@ class MessagePayload {
       'senderUsername': senderUsername,
       'timestamp': timestamp,
       if (quotedMessageId != null) 'quotedMessageId': quotedMessageId,
+      if (media != null && media!.isNotEmpty) 'media': media,
     };
     final envelope = {
       'type': 'chat_message',
@@ -155,6 +164,11 @@ class MessagePayload {
 
       final quotedMessageId = payload['quotedMessageId'] as String?;
 
+      final rawMedia = payload['media'] as List<dynamic>?;
+      final media = rawMedia
+          ?.map((e) => Map<String, dynamic>.from(e as Map))
+          .toList();
+
       return MessagePayload(
         id: id,
         text: text,
@@ -162,6 +176,7 @@ class MessagePayload {
         senderUsername: senderUsername,
         timestamp: timestamp,
         quotedMessageId: quotedMessageId,
+        media: media,
       );
     } catch (_) {
       return null;
@@ -179,6 +194,7 @@ class MessagePayload {
       'senderUsername': senderUsername,
       'timestamp': timestamp,
       if (quotedMessageId != null) 'quotedMessageId': quotedMessageId,
+      if (media != null && media!.isNotEmpty) 'media': media,
     });
   }
 

@@ -3,6 +3,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
@@ -198,6 +200,49 @@ class FakeMessageRepository implements MessageRepository {
 
   @override
   Future<List<ConversationMessage>> getFailedOutgoingMessages() async => [];
+}
+
+// -- Fake Media Attachment Repository --
+class FakeMediaAttachmentRepository implements MediaAttachmentRepository {
+  final List<MediaAttachment> saved = [];
+
+  @override
+  Future<void> saveAttachment(MediaAttachment attachment) async {
+    saved.add(attachment);
+  }
+
+  @override
+  Future<List<MediaAttachment>> getAttachmentsForMessage(
+      String messageId) async {
+    return saved.where((a) => a.messageId == messageId).toList();
+  }
+
+  @override
+  Future<Map<String, List<MediaAttachment>>> getAttachmentsForMessages(
+      List<String> messageIds) async {
+    final map = <String, List<MediaAttachment>>{};
+    for (final a in saved) {
+      if (messageIds.contains(a.messageId)) {
+        map.putIfAbsent(a.messageId, () => []).add(a);
+      }
+    }
+    return map;
+  }
+
+  @override
+  Future<void> updateLocalPath(String id, String localPath) async {}
+
+  @override
+  Future<void> updateDownloadStatus(String id, String downloadStatus) async {}
+
+  @override
+  Future<int> deleteAttachmentsForMessage(String messageId) async => 0;
+
+  @override
+  Future<int> deleteAttachmentsForContact(String contactPeerId) async => 0;
+
+  @override
+  Future<List<MediaAttachment>> getPendingDownloads() async => [];
 }
 
 Future<List<String>> capturePrintedLines(Future<void> Function() action) async {
@@ -654,6 +699,217 @@ void main() {
       expect(message!.quotedMessageId, isNull);
       // No quotedMessageId key in wire JSON
       expect(p2pService.lastSentMessage, isNot(contains('quotedMessageId')));
+    });
+
+    group('media attachments', () {
+      late FakeMediaAttachmentRepository mediaRepo;
+
+      final testMedia = [
+        const MediaAttachment(
+          id: 'blob-001',
+          messageId: '',
+          mime: 'image/jpeg',
+          size: 245000,
+          mediaType: 'image',
+          width: 1920,
+          height: 1080,
+          downloadStatus: 'done',
+          createdAt: '2026-02-20T10:00:00.000Z',
+        ),
+        const MediaAttachment(
+          id: 'blob-002',
+          messageId: '',
+          mime: 'audio/mp3',
+          size: 50000,
+          mediaType: 'audio',
+          durationMs: 30000,
+          downloadStatus: 'done',
+          createdAt: '2026-02-20T10:00:01.000Z',
+        ),
+      ];
+
+      setUp(() {
+        mediaRepo = FakeMediaAttachmentRepository();
+      });
+
+      test('allows empty text when media is attached', () async {
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: '',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          mediaAttachments: testMedia,
+          mediaAttachmentRepo: mediaRepo,
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message, isNotNull);
+        expect(message!.text, '');
+      });
+
+      test('still rejects empty text without media', () async {
+        final (result, _) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: '',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          mediaAttachments: null,
+          mediaAttachmentRepo: mediaRepo,
+        );
+
+        expect(result, SendChatMessageResult.invalidMessage);
+      });
+
+      test('rejects empty text with empty media list', () async {
+        final (result, _) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: '',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          mediaAttachments: [],
+          mediaAttachmentRepo: mediaRepo,
+        );
+
+        expect(result, SendChatMessageResult.invalidMessage);
+      });
+
+      test('includes media array in wire JSON', () async {
+        await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'With image',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          mediaAttachments: testMedia,
+          mediaAttachmentRepo: mediaRepo,
+        );
+
+        expect(p2pService.lastSentMessage, contains('"media"'));
+        expect(p2pService.lastSentMessage, contains('"blob-001"'));
+        expect(p2pService.lastSentMessage, contains('"blob-002"'));
+        expect(p2pService.lastSentMessage, contains('"image/jpeg"'));
+      });
+
+      test('omits media from wire JSON when null', () async {
+        await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'No media',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+
+        expect(p2pService.lastSentMessage, isNot(contains('"media"')));
+      });
+
+      test('persists media attachments with correct messageId on success',
+          () async {
+        const fixedId = 'msg-fixed-media-001';
+
+        final (result, _) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'With media',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          messageId: fixedId,
+          mediaAttachments: testMedia,
+          mediaAttachmentRepo: mediaRepo,
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(mediaRepo.saved.length, 2);
+        expect(mediaRepo.saved[0].id, 'blob-001');
+        expect(mediaRepo.saved[0].messageId, fixedId);
+        expect(mediaRepo.saved[1].id, 'blob-002');
+        expect(mediaRepo.saved[1].messageId, fixedId);
+      });
+
+      test('persists media attachments on inbox fallback', () async {
+        p2pService.sendMessageResult = false;
+        p2pService.storeInInboxResult = true;
+        const fixedId = 'msg-inbox-media';
+
+        final (result, _) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Inbox with media',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          messageId: fixedId,
+          mediaAttachments: testMedia,
+          mediaAttachmentRepo: mediaRepo,
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(mediaRepo.saved.length, 2);
+        expect(mediaRepo.saved[0].messageId, fixedId);
+        expect(mediaRepo.saved[1].messageId, fixedId);
+      });
+
+      test('persists media attachments even on failure', () async {
+        p2pService.sendMessageResult = false;
+        p2pService.storeInInboxResult = false;
+        const fixedId = 'msg-failed-media';
+
+        final (result, _) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Failed with media',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          messageId: fixedId,
+          mediaAttachments: testMedia,
+          mediaAttachmentRepo: mediaRepo,
+        );
+
+        expect(result, SendChatMessageResult.sendFailed);
+        expect(mediaRepo.saved.length, 2);
+        expect(mediaRepo.saved[0].messageId, fixedId);
+      });
+
+      test('does not persist media when repo is null', () async {
+        final (result, _) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Media but no repo',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          mediaAttachments: testMedia,
+          mediaAttachmentRepo: null,
+        );
+
+        expect(result, SendChatMessageResult.success);
+        // No crash, no media saved
+      });
+
+      test('does not persist when media list is empty', () async {
+        final (result, _) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Empty media',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          mediaAttachments: [],
+          mediaAttachmentRepo: mediaRepo,
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(mediaRepo.saved, isEmpty);
+      });
     });
   });
 }

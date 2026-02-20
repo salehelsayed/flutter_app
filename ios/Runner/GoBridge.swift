@@ -90,6 +90,16 @@ class GoBridge: NSObject {
         case "inboxRegisterToken":
             runOnBackground({ BridgeInboxRegisterToken(args ?? "") }, result: result)
 
+        // Media
+        case "mediaUpload":
+            runOnBackground({ BridgeMediaUpload(args ?? "") }, result: result)
+        case "mediaDownload":
+            runOnBackground({ BridgeMediaDownload(args ?? "") }, result: result)
+        case "mediaDelete":
+            runOnBackground({ BridgeMediaDelete(args ?? "") }, result: result)
+        case "mediaList":
+            runOnBackground({ BridgeMediaList(args ?? "") }, result: result)
+
         default:
             result(FlutterMethodNotImplemented)
         }

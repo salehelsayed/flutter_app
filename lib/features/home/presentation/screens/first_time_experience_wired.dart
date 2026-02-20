@@ -13,6 +13,7 @@ import 'package:flutter_app/features/contact_request/domain/repositories/contact
 import 'package:flutter_app/features/contact_request/presentation/widgets/contact_request_dialog.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
@@ -30,6 +31,7 @@ class FirstTimeExperienceWired extends StatefulWidget {
   final ContactRequestRepository contactRequestRepository;
   final ContactRequestListener contactRequestListener;
   final MessageRepository messageRepository;
+  final MediaAttachmentRepository mediaAttachmentRepository;
   final ChatMessageListener chatMessageListener;
   final Bridge bridge;
   final P2PService p2pService;
@@ -41,6 +43,7 @@ class FirstTimeExperienceWired extends StatefulWidget {
     required this.contactRequestRepository,
     required this.contactRequestListener,
     required this.messageRepository,
+    required this.mediaAttachmentRepository,
     required this.chatMessageListener,
     required this.bridge,
     required this.p2pService,
@@ -128,6 +131,7 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
             contactRequestRepository: widget.contactRequestRepository,
             contactRequestListener: widget.contactRequestListener,
             messageRepository: widget.messageRepository,
+            mediaAttachmentRepository: widget.mediaAttachmentRepository,
             chatMessageListener: widget.chatMessageListener,
             bridge: widget.bridge,
             p2pService: widget.p2pService,
@@ -373,6 +377,7 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
           contactRequestRepository: widget.contactRequestRepository,
           contactRequestListener: widget.contactRequestListener,
           messageRepository: widget.messageRepository,
+          mediaAttachmentRepository: widget.mediaAttachmentRepository,
           chatMessageListener: widget.chatMessageListener,
           identityRepository: widget.repository,
           p2pService: widget.p2pService,

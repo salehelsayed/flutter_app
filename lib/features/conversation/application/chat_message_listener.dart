@@ -6,6 +6,7 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/handle_incoming_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 
@@ -20,6 +21,7 @@ class ChatMessageListener {
   final ContactRepository contactRepo;
   final Bridge? bridge;
   final Future<String?> Function()? getOwnMlKemSecretKey;
+  final MediaAttachmentRepository? mediaAttachmentRepo;
 
   StreamSubscription<ChatMessage>? _subscription;
   final _messageController = StreamController<ConversationMessage>.broadcast();
@@ -31,6 +33,7 @@ class ChatMessageListener {
     required this.contactRepo,
     this.bridge,
     this.getOwnMlKemSecretKey,
+    this.mediaAttachmentRepo,
   });
 
   /// Stream of new incoming chat messages for the UI to listen to.
@@ -110,6 +113,7 @@ class ChatMessageListener {
         contactRepo: contactRepo,
         bridge: bridge,
         ownMlKemSecretKey: ownSecretKey,
+        mediaAttachmentRepo: mediaAttachmentRepo,
       );
 
       if (updatedContact != null) {

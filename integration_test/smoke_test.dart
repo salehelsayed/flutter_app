@@ -14,12 +14,14 @@ import 'package:flutter_app/core/database/helpers/identity_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/contact_requests_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository_impl.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository_impl.dart';
 import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository_impl.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository_impl.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository_impl.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/identity/presentation/startup_router.dart';
 import 'package:flutter_app/core/bridge/go_bridge_client.dart';
@@ -137,6 +139,23 @@ void main() {
       dbLoadFailedOutgoingMessages: () => dbLoadFailedOutgoingMessages(db),
     );
 
+    final mediaAttachmentRepository = MediaAttachmentRepositoryImpl(
+      dbInsertMediaAttachment: (row) => dbInsertMediaAttachment(db, row),
+      dbLoadMediaForMessage: (messageId) =>
+          dbLoadMediaForMessage(db, messageId),
+      dbLoadMediaForMessages: (messageIds) =>
+          dbLoadMediaForMessages(db, messageIds),
+      dbUpdateMediaLocalPath: (id, localPath, downloadStatus) =>
+          dbUpdateMediaLocalPath(db, id, localPath, downloadStatus),
+      dbUpdateMediaDownloadStatus: (id, downloadStatus) =>
+          dbUpdateMediaDownloadStatus(db, id, downloadStatus),
+      dbDeleteMediaForMessage: (messageId) =>
+          dbDeleteMediaForMessage(db, messageId),
+      dbDeleteMediaForContact: (contactPeerId) =>
+          dbDeleteMediaForContact(db, contactPeerId),
+      dbLoadPendingMediaDownloads: () => dbLoadPendingMediaDownloads(db),
+    );
+
     print('[TEST] Step 3: Initialize Go bridge...');
     final bridge = GoBridgeClient();
     try {
@@ -175,6 +194,7 @@ void main() {
           contactRequestRepository: contactRequestRepository,
           contactRequestListener: contactRequestListener,
           messageRepository: messageRepository,
+          mediaAttachmentRepository: mediaAttachmentRepository,
           chatMessageListener: chatMessageListener,
           bridge: bridge,
           p2pService: p2pService,
