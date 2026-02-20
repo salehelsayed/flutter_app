@@ -18,6 +18,7 @@ class MessagePayload {
   final String senderPeerId;
   final String senderUsername;
   final String timestamp;
+  final String? quotedMessageId;
 
   const MessagePayload({
     required this.id,
@@ -25,6 +26,7 @@ class MessagePayload {
     required this.senderPeerId,
     required this.senderUsername,
     required this.timestamp,
+    this.quotedMessageId,
   });
 
   /// Parses a JSON string into a MessagePayload, or returns null if invalid.
@@ -53,12 +55,15 @@ class MessagePayload {
         return null;
       }
 
+      final quotedMessageId = payload['quotedMessageId'] as String?;
+
       return MessagePayload(
         id: id,
         text: text,
         senderPeerId: senderPeerId,
         senderUsername: senderUsername,
         timestamp: timestamp,
+        quotedMessageId: quotedMessageId,
       );
     } catch (_) {
       return null;
@@ -67,16 +72,18 @@ class MessagePayload {
 
   /// Serializes to the full JSON envelope string.
   String toJson() {
+    final payload = {
+      'id': id,
+      'text': text,
+      'senderPeerId': senderPeerId,
+      'senderUsername': senderUsername,
+      'timestamp': timestamp,
+      if (quotedMessageId != null) 'quotedMessageId': quotedMessageId,
+    };
     final envelope = {
       'type': 'chat_message',
       'version': '1',
-      'payload': {
-        'id': id,
-        'text': text,
-        'senderPeerId': senderPeerId,
-        'senderUsername': senderUsername,
-        'timestamp': timestamp,
-      },
+      'payload': payload,
     };
     return jsonEncode(envelope);
   }
@@ -146,12 +153,15 @@ class MessagePayload {
         return null;
       }
 
+      final quotedMessageId = payload['quotedMessageId'] as String?;
+
       return MessagePayload(
         id: id,
         text: text,
         senderPeerId: senderPeerId,
         senderUsername: senderUsername,
         timestamp: timestamp,
+        quotedMessageId: quotedMessageId,
       );
     } catch (_) {
       return null;
@@ -168,6 +178,7 @@ class MessagePayload {
       'senderPeerId': senderPeerId,
       'senderUsername': senderUsername,
       'timestamp': timestamp,
+      if (quotedMessageId != null) 'quotedMessageId': quotedMessageId,
     });
   }
 
@@ -189,6 +200,7 @@ class MessagePayload {
       status: status,
       isIncoming: isIncoming,
       createdAt: DateTime.now().toUtc().toIso8601String(),
+      quotedMessageId: quotedMessageId,
     );
   }
 }

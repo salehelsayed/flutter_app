@@ -1,22 +1,38 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/app_colors.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
+import 'package:flutter_app/features/feed/domain/utils/format_message_time.dart';
 import 'package:flutter_app/features/feed/domain/utils/has_significant_time_gap.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/expanded_compose_input.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/inline_reply_input.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/message_bubble.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/quote_preview_bar.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bubble.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/time_gap_divider.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/unread_count_badge.dart';
 import 'package:flutter_app/features/home/presentation/widgets/ring_avatar.dart';
 
-/// A thread card that groups multiple messages from the same contact.
+/// A thread card that groups messages from the same contact.
 ///
-/// Collapsed: shows the latest message with optional "+N more" peek hint
-/// and stacked paper layers behind for multi-message threads.
-/// Expanded: shows all messages as bubbles with time gap dividers.
+/// Collapsed: exchange preview (last 2 messages), state indicators,
+/// inline reply input.
+/// Expanded: bidirectional message bubbles (recent 6), "View N earlier"
+/// link, compose area.
 class ThreadCard extends StatefulWidget {
   final ThreadFeedItem thread;
   final bool isExpanded;
   final VoidCallback? onToggleExpand;
   final VoidCallback? onReply;
+  final ValueChanged<String>? onInlineSend;
+  final VoidCallback? onViewFullConversation;
+  final String initialText;
+  final bool shouldRequestFocus;
+  final ValueChanged<String>? onDraftChanged;
+  final ValueChanged<bool>? onInputFocusChanged;
+  final String? activeQuoteMessageId;
+  final ValueChanged<String>? onQuoteReply;
+  final VoidCallback? onClearQuote;
 
   const ThreadCard({
     super.key,
@@ -24,6 +40,15 @@ class ThreadCard extends StatefulWidget {
     this.isExpanded = false,
     this.onToggleExpand,
     this.onReply,
+    this.onInlineSend,
+    this.onViewFullConversation,
+    this.initialText = '',
+    this.shouldRequestFocus = false,
+    this.onDraftChanged,
+    this.onInputFocusChanged,
+    this.activeQuoteMessageId,
+    this.onQuoteReply,
+    this.onClearQuote,
   });
 
   @override
@@ -73,7 +98,7 @@ class _ThreadCardState extends State<ThreadCard>
 
   void _startBubbleAnimation() {
     _bubbleController?.dispose();
-    final messageCount = widget.thread.messages.length;
+    final messageCount = _expandedMessages.length;
     final totalDuration = 300 + (messageCount - 1) * 40;
     _bubbleController = AnimationController(
       vsync: this,
@@ -86,7 +111,7 @@ class _ThreadCardState extends State<ThreadCard>
     if (_bubbleController == null) {
       return const AlwaysStoppedAnimation(1.0);
     }
-    final messageCount = widget.thread.messages.length;
+    final messageCount = _expandedMessages.length;
     final totalDuration = 300 + (messageCount - 1) * 40;
     final startFraction = (index * 40) / totalDuration;
     final endFraction =
@@ -101,6 +126,16 @@ class _ThreadCardState extends State<ThreadCard>
       ),
     );
   }
+
+  /// Messages shown in expanded view: at most recent 6.
+  List<ThreadMessage> get _expandedMessages {
+    final all = widget.thread.messages;
+    if (all.length <= 6) return all;
+    return all.sublist(all.length - 6);
+  }
+
+  /// Number of earlier messages not shown in expanded view.
+  int get _earlierCount => widget.thread.messages.length - _expandedMessages.length;
 
   @override
   void dispose() {
@@ -182,26 +217,23 @@ class _ThreadCardState extends State<ThreadCard>
   }
 
   Widget _buildMainCard() {
-    final hasUnread = widget.thread.unreadCount > 0;
+    final state = widget.thread.conversationState;
+    final isBlocked = widget.thread.isBlocked;
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(24),
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-        child: Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(24),
-            color: Colors.transparent,
-            border: Border.all(
-              color: hasUnread
-                  ? const Color.fromRGBO(255, 255, 255, 0.25)
-                  : const Color.fromRGBO(255, 255, 255, 0.10),
-            ),
-          ),
-          child: Stack(
-            children: [
-              // Content
-              Column(
+        child: Stack(
+          children: [
+            Container(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(24),
+                color: Colors.transparent,
+                border: Border.all(color: _cardBorderColor(state)),
+                boxShadow: _cardBoxShadow(state),
+              ),
+              child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   _buildFriendIndicator(),
@@ -213,18 +245,76 @@ class _ThreadCardState extends State<ThreadCard>
                         ? _buildExpandedBody()
                         : _buildCollapsedBody(),
                   ),
-                  _buildReplyFooter(),
+                  _buildFooter(),
                 ],
               ),
-            ],
-          ),
+            ),
+            if (isBlocked)
+              Positioned.fill(
+                child: Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(24),
+                    color: const Color.fromRGBO(0, 0, 0, 0.45),
+                  ),
+                  child: const Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.block,
+                          size: 28,
+                          color: Color.fromRGBO(255, 255, 255, 0.60),
+                        ),
+                        SizedBox(height: 8),
+                        Text(
+                          'Blocked',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: Color.fromRGBO(255, 255, 255, 0.60),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+          ],
         ),
       ),
     );
   }
 
+  Color _cardBorderColor(ConversationState state) {
+    switch (state) {
+      case ConversationState.unread:
+      case ConversationState.active:
+        return AppColors.warmBorderTint;
+      case ConversationState.replied:
+        return AppColors.tealBorderTint;
+      case ConversationState.read:
+        return const Color.fromRGBO(255, 255, 255, 0.10);
+    }
+  }
+
+  List<BoxShadow>? _cardBoxShadow(ConversationState state) {
+    if (state == ConversationState.unread ||
+        state == ConversationState.active) {
+      return [
+        BoxShadow(
+          color: AppColors.warmOrangeGlow,
+          blurRadius: 12,
+          spreadRadius: 0,
+        ),
+      ];
+    }
+    return null;
+  }
+
   Widget _buildFriendIndicator() {
     final thread = widget.thread;
+    final state = thread.conversationState;
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 18, 20, 12),
       child: Row(
@@ -249,48 +339,93 @@ class _ThreadCardState extends State<ThreadCard>
                   ),
                 ),
                 const SizedBox(height: 2),
-                Text(
-                  thread.latestMessage.time,
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w400,
-                    color: Color.fromRGBO(255, 255, 255, 0.4),
-                  ),
+                Row(
+                  children: [
+                    Text(
+                      thread.latestMessage.time,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w400,
+                        color: Color.fromRGBO(255, 255, 255, 0.4),
+                      ),
+                    ),
+                    if (thread.lastRepliedAt != null) ...[
+                      const SizedBox(width: 8),
+                      _buildReplyIndicator(),
+                    ],
+                  ],
                 ),
               ],
             ),
           ),
+          // State indicator: teal checkmark for replied
+          if (state == ConversationState.replied) _buildRepliedCheckmark(),
         ],
+      ),
+    );
+  }
+
+  Widget _buildReplyIndicator() {
+    final relativeTime =
+        formatRelativeTime(widget.thread.lastRepliedAt!.toIso8601String());
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(
+          Icons.reply_rounded,
+          size: 12,
+          color: AppColors.tealAccent.withValues(alpha: 0.40),
+        ),
+        const SizedBox(width: 3),
+        Text(
+          'You replied $relativeTime',
+          style: TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w400,
+            color: AppColors.tealAccent.withValues(alpha: 0.40),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildRepliedCheckmark() {
+    return Container(
+      width: 22,
+      height: 22,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: AppColors.tealAccent.withValues(alpha: 0.15),
+      ),
+      child: Icon(
+        Icons.check_rounded,
+        size: 14,
+        color: AppColors.tealAccent.withValues(alpha: 0.70),
       ),
     );
   }
 
   Widget _buildCollapsedBody() {
     final thread = widget.thread;
+    final preview = thread.exchangePreview;
+    final earlierCount = thread.messages.length - preview.length;
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            thread.latestMessage.text,
-            style: const TextStyle(
-              fontSize: 15,
-              fontWeight: FontWeight.w400,
-              color: Color.fromRGBO(255, 255, 255, 0.90),
-              height: 1.65,
-              letterSpacing: 0.2,
-            ),
-          ),
-          if (thread.isMultiMessage) ...[
+          // Exchange preview: last 2 messages
+          for (final msg in preview) _buildPreviewLine(msg, thread),
+          if (earlierCount > 0) ...[
             const SizedBox(height: 10),
             Center(
               child: Text(
-                '+${thread.additionalCount} more message${thread.additionalCount == 1 ? '' : 's'} \u02C5',
-                style: const TextStyle(
+                '+$earlierCount earlier \u02C5',
+                style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w500,
-                  color: Color.fromRGBO(78, 205, 196, 0.6),
+                  color: AppColors.tealAccent.withValues(alpha: 0.60),
                 ),
               ),
             ),
@@ -300,12 +435,74 @@ class _ThreadCardState extends State<ThreadCard>
     );
   }
 
+  Widget _buildPreviewLine(ThreadMessage msg, ThreadFeedItem thread) {
+    final isSent = !msg.isIncoming;
+    final hasQuote = isSent && msg.quotedMessageId != null;
+    final label = hasQuote
+        ? '\u21A9 You'
+        : (isSent ? 'You' : thread.contactUsername);
+    final labelColor = isSent
+        ? AppColors.tealAccent.withValues(alpha: 0.50)
+        : const Color.fromRGBO(255, 255, 255, 0.50);
+    final textOpacity = isSent ? 0.65 : 0.90;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '$label: ',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: labelColor,
+            ),
+          ),
+          Expanded(
+            child: Text(
+              msg.text,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w400,
+                color: Color.fromRGBO(255, 255, 255, textOpacity),
+                height: 1.5,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildExpandedBody() {
-    final messages = widget.thread.messages;
+    final messages = _expandedMessages;
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
       child: Column(
         children: [
+          // "View N earlier messages" link
+          if (_earlierCount > 0) ...[
+            GestureDetector(
+              onTap: widget.onViewFullConversation,
+              behavior: HitTestBehavior.opaque,
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: Center(
+                  child: Text(
+                    'View $_earlierCount earlier messages',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                      color: AppColors.tealAccent.withValues(alpha: 0.60),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
           for (var i = 0; i < messages.length; i++) ...[
             if (i > 0 &&
                 hasSignificantTimeGap(
@@ -325,13 +522,13 @@ class _ThreadCardState extends State<ThreadCard>
           GestureDetector(
             onTap: widget.onToggleExpand,
             behavior: HitTestBehavior.opaque,
-            child: const Center(
+            child: Center(
               child: Text(
                 '\u02C4 Collapse',
                 style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w500,
-                  color: Color.fromRGBO(78, 205, 196, 0.6),
+                  color: AppColors.tealAccent.withValues(alpha: 0.60),
                 ),
               ),
             ),
@@ -341,8 +538,42 @@ class _ThreadCardState extends State<ThreadCard>
     );
   }
 
+  /// Resolves quoted text from sibling messages in the thread.
+  String? _resolveQuotedText(String? quotedMessageId) {
+    if (quotedMessageId == null) return null;
+    final match = widget.thread.messages
+        .where((m) => m.id == quotedMessageId)
+        .firstOrNull;
+    return match?.text;
+  }
+
   Widget _buildAnimatedBubble(int index, ThreadMessage message) {
     final anim = _bubbleAnimation(index);
+
+    final quotedText = _resolveQuotedText(message.quotedMessageId);
+    final isQuoteUnavailable =
+        message.quotedMessageId != null && quotedText == null;
+
+    Widget bubble = MessageBubble(
+      text: message.text,
+      time: message.time,
+      isUnread: message.isUnread,
+      isIncoming: message.isIncoming,
+      status: message.status,
+      quotedText: quotedText,
+      isQuoteUnavailable: isQuoteUnavailable,
+    );
+
+    // Wrap incoming bubbles in swipe-to-quote when expanded
+    if (widget.isExpanded &&
+        message.isIncoming &&
+        widget.onQuoteReply != null) {
+      bubble = SwipeToQuoteBubble(
+        onQuoteTriggered: () => widget.onQuoteReply!(message.id),
+        child: bubble,
+      );
+    }
+
     return AnimatedBuilder(
       animation: anim,
       builder: (context, child) {
@@ -357,15 +588,45 @@ class _ThreadCardState extends State<ThreadCard>
           ),
         );
       },
-      child: MessageBubble(
-        text: message.text,
-        time: message.time,
-        isUnread: message.isUnread,
-      ),
+      child: bubble,
     );
   }
 
-  Widget _buildReplyFooter() {
+  Widget _buildFooter() {
+    final state = widget.thread.conversationState;
+    final enabled = widget.onInlineSend != null && !widget.thread.isBlocked;
+
+    // Resolve quote preview text
+    final quoteId = widget.activeQuoteMessageId;
+    final quoteText = _resolveQuotedText(quoteId);
+
+    final Widget input;
+    if (widget.isExpanded) {
+      input = ExpandedComposeInput(
+        hintText: 'Write something...',
+        onSend: (text) => widget.onInlineSend?.call(text),
+        enabled: enabled,
+        initialText: widget.initialText,
+        shouldRequestFocus: widget.shouldRequestFocus,
+        onDraftChanged: widget.onDraftChanged,
+        onFocusChanged: widget.onInputFocusChanged,
+      );
+    } else {
+      final hintText = (state == ConversationState.replied ||
+              state == ConversationState.active)
+          ? 'Continue...'
+          : 'Reply...';
+      input = InlineReplyInput(
+        hintText: hintText,
+        onSend: (text) => widget.onInlineSend?.call(text),
+        enabled: enabled,
+        initialText: widget.initialText,
+        shouldRequestFocus: widget.shouldRequestFocus,
+        onDraftChanged: widget.onDraftChanged,
+        onFocusChanged: widget.onInputFocusChanged,
+      );
+    }
+
     return Container(
       decoration: const BoxDecoration(
         border: Border(
@@ -374,43 +635,16 @@ class _ThreadCardState extends State<ThreadCard>
           ),
         ),
       ),
-      padding: const EdgeInsets.fromLTRB(20, 12, 20, 18),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.end,
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 14),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          GestureDetector(
-            onTap: widget.onReply,
-            behavior: HitTestBehavior.opaque,
-            child: Container(
-              padding: const EdgeInsets.symmetric(
-                horizontal: 18,
-                vertical: 10,
-              ),
-              decoration: BoxDecoration(
-                color: const Color.fromRGBO(255, 255, 255, 0.08),
-                borderRadius: BorderRadius.circular(24),
-              ),
-              child: const Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    Icons.chat_bubble_outline_rounded,
-                    size: 18,
-                    color: Color.fromRGBO(255, 255, 255, 0.6),
-                  ),
-                  SizedBox(width: 8),
-                  Text(
-                    'Reply',
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w500,
-                      color: Color.fromRGBO(255, 255, 255, 0.6),
-                    ),
-                  ),
-                ],
-              ),
+          if (widget.isExpanded && quoteId != null && quoteText != null)
+            QuotePreviewBar(
+              text: quoteText,
+              onDismiss: widget.onClearQuote,
             ),
-          ),
+          input,
         ],
       ),
     );

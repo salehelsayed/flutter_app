@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
 import 'package:flutter_app/features/feed/domain/utils/group_messages_into_threads.dart';
 
 ConversationMessage _msg({
@@ -9,6 +10,8 @@ ConversationMessage _msg({
   required String timestamp,
   required bool isIncoming,
   String? readAt,
+  String status = 'delivered',
+  String? quotedMessageId,
 }) {
   return ConversationMessage(
     id: id,
@@ -16,10 +19,11 @@ ConversationMessage _msg({
     senderPeerId: isIncoming ? contactPeerId : 'self',
     text: text,
     timestamp: timestamp,
-    status: 'delivered',
+    status: status,
     isIncoming: isIncoming,
     createdAt: timestamp,
     readAt: readAt,
+    quotedMessageId: quotedMessageId,
   );
 }
 
@@ -33,7 +37,7 @@ void main() {
       expect(result, isEmpty);
     });
 
-    test('single unread message produces one unread stack with badge', () {
+    test('single unread incoming message produces unread state', () {
       final result = groupMessagesIntoThreads(
         allMessages: [
           _msg(
@@ -48,28 +52,30 @@ void main() {
       );
 
       expect(result.length, 1);
+      expect(result[0].conversationState, ConversationState.unread);
       expect(result[0].isUnreadCard, isTrue);
       expect(result[0].unreadCount, 1);
       expect(result[0].messages.length, 1);
       expect(result[0].contactUsername, 'Alice');
     });
 
-    test('multiple unread messages from same contact grouped into one stack', () {
+    test('sent + received messages both appear in thread', () {
       final result = groupMessagesIntoThreads(
         allMessages: [
           _msg(
             id: 'msg-1',
             contactPeerId: 'peer-A',
-            text: 'First',
+            text: 'Hello from Alice',
             timestamp: '2026-02-09T12:00:00.000Z',
             isIncoming: true,
+            readAt: '2026-02-09T12:05:00.000Z',
           ),
           _msg(
             id: 'msg-2',
             contactPeerId: 'peer-A',
-            text: 'Second',
-            timestamp: '2026-02-09T12:05:00.000Z',
-            isIncoming: true,
+            text: 'Hi Alice!',
+            timestamp: '2026-02-09T12:10:00.000Z',
+            isIncoming: false,
           ),
         ],
         contactUsernames: {'peer-A': 'Alice'},
@@ -77,73 +83,128 @@ void main() {
 
       expect(result.length, 1);
       expect(result[0].messages.length, 2);
-      expect(result[0].messages[0].text, 'First');
-      expect(result[0].messages[1].text, 'Second');
+      expect(result[0].messages[0].isIncoming, isTrue);
+      expect(result[0].messages[1].isIncoming, isFalse);
     });
 
-    test('read messages from same session stay grouped without badge', () {
+    test('state derivation: unread — unread incoming, no sent', () {
       final result = groupMessagesIntoThreads(
         allMessages: [
           _msg(
             id: 'msg-1',
             contactPeerId: 'peer-A',
-            text: 'First',
+            text: 'New message',
+            timestamp: '2026-02-09T12:00:00.000Z',
+            isIncoming: true,
+          ),
+        ],
+        contactUsernames: {'peer-A': 'Alice'},
+      );
+
+      expect(result[0].conversationState, ConversationState.unread);
+    });
+
+    test('state derivation: active — unread incoming + sent messages', () {
+      final result = groupMessagesIntoThreads(
+        allMessages: [
+          _msg(
+            id: 'msg-1',
+            contactPeerId: 'peer-A',
+            text: 'Hey',
+            timestamp: '2026-02-09T12:00:00.000Z',
+            isIncoming: true,
+          ),
+          _msg(
+            id: 'msg-2',
+            contactPeerId: 'peer-A',
+            text: 'Hi back',
+            timestamp: '2026-02-09T12:05:00.000Z',
+            isIncoming: false,
+          ),
+        ],
+        contactUsernames: {'peer-A': 'Alice'},
+      );
+
+      expect(result[0].conversationState, ConversationState.active);
+      expect(result[0].isUnreadCard, isTrue);
+    });
+
+    test('state derivation: replied — all read + has sent', () {
+      final result = groupMessagesIntoThreads(
+        allMessages: [
+          _msg(
+            id: 'msg-1',
+            contactPeerId: 'peer-A',
+            text: 'Read message',
+            timestamp: '2026-02-09T12:00:00.000Z',
+            isIncoming: true,
+            readAt: '2026-02-09T12:05:00.000Z',
+          ),
+          _msg(
+            id: 'msg-2',
+            contactPeerId: 'peer-A',
+            text: 'My reply',
+            timestamp: '2026-02-09T12:10:00.000Z',
+            isIncoming: false,
+          ),
+        ],
+        contactUsernames: {'peer-A': 'Alice'},
+      );
+
+      expect(result[0].conversationState, ConversationState.replied);
+      expect(result[0].hasReply, isTrue);
+      expect(result[0].lastRepliedAt, isNotNull);
+    });
+
+    test('state derivation: read — all read, no sent', () {
+      final result = groupMessagesIntoThreads(
+        allMessages: [
+          _msg(
+            id: 'msg-1',
+            contactPeerId: 'peer-A',
+            text: 'Read msg',
             timestamp: '2026-02-09T12:00:00.000Z',
             isIncoming: true,
             readAt: '2026-02-09T12:30:00.000Z',
           ),
-          _msg(
-            id: 'msg-2',
-            contactPeerId: 'peer-A',
-            text: 'Second',
-            timestamp: '2026-02-09T12:05:00.000Z',
-            isIncoming: true,
-            readAt: '2026-02-09T12:30:00.000Z', // same readAt = same session
-          ),
         ],
         contactUsernames: {'peer-A': 'Alice'},
       );
 
-      expect(result.length, 1);
-      expect(result[0].messages.length, 2);
-      expect(result[0].unreadCount, 0);
+      expect(result[0].conversationState, ConversationState.read);
       expect(result[0].isUnreadCard, isFalse);
     });
 
-    test('different read sessions produce separate stacks', () {
+    test('24-hour gap splits into separate thread cards', () {
       final result = groupMessagesIntoThreads(
         allMessages: [
-          // First read session
           _msg(
             id: 'msg-1',
             contactPeerId: 'peer-A',
-            text: 'Session 1 msg',
-            timestamp: '2026-02-09T10:00:00.000Z',
+            text: 'Yesterday',
+            timestamp: '2026-02-08T10:00:00.000Z',
             isIncoming: true,
-            readAt: '2026-02-09T10:30:00.000Z',
+            readAt: '2026-02-08T10:05:00.000Z',
           ),
-          // Second read session
+          // 25 hour gap
           _msg(
             id: 'msg-2',
             contactPeerId: 'peer-A',
-            text: 'Session 2 msg',
-            timestamp: '2026-02-09T12:00:00.000Z',
+            text: 'Today',
+            timestamp: '2026-02-09T11:00:00.000Z',
             isIncoming: true,
-            readAt: '2026-02-09T12:30:00.000Z',
+            readAt: '2026-02-09T11:05:00.000Z',
           ),
         ],
         contactUsernames: {'peer-A': 'Alice'},
       );
 
-      // Two separate read stacks from the same contact
       expect(result.length, 2);
-      expect(result.every((t) => !t.isUnreadCard), isTrue);
-      // Newest session first
-      expect(result[0].messages[0].text, 'Session 2 msg');
-      expect(result[1].messages[0].text, 'Session 1 msg');
+      expect(result[0].messages[0].text, 'Today'); // newest first
+      expect(result[1].messages[0].text, 'Yesterday');
     });
 
-    test('unread stacks sort before read stacks', () {
+    test('unread/active sort before read/replied', () {
       final result = groupMessagesIntoThreads(
         allMessages: [
           _msg(
@@ -166,19 +227,89 @@ void main() {
       );
 
       expect(result.length, 2);
-      expect(result[0].isUnreadCard, isTrue);
+      expect(result[0].conversationState, ConversationState.unread);
       expect(result[0].contactUsername, 'Bob');
-      expect(result[1].isUnreadCard, isFalse);
+      expect(result[1].conversationState, ConversationState.read);
       expect(result[1].contactUsername, 'Alice');
     });
 
-    test('sent messages are filtered out', () {
+    test('exchangePreview returns last 2 messages', () {
       final result = groupMessagesIntoThreads(
         allMessages: [
           _msg(
             id: 'msg-1',
             contactPeerId: 'peer-A',
-            text: 'Sent by me',
+            text: 'First',
+            timestamp: '2026-02-09T12:00:00.000Z',
+            isIncoming: true,
+            readAt: '2026-02-09T12:30:00.000Z',
+          ),
+          _msg(
+            id: 'msg-2',
+            contactPeerId: 'peer-A',
+            text: 'Second',
+            timestamp: '2026-02-09T12:05:00.000Z',
+            isIncoming: false,
+          ),
+          _msg(
+            id: 'msg-3',
+            contactPeerId: 'peer-A',
+            text: 'Third',
+            timestamp: '2026-02-09T12:10:00.000Z',
+            isIncoming: true,
+            readAt: '2026-02-09T12:30:00.000Z',
+          ),
+        ],
+        contactUsernames: {'peer-A': 'Alice'},
+      );
+
+      expect(result.length, 1);
+      final preview = result[0].exchangePreview;
+      expect(preview.length, 2);
+      expect(preview[0].text, 'Second');
+      expect(preview[1].text, 'Third');
+    });
+
+    test('lastRepliedAt is set to latest sent message timestamp', () {
+      final result = groupMessagesIntoThreads(
+        allMessages: [
+          _msg(
+            id: 'msg-1',
+            contactPeerId: 'peer-A',
+            text: 'Hello',
+            timestamp: '2026-02-09T12:00:00.000Z',
+            isIncoming: true,
+            readAt: '2026-02-09T12:05:00.000Z',
+          ),
+          _msg(
+            id: 'msg-2',
+            contactPeerId: 'peer-A',
+            text: 'Reply 1',
+            timestamp: '2026-02-09T12:10:00.000Z',
+            isIncoming: false,
+          ),
+          _msg(
+            id: 'msg-3',
+            contactPeerId: 'peer-A',
+            text: 'Reply 2',
+            timestamp: '2026-02-09T12:20:00.000Z',
+            isIncoming: false,
+          ),
+        ],
+        contactUsernames: {'peer-A': 'Alice'},
+      );
+
+      expect(result[0].lastRepliedAt,
+          DateTime.parse('2026-02-09T12:20:00.000Z'));
+    });
+
+    test('user sends first (no incoming) produces replied state', () {
+      final result = groupMessagesIntoThreads(
+        allMessages: [
+          _msg(
+            id: 'msg-1',
+            contactPeerId: 'peer-A',
+            text: 'I start',
             timestamp: '2026-02-09T12:00:00.000Z',
             isIncoming: false,
           ),
@@ -186,39 +317,172 @@ void main() {
         contactUsernames: {'peer-A': 'Alice'},
       );
 
-      expect(result, isEmpty);
+      expect(result.length, 1);
+      expect(result[0].conversationState, ConversationState.replied);
+      expect(result[0].hasReply, isTrue);
     });
 
-    test('new unread stack appears above old read stack from same contact', () {
+    test('ThreadMessage preserves isIncoming and status', () {
       final result = groupMessagesIntoThreads(
         allMessages: [
           _msg(
             id: 'msg-1',
             contactPeerId: 'peer-A',
-            text: 'Old read message',
-            timestamp: '2026-02-09T10:00:00.000Z',
+            text: 'Incoming',
+            timestamp: '2026-02-09T12:00:00.000Z',
             isIncoming: true,
-            readAt: '2026-02-09T10:30:00.000Z',
           ),
           _msg(
             id: 'msg-2',
             contactPeerId: 'peer-A',
-            text: 'New unread message',
-            timestamp: '2026-02-09T14:00:00.000Z',
-            isIncoming: true,
+            text: 'Outgoing',
+            timestamp: '2026-02-09T12:05:00.000Z',
+            isIncoming: false,
+            status: 'delivered',
           ),
         ],
         contactUsernames: {'peer-A': 'Alice'},
       );
 
+      expect(result[0].messages[0].isIncoming, isTrue);
+      expect(result[0].messages[0].status, isNull); // incoming has no status
+      expect(result[0].messages[1].isIncoming, isFalse);
+      expect(result[0].messages[1].status, 'delivered');
+    });
+
+    test('multiple contacts produce separate threads', () {
+      final result = groupMessagesIntoThreads(
+        allMessages: [
+          _msg(
+            id: 'msg-1',
+            contactPeerId: 'peer-A',
+            text: 'From Alice',
+            timestamp: '2026-02-09T12:00:00.000Z',
+            isIncoming: true,
+          ),
+          _msg(
+            id: 'msg-2',
+            contactPeerId: 'peer-B',
+            text: 'From Bob',
+            timestamp: '2026-02-09T12:05:00.000Z',
+            isIncoming: true,
+          ),
+        ],
+        contactUsernames: {'peer-A': 'Alice', 'peer-B': 'Bob'},
+      );
+
       expect(result.length, 2);
-      // Unread stack first
-      expect(result[0].isUnreadCard, isTrue);
-      expect(result[0].unreadCount, 1);
-      expect(result[0].messages[0].text, 'New unread message');
-      // Read stack second
-      expect(result[1].isUnreadCard, isFalse);
-      expect(result[1].messages[0].text, 'Old read message');
+      // Both are unread, newest first
+      expect(result[0].contactUsername, 'Bob');
+      expect(result[1].contactUsername, 'Alice');
+    });
+
+    test('blocked contact produces ThreadFeedItem with isBlocked=true', () {
+      final result = groupMessagesIntoThreads(
+        allMessages: [
+          _msg(
+            id: 'msg-1',
+            contactPeerId: 'peer-A',
+            text: 'Hello',
+            timestamp: '2026-02-09T12:00:00.000Z',
+            isIncoming: true,
+          ),
+        ],
+        contactUsernames: {'peer-A': 'Alice'},
+        contactBlocked: {'peer-A': true},
+      );
+
+      expect(result.length, 1);
+      expect(result[0].isBlocked, isTrue);
+      expect(result[0].contactUsername, 'Alice');
+    });
+
+    test('non-blocked contact produces ThreadFeedItem with isBlocked=false', () {
+      final result = groupMessagesIntoThreads(
+        allMessages: [
+          _msg(
+            id: 'msg-1',
+            contactPeerId: 'peer-A',
+            text: 'Hello',
+            timestamp: '2026-02-09T12:00:00.000Z',
+            isIncoming: true,
+          ),
+        ],
+        contactUsernames: {'peer-A': 'Alice'},
+        contactBlocked: {'peer-A': false},
+      );
+
+      expect(result.length, 1);
+      expect(result[0].isBlocked, isFalse);
+    });
+
+    test('quotedMessageId propagates to ThreadMessage', () {
+      final result = groupMessagesIntoThreads(
+        allMessages: [
+          _msg(
+            id: 'msg-1',
+            contactPeerId: 'peer-A',
+            text: 'Original message',
+            timestamp: '2026-02-09T12:00:00.000Z',
+            isIncoming: true,
+            readAt: '2026-02-09T12:05:00.000Z',
+          ),
+          _msg(
+            id: 'msg-2',
+            contactPeerId: 'peer-A',
+            text: 'Quote reply',
+            timestamp: '2026-02-09T12:10:00.000Z',
+            isIncoming: false,
+            quotedMessageId: 'msg-1',
+          ),
+          _msg(
+            id: 'msg-3',
+            contactPeerId: 'peer-A',
+            text: 'Normal message',
+            timestamp: '2026-02-09T12:15:00.000Z',
+            isIncoming: false,
+          ),
+        ],
+        contactUsernames: {'peer-A': 'Alice'},
+      );
+
+      expect(result.length, 1);
+      expect(result[0].messages.length, 3);
+      expect(result[0].messages[0].quotedMessageId, isNull);
+      expect(result[0].messages[1].quotedMessageId, 'msg-1');
+      expect(result[0].messages[2].quotedMessageId, isNull);
+    });
+
+    test('burst within same contact stays in one thread', () {
+      final result = groupMessagesIntoThreads(
+        allMessages: [
+          _msg(
+            id: 'msg-1',
+            contactPeerId: 'peer-A',
+            text: 'Msg 1',
+            timestamp: '2026-02-09T12:00:00.000Z',
+            isIncoming: true,
+          ),
+          _msg(
+            id: 'msg-2',
+            contactPeerId: 'peer-A',
+            text: 'Msg 2',
+            timestamp: '2026-02-09T12:01:00.000Z',
+            isIncoming: true,
+          ),
+          _msg(
+            id: 'msg-3',
+            contactPeerId: 'peer-A',
+            text: 'Msg 3',
+            timestamp: '2026-02-09T12:02:00.000Z',
+            isIncoming: false,
+          ),
+        ],
+        contactUsernames: {'peer-A': 'Alice'},
+      );
+
+      expect(result.length, 1);
+      expect(result[0].messages.length, 3);
     });
   });
 }

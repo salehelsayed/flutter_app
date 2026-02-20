@@ -8,6 +8,7 @@ import 'package:flutter_app/core/database/migrations/005_secret_null_checks.dart
 import 'package:flutter_app/core/database/migrations/006_read_at_column.dart';
 import 'package:flutter_app/core/database/migrations/007_archive_columns.dart';
 import 'package:flutter_app/core/database/migrations/008_block_columns.dart';
+import 'package:flutter_app/core/database/migrations/009_quoted_message_id.dart';
 import 'package:flutter_app/core/database/encrypted_db_opener.dart';
 import 'package:flutter_app/core/database/helpers/identity_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
@@ -73,7 +74,7 @@ void main() async {
   final db = await openEncryptedDatabase(
     secureKeyStore: secureKeyStore,
     dbName: 'identity.db',
-    version: 8,
+    version: 9,
     onCreate: (db, version) async {
       await runIdentityTableMigration(db);
       await runMessagesTableMigration(db);
@@ -83,6 +84,7 @@ void main() async {
       await runReadAtColumnMigration(db);
       await runArchiveColumnsMigration(db);
       await runBlockColumnsMigration(db);
+      await runQuotedMessageIdMigration(db);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) {
@@ -103,6 +105,9 @@ void main() async {
       }
       if (oldVersion < 8) {
         await runBlockColumnsMigration(db);
+      }
+      if (oldVersion < 9) {
+        await runQuotedMessageIdMigration(db);
       }
     },
   );

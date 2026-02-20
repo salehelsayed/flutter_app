@@ -30,6 +30,9 @@ class ConversationMessage {
   /// ISO-8601 timestamp when the message was read. NULL means unread.
   final String? readAt;
 
+  /// The ID of the message being quoted (quote-reply). NULL means no quote.
+  final String? quotedMessageId;
+
   const ConversationMessage({
     required this.id,
     required this.contactPeerId,
@@ -40,6 +43,7 @@ class ConversationMessage {
     required this.isIncoming,
     required this.createdAt,
     this.readAt,
+    this.quotedMessageId,
   });
 
   /// Creates a ConversationMessage from a database row map.
@@ -54,6 +58,7 @@ class ConversationMessage {
       isIncoming: (map['is_incoming'] as int? ?? 0) == 1,
       createdAt: map['created_at'] as String,
       readAt: map['read_at'] as String?,
+      quotedMessageId: map['quoted_message_id'] as String?,
     );
   }
 
@@ -69,6 +74,7 @@ class ConversationMessage {
       'is_incoming': isIncoming ? 1 : 0,
       'created_at': createdAt,
       'read_at': readAt,
+      'quoted_message_id': quotedMessageId,
     };
   }
 
@@ -83,6 +89,7 @@ class ConversationMessage {
     bool? isIncoming,
     String? createdAt,
     String? readAt,
+    String? quotedMessageId,
   }) {
     return ConversationMessage(
       id: id ?? this.id,
@@ -94,6 +101,7 @@ class ConversationMessage {
       isIncoming: isIncoming ?? this.isIncoming,
       createdAt: createdAt ?? this.createdAt,
       readAt: readAt ?? this.readAt,
+      quotedMessageId: quotedMessageId ?? this.quotedMessageId,
     );
   }
 

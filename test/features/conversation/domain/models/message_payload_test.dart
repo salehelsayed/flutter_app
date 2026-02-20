@@ -259,5 +259,93 @@ void main() {
         expect(inner['timestamp'], testPayload.timestamp);
       });
     });
+
+    group('quotedMessageId', () {
+      const payloadWithQuote = MessagePayload(
+        id: 'msg-q1',
+        text: 'This is a reply',
+        senderPeerId: '12D3KooWSender123',
+        senderUsername: 'Alice',
+        timestamp: '2026-02-20T10:00:00.000Z',
+        quotedMessageId: 'original-msg-001',
+      );
+
+      test('v1 round-trip preserves quotedMessageId', () {
+        final jsonString = payloadWithQuote.toJson();
+        final restored = MessagePayload.fromJson(jsonString);
+
+        expect(restored, isNotNull);
+        expect(restored!.quotedMessageId, 'original-msg-001');
+      });
+
+      test('v1 toJson includes quotedMessageId in payload', () {
+        final jsonString = payloadWithQuote.toJson();
+        final parsed = jsonDecode(jsonString) as Map<String, dynamic>;
+        final payload = parsed['payload'] as Map<String, dynamic>;
+
+        expect(payload['quotedMessageId'], 'original-msg-001');
+      });
+
+      test('v1 toJson omits quotedMessageId when null', () {
+        final jsonString = testPayload.toJson();
+        final parsed = jsonDecode(jsonString) as Map<String, dynamic>;
+        final payload = parsed['payload'] as Map<String, dynamic>;
+
+        expect(payload.containsKey('quotedMessageId'), isFalse);
+      });
+
+      test('v1 fromJson reads null when quotedMessageId absent (backward compat)', () {
+        final json = jsonEncode({
+          'type': 'chat_message',
+          'version': '1',
+          'payload': {
+            'id': 'old-msg',
+            'text': 'old message',
+            'senderPeerId': 'peer',
+            'senderUsername': 'user',
+            'timestamp': '2026-01-01T00:00:00.000Z',
+          },
+        });
+        final restored = MessagePayload.fromJson(json);
+        expect(restored, isNotNull);
+        expect(restored!.quotedMessageId, isNull);
+      });
+
+      test('v2 inner round-trip preserves quotedMessageId', () {
+        final innerJson = payloadWithQuote.toInnerJson();
+        final restored = MessagePayload.fromDecryptedJson(innerJson);
+
+        expect(restored, isNotNull);
+        expect(restored!.quotedMessageId, 'original-msg-001');
+      });
+
+      test('v2 toInnerJson includes quotedMessageId', () {
+        final inner = jsonDecode(payloadWithQuote.toInnerJson())
+            as Map<String, dynamic>;
+        expect(inner['quotedMessageId'], 'original-msg-001');
+      });
+
+      test('v2 toInnerJson omits quotedMessageId when null', () {
+        final inner = jsonDecode(testPayload.toInnerJson())
+            as Map<String, dynamic>;
+        expect(inner.containsKey('quotedMessageId'), isFalse);
+      });
+
+      test('toConversationMessage passes quotedMessageId', () {
+        final msg = payloadWithQuote.toConversationMessage(
+          contactPeerId: 'target',
+          isIncoming: false,
+        );
+        expect(msg.quotedMessageId, 'original-msg-001');
+      });
+
+      test('toConversationMessage passes null when no quote', () {
+        final msg = testPayload.toConversationMessage(
+          contactPeerId: 'target',
+          isIncoming: false,
+        );
+        expect(msg.quotedMessageId, isNull);
+      });
+    });
   });
 }

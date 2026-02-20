@@ -27,6 +27,7 @@ void main() {
         expect(restored.status, testMessage.status);
         expect(restored.isIncoming, testMessage.isIncoming);
         expect(restored.createdAt, testMessage.createdAt);
+        expect(restored.quotedMessageId, isNull);
       });
 
       test('toMap produces correct keys and values', () {
@@ -117,6 +118,43 @@ void main() {
       final str = testMessage.toString();
       expect(str, contains('msg-001'));
       expect(str, contains('isIncoming: false'));
+    });
+
+    group('quotedMessageId', () {
+      test('fromMap/toMap round-trips with quotedMessageId', () {
+        final withQuote = testMessage.copyWith(
+          quotedMessageId: 'quoted-msg-123',
+        );
+        final map = withQuote.toMap();
+        expect(map['quoted_message_id'], 'quoted-msg-123');
+
+        final restored = ConversationMessage.fromMap(map);
+        expect(restored.quotedMessageId, 'quoted-msg-123');
+      });
+
+      test('fromMap reads null quotedMessageId when absent', () {
+        final map = testMessage.toMap();
+        map.remove('quoted_message_id');
+        final restored = ConversationMessage.fromMap(map);
+        expect(restored.quotedMessageId, isNull);
+      });
+
+      test('copyWith preserves quotedMessageId when not overridden', () {
+        final withQuote = ConversationMessage(
+          id: 'msg-q1',
+          contactPeerId: 'peer',
+          senderPeerId: 'sender',
+          text: 'text',
+          timestamp: '2026-02-20T00:00:00.000Z',
+          status: 'sent',
+          isIncoming: false,
+          createdAt: '2026-02-20T00:00:00.000Z',
+          quotedMessageId: 'original-msg',
+        );
+        final copy = withQuote.copyWith(text: 'new text');
+        expect(copy.quotedMessageId, 'original-msg');
+        expect(copy.text, 'new text');
+      });
     });
   });
 }

@@ -136,6 +136,20 @@ class _ConversationScreenState extends State<ConversationScreen> {
             final message = item.message!;
             final isNew = item.isLastAndWasEmpty;
 
+            // Resolve quoted message text
+            String? quotedText;
+            bool isQuoteUnavailable = false;
+            if (message.quotedMessageId != null) {
+              final quoted = widget.messages
+                  .where((m) => m.id == message.quotedMessageId)
+                  .firstOrNull;
+              if (quoted != null) {
+                quotedText = quoted.text;
+              } else {
+                isQuoteUnavailable = true;
+              }
+            }
+
             final letterCard = LetterCard(
               senderPeerId: message.senderPeerId,
               senderName: message.isIncoming
@@ -145,6 +159,8 @@ class _ConversationScreenState extends State<ConversationScreen> {
               time: _formatTime(message.timestamp),
               isIncoming: message.isIncoming,
               status: message.isIncoming ? null : message.status,
+              quotedText: quotedText,
+              isQuoteUnavailable: isQuoteUnavailable,
             );
 
             final shouldAnimate = !widget.initialLoadDone || isNew;
