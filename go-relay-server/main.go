@@ -6,11 +6,15 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"runtime"
+	"sync/atomic"
 	"syscall"
+	"time"
 
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/event"
+	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/relay"
@@ -35,6 +39,8 @@ const (
 	wssPort    = 4001 // Announced WSS port (via nginx)
 	quicPort   = 4002 // New: direct QUIC for mobile clients
 )
+
+var totalConnected atomic.Int64
 
 func main() {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -104,9 +110,11 @@ func main() {
 			switch e := ev.(type) {
 			case event.EvtPeerConnectednessChanged:
 				if e.Connectedness == network.Connected {
-					logPeerConnected(e.Peer, inbox)
+					current := totalConnected.Add(1)
+					logPeerConnected(e.Peer, inbox, current)
 				} else if e.Connectedness == network.NotConnected {
-					log.Printf("[NODE] Peer disconnected: %s", shortPeerId(e.Peer))
+					current := totalConnected.Add(-1)
+					log.Printf("[NODE] Peer disconnected: %s (total=%d)", shortPeerId(e.Peer), current)
 				}
 			}
 		}
@@ -133,7 +141,7 @@ func main() {
 	log.Println()
 
 	// Periodic stats
-	go inbox.LogStatsPeriodically(ctx)
+	go logStatsPeriodically(ctx, h, inbox, store)
 
 	// Wait for shutdown signal
 	sigCh := make(chan os.Signal, 1)
@@ -149,12 +157,34 @@ func main() {
 	log.Println("Node stopped.")
 }
 
-func logPeerConnected(p peer.ID, inbox *InboxStore) {
+func logPeerConnected(p peer.ID, inbox *InboxStore, total int64) {
 	short := shortPeerId(p)
-	log.Printf("[NODE] Peer connected: %s", short)
+	log.Printf("[NODE] Peer connected: %s (total=%d)", short, total)
 	count := inbox.Count(p.String())
 	if count > 0 {
 		log.Printf("[INBOX] Peer %s has %d pending messages", short, count)
+	}
+}
+
+func logStatsPeriodically(ctx context.Context, h host.Host, inbox *InboxStore, rz *RendezvousStore) {
+	ticker := time.NewTicker(60 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			conns := len(h.Network().Peers())
+			rzNs, rzPeers := rz.Stats()
+			inboxPeers, inboxMsgs := inbox.Stats()
+			tokenCount := inbox.push.TokenCount()
+			var mem runtime.MemStats
+			runtime.ReadMemStats(&mem)
+			log.Printf("[STATS] conns=%d rz_ns=%d rz_peers=%d inbox_peers=%d inbox_msgs=%d push_tokens=%d heap_mb=%d goroutines=%d active_rz_streams=%d active_inbox_streams=%d",
+				conns, rzNs, rzPeers, inboxPeers, inboxMsgs, tokenCount,
+				mem.HeapAlloc/1024/1024, runtime.NumGoroutine(),
+				activeRendezvousStreams.Load(), activeInboxStreams.Load())
+		case <-ctx.Done():
+			return
+		}
 	}
 }
 
