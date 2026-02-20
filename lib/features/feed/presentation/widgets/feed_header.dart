@@ -13,6 +13,7 @@ class FeedHeader extends StatelessWidget {
   final String? peerId;
   final ValueChanged<String>? onUsernameChanged;
   final P2PService? p2pService;
+  final VoidCallback? onAvatarTap;
 
   const FeedHeader({
     super.key,
@@ -21,6 +22,7 @@ class FeedHeader extends StatelessWidget {
     this.peerId,
     this.onUsernameChanged,
     this.p2pService,
+    this.onAvatarTap,
   });
 
   @override
@@ -46,7 +48,10 @@ class FeedHeader extends StatelessWidget {
               ConnectionStatusIndicator(p2pService: p2pService!),
               const SizedBox(width: 8),
             ],
-            _HeaderAvatar(peerId: peerId, avatarBytes: avatarBytes),
+            GestureDetector(
+              onTap: onAvatarTap,
+              child: _HeaderAvatar(peerId: peerId, avatarBytes: avatarBytes),
+            ),
           ],
         ),
       ],

@@ -30,6 +30,8 @@ import 'package:flutter_app/features/identity/domain/models/identity_model.dart'
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/orbit/presentation/navigation/orbit_route_transition.dart';
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_wired.dart';
+import 'package:flutter_app/features/settings/presentation/navigation/settings_route_transition.dart';
+import 'package:flutter_app/features/settings/presentation/screens/settings_wired.dart';
 import 'feed_screen.dart';
 
 /// Wired widget that connects FeedScreen to business logic.
@@ -534,6 +536,16 @@ class _FeedWiredState extends State<FeedWired> {
     }
   }
 
+  void _onAvatarTap() {
+    Navigator.of(context).push(
+      buildSettingsSlideUpRoute(
+        builder: (_) => SettingsWired(
+          identityRepo: widget.repository,
+        ),
+      ),
+    );
+  }
+
   void _onSwitchView(String tab) {
     if (tab == 'orbit') {
       Navigator.of(context).push(
@@ -700,6 +712,7 @@ class _FeedWiredState extends State<FeedWired> {
         onQuoteReply: _onQuoteReply,
         onClearQuote: _onClearQuote,
         onAttach: _onAttach,
+        onAvatarTap: _onAvatarTap,
       ),
     );
   }
