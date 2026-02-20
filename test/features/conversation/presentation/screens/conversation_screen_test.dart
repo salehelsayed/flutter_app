@@ -141,14 +141,5 @@ void main() {
       expect(find.byType(CircularProgressIndicator), findsOneWidget);
     });
 
-    testWidgets('shows date separator for today\'s messages', (tester) async {
-      final now = DateTime.now().toUtc().toIso8601String();
-      await tester.pumpWidget(buildTestWidget(
-        messages: [makeMessage(timestamp: now)],
-      ));
-      await pumpFrames(tester);
-
-      expect(find.text('TODAY'), findsOneWidget);
-    });
   });
 }

@@ -337,7 +337,7 @@ func StopNode() (result string) {
 }
 
 // NodeStatus returns the current node state.
-// Returns JSON: { "ok": true, "peerId": "...", "isStarted": ..., "circuitAddresses": [...], "connections": [...] }
+// Returns JSON: { "ok": true, "peerId": "...", "isStarted": ..., "listenAddresses": [...], "circuitAddresses": [...], "connections": [...] }
 func NodeStatus() (result string) {
 	defer func() {
 		if r := recover(); r != nil {

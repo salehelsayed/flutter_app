@@ -4,13 +4,32 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:flutter_app/core/database/encrypted_db_opener.dart';
 import 'package:flutter_app/core/database/migrations/001_identity_table.dart';
+import 'package:flutter_app/core/database/migrations/002_messages_table.dart';
+import 'package:flutter_app/core/database/migrations/003_mlkem_keys.dart';
+import 'package:flutter_app/core/database/migrations/005_secret_null_checks.dart';
+import 'package:flutter_app/core/database/migrations/006_read_at_column.dart';
+import 'package:flutter_app/core/database/migrations/007_archive_columns.dart';
+import 'package:flutter_app/core/database/migrations/008_block_columns.dart';
 import 'package:flutter_app/core/database/helpers/identity_db_helpers.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository_impl.dart';
-import 'package:flutter_app/core/secure_storage/flutter_secure_key_store.dart';
+import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/bridge/go_bridge_client.dart';
-import 'dart:io' show Platform, exit;
+import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart' show kIsWeb;
+
+class _FakeSecureKeyStore implements SecureKeyStore {
+  final Map<String, String> _store = {};
+  @override
+  Future<String?> read(String key) async => _store[key];
+  @override
+  Future<void> write(String key, String value) async => _store[key] = value;
+  @override
+  Future<void> delete(String key) async => _store.remove(key);
+  @override
+  Future<bool> containsKey(String key) async => _store.containsKey(key);
+}
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -20,18 +39,35 @@ void main() async {
   print('========================================\n');
 
   try {
-    // Initialize database based on platform
+    // Desktop platforms need FFI; on mobile, sqflite_sqlcipher has native plugins.
     if (!kIsWeb && (Platform.isLinux || Platform.isWindows || Platform.isMacOS)) {
       sqfliteFfiInit();
       databaseFactory = databaseFactoryFfi;
     }
 
+    final secureKeyStore = _FakeSecureKeyStore();
+
     print('[SMOKE] Step 1: Initialize database...');
-    final db = await openDatabase(
-      'smoke_test_identity.db',
-      version: 1,
+    final db = await openEncryptedDatabase(
+      secureKeyStore: secureKeyStore,
+      dbName: 'smoke_test_identity.db',
+      version: 8,
       onCreate: (db, version) async {
         await runIdentityTableMigration(db);
+        await runMessagesTableMigration(db);
+        await runMlKemKeysMigration(db);
+        await runSecretNullChecksMigration(db);
+        await runReadAtColumnMigration(db);
+        await runArchiveColumnsMigration(db);
+        await runBlockColumnsMigration(db);
+      },
+      onUpgrade: (db, oldVersion, newVersion) async {
+        if (oldVersion < 2) await runMessagesTableMigration(db);
+        if (oldVersion < 3) await runMlKemKeysMigration(db);
+        if (oldVersion < 5) await runSecretNullChecksMigration(db);
+        if (oldVersion < 6) await runReadAtColumnMigration(db);
+        if (oldVersion < 7) await runArchiveColumnsMigration(db);
+        if (oldVersion < 8) await runBlockColumnsMigration(db);
       },
     );
     print('[SMOKE] Database initialized');
@@ -40,7 +76,7 @@ void main() async {
     final repository = IdentityRepositoryImpl(
       dbLoadIdentityRow: () => dbLoadIdentityRow(db),
       dbUpsertIdentityRow: (row) => dbUpsertIdentityRow(db, row),
-      secureKeyStore: FlutterSecureKeyStore(),
+      secureKeyStore: secureKeyStore,
     );
 
     print('[SMOKE] Step 3: Initialize Go bridge...');
@@ -92,7 +128,7 @@ void main() async {
       }
     } else {
       print('\n========================================');
-      print('FAILED! Error from JS:');
+      print('FAILED! Error from bridge:');
       print('========================================');
       print('Error Code: ${response['errorCode']}');
       print('Error Message: ${response['errorMessage']}');

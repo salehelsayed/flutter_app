@@ -249,32 +249,36 @@ func TestRelayRendezvousRegister(t *testing.T) {
 	t.Logf("register succeeded for ns=%s", ns)
 }
 
-func TestRelayRendezvousDiscoverSelf(t *testing.T) {
+func TestRelayRendezvousDiscoverPeer(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in -short mode")
 	}
 	requireRelay(t)
 
-	n, peerId := startNode(t)
-	ns := randomNamespace()
-	t.Logf("peerId=%s namespace=%s", peerId, ns)
+	// Use two nodes: A registers, B discovers A.
+	// (Many rendezvous servers filter the requester from results,
+	// so self-discovery is unreliable.)
+	nodeA, peerIdA := startNode(t)
+	nodeB, _ := startNode(t)
 
-	// Register first.
-	if err := n.RendezvousRegister(ns, nil); err != nil {
+	ns := randomNamespace()
+	t.Logf("nodeA=%s namespace=%s", peerIdA, ns)
+
+	// Node A registers on the namespace.
+	if err := nodeA.RendezvousRegister(ns, nil); err != nil {
 		t.Fatalf("RendezvousRegister: %v", err)
 	}
-	t.Log("register succeeded")
+	t.Log("nodeA register succeeded")
 
-	// Retry discover up to 5 times with increasing delay to handle
-	// propagation latency on the relay server.
+	// Node B discovers — retry up to 5 times with increasing delay
+	// to handle propagation latency on the relay server.
 	var found bool
 	for attempt := 1; attempt <= 5; attempt++ {
-		// Wait for registration to propagate.
 		delay := time.Duration(attempt) * 2 * time.Second
 		t.Logf("attempt %d: waiting %v for propagation...", attempt, delay)
 		time.Sleep(delay)
 
-		peers, err := n.RendezvousDiscover(ns, nil)
+		peers, err := nodeB.RendezvousDiscover(ns, nil)
 		if err != nil {
 			t.Logf("attempt %d: RendezvousDiscover error: %v", attempt, err)
 			continue
@@ -286,7 +290,7 @@ func TestRelayRendezvousDiscoverSelf(t *testing.T) {
 		}
 
 		for _, p := range peers {
-			if p.ID.String() == peerId {
+			if p.ID.String() == peerIdA {
 				found = true
 				break
 			}
@@ -297,7 +301,7 @@ func TestRelayRendezvousDiscoverSelf(t *testing.T) {
 	}
 
 	if !found {
-		t.Errorf("own peerId %s not found in discover results after 5 attempts", peerId)
+		t.Errorf("nodeA peerId %s not found in discover results after 5 attempts", peerIdA)
 	}
 }
 

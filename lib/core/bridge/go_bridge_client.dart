@@ -101,7 +101,7 @@ class GoBridgeClient extends Bridge {
       final response = await send(jsonEncode({'cmd': 'node:status'}))
           .timeout(const Duration(seconds: 5));
       final data = jsonDecode(response);
-      return data['ok'] == true || data['errorCode'] != 'BRIDGE_DEAD';
+      return data['ok'] == true;
     } catch (_) {
       emitFlowEvent(
         layer: 'FL',

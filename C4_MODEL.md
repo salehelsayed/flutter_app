@@ -32,7 +32,7 @@
                         │                             │
                         └──────────────┬──────────────┘
                                        │
-                                       │ WebSocket (libp2p)
+                                       │ libp2p (QUIC / WebSocket)
                                        │ via rendezvous relay
                                        ▼
                         ┌─────────────────────────────┐
@@ -51,11 +51,11 @@
 | Element | Type | Description |
 |---------|------|-------------|
 | User | Person | End user who wants to create or restore their cryptographic identity, connect with peers, manage contacts, and exchange encrypted messages |
-| Mknoon Identity App | Software System | Mobile/desktop app for identity management, profile customization, peer discovery, contact requests, E2E encrypted conversations (ML-KEM-768 + AES-256-GCM), offline inbox, push notifications (Firebase Cloud Messaging), and P2P messaging using libp2p and BIP39. Data at rest encrypted via SQLCipher + OS-backed secure storage |
+| Mknoon Identity App | Software System | Mobile/desktop app for identity management, profile customization, peer discovery, contact requests, E2E encrypted conversations (ML-KEM-768 + AES-256-GCM), offline inbox, push notifications (Firebase Cloud Messaging), P2P messaging using Go-native libp2p and BIP39, and local WiFi discovery via mDNS. Data at rest encrypted via SQLCipher + OS-backed secure storage |
 | Rendezvous / Relay Server | External System | libp2p rendezvous server for peer discovery, circuit relay for NAT traversal, and offline message inbox (`/mknoon/inbox/1.0.0`) for store-and-forward delivery |
 
 ### External Dependencies
-- Rendezvous/Relay server at `mknoun.xyz:4001` (WebSocket over TLS)
+- Rendezvous/Relay server at `mknoun.xyz:4001` (libp2p QUIC / WebSocket)
 - Firebase Cloud Messaging (FCM) for push notifications
 
 ---
@@ -90,37 +90,38 @@
 │  │  │  • P2P service layer                                           │  │  │
 │     │  • Ring avatar generation                                      │     │
 │  │  │  • Image picker for avatars                                    │  │  │
-│     └──────────────┬──────────────────┬──────────────┬──────────────┘     │
-│  │                 │                  │              │                 │  │
-│                    │ JSON/WebView     │ SQL queries  │ Keychain/        │
-│  │                 │ Channel          │              │ Keystore        │  │
-│                    ▼                  ▼              ▼                   │
-│  │  ┌─────────────────────────┐ ┌─────────────────────┐ ┌────────────┐│  │
-│     │  JavaScript Runtime     │ │  SQLCipher Database  │ │  Secure    │   │
-│  │  │  [Container: WebView]   │ │  [Container:         │ │  Storage   ││  │
-│     │                         │ │  sqflite_sqlcipher]  │ │  [Container│   │
-│  │  │  • BIP39 mnemonic gen   │ │                      │ │  flutter_  ││  │
-│     │  • Ed25519 keypair      │ │  • identity table    │ │  secure_   │   │
-│  │  │  • ML-KEM-768 keygen   │ │  • contacts table    │ │  storage]  ││  │
-│     │  • libp2p peer ID       │ │  • contact_requests  │ │            │   │
-│  │  │  • Payload signing      │ │  • messages table    │ │ • private  ││  │
-│     │  • Message encrypt/     │ │  • avatar BLOB store │ │   _key     │   │
-│  │  │    decrypt              │ │  • 256-bit AES       │ │ • mnemonic ││  │
-│     │  • P2P node management  │ │    encrypted         │ │   12       │   │
-│  │  │  • Peer discovery &     │ │                      │ │ • ml_kem_  ││  │
-│     │    relay                │ │                      │ │   secret   │   │
-│  │  │  • Message send/receive │ │                      │ │ • db_enc   ││  │
-│     │  • Offline inbox store/ │ │                      │ │   _key     │   │
-│  │  │    retrieve             │ │                      │ │            ││  │
-│     └──────────────┬──────────┘ └──────────────────────┘ └────────────┘   │
-│  │                 │                                                   │  │
-│                    │ WebSocket/libp2p                                     │
-│  │                 │                                                   │  │
+│     │  • Local WiFi discovery (mDNS + WebSocket)                     │     │
+│  │  └──────────────┬──────────────────┬──────────────┬──────────────┘│  │
+│                    │                  │              │                   │
+│  │                 │ MethodChannel/   │ SQL queries  │ Keychain/      │  │
+│                    │ EventChannel     │              │ Keystore          │
+│  │                 ▼                  ▼              ▼                │  │
+│     ┌─────────────────────────┐ ┌─────────────────────┐ ┌────────────┐  │
+│  │  │  Go Native Library      │ │  SQLCipher Database  │ │  Secure    ││  │
+│     │  [Container: gomobile]  │ │  [Container:         │ │  Storage   │  │
+│  │  │                         │ │  sqflite_sqlcipher]  │ │  [Container││  │
+│     │  • BIP39 mnemonic gen   │ │                      │ │  flutter_  │  │
+│  │  │  • Ed25519 keypair      │ │  • identity table    │ │  secure_   ││  │
+│     │  • ML-KEM-768 keygen   │ │  • contacts table    │ │  storage]  │  │
+│  │  │  • libp2p peer ID       │ │  • contact_requests  │ │            ││  │
+│     │  • Payload sign/verify  │ │  • messages table    │ │ • private  │  │
+│  │  │  • Message encrypt/     │ │  • avatar BLOB store │ │   _key     ││  │
+│     │    decrypt              │ │  • 256-bit AES       │ │ • mnemonic │  │
+│  │  │  • P2P node management  │ │    encrypted         │ │   12       ││  │
+│     │  • Peer discovery &     │ │                      │ │ • ml_kem_  │  │
+│  │  │    relay                │ │                      │ │   secret   ││  │
+│     │  • Message send/receive │ │                      │ │ • db_enc   │  │
+│  │  │  • Offline inbox store/ │ │                      │ │   _key     ││  │
+│     │    retrieve             │ │                      │ │            │  │
+│  │  └──────────────┬──────────┘ └──────────────────────┘ └────────────┘│  │
+│                    │                                                      │
+│  │                 │ libp2p (QUIC / WebSocket)                        │  │
+│                    │                                                      │
 │  └ ─ ─ ─ ─ ─ ─ ─ ─┼─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘  │
 │                    │                                                      │
 └────────────────────┼─────────────────────────────────────────────────────┘
                      │
-                     │ WebSocket (libp2p relay)
+                     │ libp2p (QUIC / WebSocket relay)
                      ▼
               ┌─────────────────────────────┐
               │   Rendezvous / Relay Server │
@@ -132,8 +133,8 @@
 
 | Container | Technology | Description |
 |-----------|------------|-------------|
-| Flutter Application | Dart/Flutter | Main application with UI, business logic, P2P service, and data access |
-| JavaScript Runtime | WebView + esbuild bundle | Executes crypto operations and P2P networking using libp2p libraries |
+| Flutter Application | Dart/Flutter | Main application with UI, business logic, P2P service, local WiFi discovery (mDNS), and data access |
+| Go Native Library | gomobile bind → .xcframework (iOS) + .aar (Android) | Executes crypto operations (BIP39, Ed25519, ML-KEM-768) and P2P networking (libp2p node, rendezvous, relay, inbox); communicates with Flutter via MethodChannel/EventChannel through platform wrappers (GoBridge.swift / GoBridge.kt) |
 | SQLCipher Database | sqflite_sqlcipher | 256-bit AES encrypted SQLite database; persists identity, contacts, contact requests, messages, and avatar BLOBs locally |
 | Secure Storage | flutter_secure_storage | OS-backed secret storage: iOS Keychain (device-bound, kSecAttrAccessibleWhenUnlockedThisDeviceOnly), Android EncryptedSharedPreferences; holds identity secrets and DB encryption key |
 | Rendezvous / Relay Server | libp2p | External server for peer discovery, NAT traversal relay, and offline message inbox |
@@ -143,10 +144,10 @@
 
 | From | To | Protocol | Description |
 |------|-----|----------|-------------|
-| Flutter App | JS Runtime | JSON via JavaScriptChannel | Request/response for identity, signing, and P2P operations |
+| Flutter App | Go Native Library | MethodChannel / EventChannel via platform wrappers | Request/response for identity, signing, crypto, and P2P operations; push events (message:received, peer:connected, peer:disconnected) delivered via EventChannel |
 | Flutter App | SQLCipher DB | SQL via sqflite_sqlcipher | CRUD operations for identity, contacts, contact requests, messages, and avatar BLOBs (256-bit AES encrypted at rest) |
 | Flutter App | Secure Storage | flutter_secure_storage API | Read/write identity secrets (private_key, mnemonic12, ml_kem_secret_key) and DB encryption key |
-| JS Runtime | Rendezvous Server | WebSocket (libp2p) | Peer discovery, relay circuits, messaging, and offline inbox protocol (`/mknoon/inbox/1.0.0`) |
+| Go Native Library | Rendezvous Server | libp2p (QUIC / WebSocket) | Peer discovery, relay circuits, messaging, and offline inbox protocol (`/mknoon/inbox/1.0.0`) |
 | Flutter App | Firebase Cloud Messaging | HTTPS (FCM SDK) | Registers device token, receives push notifications for offline inbox messages |
 
 ---
@@ -264,13 +265,13 @@
 │  │  │  │  │("+N" delayed)  │  │(right avatar)  │  │Button (X)  │  │   │  │ │
 │  │  │  │  └────────────────┘  └────────────────┘  └────────────┘  │   │  │ │
 │  │  │  │  ┌────────────────┐  ┌────────────────┐  ┌────────────┐  │   │  │ │
-│  │  │  │  │FriendsListHead.│  │FriendRow +     │  │OrbitSearch │  │   │  │ │
-│  │  │  │  │(QR/Scan pills) │  │AnimatedFriend  │  │Trigger     │  │   │  │ │
+│  │  │  │  │FriendsListHead.│  │SwipeableFriend │  │OrbitSearch │  │   │  │ │
+│  │  │  │  │(QR/Scan pills) │  │Row (swipe acts)│  │Trigger     │  │   │  │ │
 │  │  │  │  └────────────────┘  └────────────────┘  └────────────┘  │   │  │ │
-│  │  │  │  ┌────────────────┐                                      │   │  │ │
-│  │  │  │  │OrbitSearchDock │                                      │   │  │ │
-│  │  │  │  │(bottom search) │                                      │   │  │ │
-│  │  │  │  └────────────────┘                                      │   │  │ │
+│  │  │  │  ┌────────────────┐  ┌────────────────┐  ┌────────────┐  │   │  │ │
+│  │  │  │  │OrbitSearchDock │  │FriendsFilter   │  │QRAction    │  │   │  │ │
+│  │  │  │  │(bottom search) │  │Toggle (All/Ar.)│  │Cards       │  │   │  │ │
+│  │  │  │  └────────────────┘  └────────────────┘  └────────────┘  │   │  │ │
 │  │  │  └──────────────────────────────────────────────────────────┘   │  │ │
 │  │  └─────────────────────────────────────────────────────────────────┘  │ │
 │  │                                                                        │ │
@@ -310,10 +311,14 @@
 │  │  └──────────────────┘                                                 │ │
 │  │                                                                        │ │
 │  │  ── Contacts ──────────────────────────────────────────────────────── │ │
-│  │  ┌──────────────────┐                                                 │ │
-│  │  │ addContact()     │  Adds contact from QR scan                      │ │
-│  │  │ [Use Case]       │                                                 │ │
-│  │  └──────────────────┘                                                 │ │
+│  │  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────────┐ │ │
+│  │  │ addContact()     │  │ archiveContact() │  │ unarchiveContact()   │ │ │
+│  │  │ [Use Case]       │  │ [Use Case]       │  │ [Use Case]           │ │ │
+│  │  └──────────────────┘  └──────────────────┘  └──────────────────────┘ │ │
+│  │  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────────┐ │ │
+│  │  │ blockContact()   │  │ unblockContact() │  │ deleteContactAnd     │ │ │
+│  │  │ [Use Case]       │  │ [Use Case]       │  │ Messages() [UC]      │ │ │
+│  │  └──────────────────┘  └──────────────────┘  └──────────────────────┘ │ │
 │  │                                                                        │ │
 │  │  ── Contact Requests ──────────────────────────────────────────────── │ │
 │  │  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────────┐ │ │
@@ -339,6 +344,10 @@
 │  │  └──────────────────────────────────────────┘                         │ │
 │  │  ┌──────────────────────────────────────────┐                         │ │
 │  │  │ markConversationRead()                   │                         │ │
+│  │  │ [Use Case]                               │                         │ │
+│  │  └──────────────────────────────────────────┘                         │ │
+│  │  ┌──────────────────────────────────────────┐                         │ │
+│  │  │ retryFailedMessages()                    │                         │ │
 │  │  │ [Use Case]                               │                         │ │
 │  │  └──────────────────────────────────────────┘                         │ │
 │  │                                                                        │ │
@@ -415,12 +424,16 @@
 │  │                                                                        │ │
 │  │  ── Bridge ────────────────────────────────────────────────────────── │ │
 │  │  ┌──────────────────────────┐  ┌──────────────────────────────────┐   │ │
-│  │  │     WebViewJsBridge      │  │     P2PBridgeClient              │   │ │
+│  │  │     GoBridgeClient       │  │     P2PBridgeClient              │   │ │
 │  │  │     [Bridge Client]      │  │     [Bridge Client]              │   │ │
+│  │  │  MethodChannel/EventChan │  │                                  │   │ │
 │  │  └──────────────────────────┘  └──────────────────────────────────┘   │ │
 │  │  ┌──────────────────────────┐                                         │ │
-│  │  │   JsBridgeClient         │  Identity + signing bridge helpers      │ │
-│  │  │   [Bridge Helpers]       │                                         │ │
+│  │  │  Bridge Helper Functions │  In bridge.dart: callIdentityGenerate,  │ │
+│  │  │  [in bridge.dart +       │  callSignPayload, callVerifyPayload,    │ │
+│  │  │   p2p_bridge_client.dart]│  callMlKemKeygen, callEncryptMessage,   │ │
+│  │  │                          │  callDecryptMessage                     │ │
+│  │  │                          │  In p2p_bridge_client.dart: callP2P*    │ │
 │  │  └──────────────────────────┘                                         │ │
 │  │                                                                        │ │
 │  │  ── Services ──────────────────────────────────────────────────────── │ │
@@ -428,14 +441,21 @@
 │  │  │   P2PService [Interface] → P2PServiceImpl│                         │ │
 │  │  │   Reactive streams for state + messages  │                         │ │
 │  │  │   + offline inbox store/retrieve         │                         │ │
-│  │  │   + registerInboxToken (FCM push)        │                         │ │
+│  │  │   + registerPushToken (FCM push)         │                         │ │
 │  │  │   + performImmediateHealthCheck()        │                         │ │
 │  │  │   + drainOfflineInbox()                  │                         │ │
+│  │  │   + sendMessageWithReply() (ACK support) │                         │ │
+│  │  │   + local WiFi discovery (mDNS/Bonsoir)  │                         │ │
 │  │  └──────────────────────────────────────────┘                         │ │
 │  │  ┌──────────────────────────────────────────┐                         │ │
 │  │  │   IncomingMessageRouter                  │                         │ │
 │  │  │   Routes P2P msgs → typed streams        │                         │ │
 │  │  │   (contactRequest, chatMessage, unknown)  │                         │ │
+│  │  └──────────────────────────────────────────┘                         │ │
+│  │  ┌──────────────────────────────────────────┐                         │ │
+│  │  │   PendingMessageRetrier                  │                         │ │
+│  │  │   Subscribes to stateStream, retries     │                         │ │
+│  │  │   failed messages on reconnect (5s deb.) │                         │ │
 │  │  └──────────────────────────────────────────┘                         │ │
 │  │                                                                        │ │
 │  │  ── Database ──────────────────────────────────────────────────────── │ │
@@ -465,6 +485,12 @@
 │  │  │  006_read_at_column      │  Adds read_at TEXT column to           │ │
 │  │  │  migration (v6)          │  messages table for unread tracking    │ │
 │  │  └──────────────────────────┘                                         │ │
+│  │  ┌──────────────────────────┐  ┌──────────────────────────────────┐   │ │
+│  │  │  007_archive_columns     │  │  008_block_columns               │   │ │
+│  │  │  migration (v7)          │  │  migration (v8)                  │   │ │
+│  │  │  Adds is_archived,       │  │  Adds is_blocked,               │   │ │
+│  │  │  archived_at to contacts │  │  blocked_at to contacts         │   │ │
+│  │  └──────────────────────────┘  └──────────────────────────────────┘   │ │
 │  │  ┌──────────────────────────┐                                         │ │
 │  │  │  encrypted_db_opener     │  Opens SQLCipher DB with key from      │ │
 │  │  │                          │  secure storage; handles plaintext→    │ │
@@ -502,78 +528,87 @@
                    │                                 │
                    ▼                                 ▼
 ┌──────────────────────────────────┐  ┌──────────────────────────────────────┐
-│     JAVASCRIPT RUNTIME           │  │      SQLCIPHER DATABASE              │
-│     [WebView Container]          │  │    [sqflite_sqlcipher Container]     │
+│     GO NATIVE LIBRARY            │  │      SQLCIPHER DATABASE              │
+│     [gomobile Container]         │  │    [sqflite_sqlcipher Container]     │
 │                                  │  │                                      │
 │  ┌────────────────────────────┐  │  │  ┌────────────────────────────────┐  │
 │  │      Bridge Entry          │  │  │  │        identity table          │  │
-│  │      [Handler Router]      │  │  │  │                                │  │
+│  │      [Command Dispatch]    │  │  │  │                                │  │
 │  │                            │  │  │  │  id INTEGER PRIMARY KEY        │  │
-│  │  handleBridgeMessage()     │  │  │  │  peer_id TEXT NOT NULL         │  │
-│  │  sendToFlutter(response)   │  │  │  │  public_key TEXT NOT NULL      │  │
+│  │  HandleCommand(cmd, json)  │  │  │  │  peer_id TEXT NOT NULL         │  │
+│  │  → JSON response           │  │  │  │  public_key TEXT NOT NULL      │  │
 │  └──────────┬─────────────────┘  │  │  │  private_key TEXT              │  │
 │             │                    │  │  │   CHECK(private_key IS NULL)  │  │
 │  ┌──────────┴─────────────────┐  │  │  │  mnemonic12 TEXT              │  │
-│  │    Handlers                │  │  │  │   CHECK(mnemonic12 IS NULL)   │  │
+│  │    Commands                │  │  │  │   CHECK(mnemonic12 IS NULL)   │  │
 │  │                            │  │  │  │  username TEXT NOT NULL        │  │
 │  │  identity.generate         │  │  │  │  avatar_path TEXT              │  │
 │  │  identity.restore          │  │  │  │  avatar_blob BLOB (v5)       │  │
 │  │  payload.sign              │  │  │  │  created_at TEXT NOT NULL      │  │
-│  │  mlkem.keygen              │  │  │  │  updated_at TEXT NOT NULL      │  │
-│  │  message.encrypt           │  │  │  │  ml_kem_public_key TEXT (v3)  │  │
-│  │  message.decrypt           │  │  │  │  ml_kem_secret_key TEXT       │  │
-│                                  │  │  │   CHECK(..IS NULL) (v5)      │  │
-│  ┌────────────────────────────┐  │  │  │  Constraint: id = 1 always     │  │
-│  │    Identity Module         │  │  │  │  Secrets → Secure Storage      │  │
-│  │                            │  │  │  └────────────────────────────────┘  │
-│  │  generateIdentity()        │  │  │                                      │
-│  │  restoreFromMnemonic()     │  │  │                                      │
-│  └────────────────────────────┘  │  │  ┌────────────────────────────────┐  │
-│                                  │  │  │        contacts table          │  │
-│                                  │  │  │                                │  │
-│  ┌────────────────────────────┐  │  │  │  peer_id TEXT PRIMARY KEY      │  │
-│  │    Signing Module          │  │  │  │  public_key TEXT NOT NULL      │  │
-│  │                            │  │  │  │  rendezvous TEXT NOT NULL      │  │
-│  │  signPayload()             │  │  │  │  username TEXT NOT NULL        │  │
+│  │  payload.verify            │  │  │  │  updated_at TEXT NOT NULL      │  │
+│  │  mlkem.keygen              │  │  │  │  ml_kem_public_key TEXT (v3)  │  │
+│  │  message.encrypt           │  │  │  │  ml_kem_secret_key TEXT       │  │
+│  │  message.decrypt           │  │  │  │   CHECK(..IS NULL) (v5)      │  │
+│                                  │  │  │  Constraint: id = 1 always     │  │
+│  ┌────────────────────────────┐  │  │  │  Secrets → Secure Storage      │  │
+│  │    Identity Module         │  │  │  └────────────────────────────────┘  │
+│  │    (identity/)             │  │  │                                      │
+│  │                            │  │  │                                      │
+│  │  GenerateIdentity()        │  │  │  ┌────────────────────────────────┐  │
+│  │  RestoreFromMnemonic()     │  │  │  │        contacts table          │  │
+│  └────────────────────────────┘  │  │  │                                │  │
+│                                  │  │  │  peer_id TEXT PRIMARY KEY      │  │
+│  ┌────────────────────────────┐  │  │  │  public_key TEXT NOT NULL      │  │
+│  │    Signing Module          │  │  │  │  rendezvous TEXT NOT NULL      │  │
+│  │                            │  │  │  │  username TEXT NOT NULL        │  │
+│  │  SignPayload()             │  │  │  │  signature TEXT NOT NULL       │  │
+│  │  VerifyPayload()           │  │  │  │  scanned_at TEXT NOT NULL      │  │
+│  │                            │  │  │  │  avatar_path TEXT              │  │
+│  │  Uses: crypto/ed25519      │  │  │  │  ml_kem_public_key TEXT (v3)  │  │
+│  └────────────────────────────┘  │  │  │  is_archived INT NOT NULL (v7) │  │
+│                                  │  │  │  archived_at TEXT (v7)         │  │
+│                                  │  │  │  is_blocked INT NOT NULL (v8)  │  │
+│                                  │  │  │  blocked_at TEXT (v8)          │  │
+│                                  │  │  └────────────────────────────────┘  │
+│                                  │  │                                      │
+│  ┌────────────────────────────┐  │  │  ┌────────────────────────────────┐  │
+│  │    Crypto Module           │  │  │  │    contact_requests table      │  │
+│  │    (crypto/)               │  │  │  │                                │  │
+│  │                            │  │  │  │  peer_id TEXT PRIMARY KEY      │  │
+│  │  ML-KEM-768 keygen         │  │  │  │  public_key TEXT NOT NULL      │  │
+│  │  EncryptMessage()          │  │  │  │  rendezvous TEXT NOT NULL      │  │
+│  │  DecryptMessage()          │  │  │  │  username TEXT NOT NULL        │  │
 │  │                            │  │  │  │  signature TEXT NOT NULL       │  │
-│  │  Uses:                     │  │  │  │  scanned_at TEXT NOT NULL      │  │
-│  │  • @noble/ed25519          │  │  │  │  avatar_path TEXT              │  │
+│  │  Uses:                     │  │  │  │  received_at TEXT NOT NULL     │  │
+│  │  • circl/kem/mlkem768      │  │  │  │  status TEXT NOT NULL          │  │
+│  │  • crypto/aes (AES-GCM)   │  │  │  │  DEFAULT 'pending'            │  │
 │  └────────────────────────────┘  │  │  │  ml_kem_public_key TEXT (v3)  │  │
 │                                  │  │  └────────────────────────────────┘  │
 │  ┌────────────────────────────┐  │  │                                      │
-│  │    Crypto Module           │  │  │  ┌────────────────────────────────┐  │
-│  │                            │  │  │  │    contact_requests table      │  │
-│  │  ML-KEM-768 keygen         │  │  │  │                                │  │
-│  │  encryptMessage()          │  │  │  │  peer_id TEXT PRIMARY KEY      │  │
-│  │  decryptMessage()          │  │  │  │  public_key TEXT NOT NULL      │  │
-│  │                            │  │  │  │  rendezvous TEXT NOT NULL      │  │
-│  │  Uses:                     │  │  │  │  username TEXT NOT NULL        │  │
-│  │  • @noble/post-quantum    │  │  │  │  signature TEXT NOT NULL       │  │
-│  │  • crypto.subtle (AES)    │  │  │  │  received_at TEXT NOT NULL     │  │
-│  └────────────────────────────┘  │  │  │  status TEXT NOT NULL          │  │
-│                                  │  │  │  DEFAULT 'pending'            │  │
-│  ┌────────────────────────────┐  │  │  │  ml_kem_public_key TEXT (v3)  │  │
-│  │    P2P Module              │  │  │  └────────────────────────────────┘  │
-│  │    (libp2p node)           │  │  │                                      │
-│  │                            │  │  │  ┌────────────────────────────────┐  │
-│  │  Node start/stop           │  │  │  │        messages table          │  │
-│  │  Rendezvous register       │  │  │  │        (v2 migration)          │  │
+│  │    Node Module             │  │  │  ┌────────────────────────────────┐  │
+│  │    (node/)                 │  │  │  │        messages table          │  │
+│  │                            │  │  │  │        (v2 migration)          │  │
+│  │  Node start/stop/status    │  │  │  │                                │  │
+│  │  Rendezvous register       │  │  │  │  id TEXT PRIMARY KEY           │  │
 │  │  Rendezvous discover       │  │  │  │                                │  │
-│  │  Peer dial/disconnect      │  │  │  │  id TEXT PRIMARY KEY           │  │
-│  │  Message send/receive      │  │  │  │                                │  │
-│  │                            │  │  │  │  contact_peer_id TEXT NOT NULL │  │
-│  │  Uses:                     │  │  │  │  sender_peer_id TEXT NOT NULL  │  │
-│  │  • @libp2p/* suite         │  │  │  │  text TEXT NOT NULL            │  │
-│  └────────────────────────────┘  │  │  │  timestamp TEXT NOT NULL       │  │
-│                                  │  │  │  status TEXT DEFAULT 'sent'    │  │
-│                                  │  │  │  is_incoming INTEGER NOT NULL  │  │
-│                                  │  │  │  created_at TEXT NOT NULL      │  │
-│                                  │  │  │  read_at TEXT (v6)            │  │
-│                                  │  │  │  INDEX idx_messages_contact    │  │
-│                                  │  │  │  INDEX idx_messages_ts         │  │
+│  │  Peer dial/disconnect      │  │  │  │  contact_peer_id TEXT NOT NULL │  │
+│  │  Message send/receive      │  │  │  │  sender_peer_id TEXT NOT NULL  │  │
+│  │  Offline inbox protocol    │  │  │  │  text TEXT NOT NULL            │  │
+│  │                            │  │  │  │  timestamp TEXT NOT NULL       │  │
+│  │  Uses:                     │  │  │  │  status TEXT DEFAULT 'sent'    │  │
+│  │  • libp2p (Go)             │  │  │  │  is_incoming INTEGER NOT NULL  │  │
+│  │  • Circuit relay v2        │  │  │  │  created_at TEXT NOT NULL      │  │
+│  │  • Hole punching           │  │  │  │  read_at TEXT (v6)            │  │
+│  │  • NAT port mapping        │  │  │  │  INDEX idx_messages_contact    │  │
+│  └────────────────────────────┘  │  │  │  INDEX idx_messages_ts         │  │
 │                                  │  │  └────────────────────────────────┘  │
-│                                  │  │                                      │
-│                                  │  └──────────────────────────────────────┘
+│  ┌────────────────────────────┐  │  │                                      │
+│  │    Platform Wrappers       │  │  └──────────────────────────────────────┘
+│  │                            │  │
+│  │  GoBridge.swift (iOS)      │  │
+│  │  GoBridge.kt   (Android)  │  │
+│  │  MethodChannel + EventChan │  │
+│  └────────────────────────────┘  │
 └──────────────────────────────────┘
 ```
 
@@ -587,7 +622,7 @@
 | MnemonicInputScreen | Widget | UI for entering recovery phrase |
 | **Home Feature** | | |
 | FirstTimeExperienceScreen | Widget | Main home screen with profile, QR, scan, and empty state |
-| FirstTimeExperienceWired | Widget | Business logic: QR build, username edit, avatar (BLOB in DB), scan, contact request listening |
+| FirstTimeExperienceWired | Widget | Business logic: QR build, username edit, avatar (BLOB in DB), scan, contact request listening, P2P node start |
 | ProfileAvatarWidget | Widget | Avatar display with camera button and image picker; uses Image.memory() from BLOB (no file on disk) |
 | EditableUsernameWidget | Widget | Tap-to-edit username display |
 | QRCodeSection | Widget | QR code display with green glow effect |
@@ -606,13 +641,17 @@
 | PendingRequestsBadge | Widget | Circular count badge (shows 99+ max) |
 | **Feed Feature** | | |
 | FeedScreen | Widget | Main feed UI displaying connection and message cards |
-| FeedWired | Widget | Feed orchestration: loads identity, builds initial feed, listens for contact requests and messages; orbit tab pushes OrbitWired via Navigator.push |
+| FeedWired | Widget | Feed orchestration: loads identity, builds initial feed, listens for contact requests and messages; orbit tab pushes OrbitWired via Navigator.push; P2P node start |
 | FeedHeader | Widget | Sticky header with username and ring avatar |
 | FeedNavigationBar | Widget | Bottom glassmorphic nav bar with 3 SVG tabs (feed, orbit, remember); orbit tab triggers Navigator.push instead of tab swap; shows total unread badge on feed tab |
 | NavBarButton | Widget | Individual nav bar tab button (active/inactive states) with optional badge overlay |
 | UnreadCountBadge | Widget | Circular count badge for unread messages (shows 99+ max) |
 | ConnectionCard | Widget | Card displaying a contact connection with ring avatar and inline green checkmark badge |
 | MessageFeedCard | Widget | Incoming message card with contact avatar, message preview, and reply button |
+| ThreadCard | Widget | Thread card displaying grouped messages from a contact |
+| MessageBubble | Widget | Single message bubble within a thread card |
+| SessionDivider | Widget | Session divider between message groups in feed |
+| TimeGapDivider | Widget | Time gap divider for significant time pauses between messages |
 | CheckmarkBurstAnimation | Widget | Animated checkmark with expanding ring burst effect (unused/orphaned) |
 | FeedRouteTransition | Route | Slide-up page transition for feed navigation |
 | **Conversation Feature** | | |
@@ -624,6 +663,7 @@
 | ConversationHeader | Widget | Frosted-glass sticky header with back button, contact avatar + name, connection status |
 | CompactOriginMarker | Widget | Compact connection origin marker at top of conversation (48px avatar) |
 | DateSeparator | Widget | Date divider between letter cards spanning different days with gradient lines |
+| BlockedBanner | Widget | Banner displayed when conversation contact is blocked, with "Unblock" button |
 | ConversationRouteTransition | Route | Slide-up page transition (420ms easeOutCubic) |
 | **Orbit Feature** | | |
 | OrbitScreen | Widget | Pure UI: AmbientBackground, Scaffold, 4-layer Stack (scrollable content, close button, floating search trigger, search dock) |
@@ -636,7 +676,12 @@
 | OrbitHeader | Widget | Right-aligned 44px user RingAvatar |
 | FriendsListHeader | Widget | "Friends" title + My QR / Scan pill buttons (hidden during search) |
 | FriendRow | Widget | Glassmorphic card with contact avatar, name, message count, last activity, and unread badge |
-| AnimatedFriendRow | Widget | FriendRow wrapper with staggered slide-up animation (index * 20ms) |
+| SwipeableFriendRow | Widget | FriendRow wrapper with slide-to-reveal swipe actions (Block/Delete/Archive or Unblock/Delete/Unarchive) |
+| SwipeActionButtons | Widget | Block/Delete/Archive action buttons revealed on swipe |
+| FriendsFilterToggle | Widget | Segmented toggle "All (N)" / "Archived (N)" for filtering friends list |
+| ArchivedEmptyState | Widget | Empty state display for the archived contacts list |
+| ConfirmationDialog | Widget | Confirmation dialog for destructive actions (block, delete) |
+| QRActionCards | Widget | My QR / Scan QR action card buttons |
 | OrbitSearchTrigger | Widget | Floating glass pill with search button + close button |
 | OrbitSearchDock | Widget | Bottom-docked search TextField with native keyboard |
 | **Push Notifications Feature** | | |
@@ -647,10 +692,11 @@
 | AmbientBackground | Widget | Animated green/red glow background |
 | GlassmorphicContainer | Widget | Frosted glass effect container |
 | ChoiceCard | Widget | Tappable card with scale animation |
+| IdentityLoadingCard | Widget | Loading card displayed during identity generation/restore |
 | **Identity Use Cases** | | |
 | decideStartupRoute() | Use Case | Checks identity + contact count → 3-way routing decision |
-| generateNewIdentity() | Use Case | Orchestrates identity generation via JS bridge |
-| restoreIdentityFromMnemonic() | Use Case | Orchestrates identity restoration via JS bridge |
+| generateNewIdentity() | Use Case | Orchestrates identity generation via Go bridge |
+| restoreIdentityFromMnemonic() | Use Case | Orchestrates identity restoration via Go bridge |
 | **QR Use Cases** | | |
 | buildQRPayload() | Use Case | Creates signed QR payload |
 | parseQRPayload() | Use Case | Validates scanned QR: JSON parse, field check, expiry, signature verify, self-scan |
@@ -662,6 +708,11 @@
 | dialP2PPeer() | Use Case | Establishes connection to peer |
 | **Contact Use Cases** | | |
 | addContact() | Use Case | Adds contact with duplicate check |
+| archiveContact() | Use Case | Archives a contact |
+| unarchiveContact() | Use Case | Unarchives a contact |
+| blockContact() | Use Case | Blocks a contact |
+| unblockContact() | Use Case | Unblocks a contact |
+| deleteContactAndMessages() | Use Case | Deletes contact and all associated messages |
 | **Contact Request Use Cases** | | |
 | sendContactRequest() | Use Case | Builds signed payload, discovers peer, dials, sends request (3x retry) |
 | acceptContactRequest() | Use Case | Converts request to contact, updates status |
@@ -672,8 +723,10 @@
 | sendChatMessage() | Use Case | Builds MessagePayload, encrypts with ML-KEM-768 + AES-256-GCM if recipient has ML-KEM key (v2 envelope) or falls back to v1 plaintext, discovers peer, dials, sends with 3x retry, offline inbox fallback, persists optimistically |
 | handleIncomingChatMessage() | Use Case | Detects v2 encrypted envelope (decrypts via ML-KEM decapsulate + AES-256-GCM) or v1 plaintext, validates sender is contact, detects name changes, persists |
 | loadConversation() | Use Case | Loads all messages for a contact, ordered by timestamp ASC |
-| ChatMessageListener | Service | Monitors chatMessageStream, resolves own ML-KEM secret key for decryption, broadcasts persisted ConversationMessages and contact updates to UI |
+| ChatMessageListener | Service | Monitors chatMessageStream, resolves own ML-KEM secret key for decryption, rejects messages from blocked contacts, suppresses UI notification for archived contacts, broadcasts persisted ConversationMessages and contact updates to UI |
 | markConversationRead() | Use Case | Marks all unread messages for a contact as read (sets read_at timestamp) |
+| retryFailedMessages() | Use Case | Retries sending all failed outgoing messages; returns count of successfully retried |
+| PendingMessageRetrier | Service | Subscribes to P2PService.stateStream, detects online transitions (5s debounce), auto-retries failed messages |
 | **Feed Use Cases** | | |
 | loadFeed() | Use Case | Loads initial feed from DB: contacts + latest messages per contact + unread counts |
 | **Orbit Use Cases** | | |
@@ -683,35 +736,45 @@
 | **Stream Error Handling** | Convention | All `.listen()` calls across IncomingMessageRouter (1), ContactRequestListener (1), ChatMessageListener (1), FeedWired (3), ConversationWired (2), FirstTimeExperienceWired (1), OrbitWired (3) include `onError` and `onDone` callbacks for resilience |
 | **Domain** | | |
 | IdentityModel | Entity | Immutable data class for identity (peerId, keys, mnemonic, username, avatarBlob, mlKemPublicKey?, mlKemSecretKey?); secrets (privateKey, mnemonic12, mlKemSecretKey) stored in SecureKeyStore, DB columns always NULL |
-| ContactModel | Entity | Contact from QR scan (peerId, publicKey, rendezvous, username, signature, scannedAt, mlKemPublicKey?) |
+| ContactModel | Entity | Contact from QR scan (peerId, publicKey, rendezvous, username, signature, scannedAt, mlKemPublicKey?, isArchived, archivedAt?, isBlocked, blockedAt?) |
 | ContactRequestModel | Entity | Incoming request (peerId, publicKey, rendezvous, username, signature, status, mlKemPublicKey?) |
 | NodeState | P2P Model | P2P node state (peerId, isStarted, listenAddresses, connections) |
 | DiscoveredPeer | P2P Model | Discovered peer (id, addresses) |
 | ConnectionState | P2P Model | Active connection (peerId, multiaddrs, direction, status) |
 | ChatMessage | P2P Model | P2P message (from, to, content, timestamp, isIncoming) |
+| SendMessageResult | P2P Model | P2P send result class (sent: bool, reply: String?, acknowledged: bool getter) |
 | FeedItem | Abstract Entity | Base class for feed items (id, timestamp, type) |
 | ConnectionFeedItem | Entity | Feed item for new connections (extends FeedItem) |
+| ThreadFeedItem | Entity | Feed item representing a thread of messages grouped by contact and read session (extends FeedItem); contains List\<ThreadMessage\>, unreadCount, isUnreadCard |
+| ThreadMessage | Data Class | Single message within a thread group (id, text, time, timestamp, isUnread) |
 | MessageFeedItem | Entity | Feed item for incoming messages (extends FeedItem, contactPeerId, messageText, messageTime, unreadCount) |
-| FeedItemType | Enum | Feed item types: connection, message |
+| FeedItemType | Enum | Feed item types: connection, message, thread |
 | ConversationMessage | Entity | Message in a conversation (id, contactPeerId, senderPeerId, text, status, isIncoming, readAt?) |
 | MessagePayload | Wire Model | Chat message envelope: v1 plaintext `{ "type": "chat_message", "version": "1", "payload": {...} }` or v2 encrypted `{ "type": "chat_message", "version": "2", "senderPeerId": "...", "encrypted": { "kem", "ciphertext", "nonce" } }` |
 | OrbitFriend | Composite Model | ContactModel + messageCount (int) + lastActivity (String) + lastMessageTimestamp (DateTime?) + unreadCount (int, default 0); used by Orbit feature for ranking friends by conversation activity |
 | IdentityRepository | Interface + Impl | Abstracts identity persistence; IdentityRepositoryImpl takes SecureKeyStore, reads secrets from secure storage (falls back to DB for pre-migration), writes secrets only to secure storage |
-| ContactRepository | Interface + Impl | Abstracts contact persistence (add, get, getAll, delete, exists, count) |
+| ContactRepository | Interface + Impl | Abstracts contact persistence (add, get, getAll, delete, exists, count, archiveContact, unarchiveContact, getActiveContacts, getArchivedContacts, blockContact, unblockContact) |
 | ContactRequestRepository | Interface + Impl | Abstracts request persistence (add, get, getPending, updateStatus, delete, exists) |
-| MessageRepository | Interface + Impl | Abstracts message persistence (save, getForContact, getLatest, updateStatus, exists, getMessageCountForContact, markConversationAsRead, getUnreadCountForContact, getTotalUnreadCount) |
+| MessageRepository | Interface + Impl | Abstracts message persistence (save, getForContact, getLatest, updateStatus, exists, getMessageCountForContact, markConversationAsRead, getUnreadCountForContact, getTotalUnreadCount, getTotalUnreadCountExcludingArchived, deleteMessagesForContact, getFailedOutgoingMessages, getMessagesPage) |
 | **Core** | | |
-| WebViewJsBridge | Bridge Client | Sends requests to JS runtime, manages event handlers; checkHealth() probes bridge liveness (node:status, 5s timeout); reinitialize() tears down and recreates WebView preserving callbacks; send() catches PlatformException and returns `{errorCode: 'BRIDGE_DEAD'}` |
+| GoBridgeClient | Bridge Client | Sends requests to Go native library via MethodChannel, receives push events via EventChannel; checkHealth() probes bridge liveness (node:status, 5s timeout); reinitialize() re-initializes Go bridge preserving callbacks; send() catches PlatformException and returns `{errorCode: 'PLATFORM_ERROR'}`; platform wrappers: GoBridge.swift (iOS) + GoBridge.kt (Android) |
 | P2PBridgeClient | Bridge Client | P2P-specific bridge calls (start, stop, status, register, discover, dial, disconnect, send, inbox store/retrieve, inbox register token) |
-| JsBridgeClient | Bridge Helpers | Identity + signing + ML-KEM encryption/decryption bridge helper functions |
-| P2PService / P2PServiceImpl | Service | Reactive P2P service with state and message streams, with offline inbox fallback + registerInboxToken for FCM push notifications; public performImmediateHealthCheck() and drainOfflineInbox() wrappers for app-resume lifecycle |
+| Bridge Helper Functions (in bridge.dart) | Bridge Helpers | Identity + signing + verification + ML-KEM encryption/decryption helper functions: callIdentityGenerate, callIdentityRestore, callSignPayload, callVerifyPayload, callMlKemKeygen, callEncryptMessage, callDecryptMessage |
+| P2P Bridge Helper Functions (in p2p_bridge_client.dart) | Bridge Helpers | P2P-specific helper functions: callP2PNodeStart/Stop/Status, callP2PRendezvousRegister/Discover, callP2PPeerDial/Disconnect, callP2PMessageSend, callP2PInboxStore/Retrieve/RegisterToken; also exports defaultRendezvousAddress constant |
+| P2PService / P2PServiceImpl | Service | Reactive P2P service with state and message streams, sendMessageWithReply() for ACK-based chat, offline inbox fallback + registerPushToken for FCM push notifications; public performImmediateHealthCheck() and drainOfflineInbox() wrappers for app-resume lifecycle; startNodeCore() / warmBackground() split for deferred startup; isLocalPeer() / sendLocalMessage() for WiFi-first delivery; local WiFi discovery via Bonsoir mDNS |
 | IncomingMessageRouter | Service | Routes P2P messages by JSON envelope type to typed broadcast streams |
+| LocalDiscoveryService | Interface | Abstract mDNS service discovery for local WiFi peers |
+| BonsoirDiscoveryService | Impl | Bonsoir-based mDNS service discovery implementation |
+| LocalP2PService | Service | Combines mDNS discovery + WebSocket for local WiFi peer communication |
+| LocalWsServer | Service | Local WebSocket server for direct WiFi peer message exchange |
 | RingAvatarGenerator | Utility | Deterministic avatar from peerId via DJB2 hash |
 | KeyConversion | Utility | base64ToHex, hexToBase64, bytesToHex, hexToBytes |
 | FlowEventEmitter | Utility | Structured logging across all layers |
 | NetworkConstants | Constants | Rendezvous address constant |
 | ChatConsoleLogger | Utility | Debug logging for chat messages with shortened peer IDs |
 | formatRelativeTime() | Utility | Formats timestamps as relative "2m ago" strings for Orbit feature |
+| StartupTiming | Utility | Singleton for debug timing marks during startup (mark, getAll) |
+| StartupConfig | Config | Configuration class with deferredStartupMode flag |
 | SecureKeyStore | Interface | Abstract secure key-value storage (read, write, delete, containsKey) |
 | FlutterSecureKeyStore | Impl | iOS Keychain (kSecAttrAccessibleWhenUnlockedThisDeviceOnly, device-bound) / Android EncryptedSharedPreferences; stores identity_private_key, identity_mnemonic12, identity_ml_kem_secret_key, db_encryption_key |
 | encrypted_db_opener | DB Setup | Opens SQLCipher-encrypted database with key from SecureKeyStore; handles plaintext-to-encrypted migration |
@@ -720,19 +783,20 @@
 | AppColors / AppTheme | Theme | Color constants and ThemeData for dark theme |
 | GlassmorphicContainer | Theme | Frosted glass effect widget |
 
-### JavaScript Runtime Components
+### Go Native Library Components
 
 | Component | Responsibility |
 |-----------|----------------|
-| Bridge Entry (entry.ts) | Routes incoming requests to handlers via command registry; log sanitization prevents secret payloads in fallback console output |
-| Handlers (handlers.ts) | Command map: `identity.generate`, `identity.restore`, `payload.sign`, `inbox:store`, `inbox:retrieve`, `inbox:check` |
-| generateIdentity() | Creates new BIP39 mnemonic + Ed25519 keypair + ML-KEM-768 keypair |
-| restoreFromMnemonic() | Derives Ed25519 keypair from existing mnemonic + generates fresh ML-KEM-768 keypair |
-| signPayload() | Signs data with Ed25519 private key using @noble/ed25519 |
-| Crypto Module (crypto/) | ML-KEM-768 keygen, message encrypt (KEM encapsulate + AES-256-GCM), message decrypt (KEM decapsulate + AES-256-GCM) using @noble/post-quantum |
-| Bridge Commands | `mlkem.keygen` → ML-KEM keypair, `message.encrypt` → {kem, ciphertext, nonce}, `message.decrypt` → {plaintext} |
-| P2P Module | libp2p node management, rendezvous, relay, messaging |
-| Inbox Module | Offline message store/retrieve/register token via relay server inbox protocol (`/mknoon/inbox/1.0.0`) |
+| Bridge Entry (bridge/bridge.go) | Routes incoming requests to handlers via command dispatch; JSON request/response encoding |
+| Identity Module (identity/) | `identity.generate` → BIP39 mnemonic + Ed25519 keypair + ML-KEM-768 keypair; `identity.restore` → derive from mnemonic + fresh ML-KEM-768 |
+| Signing Module (bridge/bridge.go) | `payload.sign` → Ed25519 signing; `payload.verify` → Ed25519 signature verification |
+| Crypto Module (crypto/) | `mlkem.keygen` → ML-KEM-768 keypair; `message.encrypt` → KEM encapsulate + AES-256-GCM; `message.decrypt` → KEM decapsulate + AES-256-GCM |
+| Node Module (node/) | libp2p node lifecycle (start/stop/status), circuit relay v2, NAT port mapping, hole punching |
+| Rendezvous Module (node/rendezvous.go) | Peer registration and discovery with signed peer records via protobuf protocol |
+| Chat Protocol (node/node.go) | `/mknoon/chat/1.0.0` — bidirectional message exchange with ACK replies, 4-byte big-endian length-prefixed frames |
+| Inbox Module (node/inbox.go) | `/mknoon/inbox/1.0.0` — offline message store/retrieve/register FCM token via relay server |
+| Event System (node/node.go) | Push events to Flutter: `message:received`, `peer:connected`, `peer:disconnected` via callback interface |
+| Platform Wrappers | GoBridge.swift (iOS) + GoBridge.kt (Android) — bridge MethodChannel/EventChannel to Go library |
 
 ---
 
@@ -752,36 +816,45 @@
 
   ┌─────────────────────────────────────┐
   │         <<abstract>>                │
-  │         JsBridge                    │
+  │         Bridge                      │
   ├─────────────────────────────────────┤
   │ + send(message: String): String     │
+  │ + initialize(): Future<void>        │
+  │ + checkHealth(): Future<bool>       │
+  │ + reinitialize(): Future<void>      │
+  │ + dispose(): Future<void>           │
+  │ + onMessageReceived: callback?      │
+  │ + onPeerConnected: callback?        │
+  │ + onPeerDisconnected: callback?     │
   └──────────────────┬──────────────────┘
                      │
-                     │ extends
+                     │ implements
                      ▼
   ┌─────────────────────────────────────┐
-  │         WebViewJsBridge             │
+  │         GoBridgeClient              │
   ├─────────────────────────────────────┤
-  │ - _controller: WebViewController?   │
+  │ - _methodChannel: MethodChannel     │
+  │ - _eventChannel: EventChannel       │
   │ - _initialized: bool                │
-  │ - _requestId: int                   │
-  │ - _pendingRequests: Map<Completer>  │
-  │ - _eventHandlers: Map<String, Fn>  │
+  │ - _cmdMap: Map<String, _CmdSpec>     │
+  │   (cmd→MethodChannel method map)    │
   ├─────────────────────────────────────┤
   │ + initialize(): Future<void>        │
   │ + send(message: String): String     │
-  │   (catches PlatformException →      │
-  │    marks bridge dead, returns       │
-  │    {errorCode: 'BRIDGE_DEAD'})      │
+  │   (maps cmd strings to MethodChan   │
+  │    method names, JSON encode/decode │
+  │    via MethodChannel)               │
   │ + checkHealth(): Future<bool>       │
   │   (sends node:status, 5s timeout)   │
   │ + reinitialize(): Future<void>      │
-  │   (tears down + recreates WebView,  │
+  │   (re-initializes Go bridge,        │
   │    preserves callback references)   │
+  │ + dispose(): Future<void>           │
   │ + onMessageReceived(callback)       │
   │ + onPeerConnected(callback)         │
   │ + onPeerDisconnected(callback)      │
-  │ - _onMessage(JavaScriptMessage)     │
+  │ - _handleEvent(Map): void           │
+  │   (routes EventChannel push events) │
   └─────────────────────────────────────┘
 
 
@@ -843,11 +916,16 @@
   │ + scannedAt: String                 │
   │ + avatarPath: String?               │
   │ + mlKemPublicKey: String?           │
+  │ + isArchived: bool (default false)  │
+  │ + archivedAt: String?               │
+  │ + isBlocked: bool (default false)   │
+  │ + blockedAt: String?                │
   ├─────────────────────────────────────┤
   │ + fromQRPayload(Map): ContactModel  │
   │ + fromMap(Map): ContactModel        │
   │ + toMap(): Map                      │
-  │ + copyWith(): ContactModel          │
+  │ + copyWith({clearArchivedAt,        │
+  │     clearBlockedAt}): ContactModel  │
   └─────────────────────────────────────┘
 
   ┌─────────────────────────────────────┐
@@ -860,6 +938,12 @@
   │ + deleteContact(peerId): void       │
   │ + contactExists(peerId): bool       │
   │ + getContactCount(): int            │
+  │ + archiveContact(peerId): void      │
+  │ + unarchiveContact(peerId): void    │
+  │ + getActiveContacts(): List<Contact>│
+  │ + getArchivedContacts(): List       │
+  │ + blockContact(peerId): void        │
+  │ + unblockContact(peerId): void      │
   └──────────────────┬──────────────────┘
                      │ implements
                      ▼
@@ -872,6 +956,12 @@
   │ - dbDeleteContact: Function         │
   │ - dbGetContactCount: Function       │
   │ - dbContactExists: Function         │
+  │ - dbArchiveContact: Function        │
+  │ - dbUnarchiveContact: Function      │
+  │ - dbLoadActiveContacts: Function    │
+  │ - dbLoadArchivedContacts: Function  │
+  │ - dbBlockContact: Function          │
+  │ - dbUnblockContact: Function        │
   └─────────────────────────────────────┘
 
 
@@ -995,9 +1085,14 @@
   │ + dialPeer(peerId, {addrs}): bool   │
   │ + storeInInbox(peerId, msg): bool  │
   │ + retrieveInbox(): List<Map>       │
-  │ + registerInboxToken(token, platform): bool │
+  │ + registerPushToken(token, platform): bool │
+  │ + sendMessageWithReply(peerId, msg): Map │
   │ + performImmediateHealthCheck(): void │
   │ + drainOfflineInbox(): void          │
+  │ + startNodeCore(privKey, peerId)     │
+  │ + warmBackground(): void             │
+  │ + isLocalPeer(peerId): bool          │
+  │ + sendLocalMessage(peerId, msg): bool│
   │ + dispose(): void                   │
   └──────────────────┬──────────────────┘
                      │ implements
@@ -1005,28 +1100,40 @@
   ┌─────────────────────────────────────┐
   │       P2PServiceImpl                │
   ├─────────────────────────────────────┤
-  │ - _bridge: WebViewJsBridge          │
+  │ - _bridge: Bridge                   │
+  │ - _localP2P: LocalP2PService?       │
   │ - _stateController: StreamController│
   │ - _messageController: StreamCtrl    │
   │ - _currentState: NodeState          │
+  │ - _isStarting: bool                 │
   ├─────────────────────────────────────┤
   │ + startNode(privKey, peerId): bool  │
+  │ + startNodeCore(privKey, peerId)    │
+  │ + warmBackground(): void            │
   │ + stopNode(): bool                  │
   │ + sendMessage(peerId, msg): bool    │
+  │ + sendMessageWithReply(peerId, msg) │
+  │   (bidirectional chat with ACK)     │
   │ + discoverPeer(peerId): Discovered? │
   │ + dialPeer(peerId, {addrs}): bool   │
   │ + storeInInbox(peerId, msg): bool  │
   │ + retrieveInbox(): List<Map>       │
-  │ + registerInboxToken(token, platform): bool │
+  │ + registerPushToken(token, plat.)   │
+  │   (caches token/platform for        │
+  │    recovery after relay reconnect)  │
   │ + performImmediateHealthCheck(): void │
   │   (public wrapper → _performHealthCheck) │
   │ + drainOfflineInbox(): void          │
   │   (public wrapper → _drainOfflineInbox)  │
+  │ + isLocalPeer(peerId): bool         │
+  │ + sendLocalMessage(peerId, msg)     │
   │ + dispose(): void                   │
   │ - _onMessageReceived(Map)           │
   │ - _onPeerConnected(Map)             │
   │ - _onPeerDisconnected(Map)          │
   │ - _performHealthCheck(): void      │
+  │   (periodic 30s, detects degraded   │
+  │    relay, auto-dials, re-registers) │
   │ - _drainOfflineInbox(): void       │
   └─────────────────────────────────────┘
 
@@ -1039,7 +1146,7 @@
   │ - p2pService: P2PService            │
   │ - requestRepo: ContactRequestRepo   │
   │ - contactRepo: ContactRepository    │
-  │ - bridge: JsBridge                  │
+  │ - bridge: Bridge                    │
   │ - getOwnPeerId: () => String       │
   │ - _subscription: StreamSubscription │
   │ - _requestController: StreamCtrl    │
@@ -1061,7 +1168,7 @@
   │ + contactRepository: ContactRepo    │
   │ + contactRequestRepository: CRRepo  │
   │ + contactRequestListener: Listener  │
-  │ + bridge: JsBridge                  │
+  │ + bridge: Bridge                    │
   │ + p2pService: P2PService            │
   ├─────────────────────────────────────┤
   │ - _qrData: String?                  │
@@ -1090,6 +1197,7 @@
   ├─────────────────────────────────────┤
   │ + connection                        │
   │ + message                           │
+  │ + thread                            │
   └─────────────────────────────────────┘
 
   ┌─────────────────────────────────────┐
@@ -1124,6 +1232,30 @@
   └─────────────────────────────────────┘
 
   ┌─────────────────────────────────────┐
+  │       ThreadFeedItem                │
+  ├─────────────────────────────────────┤
+  │ + contactPeerId: String             │
+  │ + contactUsername: String            │
+  │ + messages: List<ThreadMessage>     │
+  │ + unreadCount: int                  │
+  │ + isUnreadCard: bool                │
+  ├─────────────────────────────────────┤
+  │ + isMultiMessage: bool (getter)     │
+  │ + latestMessage: ThreadMessage      │
+  │ + additionalCount: int (getter)     │
+  └─────────────────────────────────────┘
+
+  ┌─────────────────────────────────────┐
+  │       ThreadMessage                 │
+  ├─────────────────────────────────────┤
+  │ + id: String                        │
+  │ + text: String                      │
+  │ + time: String                      │
+  │ + timestamp: DateTime               │
+  │ + isUnread: bool                    │
+  └─────────────────────────────────────┘
+
+  ┌─────────────────────────────────────┐
   │    FeedWired                        │
   ├─────────────────────────────────────┤
   │ + repository: IdentityRepository    │
@@ -1131,7 +1263,7 @@
   │ + contactRequestRepository: CRRepo  │
   │ + contactRequestListener: Listener  │
   │ + messageRepository: MessageRepo    │
-  │ + bridge: JsBridge                  │
+  │ + bridge: Bridge                    │
   │ + p2pService: P2PService            │
   │ + initialContact: ContactModel      │
   ├─────────────────────────────────────┤
@@ -1172,7 +1304,7 @@
   │ + contactRequestListener: Listener  │
   │ + identityRepository: IdentityRepo  │
   │ + p2pService: P2PService            │
-  │ + bridge: JsBridge                  │
+  │ + bridge: Bridge                    │
   │ + contactRequestRepository: CRRepo  │
   ├─────────────────────────────────────┤
   │ - _orbitFriends: List<OrbitFriend>  │
@@ -1256,6 +1388,15 @@
   │ + getUnreadCountForContact(         │
   │ │   contactPeerId): Future<int>     │
   │ + getTotalUnreadCount(): Future<int>│
+  │ + getTotalUnreadCountExcluding     │
+  │ │   Archived(): Future<int>        │
+  │ + deleteMessagesForContact(        │
+  │ │   peerId): Future<void>          │
+  │ + getFailedOutgoingMessages():     │
+  │ │   Future<List<ConversationMsg>>  │
+  │ + getMessagesPage(contactPeerId,   │
+  │ │   {limit, beforeTimestamp}):      │
+  │ │   Future<List<ConversationMsg>>  │
   └──────────────────┬──────────────────┘
                      │ implements
                      ▼
@@ -1271,6 +1412,11 @@
   │ - dbMarkConversationAsRead: Function│
   │ - dbCountUnreadForContact: Function │
   │ - dbCountTotalUnread: Function      │
+  │ - dbCountTotalUnreadExcluding      │
+  │     Archived: Function              │
+  │ - dbDeleteMessagesForContact: Fn    │
+  │ - dbLoadFailedOutgoingMessages: Fn  │
+  │ - dbLoadMessagesPage: Function      │
   └─────────────────────────────────────┘
 
 
@@ -1282,7 +1428,7 @@
   │ - chatMessageStream: Stream         │
   │ - messageRepo: MessageRepository    │
   │ - contactRepo: ContactRepository    │
-  │ - bridge: JsBridge?                 │
+  │ - bridge: Bridge?                   │
   │ - getOwnMlKemSecretKey: Fn?        │
   │ - _subscription: StreamSubscription │
   │ - _messageController: StreamCtrl    │
@@ -1384,13 +1530,13 @@
   └─────────────────────────────────────┘
 
   ┌─────────────────────────────────────┐        ┌─────────────────────────┐
-  │         <<enum>>                    │        │      <<enum>>           │
-  │         SendMessageResult           │        │  DiscoverPeerResult     │
+  │       SendMessageResult             │        │      <<enum>>           │
+  │       [P2P Model / Class]           │        │  DiscoverPeerResult     │
   ├─────────────────────────────────────┤        ├─────────────────────────┤
-  │ + success                           │        │ + success               │
-  │ + nodeNotRunning                    │        │ + nodeNotRunning        │
-  │ + peerNotFound                      │        │ + notFound              │
-  │ + error                             │        │ + error                 │
+  │ + sent: bool                        │        │ + success               │
+  │ + reply: String?                    │        │ + nodeNotRunning        │
+  │ + acknowledged: bool (getter)       │        │ + notFound              │
+  │   (sent && reply != null/empty)     │        │ + error                 │
   └─────────────────────────────────────┘        └─────────────────────────┘
 
   ┌─────────────────────────────────────┐        ┌─────────────────────────┐
@@ -1439,60 +1585,76 @@
 
 
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                           TYPESCRIPT INTERFACES                              │
+│                        GO BRIDGE WIRE FORMAT                                 │
 ├─────────────────────────────────────────────────────────────────────────────┤
 
+  Bridge Request (MethodChannel → Go):
   ┌─────────────────────────────────────┐
-  │         <<interface>>               │
-  │         IdentityJson                │
+  │  MethodChannel invocation           │
   ├─────────────────────────────────────┤
-  │ + peerId: string                    │
-  │ + publicKey: string                 │
-  │ + privateKey: string                │
-  │ + mnemonic12: string                │
-  │ + createdAt: string                 │
-  │ + updatedAt: string                 │
-  │ + mlKemPublicKey?: string           │
-  │ + mlKemSecretKey?: string           │
+  │ + methodName: string                │
+  │   (camelCase, e.g.                 │
+  │    "generateIdentity",            │
+  │    "startNode", "dialPeer")        │
+  │ + argument: string? (JSON payload) │
   └─────────────────────────────────────┘
 
+  Bridge Response (Go → MethodChannel):
   ┌─────────────────────────────────────┐
-  │         <<interface>>               │
-  │         UnsignedQRPayload           │
-  ├─────────────────────────────────────┤
-  │ + pk: string                        │
-  │ + ns: string                        │
-  │ + rv: string                        │
-  │ + ts: string                        │
-  └─────────────────────────────────────┘
-
-  ┌─────────────────────────────────────┐
-  │         <<interface>>               │
-  │     SignedQRPayload extends         │
-  │         UnsignedQRPayload           │
-  ├─────────────────────────────────────┤
-  │ + sig: string                       │
-  └─────────────────────────────────────┘
-
-  ┌─────────────────────────────────────┐
-  │         <<interface>>               │
-  │         BridgeRequest               │
-  ├─────────────────────────────────────┤
-  │ + cmd: string                       │
-  │ + payload: object                   │
-  │ + requestId: string                 │
-  └─────────────────────────────────────┘
-
-  ┌─────────────────────────────────────┐
-  │         <<interface>>               │
-  │         BridgeResponse              │
+  │  JSON response string               │
   ├─────────────────────────────────────┤
   │ + ok: boolean                       │
-  │ + requestId: string                 │
   │ + identity?: IdentityJson           │
   │ + signature?: string                │
+  │ + verified?: boolean                │
+  │ + publicKey?: string                │
+  │ + secretKey?: string                │
+  │ + kem?: string                      │
+  │ + ciphertext?: string               │
+  │ + nonce?: string                    │
+  │ + plaintext?: string                │
+  │ + peerId?: string                   │
+  │ + peers?: []                        │
+  │ + messages?: []                     │
   │ + errorCode?: string                │
   │ + errorMessage?: string             │
+  └─────────────────────────────────────┘
+
+  Push Events (Go → EventChannel):
+  ┌─────────────────────────────────────┐
+  │  JSON event via EventChannel        │
+  ├─────────────────────────────────────┤
+  │ + event: string                     │
+  │   ("message:received" |            │
+  │    "peer:connected" |              │
+  │    "peer:disconnected")            │
+  │ + data: object                      │
+  │   (message content or peer info)   │
+  └─────────────────────────────────────┘
+
+  Command Name Mapping (Dart cmd → MethodChannel method):
+  ┌─────────────────────────────────────┐
+  │  GoBridgeClient._cmdMap             │
+  │  (cmd → _CmdSpec(methodName, bool)) │
+  ├─────────────────────────────────────┤
+  │  identity.generate → generateIdent. │
+  │  identity.restore  → restoreIdent.  │
+  │  payload.sign      → signPayload    │
+  │  payload.verify    → verifyPayload  │
+  │  mlkem.keygen      → mlKemKeygen    │
+  │  message.encrypt   → encryptMessage │
+  │  message.decrypt   → decryptMessage │
+  │  node:start        → startNode      │
+  │  node:stop         → stopNode       │
+  │  node:status       → nodeStatus     │
+  │  rendezvous:register → rendezvousR. │
+  │  rendezvous:discover → rendezvousD. │
+  │  peer:dial         → dialPeer       │
+  │  peer:disconnect   → disconnectPeer │
+  │  message:send      → sendMessage    │
+  │  inbox:store       → inboxStore     │
+  │  inbox:retrieve    → inboxRetrieve  │
+  │  inbox:register_token → inboxReg.T. │
   └─────────────────────────────────────┘
 
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -1510,13 +1672,13 @@
   ): Future<StartupDecision>
 
   generateNewIdentity(
-    callJsGenerate: () => Future<Map>,
+    callGenerate: () => Future<Map>,
     repo: IdentityRepository
   ): Future<GenerateIdentityResult>
 
   restoreIdentityFromMnemonic(
     input: String,
-    callJsRestore: (String) => Future<Map>,
+    callRestore: (String) => Future<Map>,
     repo: IdentityRepository
   ): Future<RestoreIdentityResult>
 
@@ -1525,12 +1687,12 @@
   ────────────────────────────
   buildQRPayload(
     repo: IdentityRepository,
-    callJsSign: (String, String) => Future<Map>
+    callSign: (String, String) => Future<Map>
   ): Future<(BuildQRPayloadResult, String?)>
 
   parseQRPayload(
     qrString: String,
-    bridge: JsBridge,
+    bridge: Bridge,
     ownPeerId: String,
     {maxAge: Duration = 24h}
   ): Future<(ParseQRResult, ContactModel?)>
@@ -1575,7 +1737,7 @@
     senderPeerId: String,
     senderUsername: String,
     {messageId?: String, timestamp?: String,
-     bridge?: JsBridge,
+     bridge?: Bridge,
      recipientMlKemPublicKey?: String}
   ): Future<(SendChatMessageResult, ConversationMessage?)>
   // If bridge + recipientMlKemPublicKey present → encrypt (v2 envelope)
@@ -1586,7 +1748,7 @@
     message: ChatMessage,
     messageRepo: MessageRepository,
     contactRepo: ContactRepository,
-    {bridge?: JsBridge,
+    {bridge?: Bridge,
      ownMlKemSecretKey?: String}
   ): Future<(HandleChatMessageResult, ConversationMessage?, ContactModel?)>
   // Detects v2 encrypted envelope → decrypts via ML-KEM + AES-256-GCM
@@ -1601,6 +1763,14 @@
     messageRepo: MessageRepository,
     contactPeerId: String
   ): Future<int>
+
+  retryFailedMessages(
+    messageRepo: MessageRepository,
+    identityRepo: IdentityRepository,
+    contactRepo: ContactRepository,
+    p2pService: P2PService,
+    bridge: Bridge
+  ): Future<int>   // Returns count of successfully retried messages
 
 
   FLUTTER USE CASES - FEED:
@@ -1638,13 +1808,39 @@
     contact: ContactModel
   ): Future<AddContactResult>
 
+  archiveContact(
+    contactRepo: ContactRepository,
+    peerId: String
+  ): Future<void>
+
+  unarchiveContact(
+    contactRepo: ContactRepository,
+    peerId: String
+  ): Future<void>
+
+  blockContact(
+    contactRepo: ContactRepository,
+    peerId: String
+  ): Future<void>
+
+  unblockContact(
+    contactRepo: ContactRepository,
+    peerId: String
+  ): Future<void>
+
+  deleteContactAndMessages(
+    contactRepo: ContactRepository,
+    messageRepo: MessageRepository,
+    peerId: String
+  ): Future<void>
+
 
   FLUTTER USE CASES - CONTACT REQUESTS:
   ─────────────────────────────────────
   sendContactRequest(
     p2pService: P2PService,
     identityRepo: IdentityRepository,
-    bridge: JsBridge,
+    bridge: Bridge,
     targetPeerId: String
   ): Future<SendContactRequestResult>
 
@@ -1661,24 +1857,25 @@
 
   handleIncomingMessage(
     message: ChatMessage,
-    bridge: JsBridge,
+    bridge: Bridge,
     requestRepo: ContactRequestRepository,
     contactRepo: ContactRepository,
     ownPeerId: String
   ): Future<(HandleMessageResult, ContactRequestModel?)>
 
 
-  FLUTTER BRIDGE CLIENTS - IDENTITY:
-  ──────────────────────────────────
-  callJsIdentityGenerate(bridge: JsBridge): Future<Map<String, dynamic>>
-  callJsIdentityRestore(bridge: JsBridge, mnemonic12: String): Future<Map<String, dynamic>>
-  callJsSignPayload(bridge: JsBridge, dataToSign: String, privateKey: String): Future<Map<String, dynamic>>
-  callJsMlKemKeygen(bridge: JsBridge): Future<Map<String, dynamic>>
-  callJsEncryptMessage({bridge, recipientMlKemPublicKey, plaintext, timeout?}): Future<Map<String, dynamic>>
-  callJsDecryptMessage({bridge, ownMlKemSecretKey, kem, ciphertext, nonce, timeout?}): Future<Map<String, dynamic>>
+  FLUTTER BRIDGE HELPERS - IDENTITY/CRYPTO:
+  ─────────────────────────────────────────
+  callIdentityGenerate(bridge: Bridge): Future<Map<String, dynamic>>
+  callIdentityRestore(bridge: Bridge, mnemonic12: String): Future<Map<String, dynamic>>
+  callSignPayload(bridge: Bridge, dataToSign: String, privateKey: String): Future<Map<String, dynamic>>
+  callVerifyPayload(bridge: Bridge, dataToVerify: String, signature: String, publicKey: String): Future<Map<String, dynamic>>
+  callMlKemKeygen(bridge: Bridge): Future<Map<String, dynamic>>
+  callEncryptMessage({bridge, recipientMlKemPublicKey, plaintext, timeout?}): Future<Map<String, dynamic>>
+  callDecryptMessage({bridge, ownMlKemSecretKey, kem, ciphertext, nonce, timeout?}): Future<Map<String, dynamic>>
 
 
-  FLUTTER BRIDGE CLIENTS - P2P:
+  FLUTTER BRIDGE HELPERS - P2P:
   ─────────────────────────────
   callP2PNodeStart(bridge, privateKeyHex, {relayAddresses, autoRegister, namespace}): Future<Map>
   callP2PNodeStop(bridge): Future<Map>
@@ -1708,6 +1905,12 @@
   dbDeleteContact(db: Database, peerId: String): Future<void>
   dbGetContactCount(db: Database): Future<int>
   dbContactExists(db: Database, peerId: String): Future<bool>
+  dbArchiveContact(db: Database, peerId: String): Future<void>
+  dbUnarchiveContact(db: Database, peerId: String): Future<void>
+  dbLoadActiveContacts(db: Database): Future<List<Map>>
+  dbLoadArchivedContacts(db: Database): Future<List<Map>>
+  dbBlockContact(db: Database, peerId: String): Future<void>
+  dbUnblockContact(db: Database, peerId: String): Future<void>
 
 
   FLUTTER DB HELPERS - CONTACT REQUESTS:
@@ -1732,8 +1935,14 @@
   dbMarkConversationAsRead(db: Database, contactPeerId: String): Future<int>
   dbCountUnreadForContact(db: Database, contactPeerId: String): Future<int>
   dbCountTotalUnread(db: Database): Future<int>
+  dbCountTotalUnreadExcludingArchived(db: Database): Future<int>
+  dbDeleteMessagesForContact(db: Database, contactPeerId: String): Future<void>
+  dbLoadFailedOutgoingMessages(db: Database): Future<List<Map>>
+  dbLoadMessagesPage(db: Database, contactPeerId: String, {limit: int, beforeTimestamp: String?}): Future<List<Map>>
   runMessagesTableMigration(db: Database): Future<void>   ← creates messages table + indexes
   runReadAtColumnMigration(db: Database): Future<void>    ← adds read_at TEXT to messages (v6)
+  runArchiveColumnsMigration(db: Database): Future<void>  ← adds is_archived, archived_at to contacts (v7)
+  runBlockColumnsMigration(db: Database): Future<void>    ← adds is_blocked, blocked_at to contacts (v8)
 
 
   FLUTTER UTILS:
@@ -1768,18 +1977,42 @@
   migrateSecretsToSecureStorage(db, secureKeyStore): Future<void>
 
 
-  JAVASCRIPT FUNCTIONS:
-  ─────────────────────
-  generateIdentity(): Promise<IdentityJson>           // now includes mlKemPublicKey, mlKemSecretKey
-  restoreIdentityFromMnemonic(mnemonic12: string): Promise<IdentityJson>  // fresh ML-KEM keypair (not from mnemonic)
-  signPayload(dataToSign: string, privateKey: string): Promise<string>
-  generateMlKemKeyPair(): Promise<{publicKey, secretKey}>
-  encryptMessage(recipientMlKemPublicKey, plaintext): Promise<{kem, ciphertext, nonce}>
-  decryptMessage(ownMlKemSecretKey, kem, ciphertext, nonce): Promise<{plaintext}>
-  handleBridgeMessage(message: {cmd, requestId, payload}): Promise<any>
-  storeInInbox(node, relayPeerId, toPeerId, message, metadata): Promise<InboxResponse>
-  retrieveFromInbox(node, relayPeerId, options): Promise<InboxResponse>
-  registerInboxToken(node, relayPeerId, {token, platform}): Promise<InboxResponse>
+  GO BRIDGE FUNCTIONS (go-mknoon/bridge/bridge.go):
+  ─────────────────────────────────────────────────
+  HandleCommand(command string, payload string) string   // JSON dispatch to all handlers
+  handleIdentityGenerate(payload) → {ok, identity}       // BIP39 + Ed25519 + ML-KEM-768
+  handleIdentityRestore(payload) → {ok, identity}        // Derive from mnemonic + fresh ML-KEM
+  handlePayloadSign(payload) → {ok, signature}           // Ed25519 sign
+  handlePayloadVerify(payload) → {ok, verified}          // Ed25519 verify
+  handleMlKemKeygen(payload) → {ok, publicKey, secretKey}
+  handleMessageEncrypt(payload) → {ok, kem, ciphertext, nonce}
+  handleMessageDecrypt(payload) → {ok, plaintext}
+  handleNodeStart(payload) → {ok, peerId, ...}           // libp2p node + relay + auto-register
+  handleNodeStop(payload) → {ok}
+  handleNodeStatus(payload) → {ok, peerId, isStarted, connections, ...}
+  handleRendezvousRegister(payload) → {ok}               // Signed peer record registration
+  handleRendezvousDiscover(payload) → {ok, peers}
+  handlePeerDial(payload) → {ok}
+  handlePeerDisconnect(payload) → {ok}
+  handleMessageSend(payload) → {ok, reply?}              // Frame-based with ACK
+  handleInboxStore(payload) → {ok}
+  handleInboxRetrieve(payload) → {ok, messages}
+  handleInboxRegisterToken(payload) → {ok}               // FCM token registration
+
+  GO NODE FUNCTIONS (go-mknoon/node/):
+  ─────────────────────────────────────
+  Node.Start(privateKeyHex, relayAddresses) error        // libp2p host + relay + NAT + hole punch
+  Node.Stop() error
+  Node.Status() NodeStatus
+  Node.RegisterRendezvous(namespace, serverAddrs) error  // Protobuf signed peer records
+  Node.DiscoverPeers(namespace, serverAddrs, timeout) []Peer
+  Node.DialPeer(peerId, addresses, timeout) error
+  Node.DisconnectPeer(peerId) error
+  Node.SendMessage(peerId, message, timeout) (reply, error)  // /mknoon/chat/1.0.0
+  Node.StoreInbox(toPeerId, message) error               // /mknoon/inbox/1.0.0
+  Node.RetrieveInbox() []InboxMessage
+  Node.RegisterInboxToken(token, platform) error          // FCM push registration
+  Node.SetEventCallback(callback)                         // Push events to Flutter
 
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -1831,13 +2064,13 @@
        │              │
        │              ├──────► generateNewIdentity()
        │              │              │
-       │              │              ├──────► callJsIdentityGenerate()
+       │              │              ├──────► callIdentityGenerate()
        │              │              │              │
-       │              │              │              └──────► WebViewJsBridge.send()
+       │              │              │              └──────► GoBridgeClient.send()
        │              │              │                             │
-       │              │              │                             └──────► [JS] handleBridgeMessage()
+       │              │              │                             └──────► [Go] HandleCommand()
        │              │              │                                            │
-       │              │              │                                            └──────► generateIdentity()
+       │              │              │                                            └──────► GenerateIdentity()
        │              │              │
        │              │              └──────► IdentityRepository.saveIdentity()
        │              │                             │
@@ -1847,9 +2080,9 @@
        │                             │
        │                             └──────► restoreIdentityFromMnemonic()
        │                                            │
-       │                                            ├──────► callJsIdentityRestore()
+       │                                            ├──────► callIdentityRestore()
        │                                            │              │
-       │                                            │              └──────► [JS] restoreFromMnemonic()
+       │                                            │              └──────► [Go] RestoreFromMnemonic()
        │                                            │
        │                                            └──────► IdentityRepository.saveIdentity()
        │
@@ -1859,9 +2092,9 @@
                       │              │
                       │              ├──────► IdentityRepository.loadIdentity()
                       │              │
-                      │              └──────► callJsSignPayload()
+                      │              └──────► callSignPayload()
                       │                             │
-                      │                             └──────► [JS] signPayload()
+                      │                             └──────► [Go] SignPayload()
                       │
                       ├──────► _onUsernameChanged()
                       │              │
@@ -1882,7 +2115,7 @@
                       │                             │
                       │                             ├──────► parseQRPayload()
                       │                             │              │
-                      │                             │              ├──────► [JS] signPayload() (verify)
+                      │                             │              ├──────► [Go] VerifyPayload()
                       │                             │              │
                       │                             │              └──────► ContactModel.fromQRPayload()
                       │                             │
@@ -1938,7 +2171,7 @@
                                      │
                                      ├──────► JSON parse + validate
                                      │
-                                     ├──────► [JS] signPayload() (verify signature)
+                                     ├──────► [Go] VerifyPayload()
                                      │
                                      ├──────► ContactRepository.contactExists()
                                      │
@@ -1949,7 +2182,7 @@
 
   ChatMessageListener (background service)
        │
-       ├──────► bridge: JsBridge? (for ML-KEM decryption)
+       ├──────► bridge: Bridge? (for ML-KEM decryption)
        │
        ├──────► getOwnMlKemSecretKey: () => Future<String?> (from identity repo)
        │
@@ -1959,7 +2192,7 @@
                                      │
                                      ├──────► Detect v2 encrypted envelope
                                      │              │
-                                     │              └──────► callJsDecryptMessage() (ML-KEM + AES-256-GCM)
+                                     │              └──────► callDecryptMessage() (ML-KEM + AES-256-GCM)
                                      │
                                      ├──────► [else] Parse v1 plaintext MessagePayload
                                      │
@@ -1982,7 +2215,7 @@
        │              │
        │              ├──────► MessageRepository.saveMessage() (optimistic persist)
        │              │
-       │              ├──────► [if ML-KEM key] callJsEncryptMessage() → v2 envelope
+       │              ├──────► [if ML-KEM key] callEncryptMessage() → v2 envelope
        │              │
        │              ├──────► [else] Build v1 plaintext envelope
        │              │
@@ -2007,9 +2240,9 @@
        │
        ├──────► P2PBridgeClient (all bridge calls)
        │              │
-       │              └──────► WebViewJsBridge.send()
+       │              └──────► GoBridgeClient.send()
        │                             │
-       │                             └──────► [JS] P2P Module (libp2p)
+       │                             └──────► [Go] Node Module (libp2p)
        │                                            │
        │                                            └──────► Rendezvous Server
        │
@@ -2035,15 +2268,15 @@
 
 ```
 lib/
-├── main.dart                                    # App entry point, Firebase init, SecureKeyStore + encrypted DB setup (v6), secret migration, DI; MyApp = StatefulWidget + WidgetsBindingObserver (lifecycle, push listeners, orderly dispose)
+├── main.dart                                    # App entry point, Firebase init, SecureKeyStore + encrypted DB setup (v8), secret migration, DI; MyApp = StatefulWidget + WidgetsBindingObserver (lifecycle, push listeners, orderly dispose)
 ├── smoke_test_main.dart                         # Smoke test entry point
 ├── smoke_test_restore.dart                      # Smoke test for identity restore
 ├── smoke_test_messages.dart                     # Smoke test for messages DB layer
 ├── core/
 │   ├── bridge/
-│   │   ├── js_bridge_client.dart               # JsBridge interface + identity/signing/encryption helpers
-│   │   ├── webview_js_bridge.dart              # WebView implementation + event handlers
-│   │   └── p2p_bridge_client.dart              # P2P-specific bridge calls + inbox store/retrieve
+│   │   ├── bridge.dart                          # Bridge abstract interface (send, initialize, checkHealth, reinitialize, dispose, callbacks) + identity/crypto helper functions (callIdentityGenerate, callSignPayload, callVerifyPayload, callMlKemKeygen, callEncryptMessage, callDecryptMessage)
+│   │   ├── go_bridge_client.dart               # GoBridgeClient: MethodChannel/EventChannel → Go native; _cmdMap maps cmd→MethodChannel method names
+│   │   └── p2p_bridge_client.dart              # P2P-specific bridge calls (callP2PNodeStart/Stop/Status, rendezvous, peer, message, inbox) + defaultRendezvousAddress constant
 │   ├── constants/
 │   │   └── network_constants.dart              # Rendezvous address
 │   ├── database/
@@ -2055,7 +2288,9 @@ lib/
 │   │   │   ├── 003_mlkem_keys.dart             # Schema v3 (ML-KEM key columns on identity, contacts, contact_requests)
 │   │   │   ├── 004_nullify_secret_columns.dart # Schema v4 (makes private_key, mnemonic12 nullable)
 │   │   │   ├── 005_secret_null_checks.dart     # Schema v5 (CHECK constraints + avatar_blob BLOB)
-│   │   │   └── 006_read_at_column.dart         # Schema v6 (read_at TEXT on messages table)
+│   │   │   ├── 006_read_at_column.dart         # Schema v6 (read_at TEXT on messages table)
+│   │   │   ├── 007_archive_columns.dart        # Schema v7 (is_archived, archived_at on contacts)
+│   │   │   └── 008_block_columns.dart          # Schema v8 (is_blocked, blocked_at on contacts)
 │   │   └── helpers/
 │   │       ├── identity_db_helpers.dart        # Identity DB CRUD
 │   │       ├── contacts_db_helpers.dart        # Contacts DB CRUD
@@ -2065,19 +2300,31 @@ lib/
 │   │   ├── secure_key_store.dart                 # SecureKeyStore abstract interface
 │   │   └── flutter_secure_key_store.dart         # FlutterSecureKeyStore impl (iOS Keychain / Android EncryptedSharedPrefs)
 │   ├── services/
-│   │   ├── p2p_service.dart                    # P2PService abstract interface (incl. inbox)
-│   │   ├── p2p_service_impl.dart               # P2PServiceImpl with streams + offline inbox drain
-│   │   └── incoming_message_router.dart        # Routes P2P messages by type to streams
+│   │   ├── p2p_service.dart                    # P2PService abstract interface (incl. inbox, sendMessageWithReply, startNodeCore, warmBackground, isLocalPeer, sendLocalMessage)
+│   │   ├── p2p_service_impl.dart               # P2PServiceImpl with streams, offline inbox drain, local WiFi discovery (mDNS/Bonsoir), periodic health check (30s)
+│   │   ├── incoming_message_router.dart        # Routes P2P messages by type to streams
+│   │   ├── pending_message_retrier.dart        # PendingMessageRetrier: subscribes to stateStream, retries failed messages on reconnect (5s debounce)
+│   │   ├── chat_message_listener.dart          # Stub ChatMessageListener (core-level; real impl in features/conversation)
+│   │   ├── contact_request_listener.dart       # Stub ContactRequestListener (core-level; real impl in features/contact_request)
+│   │   └── chat_message.dart                   # ChatMessage type re-export
 │   ├── theme/
 │   │   ├── app_colors.dart                     # Color constants (Custom1 dark)
 │   │   ├── app_theme.dart                      # ThemeData configuration
 │   │   └── glassmorphism.dart                  # GlassmorphicContainer widget
+│   ├── config/
+│   │   └── startup_config.dart                 # StartupConfig class with deferredStartupMode flag
+│   ├── local_discovery/
+│   │   ├── local_discovery_service.dart        # LocalDiscoveryService abstract interface (mDNS)
+│   │   ├── bonsoir_discovery_service.dart      # BonsoirDiscoveryService impl (Bonsoir mDNS)
+│   │   ├── local_p2p_service.dart              # LocalP2PService: combines mDNS discovery + WebSocket
+│   │   └── local_ws_server.dart                # LocalWsServer: local WebSocket server for WiFi peers
 │   └── utils/
 │       ├── flow_event_emitter.dart             # Logging utility
 │       ├── key_conversion.dart                 # base64 ↔ hex conversion
 │       ├── ring_avatar_spec.dart               # Ring avatar constants + data models
 │       ├── ring_avatar_generator.dart          # Deterministic avatar from peerId
-│       └── chat_console_logger.dart           # Chat message debug logging + wire envelope logging
+│       ├── chat_console_logger.dart           # Chat message debug logging + wire envelope logging
+│       └── startup_timing.dart                # StartupTiming singleton for debug timing marks
 │
 ├── features/
 │   ├── home/
@@ -2097,9 +2344,11 @@ lib/
 │   ├── feed/
 │   │   ├── domain/
 │   │   │   ├── models/
-│   │   │   │   └── feed_item.dart              # FeedItem base + ConnectionFeedItem + MessageFeedItem
+│   │   │   │   └── feed_item.dart              # FeedItem base + ConnectionFeedItem + MessageFeedItem + ThreadFeedItem + ThreadMessage
 │   │   │   └── utils/
-│   │   │       └── format_message_time.dart    # Message timestamp formatting + formatRelativeTime()
+│   │   │       ├── format_message_time.dart    # Message timestamp formatting + formatRelativeTime()
+│   │   │       ├── group_messages_into_threads.dart  # Groups incoming messages into ThreadFeedItems by contact and read session
+│   │   │       └── has_significant_time_gap.dart     # Returns true if gap >= 2h or crosses AM/PM boundary
 │   │   ├── application/
 │   │   │   └── load_feed_use_case.dart         # Load initial feed from DB
 │   │   └── presentation/
@@ -2112,6 +2361,10 @@ lib/
 │   │       │   ├── nav_bar_button.dart         # Individual nav button widget
 │   │       │   ├── connection_card.dart        # Contact connection card
 │   │       │   ├── message_feed_card.dart     # Incoming message card with reply
+│   │       │   ├── message_bubble.dart        # Single message bubble within thread card
+│   │       │   ├── thread_card.dart           # Thread card: grouped messages by contact
+│   │       │   ├── session_divider.dart       # Session divider between message groups
+│   │       │   ├── time_gap_divider.dart      # Time gap divider for significant pauses
 │   │       │   ├── unread_count_badge.dart   # Circular unread count badge
 │   │       │   └── checkmark_burst_animation.dart  # Animated checkmark
 │   │       └── navigation/
@@ -2130,7 +2383,8 @@ lib/
 │   │   │   ├── handle_incoming_chat_message_use_case.dart  # Receive: decrypt v2 or parse v1
 │   │   │   ├── load_conversation_use_case.dart # Load messages for contact
 │   │   │   ├── mark_conversation_read_use_case.dart # Mark unread messages as read
-│   │   │   └── chat_message_listener.dart      # Background chat listener + ML-KEM decryption
+│   │   │   ├── retry_failed_messages_use_case.dart  # Retry failed outgoing messages on reconnect
+│   │   │   └── chat_message_listener.dart      # Background chat listener + ML-KEM decryption; rejects blocked contacts, suppresses UI for archived
 │   │   └── presentation/
 │   │       ├── screens/
 │   │       │   ├── conversation_screen.dart    # Pure UI: letter cards, compose
@@ -2141,7 +2395,8 @@ lib/
 │   │       │   ├── empty_conversation_state.dart # Breathing glow empty state
 │   │       │   ├── conversation_header.dart    # Frosted-glass header
 │   │       │   ├── compact_origin_marker.dart  # Connection origin marker
-│   │       │   └── date_separator.dart         # Date divider
+│   │       │   ├── date_separator.dart         # Date divider
+│   │       │   └── blocked_banner.dart         # Blocked contact banner with "Unblock" button
 │   │       └── navigation/
 │   │           └── conversation_route_transition.dart
 │   │
@@ -2164,7 +2419,12 @@ lib/
 │   │           ├── orbit_header.dart              # Right-aligned 44px user RingAvatar
 │   │           ├── friends_list_header.dart        # "Friends" title + QR/Scan pill buttons
 │   │           ├── friend_row.dart                # Glassmorphic friend card
-│   │           ├── animated_friend_row.dart        # Staggered slide-up wrapper (index * 20ms)
+│   │           ├── swipeable_friend_row.dart      # Swipeable friend row with slide-to-reveal actions (Block/Delete/Archive)
+│   │           ├── swipe_action_buttons.dart       # Block/Delete/Archive action buttons for swipe
+│   │           ├── friends_filter_toggle.dart      # Segmented toggle "All (N)" / "Archived (N)"
+│   │           ├── archived_empty_state.dart       # Empty state for archived contacts list
+│   │           ├── confirmation_dialog.dart        # Confirmation dialog for destructive actions
+│   │           ├── qr_action_cards.dart            # QR action cards (My QR / Scan QR)
 │   │           ├── orbit_search_trigger.dart       # Floating glass pill search button
 │   │           └── orbit_search_dock.dart          # Bottom-docked search TextField
 │   │
@@ -2194,7 +2454,8 @@ lib/
 │   │       └── widgets/
 │   │           ├── ambient_background.dart     # Animated glow background
 │   │           ├── brand_header.dart           # Logo/title header
-│   │           └── choice_card.dart            # Glassmorphic tap card
+│   │           ├── choice_card.dart            # Glassmorphic tap card
+│   │           └── identity_loading_card.dart  # Loading card during identity generation/restore
 │   │
 │   ├── qr_code/
 │   │   ├── domain/
@@ -2220,7 +2481,12 @@ lib/
 │   │   │       ├── contact_repository.dart     # Abstract interface
 │   │   │       └── contact_repository_impl.dart
 │   │   └── application/
-│   │       └── add_contact_use_case.dart        # Add with duplicate check
+│   │       ├── add_contact_use_case.dart        # Add with duplicate check
+│   │       ├── archive_contact_use_case.dart    # Archive contact
+│   │       ├── unarchive_contact_use_case.dart  # Unarchive contact
+│   │       ├── block_contact_use_case.dart      # Block contact
+│   │       ├── unblock_contact_use_case.dart    # Unblock contact
+│   │       └── delete_contact_use_case.dart     # Delete contact and messages
 │   │
 │   ├── contact_request/
 │   │   ├── domain/
@@ -2246,7 +2512,8 @@ lib/
 │       │       ├── node_state.dart              # NodeState (isStarted, connections, etc.)
 │       │       ├── connection_state.dart         # ConnectionState (peerId, direction)
 │       │       ├── discovered_peer.dart          # DiscoveredPeer (id, addresses)
-│       │       └── chat_message.dart             # ChatMessage (from, to, content)
+│       │       ├── chat_message.dart             # ChatMessage (from, to, content)
+│       │       └── send_message_result.dart      # SendMessageResult class (sent, reply, acknowledged)
 │       ├── application/
 │       │   ├── start_node_use_case.dart          # Start node with identity
 │       │   ├── stop_node_use_case.dart           # Stop running node
@@ -2256,46 +2523,35 @@ lib/
 │           └── widgets/
 │               └── connection_status_indicator.dart  # Online/Offline badge
 
-core_lib_js/
-├── package.json                                # NPM config + dependencies
-├── package-lock.json                           # Dependency lock file
-├── build.mjs                                   # esbuild config
-├── build.sh                                    # Shell build script
-├── tsconfig.json                               # TypeScript compiler options
-├── jest.config.cjs                             # Jest test runner config (CommonJS for ESM package)
-├── test_identity.js                            # Standalone Node.js identity test
-├── shims/
-│   └── buffer-shim.js                          # Node.js Buffer polyfill
-└── src/
-    ├── types/
-    │   ├── identity.ts                         # IdentityJson interface (incl. mlKemPublicKey, mlKemSecretKey)
-    │   └── qr_payload.ts                       # UnsignedQRPayload, SignedQRPayload
-    ├── identity/
-    │   ├── generate.ts                         # generateIdentity() (Ed25519 + ML-KEM-768)
-    │   └── restore.ts                          # restoreIdentityFromMnemonic() (Ed25519 + fresh ML-KEM-768)
-    ├── crypto/
-    │   ├── keygen_mlkem.ts                     # ML-KEM-768 keypair generation
-    │   ├── encrypt_message.ts                  # ML-KEM encapsulate + AES-256-GCM encrypt
-    │   └── decrypt_message.ts                  # ML-KEM decapsulate + AES-256-GCM decrypt
-    ├── signing/
-    │   └── sign_payload.ts                     # signPayload() using @noble/ed25519
-    ├── bridge/
-    │   ├── entry.ts                            # WebView entry point (incl. mlkem.keygen, message.encrypt/decrypt); log sanitization
-    │   └── handlers.ts                         # Command map: identity.*, payload.sign
-    ├── utils/
-    │   ├── flow_events.ts                      # JS-side flow event emitter
-    │   └── base64.ts                           # Browser-compatible base64
-    └── __test__/
-        ├── identity.test.ts                    # Jest unit tests for identity gen/restore
-        └── crypto.test.ts                      # Jest unit tests for ML-KEM keygen, encrypt/decrypt
+go-mknoon/
+├── Makefile                                    # Build targets: `make all` (iOS + Android), `make ios`, `make android`
+├── go.mod / go.sum                             # Go module dependencies
+├── bridge/
+│   └── bridge.go                               # HandleCommand() dispatch → identity, crypto, node, inbox handlers
+├── identity/
+│   ├── generate.go                             # BIP39 mnemonic + Ed25519 keypair + ML-KEM-768 keygen
+│   └── restore.go                              # Restore Ed25519 from mnemonic + fresh ML-KEM-768
+├── crypto/
+│   ├── mlkem.go                                # ML-KEM-768 keygen (circl/kem/mlkem768)
+│   ├── encrypt.go                              # ML-KEM encapsulate + AES-256-GCM encrypt
+│   └── decrypt.go                              # ML-KEM decapsulate + AES-256-GCM decrypt
+├── node/
+│   ├── node.go                                 # libp2p host lifecycle, chat protocol (/mknoon/chat/1.0.0), event broadcasting
+│   ├── rendezvous.go                           # Rendezvous register/discover with protobuf signed peer records
+│   └── inbox.go                                # Offline inbox protocol (/mknoon/inbox/1.0.0): store/retrieve/register FCM token
+├── stub/
+│   └── gosigar/                                # iOS stub for gosigar (libproc.h not available)
+└── testdata/
+    └── interop_vectors.json                    # Cross-platform test vectors for crypto interop
+
+ios/
+├── Runner/GoBridge.swift                       # iOS platform wrapper: MethodChannel + EventChannel → GoMknoon framework
+└── Podfile                                     # CocoaPods config (includes GoMknoon.xcframework)
+
+android/
+└── app/src/main/kotlin/.../GoBridge.kt         # Android platform wrapper: MethodChannel + EventChannel → GoMknoon AAR
 
 assets/
-├── js/
-│   ├── bridge.html                             # WebView HTML wrapper
-│   ├── core_lib.js                             # Bundled JS identity/signing (generated)
-│   ├── core_lib.js.map                         # Source map for debugging
-│   ├── p2p_lib.js                              # Bundled JS P2P networking (generated)
-│   └── test.html                               # Test HTML for bridge debugging
 └── icons/
     ├── nav_feed.svg                             # Feed tab icon
     ├── nav_orbit.svg                            # Orbit/circle tab icon
@@ -2313,7 +2569,7 @@ assets/
 │                    GENERATE IDENTITY - DATA FLOW                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 
-  User                Flutter UI           Use Case            Bridge              JS Runtime           Database
+  User                Flutter UI           Use Case          GoBridgeClient       Go Native Lib        Database
    │                      │                   │                   │                    │                   │
    │  Tap "I'm new"       │                   │                   │                    │                   │
    │─────────────────────>│                   │                   │                    │                   │
@@ -2322,15 +2578,16 @@ assets/
    │                      │  Identity()       │                   │                    │                   │
    │                      │──────────────────>│                   │                    │                   │
    │                      │                   │                   │                    │                   │
-   │                      │                   │  callJsGenerate() │                    │                   │
+   │                      │                   │  callGenerate()   │                    │                   │
    │                      │                   │──────────────────>│                    │                   │
    │                      │                   │                   │                    │                   │
-   │                      │                   │                   │  JSON request      │                   │
-   │                      │                   │                   │  {cmd, payload}    │                   │
+   │                      │                   │                   │  MethodChannel     │                   │
+   │                      │                   │                   │  generateIdentity  │                   │
    │                      │                   │                   │───────────────────>│                   │
    │                      │                   │                   │                    │                   │
    │                      │                   │                   │                    │  bip39.generate() │
    │                      │                   │                   │                    │  ed25519.keypair()│
+   │                      │                   │                   │                    │  mlkem768.keygen()│
    │                      │                   │                   │                    │  peerId.derive()  │
    │                      │                   │                   │                    │                   │
    │                      │                   │                   │  JSON response     │                   │
@@ -2363,7 +2620,7 @@ assets/
 │                    QR CODE GENERATION - DATA FLOW                            │
 └─────────────────────────────────────────────────────────────────────────────┘
 
-  User                FTE Wired            Use Case            Bridge              JS Runtime           Database
+  User                FTE Wired            Use Case          GoBridgeClient       Go Native Lib        Database
    │                      │                   │                   │                    │                   │
    │  Screen loads        │                   │                   │                    │                   │
    │─────────────────────>│                   │                   │                    │                   │
@@ -2381,10 +2638,11 @@ assets/
    │                      │                   │  payload JSON     │                    │                   │
    │                      │                   │  {ns,pk,rv,ts,un} │                    │                   │
    │                      │                   │                   │                    │                   │
-   │                      │                   │  callJsSign()     │                    │                   │
+   │                      │                   │  callSignPayload()│                    │                   │
    │                      │                   │──────────────────>│                    │                   │
    │                      │                   │                   │                    │                   │
-   │                      │                   │                   │  Sign payload      │                   │
+   │                      │                   │                   │  MethodChannel     │                   │
+   │                      │                   │                   │  signPayload       │                   │
    │                      │                   │                   │───────────────────>│                   │
    │                      │                   │                   │                    │                   │
    │                      │                   │                   │                    │  ed25519.sign()   │
@@ -2442,7 +2700,7 @@ assets/
    │                 │─────────────────────────────────────────────────>│                 │
    │                 │                │                │                 │                 │
    │                 │                │                │                 │  Build payload  │
-   │                 │                │                │                 │  Sign via JS    │
+   │                 │                │                │                 │  Sign via Go    │
    │                 │                │                │                 │  Discover peer  │
    │                 │                │                │                 │───────────────>│
    │                 │                │                │                 │  (3x retry)    │
@@ -2516,7 +2774,7 @@ assets/
 │              SEND CHAT MESSAGE - DATA FLOW (v2 encrypted / v1 fallback)      │
 └─────────────────────────────────────────────────────────────────────────────┘
 
-  User          Conv Wired      sendChatMsg UC   JS Bridge     MessageRepo     P2PService
+  User          Conv Wired      sendChatMsg UC   GoBridge      MessageRepo     P2PService
    │                 │                │              │              │                │
    │  Type + Send    │                │              │              │                │
    │────────────────>│                │              │              │                │
@@ -2535,7 +2793,7 @@ assets/
    │                 │                │──────────────────────────────>│                │
    │                 │                │              │              │                │
    │                 │                │  [if contact has ML-KEM key]  │                │
-   │                 │                │  callJsEncrypt│              │                │
+   │                 │                │  callEncrypt │              │                │
    │                 │                │  Message()   │              │                │
    │                 │                │─────────────>│              │                │
    │                 │                │              │  ML-KEM-768  │                │
@@ -2595,7 +2853,7 @@ assets/
 │              INCOMING CHAT MESSAGE - DATA FLOW (v2 decrypt / v1 parse)        │
 └─────────────────────────────────────────────────────────────────────────────┘
 
-  P2PService     Msg Router     Chat Listener    handleMsg UC    JS Bridge    Conv Wired     User
+  P2PService     Msg Router     Chat Listener    handleMsg UC    GoBridge     Conv Wired     User
    │                │                │                │              │            │           │
    │  messageStream │                │                │              │            │           │
    │  (ChatMessage) │                │                │              │            │           │
@@ -2620,7 +2878,7 @@ assets/
    │                │                │                │  edEnvelope()│            │           │
    │                │                │                │              │            │           │
    │                │                │                │  [if v2 encrypted]        │           │
-   │                │                │                │  callJsDecrypt            │           │
+   │                │                │                │  callDecrypt              │           │
    │                │                │                │  Message()   │            │           │
    │                │                │                │─────────────>│            │           │
    │                │                │                │              │ ML-KEM-768 │           │
@@ -2797,7 +3055,6 @@ assets/
 |---------|---------|
 | sqflite_sqlcipher | SQLCipher encrypted database access (replaces plain sqflite) |
 | flutter_secure_storage | OS-backed secure key-value storage (iOS Keychain / Android EncryptedSharedPreferences) |
-| webview_flutter | JavaScript runtime container |
 | qr_flutter | QR code generation widget |
 | mobile_scanner | Camera-based QR code scanning |
 | image_picker | Camera/gallery image selection |
@@ -2805,6 +3062,7 @@ assets/
 | cupertino_icons | iOS-style icons |
 | firebase_core | Firebase initialization |
 | firebase_messaging | Push notifications (FCM) |
+| bonsoir | mDNS service discovery for local WiFi P2P |
 
 ### Flutter Dev Packages
 
@@ -2815,17 +3073,16 @@ assets/
 | integration_test | Integration testing framework |
 | flutter_lints | Lint rules |
 
-### JavaScript Packages (package.json)
+### Go Packages (go-mknoon/go.mod)
 
 | Package | Purpose |
 |---------|---------|
-| bip39 | Mnemonic phrase generation |
-| @libp2p/crypto | Ed25519 key generation |
-| @libp2p/peer-id | libp2p peer ID derivation |
-| @noble/ed25519 | Ed25519 signing & verification |
-| @noble/post-quantum | ML-KEM-768 (FIPS 203) key encapsulation for E2E message encryption |
-| esbuild | JavaScript bundling |
-| @libp2p/* suite | P2P networking (node, relay, rendezvous, messaging) |
+| github.com/libp2p/go-libp2p | Core libp2p host, relay, hole punching, NAT traversal |
+| github.com/tyler-smith/go-bip39 | BIP39 mnemonic phrase generation |
+| github.com/cloudflare/circl | ML-KEM-768 (FIPS 203) post-quantum key encapsulation |
+| crypto/ed25519 (stdlib) | Ed25519 signing & verification |
+| crypto/aes + crypto/cipher (stdlib) | AES-256-GCM symmetric encryption |
+| golang.org/x/mobile/bind | gomobile framework binding (iOS .xcframework + Android .aar) |
 
 ---
 
@@ -2852,7 +3109,7 @@ The application initialization sequence is defined in `lib/main.dart`. Understan
     ├─► SecureKeyStore instantiation (FlutterSecureKeyStore)
     │       iOS Keychain (device-bound) / Android EncryptedSharedPreferences
     │
-    ├─► openEncryptedDatabase('identity.db', version: 6, secureKeyStore)
+    ├─► openEncryptedDatabase('identity.db', version: 8, secureKeyStore)
     │       │
     │       ├─► Read/generate db_encryption_key from SecureKeyStore
     │       │       Random 256-bit key, stored as base64 in secure storage
@@ -2876,10 +3133,16 @@ The application initialization sequence is defined in `lib/main.dart`. Understan
     │       │       ├─► runSecretNullChecksMigration(db)
     │       │       │       CHECK constraints + avatar_blob BLOB column (v5)
     │       │       │
-    │       │       └─► runReadAtColumnMigration(db)
-    │       │               Adds read_at TEXT column to messages (v6)
+    │       │       ├─► runReadAtColumnMigration(db)
+    │       │       │       Adds read_at TEXT column to messages (v6)
+    │       │       │
+    │       │       ├─► runArchiveColumnsMigration(db)
+    │       │       │       Adds is_archived, archived_at to contacts (v7)
+    │       │       │
+    │       │       └─► runBlockColumnsMigration(db)
+    │       │               Adds is_blocked, blocked_at to contacts (v8)
     │       │
-    │       └─► onUpgrade callback (v1→v2→v3→v4→v5→v6)
+    │       └─► onUpgrade callback (v1→v2→v3→v4→v5→v6→v7→v8)
     │               │
     │               ├─► runMessagesTableMigration(db)                (v1 → v2)
     │               │       Creates messages table for existing installs
@@ -2894,8 +3157,14 @@ The application initialization sequence is defined in `lib/main.dart`. Understan
     │               │       CHECK constraints enforcing secret cols NULL
     │               │       + avatar_blob BLOB column
     │               │
-    │               └─► runReadAtColumnMigration(db)                (v5 → v6)
-    │                       Adds read_at TEXT column to messages table
+    │               ├─► runReadAtColumnMigration(db)                (v5 → v6)
+    │               │       Adds read_at TEXT column to messages table
+    │               │
+    │               ├─► runArchiveColumnsMigration(db)             (v6 → v7)
+    │               │       Adds is_archived, archived_at to contacts
+    │               │
+    │               └─► runBlockColumnsMigration(db)               (v7 → v8)
+    │                       Adds is_blocked, blocked_at to contacts
     │
     ├─► migrateSecretsToSecureStorage(db, secureKeyStore)
     │       One-time migration: reads secrets from DB, writes to SecureKeyStore
@@ -2906,21 +3175,27 @@ The application initialization sequence is defined in `lib/main.dart`. Understan
     │       │
     │       ├─► IdentityRepositoryImpl (dbLoad, dbUpsert, secureKeyStore)
     │       │
-    │       ├─► ContactRepositoryImpl (6 db helper functions)
+    │       ├─► ContactRepositoryImpl (12 db helper functions)
     │       │
     │       ├─► ContactRequestRepositoryImpl (6 db helper functions)
     │       │
-    │       └─► MessageRepositoryImpl (9 db helper functions)
+    │       └─► MessageRepositoryImpl (13 db helper functions)
     │
-    ├─► WebViewJsBridge instantiation + initialize()
+    ├─► GoBridgeClient instantiation + initialize()
     │       │
-    │       └─► Loads bridge.html + core_lib.js into hidden WebView
-    │           Sets up JavaScriptChannel for Flutter ↔ JS communication
+    │       └─► Sets up MethodChannel + EventChannel to Go native library
+    │           via platform wrappers (GoBridge.swift / GoBridge.kt)
     │           Registers event handlers (messages, peer events)
+    │
+    ├─► LocalP2PService instantiation
+    │       │
+    │       ├─► BonsoirDiscoveryService (mDNS)
+    │       │
+    │       └─► LocalWsServer (WebSocket)
     │
     ├─► P2PServiceImpl instantiation
     │       │
-    │       └─► Wraps WebViewJsBridge with reactive streams
+    │       └─► Wraps GoBridgeClient + LocalP2PService with reactive streams
     │           stateStream (NodeState) + messageStream (ChatMessage)
     │
     ├─► IncomingMessageRouter instantiation + start()
@@ -2939,11 +3214,19 @@ The application initialization sequence is defined in `lib/main.dart`. Understan
     │       │
     │       └─► Subscribes to messageRouter.chatMessageStream
     │           Monitors for incoming chat messages
+    │           Rejects messages from blocked contacts
+    │           Suppresses UI notifications for archived contacts
     │           Broadcasts to incomingMessageStream + contactUpdatedStream
+    │
+    ├─► PendingMessageRetrier instantiation + start()
+    │       │
+    │       └─► Subscribes to P2PService.stateStream
+    │           Detects online transitions, 5s debounce
+    │           Calls retryFailedMessages() on reconnect
     │
     └─► runApp(MyApp) — StatefulWidget + WidgetsBindingObserver
             │
-            ├─► Constructor params: messageRouter, isDesktop, + all existing deps
+            ├─► Constructor params: messageRouter, pendingMessageRetrier, isDesktop, + all existing deps
             │
             ├─► _onResumed() lifecycle handler (app foreground):
             │       │
@@ -2962,8 +3245,9 @@ The application initialization sequence is defined in `lib/main.dart`. Understan
             │       └─► FirebaseMessaging.onMessageOpenedApp → drainOfflineInbox()
             │
             ├─► dispose() orderly teardown:
-            │       chatMessageListener → contactRequestListener →
-            │       messageRouter → p2pService → bridge
+            │       pendingMessageRetrier → chatMessageListener →
+            │       contactRequestListener → messageRouter →
+            │       p2pService → bridge
             │
             └─► StartupRouter widget
                     │
@@ -2990,7 +3274,7 @@ The application initialization sequence is defined in `lib/main.dart`. Understan
 
 | File | Responsibility |
 |------|----------------|
-| `lib/main.dart` | Entry point, Firebase init, SecureKeyStore + encrypted DB setup (v6), secret migration, repository + service + listener DI; MyApp is StatefulWidget + WidgetsBindingObserver with app-resume lifecycle (bridge health check → reinitialize if dead → P2P health check → drain inbox), foreground push listeners (Firebase onMessage/onMessageOpenedApp → inbox drain), and orderly dispose chain (chatMessageListener → contactRequestListener → messageRouter → p2pService → bridge) |
+| `lib/main.dart` | Entry point, Firebase init, SecureKeyStore + encrypted DB setup (v8), secret migration, repository + service + listener + PendingMessageRetrier DI; MyApp is StatefulWidget + WidgetsBindingObserver with app-resume lifecycle (bridge health check → reinitialize if dead → P2P health check → drain inbox), foreground push listeners (Firebase onMessage/onMessageOpenedApp → inbox drain), and orderly dispose chain (pendingMessageRetrier → chatMessageListener → contactRequestListener → messageRouter → p2pService → bridge) |
 | `lib/core/secure_storage/secure_key_store.dart` | SecureKeyStore abstract interface |
 | `lib/core/secure_storage/flutter_secure_key_store.dart` | FlutterSecureKeyStore production impl (iOS Keychain / Android EncryptedSharedPreferences) |
 | `lib/core/database/encrypted_db_opener.dart` | Opens SQLCipher DB with key from secure storage; handles plaintext-to-encrypted migration |
@@ -3001,8 +3285,11 @@ The application initialization sequence is defined in `lib/main.dart`. Understan
 | `lib/core/database/migrations/004_nullify_secret_columns.dart` | Schema v4 migration (makes private_key, mnemonic12 nullable) |
 | `lib/core/database/migrations/005_secret_null_checks.dart` | Schema v5 migration (CHECK constraints enforcing secret columns NULL + avatar_blob BLOB) |
 | `lib/core/database/migrations/006_read_at_column.dart` | Schema v6 migration (read_at TEXT column on messages table) |
+| `lib/core/database/migrations/007_archive_columns.dart` | Schema v7 migration (is_archived, archived_at on contacts table) |
+| `lib/core/database/migrations/008_block_columns.dart` | Schema v8 migration (is_blocked, blocked_at on contacts table) |
 | `lib/core/services/incoming_message_router.dart` | P2P message routing by type |
-| `lib/core/bridge/webview_js_bridge.dart` | JS runtime initialization + event handlers |
+| `lib/core/services/pending_message_retrier.dart` | Retries failed outgoing messages on P2P reconnect (5s debounce) |
+| `lib/core/bridge/go_bridge_client.dart` | Go native bridge initialization + event handlers (MethodChannel/EventChannel) |
 | `lib/core/services/p2p_service_impl.dart` | P2P service initialization |
 | `lib/features/contact_request/application/contact_request_listener.dart` | Background contact request listener startup |
 | `lib/features/conversation/application/chat_message_listener.dart` | Background chat message listener startup |
@@ -3018,8 +3305,8 @@ To add a new initialization step:
 1. Add async initialization code in `main()` before `runApp()`
 2. Inject dependencies into `MyApp` constructor
 3. Pass dependencies through `StartupRouter` to child widgets
-4. For new migrations, create `007_*.dart` and update `openEncryptedDatabase` version (currently v6)
-5. For new P2P event handlers, register on `WebViewJsBridge` in `P2PServiceImpl`
+4. For new migrations, create `009_*.dart` and update `openEncryptedDatabase` version (currently v8)
+5. For new P2P event handlers, register on `GoBridgeClient` in `P2PServiceImpl`
 6. For new secrets, add read/write methods to `SecureKeyStore` and update `FlutterSecureKeyStore`
 
 ---
@@ -3028,7 +3315,7 @@ To add a new initialization step:
 
 ### Current State (P2P Active)
 
-The application has **active P2P networking** via the JavaScript runtime. Identity and cryptographic operations happen locally, while peer discovery and messaging use the rendezvous/relay server.
+The application has **active P2P networking** via the Go native library. Identity and cryptographic operations happen locally, while peer discovery and messaging use the rendezvous/relay server. Local WiFi discovery (mDNS via Bonsoir) provides an additional direct connectivity path.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -3067,11 +3354,13 @@ The application has **active P2P networking** via the JavaScript runtime. Identi
                          │   │  • Offline inbox fallback   │   │
                          │   │  • Inbox drain on startup   │   │
                          │   │  • Push token registration  │   │
+                         │   │  • Local WiFi discovery     │   │
+                         │   │    (mDNS + WebSocket)       │   │
                          │   └──────────────┬──────────────┘   │
                          │                  │                   │
                          └──────────────────┼───────────────────┘
                                             │
-                                            │ WebSocket (libp2p relay)
+                                            │ libp2p (QUIC / WebSocket relay)
                                             ▼
                          ┌─────────────────────────────────────┐
                          │   Rendezvous / Relay Server         │
@@ -3082,11 +3371,14 @@ The application has **active P2P networking** via the JavaScript runtime. Identi
                          │   • Offline inbox (store/retrieve)  │
                          └──────────────────┬──────────────────┘
                                             │
-                                            │ WebSocket relay
+                                            │ libp2p relay
                                             ▼
                          ┌─────────────────────────────────────┐
                          │        Another Device               │
                          │   (Running Mknoon Identity App)     │
+                         │                                     │
+                         │   Also reachable via local WiFi     │
+                         │   (mDNS + direct WebSocket)         │
                          └─────────────────────────────────────┘
 ```
 
@@ -3187,15 +3479,27 @@ Each message gets a fresh KEM encapsulation for forward secrecy. Falls back to v
 | Rendezvous/Relay Server | `mknoun.xyz:4001` | Active | P2P peer discovery and circuit relay |
 | Firebase Cloud Messaging | Google FCM | Active | Push notifications for offline inbox messages |
 
-### JS Bridge Command Registry
+### Go Bridge Command Registry
 
-| Command | Handler | Description |
-|---------|---------|-------------|
-| `identity.generate` | Identity module | Generate new BIP39 mnemonic + Ed25519 keypair + ML-KEM-768 keypair |
-| `identity.restore` | Identity module | Restore Ed25519 keypair from mnemonic + generate fresh ML-KEM-768 keypair |
-| `payload.sign` | Signing module | Sign data with Ed25519 private key |
-| `mlkem.keygen` | Crypto module | Generate ML-KEM-768 keypair (publicKey + secretKey) |
-| `message.encrypt` | Crypto module | Encrypt message: ML-KEM-768 encapsulate + AES-256-GCM -> {kem, ciphertext, nonce} |
-| `message.decrypt` | Crypto module | Decrypt message: ML-KEM-768 decapsulate + AES-256-GCM -> {plaintext} |
-| `inbox:register_token` | Inbox module | Register FCM device token for push notifications |
-| P2P commands | P2P module | Node management, peer discovery, messaging |
+The Dart `GoBridgeClient._cmdMap` maps command strings (used by Dart callers) to MethodChannel method names (camelCase, invoked via platform wrappers GoBridge.swift / GoBridge.kt). Identity and crypto commands use dot-notation (`identity.generate`), P2P commands use colon-notation (`node:start`). The platform wrappers then dispatch to the Go library's `HandleCommand()`.
+
+| Command (Dart) | MethodChannel Method | Handler | Description |
+|---------|---------|---------|-------------|
+| `identity.generate` | `generateIdentity` | Identity module | Generate new BIP39 mnemonic + Ed25519 keypair + ML-KEM-768 keypair |
+| `identity.restore` | `restoreIdentity` | Identity module | Restore Ed25519 keypair from mnemonic + generate fresh ML-KEM-768 keypair |
+| `payload.sign` | `signPayload` | Signing module | Sign data with Ed25519 private key |
+| `payload.verify` | `verifyPayload` | Signing module | Verify Ed25519 signature against public key |
+| `mlkem.keygen` | `mlKemKeygen` | Crypto module | Generate ML-KEM-768 keypair (publicKey + secretKey) |
+| `message.encrypt` | `encryptMessage` | Crypto module | Encrypt message: ML-KEM-768 encapsulate + AES-256-GCM -> {kem, ciphertext, nonce} |
+| `message.decrypt` | `decryptMessage` | Crypto module | Decrypt message: ML-KEM-768 decapsulate + AES-256-GCM -> {plaintext} |
+| `node:start` | `startNode` | Node module | Start libp2p node with relay, auto-register |
+| `node:stop` | `stopNode` | Node module | Stop libp2p node |
+| `node:status` | `nodeStatus` | Node module | Get node status (peerId, connections, isStarted) |
+| `rendezvous:register` | `rendezvousRegister` | Rendezvous module | Register peer with signed peer record |
+| `rendezvous:discover` | `rendezvousDiscover` | Rendezvous module | Discover peers by namespace |
+| `peer:dial` | `dialPeer` | Node module | Dial peer by ID and optional addresses |
+| `peer:disconnect` | `disconnectPeer` | Node module | Disconnect from peer |
+| `message:send` | `sendMessage` | Node module | Send message via /mknoon/chat/1.0.0 (frame-based with ACK) |
+| `inbox:store` | `inboxStore` | Inbox module | Store message in offline inbox on relay |
+| `inbox:retrieve` | `inboxRetrieve` | Inbox module | Retrieve messages from offline inbox |
+| `inbox:register_token` | `inboxRegisterToken` | Inbox module | Register FCM device token for push notifications |
