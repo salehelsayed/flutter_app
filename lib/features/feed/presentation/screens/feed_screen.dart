@@ -37,6 +37,7 @@ class FeedScreen extends StatelessWidget {
   final Map<String, String>? activeQuoteMessageIds;
   final void Function(String contactPeerId, String messageId)? onQuoteReply;
   final void Function(String contactPeerId)? onClearQuote;
+  final void Function(String contactPeerId)? onAttach;
 
   const FeedScreen({
     super.key,
@@ -62,6 +63,7 @@ class FeedScreen extends StatelessWidget {
     this.activeQuoteMessageIds,
     this.onQuoteReply,
     this.onClearQuote,
+    this.onAttach,
   });
 
   @override
@@ -71,82 +73,86 @@ class FeedScreen extends StatelessWidget {
       behavior: HitTestBehavior.translucent,
       child: AmbientBackground(
         child: SafeArea(
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final horizontalPadding = constraints.maxWidth < 390 ? 14.0 : 18.0;
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final horizontalPadding = constraints.maxWidth < 390
+                  ? 14.0
+                  : 18.0;
 
-            return Column(
-              children: [
-                Padding(
-                  padding: EdgeInsets.fromLTRB(
-                    horizontalPadding,
-                    8,
-                    horizontalPadding,
-                    0,
+              return Column(
+                children: [
+                  Padding(
+                    padding: EdgeInsets.fromLTRB(
+                      horizontalPadding,
+                      8,
+                      horizontalPadding,
+                      0,
+                    ),
+                    child: FeedHeader(
+                      username: username,
+                      avatarBytes: userAvatarBytes,
+                      peerId: userPeerId,
+                      onUsernameChanged: onUsernameChanged,
+                      p2pService: p2pService,
+                    ),
                   ),
-                  child: FeedHeader(
-                    username: username,
-                    avatarBytes: userAvatarBytes,
-                    peerId: userPeerId,
-                    onUsernameChanged: onUsernameChanged,
-                    p2pService: p2pService,
-                  ),
-                ),
-                const SizedBox(height: 10),
-                Expanded(
-                  child: LayoutBuilder(
-                    builder: (context, contentConstraints) {
-                      final maxFeedWidth = contentConstraints.maxWidth >= 900
-                          ? 640.0
-                          : contentConstraints.maxWidth >= 600
-                          ? 560.0
-                          : 460.0;
+                  const SizedBox(height: 10),
+                  Expanded(
+                    child: LayoutBuilder(
+                      builder: (context, contentConstraints) {
+                        final maxFeedWidth = contentConstraints.maxWidth >= 900
+                            ? 640.0
+                            : contentConstraints.maxWidth >= 600
+                            ? 560.0
+                            : 460.0;
 
-                      return SingleChildScrollView(
-                        physics: const BouncingScrollPhysics(),
-                        padding: EdgeInsets.symmetric(
-                          horizontal: horizontalPadding,
-                        ),
-                        child: ConstrainedBox(
-                          constraints: BoxConstraints(
-                            minHeight: contentConstraints.maxHeight,
+                        return SingleChildScrollView(
+                          physics: const BouncingScrollPhysics(),
+                          padding: EdgeInsets.symmetric(
+                            horizontal: horizontalPadding,
                           ),
-                          child: Align(
-                            alignment: Alignment.topCenter,
-                            child: ConstrainedBox(
-                              constraints: BoxConstraints(
-                                maxWidth: maxFeedWidth,
-                              ),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.stretch,
-                                children: _buildFeedCards(),
+                          child: ConstrainedBox(
+                            constraints: BoxConstraints(
+                              minHeight: contentConstraints.maxHeight,
+                            ),
+                            child: Align(
+                              alignment: Alignment.topCenter,
+                              child: ConstrainedBox(
+                                constraints: BoxConstraints(
+                                  maxWidth: maxFeedWidth,
+                                ),
+                                child: Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
+                                  children: _buildFeedCards(),
+                                ),
                               ),
                             ),
                           ),
-                        ),
-                      );
-                    },
+                        );
+                      },
+                    ),
                   ),
-                ),
-                Padding(
-                  padding: EdgeInsets.fromLTRB(
-                    horizontalPadding,
-                    8,
-                    horizontalPadding,
-                    10,
-                  ),
-                  child: FeedNavigationBar(
-                    activeTab: activeTab,
-                    onSwitchView: onSwitchView,
-                    feedBadgeCount: totalUnreadCount,
-                  ),
-                ),
-              ],
-            );
-          },
+                  if (activeFocusPeerId == null)
+                    Padding(
+                      padding: EdgeInsets.fromLTRB(
+                        horizontalPadding,
+                        8,
+                        horizontalPadding,
+                        10,
+                      ),
+                      child: FeedNavigationBar(
+                        activeTab: activeTab,
+                        onSwitchView: onSwitchView,
+                        feedBadgeCount: totalUnreadCount,
+                      ),
+                    ),
+                ],
+              );
+            },
+          ),
         ),
       ),
-    ),
     );
   }
 
@@ -226,7 +232,7 @@ class FeedScreen extends StatelessWidget {
       widgets.add(
         Padding(
           padding: EdgeInsets.only(
-            bottom: item.isMultiMessage && !isExpanded ? 12 : 0,
+            bottom: item.isMultiMessage && !isExpanded ? 18 : 0,
           ),
           child: ThreadCard(
             thread: item,
@@ -249,7 +255,8 @@ class FeedScreen extends StatelessWidget {
                 ? (text) => onDraftChanged!(item.contactPeerId, text)
                 : null,
             onInputFocusChanged: onInputFocusChanged != null
-                ? (hasFocus) => onInputFocusChanged!(item.contactPeerId, hasFocus)
+                ? (hasFocus) =>
+                      onInputFocusChanged!(item.contactPeerId, hasFocus)
                 : null,
             activeQuoteMessageId: activeQuoteMessageIds?[item.contactPeerId],
             onQuoteReply: onQuoteReply != null
@@ -257,6 +264,9 @@ class FeedScreen extends StatelessWidget {
                 : null,
             onClearQuote: onClearQuote != null
                 ? () => onClearQuote!(item.contactPeerId)
+                : null,
+            onAttach: onAttach != null
+                ? () => onAttach!(item.contactPeerId)
                 : null,
           ),
         ),

@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
@@ -425,6 +427,113 @@ class _FeedWiredState extends State<FeedWired> {
     _onReplyToMessage(contactPeerId);
   }
 
+  void _onAttach(String contactPeerId) {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.grey[900],
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 8),
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey[600],
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 16),
+            ListTile(
+              leading: const Icon(Icons.photo_library, color: Colors.white),
+              title: const Text(
+                'Photo Library',
+                style: TextStyle(color: Colors.white),
+              ),
+              onTap: () {
+                Navigator.pop(ctx);
+                _pickAndOpenConversation(contactPeerId, fromCamera: false);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.camera_alt, color: Colors.white),
+              title: const Text(
+                'Camera',
+                style: TextStyle(color: Colors.white),
+              ),
+              onTap: () {
+                Navigator.pop(ctx);
+                _pickAndOpenConversation(contactPeerId, fromCamera: true);
+              },
+            ),
+            const SizedBox(height: 16),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _pickAndOpenConversation(
+    String contactPeerId, {
+    required bool fromCamera,
+  }) async {
+    try {
+      final picker = ImagePicker();
+      List<File> files;
+
+      if (fromCamera) {
+        final picked = await picker.pickImage(
+          source: ImageSource.camera,
+          imageQuality: 85,
+        );
+        if (picked == null || !mounted) return;
+        files = [File(picked.path)];
+      } else {
+        final picked = await picker.pickMultiImage(imageQuality: 85);
+        if (picked.isEmpty || !mounted) return;
+        files = picked.map((xf) => File(xf.path)).toList();
+      }
+
+      final contact =
+          await widget.contactRepository.getContact(contactPeerId);
+      if (contact == null || !mounted) return;
+
+      await markConversationRead(
+        messageRepo: widget.messageRepository,
+        contactPeerId: contactPeerId,
+      );
+
+      if (!mounted) return;
+
+      Navigator.of(context).push(
+        buildConversationSlideUpRoute(
+          builder: (_) => ConversationWired(
+            contact: contact,
+            identityRepo: widget.repository,
+            messageRepo: widget.messageRepository,
+            chatMessageListener: widget.chatMessageListener,
+            p2pService: widget.p2pService,
+            bridge: widget.bridge,
+            contactRepo: widget.contactRepository,
+            mediaAttachmentRepo: widget.mediaAttachmentRepository,
+            mediaFileManager: widget.mediaFileManager,
+            initialAttachments: files,
+          ),
+        ),
+      ).then((_) => _refreshFeed());
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'FEED_FL_PICK_ATTACH_ERROR',
+        details: {'error': e.toString()},
+      );
+    }
+  }
+
   void _onSwitchView(String tab) {
     if (tab == 'orbit') {
       Navigator.of(context).push(
@@ -539,7 +648,9 @@ class _FeedWiredState extends State<FeedWired> {
   }
 
   void _onInputFocusChanged(String contactPeerId, bool hasFocus) {
-    _activeFocusPeerId = hasFocus ? contactPeerId : null;
+    setState(() {
+      _activeFocusPeerId = hasFocus ? contactPeerId : null;
+    });
   }
 
   void _onQuoteReply(String contactPeerId, String messageId) {
@@ -588,6 +699,7 @@ class _FeedWiredState extends State<FeedWired> {
         activeQuoteMessageIds: _activeQuoteMessageIds,
         onQuoteReply: _onQuoteReply,
         onClearQuote: _onClearQuote,
+        onAttach: _onAttach,
       ),
     );
   }

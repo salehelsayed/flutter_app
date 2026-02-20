@@ -13,6 +13,7 @@ class ExpandedComposeInput extends StatefulWidget {
   final bool shouldRequestFocus;
   final ValueChanged<String>? onDraftChanged;
   final ValueChanged<bool>? onFocusChanged;
+  final VoidCallback? onAttach;
 
   const ExpandedComposeInput({
     super.key,
@@ -23,6 +24,7 @@ class ExpandedComposeInput extends StatefulWidget {
     this.shouldRequestFocus = false,
     this.onDraftChanged,
     this.onFocusChanged,
+    this.onAttach,
   });
 
   @override
@@ -113,44 +115,74 @@ class _ExpandedComposeInputState extends State<ExpandedComposeInput>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 200),
-            constraints: const BoxConstraints(minHeight: 44, maxHeight: 120),
-            decoration: BoxDecoration(
-              color: _hasFocus
-                  ? const Color.fromRGBO(255, 255, 255, 0.08)
-                  : const Color.fromRGBO(255, 255, 255, 0.06),
-              borderRadius: BorderRadius.circular(18),
-              border: Border.all(
-                color: _hasFocus
-                    ? const Color.fromRGBO(78, 205, 196, 0.20)
-                    : const Color.fromRGBO(255, 255, 255, 0.08),
-              ),
-            ),
-            child: TextField(
-              controller: _controller,
-              focusNode: _focusNode,
-              enabled: widget.enabled,
-              maxLines: null,
-              style: const TextStyle(
-                fontSize: 14,
-                color: Color.fromRGBO(255, 255, 255, 0.90),
-                height: 1.4,
-              ),
-              decoration: InputDecoration(
-                hintText: widget.hintText,
-                hintStyle: const TextStyle(
-                  fontSize: 14,
-                  color: Color.fromRGBO(255, 255, 255, 0.25),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              if (widget.onAttach != null)
+                Padding(
+                  padding: const EdgeInsets.only(right: 8, bottom: 4),
+                  child: GestureDetector(
+                    onTap: widget.onAttach,
+                    child: Container(
+                      width: 34,
+                      height: 34,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: const Color.fromRGBO(255, 255, 255, 0.08),
+                        border: Border.all(
+                          color: const Color.fromRGBO(255, 255, 255, 0.12),
+                        ),
+                      ),
+                      child: const Icon(
+                        Icons.add_rounded,
+                        size: 20,
+                        color: Color.fromRGBO(255, 255, 255, 0.50),
+                      ),
+                    ),
+                  ),
                 ),
-                border: InputBorder.none,
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 12,
+              Expanded(
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  constraints: const BoxConstraints(minHeight: 44, maxHeight: 120),
+                  decoration: BoxDecoration(
+                    color: _hasFocus
+                        ? const Color.fromRGBO(255, 255, 255, 0.08)
+                        : const Color.fromRGBO(255, 255, 255, 0.06),
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(
+                      color: _hasFocus
+                          ? const Color.fromRGBO(78, 205, 196, 0.20)
+                          : const Color.fromRGBO(255, 255, 255, 0.08),
+                    ),
+                  ),
+                  child: TextField(
+                    controller: _controller,
+                    focusNode: _focusNode,
+                    enabled: widget.enabled,
+                    maxLines: null,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      color: Color.fromRGBO(255, 255, 255, 0.90),
+                      height: 1.4,
+                    ),
+                    decoration: InputDecoration(
+                      hintText: widget.hintText,
+                      hintStyle: const TextStyle(
+                        fontSize: 14,
+                        color: Color.fromRGBO(255, 255, 255, 0.40),
+                      ),
+                      border: InputBorder.none,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 12,
+                      ),
+                      isDense: true,
+                    ),
+                  ),
                 ),
-                isDense: true,
               ),
-            ),
+            ],
           ),
           const SizedBox(height: 8),
           Align(
