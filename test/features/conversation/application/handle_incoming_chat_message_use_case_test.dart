@@ -5,6 +5,8 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/handle_incoming_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 
@@ -138,6 +140,41 @@ class FakeMessageRepository implements MessageRepository {
 
   @override
   Future<List<ConversationMessage>> getFailedOutgoingMessages() async => [];
+}
+
+// -- Fake Media Attachment Repository --
+class FakeMediaAttachmentRepository implements MediaAttachmentRepository {
+  final List<MediaAttachment> saved = [];
+
+  @override
+  Future<void> saveAttachment(MediaAttachment attachment) async {
+    saved.add(attachment);
+  }
+
+  @override
+  Future<List<MediaAttachment>> getAttachmentsForMessage(
+      String messageId) async {
+    return saved.where((a) => a.messageId == messageId).toList();
+  }
+
+  @override
+  Future<Map<String, List<MediaAttachment>>> getAttachmentsForMessages(
+      List<String> messageIds) async => {};
+
+  @override
+  Future<void> updateLocalPath(String id, String localPath) async {}
+
+  @override
+  Future<void> updateDownloadStatus(String id, String downloadStatus) async {}
+
+  @override
+  Future<int> deleteAttachmentsForMessage(String messageId) async => 0;
+
+  @override
+  Future<int> deleteAttachmentsForContact(String contactPeerId) async => 0;
+
+  @override
+  Future<List<MediaAttachment>> getPendingDownloads() async => [];
 }
 
 Future<List<String>> capturePrintedLines(Future<void> Function() action) async {
@@ -373,5 +410,145 @@ void main() {
         expect(contactRepo.upserted, isEmpty);
       },
     );
+
+    group('media attachments', () {
+      late FakeMediaAttachmentRepository mediaRepo;
+
+      setUp(() {
+        mediaRepo = FakeMediaAttachmentRepository();
+      });
+
+      String buildChatJsonWithMedia({
+        String id = 'msg-media-001',
+        String text = 'Check this out',
+        List<Map<String, dynamic>>? media,
+      }) {
+        return jsonEncode({
+          'type': 'chat_message',
+          'version': '1',
+          'payload': {
+            'id': id,
+            'text': text,
+            'senderPeerId': senderPeerId,
+            'senderUsername': 'Alice',
+            'timestamp': '2026-02-09T15:30:00.000Z',
+            if (media != null) 'media': media,
+          },
+        });
+      }
+
+      test('persists media attachments from incoming message', () async {
+        final mediaArray = [
+          {
+            'id': 'blob-001',
+            'mime': 'image/jpeg',
+            'size': 245000,
+            'mediaType': 'image',
+            'width': 1920,
+            'height': 1080,
+          },
+          {
+            'id': 'blob-002',
+            'mime': 'audio/mp3',
+            'size': 50000,
+            'mediaType': 'audio',
+            'durationMs': 30000,
+          },
+        ];
+
+        final message = buildP2PMessage(buildChatJsonWithMedia(
+          media: mediaArray,
+        ));
+
+        final (result, msg, _) = await handleIncomingChatMessage(
+          message: message,
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+          mediaAttachmentRepo: mediaRepo,
+        );
+
+        expect(result, HandleChatMessageResult.chatMessage);
+        expect(msg, isNotNull);
+
+        // Media should be persisted
+        expect(mediaRepo.saved.length, 2);
+        expect(mediaRepo.saved[0].id, 'blob-001');
+        expect(mediaRepo.saved[0].messageId, 'msg-media-001');
+        expect(mediaRepo.saved[0].mime, 'image/jpeg');
+        expect(mediaRepo.saved[0].size, 245000);
+        expect(mediaRepo.saved[0].width, 1920);
+        expect(mediaRepo.saved[0].downloadStatus, 'pending');
+
+        expect(mediaRepo.saved[1].id, 'blob-002');
+        expect(mediaRepo.saved[1].messageId, 'msg-media-001');
+        expect(mediaRepo.saved[1].mime, 'audio/mp3');
+        expect(mediaRepo.saved[1].durationMs, 30000);
+      });
+
+      test('does not persist media when payload has no media', () async {
+        final message = buildP2PMessage(buildChatJsonWithMedia());
+
+        await handleIncomingChatMessage(
+          message: message,
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+          mediaAttachmentRepo: mediaRepo,
+        );
+
+        expect(mediaRepo.saved, isEmpty);
+      });
+
+      test('does not crash when mediaAttachmentRepo is null', () async {
+        final mediaArray = [
+          {
+            'id': 'blob-001',
+            'mime': 'image/jpeg',
+            'size': 1000,
+            'mediaType': 'image',
+          },
+        ];
+        final message = buildP2PMessage(buildChatJsonWithMedia(
+          media: mediaArray,
+        ));
+
+        final (result, msg, _) = await handleIncomingChatMessage(
+          message: message,
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+          mediaAttachmentRepo: null,
+        );
+
+        // Should succeed but just skip media persistence
+        expect(result, HandleChatMessageResult.chatMessage);
+        expect(msg, isNotNull);
+      });
+
+      test('message is still persisted even with media', () async {
+        final mediaArray = [
+          {
+            'id': 'blob-001',
+            'mime': 'image/jpeg',
+            'size': 1000,
+            'mediaType': 'image',
+          },
+        ];
+        final message = buildP2PMessage(buildChatJsonWithMedia(
+          id: 'msg-with-media-001',
+          text: 'Photo attached',
+          media: mediaArray,
+        ));
+
+        await handleIncomingChatMessage(
+          message: message,
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+          mediaAttachmentRepo: mediaRepo,
+        );
+
+        expect(messageRepo.saved.length, 1);
+        expect(messageRepo.saved.first.id, 'msg-with-media-001');
+        expect(messageRepo.saved.first.text, 'Photo attached');
+      });
+    });
   });
 }

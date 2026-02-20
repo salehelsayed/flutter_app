@@ -4,7 +4,9 @@ import 'package:flutter_app/core/utils/chat_console_logger.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_payload.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 
@@ -36,6 +38,7 @@ handleIncomingChatMessage({
   required ContactRepository contactRepo,
   Bridge? bridge,
   String? ownMlKemSecretKey,
+  MediaAttachmentRepository? mediaAttachmentRepo,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -163,6 +166,15 @@ handleIncomingChatMessage({
     status: 'delivered',
   );
   await messageRepo.saveMessage(conversationMessage);
+
+  // 6. Persist media attachment metadata
+  if (mediaAttachmentRepo != null && payload.media != null) {
+    for (final mediaJson in payload.media!) {
+      final attachment = MediaAttachment.fromJson(mediaJson)
+          .copyWith(messageId: payload.id);
+      await mediaAttachmentRepo.saveAttachment(attachment);
+    }
+  }
 
   emitFlowEvent(
     layer: 'FL',

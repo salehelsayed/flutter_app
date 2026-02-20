@@ -1,3 +1,5 @@
+import 'media_attachment.dart';
+
 /// Model representing a single message in a conversation.
 ///
 /// Maps to the `messages` database table. Each message belongs to a
@@ -33,6 +35,10 @@ class ConversationMessage {
   /// The ID of the message being quoted (quote-reply). NULL means no quote.
   final String? quotedMessageId;
 
+  /// Transient media attachments — populated via copyWith() after batch-loading
+  /// from media_attachments table. NOT serialized to DB.
+  final List<MediaAttachment> media;
+
   const ConversationMessage({
     required this.id,
     required this.contactPeerId,
@@ -44,6 +50,7 @@ class ConversationMessage {
     required this.createdAt,
     this.readAt,
     this.quotedMessageId,
+    this.media = const [],
   });
 
   /// Creates a ConversationMessage from a database row map.
@@ -90,6 +97,7 @@ class ConversationMessage {
     String? createdAt,
     String? readAt,
     String? quotedMessageId,
+    List<MediaAttachment>? media,
   }) {
     return ConversationMessage(
       id: id ?? this.id,
@@ -102,6 +110,7 @@ class ConversationMessage {
       createdAt: createdAt ?? this.createdAt,
       readAt: readAt ?? this.readAt,
       quotedMessageId: quotedMessageId ?? this.quotedMessageId,
+      media: media ?? this.media,
     );
   }
 

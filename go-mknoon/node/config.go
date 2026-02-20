@@ -19,12 +19,14 @@ const (
 	RendezvousProtocol = "/canvas/rendezvous/1.0.0"
 	InboxProtocol      = "/mknoon/inbox/1.0.0"
 	ChatProtocol       = "/mknoon/chat/1.0.0"
+	MediaProtocol      = "/mknoon/media/1.0.0"
 
 	// Timeouts.
 	DialTimeout     = 30 * time.Second
 	SendTimeout     = 15 * time.Second
 	DiscoverTimeout = 10 * time.Second
 	InboxTimeout    = 15 * time.Second
+	MediaTimeout    = 5 * time.Minute // large files need generous timeout
 
 	// Inbox framing.
 	MaxFrameLen = 128 * 1024 // 128 KB, matches relay server

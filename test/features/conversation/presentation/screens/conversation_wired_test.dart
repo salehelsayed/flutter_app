@@ -8,6 +8,8 @@ import 'package:flutter_app/features/contacts/domain/repositories/contact_reposi
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
@@ -285,6 +287,8 @@ void main() {
         String? timestamp,
         Bridge? bridge,
         String? recipientMlKemPublicKey,
+        List<MediaAttachment>? mediaAttachments,
+        MediaAttachmentRepository? mediaAttachmentRepo,
       }) async {
         sentMessageId = messageId;
         sentTimestamp = timestamp;
@@ -355,6 +359,8 @@ void main() {
         String? timestamp,
         Bridge? bridge,
         String? recipientMlKemPublicKey,
+        List<MediaAttachment>? mediaAttachments,
+        MediaAttachmentRepository? mediaAttachmentRepo,
       }) async {
         sentMessageId = messageId;
         await gate.future;
@@ -409,6 +415,8 @@ void main() {
         String? timestamp,
         Bridge? bridge,
         String? recipientMlKemPublicKey,
+        List<MediaAttachment>? mediaAttachments,
+        MediaAttachmentRepository? mediaAttachmentRepo,
       }) async {
         sentMessageId = messageId;
         await gate.future;

@@ -15,6 +15,8 @@ import 'package:flutter_app/features/conversation/application/load_conversation_
 import 'package:flutter_app/features/conversation/application/mark_conversation_read_use_case.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
@@ -32,6 +34,8 @@ typedef SendChatMessageFn =
       String? timestamp,
       Bridge? bridge,
       String? recipientMlKemPublicKey,
+      List<MediaAttachment>? mediaAttachments,
+      MediaAttachmentRepository? mediaAttachmentRepo,
     });
 
 /// Wired widget that connects ConversationScreen to business logic.

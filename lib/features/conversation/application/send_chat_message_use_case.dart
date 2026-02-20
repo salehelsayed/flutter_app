@@ -5,7 +5,9 @@ import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/chat_console_logger.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_payload.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 
 /// Result of sending a chat message.
@@ -42,6 +44,8 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   Bridge? bridge,
   String? recipientMlKemPublicKey,
   String? quotedMessageId,
+  List<MediaAttachment>? mediaAttachments,
+  MediaAttachmentRepository? mediaAttachmentRepo,
 }) async {
   final targetPrefix = targetPeerId.length > 10
       ? targetPeerId.substring(0, 10)
@@ -54,8 +58,9 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     details: {'targetPeerId': targetPrefix, 'textPreview': textPreview},
   );
 
-  // 1. Validate
-  if (text.trim().isEmpty) {
+  // 1. Validate — allow empty text if media is attached
+  final hasMedia = mediaAttachments != null && mediaAttachments.isNotEmpty;
+  if (text.trim().isEmpty && !hasMedia) {
     emitFlowEvent(
       layer: 'FL',
       event: 'CHAT_MSG_SEND_INVALID',
@@ -86,6 +91,9 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     senderUsername: senderUsername,
     timestamp: resolvedTimestamp,
     quotedMessageId: quotedMessageId,
+    media: hasMedia
+        ? mediaAttachments!.map((a) => a.toJson()).toList()
+        : null,
   );
   logChatOutgoing(
     messageId: resolvedMessageId,
@@ -155,6 +163,8 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
         status: 'delivered',
       );
       await messageRepo.saveMessage(message);
+      await _persistMediaAttachments(
+          mediaAttachmentRepo, mediaAttachments, resolvedMessageId);
       emitFlowEvent(
         layer: 'FL',
         event: 'CHAT_MSG_SEND_LOCAL_SUCCESS',
@@ -254,6 +264,8 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
         status: status,
       );
       await messageRepo.saveMessage(message);
+      await _persistMediaAttachments(
+          mediaAttachmentRepo, mediaAttachments, resolvedMessageId);
 
       emitFlowEvent(
         layer: 'FL',
@@ -301,6 +313,8 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
         status: 'delivered',
       );
       await messageRepo.saveMessage(deliveredMessage);
+      await _persistMediaAttachments(
+          mediaAttachmentRepo, mediaAttachments, resolvedMessageId);
 
       emitFlowEvent(
         layer: 'FL',
@@ -337,6 +351,8 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     status: 'failed',
   );
   await messageRepo.saveMessage(failedMessage);
+  await _persistMediaAttachments(
+      mediaAttachmentRepo, mediaAttachments, resolvedMessageId);
 
   emitFlowEvent(
     layer: 'FL',
@@ -355,4 +371,16 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     attempt: maxAttempts,
   );
   return (lastFailureReason ?? SendChatMessageResult.sendFailed, failedMessage);
+}
+
+/// Persists media attachments after a message is saved.
+Future<void> _persistMediaAttachments(
+  MediaAttachmentRepository? repo,
+  List<MediaAttachment>? attachments,
+  String messageId,
+) async {
+  if (repo == null || attachments == null || attachments.isEmpty) return;
+  for (final a in attachments) {
+    await repo.saveAttachment(a.copyWith(messageId: messageId));
+  }
 }

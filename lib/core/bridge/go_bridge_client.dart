@@ -60,6 +60,11 @@ class GoBridgeClient extends Bridge {
     'inbox:store': _CmdSpec('inboxStore', true),
     'inbox:retrieve': _CmdSpec('inboxRetrieve', false),
     'inbox:register_token': _CmdSpec('inboxRegisterToken', true),
+    // Media
+    'media:upload': _CmdSpec('mediaUpload', true),
+    'media:download': _CmdSpec('mediaDownload', true),
+    'media:delete': _CmdSpec('mediaDelete', true),
+    'media:list': _CmdSpec('mediaList', true),
   };
 
   @override

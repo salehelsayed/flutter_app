@@ -14,6 +14,7 @@ import 'package:flutter_app/features/contacts/domain/repositories/contact_reposi
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/application/mark_conversation_read_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/conversation/presentation/navigation/conversation_route_transition.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
@@ -40,6 +41,7 @@ class OrbitWired extends StatefulWidget {
   final ContactRequestRepository contactRequestRepo;
   final ContactRequestListener contactRequestListener;
   final MessageRepository messageRepo;
+  final MediaAttachmentRepository mediaAttachmentRepo;
   final ChatMessageListener chatMessageListener;
   final Bridge bridge;
   final P2PService p2pService;
@@ -51,6 +53,7 @@ class OrbitWired extends StatefulWidget {
     required this.contactRequestRepo,
     required this.contactRequestListener,
     required this.messageRepo,
+    required this.mediaAttachmentRepo,
     required this.chatMessageListener,
     required this.bridge,
     required this.p2pService,
@@ -451,6 +454,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           contactRequestRepository: widget.contactRequestRepo,
           contactRequestListener: widget.contactRequestListener,
           messageRepository: widget.messageRepo,
+          mediaAttachmentRepository: widget.mediaAttachmentRepo,
           chatMessageListener: widget.chatMessageListener,
           identityRepository: widget.identityRepo,
           p2pService: widget.p2pService,

@@ -6,6 +6,7 @@ import 'package:flutter_app/features/contact_request/application/contact_request
 import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/feed/presentation/screens/feed_wired.dart';
 import 'package:flutter_app/features/identity/application/startup_decision.dart';
@@ -47,6 +48,9 @@ class StartupRouter extends StatefulWidget {
   /// The message repository for conversation persistence.
   final MessageRepository messageRepository;
 
+  /// The media attachment repository for media metadata.
+  final MediaAttachmentRepository mediaAttachmentRepository;
+
   /// The listener for incoming chat messages.
   final ChatMessageListener chatMessageListener;
 
@@ -63,6 +67,7 @@ class StartupRouter extends StatefulWidget {
     required this.contactRequestRepository,
     required this.contactRequestListener,
     required this.messageRepository,
+    required this.mediaAttachmentRepository,
     required this.chatMessageListener,
     required this.bridge,
     required this.p2pService,
@@ -100,6 +105,7 @@ class _StartupRouterState extends State<StartupRouter> {
       final contactRequestRepository = widget.contactRequestRepository;
       final contactRequestListener = widget.contactRequestListener;
       final messageRepository = widget.messageRepository;
+      final mediaAttachmentRepository = widget.mediaAttachmentRepository;
       final chatMessageListener = widget.chatMessageListener;
       final p2pService = widget.p2pService;
 
@@ -122,6 +128,7 @@ class _StartupRouterState extends State<StartupRouter> {
                 contactRequestRepository: contactRequestRepository,
                 contactRequestListener: contactRequestListener,
                 messageRepository: messageRepository,
+                mediaAttachmentRepository: mediaAttachmentRepository,
                 chatMessageListener: chatMessageListener,
                 bridge: bridge,
                 p2pService: p2pService,
@@ -147,6 +154,7 @@ class _StartupRouterState extends State<StartupRouter> {
             contactRequestRepository: contactRequestRepository,
             contactRequestListener: contactRequestListener,
             messageRepository: messageRepository,
+            mediaAttachmentRepository: mediaAttachmentRepository,
             chatMessageListener: chatMessageListener,
             bridge: bridge,
             p2pService: p2pService,
@@ -181,6 +189,7 @@ class _StartupRouterState extends State<StartupRouter> {
                         contactRequestRepository: contactRequestRepository,
                         contactRequestListener: contactRequestListener,
                         messageRepository: messageRepository,
+                        mediaAttachmentRepository: mediaAttachmentRepository,
                         chatMessageListener: chatMessageListener,
                         bridge: bridge,
                         p2pService: p2pService,
@@ -345,6 +354,7 @@ class _StartupRouterState extends State<StartupRouter> {
     required ContactRequestRepository contactRequestRepository,
     required ContactRequestListener contactRequestListener,
     required MessageRepository messageRepository,
+    required MediaAttachmentRepository mediaAttachmentRepository,
     required ChatMessageListener chatMessageListener,
     required Bridge bridge,
     required P2PService p2pService,
@@ -357,6 +367,7 @@ class _StartupRouterState extends State<StartupRouter> {
           contactRequestRepository: contactRequestRepository,
           contactRequestListener: contactRequestListener,
           messageRepository: messageRepository,
+          mediaAttachmentRepository: mediaAttachmentRepository,
           chatMessageListener: chatMessageListener,
           bridge: bridge,
           p2pService: p2pService,

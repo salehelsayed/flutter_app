@@ -81,6 +81,12 @@ class GoBridge(flutterEngine: FlutterEngine) : MethodChannel.MethodCallHandler,
             "inboxRetrieve" -> runOnBackground({ GoMknoon.inboxRetrieve() }, result)
             "inboxRegisterToken" -> runOnBackground({ GoMknoon.inboxRegisterToken(args ?: "") }, result)
 
+            // Media
+            "mediaUpload" -> runOnBackground({ GoMknoon.mediaUpload(args ?: "") }, result)
+            "mediaDownload" -> runOnBackground({ GoMknoon.mediaDownload(args ?: "") }, result)
+            "mediaDelete" -> runOnBackground({ GoMknoon.mediaDelete(args ?: "") }, result)
+            "mediaList" -> runOnBackground({ GoMknoon.mediaList(args ?: "") }, result)
+
             else -> result.notImplemented()
         }
     }

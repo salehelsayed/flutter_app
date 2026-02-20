@@ -10,6 +10,7 @@ import 'package:flutter_app/features/contacts/application/add_contact_use_case.d
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/feed/presentation/navigation/feed_route_transition.dart';
 import 'package:flutter_app/features/feed/presentation/screens/feed_wired.dart';
@@ -33,6 +34,7 @@ class QRScannerWired extends StatelessWidget {
   final ContactRequestRepository contactRequestRepository;
   final ContactRequestListener contactRequestListener;
   final MessageRepository messageRepository;
+  final MediaAttachmentRepository mediaAttachmentRepository;
   final ChatMessageListener chatMessageListener;
   final IdentityRepository identityRepository;
   final P2PService p2pService;
@@ -45,6 +47,7 @@ class QRScannerWired extends StatelessWidget {
     required this.contactRequestRepository,
     required this.contactRequestListener,
     required this.messageRepository,
+    required this.mediaAttachmentRepository,
     required this.chatMessageListener,
     required this.identityRepository,
     required this.p2pService,
@@ -243,6 +246,7 @@ class QRScannerWired extends StatelessWidget {
                         contactRequestRepository: contactRequestRepository,
                         contactRequestListener: contactRequestListener,
                         messageRepository: messageRepository,
+                        mediaAttachmentRepository: mediaAttachmentRepository,
                         chatMessageListener: chatMessageListener,
                         bridge: bridge,
                         p2pService: p2pService,
