@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:flutter_app/core/database/encrypted_db_opener.dart';
+import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/database/migrations/001_identity_table.dart';
 import 'package:flutter_app/core/database/migrations/002_messages_table.dart';
 import 'package:flutter_app/core/database/migrations/003_mlkem_keys.dart';
@@ -198,6 +199,7 @@ void main() {
           chatMessageListener: chatMessageListener,
           bridge: bridge,
           p2pService: p2pService,
+          mediaFileManager: MediaFileManager(),
         ),
       ),
     );

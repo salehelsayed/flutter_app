@@ -19,7 +19,6 @@ import (
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
-	"github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/client"
 	ma "github.com/multiformats/go-multiaddr"
 )
 
@@ -102,6 +101,22 @@ func (n *Node) Start(cfg NodeConfig) (*NodeState, error) {
 	}
 	n.relayAddresses = relayAddresses
 
+	// Parse relay multiaddrs into AddrInfo for AutoRelay
+	relayInfos := make([]peer.AddrInfo, 0, len(relayAddresses))
+	for _, addr := range relayAddresses {
+		maddr, err := ma.NewMultiaddr(addr)
+		if err != nil {
+			log.Printf("[NODE] Skipping invalid relay address %s: %v", addr, err)
+			continue
+		}
+		info, err := peer.AddrInfoFromP2pAddr(maddr)
+		if err != nil {
+			log.Printf("[NODE] Skipping unparseable relay address %s: %v", addr, err)
+			continue
+		}
+		relayInfos = append(relayInfos, *info)
+	}
+
 	// Build listen addresses
 	listenAddrs := []string{
 		"/ip4/0.0.0.0/udp/0/quic-v1",
@@ -116,15 +131,24 @@ func (n *Node) Start(cfg NodeConfig) (*NodeState, error) {
 		}
 	}
 
-	// Create the libp2p host
-	h, err := libp2p.New(
+	// Create the libp2p host with AutoRelay for circuit address management.
+	// ForceReachabilityPrivate tells AutoRelay to always seek relay reservations,
+	// which is correct for mobile devices that are always behind NAT.
+	hostOpts := []libp2p.Option{
 		libp2p.Identity(privKey),
 		libp2p.ListenAddrStrings(listenAddrs...),
 		libp2p.ConnectionManager(cm),
 		libp2p.EnableRelay(),
 		libp2p.EnableHolePunching(),
 		libp2p.NATPortMap(),
-	)
+		libp2p.ForceReachabilityPrivate(),
+	}
+	if len(relayInfos) > 0 {
+		hostOpts = append(hostOpts,
+			libp2p.EnableAutoRelayWithStaticRelays(relayInfos),
+		)
+	}
+	h, err := libp2p.New(hostOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("create host: %w", err)
 	}
@@ -272,7 +296,8 @@ func (n *Node) WaitForRelayConnection(timeout time.Duration) error {
 	}
 }
 
-// connectToRelay dials the relay server and makes a reservation.
+// connectToRelay dials the relay server to establish a connection.
+// AutoRelay handles circuit reservation and address management automatically.
 func (n *Node) connectToRelay(relayAddr string) error {
 	maddr, err := ma.NewMultiaddr(relayAddr)
 	if err != nil {
@@ -289,13 +314,6 @@ func (n *Node) connectToRelay(relayAddr string) error {
 
 	if err := n.host.Connect(ctx, *addrInfo); err != nil {
 		return fmt.Errorf("dial relay: %w", err)
-	}
-
-	// Request a relay reservation
-	_, err = client.Reserve(ctx, n.host, *addrInfo)
-	if err != nil {
-		log.Printf("[NODE] Relay reservation failed (may not be needed): %v", err)
-		// Not fatal — relay may auto-provide circuit
 	}
 
 	log.Printf("[NODE] Connected to relay: %s", addrInfo.ID.String()[:20])

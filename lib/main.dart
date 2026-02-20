@@ -34,6 +34,7 @@ import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/core/local_discovery/local_p2p_service.dart';
 import 'package:flutter_app/core/local_discovery/bonsoir_discovery_service.dart';
 import 'package:flutter_app/core/local_discovery/local_ws_server.dart';
+import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/theme/app_theme.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/startup_timing.dart';
@@ -209,6 +210,9 @@ void main() async {
     dbLoadPendingMediaDownloads: () => dbLoadPendingMediaDownloads(db),
   );
 
+  // Create media file manager
+  final mediaFileManager = MediaFileManager();
+
   // Create and initialize the bridge (Go native)
   final Bridge bridge = GoBridgeClient();
   await bridge.initialize();
@@ -253,6 +257,7 @@ void main() async {
       return identity?.mlKemSecretKey;
     },
     mediaAttachmentRepo: mediaAttachmentRepository,
+    mediaFileManager: mediaFileManager,
   );
 
   // Create pending message retrier
@@ -282,6 +287,7 @@ void main() async {
     pendingMessageRetrier: pendingMessageRetrier,
     bridge: bridge,
     p2pService: p2pService,
+    mediaFileManager: mediaFileManager,
     isDesktop: isDesktop,
   ));
   StartupTiming.instance.mark('run_app_called');
@@ -299,6 +305,7 @@ class MyApp extends StatefulWidget {
   final PendingMessageRetrier pendingMessageRetrier;
   final Bridge bridge;
   final P2PServiceImpl p2pService;
+  final MediaFileManager mediaFileManager;
   final bool isDesktop;
 
   const MyApp({
@@ -314,6 +321,7 @@ class MyApp extends StatefulWidget {
     required this.pendingMessageRetrier,
     required this.bridge,
     required this.p2pService,
+    required this.mediaFileManager,
     required this.isDesktop,
   }) : super(key: key);
 
@@ -444,6 +452,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         chatMessageListener: widget.chatMessageListener,
         bridge: widget.bridge,
         p2pService: widget.p2pService,
+        mediaFileManager: widget.mediaFileManager,
       ),
       debugShowCheckedModeBanner: false,
     );

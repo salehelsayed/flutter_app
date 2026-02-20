@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/app_colors.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/shared/widgets/media/audio_player_widget.dart';
+import 'package:flutter_app/shared/widgets/media/media_grid.dart';
 
 /// Individual message bubble within an expanded thread card.
 ///
@@ -16,6 +19,8 @@ class MessageBubble extends StatelessWidget {
   final String? senderLabel;
   final String? quotedText;
   final bool isQuoteUnavailable;
+  final List<MediaAttachment> media;
+  final void Function(int index)? onMediaTap;
 
   const MessageBubble({
     super.key,
@@ -27,7 +32,14 @@ class MessageBubble extends StatelessWidget {
     this.senderLabel,
     this.quotedText,
     this.isQuoteUnavailable = false,
+    this.media = const [],
+    this.onMediaTap,
   });
+
+  List<MediaAttachment> get _imageVideoMedia =>
+      media.where((a) => a.mediaType == 'image' || a.mediaType == 'video').toList();
+  List<MediaAttachment> get _audioMedia =>
+      media.where((a) => a.mediaType == 'audio').toList();
 
   @override
   Widget build(BuildContext context) {
@@ -63,20 +75,31 @@ class MessageBubble extends StatelessWidget {
                 children: [
                   if (quotedText != null || isQuoteUnavailable)
                     _buildQuoteBar(),
-                  Text(
-                    text,
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w400,
-                      color: Color.fromRGBO(
-                        255,
-                        255,
-                        255,
-                        isSent ? 0.70 : 0.88,
-                      ),
-                      height: 1.5,
+                  if (_imageVideoMedia.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: MediaGrid(media: _imageVideoMedia, onTap: onMediaTap),
                     ),
-                  ),
+                  for (final audio in _audioMedia)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: AudioPlayerWidget(attachment: audio),
+                    ),
+                  if (text.isNotEmpty)
+                    Text(
+                      text,
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w400,
+                        color: Color.fromRGBO(
+                          255,
+                          255,
+                          255,
+                          isSent ? 0.70 : 0.88,
+                        ),
+                        height: 1.5,
+                      ),
+                    ),
                   const SizedBox(height: 4),
                   Align(
                     alignment: Alignment.centerRight,

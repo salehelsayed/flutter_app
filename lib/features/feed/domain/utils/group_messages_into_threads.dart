@@ -79,6 +79,7 @@ List<ThreadFeedItem> groupMessagesIntoThreads({
                 isIncoming: m.isIncoming,
                 status: m.isIncoming ? null : m.status,
                 quotedMessageId: m.quotedMessageId,
+                media: m.media,
               ))
           .toList();
 

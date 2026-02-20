@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/connection_state.dart';
@@ -187,7 +188,86 @@ void main() {
       expect(result.height, isNull);
       expect(result.durationMs, isNull);
     });
+
+    group('with mediaFileManager', () {
+      late _FakeMediaFileManager fakeFileManager;
+
+      setUp(() {
+        fakeFileManager = _FakeMediaFileManager(tempDir.path);
+      });
+
+      test('returns relative path in localPath for DB storage', () async {
+        final result = await uploadMedia(
+          bridge: bridge,
+          localFilePath: tempFile.path,
+          mime: 'image/jpeg',
+          recipientPeerId: 'contact-A',
+          mediaFileManager: fakeFileManager,
+        );
+
+        expect(result, isNotNull);
+        // localPath should be relative (for DB storage)
+        expect(result!.localPath, startsWith('media/'));
+        expect(result.localPath, contains('contact-A'));
+        expect(result.localPath, endsWith('.jpg'));
+        // Should NOT be an absolute path
+        expect(result.localPath, isNot(startsWith('/')));
+      });
+
+      test('copies file to persistent absolute path', () async {
+        final result = await uploadMedia(
+          bridge: bridge,
+          localFilePath: tempFile.path,
+          mime: 'image/jpeg',
+          recipientPeerId: 'contact-A',
+          mediaFileManager: fakeFileManager,
+        );
+
+        expect(result, isNotNull);
+        // The file should be copied to the absolute path
+        final absolutePath = '${tempDir.path}/contact-A/${result!.id}.jpg';
+        expect(await File(absolutePath).exists(), isTrue);
+        expect(await File(absolutePath).length(), 1024);
+      });
+
+      test('without mediaFileManager returns original absolute path', () async {
+        final result = await uploadMedia(
+          bridge: bridge,
+          localFilePath: tempFile.path,
+          mime: 'image/jpeg',
+          recipientPeerId: 'contact-A',
+        );
+
+        expect(result, isNotNull);
+        // Without mediaFileManager, localPath is the original file path
+        expect(result!.localPath, tempFile.path);
+      });
+    });
   });
+}
+
+/// Fake media file manager that uses a temp directory as base path.
+class _FakeMediaFileManager extends MediaFileManager {
+  final String basePath;
+
+  _FakeMediaFileManager(this.basePath);
+
+  @override
+  Future<String> localPathForAttachment({
+    required String contactPeerId,
+    required String blobId,
+    required String mime,
+  }) async {
+    final ext = _extFromMime(mime);
+    final dir = Directory('$basePath/$contactPeerId');
+    if (!await dir.exists()) await dir.create(recursive: true);
+    return '$basePath/$contactPeerId/$blobId$ext';
+  }
+
+  static String _extFromMime(String mime) {
+    const m = {'image/jpeg': '.jpg', 'image/png': '.png', 'video/mp4': '.mp4', 'audio/mpeg': '.mp3'};
+    return m[mime] ?? '';
+  }
 }
 
 class _ThrowingBridge implements Bridge {

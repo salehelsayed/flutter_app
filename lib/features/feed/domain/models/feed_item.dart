@@ -1,4 +1,5 @@
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 
 /// Types of feed items.
 enum FeedItemType {
@@ -74,6 +75,7 @@ class ThreadMessage {
   final bool isIncoming;
   final String? status;
   final String? quotedMessageId;
+  final List<MediaAttachment> media;
 
   const ThreadMessage({
     required this.id,
@@ -84,6 +86,7 @@ class ThreadMessage {
     this.isIncoming = true,
     this.status,
     this.quotedMessageId,
+    this.media = const [],
   });
 }
 

@@ -1,7 +1,10 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:uuid/uuid.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/application/block_contact_use_case.dart';
@@ -12,6 +15,7 @@ import 'package:flutter_app/features/contacts/domain/repositories/contact_reposi
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/confirmation_dialog.dart';
 import 'package:flutter_app/features/conversation/application/load_conversation_use_case.dart';
+import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/application/mark_conversation_read_use_case.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
@@ -52,6 +56,8 @@ class ConversationWired extends StatefulWidget {
   final SendChatMessageFn sendChatMessageFn;
   final List<ConversationMessage>? initialMessages;
   final ContactRepository? contactRepo;
+  final MediaAttachmentRepository? mediaAttachmentRepo;
+  final MediaFileManager? mediaFileManager;
 
   const ConversationWired({
     super.key,
@@ -64,6 +70,8 @@ class ConversationWired extends StatefulWidget {
     this.sendChatMessageFn = sendChatMessage,
     this.initialMessages,
     this.contactRepo,
+    this.mediaAttachmentRepo,
+    this.mediaFileManager,
   });
 
   @override
@@ -84,6 +92,10 @@ class _ConversationWiredState extends State<ConversationWired> {
   bool _hasMoreOlderMessages = true;
   bool _isLoadingMore = false;
   bool _initialLoadDone = false;
+
+  List<File> _pendingAttachments = [];
+  bool _isUploading = false;
+  static const _maxAttachments = 10;
 
   @override
   void initState() {
@@ -128,6 +140,8 @@ class _ConversationWiredState extends State<ConversationWired> {
         messageRepo: widget.messageRepo,
         contactPeerId: _contact.peerId,
         pageSize: _pageSize,
+        mediaAttachmentRepo: widget.mediaAttachmentRepo,
+        mediaFileManager: widget.mediaFileManager,
       );
       if (mounted) {
         setState(() {
@@ -174,6 +188,8 @@ class _ConversationWiredState extends State<ConversationWired> {
         contactPeerId: _contact.peerId,
         pageSize: _pageSize,
         beforeTimestamp: cursor,
+        mediaAttachmentRepo: widget.mediaAttachmentRepo,
+        mediaFileManager: widget.mediaFileManager,
       );
       if (mounted) {
         setState(() {
@@ -251,11 +267,40 @@ class _ConversationWiredState extends State<ConversationWired> {
     final identity = _identity;
     if (identity == null) return;
 
+    final hasAttachments = _pendingAttachments.isNotEmpty;
+    if (text.isEmpty && !hasAttachments) return;
+
     emitFlowEvent(
       layer: 'FL',
       event: 'CONV_FL_SEND_PRESSED',
-      details: {'textLength': text.length},
+      details: {'textLength': text.length, 'attachments': _pendingAttachments.length},
     );
+
+    // Capture and clear pending attachments
+    final filesToUpload = List<File>.from(_pendingAttachments);
+    List<MediaAttachment>? optimisticMedia;
+
+    if (filesToUpload.isNotEmpty) {
+      final now = DateTime.now().toUtc().toIso8601String();
+      optimisticMedia = filesToUpload.map((f) {
+        final mime = _mimeFromPath(f.path);
+        return MediaAttachment(
+          id: _uuid.v4(),
+          messageId: '',
+          mime: mime,
+          size: 0,
+          mediaType: MediaAttachment.mediaTypeFromMime(mime),
+          localPath: f.path,
+          downloadStatus: 'done',
+          createdAt: now,
+        );
+      }).toList();
+    }
+
+    setState(() {
+      _pendingAttachments = [];
+      if (filesToUpload.isNotEmpty) _isUploading = true;
+    });
 
     final now = DateTime.now().toUtc().toIso8601String();
     final optimisticMessage = ConversationMessage(
@@ -267,6 +312,7 @@ class _ConversationWiredState extends State<ConversationWired> {
       status: 'sending',
       isIncoming: false,
       createdAt: now,
+      media: optimisticMedia ?? const [],
     );
 
     if (mounted) {
@@ -286,6 +332,46 @@ class _ConversationWiredState extends State<ConversationWired> {
       );
     }
 
+    // Upload attachments if any
+    List<MediaAttachment>? uploadedAttachments;
+    if (filesToUpload.isNotEmpty && widget.bridge != null) {
+      uploadedAttachments = [];
+      for (final file in filesToUpload) {
+        final mime = _mimeFromPath(file.path);
+        final result = await uploadMedia(
+          bridge: widget.bridge!,
+          localFilePath: file.path,
+          mime: mime,
+          recipientPeerId: _contact.peerId,
+          mediaFileManager: widget.mediaFileManager,
+        );
+
+        if (result == null) {
+          // Upload failed — restore attachments, mark message failed
+          if (mounted) {
+            setState(() {
+              _isUploading = false;
+              _pendingAttachments = filesToUpload;
+            });
+            _updateLocalMessageStatus(optimisticMessage.id, 'failed');
+            await _persistMessageStatus(optimisticMessage.id, 'failed');
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: const Text('Failed to upload media. Try again.'),
+                backgroundColor: Colors.red[700],
+                behavior: SnackBarBehavior.floating,
+              ),
+            );
+          }
+          return;
+        }
+        uploadedAttachments.add(result);
+      }
+      if (mounted) {
+        setState(() => _isUploading = false);
+      }
+    }
+
     final (result, message) = await widget.sendChatMessageFn(
       p2pService: widget.p2pService,
       messageRepo: widget.messageRepo,
@@ -297,13 +383,33 @@ class _ConversationWiredState extends State<ConversationWired> {
       timestamp: optimisticMessage.timestamp,
       bridge: widget.bridge,
       recipientMlKemPublicKey: _contact.mlKemPublicKey,
+      mediaAttachments: uploadedAttachments,
+      mediaAttachmentRepo: widget.mediaAttachmentRepo,
     );
 
     if (!mounted) return;
 
     if (message != null) {
+      // Resolve relative paths from uploaded attachments to absolute for display
+      List<MediaAttachment>? displayMedia;
+      if (uploadedAttachments != null && widget.mediaFileManager != null) {
+        displayMedia = [];
+        for (final a in uploadedAttachments) {
+          if (a.localPath != null) {
+            final absPath =
+                await widget.mediaFileManager!.resolveStoredPath(a.localPath!);
+            displayMedia.add(a.copyWith(localPath: absPath));
+          } else {
+            displayMedia.add(a);
+          }
+        }
+      }
+      final persistedMedia = displayMedia ?? optimisticMedia;
+      final messageWithMedia = persistedMedia != null
+          ? message.copyWith(media: persistedMedia)
+          : message;
       setState(() {
-        _upsertMessageById(message);
+        _upsertMessageById(messageWithMedia);
       });
       _scrollToBottom();
     } else {
@@ -334,6 +440,127 @@ class _ConversationWiredState extends State<ConversationWired> {
         ),
       );
     }
+  }
+
+  static String _mimeFromPath(String path) {
+    final ext = path.split('.').last.toLowerCase();
+    const map = {
+      'jpg': 'image/jpeg',
+      'jpeg': 'image/jpeg',
+      'png': 'image/png',
+      'gif': 'image/gif',
+      'webp': 'image/webp',
+      'heic': 'image/heic',
+      'mp4': 'video/mp4',
+      'mov': 'video/quicktime',
+    };
+    return map[ext] ?? 'application/octet-stream';
+  }
+
+  void _onAttach() {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.grey[900],
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 8),
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey[600],
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 16),
+            ListTile(
+              leading: const Icon(Icons.photo_library, color: Colors.white),
+              title: const Text(
+                'Photo Library',
+                style: TextStyle(color: Colors.white),
+              ),
+              onTap: () {
+                Navigator.pop(ctx);
+                _pickFromGallery();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.camera_alt, color: Colors.white),
+              title: const Text(
+                'Camera',
+                style: TextStyle(color: Colors.white),
+              ),
+              onTap: () {
+                Navigator.pop(ctx);
+                _pickFromCamera();
+              },
+            ),
+            const SizedBox(height: 16),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _pickFromGallery() async {
+    try {
+      final picker = ImagePicker();
+      final remaining = _maxAttachments - _pendingAttachments.length;
+      if (remaining <= 0) return;
+
+      final picked = await picker.pickMultiImage(imageQuality: 85);
+      if (picked.isEmpty || !mounted) return;
+
+      final files = picked
+          .take(remaining)
+          .map((xf) => File(xf.path))
+          .toList();
+      setState(() {
+        _pendingAttachments = [..._pendingAttachments, ...files];
+      });
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONV_FL_PICK_GALLERY_ERROR',
+        details: {'error': e.toString()},
+      );
+    }
+  }
+
+  Future<void> _pickFromCamera() async {
+    try {
+      final picker = ImagePicker();
+      final picked = await picker.pickImage(
+        source: ImageSource.camera,
+        imageQuality: 85,
+      );
+      if (picked == null || !mounted) return;
+      if (_pendingAttachments.length >= _maxAttachments) return;
+
+      setState(() {
+        _pendingAttachments = [..._pendingAttachments, File(picked.path)];
+      });
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONV_FL_PICK_CAMERA_ERROR',
+        details: {'error': e.toString()},
+      );
+    }
+  }
+
+  void _removeAttachment(int index) {
+    if (index < 0 || index >= _pendingAttachments.length) return;
+    setState(() {
+      final updated = List<File>.from(_pendingAttachments);
+      updated.removeAt(index);
+      _pendingAttachments = updated;
+    });
   }
 
   void _upsertMessageById(ConversationMessage message) {
@@ -606,6 +833,10 @@ class _ConversationWiredState extends State<ConversationWired> {
         isLoadingMore: _isLoadingMore,
         hasMoreOlderMessages: _hasMoreOlderMessages,
         initialLoadDone: _initialLoadDone,
+        onAttach: _onAttach,
+        pendingAttachments: _pendingAttachments,
+        isUploading: _isUploading,
+        onRemoveAttachment: _removeAttachment,
       ),
     );
   }

@@ -201,6 +201,58 @@ void main() {
       });
     });
 
+    group('relativePathForAttachment', () {
+      test('returns relative path without leading slash', () {
+        final path = fileManager.relativePathForAttachment(
+          contactPeerId: 'contact-A',
+          blobId: 'blob-001',
+          mime: 'image/jpeg',
+        );
+        expect(path, equals('media/contact-A/blob-001.jpg'));
+      });
+
+      test('maps MIME types correctly', () {
+        expect(
+          fileManager.relativePathForAttachment(
+            contactPeerId: 'c',
+            blobId: 'b',
+            mime: 'image/png',
+          ),
+          equals('media/c/b.png'),
+        );
+      });
+
+      test('unknown MIME gets no extension', () {
+        final path = fileManager.relativePathForAttachment(
+          contactPeerId: 'c',
+          blobId: 'blob-id',
+          mime: 'application/octet-stream',
+        );
+        expect(path, equals('media/c/blob-id'));
+      });
+    });
+
+    group('resolveStoredPath', () {
+      test('resolves relative path to absolute', () async {
+        final resolved =
+            await fileManager.resolveStoredPath('media/contact-A/blob-001.jpg');
+        expect(resolved, equals('${tempDir.path}/media/contact-A/blob-001.jpg'));
+      });
+
+      test('resolves legacy absolute path with /media/ segment', () async {
+        final legacyPath =
+            '/old-container-uuid/Documents/media/contact-A/blob-001.jpg';
+        final resolved = await fileManager.resolveStoredPath(legacyPath);
+        expect(resolved, equals('${tempDir.path}/media/contact-A/blob-001.jpg'));
+      });
+
+      test('returns unknown absolute path as-is', () async {
+        const unknownPath = '/some/random/path.jpg';
+        final resolved = await fileManager.resolveStoredPath(unknownPath);
+        expect(resolved, equals(unknownPath));
+      });
+    });
+
     group('deleteFile', () {
       test('deletes an existing file', () async {
         final path = await fileManager.localPathForAttachment(

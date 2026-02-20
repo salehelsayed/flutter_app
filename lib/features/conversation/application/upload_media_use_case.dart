@@ -4,6 +4,7 @@ import 'package:uuid/uuid.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
+import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 
@@ -13,11 +14,15 @@ const _uuid = Uuid();
 ///
 /// Called BEFORE sendChatMessage — the send use case receives
 /// already-uploaded attachments.
+///
+/// When [mediaFileManager] is provided, copies the file to the persistent
+/// media directory so it survives app restarts.
 Future<MediaAttachment?> uploadMedia({
   required Bridge bridge,
   required String localFilePath,
   required String mime,
   required String recipientPeerId,
+  MediaFileManager? mediaFileManager,
   int? width,
   int? height,
   int? durationMs,
@@ -63,6 +68,24 @@ Future<MediaAttachment?> uploadMedia({
     final now = DateTime.now().toUtc().toIso8601String();
     final mediaType = MediaAttachment.mediaTypeFromMime(mime);
 
+    // Copy to persistent media directory so the file survives app restarts.
+    // Store the relative path in the attachment (goes to DB) so it survives
+    // iOS container UUID changes across app launches.
+    String storedPath = localFilePath;
+    if (mediaFileManager != null) {
+      final absolutePath = await mediaFileManager.localPathForAttachment(
+        contactPeerId: recipientPeerId,
+        blobId: blobId,
+        mime: mime,
+      );
+      await File(localFilePath).copy(absolutePath);
+      storedPath = mediaFileManager.relativePathForAttachment(
+        contactPeerId: recipientPeerId,
+        blobId: blobId,
+        mime: mime,
+      );
+    }
+
     emitFlowEvent(
       layer: 'FL',
       event: 'MEDIA_UPLOAD_SUCCESS',
@@ -78,7 +101,7 @@ Future<MediaAttachment?> uploadMedia({
       width: width,
       height: height,
       durationMs: durationMs,
-      localPath: localFilePath,
+      localPath: storedPath,
       downloadStatus: 'done',
       createdAt: now,
     );

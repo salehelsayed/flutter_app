@@ -41,56 +41,59 @@ class _EmptyConversationStateState extends State<EmptyConversationState>
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 40),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // Avatar with breathing glow
-            _buildAvatarWithGlow(),
-            const SizedBox(height: 16),
-            // "Connected!" label
-            const Text(
-              'Connected!',
-              style: TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.w600,
-                color: Color(0xFF1DB954),
-                shadows: [
-                  Shadow(
-                    color: Color.fromRGBO(29, 185, 84, 0.4),
-                    blurRadius: 20,
+    return LayoutBuilder(
+      builder: (context, constraints) => SingleChildScrollView(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(minHeight: constraints.maxHeight),
+          child: Center(
+            child: Padding(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 32, vertical: 40),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _buildAvatarWithGlow(),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'Connected!',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFF1DB954),
+                      shadows: [
+                        Shadow(
+                          color: Color.fromRGBO(29, 185, 84, 0.4),
+                          blurRadius: 20,
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    widget.connectionDate,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w400,
+                      color: Color.fromRGBO(255, 255, 255, 0.35),
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  _buildDashedDivider(),
+                  const SizedBox(height: 24),
+                  const Text(
+                    'Write the first letter\nto start your conversation',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w500,
+                      color: Color.fromRGBO(255, 255, 255, 0.5),
+                      height: 1.5,
+                    ),
                   ),
                 ],
               ),
             ),
-            const SizedBox(height: 4),
-            // Connection date
-            Text(
-              widget.connectionDate,
-              style: const TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w400,
-                color: Color.fromRGBO(255, 255, 255, 0.35),
-              ),
-            ),
-            const SizedBox(height: 24),
-            // Dashed divider
-            _buildDashedDivider(),
-            const SizedBox(height: 24),
-            // Writing prompt
-            const Text(
-              'Write the first letter\nto start your conversation',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 17,
-                fontWeight: FontWeight.w500,
-                color: Color.fromRGBO(255, 255, 255, 0.5),
-                height: 1.5,
-              ),
-            ),
-          ],
+          ),
         ),
       ),
     );

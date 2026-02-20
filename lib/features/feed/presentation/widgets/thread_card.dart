@@ -1,12 +1,15 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/app_colors.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
 import 'package:flutter_app/features/feed/domain/utils/format_message_time.dart';
 import 'package:flutter_app/features/feed/domain/utils/has_significant_time_gap.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/expanded_compose_input.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/inline_reply_input.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/message_bubble.dart';
+import 'package:flutter_app/shared/widgets/media/full_screen_image_viewer.dart';
+import 'package:flutter_app/shared/widgets/media/media_preview_text.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/quote_preview_bar.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bubble.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/time_gap_divider.dart';
@@ -445,6 +448,66 @@ class _ThreadCardState extends State<ThreadCard>
         ? AppColors.tealAccent.withValues(alpha: 0.50)
         : const Color.fromRGBO(255, 255, 255, 0.50);
     final textOpacity = isSent ? 0.65 : 0.90;
+    final mutedColor = Color.fromRGBO(255, 255, 255, textOpacity);
+
+    final hasMedia = msg.media.isNotEmpty;
+    final hasText = msg.text.isNotEmpty;
+
+    Widget contentWidget;
+    if (hasMedia && !hasText) {
+      // Media-only: "[icon] Photo" / "[icon] 3 photos" etc.
+      contentWidget = Row(
+        children: [
+          Icon(mediaPreviewIcon(msg.media), size: 12, color: mutedColor),
+          const SizedBox(width: 4),
+          Text(
+            mediaPreviewText(msg.media),
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w400,
+              color: mutedColor,
+              height: 1.5,
+            ),
+          ),
+        ],
+      );
+    } else if (hasMedia && hasText) {
+      // Media + caption: "[icon]" + caption text
+      contentWidget = Row(
+        children: [
+          Icon(mediaPreviewIcon(msg.media), size: 12, color: mutedColor),
+          const SizedBox(width: 4),
+          Expanded(
+            child: Text(
+              msg.text,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w400,
+                color: mutedColor,
+                height: 1.5,
+              ),
+            ),
+          ),
+        ],
+      );
+    } else {
+      // Text-only (existing)
+      contentWidget = Expanded(
+        child: Text(
+          msg.text,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w400,
+            color: mutedColor,
+            height: 1.5,
+          ),
+        ),
+      );
+    }
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 4),
@@ -459,19 +522,10 @@ class _ThreadCardState extends State<ThreadCard>
               color: labelColor,
             ),
           ),
-          Expanded(
-            child: Text(
-              msg.text,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w400,
-                color: Color.fromRGBO(255, 255, 255, textOpacity),
-                height: 1.5,
-              ),
-            ),
-          ),
+          if (hasMedia)
+            Expanded(child: contentWidget)
+          else
+            contentWidget,
         ],
       ),
     );
@@ -544,7 +598,34 @@ class _ThreadCardState extends State<ThreadCard>
     final match = widget.thread.messages
         .where((m) => m.id == quotedMessageId)
         .firstOrNull;
-    return match?.text;
+    if (match == null) return null;
+    if (match.text.isNotEmpty) return match.text;
+    if (match.media.isNotEmpty) return mediaPreviewText(match.media);
+    return null;
+  }
+
+  void _openMediaViewer(List<MediaAttachment> media, int tappedIndex) {
+    final visual = media
+        .where((a) => a.mediaType == 'image' || a.mediaType == 'video')
+        .toList();
+    if (tappedIndex >= visual.length) return;
+    final tapped = visual[tappedIndex];
+    if (tapped.localPath == null) return;
+
+    final allPaths = visual
+        .where((a) => a.localPath != null && a.downloadStatus == 'done')
+        .map((a) => a.localPath!)
+        .toList();
+    final startIndex =
+        allPaths.indexOf(tapped.localPath!).clamp(0, allPaths.length - 1);
+
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => FullScreenImageViewer(
+        localPath: tapped.localPath!,
+        allPaths: allPaths,
+        initialIndex: startIndex,
+      ),
+    ));
   }
 
   Widget _buildAnimatedBubble(int index, ThreadMessage message) {
@@ -562,6 +643,9 @@ class _ThreadCardState extends State<ThreadCard>
       status: message.status,
       quotedText: quotedText,
       isQuoteUnavailable: isQuoteUnavailable,
+      media: message.media,
+      onMediaTap: (mediaIndex) =>
+          _openMediaViewer(message.media, mediaIndex),
     );
 
     // Wrap incoming bubbles in swipe-to-quote when expanded

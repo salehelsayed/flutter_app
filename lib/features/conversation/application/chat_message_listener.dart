@@ -1,11 +1,14 @@
 import 'dart:async';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/conversation/application/download_media_use_case.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/handle_incoming_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
@@ -22,6 +25,7 @@ class ChatMessageListener {
   final Bridge? bridge;
   final Future<String?> Function()? getOwnMlKemSecretKey;
   final MediaAttachmentRepository? mediaAttachmentRepo;
+  final MediaFileManager? mediaFileManager;
 
   StreamSubscription<ChatMessage>? _subscription;
   final _messageController = StreamController<ConversationMessage>.broadcast();
@@ -34,6 +38,7 @@ class ChatMessageListener {
     this.bridge,
     this.getOwnMlKemSecretKey,
     this.mediaAttachmentRepo,
+    this.mediaFileManager,
   });
 
   /// Stream of new incoming chat messages for the UI to listen to.
@@ -82,6 +87,58 @@ class ChatMessageListener {
     stop();
     _messageController.close();
     _contactUpdatedController.close();
+  }
+
+  Future<void> _autoDownloadMedia(ConversationMessage message) async {
+    try {
+      final attachments =
+          await mediaAttachmentRepo!.getAttachmentsForMessage(message.id);
+      if (attachments.isEmpty) return;
+
+      final downloadedMedia = <MediaAttachment>[];
+      for (final attachment in attachments) {
+        if (attachment.downloadStatus != 'pending') {
+          downloadedMedia.add(attachment);
+          continue;
+        }
+        try {
+          final result = await downloadMedia(
+            bridge: bridge!,
+            mediaAttachmentRepo: mediaAttachmentRepo!,
+            mediaFileManager: mediaFileManager!,
+            attachment: attachment,
+            contactPeerId: message.contactPeerId,
+          );
+          downloadedMedia.add(
+            result ??
+                attachment.copyWith(downloadStatus: 'failed'),
+          );
+        } catch (e) {
+          downloadedMedia
+              .add(attachment.copyWith(downloadStatus: 'failed'));
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'CHAT_LISTENER_DOWNLOAD_ERROR',
+            details: {
+              'blobId': attachment.id.length > 8
+                  ? attachment.id.substring(0, 8)
+                  : attachment.id,
+              'error': e.toString(),
+            },
+          );
+        }
+      }
+
+      // Re-emit with media hydrated — ConversationWired._upsertMessageById
+      // replaces by ID so the UI updates seamlessly.
+      _messageController.add(message.copyWith(media: downloadedMedia));
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CHAT_LISTENER_AUTO_DOWNLOAD_ERROR',
+        details: {'messageId': message.id.length > 8 ? message.id.substring(0, 8) : message.id, 'error': e.toString()},
+      );
+    }
   }
 
   Future<void> _onMessage(ChatMessage message) async {
@@ -156,6 +213,13 @@ class ChatMessageListener {
         );
 
         _messageController.add(conversationMessage);
+
+        // Fire-and-forget: auto-download media attachments
+        if (bridge != null &&
+            mediaAttachmentRepo != null &&
+            mediaFileManager != null) {
+          _autoDownloadMedia(conversationMessage);
+        }
       }
     } catch (e) {
       emitFlowEvent(

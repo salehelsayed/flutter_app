@@ -6,6 +6,7 @@ import 'package:flutter_app/features/contact_request/application/contact_request
 import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
+import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/feed/presentation/screens/feed_wired.dart';
@@ -60,6 +61,9 @@ class StartupRouter extends StatefulWidget {
   /// The P2P service for networking operations.
   final P2PService p2pService;
 
+  /// The media file manager for local file operations.
+  final MediaFileManager mediaFileManager;
+
   const StartupRouter({
     super.key,
     required this.repository,
@@ -71,6 +75,7 @@ class StartupRouter extends StatefulWidget {
     required this.chatMessageListener,
     required this.bridge,
     required this.p2pService,
+    required this.mediaFileManager,
   });
 
   @override
@@ -132,6 +137,7 @@ class _StartupRouterState extends State<StartupRouter> {
                 chatMessageListener: chatMessageListener,
                 bridge: bridge,
                 p2pService: p2pService,
+                mediaFileManager: widget.mediaFileManager,
               ),
             ),
           );
@@ -158,6 +164,7 @@ class _StartupRouterState extends State<StartupRouter> {
             chatMessageListener: chatMessageListener,
             bridge: bridge,
             p2pService: p2pService,
+            mediaFileManager: widget.mediaFileManager,
           );
           StartupTiming.instance.mark('route_pushed');
 
@@ -193,6 +200,7 @@ class _StartupRouterState extends State<StartupRouter> {
                         chatMessageListener: chatMessageListener,
                         bridge: bridge,
                         p2pService: p2pService,
+                        mediaFileManager: widget.mediaFileManager,
                       ),
                     ),
                   );
@@ -358,6 +366,7 @@ class _StartupRouterState extends State<StartupRouter> {
     required ChatMessageListener chatMessageListener,
     required Bridge bridge,
     required P2PService p2pService,
+    required MediaFileManager mediaFileManager,
   }) {
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(
@@ -371,6 +380,7 @@ class _StartupRouterState extends State<StartupRouter> {
           chatMessageListener: chatMessageListener,
           bridge: bridge,
           p2pService: p2pService,
+          mediaFileManager: mediaFileManager,
         ),
       ),
     );

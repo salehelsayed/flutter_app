@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/features/conversation/application/load_conversation_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
@@ -421,4 +422,263 @@ void main() {
       expect(result[2].media, isEmpty);
     });
   });
+
+  group('path resolution with mediaFileManager', () {
+    late _FakeMediaFileManager fakeFileManager;
+
+    setUp(() {
+      fakeFileManager = _FakeMediaFileManager('/app/Documents');
+    });
+
+    test('resolves relative paths to absolute in loadConversation', () async {
+      final messageRepo = FakeMessageRepository(
+        messagesByContact: {
+          'contact-A': [
+            ConversationMessage(
+              id: 'msg-1',
+              contactPeerId: 'contact-A',
+              senderPeerId: 'contact-A',
+              text: 'Photo',
+              timestamp: '2026-02-09T10:00:00.000Z',
+              status: 'delivered',
+              isIncoming: true,
+              createdAt: '2026-02-09T10:00:01.000Z',
+            ),
+          ],
+        },
+      );
+      final mediaRepo = FakeMediaAttachmentRepository(
+        mediaByMessage: {
+          'msg-1': [
+            const MediaAttachment(
+              id: 'blob-001',
+              messageId: 'msg-1',
+              mime: 'image/jpeg',
+              size: 245000,
+              mediaType: 'image',
+              localPath: 'media/contact-A/blob-001.jpg', // relative path in DB
+              downloadStatus: 'done',
+              createdAt: '2026-02-09T10:00:00.000Z',
+            ),
+          ],
+        },
+      );
+
+      final result = await loadConversation(
+        messageRepo: messageRepo,
+        contactPeerId: 'contact-A',
+        mediaAttachmentRepo: mediaRepo,
+        mediaFileManager: fakeFileManager,
+      );
+
+      expect(result.length, 1);
+      expect(result[0].media.length, 1);
+      // Path should be resolved to absolute
+      expect(result[0].media[0].localPath, '/app/Documents/media/contact-A/blob-001.jpg');
+    });
+
+    test('resolves relative paths in loadConversationPage', () async {
+      final messageRepo = FakeMessageRepository(
+        messagesByContact: {
+          'contact-A': [
+            ConversationMessage(
+              id: 'msg-1',
+              contactPeerId: 'contact-A',
+              senderPeerId: 'contact-A',
+              text: 'Photo',
+              timestamp: '2026-02-09T10:00:00.000Z',
+              status: 'delivered',
+              isIncoming: true,
+              createdAt: '2026-02-09T10:00:01.000Z',
+            ),
+          ],
+        },
+      );
+      final mediaRepo = FakeMediaAttachmentRepository(
+        mediaByMessage: {
+          'msg-1': [
+            const MediaAttachment(
+              id: 'blob-001',
+              messageId: 'msg-1',
+              mime: 'image/jpeg',
+              size: 245000,
+              mediaType: 'image',
+              localPath: 'media/contact-A/blob-001.jpg',
+              downloadStatus: 'done',
+              createdAt: '2026-02-09T10:00:00.000Z',
+            ),
+          ],
+        },
+      );
+
+      final result = await loadConversationPage(
+        messageRepo: messageRepo,
+        contactPeerId: 'contact-A',
+        pageSize: 50,
+        mediaAttachmentRepo: mediaRepo,
+        mediaFileManager: fakeFileManager,
+      );
+
+      expect(result.length, 1);
+      expect(result[0].media[0].localPath, '/app/Documents/media/contact-A/blob-001.jpg');
+    });
+
+    test('resolves legacy absolute paths with /media/ segment', () async {
+      final messageRepo = FakeMessageRepository(
+        messagesByContact: {
+          'contact-A': [
+            ConversationMessage(
+              id: 'msg-1',
+              contactPeerId: 'contact-A',
+              senderPeerId: 'contact-A',
+              text: 'Photo',
+              timestamp: '2026-02-09T10:00:00.000Z',
+              status: 'delivered',
+              isIncoming: true,
+              createdAt: '2026-02-09T10:00:01.000Z',
+            ),
+          ],
+        },
+      );
+      final mediaRepo = FakeMediaAttachmentRepository(
+        mediaByMessage: {
+          'msg-1': [
+            const MediaAttachment(
+              id: 'blob-001',
+              messageId: 'msg-1',
+              mime: 'image/jpeg',
+              size: 245000,
+              mediaType: 'image',
+              // Legacy absolute path from old iOS container UUID
+              localPath: '/old-uuid/Documents/media/contact-A/blob-001.jpg',
+              downloadStatus: 'done',
+              createdAt: '2026-02-09T10:00:00.000Z',
+            ),
+          ],
+        },
+      );
+
+      final result = await loadConversation(
+        messageRepo: messageRepo,
+        contactPeerId: 'contact-A',
+        mediaAttachmentRepo: mediaRepo,
+        mediaFileManager: fakeFileManager,
+      );
+
+      expect(result[0].media[0].localPath,
+          '/app/Documents/media/contact-A/blob-001.jpg');
+    });
+
+    test('does not resolve when mediaFileManager is null', () async {
+      final messageRepo = FakeMessageRepository(
+        messagesByContact: {
+          'contact-A': [
+            ConversationMessage(
+              id: 'msg-1',
+              contactPeerId: 'contact-A',
+              senderPeerId: 'contact-A',
+              text: 'Photo',
+              timestamp: '2026-02-09T10:00:00.000Z',
+              status: 'delivered',
+              isIncoming: true,
+              createdAt: '2026-02-09T10:00:01.000Z',
+            ),
+          ],
+        },
+      );
+      final mediaRepo = FakeMediaAttachmentRepository(
+        mediaByMessage: {
+          'msg-1': [
+            const MediaAttachment(
+              id: 'blob-001',
+              messageId: 'msg-1',
+              mime: 'image/jpeg',
+              size: 245000,
+              mediaType: 'image',
+              localPath: 'media/contact-A/blob-001.jpg',
+              downloadStatus: 'done',
+              createdAt: '2026-02-09T10:00:00.000Z',
+            ),
+          ],
+        },
+      );
+
+      final result = await loadConversation(
+        messageRepo: messageRepo,
+        contactPeerId: 'contact-A',
+        mediaAttachmentRepo: mediaRepo,
+        // no mediaFileManager
+      );
+
+      // Path should remain as-is (relative)
+      expect(result[0].media[0].localPath, 'media/contact-A/blob-001.jpg');
+    });
+
+    test('handles null localPath gracefully', () async {
+      final messageRepo = FakeMessageRepository(
+        messagesByContact: {
+          'contact-A': [
+            ConversationMessage(
+              id: 'msg-1',
+              contactPeerId: 'contact-A',
+              senderPeerId: 'contact-A',
+              text: 'Photo pending',
+              timestamp: '2026-02-09T10:00:00.000Z',
+              status: 'delivered',
+              isIncoming: true,
+              createdAt: '2026-02-09T10:00:01.000Z',
+            ),
+          ],
+        },
+      );
+      final mediaRepo = FakeMediaAttachmentRepository(
+        mediaByMessage: {
+          'msg-1': [
+            const MediaAttachment(
+              id: 'blob-001',
+              messageId: 'msg-1',
+              mime: 'image/jpeg',
+              size: 245000,
+              mediaType: 'image',
+              localPath: null, // not yet downloaded
+              downloadStatus: 'pending',
+              createdAt: '2026-02-09T10:00:00.000Z',
+            ),
+          ],
+        },
+      );
+
+      final result = await loadConversation(
+        messageRepo: messageRepo,
+        contactPeerId: 'contact-A',
+        mediaAttachmentRepo: mediaRepo,
+        mediaFileManager: fakeFileManager,
+      );
+
+      expect(result[0].media[0].localPath, isNull);
+    });
+  });
+}
+
+/// Fake media file manager that resolves paths deterministically without
+/// needing path_provider.
+class _FakeMediaFileManager extends MediaFileManager {
+  final String basePath;
+
+  _FakeMediaFileManager(this.basePath);
+
+  @override
+  Future<String> resolveStoredPath(String storedPath) async {
+    // Relative path: prepend basePath
+    if (storedPath.startsWith('media/')) {
+      return '$basePath/$storedPath';
+    }
+    // Legacy absolute path with /media/
+    final mediaIndex = storedPath.indexOf('/media/');
+    if (mediaIndex != -1) {
+      final relativePortion = storedPath.substring(mediaIndex + 1);
+      return '$basePath/$relativePortion';
+    }
+    return storedPath;
+  }
 }
