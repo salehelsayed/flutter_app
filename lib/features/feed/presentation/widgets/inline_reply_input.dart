@@ -13,6 +13,7 @@ class InlineReplyInput extends StatefulWidget {
   final bool shouldRequestFocus;
   final ValueChanged<String>? onDraftChanged;
   final ValueChanged<bool>? onFocusChanged;
+  final VoidCallback? onAttach;
 
   const InlineReplyInput({
     super.key,
@@ -23,6 +24,7 @@ class InlineReplyInput extends StatefulWidget {
     this.shouldRequestFocus = false,
     this.onDraftChanged,
     this.onFocusChanged,
+    this.onAttach,
   });
 
   @override
@@ -38,6 +40,7 @@ class _InlineReplyInputState extends State<InlineReplyInput>
 
   late final AnimationController _sendButtonController;
   late final Animation<double> _sendScale;
+  late final Animation<double> _sendOpacity;
 
   @override
   void initState() {
@@ -46,10 +49,12 @@ class _InlineReplyInputState extends State<InlineReplyInput>
       vsync: this,
       duration: const Duration(milliseconds: 250),
     );
-    _sendScale = CurvedAnimation(
+    final sendCurve = CurvedAnimation(
       parent: _sendButtonController,
-      curve: Curves.ease,
+      curve: Curves.easeOut,
     );
+    _sendScale = Tween<double>(begin: 0.86, end: 1.0).animate(sendCurve);
+    _sendOpacity = Tween<double>(begin: 0.46, end: 1.0).animate(sendCurve);
     _controller.addListener(_onTextChanged);
     _focusNode.addListener(_onFocusChanged);
     if (widget.initialText.isNotEmpty) {
@@ -112,20 +117,71 @@ class _InlineReplyInputState extends State<InlineReplyInput>
       onTap: () {}, // absorb taps
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
-        height: 40,
+        height: 44,
         decoration: BoxDecoration(
-          color: _hasFocus
-              ? const Color.fromRGBO(255, 255, 255, 0.06)
-              : const Color.fromRGBO(255, 255, 255, 0.04),
-          borderRadius: BorderRadius.circular(20),
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: _hasFocus
+                ? const [
+                    Color.fromRGBO(255, 255, 255, 0.09),
+                    Color.fromRGBO(255, 255, 255, 0.05),
+                  ]
+                : const [
+                    Color.fromRGBO(255, 255, 255, 0.07),
+                    Color.fromRGBO(255, 255, 255, 0.04),
+                  ],
+          ),
+          borderRadius: BorderRadius.circular(22),
           border: Border.all(
             color: _hasFocus
-                ? const Color.fromRGBO(78, 205, 196, 0.20)
-                : const Color.fromRGBO(255, 255, 255, 0.08),
+                ? AppColors.tealAccent.withValues(alpha: 0.32)
+                : const Color.fromRGBO(255, 255, 255, 0.10),
           ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.24),
+              blurRadius: 12,
+              offset: const Offset(0, 6),
+            ),
+            if (_hasFocus)
+              BoxShadow(
+                color: AppColors.tealAccent.withValues(alpha: 0.10),
+                blurRadius: 14,
+                spreadRadius: 1,
+              ),
+          ],
         ),
         child: Row(
           children: [
+            if (widget.onAttach != null)
+              GestureDetector(
+                onTap: widget.onAttach,
+                child: Container(
+                  width: 32,
+                  height: 32,
+                  margin: const EdgeInsets.only(left: 6, right: 4),
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: const LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [
+                        Color.fromRGBO(255, 255, 255, 0.13),
+                        Color.fromRGBO(255, 255, 255, 0.07),
+                      ],
+                    ),
+                    border: Border.all(
+                      color: const Color.fromRGBO(255, 255, 255, 0.12),
+                    ),
+                  ),
+                  child: const Icon(
+                    Icons.add_rounded,
+                    size: 18,
+                    color: Color.fromRGBO(255, 255, 255, 0.56),
+                  ),
+                ),
+              ),
             Expanded(
               child: TextField(
                 controller: _controller,
@@ -137,16 +193,18 @@ class _InlineReplyInputState extends State<InlineReplyInput>
                   color: Color.fromRGBO(255, 255, 255, 0.90),
                   height: 1.3,
                 ),
+                textAlignVertical: TextAlignVertical.center,
                 decoration: InputDecoration(
                   hintText: widget.hintText,
                   hintStyle: const TextStyle(
                     fontSize: 14,
-                    color: Color.fromRGBO(255, 255, 255, 0.25),
+                    color: Color.fromRGBO(255, 255, 255, 0.40),
                   ),
                   border: InputBorder.none,
-                  contentPadding: const EdgeInsets.only(
-                    left: 16,
-                    right: 8,
+                  contentPadding: EdgeInsets.only(
+                    left: widget.onAttach != null ? 6 : 14,
+                    right: 10,
+                    top: 10,
                     bottom: 10,
                   ),
                   isDense: true,
@@ -155,20 +213,53 @@ class _InlineReplyInputState extends State<InlineReplyInput>
             ),
             ScaleTransition(
               scale: _sendScale,
-              child: GestureDetector(
-                onTap: _hasText ? _onSendPressed : null,
-                child: Container(
-                  width: 32,
-                  height: 32,
-                  margin: const EdgeInsets.only(right: 4),
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: AppColors.tealAccent.withValues(alpha: 0.20),
-                  ),
-                  child: const Icon(
-                    Icons.arrow_upward_rounded,
-                    size: 18,
-                    color: AppColors.tealAccent,
+              child: FadeTransition(
+                opacity: _sendOpacity,
+                child: GestureDetector(
+                  onTap: _hasText ? _onSendPressed : null,
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 180),
+                    width: 32,
+                    height: 32,
+                    margin: const EdgeInsets.only(right: 6),
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          AppColors.tealAccent.withValues(
+                            alpha: _hasText ? 0.42 : 0.24,
+                          ),
+                          AppColors.tealAccent.withValues(
+                            alpha: _hasText ? 0.28 : 0.16,
+                          ),
+                        ],
+                      ),
+                      border: Border.all(
+                        color: AppColors.tealAccent.withValues(
+                          alpha: _hasText ? 0.58 : 0.24,
+                        ),
+                      ),
+                      boxShadow: _hasText
+                          ? [
+                              BoxShadow(
+                                color: AppColors.tealAccent.withValues(
+                                  alpha: 0.20,
+                                ),
+                                blurRadius: 10,
+                                offset: const Offset(0, 4),
+                              ),
+                            ]
+                          : null,
+                    ),
+                    child: Icon(
+                      Icons.arrow_upward_rounded,
+                      size: 18,
+                      color: AppColors.tealAccent.withValues(
+                        alpha: _hasText ? 0.96 : 0.68,
+                      ),
+                    ),
                   ),
                 ),
               ),

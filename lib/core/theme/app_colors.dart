@@ -26,7 +26,7 @@ class AppColors {
   // Conversation state accents
   static const Color tealAccent = Color(0xFF4ECDC4);
   static const Color warmOrange = Color(0xFFFF6B6B);
-  static const Color warmOrangeGlow = Color(0x14FF6B6B); // 8%
+  static const Color warmOrangeGlow = Color(0x1400E5FF); // 8% cyan
   static const Color tealBorderTint = Color(0x1F4ECDC4); // 12%
-  static const Color warmBorderTint = Color(0x1FFF6B6B); // 12%
+  static const Color warmBorderTint = Color(0x1F00E5FF); // 12% cyan
 }

@@ -36,6 +36,7 @@ class ThreadCard extends StatefulWidget {
   final String? activeQuoteMessageId;
   final ValueChanged<String>? onQuoteReply;
   final VoidCallback? onClearQuote;
+  final VoidCallback? onAttach;
 
   const ThreadCard({
     super.key,
@@ -52,14 +53,14 @@ class ThreadCard extends StatefulWidget {
     this.activeQuoteMessageId,
     this.onQuoteReply,
     this.onClearQuote,
+    this.onAttach,
   });
 
   @override
   State<ThreadCard> createState() => _ThreadCardState();
 }
 
-class _ThreadCardState extends State<ThreadCard>
-    with TickerProviderStateMixin {
+class _ThreadCardState extends State<ThreadCard> with TickerProviderStateMixin {
   late final AnimationController _entryController;
   late final Animation<double> _entryOpacity;
   late final Animation<double> _entryTranslateY;
@@ -138,7 +139,8 @@ class _ThreadCardState extends State<ThreadCard>
   }
 
   /// Number of earlier messages not shown in expanded view.
-  int get _earlierCount => widget.thread.messages.length - _expandedMessages.length;
+  int get _earlierCount =>
+      widget.thread.messages.length - _expandedMessages.length;
 
   @override
   void dispose() {
@@ -167,40 +169,29 @@ class _ThreadCardState extends State<ThreadCard>
   Widget _buildStackedCard() {
     final isMulti = widget.thread.isMultiMessage;
     final showStacks = isMulti && !widget.isExpanded;
+    final state = widget.thread.conversationState;
 
     return Stack(
       clipBehavior: Clip.none,
       children: [
         if (showStacks) ...[
-          // Second stack layer (furthest back)
-          Positioned(
-            left: 12,
-            right: 12,
-            bottom: -8,
-            child: Container(
-              height: 30,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(24),
-                border: Border.all(
-                  color: const Color.fromRGBO(255, 255, 255, 0.04),
-                ),
-              ),
-            ),
+          _buildStackLayer(
+            state: state,
+            xOffset: 6,
+            yOffset: 12,
+            borderOpacity: 0.16,
+            fillOpacity: 0.018,
+            shadowOpacity: 0.13,
+            accentShadowOpacity: 0.05,
           ),
-          // First stack layer
-          Positioned(
-            left: 6,
-            right: 6,
-            bottom: -4,
-            child: Container(
-              height: 30,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(24),
-                border: Border.all(
-                  color: const Color.fromRGBO(255, 255, 255, 0.06),
-                ),
-              ),
-            ),
+          _buildStackLayer(
+            state: state,
+            xOffset: 3,
+            yOffset: 6,
+            borderOpacity: 0.22,
+            fillOpacity: 0.026,
+            shadowOpacity: 0.17,
+            accentShadowOpacity: 0.07,
           ),
         ],
         // Main card
@@ -219,6 +210,69 @@ class _ThreadCardState extends State<ThreadCard>
     );
   }
 
+  Widget _buildStackLayer({
+    required ConversationState state,
+    required double xOffset,
+    required double yOffset,
+    required double borderOpacity,
+    required double fillOpacity,
+    required double shadowOpacity,
+    required double accentShadowOpacity,
+  }) {
+    return Positioned.fill(
+      child: IgnorePointer(
+        child: Transform.translate(
+          offset: Offset(xOffset, yOffset),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(24),
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  Colors.white.withValues(alpha: fillOpacity + 0.016),
+                  Colors.white.withValues(alpha: fillOpacity),
+                ],
+              ),
+              border: Border.all(
+                color: _stackLayerTint(state).withValues(alpha: borderOpacity),
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: shadowOpacity),
+                  blurRadius: 12,
+                  offset: const Offset(0, 9),
+                ),
+                if (state == ConversationState.unread ||
+                    state == ConversationState.active)
+                  BoxShadow(
+                    color: AppColors.warmOrange.withValues(
+                      alpha: accentShadowOpacity,
+                    ),
+                    blurRadius: 14,
+                    spreadRadius: -4,
+                    offset: const Offset(0, 8),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Color _stackLayerTint(ConversationState state) {
+    switch (state) {
+      case ConversationState.unread:
+      case ConversationState.active:
+        return AppColors.warmOrange;
+      case ConversationState.replied:
+        return AppColors.tealAccent;
+      case ConversationState.read:
+        return Colors.white;
+    }
+  }
+
   Widget _buildMainCard() {
     final state = widget.thread.conversationState;
     final isBlocked = widget.thread.isBlocked;
@@ -226,13 +280,13 @@ class _ThreadCardState extends State<ThreadCard>
     return ClipRRect(
       borderRadius: BorderRadius.circular(24),
       child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+        filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
         child: Stack(
           children: [
             Container(
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(24),
-                color: Colors.transparent,
+                color: const Color.fromRGBO(255, 255, 255, 0.06),
                 border: Border.all(color: _cardBorderColor(state)),
                 boxShadow: _cardBoxShadow(state),
               ),
@@ -322,10 +376,7 @@ class _ThreadCardState extends State<ThreadCard>
       padding: const EdgeInsets.fromLTRB(20, 18, 20, 12),
       child: Row(
         children: [
-          RingAvatar(
-            peerId: thread.contactPeerId,
-            size: 42,
-          ),
+          RingAvatar(peerId: thread.contactPeerId, size: 42),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
@@ -338,7 +389,7 @@ class _ThreadCardState extends State<ThreadCard>
                   style: const TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.w600,
-                    color: Color.fromRGBO(255, 255, 255, 0.9),
+                    color: Color.fromRGBO(255, 255, 255, 1.0),
                   ),
                 ),
                 const SizedBox(height: 2),
@@ -349,7 +400,7 @@ class _ThreadCardState extends State<ThreadCard>
                       style: const TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w400,
-                        color: Color.fromRGBO(255, 255, 255, 0.4),
+                        color: Color.fromRGBO(255, 255, 255, 0.55),
                       ),
                     ),
                     if (thread.lastRepliedAt != null) ...[
@@ -369,15 +420,16 @@ class _ThreadCardState extends State<ThreadCard>
   }
 
   Widget _buildReplyIndicator() {
-    final relativeTime =
-        formatRelativeTime(widget.thread.lastRepliedAt!.toIso8601String());
+    final relativeTime = formatRelativeTime(
+      widget.thread.lastRepliedAt!.toIso8601String(),
+    );
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         Icon(
           Icons.reply_rounded,
           size: 12,
-          color: AppColors.tealAccent.withValues(alpha: 0.40),
+          color: AppColors.tealAccent.withValues(alpha: 0.55),
         ),
         const SizedBox(width: 3),
         Text(
@@ -385,7 +437,7 @@ class _ThreadCardState extends State<ThreadCard>
           style: TextStyle(
             fontSize: 11,
             fontWeight: FontWeight.w400,
-            color: AppColors.tealAccent.withValues(alpha: 0.40),
+            color: AppColors.tealAccent.withValues(alpha: 0.55),
           ),
         ),
       ],
@@ -445,9 +497,9 @@ class _ThreadCardState extends State<ThreadCard>
         ? '\u21A9 You'
         : (isSent ? 'You' : thread.contactUsername);
     final labelColor = isSent
-        ? AppColors.tealAccent.withValues(alpha: 0.50)
-        : const Color.fromRGBO(255, 255, 255, 0.50);
-    final textOpacity = isSent ? 0.65 : 0.90;
+        ? AppColors.tealAccent.withValues(alpha: 0.70)
+        : const Color.fromRGBO(255, 255, 255, 0.70);
+    final textOpacity = isSent ? 0.85 : 0.95;
     final mutedColor = Color.fromRGBO(255, 255, 255, textOpacity);
 
     final hasMedia = msg.media.isNotEmpty;
@@ -522,10 +574,7 @@ class _ThreadCardState extends State<ThreadCard>
               color: labelColor,
             ),
           ),
-          if (hasMedia)
-            Expanded(child: contentWidget)
-          else
-            contentWidget,
+          if (hasMedia) Expanded(child: contentWidget) else contentWidget,
         ],
       ),
     );
@@ -616,16 +665,19 @@ class _ThreadCardState extends State<ThreadCard>
         .where((a) => a.localPath != null && a.downloadStatus == 'done')
         .map((a) => a.localPath!)
         .toList();
-    final startIndex =
-        allPaths.indexOf(tapped.localPath!).clamp(0, allPaths.length - 1);
+    final startIndex = allPaths
+        .indexOf(tapped.localPath!)
+        .clamp(0, allPaths.length - 1);
 
-    Navigator.of(context).push(MaterialPageRoute(
-      builder: (_) => FullScreenImageViewer(
-        localPath: tapped.localPath!,
-        allPaths: allPaths,
-        initialIndex: startIndex,
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => FullScreenImageViewer(
+          localPath: tapped.localPath!,
+          allPaths: allPaths,
+          initialIndex: startIndex,
+        ),
       ),
-    ));
+    );
   }
 
   Widget _buildAnimatedBubble(int index, ThreadMessage message) {
@@ -644,8 +696,7 @@ class _ThreadCardState extends State<ThreadCard>
       quotedText: quotedText,
       isQuoteUnavailable: isQuoteUnavailable,
       media: message.media,
-      onMediaTap: (mediaIndex) =>
-          _openMediaViewer(message.media, mediaIndex),
+      onMediaTap: (mediaIndex) => _openMediaViewer(message.media, mediaIndex),
     );
 
     // Wrap incoming bubbles in swipe-to-quote when expanded
@@ -694,9 +745,11 @@ class _ThreadCardState extends State<ThreadCard>
         shouldRequestFocus: widget.shouldRequestFocus,
         onDraftChanged: widget.onDraftChanged,
         onFocusChanged: widget.onInputFocusChanged,
+        onAttach: widget.onAttach,
       );
     } else {
-      final hintText = (state == ConversationState.replied ||
+      final hintText =
+          (state == ConversationState.replied ||
               state == ConversationState.active)
           ? 'Continue...'
           : 'Reply...';
@@ -708,15 +761,14 @@ class _ThreadCardState extends State<ThreadCard>
         shouldRequestFocus: widget.shouldRequestFocus,
         onDraftChanged: widget.onDraftChanged,
         onFocusChanged: widget.onInputFocusChanged,
+        onAttach: widget.onAttach,
       );
     }
 
     return Container(
       decoration: const BoxDecoration(
         border: Border(
-          top: BorderSide(
-            color: Color.fromRGBO(255, 255, 255, 0.08),
-          ),
+          top: BorderSide(color: Color.fromRGBO(255, 255, 255, 0.08)),
         ),
       ),
       padding: const EdgeInsets.fromLTRB(16, 10, 16, 14),
@@ -724,10 +776,7 @@ class _ThreadCardState extends State<ThreadCard>
         mainAxisSize: MainAxisSize.min,
         children: [
           if (widget.isExpanded && quoteId != null && quoteText != null)
-            QuotePreviewBar(
-              text: quoteText,
-              onDismiss: widget.onClearQuote,
-            ),
+            QuotePreviewBar(text: quoteText, onDismiss: widget.onClearQuote),
           input,
         ],
       ),

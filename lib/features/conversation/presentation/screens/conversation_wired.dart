@@ -58,6 +58,7 @@ class ConversationWired extends StatefulWidget {
   final ContactRepository? contactRepo;
   final MediaAttachmentRepository? mediaAttachmentRepo;
   final MediaFileManager? mediaFileManager;
+  final List<File>? initialAttachments;
 
   const ConversationWired({
     super.key,
@@ -72,6 +73,7 @@ class ConversationWired extends StatefulWidget {
     this.contactRepo,
     this.mediaAttachmentRepo,
     this.mediaFileManager,
+    this.initialAttachments,
   });
 
   @override
@@ -101,6 +103,9 @@ class _ConversationWiredState extends State<ConversationWired> {
   void initState() {
     super.initState();
     _contact = widget.contact;
+    if (widget.initialAttachments != null && widget.initialAttachments!.isNotEmpty) {
+      _pendingAttachments = List<File>.from(widget.initialAttachments!);
+    }
     emitFlowEvent(layer: 'FL', event: 'CONV_FL_SCREEN_INIT', details: {});
     _scrollController.addListener(_onScroll);
     _loadIdentity();
