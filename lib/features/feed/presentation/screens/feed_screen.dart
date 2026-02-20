@@ -38,6 +38,7 @@ class FeedScreen extends StatelessWidget {
   final void Function(String contactPeerId, String messageId)? onQuoteReply;
   final void Function(String contactPeerId)? onClearQuote;
   final void Function(String contactPeerId)? onAttach;
+  final VoidCallback? onAvatarTap;
 
   const FeedScreen({
     super.key,
@@ -64,6 +65,7 @@ class FeedScreen extends StatelessWidget {
     this.onQuoteReply,
     this.onClearQuote,
     this.onAttach,
+    this.onAvatarTap,
   });
 
   @override
@@ -94,6 +96,7 @@ class FeedScreen extends StatelessWidget {
                       peerId: userPeerId,
                       onUsernameChanged: onUsernameChanged,
                       p2pService: p2pService,
+                      onAvatarTap: onAvatarTap,
                     ),
                   ),
                   const SizedBox(height: 10),
