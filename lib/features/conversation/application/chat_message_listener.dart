@@ -45,9 +45,14 @@ class ChatMessageListener {
   Stream<ConversationMessage> get incomingMessageStream =>
       _messageController.stream;
 
-  /// Stream of contacts whose username was updated from an incoming message.
+  /// Stream of contacts updated from an incoming message (username or avatar).
   Stream<ContactModel> get contactUpdatedStream =>
       _contactUpdatedController.stream;
+
+  /// Emits a contact update from an external source (e.g. ProfileUpdateListener).
+  void emitContactUpdate(ContactModel contact) {
+    _contactUpdatedController.add(contact);
+  }
 
   /// Starts listening for incoming P2P messages.
   void start() {

@@ -23,6 +23,9 @@ class ContactModel {
   /// Optional path to a custom avatar image.
   final String? avatarPath;
 
+  /// ISO-8601 timestamp of the avatar version, for change detection.
+  final String? avatarVersion;
+
   /// Base64-encoded ML-KEM-768 public key for post-quantum encryption.
   final String? mlKemPublicKey;
 
@@ -46,6 +49,7 @@ class ContactModel {
     required this.signature,
     required this.scannedAt,
     this.avatarPath,
+    this.avatarVersion,
     this.mlKemPublicKey,
     this.isArchived = false,
     this.archivedAt,
@@ -78,6 +82,7 @@ class ContactModel {
       signature: map['signature'] as String,
       scannedAt: map['scanned_at'] as String,
       avatarPath: map['avatar_path'] as String?,
+      avatarVersion: map['avatar_version'] as String?,
       mlKemPublicKey: map['ml_kem_public_key'] as String?,
       isArchived: (map['is_archived'] as int? ?? 0) == 1,
       archivedAt: map['archived_at'] as String?,
@@ -96,6 +101,7 @@ class ContactModel {
       'signature': signature,
       'scanned_at': scannedAt,
       'avatar_path': avatarPath,
+      'avatar_version': avatarVersion,
       'ml_kem_public_key': mlKemPublicKey,
       'is_archived': isArchived ? 1 : 0,
       'archived_at': archivedAt,
@@ -113,6 +119,7 @@ class ContactModel {
     String? signature,
     String? scannedAt,
     String? avatarPath,
+    String? avatarVersion,
     String? mlKemPublicKey,
     bool? isArchived,
     String? archivedAt,
@@ -129,6 +136,7 @@ class ContactModel {
       signature: signature ?? this.signature,
       scannedAt: scannedAt ?? this.scannedAt,
       avatarPath: avatarPath ?? this.avatarPath,
+      avatarVersion: avatarVersion ?? this.avatarVersion,
       mlKemPublicKey: mlKemPublicKey ?? this.mlKemPublicKey,
       isArchived: isArchived ?? this.isArchived,
       archivedAt: clearArchivedAt ? null : (archivedAt ?? this.archivedAt),

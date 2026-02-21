@@ -1,6 +1,6 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
-import 'package:flutter_app/features/home/presentation/widgets/ring_avatar.dart';
+import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 
 /// Frosted-glass sticky header for the conversation screen.
 ///
@@ -65,7 +65,7 @@ class ConversationHeader extends StatelessWidget {
               ),
               const SizedBox(width: 6),
               // Avatar
-              RingAvatar(peerId: contactPeerId, size: 36),
+              UserAvatar(peerId: contactPeerId, size: 36),
               const SizedBox(width: 14),
               // Name and status
               Expanded(

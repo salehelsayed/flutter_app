@@ -1,12 +1,18 @@
 import 'dart:async';
-import 'dart:typed_data';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:path/path.dart' as p;
+import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
+import 'package:flutter_app/features/settings/application/upload_profile_picture_use_case.dart';
 import 'settings_screen.dart';
 
 /// Wired widget connecting SettingsScreen to business logic.
@@ -14,10 +20,16 @@ import 'settings_screen.dart';
 /// Loads identity, manages mnemonic reveal/hide state and copy timers.
 class SettingsWired extends StatefulWidget {
   final IdentityRepository identityRepo;
+  final Bridge bridge;
+  final ContactRepository contactRepo;
+  final P2PService p2pService;
 
   const SettingsWired({
     super.key,
     required this.identityRepo,
+    required this.bridge,
+    required this.contactRepo,
+    required this.p2pService,
   });
 
   @override
@@ -49,8 +61,27 @@ class _SettingsWiredState extends State<SettingsWired> {
       final identity = await widget.identityRepo.loadIdentity();
       if (identity == null || !mounted) return;
 
+      // Load saved avatar from disk if avatarVersion is set
+      Uint8List? savedAvatar;
+      if (identity.avatarVersion != null) {
+        try {
+          final appDir = await getApplicationDocumentsDirectory();
+          final avatarFile = File(
+            p.join(appDir.path, 'media', 'avatars', '${identity.peerId}.jpg'),
+          );
+          if (avatarFile.existsSync()) {
+            savedAvatar = await avatarFile.readAsBytes();
+          }
+        } catch (_) {}
+      }
+
+      if (!mounted) return;
+
       setState(() {
         _identity = identity;
+        if (savedAvatar != null) {
+          _pickedAvatarBytes = savedAvatar;
+        }
       });
     } catch (e) {
       emitFlowEvent(
@@ -118,6 +149,7 @@ class _SettingsWiredState extends State<SettingsWired> {
       mlKemSecretKey: identity.mlKemSecretKey,
       username: newUsername,
       avatarBlob: identity.avatarBlob,
+      avatarVersion: identity.avatarVersion,
       createdAt: identity.createdAt,
       updatedAt: DateTime.now().toUtc().toIso8601String(),
     );
@@ -147,14 +179,47 @@ class _SettingsWiredState extends State<SettingsWired> {
       final picker = ImagePicker();
       final picked = await picker.pickImage(
         source: ImageSource.gallery,
-        imageQuality: 85,
+        maxWidth: 512,
+        maxHeight: 512,
+        imageQuality: 80,
       );
       if (picked == null || !mounted) return;
 
       final bytes = await picked.readAsBytes();
       if (!mounted) return;
 
+      // Show preview immediately
+      final previousBytes = _pickedAvatarBytes;
       setState(() => _pickedAvatarBytes = bytes);
+
+      // Upload to relay and notify contacts
+      final success = await uploadProfilePicture(
+        bridge: widget.bridge,
+        identityRepo: widget.identityRepo,
+        contactRepo: widget.contactRepo,
+        p2pService: widget.p2pService,
+        filePath: picked.path,
+        mime: 'image/jpeg',
+      );
+
+      if (!mounted) return;
+
+      if (success) {
+        // Reload identity to get updated avatarVersion
+        final updated = await widget.identityRepo.loadIdentity();
+        if (updated != null && mounted) {
+          setState(() => _identity = updated);
+        }
+      } else {
+        // Revert preview on failure
+        setState(() => _pickedAvatarBytes = previousBytes);
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Failed to upload profile picture')),
+          );
+        }
+      }
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',

@@ -849,6 +849,87 @@ func MediaList(paramsJSON string) (result string) {
 	})
 }
 
+// --- Profile ---
+
+// ProfileUpload uploads the user's profile picture to the relay.
+// Input JSON: { "mime": "...", "filePath": "..." }
+// Returns JSON: { "ok": true }
+func ProfileUpload(paramsJSON string) (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+		}
+	}()
+
+	nodeMu.Lock()
+	n := singletonNode
+	nodeMu.Unlock()
+
+	if n == nil {
+		return errJSON("NOT_INITIALIZED", "call Initialize first")
+	}
+
+	var params struct {
+		Mime     string `json:"mime"`
+		FilePath string `json:"filePath"`
+	}
+	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
+		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
+	}
+	if params.FilePath == "" {
+		return errJSON("INVALID_INPUT", "missing filePath")
+	}
+
+	if err := n.ProfileUpload(params.Mime, params.FilePath); err != nil {
+		return errJSON("PROFILE_ERROR", err.Error())
+	}
+
+	return okJSON(map[string]interface{}{
+		"ok": true,
+	})
+}
+
+// ProfileDownload downloads a peer's profile picture from the relay.
+// Input JSON: { "ownerPeerId": "...", "outputPath": "..." }
+// Returns JSON: { "ok": true, "mime": "...", "size": N }
+func ProfileDownload(paramsJSON string) (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+		}
+	}()
+
+	nodeMu.Lock()
+	n := singletonNode
+	nodeMu.Unlock()
+
+	if n == nil {
+		return errJSON("NOT_INITIALIZED", "call Initialize first")
+	}
+
+	var params struct {
+		OwnerPeerId string `json:"ownerPeerId"`
+		OutputPath  string `json:"outputPath"`
+	}
+	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
+		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
+	}
+	if params.OwnerPeerId == "" || params.OutputPath == "" {
+		return errJSON("INVALID_INPUT", "missing ownerPeerId or outputPath")
+	}
+
+	mime, size, err := n.ProfileDownload(params.OwnerPeerId, params.OutputPath)
+	if err != nil {
+		return errJSON("PROFILE_ERROR", err.Error())
+	}
+
+	return okJSON(map[string]interface{}{
+		"ok":   true,
+		"mime": mime,
+		"size": size,
+	})
+}
+
 // --- Helpers ---
 
 // identityMap converts an identity.Identity to the JSON-compatible map format.

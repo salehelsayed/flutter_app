@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
@@ -18,6 +20,7 @@ import 'package:flutter_app/features/orbit/presentation/widgets/archived_empty_s
 /// Receives all state and callbacks from OrbitWired.
 class OrbitScreen extends StatelessWidget {
   final IdentityModel? identity;
+  final Uint8List? userAvatarBytes;
   final List<OrbitFriend> allFriends;
   final List<OrbitFriend> displayedFriends;
   final bool searchActive;
@@ -50,6 +53,7 @@ class OrbitScreen extends StatelessWidget {
   const OrbitScreen({
     super.key,
     required this.identity,
+    this.userAvatarBytes,
     required this.allFriends,
     required this.displayedFriends,
     required this.searchActive,
@@ -116,7 +120,7 @@ class OrbitScreen extends StatelessWidget {
                     },
                     child: Column(
                       children: [
-                        OrbitHeader(userPeerId: userPeerId),
+                        OrbitHeader(userPeerId: userPeerId, avatarBytes: userAvatarBytes),
                         OrbitalVisualization(
                           userPeerId: userPeerId,
                           friends: allFriends

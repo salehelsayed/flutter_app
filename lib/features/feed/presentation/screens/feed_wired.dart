@@ -3,6 +3,8 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:path/path.dart' as p;
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
@@ -102,10 +104,26 @@ class _FeedWiredState extends State<FeedWired> {
       final identity = await widget.repository.loadIdentity();
       if (identity == null || !mounted) return;
 
+      // Load file-based avatar if avatarVersion is set
+      Uint8List? avatarBytes = identity.avatarBlob;
+      if (identity.avatarVersion != null) {
+        try {
+          final appDir = await getApplicationDocumentsDirectory();
+          final avatarFile = File(
+            p.join(appDir.path, 'media', 'avatars', '${identity.peerId}.jpg'),
+          );
+          if (avatarFile.existsSync()) {
+            avatarBytes = await avatarFile.readAsBytes();
+          }
+        } catch (_) {}
+      }
+
+      if (!mounted) return;
+
       setState(() {
         _identity = identity;
         _username = identity.username;
-        _avatarBytes = identity.avatarBlob;
+        _avatarBytes = avatarBytes;
         _peerId = identity.peerId;
       });
     } catch (e) {
@@ -275,36 +293,7 @@ class _FeedWiredState extends State<FeedWired> {
 
   void _onContactUpdated(ContactModel contact) {
     if (!mounted) return;
-    setState(() {
-      for (var i = 0; i < _feedItems.length; i++) {
-        final item = _feedItems[i];
-        if (item is ConnectionFeedItem &&
-            item.contactPeerId == contact.peerId) {
-          _feedItems[i] = ConnectionFeedItem(
-            id: item.id,
-            timestamp: item.timestamp,
-            contactPeerId: item.contactPeerId,
-            contactUsername: contact.username,
-            contactAvatarPath: item.contactAvatarPath,
-            isBlocked: contact.isBlocked,
-          );
-        } else if (item is ThreadFeedItem &&
-            item.contactPeerId == contact.peerId) {
-          _feedItems[i] = ThreadFeedItem(
-            id: item.id,
-            timestamp: item.timestamp,
-            contactPeerId: item.contactPeerId,
-            contactUsername: contact.username,
-            messages: item.messages,
-            unreadCount: item.unreadCount,
-            isUnreadCard: item.isUnreadCard,
-            conversationState: item.conversationState,
-            lastRepliedAt: item.lastRepliedAt,
-            isBlocked: contact.isBlocked,
-          );
-        }
-      }
-    });
+    _refreshFeed();
   }
 
   void _onSendMessage(ConnectionFeedItem item) async {
@@ -541,9 +530,12 @@ class _FeedWiredState extends State<FeedWired> {
       buildSettingsSlideUpRoute(
         builder: (_) => SettingsWired(
           identityRepo: widget.repository,
+          bridge: widget.bridge,
+          contactRepo: widget.contactRepository,
+          p2pService: widget.p2pService,
         ),
       ),
-    );
+    ).then((_) => _loadIdentity());
   }
 
   void _onSwitchView(String tab) {
@@ -584,6 +576,7 @@ class _FeedWiredState extends State<FeedWired> {
       mlKemSecretKey: identity.mlKemSecretKey,
       username: newUsername,
       avatarBlob: identity.avatarBlob,
+      avatarVersion: identity.avatarVersion,
       createdAt: identity.createdAt,
       updatedAt: DateTime.now().toUtc().toIso8601String(),
     );

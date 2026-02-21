@@ -74,6 +74,7 @@ class IdentityRepositoryImpl implements IdentityRepository {
       mlKemSecretKey: mlKemSecretKey,
       username: row['username'] as String? ?? 'Username',
       avatarBlob: row['avatar_blob'] as Uint8List?,
+      avatarVersion: row['avatar_version'] as String?,
       createdAt: row['created_at'] as String,
       updatedAt: row['updated_at'] as String,
     );
@@ -113,6 +114,7 @@ class IdentityRepositoryImpl implements IdentityRepository {
       'username': identity.username,
       'avatar_path': null,
       'avatar_blob': identity.avatarBlob,
+      'avatar_version': identity.avatarVersion,
       'created_at': identity.createdAt,
       'updated_at': identity.updatedAt,
     };

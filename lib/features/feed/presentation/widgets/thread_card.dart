@@ -14,7 +14,7 @@ import 'package:flutter_app/features/feed/presentation/widgets/quote_preview_bar
 import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bubble.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/time_gap_divider.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/unread_count_badge.dart';
-import 'package:flutter_app/features/home/presentation/widgets/ring_avatar.dart';
+import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 
 /// A thread card that groups messages from the same contact.
 ///
@@ -376,7 +376,7 @@ class _ThreadCardState extends State<ThreadCard> with TickerProviderStateMixin {
       padding: const EdgeInsets.fromLTRB(20, 18, 20, 12),
       child: Row(
         children: [
-          RingAvatar(peerId: thread.contactPeerId, size: 42),
+          UserAvatar(peerId: thread.contactPeerId, size: 42),
           const SizedBox(width: 12),
           Expanded(
             child: Column(

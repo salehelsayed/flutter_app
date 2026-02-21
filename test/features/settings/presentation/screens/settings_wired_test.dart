@@ -1,8 +1,19 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/services/p2p_service.dart';
+import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
+import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
+import 'package:flutter_app/features/p2p/domain/models/connection_state.dart' as p2p;
+import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
+import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
+import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
 import 'package:flutter_app/features/settings/presentation/screens/settings_wired.dart';
 
 class FakeIdentityRepository implements IdentityRepository {
@@ -17,6 +28,99 @@ class FakeIdentityRepository implements IdentityRepository {
   Future<void> saveIdentity(IdentityModel identity) async {
     this.identity = identity;
   }
+}
+
+class _FakeBridge implements Bridge {
+  @override
+  Future<String> send(String message) async {
+    return jsonEncode({'ok': true});
+  }
+
+  @override
+  Future<void> initialize() async {}
+  @override
+  Future<bool> checkHealth() async => true;
+  @override
+  Future<void> reinitialize() async {}
+  @override
+  void dispose() {}
+  @override
+  bool get isInitialized => true;
+  @override
+  void Function(ChatMessage)? onMessageReceived;
+  @override
+  void Function(p2p.ConnectionState)? onPeerConnected;
+  @override
+  void Function(p2p.ConnectionState)? onPeerDisconnected;
+}
+
+class _FakeContactRepo implements ContactRepository {
+  @override
+  Future<void> addContact(ContactModel contact) async {}
+  @override
+  Future<ContactModel?> getContact(String peerId) async => null;
+  @override
+  Future<List<ContactModel>> getAllContacts() async => [];
+  @override
+  Future<List<ContactModel>> getActiveContacts() async => [];
+  @override
+  Future<List<ContactModel>> getArchivedContacts() async => [];
+  @override
+  Future<void> deleteContact(String peerId) async {}
+  @override
+  Future<bool> contactExists(String peerId) async => false;
+  @override
+  Future<int> getContactCount() async => 0;
+  @override
+  Future<void> archiveContact(String peerId) async {}
+  @override
+  Future<void> unarchiveContact(String peerId) async {}
+  @override
+  Future<void> blockContact(String peerId) async {}
+  @override
+  Future<void> unblockContact(String peerId) async {}
+}
+
+class _FakeP2PService implements P2PService {
+  @override
+  NodeState get currentState => const NodeState(isStarted: true);
+  @override
+  Stream<NodeState> get stateStream => const Stream.empty();
+  @override
+  Stream<ChatMessage> get messageStream => const Stream.empty();
+  @override
+  Future<bool> startNode(String privateKeyBase64, String peerId) async => true;
+  @override
+  Future<bool> startNodeCore(String privateKeyBase64, String peerId) async => false;
+  @override
+  Future<void> warmBackground() async {}
+  @override
+  Future<bool> stopNode() async => true;
+  @override
+  Future<bool> sendMessage(String peerId, String message) async => true;
+  @override
+  Future<SendMessageResult> sendMessageWithReply(String peerId, String message) async =>
+      const SendMessageResult(sent: true);
+  @override
+  Future<DiscoveredPeer?> discoverPeer(String peerId) async => null;
+  @override
+  Future<bool> dialPeer(String peerId, {List<String>? addresses}) async => true;
+  @override
+  Future<bool> storeInInbox(String toPeerId, String message) async => false;
+  @override
+  Future<List<Map<String, dynamic>>> retrieveInbox() async => [];
+  @override
+  Future<bool> registerPushToken(String token, String platform) async => true;
+  @override
+  Future<void> performImmediateHealthCheck() async {}
+  @override
+  Future<void> drainOfflineInbox() async {}
+  @override
+  bool isLocalPeer(String peerId) => false;
+  @override
+  Future<bool> sendLocalMessage(String peerId, String message, String fromPeerId) async => false;
+  @override
+  void dispose() {}
 }
 
 void main() {
@@ -36,10 +140,18 @@ void main() {
   Future<void> pumpScreen(
     WidgetTester tester, {
     required FakeIdentityRepository identityRepo,
+    Bridge? bridge,
+    ContactRepository? contactRepo,
+    P2PService? p2pService,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
-        home: SettingsWired(identityRepo: identityRepo),
+        home: SettingsWired(
+          identityRepo: identityRepo,
+          bridge: bridge ?? _FakeBridge(),
+          contactRepo: contactRepo ?? _FakeContactRepo(),
+          p2pService: p2pService ?? _FakeP2PService(),
+        ),
       ),
     );
     // Use pump (not pumpAndSettle) because AmbientBackground has an
@@ -175,7 +287,12 @@ void main() {
             onPressed: () {
               Navigator.of(context).push(
                 MaterialPageRoute<void>(
-                  builder: (_) => SettingsWired(identityRepo: identityRepo),
+                  builder: (_) => SettingsWired(
+                    identityRepo: identityRepo,
+                    bridge: _FakeBridge(),
+                    contactRepo: _FakeContactRepo(),
+                    p2pService: _FakeP2PService(),
+                  ),
                 ),
               ).then((_) => popped = true);
             },
