@@ -15,7 +15,7 @@ import 'package:flutter_app/features/conversation/domain/repositories/media_atta
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/feed/presentation/navigation/feed_route_transition.dart';
 import 'package:flutter_app/features/feed/presentation/screens/feed_wired.dart';
-import 'package:flutter_app/features/home/presentation/widgets/ring_avatar.dart';
+import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/qr_code/application/parse_qr_payload_use_case.dart';
 import 'qr_scanner_screen.dart';
@@ -218,7 +218,7 @@ class QRScannerWired extends StatelessWidget {
           children: [
             const SizedBox(height: 16),
             // Contact's ring avatar
-            RingAvatar(peerId: contact.peerId, size: 80),
+            UserAvatar(peerId: contact.peerId, size: 80),
             const SizedBox(height: 16),
             // Username
             Text(
@@ -294,7 +294,7 @@ class QRScannerWired extends StatelessWidget {
           children: [
             const SizedBox(height: 16),
             // Contact's ring avatar
-            RingAvatar(peerId: contact.peerId, size: 80),
+            UserAvatar(peerId: contact.peerId, size: 80),
             const SizedBox(height: 16),
             // Username
             Text(

@@ -123,6 +123,7 @@ class OrbitScreen extends StatelessWidget {
                         OrbitHeader(userPeerId: userPeerId, avatarBytes: userAvatarBytes),
                         OrbitalVisualization(
                           userPeerId: userPeerId,
+                          userAvatarBytes: userAvatarBytes,
                           friends: allFriends
                               .where((f) => !f.isBlocked)
                               .toList(),

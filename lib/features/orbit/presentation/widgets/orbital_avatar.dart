@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_app/features/home/presentation/widgets/ring_avatar.dart';
+import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 
 /// A positioned avatar on an orbital ring with staggered scale-in animation.
 ///
@@ -79,7 +79,7 @@ class _OrbitalAvatarState extends State<OrbitalAvatar>
           ),
         ),
         child: ClipOval(
-          child: RingAvatar(
+          child: UserAvatar(
             peerId: widget.peerId,
             size: widget.size - widget.borderWidth * 2,
           ),

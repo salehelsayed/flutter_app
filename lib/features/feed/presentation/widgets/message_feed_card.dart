@@ -1,7 +1,7 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/unread_count_badge.dart';
-import 'package:flutter_app/features/home/presentation/widgets/ring_avatar.dart';
+import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 
 /// A glassmorphic feed card showing an incoming message from a contact.
 ///
@@ -134,7 +134,7 @@ class _MessageFeedCardState extends State<MessageFeedCard>
                       padding: const EdgeInsets.fromLTRB(20, 18, 20, 12),
                       child: Row(
                         children: [
-                          RingAvatar(
+                          UserAvatar(
                             peerId: widget.contactPeerId,
                             size: 42,
                           ),

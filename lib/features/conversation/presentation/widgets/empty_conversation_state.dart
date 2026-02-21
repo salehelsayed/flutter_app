@@ -1,6 +1,6 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
-import 'package:flutter_app/features/home/presentation/widgets/ring_avatar.dart';
+import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 
 /// Empty state shown when a conversation has no messages yet.
 ///
@@ -153,7 +153,7 @@ class _EmptyConversationStateState extends State<EmptyConversationState>
                 ),
               ],
             ),
-            child: RingAvatar(peerId: widget.contactPeerId, size: 80),
+            child: UserAvatar(peerId: widget.contactPeerId, size: 80),
           ),
         ],
       ),
