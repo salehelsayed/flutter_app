@@ -6,8 +6,12 @@ import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
+import 'package:flutter_app/features/settings/application/image_quality_preference_use_cases.dart';
+import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contact_request/application/accept_contact_request_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
@@ -36,6 +40,8 @@ import 'package:flutter_app/features/settings/presentation/navigation/settings_r
 import 'package:flutter_app/features/settings/presentation/screens/settings_wired.dart';
 import 'feed_screen.dart';
 
+enum _MediaSource { gallery, camera, videoCamera }
+
 /// Wired widget that connects FeedScreen to business logic.
 ///
 /// Follows the same "Wired" pattern as FirstTimeExperienceWired.
@@ -52,6 +58,8 @@ class FeedWired extends StatefulWidget {
   final Bridge bridge;
   final P2PService p2pService;
   final MediaFileManager mediaFileManager;
+  final SecureKeyStore secureKeyStore;
+  final ImageProcessor imageProcessor;
 
   const FeedWired({
     super.key,
@@ -65,6 +73,8 @@ class FeedWired extends StatefulWidget {
     required this.bridge,
     required this.p2pService,
     required this.mediaFileManager,
+    required this.secureKeyStore,
+    required this.imageProcessor,
   });
 
   @override
@@ -86,12 +96,16 @@ class _FeedWiredState extends State<FeedWired> {
   StreamSubscription<ContactRequestModel>? _requestSubscription;
   StreamSubscription<ConversationMessage>? _chatSubscription;
   StreamSubscription<ContactModel>? _contactUpdateSubscription;
+  ImageQualityPreference _qualityPreference = ImageQualityPreference.compressed;
+  ImageQualityPreference _videoQualityPreference = ImageQualityPreference.compressed;
 
   @override
   void initState() {
     super.initState();
     emitFlowEvent(layer: 'FL', event: 'FEED_FL_SCREEN_INIT', details: {});
     _loadIdentity();
+    _loadQualityPreference();
+    _loadVideoQualityPreference();
     _loadFeedFromDatabase();
     _loadTotalUnreadCount();
     _startListeningForContactRequests();
@@ -132,6 +146,24 @@ class _FeedWiredState extends State<FeedWired> {
         event: 'FEED_FL_LOAD_ERROR',
         details: {'error': e.toString()},
       );
+    }
+  }
+
+  Future<void> _loadQualityPreference() async {
+    final pref = await loadImageQualityPreference(
+      secureKeyStore: widget.secureKeyStore,
+    );
+    if (mounted) {
+      setState(() => _qualityPreference = pref);
+    }
+  }
+
+  Future<void> _loadVideoQualityPreference() async {
+    final pref = await loadVideoQualityPreference(
+      secureKeyStore: widget.secureKeyStore,
+    );
+    if (mounted) {
+      setState(() => _videoQualityPreference = pref);
     }
   }
 
@@ -319,6 +351,9 @@ class _FeedWiredState extends State<FeedWired> {
           contactRepo: widget.contactRepository,
           mediaAttachmentRepo: widget.mediaAttachmentRepository,
           mediaFileManager: widget.mediaFileManager,
+          imageProcessor: widget.imageProcessor,
+          qualityPreference: _qualityPreference,
+          videoQualityPreference: _videoQualityPreference,
         ),
       ),
     ).then((_) => _refreshFeed());
@@ -350,6 +385,9 @@ class _FeedWiredState extends State<FeedWired> {
           contactRepo: widget.contactRepository,
           mediaAttachmentRepo: widget.mediaAttachmentRepository,
           mediaFileManager: widget.mediaFileManager,
+          imageProcessor: widget.imageProcessor,
+          qualityPreference: _qualityPreference,
+          videoQualityPreference: _videoQualityPreference,
         ),
       ),
     ).then((_) => _refreshFeed());
@@ -442,23 +480,34 @@ class _FeedWiredState extends State<FeedWired> {
             ListTile(
               leading: const Icon(Icons.photo_library, color: Colors.white),
               title: const Text(
-                'Photo Library',
+                'Media Library',
                 style: TextStyle(color: Colors.white),
               ),
               onTap: () {
                 Navigator.pop(ctx);
-                _pickAndOpenConversation(contactPeerId, fromCamera: false);
+                _pickAndOpenConversation(contactPeerId, source: _MediaSource.gallery);
               },
             ),
             ListTile(
               leading: const Icon(Icons.camera_alt, color: Colors.white),
               title: const Text(
-                'Camera',
+                'Take Photo',
                 style: TextStyle(color: Colors.white),
               ),
               onTap: () {
                 Navigator.pop(ctx);
-                _pickAndOpenConversation(contactPeerId, fromCamera: true);
+                _pickAndOpenConversation(contactPeerId, source: _MediaSource.camera);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.videocam, color: Colors.white),
+              title: const Text(
+                'Record Video',
+                style: TextStyle(color: Colors.white),
+              ),
+              onTap: () {
+                Navigator.pop(ctx);
+                _pickAndOpenConversation(contactPeerId, source: _MediaSource.videoCamera);
               },
             ),
             const SizedBox(height: 16),
@@ -470,23 +519,45 @@ class _FeedWiredState extends State<FeedWired> {
 
   Future<void> _pickAndOpenConversation(
     String contactPeerId, {
-    required bool fromCamera,
+    required _MediaSource source,
   }) async {
     try {
       final picker = ImagePicker();
       List<File> files;
 
-      if (fromCamera) {
-        final picked = await picker.pickImage(
-          source: ImageSource.camera,
-          imageQuality: 85,
-        );
-        if (picked == null || !mounted) return;
-        files = [File(picked.path)];
-      } else {
-        final picked = await picker.pickMultiImage(imageQuality: 85);
-        if (picked.isEmpty || !mounted) return;
-        files = picked.map((xf) => File(xf.path)).toList();
+      switch (source) {
+        case _MediaSource.camera:
+          final picked = await picker.pickImage(
+            source: ImageSource.camera,
+          );
+          if (picked == null || !mounted) return;
+          final path = await _processMediaPath(picked.path);
+          files = [File(path)];
+        case _MediaSource.videoCamera:
+          final picked = await picker.pickVideo(
+            source: ImageSource.camera,
+          );
+          if (picked == null || !mounted) return;
+          _showProcessingSnackBar();
+          final path = await _processMediaPath(picked.path);
+          if (mounted) ScaffoldMessenger.of(context).hideCurrentSnackBar();
+          files = [File(path)];
+        case _MediaSource.gallery:
+          final picked = await picker.pickMultipleMedia();
+          if (picked.isEmpty || !mounted) return;
+          final hasVideo = picked.any(
+            (xf) => widget.imageProcessor.isProcessableVideo(xf.path),
+          );
+          if (hasVideo) _showProcessingSnackBar();
+          final processedFiles = <File>[];
+          for (final xf in picked) {
+            final path = await _processMediaPath(xf.path);
+            processedFiles.add(File(path));
+          }
+          if (hasVideo && mounted) {
+            ScaffoldMessenger.of(context).hideCurrentSnackBar();
+          }
+          files = processedFiles;
       }
 
       final contact =
@@ -513,6 +584,9 @@ class _FeedWiredState extends State<FeedWired> {
             mediaAttachmentRepo: widget.mediaAttachmentRepository,
             mediaFileManager: widget.mediaFileManager,
             initialAttachments: files,
+            imageProcessor: widget.imageProcessor,
+            qualityPreference: _qualityPreference,
+            videoQualityPreference: _videoQualityPreference,
           ),
         ),
       ).then((_) => _refreshFeed());
@@ -525,6 +599,32 @@ class _FeedWiredState extends State<FeedWired> {
     }
   }
 
+  void _showProcessingSnackBar() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Processing video\u2026'),
+        duration: Duration(minutes: 5),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  /// Processes a media file (image or video) and returns the processed path.
+  Future<String> _processMediaPath(String path) async {
+    final processor = widget.imageProcessor;
+    if (processor.isProcessableVideo(path)) {
+      final result = await processor.processVideo(
+        inputPath: path,
+        quality: _videoQualityPreference,
+      );
+      return result.path;
+    }
+    return processor.processImage(
+      inputPath: path,
+      quality: _qualityPreference,
+    );
+  }
+
   void _onAvatarTap() {
     Navigator.of(context).push(
       buildSettingsSlideUpRoute(
@@ -533,9 +633,15 @@ class _FeedWiredState extends State<FeedWired> {
           bridge: widget.bridge,
           contactRepo: widget.contactRepository,
           p2pService: widget.p2pService,
+          secureKeyStore: widget.secureKeyStore,
+          imageProcessor: widget.imageProcessor,
         ),
       ),
-    ).then((_) => _loadIdentity());
+    ).then((_) {
+      _loadIdentity();
+      _loadQualityPreference();
+      _loadVideoQualityPreference();
+    });
   }
 
   void _onSwitchView(String tab) {
@@ -553,6 +659,8 @@ class _FeedWiredState extends State<FeedWired> {
             bridge: widget.bridge,
             p2pService: widget.p2pService,
             mediaFileManager: widget.mediaFileManager,
+            secureKeyStore: widget.secureKeyStore,
+            imageProcessor: widget.imageProcessor,
           ),
         ),
       ).then((_) => _refreshFeed());

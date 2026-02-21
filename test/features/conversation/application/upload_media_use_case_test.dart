@@ -35,6 +35,9 @@ class _FakeBridge implements Bridge {
   void Function(ConnectionState)? onPeerConnected;
   @override
   void Function(ConnectionState)? onPeerDisconnected;
+  @override
+  void Function(List<String> listenAddresses, List<String> circuitAddresses)?
+      onAddressesUpdated;
 }
 
 void main() {
@@ -290,4 +293,7 @@ class _ThrowingBridge implements Bridge {
   void Function(ConnectionState)? onPeerConnected;
   @override
   void Function(ConnectionState)? onPeerDisconnected;
+  @override
+  void Function(List<String> listenAddresses, List<String> circuitAddresses)?
+      onAddressesUpdated;
 }

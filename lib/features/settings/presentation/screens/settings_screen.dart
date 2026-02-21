@@ -7,6 +7,8 @@ import 'package:flutter_app/features/identity/presentation/widgets/ambient_backg
 import 'package:flutter_app/features/settings/presentation/widgets/settings_peer_id_card.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/settings_profile_section.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/settings_recovery_phrase_card.dart';
+import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
+import 'package:flutter_app/features/settings/presentation/widgets/image_quality_toggle.dart';
 
 /// Pure UI Settings screen.
 ///
@@ -27,6 +29,10 @@ class SettingsScreen extends StatelessWidget {
   final VoidCallback? onToggleMnemonic;
   final VoidCallback? onCopyMnemonic;
   final VoidCallback? onHideMnemonic;
+  final ImageQualityPreference currentQuality;
+  final ValueChanged<ImageQualityPreference>? onQualityChanged;
+  final ImageQualityPreference currentVideoQuality;
+  final ValueChanged<ImageQualityPreference>? onVideoQualityChanged;
   final void Function(String) onSwitchView;
   final String activeTab;
 
@@ -46,6 +52,10 @@ class SettingsScreen extends StatelessWidget {
     this.onToggleMnemonic,
     this.onCopyMnemonic,
     this.onHideMnemonic,
+    this.currentQuality = ImageQualityPreference.compressed,
+    this.onQualityChanged,
+    this.currentVideoQuality = ImageQualityPreference.compressed,
+    this.onVideoQualityChanged,
     required this.onSwitchView,
     required this.activeTab,
   });
@@ -136,6 +146,22 @@ class SettingsScreen extends StatelessWidget {
                         peerId: peerId!,
                         isCopied: isPeerIdCopied,
                         onCopy: onCopyPeerId,
+                      ),
+                      const SizedBox(height: 24),
+                    ],
+                    if (onQualityChanged != null) ...[
+                      ImageQualityToggle(
+                        value: currentQuality,
+                        onChanged: onQualityChanged!,
+                      ),
+                      const SizedBox(height: 24),
+                    ],
+                    if (onVideoQualityChanged != null) ...[
+                      ImageQualityToggle(
+                        value: currentVideoQuality,
+                        onChanged: onVideoQualityChanged!,
+                        label: 'Video Quality',
+                        icon: Icons.videocam,
                       ),
                       const SizedBox(height: 24),
                     ],

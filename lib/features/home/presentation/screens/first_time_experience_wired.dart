@@ -1,9 +1,12 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contact_request/application/accept_contact_request_use_case.dart';
@@ -37,6 +40,8 @@ class FirstTimeExperienceWired extends StatefulWidget {
   final Bridge bridge;
   final P2PService p2pService;
   final MediaFileManager mediaFileManager;
+  final ImageProcessor imageProcessor;
+  final SecureKeyStore secureKeyStore;
 
   const FirstTimeExperienceWired({
     super.key,
@@ -50,6 +55,8 @@ class FirstTimeExperienceWired extends StatefulWidget {
     required this.bridge,
     required this.p2pService,
     required this.mediaFileManager,
+    required this.imageProcessor,
+    required this.secureKeyStore,
   });
 
   @override
@@ -139,6 +146,8 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
             bridge: widget.bridge,
             p2pService: widget.p2pService,
             mediaFileManager: widget.mediaFileManager,
+            secureKeyStore: widget.secureKeyStore,
+            imageProcessor: widget.imageProcessor,
           ),
         ),
       );
@@ -322,15 +331,15 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
       final picker = ImagePicker();
       final pickedFile = await picker.pickImage(
         source: source,
-        maxWidth: 512,
-        maxHeight: 512,
-        imageQuality: 85,
       );
 
       if (pickedFile == null) return;
 
-      // Read image bytes and store in encrypted DB (no file on disk)
-      final bytes = await pickedFile.readAsBytes();
+      // Process avatar: strip EXIF, compress to 512x512
+      final processedPath = await widget.imageProcessor.processAvatar(
+        inputPath: pickedFile.path,
+      );
+      final bytes = await File(processedPath).readAsBytes();
 
       final updatedIdentity = IdentityModel(
         peerId: _identity!.peerId,
@@ -386,6 +395,8 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
           identityRepository: widget.repository,
           p2pService: widget.p2pService,
           mediaFileManager: widget.mediaFileManager,
+          secureKeyStore: widget.secureKeyStore,
+          imageProcessor: widget.imageProcessor,
           ownPeerId: _identity!.peerId,
         ),
       ),

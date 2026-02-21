@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
@@ -14,7 +15,9 @@ import 'package:flutter_app/features/p2p/domain/models/connection_state.dart' as
 import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
+import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/features/settings/presentation/screens/settings_wired.dart';
+import '../../../../core/secure_storage/fake_secure_key_store.dart';
 
 class FakeIdentityRepository implements IdentityRepository {
   IdentityModel? identity;
@@ -52,6 +55,9 @@ class _FakeBridge implements Bridge {
   void Function(p2p.ConnectionState)? onPeerConnected;
   @override
   void Function(p2p.ConnectionState)? onPeerDisconnected;
+  @override
+  void Function(List<String> listenAddresses, List<String> circuitAddresses)?
+      onAddressesUpdated;
 }
 
 class _FakeContactRepo implements ContactRepository {
@@ -151,6 +157,8 @@ void main() {
           bridge: bridge ?? _FakeBridge(),
           contactRepo: contactRepo ?? _FakeContactRepo(),
           p2pService: p2pService ?? _FakeP2PService(),
+          secureKeyStore: FakeSecureKeyStore(),
+          imageProcessor: ImageProcessor(compressFile: _noOpCompress),
         ),
       ),
     );
@@ -276,6 +284,46 @@ void main() {
     expect(find.text('@Bob'), findsOneWidget);
   });
 
+  testWidgets('renders both Photo Quality and Video Quality toggles', (
+    tester,
+  ) async {
+    final identityRepo = FakeIdentityRepository(makeIdentity());
+    await pumpScreen(tester, identityRepo: identityRepo);
+
+    expect(find.text('Photo Quality'), findsOneWidget);
+    expect(find.text('Video Quality'), findsOneWidget);
+  });
+
+  testWidgets('loads video quality preference on init from SecureKeyStore', (
+    tester,
+  ) async {
+    final identityRepo = FakeIdentityRepository(makeIdentity());
+    final store = FakeSecureKeyStore();
+    await store.write('video_quality_preference', 'original');
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SettingsWired(
+          identityRepo: identityRepo,
+          bridge: _FakeBridge(),
+          contactRepo: _FakeContactRepo(),
+          p2pService: _FakeP2PService(),
+          secureKeyStore: store,
+          imageProcessor: ImageProcessor(compressFile: _noOpCompress),
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+
+    // Find the Video Quality section and check that "Original" is selected
+    // The second "Original" text (in Video Quality) should have bold weight
+    final originalTexts = tester.widgetList<Text>(find.text('Original')).toList();
+    // There are 2 Original texts: one in Photo Quality, one in Video Quality
+    expect(originalTexts.length, 2);
+    // Video quality toggle is second — its Original should be bold (w600)
+    expect(originalTexts[1].style?.fontWeight, FontWeight.w600);
+  });
+
   testWidgets('back button pops navigation', (tester) async {
     final identityRepo = FakeIdentityRepository(makeIdentity());
 
@@ -292,6 +340,8 @@ void main() {
                     bridge: _FakeBridge(),
                     contactRepo: _FakeContactRepo(),
                     p2pService: _FakeP2PService(),
+                    secureKeyStore: FakeSecureKeyStore(),
+                    imageProcessor: ImageProcessor(compressFile: _noOpCompress),
                   ),
                 ),
               ).then((_) => popped = true);
@@ -320,4 +370,14 @@ void main() {
 
     expect(popped, isTrue);
   });
+}
+
+Future<XFile?> _noOpCompress({
+  required String path,
+  required int quality,
+  required bool keepExif,
+  int minWidth = 1920,
+  int minHeight = 1080,
+}) async {
+  return XFile('${path}_compressed.jpg');
 }

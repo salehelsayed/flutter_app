@@ -7,7 +7,11 @@ import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/media/image_processor.dart';
+import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
+import 'package:flutter_app/features/settings/application/image_quality_preference_use_cases.dart';
+import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
@@ -23,6 +27,8 @@ class SettingsWired extends StatefulWidget {
   final Bridge bridge;
   final ContactRepository contactRepo;
   final P2PService p2pService;
+  final SecureKeyStore secureKeyStore;
+  final ImageProcessor imageProcessor;
 
   const SettingsWired({
     super.key,
@@ -30,6 +36,8 @@ class SettingsWired extends StatefulWidget {
     required this.bridge,
     required this.contactRepo,
     required this.p2pService,
+    required this.secureKeyStore,
+    required this.imageProcessor,
   });
 
   @override
@@ -44,6 +52,8 @@ class _SettingsWiredState extends State<SettingsWired> {
   Uint8List? _pickedAvatarBytes;
   Timer? _peerIdCopyTimer;
   Timer? _mnemonicCopyTimer;
+  ImageQualityPreference _currentQuality = ImageQualityPreference.compressed;
+  ImageQualityPreference _currentVideoQuality = ImageQualityPreference.compressed;
 
   @override
   void initState() {
@@ -54,6 +64,8 @@ class _SettingsWiredState extends State<SettingsWired> {
       details: {},
     );
     _loadIdentity();
+    _loadQualityPreference();
+    _loadVideoQualityPreference();
   }
 
   Future<void> _loadIdentity() async {
@@ -136,6 +148,40 @@ class _SettingsWiredState extends State<SettingsWired> {
     _mnemonicCopyTimer?.cancel();
   }
 
+  Future<void> _loadQualityPreference() async {
+    final pref = await loadImageQualityPreference(
+      secureKeyStore: widget.secureKeyStore,
+    );
+    if (mounted) {
+      setState(() => _currentQuality = pref);
+    }
+  }
+
+  Future<void> _onQualityChanged(ImageQualityPreference newQuality) async {
+    setState(() => _currentQuality = newQuality);
+    await saveImageQualityPreference(
+      secureKeyStore: widget.secureKeyStore,
+      preference: newQuality,
+    );
+  }
+
+  Future<void> _loadVideoQualityPreference() async {
+    final pref = await loadVideoQualityPreference(
+      secureKeyStore: widget.secureKeyStore,
+    );
+    if (mounted) {
+      setState(() => _currentVideoQuality = pref);
+    }
+  }
+
+  Future<void> _onVideoQualityChanged(ImageQualityPreference newQuality) async {
+    setState(() => _currentVideoQuality = newQuality);
+    await saveVideoQualityPreference(
+      secureKeyStore: widget.secureKeyStore,
+      preference: newQuality,
+    );
+  }
+
   Future<void> _onUsernameChanged(String newUsername) async {
     final identity = _identity;
     if (identity == null) return;
@@ -179,13 +225,14 @@ class _SettingsWiredState extends State<SettingsWired> {
       final picker = ImagePicker();
       final picked = await picker.pickImage(
         source: ImageSource.gallery,
-        maxWidth: 512,
-        maxHeight: 512,
-        imageQuality: 80,
       );
       if (picked == null || !mounted) return;
 
-      final bytes = await picked.readAsBytes();
+      // Process avatar: strip EXIF, compress to 512x512
+      final processedPath = await widget.imageProcessor.processAvatar(
+        inputPath: picked.path,
+      );
+      final bytes = await File(processedPath).readAsBytes();
       if (!mounted) return;
 
       // Show preview immediately
@@ -261,6 +308,10 @@ class _SettingsWiredState extends State<SettingsWired> {
         onToggleMnemonic: _onToggleMnemonic,
         onCopyMnemonic: _onCopyMnemonic,
         onHideMnemonic: _onHideMnemonic,
+        currentQuality: _currentQuality,
+        onQualityChanged: _onQualityChanged,
+        currentVideoQuality: _currentVideoQuality,
+        onVideoQualityChanged: _onVideoQualityChanged,
         onSwitchView: _onSwitchView,
         activeTab: 'feed',
       ),
