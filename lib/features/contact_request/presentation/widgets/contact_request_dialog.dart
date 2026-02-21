@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/app_colors.dart';
 import 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart';
-import 'package:flutter_app/features/home/presentation/widgets/ring_avatar.dart';
+import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 
 /// Dialog shown when receiving a contact request.
 ///
@@ -33,7 +33,7 @@ class ContactRequestDialog extends StatelessWidget {
         children: [
           const SizedBox(height: 16),
           // Sender's ring avatar
-          RingAvatar(peerId: request.peerId, size: 80),
+          UserAvatar(peerId: request.peerId, size: 80),
           const SizedBox(height: 16),
           // Username
           Text(

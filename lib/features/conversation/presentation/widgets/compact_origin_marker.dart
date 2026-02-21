@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_app/features/home/presentation/widgets/ring_avatar.dart';
+import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 
 /// Compact version of the connection origin marker.
 ///
@@ -22,7 +22,7 @@ class CompactOriginMarker extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          RingAvatar(peerId: contactPeerId, size: 48),
+          UserAvatar(peerId: contactPeerId, size: 48),
           const SizedBox(height: 4),
           const Text(
             'Connected!',

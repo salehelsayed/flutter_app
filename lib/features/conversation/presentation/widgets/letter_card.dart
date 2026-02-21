@@ -1,7 +1,7 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
-import 'package:flutter_app/features/home/presentation/widgets/ring_avatar.dart';
+import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/shared/widgets/media/audio_player_widget.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid.dart';
 
@@ -142,7 +142,7 @@ class LetterCard extends StatelessWidget {
                     padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
                     child: Row(
                       children: [
-                        RingAvatar(peerId: senderPeerId, size: 32),
+                        UserAvatar(peerId: senderPeerId, size: 32),
                         const SizedBox(width: 10),
                         Expanded(
                           child: Text(

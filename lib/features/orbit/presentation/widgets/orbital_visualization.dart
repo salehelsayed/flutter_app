@@ -1,6 +1,7 @@
 import 'dart:math';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
-import 'package:flutter_app/features/home/presentation/widgets/ring_avatar.dart';
+import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_friend.dart';
 import 'orbital_ring_painter.dart';
 import 'orbital_avatar.dart';
@@ -13,6 +14,7 @@ import 'overflow_badge.dart';
 /// Overflow badge if friends > 13.
 class OrbitalVisualization extends StatelessWidget {
   final String? userPeerId;
+  final Uint8List? userAvatarBytes;
   final List<OrbitFriend> friends;
 
   static const double _size = 320;
@@ -25,6 +27,7 @@ class OrbitalVisualization extends StatelessWidget {
   const OrbitalVisualization({
     super.key,
     required this.userPeerId,
+    this.userAvatarBytes,
     required this.friends,
   });
 
@@ -70,8 +73,9 @@ class OrbitalVisualization extends StatelessWidget {
                 Positioned(
                   left: _center - 24,
                   top: _center - 24,
-                  child: RingAvatar(
-                    peerId: userPeerId!,
+                  child: UserAvatar(
+                    peerId: userPeerId,
+                    avatarBytes: userAvatarBytes,
                     size: 48,
                   ),
                 ),

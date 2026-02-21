@@ -2,7 +2,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/app_colors.dart';
-import 'ring_avatar.dart';
+import 'user_avatar.dart';
 
 /// Profile avatar with ring avatar default and camera button.
 ///
@@ -54,7 +54,7 @@ class ProfileAvatarWidget extends StatelessWidget {
 
     // Priority 2: Ring avatar from peerId
     if (peerId != null) {
-      return RingAvatar(peerId: peerId!, size: size);
+      return UserAvatar(peerId: peerId!, size: size);
     }
 
     // Priority 3: Placeholder (edge case)
