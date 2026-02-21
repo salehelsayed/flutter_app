@@ -90,6 +90,13 @@ class GoBridgeClient extends Bridge {
           details: {'error': error.toString()},
         );
       },
+      onDone: () {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GO_BRIDGE_EVENT_STREAM_DONE',
+          details: {},
+        );
+      },
     );
 
     _initialized = true;
@@ -132,6 +139,7 @@ class GoBridgeClient extends Bridge {
     final savedOnMessage = onMessageReceived;
     final savedOnConnect = onPeerConnected;
     final savedOnDisconnect = onPeerDisconnected;
+    final savedOnAddresses = onAddressesUpdated;
 
     // Cancel existing subscription
     await _eventSubscription?.cancel();
@@ -142,6 +150,7 @@ class GoBridgeClient extends Bridge {
     onMessageReceived = savedOnMessage;
     onPeerConnected = savedOnConnect;
     onPeerDisconnected = savedOnDisconnect;
+    onAddressesUpdated = savedOnAddresses;
 
     // Re-initialize
     await initialize();
@@ -155,6 +164,7 @@ class GoBridgeClient extends Bridge {
     onMessageReceived = null;
     onPeerConnected = null;
     onPeerDisconnected = null;
+    onAddressesUpdated = null;
   }
 
   /// Handle push events from the Go layer.
@@ -202,6 +212,21 @@ class GoBridgeClient extends Bridge {
               debugPrint(
                   '[GoBridgeClient] Error parsing peer disconnected: $e');
             }
+          }
+          break;
+
+        case 'addresses:updated':
+          if (onAddressesUpdated != null) {
+            final listenAddrs = (eventData['listenAddresses'] as List<dynamic>?)
+                    ?.map((e) => e as String)
+                    .toList() ??
+                [];
+            final circuitAddrs =
+                (eventData['circuitAddresses'] as List<dynamic>?)
+                        ?.map((e) => e as String)
+                        .toList() ??
+                    [];
+            onAddressesUpdated!(listenAddrs, circuitAddrs);
           }
           break;
 

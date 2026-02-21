@@ -115,11 +115,13 @@ class GoBridge: NSObject {
 // MARK: - FlutterStreamHandler (EventChannel)
 extension GoBridge: FlutterStreamHandler {
     func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
+        NSLog("[GoBridge] onListen: eventSink registered")
         self.eventSink = events
         return nil
     }
 
     func onCancel(withArguments arguments: Any?) -> FlutterError? {
+        NSLog("[GoBridge] onCancel: eventSink cleared")
         self.eventSink = nil
         return nil
     }
@@ -129,8 +131,17 @@ extension GoBridge: FlutterStreamHandler {
 extension GoBridge: BridgeEventCallbackProtocol {
     func onEvent(_ jsonString: String?) {
         guard let json = jsonString else { return }
+        let hasSink = self.eventSink != nil
+        if !hasSink {
+            NSLog("[GoBridge] onEvent: DROPPED (no sink) event=%@", String(json.prefix(80)))
+            return
+        }
         DispatchQueue.main.async { [weak self] in
-            self?.eventSink?(json)
+            guard let sink = self?.eventSink else {
+                NSLog("[GoBridge] onEvent: DROPPED (sink gone) event=%@", String(json.prefix(80)))
+                return
+            }
+            sink(json)
         }
     }
 }

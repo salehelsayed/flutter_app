@@ -2,9 +2,13 @@ import 'dart:convert';
 import 'bridge.dart';
 import '../utils/flow_event_emitter.dart';
 
-/// Default rendezvous server address.
+/// Default rendezvous server address (WSS).
 const String defaultRendezvousAddress =
     '/dns4/mknoun.xyz/tcp/4001/wss/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g';
+
+/// Default QUIC relay address (faster than WSS on most networks).
+const String defaultQUICRelayAddress =
+    '/dns4/mknoun.xyz/udp/4002/quic-v1/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g';
 
 /// Calls the bridge to start the P2P node.
 ///
@@ -34,7 +38,7 @@ Future<Map<String, dynamic>> callP2PNodeStart(
     'cmd': 'node:start',
     'payload': {
       'privateKeyHex': privateKeyHex,
-      'relayAddresses': relayAddresses ?? [defaultRendezvousAddress],
+      'relayAddresses': relayAddresses ?? [defaultRendezvousAddress, defaultQUICRelayAddress],
       'autoRegister': autoRegister,
       if (namespace != null) 'namespace': namespace,
     },

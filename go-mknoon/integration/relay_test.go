@@ -581,3 +581,141 @@ func TestRelayInboxMultipleMessages(t *testing.T) {
 		}
 	}
 }
+
+// ---------- Addresses:updated & concurrent relay tests ----------
+
+func TestRelayAddressesUpdatedEvent(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in -short mode")
+	}
+	requireRelay(t)
+
+	collector := &eventCollector{}
+	_, _ = startNodeWithCallback(t, collector)
+
+	// Wait for an addresses:updated event that actually contains a circuit address.
+	// The first event fires immediately with only listen addresses (circuit=0).
+	// After client.Reserve() succeeds, a second event fires with /p2p-circuit addresses.
+	ev, ok := collector.waitForEvent("p2p-circuit", 30*time.Second)
+	if !ok {
+		t.Logf("all events: %v", collector.snapshot())
+		t.Fatal("did not receive addresses:updated event with circuit addresses within 30s")
+	}
+	t.Logf("addresses:updated event with circuit: %s", ev)
+
+	// Parse and verify the event contains circuit addresses.
+	var parsed map[string]interface{}
+	if err := json.Unmarshal([]byte(ev), &parsed); err != nil {
+		t.Fatalf("unmarshal event: %v", err)
+	}
+	data, _ := parsed["data"].(map[string]interface{})
+	if data == nil {
+		t.Fatal("event has no 'data' field")
+	}
+
+	circuitAddrs, _ := data["circuitAddresses"].([]interface{})
+	if len(circuitAddrs) == 0 {
+		t.Error("expected non-empty circuitAddresses in addresses:updated event")
+	}
+	for _, addr := range circuitAddrs {
+		s, _ := addr.(string)
+		if !strings.Contains(s, "/p2p-circuit") {
+			t.Errorf("circuit address %q does not contain /p2p-circuit", s)
+		}
+	}
+}
+
+func TestRendezvousRegistrationIncludesCircuitAddress(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in -short mode")
+	}
+	requireRelay(t)
+
+	// Start Node A and wait for circuit addresses via the event.
+	collectorA := &eventCollector{}
+	nodeA, peerIdA := startNodeWithCallback(t, collectorA)
+
+	// Wait for circuit address to appear (not just any addresses:updated event).
+	_, ok := collectorA.waitForEvent("p2p-circuit", 30*time.Second)
+	if !ok {
+		t.Logf("all events: %v", collectorA.snapshot())
+		t.Fatal("Node A did not receive addresses:updated event with circuit addresses")
+	}
+
+	// Register Node A on a unique namespace.
+	ns := randomNamespace()
+	if err := nodeA.RendezvousRegister(ns, nil); err != nil {
+		t.Fatalf("RendezvousRegister: %v", err)
+	}
+	t.Logf("Node A registered on %s", ns)
+
+	// Start Node B and discover A.
+	nodeB, _ := startNode(t)
+	time.Sleep(2 * time.Second)
+
+	peers, err := nodeB.RendezvousDiscover(ns, nil)
+	if err != nil {
+		t.Fatalf("RendezvousDiscover: %v", err)
+	}
+
+	var foundCircuit bool
+	for _, p := range peers {
+		if p.ID.String() != peerIdA {
+			continue
+		}
+		for _, addr := range p.Addrs {
+			if strings.Contains(addr.String(), "/p2p-circuit") {
+				foundCircuit = true
+				break
+			}
+		}
+	}
+
+	if !foundCircuit {
+		t.Errorf("Node A's discovered peer record should include /p2p-circuit address")
+		for _, p := range peers {
+			t.Logf("  peer=%s addrs=%v", p.ID.String(), p.Addrs)
+		}
+	}
+}
+
+func TestConcurrentRelayConnectTiming(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in -short mode")
+	}
+	requireRelay(t)
+
+	privHex, _ := generatePrivateKeyHex(t)
+
+	n := node.NewNode()
+	start := time.Now()
+
+	cfg := node.NodeConfig{
+		PrivateKeyHex: privHex,
+		RelayAddresses: []string{
+			node.DefaultRelayAddress,
+			node.DefaultQUICRelay,
+		},
+		AutoRegister: false,
+		ListenPort:   0,
+	}
+
+	_, err := n.Start(cfg)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { n.Stop() })
+
+	// Wait for relay connection.
+	if err := n.WaitForRelayConnection(15 * time.Second); err != nil {
+		t.Fatalf("relay connection not established: %v", err)
+	}
+	elapsed := time.Since(start)
+
+	t.Logf("concurrent relay connect + wait completed in %v", elapsed)
+
+	// With concurrent connections, should complete well under 15s.
+	if elapsed > 15*time.Second {
+		t.Errorf("relay connect took %v, expected < 15s for concurrent dial", elapsed)
+	}
+}

@@ -22,7 +22,7 @@ const (
 	MediaProtocol      = "/mknoon/media/1.0.0"
 
 	// Timeouts.
-	DialTimeout     = 30 * time.Second
+	DialTimeout     = 15 * time.Second
 	SendTimeout     = 15 * time.Second
 	DiscoverTimeout = 10 * time.Second
 	InboxTimeout    = 15 * time.Second

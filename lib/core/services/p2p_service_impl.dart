@@ -29,6 +29,7 @@ class P2PServiceImpl implements P2PService {
   String? _lastFcmToken;
   String? _lastFcmPlatform;
   bool _isStarting = false;
+  DateTime? _startNodeTime;
 
   /// How often the health check polls node:status.
   static const healthCheckInterval = Duration(seconds: 30);
@@ -45,6 +46,7 @@ class P2PServiceImpl implements P2PService {
     _bridge.onMessageReceived = _handleMessageReceived;
     _bridge.onPeerConnected = _handlePeerConnected;
     _bridge.onPeerDisconnected = _handlePeerDisconnected;
+    _bridge.onAddressesUpdated = _handleAddressesUpdated;
 
     // Merge local WiFi messages into the unified message stream
     _localMessageSub = _localP2P?.localMessageStream.listen((localMsg) {
@@ -86,6 +88,7 @@ class P2PServiceImpl implements P2PService {
   Future<bool> startNodeCore(String privateKeyBase64, String peerId) async {
     if (_isStarting) return false;
     _isStarting = true;
+    _startNodeTime = DateTime.now();
 
     emitFlowEvent(
       layer: 'FL',
@@ -173,29 +176,36 @@ class P2PServiceImpl implements P2PService {
       details: {},
     );
 
-    // Inbox drain — timeout to avoid blocking startup
-    try {
-      await _drainOfflineInbox().timeout(warmTaskTimeout);
-    } catch (e) {
-      debugPrint('[P2PService] Warm: inbox drain failed/timed out: $e');
-    }
-
     _startHealthCheck();
 
-    // Early health check to catch AutoRelay reservation quickly
-    // (the periodic timer won't fire for 30s, but circuit addresses
-    // typically appear within a few seconds of relay connection).
-    Future.delayed(const Duration(seconds: 4), _performHealthCheck);
+    // Fast circuit detection: if the push event from Go hasn't delivered
+    // circuit addresses within 2s, poll node:status directly. This is a
+    // fallback for cases where the EventChannel delivery is delayed.
+    Future.delayed(const Duration(seconds: 2), () {
+      if (_currentState.isStarted && _currentState.circuitAddresses.isEmpty) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'P2P_FAST_CIRCUIT_CHECK',
+          details: {'reason': 'no push event after 2s'},
+        );
+        _performHealthCheck();
+      }
+    });
 
-    // Local discovery — timeout to avoid slow mDNS
+    // Run inbox drain and local discovery concurrently.
+    final futures = <Future>[];
+    futures.add(
+      _drainOfflineInbox().timeout(warmTaskTimeout).catchError((_) {}),
+    );
+
     final localPeerId = _currentState.peerId;
     if (_localP2P != null && localPeerId != null) {
-      try {
-        await _localP2P.start(localPeerId).timeout(warmTaskTimeout);
-      } catch (e) {
-        debugPrint('[P2PService] Warm: local P2P start failed/timed out: $e');
-      }
+      futures.add(
+        _localP2P.start(localPeerId).timeout(warmTaskTimeout).catchError((_) {}),
+      );
     }
+
+    await Future.wait(futures);
 
     emitFlowEvent(
       layer: 'FL',
@@ -576,7 +586,6 @@ class P2PServiceImpl implements P2PService {
         );
       }
     } catch (e) {
-      debugPrint('[P2PService] Health check failed: $e');
 
       // If the check itself fails, assume the node is down
       if (_currentState.isStarted) {
@@ -610,13 +619,11 @@ class P2PServiceImpl implements P2PService {
       isIncoming: message.isIncoming,
       envelopeType: envelopeType,
     );
-    debugPrint('[P2PService] Message received from ${message.from}');
     _messageController.add(message);
   }
 
   /// Handle peer connected event from bridge.
   void _handlePeerConnected(ConnectionState conn) {
-    debugPrint('[P2PService] Peer connected: ${conn.peerId}');
 
     // Update current state with new connection
     final updatedConnections = List<ConnectionState>.from(
@@ -629,7 +636,6 @@ class P2PServiceImpl implements P2PService {
 
   /// Handle peer disconnected event from bridge.
   void _handlePeerDisconnected(ConnectionState conn) {
-    debugPrint('[P2PService] Peer disconnected: ${conn.peerId}');
 
     // Update current state by removing the connection
     final updatedConnections = _currentState.connections
@@ -638,6 +644,43 @@ class P2PServiceImpl implements P2PService {
 
     _currentState = _currentState.copyWith(connections: updatedConnections);
     _stateController.add(_currentState);
+  }
+
+  /// Handle addresses:updated push event from Go.
+  void _handleAddressesUpdated(
+    List<String> listenAddresses,
+    List<String> circuitAddresses,
+  ) {
+    final flutterElapsedMs = _startNodeTime != null
+        ? DateTime.now().difference(_startNodeTime!).inMilliseconds
+        : -1;
+
+    final wasConnecting = _currentState.circuitAddresses.isEmpty;
+    final nowOnline = circuitAddresses.isNotEmpty;
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'P2P_SERVICE_ADDRESSES_UPDATED',
+      details: {
+        'listenCount': listenAddresses.length,
+        'circuitCount': circuitAddresses.length,
+        'flutterElapsedMs': flutterElapsedMs,
+        if (wasConnecting && nowOnline) 'transition': 'connecting→online',
+      },
+    );
+
+    _currentState = _currentState.copyWith(
+      listenAddresses: listenAddresses,
+      circuitAddresses: circuitAddresses,
+    );
+    _stateController.add(_currentState);
+
+    // Re-register push token when circuit addresses become available
+    if (circuitAddresses.isNotEmpty &&
+        _lastFcmToken != null &&
+        _lastFcmPlatform != null) {
+      registerPushToken(_lastFcmToken!, _lastFcmPlatform!);
+    }
   }
 
   @override
@@ -801,5 +844,6 @@ class P2PServiceImpl implements P2PService {
     _bridge.onMessageReceived = null;
     _bridge.onPeerConnected = null;
     _bridge.onPeerDisconnected = null;
+    _bridge.onAddressesUpdated = null;
   }
 }

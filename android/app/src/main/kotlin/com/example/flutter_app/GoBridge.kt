@@ -97,18 +97,30 @@ class GoBridge(flutterEngine: FlutterEngine) : MethodChannel.MethodCallHandler,
 
     // EventChannel.StreamHandler
     override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+        android.util.Log.i("GoBridge", "onListen: eventSink registered")
         eventSink = events
     }
 
     override fun onCancel(arguments: Any?) {
+        android.util.Log.i("GoBridge", "onCancel: eventSink cleared")
         eventSink = null
     }
 
     // GoEventCallback — Go → Kotlin push events
     override fun onEvent(jsonString: String?) {
         jsonString?.let { json ->
-            android.os.Handler(android.os.Looper.getMainLooper()).post {
-                eventSink?.success(json)
+            val hasSink = eventSink != null
+            if (!hasSink) {
+                android.util.Log.w("GoBridge", "onEvent: DROPPED (no sink) event=${json.take(80)}")
+                return
+            }
+            mainHandler.post {
+                val sink = eventSink
+                if (sink == null) {
+                    android.util.Log.w("GoBridge", "onEvent: DROPPED (sink gone) event=${json.take(80)}")
+                    return@post
+                }
+                sink.success(json)
             }
         }
     }
