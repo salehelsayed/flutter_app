@@ -11,6 +11,7 @@ type EventCallback interface {
 	// Events:
 	//   "message:received" — { from, to, content, timestamp, isIncoming }
 	//   "peer:connected"   — { peerId, address, direction }
-	//   "peer:disconnected" — { peerId }
+	//   "peer:disconnected"   — { peerId }
+	//   "addresses:updated"   — { listenAddresses, circuitAddresses }
 	OnEvent(jsonString string)
 }

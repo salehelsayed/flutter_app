@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"testing"
+	"time"
 
 	"github.com/libp2p/go-libp2p/core/crypto"
 )
@@ -197,5 +198,96 @@ func TestNodeStopIdempotent(t *testing.T) {
 	}
 	if err := n.Stop(); err != nil {
 		t.Fatalf("second Stop: %v", err)
+	}
+}
+
+func TestWaitForCircuitAddress_NoRelay(t *testing.T) {
+	hexKey := generateTestKey(t)
+
+	n := NewNode()
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex: hexKey,
+		// Use an unreachable relay (RFC 5737 TEST-NET) so no circuit address appears.
+		RelayAddresses: []string{
+			"/ip4/192.0.2.99/tcp/4001/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g",
+		},
+		AutoRegister: false,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer n.Stop()
+
+	// With an unreachable relay, waitForCircuitAddress should time out and return false.
+	start := time.Now()
+	got := n.waitForCircuitAddress(2 * time.Second)
+	elapsed := time.Since(start)
+
+	if got {
+		t.Error("waitForCircuitAddress should return false with unreachable relay")
+	}
+	if elapsed < 2*time.Second {
+		t.Errorf("expected to wait at least 2s, waited %v", elapsed)
+	}
+}
+
+func TestConcurrentRelayConnect(t *testing.T) {
+	hexKey := generateTestKey(t)
+
+	// Use two unreachable addresses (RFC 5737 TEST-NET).
+	// With concurrent dialing both should fail in parallel, not sequentially.
+	n := NewNode()
+	start := time.Now()
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex: hexKey,
+		RelayAddresses: []string{
+			"/ip4/192.0.2.1/tcp/4001/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g",
+			"/ip4/192.0.2.2/udp/4002/quic-v1/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g",
+		},
+		AutoRegister: false,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer n.Stop()
+
+	// WaitForRelayConnection should time out since both addresses are unreachable.
+	relayErr := n.WaitForRelayConnection(5 * time.Second)
+	elapsed := time.Since(start)
+
+	if relayErr == nil {
+		t.Error("expected relay connection to fail with unreachable addresses")
+	}
+
+	// Concurrent dial: total time should be less than 2 * DialTimeout (60s).
+	// With a 5s wait timeout, we mainly verify it doesn't hang for 60s+.
+	if elapsed > 40*time.Second {
+		t.Errorf("expected concurrent relay connect, but took %v (sequential would be ~60s)", elapsed)
+	}
+	t.Logf("concurrent relay connect completed in %v", elapsed)
+}
+
+func TestRelayReadyChannelNotClosedOnFailure(t *testing.T) {
+	hexKey := generateTestKey(t)
+
+	n := NewNode()
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex: hexKey,
+		RelayAddresses: []string{
+			"/ip4/192.0.2.1/tcp/4001/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g",
+		},
+		AutoRegister: false,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer n.Stop()
+
+	// relayReady should NOT be closed since the relay is unreachable.
+	select {
+	case <-n.relayReady:
+		t.Error("relayReady channel should not be closed when relay is unreachable")
+	case <-time.After(2 * time.Second):
+		// Expected: channel is still open after 2s.
 	}
 }

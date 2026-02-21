@@ -19,6 +19,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
+	"github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/client"
 	ma "github.com/multiformats/go-multiaddr"
 )
 
@@ -42,6 +43,7 @@ type Node struct {
 	connections     map[string]connectionInfo
 	relayReady      chan struct{}
 	relayReadyOnce  sync.Once
+	startedAt       time.Time // for startup timing instrumentation
 }
 
 type connectionInfo struct {
@@ -101,8 +103,9 @@ func (n *Node) Start(cfg NodeConfig) (*NodeState, error) {
 	}
 	n.relayAddresses = relayAddresses
 
-	// Parse relay multiaddrs into AddrInfo for AutoRelay
-	relayInfos := make([]peer.AddrInfo, 0, len(relayAddresses))
+	// Parse relay multiaddrs into AddrInfo for AutoRelay.
+	// Merge addresses for the same peer ID (e.g. WSS + QUIC for the same relay).
+	relayInfoMap := make(map[peer.ID]*peer.AddrInfo)
 	for _, addr := range relayAddresses {
 		maddr, err := ma.NewMultiaddr(addr)
 		if err != nil {
@@ -114,6 +117,14 @@ func (n *Node) Start(cfg NodeConfig) (*NodeState, error) {
 			log.Printf("[NODE] Skipping unparseable relay address %s: %v", addr, err)
 			continue
 		}
+		if existing, ok := relayInfoMap[info.ID]; ok {
+			existing.Addrs = append(existing.Addrs, info.Addrs...)
+		} else {
+			relayInfoMap[info.ID] = info
+		}
+	}
+	relayInfos := make([]peer.AddrInfo, 0, len(relayInfoMap))
+	for _, info := range relayInfoMap {
 		relayInfos = append(relayInfos, *info)
 	}
 
@@ -163,9 +174,10 @@ func (n *Node) Start(cfg NodeConfig) (*NodeState, error) {
 	// Register chat message handler
 	h.SetStreamHandler(ChatProtocol, n.handleIncomingMessage)
 
-	// Subscribe to connection events
+	// Subscribe to connection and address events
 	sub, err := h.EventBus().Subscribe([]interface{}{
 		new(event.EvtPeerConnectednessChanged),
+		new(event.EvtLocalAddressesUpdated),
 	})
 	if err != nil {
 		log.Printf("[NODE] Failed to subscribe to events: %v", err)
@@ -175,22 +187,32 @@ func (n *Node) Start(cfg NodeConfig) (*NodeState, error) {
 	}
 
 	n.isStarted = true
+	n.startedAt = time.Now()
 	n.relayReady = make(chan struct{})
 
-	// Connect to relay in background
+	// Connect to relays concurrently in background
 	go func() {
+		var wg sync.WaitGroup
 		for _, addr := range relayAddresses {
-			if err := n.connectToRelay(addr); err != nil {
-				log.Printf("[NODE] Relay connect failed: %v", err)
-			} else {
-				n.relayReadyOnce.Do(func() { close(n.relayReady) })
-			}
+			wg.Add(1)
+			go func(a string) {
+				defer wg.Done()
+				if err := n.connectToRelay(a); err != nil {
+					log.Printf("[NODE] relay dial FAILED (%s): %v", a[:min(40, len(a))], err)
+				} else {
+					n.relayReadyOnce.Do(func() { close(n.relayReady) })
+				}
+			}(addr)
 		}
+		wg.Wait()
 
-		// Auto-register on rendezvous after relay connection
+		// Auto-register on rendezvous after relay connection.
+		// Wait for circuit address to appear before registering so that
+		// the peer record includes the relay circuit address.
 		if cfg.AutoRegister {
+			n.waitForCircuitAddress(10 * time.Second)
 			if err := n.RendezvousRegister(n.namespace, nil); err != nil {
-				log.Printf("[NODE] Auto-register failed: %v", err)
+				log.Printf("[NODE] auto-register failed: %v", err)
 			}
 		}
 	}()
@@ -314,6 +336,16 @@ func (n *Node) connectToRelay(relayAddr string) error {
 
 	if err := n.host.Connect(ctx, *addrInfo); err != nil {
 		return fmt.Errorf("dial relay: %w", err)
+	}
+
+	// Request a relay reservation to obtain a circuit address.
+	// This is the critical call that makes the relay assign a /p2p-circuit
+	// address for this peer. AutoRelay may also manage reservations long-term,
+	// but the explicit Reserve() ensures the first address appears immediately.
+	_, err = client.Reserve(ctx, n.host, *addrInfo)
+	if err != nil {
+		log.Printf("[NODE] Relay reservation failed: %v", err)
+		// Not fatal — AutoRelay may obtain a reservation later
 	}
 
 	log.Printf("[NODE] Connected to relay: %s", addrInfo.ID.String()[:20])
@@ -441,7 +473,29 @@ func (n *Node) handleIncomingMessage(s network.Stream) {
 	n.emitEvent("message:received", msgData)
 }
 
-// watchConnectionEvents monitors peer connect/disconnect events.
+// waitForCircuitAddress polls until at least one /p2p-circuit address
+// appears in the host's address set, or the timeout expires.
+func (n *Node) waitForCircuitAddress(timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		n.mu.RLock()
+		h := n.host
+		n.mu.RUnlock()
+		if h == nil {
+			return false
+		}
+		for _, addr := range h.Addrs() {
+			if strings.Contains(addr.String(), "/p2p-circuit") {
+				return true
+			}
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	log.Printf("[NODE] Timed out waiting for circuit address after %v", timeout)
+	return false
+}
+
+// watchConnectionEvents monitors peer connect/disconnect and address events.
 func (n *Node) watchConnectionEvents() {
 	for ev := range n.eventSub.Out() {
 		switch e := ev.(type) {
@@ -480,6 +534,33 @@ func (n *Node) watchConnectionEvents() {
 					"peerId": pid,
 				})
 			}
+
+		case event.EvtLocalAddressesUpdated:
+			n.mu.RLock()
+			h := n.host
+			started := n.startedAt
+			n.mu.RUnlock()
+			if h == nil {
+				continue
+			}
+
+			var listenAddrs, circuitAddrs []string
+			for _, addr := range h.Addrs() {
+				s := addr.String()
+				if strings.Contains(s, "/p2p-circuit") {
+					circuitAddrs = append(circuitAddrs, s)
+				} else {
+					listenAddrs = append(listenAddrs, s)
+				}
+			}
+
+			sinceStartMs := time.Since(started).Milliseconds()
+
+			n.emitEvent("addresses:updated", map[string]interface{}{
+				"listenAddresses":  listenAddrs,
+				"circuitAddresses": circuitAddrs,
+				"sinceStartMs":     sinceStartMs,
+			})
 		}
 	}
 }

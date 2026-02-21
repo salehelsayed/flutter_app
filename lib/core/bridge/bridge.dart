@@ -33,6 +33,9 @@ abstract class Bridge {
 
   /// Event callback when a peer disconnects.
   void Function(ConnectionState)? onPeerDisconnected;
+
+  /// Event callback when local addresses change (circuit relay acquired/lost).
+  void Function(List<String> listenAddresses, List<String> circuitAddresses)? onAddressesUpdated;
 }
 
 /// Calls the bridge to generate a new identity.
