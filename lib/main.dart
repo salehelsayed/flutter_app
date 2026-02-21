@@ -10,6 +10,7 @@ import 'package:flutter_app/core/database/migrations/007_archive_columns.dart';
 import 'package:flutter_app/core/database/migrations/008_block_columns.dart';
 import 'package:flutter_app/core/database/migrations/009_quoted_message_id.dart';
 import 'package:flutter_app/core/database/migrations/010_media_attachments.dart';
+import 'package:flutter_app/core/database/migrations/011_avatar_version.dart';
 import 'package:flutter_app/core/database/encrypted_db_opener.dart';
 import 'package:flutter_app/core/database/helpers/identity_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
@@ -25,6 +26,7 @@ import 'package:flutter_app/features/contact_request/application/contact_request
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository_impl.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository_impl.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
+import 'package:flutter_app/features/settings/application/profile_update_listener.dart';
 import 'package:flutter_app/core/services/incoming_message_router.dart';
 import 'package:flutter_app/core/services/pending_message_retrier.dart';
 import 'package:flutter_app/features/identity/presentation/startup_router.dart';
@@ -40,8 +42,10 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/startup_timing.dart';
 import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:path_provider/path_provider.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/push/application/background_message_handler.dart';
 
 void main() async {
@@ -64,6 +68,10 @@ void main() async {
     }
   }
 
+  // Initialize UserAvatar documents directory for file-based avatar loading
+  final appDocDir = await getApplicationDocumentsDirectory();
+  UserAvatar.setDocumentsDir(appDocDir.path);
+
   // Initialize database based on platform
   if (isDesktop) {
     // Desktop platforms need FFI
@@ -78,7 +86,7 @@ void main() async {
   final db = await openEncryptedDatabase(
     secureKeyStore: secureKeyStore,
     dbName: 'identity.db',
-    version: 10,
+    version: 11,
     onCreate: (db, version) async {
       await runIdentityTableMigration(db);
       await runMessagesTableMigration(db);
@@ -90,6 +98,7 @@ void main() async {
       await runBlockColumnsMigration(db);
       await runQuotedMessageIdMigration(db);
       await runMediaAttachmentsMigration(db);
+      await runAvatarVersionMigration(db);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) {
@@ -116,6 +125,9 @@ void main() async {
       }
       if (oldVersion < 10) {
         await runMediaAttachmentsMigration(db);
+      }
+      if (oldVersion < 11) {
+        await runAvatarVersionMigration(db);
       }
     },
   );
@@ -260,6 +272,13 @@ void main() async {
     mediaFileManager: mediaFileManager,
   );
 
+  // Create profile update listener
+  final profileUpdateListener = ProfileUpdateListener(
+    profileUpdateStream: messageRouter.profileUpdateStream,
+    contactRepo: contactRepository,
+    bridge: bridge,
+  );
+
   // Create pending message retrier
   final pendingMessageRetrier = PendingMessageRetrier(
     p2pService: p2pService,
@@ -273,7 +292,14 @@ void main() async {
   messageRouter.start();
   contactRequestListener.start();
   chatMessageListener.start();
+  profileUpdateListener.start();
   pendingMessageRetrier.start();
+
+  // Forward profile avatar updates through chatMessageListener so
+  // FeedWired/OrbitWired (which subscribe to contactUpdatedStream) refresh.
+  profileUpdateListener.contactUpdatedStream.listen((contact) {
+    chatMessageListener.emitContactUpdate(contact);
+  });
 
   runApp(MyApp(
     repository: repository,
@@ -283,6 +309,7 @@ void main() async {
     messageRepository: messageRepository,
     mediaAttachmentRepository: mediaAttachmentRepository,
     chatMessageListener: chatMessageListener,
+    profileUpdateListener: profileUpdateListener,
     messageRouter: messageRouter,
     pendingMessageRetrier: pendingMessageRetrier,
     bridge: bridge,
@@ -301,6 +328,7 @@ class MyApp extends StatefulWidget {
   final MessageRepositoryImpl messageRepository;
   final MediaAttachmentRepositoryImpl mediaAttachmentRepository;
   final ChatMessageListener chatMessageListener;
+  final ProfileUpdateListener profileUpdateListener;
   final IncomingMessageRouter messageRouter;
   final PendingMessageRetrier pendingMessageRetrier;
   final Bridge bridge;
@@ -317,6 +345,7 @@ class MyApp extends StatefulWidget {
     required this.messageRepository,
     required this.mediaAttachmentRepository,
     required this.chatMessageListener,
+    required this.profileUpdateListener,
     required this.messageRouter,
     required this.pendingMessageRetrier,
     required this.bridge,
@@ -345,6 +374,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
     // Orderly teardown: retrier → listeners → router → service → bridge
     widget.pendingMessageRetrier.dispose();
+    widget.profileUpdateListener.dispose();
     widget.chatMessageListener.dispose();
     widget.contactRequestListener.dispose();
     widget.messageRouter.dispose();

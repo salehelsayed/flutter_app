@@ -15,6 +15,7 @@ class IncomingMessageRouter {
 
   final _contactRequestController = StreamController<ChatMessage>.broadcast();
   final _chatMessageController = StreamController<ChatMessage>.broadcast();
+  final _profileUpdateController = StreamController<ChatMessage>.broadcast();
   final _unknownController = StreamController<ChatMessage>.broadcast();
 
   IncomingMessageRouter({required this.p2pService});
@@ -25,6 +26,10 @@ class IncomingMessageRouter {
 
   /// Stream of incoming chat_message messages.
   Stream<ChatMessage> get chatMessageStream => _chatMessageController.stream;
+
+  /// Stream of incoming profile_update messages.
+  Stream<ChatMessage> get profileUpdateStream =>
+      _profileUpdateController.stream;
 
   /// Stream of messages with unknown or unparseable types.
   Stream<ChatMessage> get unknownMessageStream => _unknownController.stream;
@@ -62,6 +67,8 @@ class IncomingMessageRouter {
           _contactRequestController.add(message);
         case 'chat_message':
           _chatMessageController.add(message);
+        case 'profile_update':
+          _profileUpdateController.add(message);
         default:
           emitFlowEvent(
             layer: 'FL',
@@ -97,6 +104,7 @@ class IncomingMessageRouter {
     stop();
     _contactRequestController.close();
     _chatMessageController.close();
+    _profileUpdateController.close();
     _unknownController.close();
   }
 }

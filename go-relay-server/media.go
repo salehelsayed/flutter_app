@@ -214,6 +214,7 @@ type mediaRequest struct {
 	Action string `json:"action"`
 	ID     string `json:"id,omitempty"`
 	To     string `json:"to,omitempty"`
+	Owner  string `json:"owner,omitempty"` // for profile_download
 	Size   int64  `json:"size,omitempty"`
 	Mime   string `json:"mime,omitempty"`
 }
@@ -229,7 +230,7 @@ type mediaResponse struct {
 
 // --- Stream handler ---
 
-func HandleMediaStream(s network.Stream, media *MediaStore) {
+func HandleMediaStream(s network.Stream, media *MediaStore, profile *ProfileStore) {
 	start := time.Now()
 	current := activeMediaStreams.Add(1)
 	defer func() {
@@ -265,6 +266,12 @@ func HandleMediaStream(s network.Stream, media *MediaStore) {
 		handleMediaDelete(s, media, remotePeer, &req)
 	case "list":
 		handleMediaList(s, media, remotePeer)
+	case "profile_upload":
+		handleProfileUpload(s, profile, remotePeer, &req)
+	case "profile_download":
+		handleProfileDownload(s, profile, &req)
+	case "profile_delete":
+		handleProfileDelete(s, profile, remotePeer)
 	default:
 		writeMediaResponse(s, mediaResponse{Status: "ERROR", Error: fmt.Sprintf("unknown action: %s", req.Action)})
 	}

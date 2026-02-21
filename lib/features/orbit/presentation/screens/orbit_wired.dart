@@ -1,5 +1,9 @@
 import 'dart:async';
+import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:path/path.dart' as p;
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
@@ -68,6 +72,7 @@ class OrbitWired extends StatefulWidget {
 
 class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   IdentityModel? _identity;
+  Uint8List? _avatarBytes;
   List<OrbitFriend> _activeFriends = [];
   List<OrbitFriend> _archivedFriends = [];
   String _filterTab = 'all';
@@ -123,7 +128,27 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     try {
       final identity = await widget.identityRepo.loadIdentity();
       if (identity == null || !mounted) return;
-      setState(() => _identity = identity);
+
+      // Load file-based avatar if avatarVersion is set
+      Uint8List? avatarBytes = identity.avatarBlob;
+      if (identity.avatarVersion != null) {
+        try {
+          final appDir = await getApplicationDocumentsDirectory();
+          final avatarFile = File(
+            p.join(appDir.path, 'media', 'avatars', '${identity.peerId}.jpg'),
+          );
+          if (avatarFile.existsSync()) {
+            avatarBytes = await avatarFile.readAsBytes();
+          }
+        } catch (_) {}
+      }
+
+      if (!mounted) return;
+
+      setState(() {
+        _identity = identity;
+        _avatarBytes = avatarBytes;
+      });
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -493,6 +518,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   Widget build(BuildContext context) {
     return OrbitScreen(
       identity: _identity,
+      userAvatarBytes: _avatarBytes,
       allFriends: _activeFriends,
       displayedFriends: _displayedFriends,
       searchActive: _searchActive,

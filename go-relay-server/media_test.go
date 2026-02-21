@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -61,6 +62,7 @@ type testEnv struct {
 	recipient host.Host
 	intruder  host.Host
 	media     *MediaStore
+	profile   *ProfileStore
 }
 
 func setupTestEnv(t *testing.T) *testEnv {
@@ -93,9 +95,10 @@ func setupTestEnv(t *testing.T) *testEnv {
 
 	dataDir := t.TempDir()
 	media := NewMediaStore(dataDir)
+	profile := NewProfileStore(filepath.Join(dataDir, "profiles"))
 
 	server.SetStreamHandler(MediaProtocol, func(s network.Stream) {
-		HandleMediaStream(s, media)
+		HandleMediaStream(s, media, profile)
 	})
 
 	t.Cleanup(func() {
@@ -105,7 +108,7 @@ func setupTestEnv(t *testing.T) *testEnv {
 		intruder.Close()
 	})
 
-	return &testEnv{server, sender, recipient, intruder, media}
+	return &testEnv{server, sender, recipient, intruder, media, profile}
 }
 
 // upload opens a stream, uploads a blob, and waits for OK.

@@ -18,6 +18,7 @@ type mediaRequest struct {
 	Action string `json:"action"`
 	ID     string `json:"id,omitempty"`
 	To     string `json:"to,omitempty"`
+	Owner  string `json:"owner,omitempty"` // for profile_download
 	Size   int64  `json:"size,omitempty"`
 	Mime   string `json:"mime,omitempty"`
 }
@@ -249,4 +250,99 @@ func (n *Node) MediaList() ([]MediaMeta, error) {
 
 	log.Printf("[MEDIA] Listed %d blob(s)", len(resp.Blobs))
 	return resp.Blobs, nil
+}
+
+// --- Profile methods ---
+
+// ProfileUpload uploads the user's profile picture to the relay.
+func (n *Node) ProfileUpload(mime, filePath string) error {
+	s, cancel, err := n.openMediaStream()
+	if err != nil {
+		return err
+	}
+	defer cancel()
+	defer s.Close()
+
+	f, err := os.Open(filePath)
+	if err != nil {
+		return fmt.Errorf("open file: %w", err)
+	}
+	defer f.Close()
+
+	fi, err := f.Stat()
+	if err != nil {
+		return fmt.Errorf("stat file: %w", err)
+	}
+
+	resp, err := sendMediaRequest(s, &mediaRequest{
+		Action: "profile_upload",
+		Size:   fi.Size(),
+		Mime:   mime,
+	})
+	if err != nil {
+		return fmt.Errorf("profile upload request: %w", err)
+	}
+
+	if resp.Status != "READY" {
+		return fmt.Errorf("profile upload not ready: %s", resp.Error)
+	}
+
+	if _, err := io.Copy(s, f); err != nil {
+		return fmt.Errorf("stream profile data: %w", err)
+	}
+
+	confirmBytes, err := readFrame(s)
+	if err != nil {
+		return fmt.Errorf("read profile upload confirmation: %w", err)
+	}
+
+	var confirm mediaResponse
+	if err := json.Unmarshal(confirmBytes, &confirm); err != nil {
+		return fmt.Errorf("unmarshal confirmation: %w", err)
+	}
+
+	if confirm.Status != "OK" {
+		return fmt.Errorf("profile upload failed: %s", confirm.Error)
+	}
+
+	log.Printf("[PROFILE] Uploaded profile (%d bytes, %s)", fi.Size(), mime)
+	return nil
+}
+
+// ProfileDownload downloads a peer's profile picture from the relay.
+func (n *Node) ProfileDownload(ownerPeerId, outputPath string) (mime string, size int64, err error) {
+	s, cancel, sErr := n.openMediaStream()
+	if sErr != nil {
+		return "", 0, sErr
+	}
+	defer cancel()
+	defer s.Close()
+
+	resp, sErr := sendMediaRequest(s, &mediaRequest{
+		Action: "profile_download",
+		Owner:  ownerPeerId,
+	})
+	if sErr != nil {
+		return "", 0, fmt.Errorf("profile download request: %w", sErr)
+	}
+
+	if resp.Status != "OK" {
+		return "", 0, fmt.Errorf("profile download failed: %s", resp.Error)
+	}
+
+	f, sErr := os.Create(outputPath)
+	if sErr != nil {
+		return "", 0, fmt.Errorf("create output file: %w", sErr)
+	}
+
+	written, sErr := io.CopyN(f, s, resp.Size)
+	f.Close()
+
+	if sErr != nil || written != resp.Size {
+		os.Remove(outputPath)
+		return "", 0, fmt.Errorf("profile download incomplete: wrote %d/%d, err=%v", written, resp.Size, sErr)
+	}
+
+	log.Printf("[PROFILE] Downloaded profile for %s (%d bytes, %s)", ownerPeerId[:min(20, len(ownerPeerId))], resp.Size, resp.Mime)
+	return resp.Mime, resp.Size, nil
 }

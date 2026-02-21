@@ -91,6 +91,7 @@ func main() {
 	inbox := NewInboxStore(push)
 	media := NewMediaStore(mediaDataDir)
 	media.StartCleanup(ctx)
+	profile := NewProfileStore(profileDataDir)
 
 	// Register protocol handlers
 	h.SetStreamHandler(RendezvousProtocol, func(s network.Stream) {
@@ -100,7 +101,7 @@ func main() {
 		HandleInboxStream(s, inbox)
 	})
 	h.SetStreamHandler(MediaProtocol, func(s network.Stream) {
-		HandleMediaStream(s, media)
+		HandleMediaStream(s, media, profile)
 	})
 
 	// Subscribe to connection events
@@ -147,7 +148,7 @@ func main() {
 	log.Println()
 
 	// Periodic stats
-	go logStatsPeriodically(ctx, h, inbox, store, media)
+	go logStatsPeriodically(ctx, h, inbox, store, media, profile)
 
 	// Wait for shutdown signal
 	sigCh := make(chan os.Signal, 1)
@@ -173,7 +174,7 @@ func logPeerConnected(p peer.ID, inbox *InboxStore, total int64) {
 	}
 }
 
-func logStatsPeriodically(ctx context.Context, h host.Host, inbox *InboxStore, rz *RendezvousStore, media *MediaStore) {
+func logStatsPeriodically(ctx context.Context, h host.Host, inbox *InboxStore, rz *RendezvousStore, media *MediaStore, profile *ProfileStore) {
 	ticker := time.NewTicker(60 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -184,11 +185,13 @@ func logStatsPeriodically(ctx context.Context, h host.Host, inbox *InboxStore, r
 			inboxPeers, inboxMsgs := inbox.Stats()
 			tokenCount := inbox.push.TokenCount()
 			mediaBlobs, mediaDiskMB := media.Stats()
+			profileCount, profileDiskMB := profile.Stats()
 			var mem runtime.MemStats
 			runtime.ReadMemStats(&mem)
-			log.Printf("[STATS] conns=%d rz_ns=%d rz_peers=%d inbox_peers=%d inbox_msgs=%d push_tokens=%d media_blobs=%d media_disk_mb=%d heap_mb=%d goroutines=%d active_rz_streams=%d active_inbox_streams=%d active_media_streams=%d",
+			log.Printf("[STATS] conns=%d rz_ns=%d rz_peers=%d inbox_peers=%d inbox_msgs=%d push_tokens=%d media_blobs=%d media_disk_mb=%d profile_count=%d profile_disk_mb=%d heap_mb=%d goroutines=%d active_rz_streams=%d active_inbox_streams=%d active_media_streams=%d",
 				conns, rzNs, rzPeers, inboxPeers, inboxMsgs, tokenCount,
 				mediaBlobs, mediaDiskMB,
+				profileCount, profileDiskMB,
 				mem.HeapAlloc/1024/1024, runtime.NumGoroutine(),
 				activeRendezvousStreams.Load(), activeInboxStreams.Load(), activeMediaStreams.Load())
 		case <-ctx.Done():

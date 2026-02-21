@@ -2,7 +2,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_app/features/home/presentation/widgets/editable_username_widget.dart';
-import 'package:flutter_app/features/home/presentation/widgets/ring_avatar.dart';
+import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 
 /// Profile section displaying avatar with camera overlay and editable username.
 class SettingsProfileSection extends StatelessWidget {
@@ -33,7 +33,11 @@ class SettingsProfileSection extends StatelessWidget {
             height: 100,
             child: Stack(
               children: [
-                _buildAvatar(),
+                UserAvatar(
+                  peerId: peerId,
+                  avatarBytes: avatarBytes,
+                  size: 100,
+                ),
                 Positioned(
                   bottom: 0,
                   right: 0,
@@ -68,40 +72,6 @@ class SettingsProfileSection extends StatelessWidget {
             onUsernameChanged: onUsernameChanged,
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildAvatar() {
-    if (avatarBytes != null) {
-      return ClipOval(
-        child: Image.memory(
-          avatarBytes!,
-          width: 100,
-          height: 100,
-          fit: BoxFit.cover,
-        ),
-      );
-    }
-
-    if (peerId != null) {
-      return RingAvatar(peerId: peerId!, size: 100);
-    }
-
-    return Container(
-      width: 100,
-      height: 100,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        border: Border.all(
-          color: const Color.fromRGBO(255, 255, 255, 0.35),
-        ),
-        color: const Color.fromRGBO(22, 24, 30, 0.7),
-      ),
-      child: const Icon(
-        Icons.person_outline_rounded,
-        color: Color.fromRGBO(255, 255, 255, 0.8),
-        size: 40,
       ),
     );
   }

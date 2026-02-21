@@ -1,6 +1,6 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
-import 'package:flutter_app/features/home/presentation/widgets/ring_avatar.dart';
+import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 
 /// A feed card representing a successful new connection.
 class ConnectionCard extends StatefulWidget {
@@ -257,7 +257,7 @@ class _ConnectionCardState extends State<ConnectionCard>
                 ),
               ],
             ),
-            child: RingAvatar(peerId: widget.contactPeerId, size: avatarSize),
+            child: UserAvatar(peerId: widget.contactPeerId, size: avatarSize),
           ),
         ],
       ),

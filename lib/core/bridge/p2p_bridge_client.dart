@@ -533,6 +533,90 @@ Future<Map<String, dynamic>> callP2PMediaList(Bridge bridge) async {
   return response;
 }
 
+// --- Profile ---
+
+/// Calls the bridge to upload the user's profile picture to the relay.
+///
+/// Parameters:
+///   - [bridge]: The Bridge instance
+///   - [mime]: MIME type of the image (e.g. "image/jpeg")
+///   - [filePath]: Absolute path to the local file
+///
+/// Returns: `{ "ok": true }`
+Future<Map<String, dynamic>> callP2PProfileUpload(
+  Bridge bridge, {
+  required String mime,
+  required String filePath,
+}) async {
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'P2P_PROFILE_UPLOAD_REQUEST',
+    details: {'mime': mime},
+  );
+
+  final request = {
+    'cmd': 'profile:upload',
+    'payload': {
+      'mime': mime,
+      'filePath': filePath,
+    },
+  };
+
+  final responseJson = await bridge
+      .send(jsonEncode(request))
+      .timeout(const Duration(minutes: 5));
+  final response = jsonDecode(responseJson) as Map<String, dynamic>;
+
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'P2P_PROFILE_UPLOAD_RESPONSE',
+    details: {'ok': response['ok']},
+  );
+
+  return response;
+}
+
+/// Calls the bridge to download a peer's profile picture from the relay.
+///
+/// Parameters:
+///   - [bridge]: The Bridge instance
+///   - [ownerPeerId]: The peer whose profile to download
+///   - [outputPath]: Absolute path where the file will be written
+///
+/// Returns: `{ "ok": true, "mime": "...", "size": N }`
+Future<Map<String, dynamic>> callP2PProfileDownload(
+  Bridge bridge, {
+  required String ownerPeerId,
+  required String outputPath,
+}) async {
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'P2P_PROFILE_DOWNLOAD_REQUEST',
+    details: {'ownerPeerId': ownerPeerId},
+  );
+
+  final request = {
+    'cmd': 'profile:download',
+    'payload': {
+      'ownerPeerId': ownerPeerId,
+      'outputPath': outputPath,
+    },
+  };
+
+  final responseJson = await bridge
+      .send(jsonEncode(request))
+      .timeout(const Duration(minutes: 5));
+  final response = jsonDecode(responseJson) as Map<String, dynamic>;
+
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'P2P_PROFILE_DOWNLOAD_RESPONSE',
+    details: {'ok': response['ok']},
+  );
+
+  return response;
+}
+
 /// Calls the bridge to send a message to a peer.
 ///
 /// Parameters:

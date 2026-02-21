@@ -100,6 +100,12 @@ class GoBridge: NSObject {
         case "mediaList":
             runOnBackground({ BridgeMediaList(args ?? "") }, result: result)
 
+        // Profile
+        case "profileUpload":
+            runOnBackground({ BridgeProfileUpload(args ?? "") }, result: result)
+        case "profileDownload":
+            runOnBackground({ BridgeProfileDownload(args ?? "") }, result: result)
+
         default:
             result(FlutterMethodNotImplemented)
         }

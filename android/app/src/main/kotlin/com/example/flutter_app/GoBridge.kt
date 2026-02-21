@@ -87,6 +87,10 @@ class GoBridge(flutterEngine: FlutterEngine) : MethodChannel.MethodCallHandler,
             "mediaDelete" -> runOnBackground({ GoMknoon.mediaDelete(args ?: "") }, result)
             "mediaList" -> runOnBackground({ GoMknoon.mediaList(args ?: "") }, result)
 
+            // Profile
+            "profileUpload" -> runOnBackground({ GoMknoon.profileUpload(args ?: "") }, result)
+            "profileDownload" -> runOnBackground({ GoMknoon.profileDownload(args ?: "") }, result)
+
             else -> result.notImplemented()
         }
     }

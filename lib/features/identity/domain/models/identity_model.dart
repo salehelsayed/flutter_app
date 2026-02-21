@@ -15,6 +15,7 @@ class IdentityModel {
   final String? mlKemSecretKey;
   final String username;
   final Uint8List? avatarBlob;
+  final String? avatarVersion;
   final String createdAt;
   final String updatedAt;
 
@@ -27,6 +28,7 @@ class IdentityModel {
     this.mlKemSecretKey,
     this.username = 'Username',
     this.avatarBlob,
+    this.avatarVersion,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -71,6 +73,7 @@ class IdentityModel {
         other.mlKemSecretKey == mlKemSecretKey &&
         other.username == username &&
         listEquals(other.avatarBlob, avatarBlob) &&
+        other.avatarVersion == avatarVersion &&
         other.createdAt == createdAt &&
         other.updatedAt == updatedAt;
   }
@@ -86,6 +89,7 @@ class IdentityModel {
       mlKemSecretKey,
       username,
       avatarBlob != null ? Object.hashAll(avatarBlob!) : null,
+      avatarVersion,
       createdAt,
       updatedAt,
     );

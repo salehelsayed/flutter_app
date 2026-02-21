@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_app/features/feed/domain/utils/format_message_time.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/unread_count_badge.dart';
-import 'package:flutter_app/features/home/presentation/widgets/ring_avatar.dart';
+import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_friend.dart';
 
 /// Glassmorphic tappable friend card for the friends list.
@@ -39,7 +39,7 @@ class FriendRow extends StatelessWidget {
         child: Row(
           children: [
             // Avatar
-            RingAvatar(peerId: friend.peerId, size: 48),
+            UserAvatar(peerId: friend.peerId, size: 48),
             const SizedBox(width: 14),
 
             // Info column

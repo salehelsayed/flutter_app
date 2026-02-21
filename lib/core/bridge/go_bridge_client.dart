@@ -65,6 +65,9 @@ class GoBridgeClient extends Bridge {
     'media:download': _CmdSpec('mediaDownload', true),
     'media:delete': _CmdSpec('mediaDelete', true),
     'media:list': _CmdSpec('mediaList', true),
+    // Profile
+    'profile:upload': _CmdSpec('profileUpload', true),
+    'profile:download': _CmdSpec('profileDownload', true),
   };
 
   @override
