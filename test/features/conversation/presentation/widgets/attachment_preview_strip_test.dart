@@ -28,6 +28,8 @@ void main() {
   Widget buildTestWidget({
     required List<File> attachments,
     bool isUploading = false,
+    bool isProcessing = false,
+    double processingProgress = 0.0,
     ValueChanged<int>? onRemove,
   }) {
     return MaterialApp(
@@ -35,6 +37,8 @@ void main() {
         body: AttachmentPreviewStrip(
           attachments: attachments,
           isUploading: isUploading,
+          isProcessing: isProcessing,
+          processingProgress: processingProgress,
           onRemove: onRemove,
         ),
       ),
@@ -140,6 +144,71 @@ void main() {
       await tester.pump();
 
       expect(find.byIcon(Icons.close), findsNothing);
+    });
+
+    testWidgets('shows processing thumbnail when isProcessing is true',
+        (tester) async {
+      await tester.pumpWidget(buildTestWidget(
+        attachments: [],
+        isProcessing: true,
+        processingProgress: 0.5,
+      ));
+      await tester.pump();
+
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      expect(find.text('50%'), findsOneWidget);
+    });
+
+    testWidgets('processing thumbnail displays correct percentage',
+        (tester) async {
+      await tester.pumpWidget(buildTestWidget(
+        attachments: [],
+        isProcessing: true,
+        processingProgress: 0.73,
+      ));
+      await tester.pump();
+
+      expect(find.text('73%'), findsOneWidget);
+    });
+
+    testWidgets('processing thumbnail shows determinate CircularProgressIndicator',
+        (tester) async {
+      await tester.pumpWidget(buildTestWidget(
+        attachments: [],
+        isProcessing: true,
+        processingProgress: 0.42,
+      ));
+      await tester.pump();
+
+      final cpi = tester.widget<CircularProgressIndicator>(
+        find.byType(CircularProgressIndicator),
+      );
+      expect(cpi.value, 0.42);
+    });
+
+    testWidgets('does not show processing thumbnail when isProcessing is false',
+        (tester) async {
+      await tester.pumpWidget(buildTestWidget(
+        attachments: [],
+        isProcessing: false,
+      ));
+      await tester.pump();
+
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+    });
+
+    testWidgets('shows processing tile alongside existing attachments',
+        (tester) async {
+      await tester.pumpWidget(buildTestWidget(
+        attachments: testFiles,
+        isProcessing: true,
+        processingProgress: 0.25,
+      ));
+      await tester.pump();
+
+      // 3 image thumbnails + 1 processing tile
+      expect(find.byType(Image), findsNWidgets(3));
+      expect(find.text('25%'), findsOneWidget);
     });
   });
 }

@@ -7,6 +7,7 @@ void main() {
     ValueChanged<String>? onSend,
     VoidCallback? onAttach,
     bool hasAttachments = false,
+    bool isProcessing = false,
   }) {
     return MaterialApp(
       home: Scaffold(
@@ -17,6 +18,7 @@ void main() {
               onSend: onSend ?? (_) {},
               onAttach: onAttach,
               hasAttachments: hasAttachments,
+              isProcessing: isProcessing,
             ),
           ],
         ),
@@ -174,6 +176,46 @@ void main() {
       await tester.pump();
 
       expect(sentText, isNull);
+    });
+
+    testWidgets('disables send button when isProcessing is true',
+        (tester) async {
+      String? sentText;
+      await tester.pumpWidget(buildTestWidget(
+        onSend: (text) => sentText = text,
+        hasAttachments: true,
+        isProcessing: true,
+      ));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Send'));
+      await tester.pump();
+
+      expect(sentText, isNull);
+    });
+
+    testWidgets('disables attach button when isProcessing is true',
+        (tester) async {
+      var attachPressed = false;
+      await tester.pumpWidget(buildTestWidget(
+        onAttach: () => attachPressed = true,
+        isProcessing: true,
+      ));
+
+      await tester.tap(find.byIcon(Icons.add_circle_outline));
+      expect(attachPressed, false);
+    });
+
+    testWidgets('attach button dimmed when isProcessing is true',
+        (tester) async {
+      await tester.pumpWidget(buildTestWidget(isProcessing: true));
+      await tester.pump();
+
+      final icon = tester.widget<Icon>(
+        find.byIcon(Icons.add_circle_outline),
+      );
+      // When processing, the icon color should have lower opacity (0.15)
+      expect(icon.color, const Color.fromRGBO(255, 255, 255, 0.15));
     });
   });
 }

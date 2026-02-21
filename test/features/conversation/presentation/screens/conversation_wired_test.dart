@@ -484,9 +484,10 @@ void main() {
       // AmbientBackground has a repeating 8s animation that never settles.
       await tester.pump(const Duration(milliseconds: 500));
 
-      // Bottom sheet should show Photo Library and Camera options
-      expect(find.text('Photo Library'), findsOneWidget);
-      expect(find.text('Camera'), findsOneWidget);
+      // Bottom sheet should show Media Library, Take Photo, and Record Video options
+      expect(find.text('Media Library'), findsOneWidget);
+      expect(find.text('Take Photo'), findsOneWidget);
+      expect(find.text('Record Video'), findsOneWidget);
     });
 
     testWidgets('does not show AttachmentPreviewStrip initially',

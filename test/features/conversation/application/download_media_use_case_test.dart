@@ -37,6 +37,9 @@ class _FakeBridge implements Bridge {
   void Function(ConnectionState)? onPeerConnected;
   @override
   void Function(ConnectionState)? onPeerDisconnected;
+  @override
+  void Function(List<String> listenAddresses, List<String> circuitAddresses)?
+      onAddressesUpdated;
 }
 
 /// Fake media attachment repository that tracks calls.
@@ -318,4 +321,7 @@ class _ThrowingBridge implements Bridge {
   void Function(ConnectionState)? onPeerConnected;
   @override
   void Function(ConnectionState)? onPeerDisconnected;
+  @override
+  void Function(List<String> listenAddresses, List<String> circuitAddresses)?
+      onAddressesUpdated;
 }

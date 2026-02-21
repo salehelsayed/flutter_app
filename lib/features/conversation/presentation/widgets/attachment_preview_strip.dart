@@ -9,25 +9,33 @@ import 'package:flutter/material.dart';
 class AttachmentPreviewStrip extends StatelessWidget {
   final List<File> attachments;
   final bool isUploading;
+  final bool isProcessing;
+  final double processingProgress;
   final ValueChanged<int>? onRemove;
 
   const AttachmentPreviewStrip({
     super.key,
     required this.attachments,
     this.isUploading = false,
+    this.isProcessing = false,
+    this.processingProgress = 0.0,
     this.onRemove,
   });
 
   @override
   Widget build(BuildContext context) {
+    final totalCount = attachments.length + (isProcessing ? 1 : 0);
     return SizedBox(
       height: 88,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        itemCount: attachments.length,
+        itemCount: totalCount,
         separatorBuilder: (_, __) => const SizedBox(width: 8),
         itemBuilder: (context, index) {
+          if (isProcessing && index == totalCount - 1) {
+            return _ProcessingThumbnail(progress: processingProgress);
+          }
           return _Thumbnail(
             file: attachments[index],
             isUploading: isUploading,
@@ -113,6 +121,52 @@ class _Thumbnail extends StatelessWidget {
               ),
             ),
         ],
+      ),
+    );
+  }
+}
+
+class _ProcessingThumbnail extends StatelessWidget {
+  final double progress;
+  const _ProcessingThumbnail({required this.progress});
+
+  @override
+  Widget build(BuildContext context) {
+    final percent = (progress * 100).round();
+    return SizedBox(
+      width: 72,
+      height: 72,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          color: const Color.fromRGBO(255, 255, 255, 0.08),
+          child: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox(
+                  width: 28,
+                  height: 28,
+                  child: CircularProgressIndicator(
+                    value: progress,
+                    strokeWidth: 2.5,
+                    color: Colors.white70,
+                    backgroundColor: const Color.fromRGBO(255, 255, 255, 0.15),
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '$percent%',
+                  style: const TextStyle(
+                    color: Colors.white70,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }

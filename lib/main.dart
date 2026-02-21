@@ -17,6 +17,7 @@ import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/contact_requests_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart';
+import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/secure_storage/flutter_secure_key_store.dart';
 import 'package:flutter_app/core/secure_storage/migrate_secrets_to_secure_storage.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository_impl.dart';
@@ -36,6 +37,7 @@ import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/core/local_discovery/local_p2p_service.dart';
 import 'package:flutter_app/core/local_discovery/bonsoir_discovery_service.dart';
 import 'package:flutter_app/core/local_discovery/local_ws_server.dart';
+import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/theme/app_theme.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -225,6 +227,9 @@ void main() async {
   // Create media file manager
   final mediaFileManager = MediaFileManager();
 
+  // Create image processor (EXIF stripping + quality compression)
+  final imageProcessor = ImageProcessor();
+
   // Create and initialize the bridge (Go native)
   final Bridge bridge = GoBridgeClient();
   await bridge.initialize();
@@ -315,6 +320,8 @@ void main() async {
     bridge: bridge,
     p2pService: p2pService,
     mediaFileManager: mediaFileManager,
+    secureKeyStore: secureKeyStore,
+    imageProcessor: imageProcessor,
     isDesktop: isDesktop,
   ));
   StartupTiming.instance.mark('run_app_called');
@@ -334,6 +341,8 @@ class MyApp extends StatefulWidget {
   final Bridge bridge;
   final P2PServiceImpl p2pService;
   final MediaFileManager mediaFileManager;
+  final SecureKeyStore secureKeyStore;
+  final ImageProcessor imageProcessor;
   final bool isDesktop;
 
   const MyApp({
@@ -351,6 +360,8 @@ class MyApp extends StatefulWidget {
     required this.bridge,
     required this.p2pService,
     required this.mediaFileManager,
+    required this.secureKeyStore,
+    required this.imageProcessor,
     required this.isDesktop,
   }) : super(key: key);
 
@@ -483,6 +494,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         bridge: widget.bridge,
         p2pService: widget.p2pService,
         mediaFileManager: widget.mediaFileManager,
+        secureKeyStore: widget.secureKeyStore,
+        imageProcessor: widget.imageProcessor,
       ),
       debugShowCheckedModeBanner: false,
     );

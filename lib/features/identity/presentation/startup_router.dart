@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/media/image_processor.dart';
+import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
 import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository.dart';
@@ -64,6 +66,12 @@ class StartupRouter extends StatefulWidget {
   /// The media file manager for local file operations.
   final MediaFileManager mediaFileManager;
 
+  /// The secure key store for preference storage.
+  final SecureKeyStore secureKeyStore;
+
+  /// The image processor for EXIF stripping and compression.
+  final ImageProcessor imageProcessor;
+
   const StartupRouter({
     super.key,
     required this.repository,
@@ -76,6 +84,8 @@ class StartupRouter extends StatefulWidget {
     required this.bridge,
     required this.p2pService,
     required this.mediaFileManager,
+    required this.secureKeyStore,
+    required this.imageProcessor,
   });
 
   @override
@@ -138,6 +148,8 @@ class _StartupRouterState extends State<StartupRouter> {
                 bridge: bridge,
                 p2pService: p2pService,
                 mediaFileManager: widget.mediaFileManager,
+                secureKeyStore: widget.secureKeyStore,
+                imageProcessor: widget.imageProcessor,
               ),
             ),
           );
@@ -165,6 +177,8 @@ class _StartupRouterState extends State<StartupRouter> {
             bridge: bridge,
             p2pService: p2pService,
             mediaFileManager: widget.mediaFileManager,
+            secureKeyStore: widget.secureKeyStore,
+            imageProcessor: widget.imageProcessor,
           );
           StartupTiming.instance.mark('route_pushed');
 
@@ -201,6 +215,8 @@ class _StartupRouterState extends State<StartupRouter> {
                         bridge: bridge,
                         p2pService: p2pService,
                         mediaFileManager: widget.mediaFileManager,
+                        secureKeyStore: widget.secureKeyStore,
+                        imageProcessor: widget.imageProcessor,
                       ),
                     ),
                   );
@@ -367,6 +383,8 @@ class _StartupRouterState extends State<StartupRouter> {
     required Bridge bridge,
     required P2PService p2pService,
     required MediaFileManager mediaFileManager,
+    required SecureKeyStore secureKeyStore,
+    required ImageProcessor imageProcessor,
   }) {
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(
@@ -381,6 +399,8 @@ class _StartupRouterState extends State<StartupRouter> {
           bridge: bridge,
           p2pService: p2pService,
           mediaFileManager: mediaFileManager,
+          secureKeyStore: secureKeyStore,
+          imageProcessor: imageProcessor,
         ),
       ),
     );

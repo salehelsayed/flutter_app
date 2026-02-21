@@ -4,7 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:uuid/uuid.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/application/block_contact_use_case.dart';
@@ -42,6 +44,21 @@ typedef SendChatMessageFn =
       MediaAttachmentRepository? mediaAttachmentRepo,
     });
 
+/// A pending media attachment with optional video metadata.
+class _PendingMedia {
+  final File file;
+  final int? width;
+  final int? height;
+  final int? durationMs;
+
+  const _PendingMedia({
+    required this.file,
+    this.width,
+    this.height,
+    this.durationMs,
+  });
+}
+
 /// Wired widget that connects ConversationScreen to business logic.
 ///
 /// Loads identity and messages on init, subscribes to incoming message stream,
@@ -59,6 +76,9 @@ class ConversationWired extends StatefulWidget {
   final MediaAttachmentRepository? mediaAttachmentRepo;
   final MediaFileManager? mediaFileManager;
   final List<File>? initialAttachments;
+  final ImageProcessor? imageProcessor;
+  final ImageQualityPreference qualityPreference;
+  final ImageQualityPreference videoQualityPreference;
 
   const ConversationWired({
     super.key,
@@ -74,6 +94,9 @@ class ConversationWired extends StatefulWidget {
     this.mediaAttachmentRepo,
     this.mediaFileManager,
     this.initialAttachments,
+    this.imageProcessor,
+    this.qualityPreference = ImageQualityPreference.compressed,
+    this.videoQualityPreference = ImageQualityPreference.compressed,
   });
 
   @override
@@ -95,8 +118,10 @@ class _ConversationWiredState extends State<ConversationWired> {
   bool _isLoadingMore = false;
   bool _initialLoadDone = false;
 
-  List<File> _pendingAttachments = [];
+  List<_PendingMedia> _pendingAttachments = [];
   bool _isUploading = false;
+  bool _isProcessingVideo = false;
+  double _processingProgress = 0.0;
   static const _maxAttachments = 10;
 
   @override
@@ -104,7 +129,9 @@ class _ConversationWiredState extends State<ConversationWired> {
     super.initState();
     _contact = widget.contact;
     if (widget.initialAttachments != null && widget.initialAttachments!.isNotEmpty) {
-      _pendingAttachments = List<File>.from(widget.initialAttachments!);
+      _pendingAttachments = widget.initialAttachments!
+          .map((f) => _PendingMedia(file: f))
+          .toList();
     }
     emitFlowEvent(layer: 'FL', event: 'CONV_FL_SCREEN_INIT', details: {});
     _scrollController.addListener(_onScroll);
@@ -282,20 +309,23 @@ class _ConversationWiredState extends State<ConversationWired> {
     );
 
     // Capture and clear pending attachments
-    final filesToUpload = List<File>.from(_pendingAttachments);
+    final mediaToUpload = List<_PendingMedia>.from(_pendingAttachments);
     List<MediaAttachment>? optimisticMedia;
 
-    if (filesToUpload.isNotEmpty) {
+    if (mediaToUpload.isNotEmpty) {
       final now = DateTime.now().toUtc().toIso8601String();
-      optimisticMedia = filesToUpload.map((f) {
-        final mime = _mimeFromPath(f.path);
+      optimisticMedia = mediaToUpload.map((m) {
+        final mime = _mimeFromPath(m.file.path);
         return MediaAttachment(
           id: _uuid.v4(),
           messageId: '',
           mime: mime,
           size: 0,
           mediaType: MediaAttachment.mediaTypeFromMime(mime),
-          localPath: f.path,
+          width: m.width,
+          height: m.height,
+          durationMs: m.durationMs,
+          localPath: m.file.path,
           downloadStatus: 'done',
           createdAt: now,
         );
@@ -304,7 +334,7 @@ class _ConversationWiredState extends State<ConversationWired> {
 
     setState(() {
       _pendingAttachments = [];
-      if (filesToUpload.isNotEmpty) _isUploading = true;
+      if (mediaToUpload.isNotEmpty) _isUploading = true;
     });
 
     final now = DateTime.now().toUtc().toIso8601String();
@@ -339,16 +369,19 @@ class _ConversationWiredState extends State<ConversationWired> {
 
     // Upload attachments if any
     List<MediaAttachment>? uploadedAttachments;
-    if (filesToUpload.isNotEmpty && widget.bridge != null) {
+    if (mediaToUpload.isNotEmpty && widget.bridge != null) {
       uploadedAttachments = [];
-      for (final file in filesToUpload) {
-        final mime = _mimeFromPath(file.path);
+      for (final media in mediaToUpload) {
+        final mime = _mimeFromPath(media.file.path);
         final result = await uploadMedia(
           bridge: widget.bridge!,
-          localFilePath: file.path,
+          localFilePath: media.file.path,
           mime: mime,
           recipientPeerId: _contact.peerId,
           mediaFileManager: widget.mediaFileManager,
+          width: media.width,
+          height: media.height,
+          durationMs: media.durationMs,
         );
 
         if (result == null) {
@@ -356,7 +389,7 @@ class _ConversationWiredState extends State<ConversationWired> {
           if (mounted) {
             setState(() {
               _isUploading = false;
-              _pendingAttachments = filesToUpload;
+              _pendingAttachments = mediaToUpload;
             });
             _updateLocalMessageStatus(optimisticMessage.id, 'failed');
             await _persistMessageStatus(optimisticMessage.id, 'failed');
@@ -458,6 +491,9 @@ class _ConversationWiredState extends State<ConversationWired> {
       'heic': 'image/heic',
       'mp4': 'video/mp4',
       'mov': 'video/quicktime',
+      'avi': 'video/x-msvideo',
+      'mkv': 'video/x-matroska',
+      'm4v': 'video/x-m4v',
     };
     return map[ext] ?? 'application/octet-stream';
   }
@@ -486,7 +522,7 @@ class _ConversationWiredState extends State<ConversationWired> {
             ListTile(
               leading: const Icon(Icons.photo_library, color: Colors.white),
               title: const Text(
-                'Photo Library',
+                'Media Library',
                 style: TextStyle(color: Colors.white),
               ),
               onTap: () {
@@ -497,12 +533,23 @@ class _ConversationWiredState extends State<ConversationWired> {
             ListTile(
               leading: const Icon(Icons.camera_alt, color: Colors.white),
               title: const Text(
-                'Camera',
+                'Take Photo',
                 style: TextStyle(color: Colors.white),
               ),
               onTap: () {
                 Navigator.pop(ctx);
                 _pickFromCamera();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.videocam, color: Colors.white),
+              title: const Text(
+                'Record Video',
+                style: TextStyle(color: Colors.white),
+              ),
+              onTap: () {
+                Navigator.pop(ctx);
+                _pickVideoFromCamera();
               },
             ),
             const SizedBox(height: 16),
@@ -518,15 +565,19 @@ class _ConversationWiredState extends State<ConversationWired> {
       final remaining = _maxAttachments - _pendingAttachments.length;
       if (remaining <= 0) return;
 
-      final picked = await picker.pickMultiImage(imageQuality: 85);
+      final picked = await picker.pickMultipleMedia();
       if (picked.isEmpty || !mounted) return;
 
-      final files = picked
-          .take(remaining)
-          .map((xf) => File(xf.path))
-          .toList();
+      final selectedFiles = picked.take(remaining).toList();
+      final media = <_PendingMedia>[];
+      for (final xf in selectedFiles) {
+        final result = await _processMediaIfNeeded(xf.path);
+        media.add(result);
+      }
+
+      if (!mounted) return;
       setState(() {
-        _pendingAttachments = [..._pendingAttachments, ...files];
+        _pendingAttachments = [..._pendingAttachments, ...media];
       });
     } catch (e) {
       emitFlowEvent(
@@ -542,13 +593,15 @@ class _ConversationWiredState extends State<ConversationWired> {
       final picker = ImagePicker();
       final picked = await picker.pickImage(
         source: ImageSource.camera,
-        imageQuality: 85,
       );
       if (picked == null || !mounted) return;
       if (_pendingAttachments.length >= _maxAttachments) return;
 
+      final result = await _processMediaIfNeeded(picked.path);
+      if (!mounted) return;
+
       setState(() {
-        _pendingAttachments = [..._pendingAttachments, File(picked.path)];
+        _pendingAttachments = [..._pendingAttachments, result];
       });
     } catch (e) {
       emitFlowEvent(
@@ -559,10 +612,75 @@ class _ConversationWiredState extends State<ConversationWired> {
     }
   }
 
+  Future<void> _pickVideoFromCamera() async {
+    try {
+      final picker = ImagePicker();
+      final picked = await picker.pickVideo(
+        source: ImageSource.camera,
+      );
+      if (picked == null || !mounted) return;
+      if (_pendingAttachments.length >= _maxAttachments) return;
+
+      final result = await _processMediaIfNeeded(picked.path);
+      if (!mounted) return;
+
+      setState(() {
+        _pendingAttachments = [..._pendingAttachments, result];
+      });
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONV_FL_PICK_VIDEO_CAMERA_ERROR',
+        details: {'error': e.toString()},
+      );
+    }
+  }
+
+  /// Processes a media file (image or video) before attaching.
+  Future<_PendingMedia> _processMediaIfNeeded(String path) async {
+    final processor = widget.imageProcessor;
+    if (processor == null) return _PendingMedia(file: File(path));
+
+    if (processor.isProcessableVideo(path)) {
+      setState(() {
+        _isProcessingVideo = true;
+        _processingProgress = 0.0;
+      });
+
+      final result = await processor.processVideo(
+        inputPath: path,
+        quality: widget.videoQualityPreference,
+        onProgress: (progress) {
+          if (mounted) {
+            setState(() => _processingProgress = progress / 100.0);
+          }
+        },
+      );
+
+      if (mounted) {
+        setState(() => _isProcessingVideo = false);
+      }
+
+      return _PendingMedia(
+        file: File(result.path),
+        width: result.width,
+        height: result.height,
+        durationMs: result.durationMs,
+      );
+    }
+
+    // Image processing (existing behavior)
+    final processed = await processor.processImage(
+      inputPath: path,
+      quality: widget.qualityPreference,
+    );
+    return _PendingMedia(file: File(processed));
+  }
+
   void _removeAttachment(int index) {
     if (index < 0 || index >= _pendingAttachments.length) return;
     setState(() {
-      final updated = List<File>.from(_pendingAttachments);
+      final updated = List<_PendingMedia>.from(_pendingAttachments);
       updated.removeAt(index);
       _pendingAttachments = updated;
     });
@@ -839,9 +957,11 @@ class _ConversationWiredState extends State<ConversationWired> {
         hasMoreOlderMessages: _hasMoreOlderMessages,
         initialLoadDone: _initialLoadDone,
         onAttach: _onAttach,
-        pendingAttachments: _pendingAttachments,
+        pendingAttachments: _pendingAttachments.map((m) => m.file).toList(),
         isUploading: _isUploading,
         onRemoveAttachment: _removeAttachment,
+        isProcessing: _isProcessingVideo,
+        processingProgress: _processingProgress,
       ),
     );
   }

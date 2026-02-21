@@ -5,8 +5,12 @@ import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
+import 'package:flutter_app/features/settings/application/image_quality_preference_use_cases.dart';
+import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contact_request/application/accept_contact_request_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
@@ -51,6 +55,8 @@ class OrbitWired extends StatefulWidget {
   final Bridge bridge;
   final P2PService p2pService;
   final MediaFileManager mediaFileManager;
+  final SecureKeyStore secureKeyStore;
+  final ImageProcessor imageProcessor;
 
   const OrbitWired({
     super.key,
@@ -64,6 +70,8 @@ class OrbitWired extends StatefulWidget {
     required this.bridge,
     required this.p2pService,
     required this.mediaFileManager,
+    required this.secureKeyStore,
+    required this.imageProcessor,
   });
 
   @override
@@ -93,6 +101,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   StreamSubscription<ConversationMessage>? _chatSubscription;
   StreamSubscription<ContactModel>? _contactUpdateSubscription;
   StreamSubscription<ContactRequestModel>? _requestSubscription;
+  ImageQualityPreference _qualityPreference = ImageQualityPreference.compressed;
+  ImageQualityPreference _videoQualityPreference = ImageQualityPreference.compressed;
 
   static const _animCurve = Cubic(0.22, 0.61, 0.36, 1);
 
@@ -117,11 +127,31 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     );
 
     _loadIdentity();
+    _loadQualityPreference();
+    _loadVideoQualityPreference();
     _loadOrbitData();
     _startListeningForChatMessages();
     _startListeningForContactUpdates();
     _startListeningForContactRequests();
     _scrollController.addListener(_onScroll);
+  }
+
+  Future<void> _loadQualityPreference() async {
+    final pref = await loadImageQualityPreference(
+      secureKeyStore: widget.secureKeyStore,
+    );
+    if (mounted) {
+      setState(() => _qualityPreference = pref);
+    }
+  }
+
+  Future<void> _loadVideoQualityPreference() async {
+    final pref = await loadVideoQualityPreference(
+      secureKeyStore: widget.secureKeyStore,
+    );
+    if (mounted) {
+      setState(() => _videoQualityPreference = pref);
+    }
   }
 
   void _loadIdentity() async {
@@ -458,6 +488,9 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           contactRepo: widget.contactRepo,
           mediaAttachmentRepo: widget.mediaAttachmentRepo,
           mediaFileManager: widget.mediaFileManager,
+          imageProcessor: widget.imageProcessor,
+          qualityPreference: _qualityPreference,
+          videoQualityPreference: _videoQualityPreference,
         ),
       ),
     ).then((_) => _loadOrbitData());
@@ -489,6 +522,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           identityRepository: widget.identityRepo,
           p2pService: widget.p2pService,
           mediaFileManager: widget.mediaFileManager,
+          secureKeyStore: widget.secureKeyStore,
+          imageProcessor: widget.imageProcessor,
           ownPeerId: _identity?.peerId ?? '',
         ),
       ),

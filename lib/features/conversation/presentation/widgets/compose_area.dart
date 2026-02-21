@@ -9,12 +9,14 @@ class ComposeArea extends StatefulWidget {
   final ValueChanged<String> onSend;
   final VoidCallback? onAttach;
   final bool hasAttachments;
+  final bool isProcessing;
 
   const ComposeArea({
     super.key,
     required this.onSend,
     this.onAttach,
     this.hasAttachments = false,
+    this.isProcessing = false,
   });
 
   @override
@@ -188,16 +190,19 @@ class _ComposeAreaState extends State<ComposeArea>
                 children: [
                   // Attachment button
                   GestureDetector(
-                    onTap: widget.onAttach,
+                    onTap: widget.isProcessing ? null : widget.onAttach,
                     behavior: HitTestBehavior.opaque,
-                    child: const SizedBox(
+                    child: SizedBox(
                       width: 44,
                       height: 44,
                       child: Center(
                         child: Icon(
                           Icons.add_circle_outline,
                           size: 22,
-                          color: Color.fromRGBO(255, 255, 255, 0.4),
+                          color: Color.fromRGBO(
+                            255, 255, 255,
+                            widget.isProcessing ? 0.15 : 0.4,
+                          ),
                         ),
                       ),
                     ),
@@ -224,7 +229,9 @@ class _ComposeAreaState extends State<ComposeArea>
                       );
                     },
                     child: GestureDetector(
-                      onTap: (_hasText || widget.hasAttachments) ? _onSendPressed : null,
+                      onTap: !widget.isProcessing && (_hasText || widget.hasAttachments)
+                          ? _onSendPressed
+                          : null,
                       child: Container(
                         padding: const EdgeInsets.symmetric(
                           horizontal: 20,

@@ -36,6 +36,8 @@ class ConversationScreen extends StatefulWidget {
   final List<File> pendingAttachments;
   final bool isUploading;
   final ValueChanged<int>? onRemoveAttachment;
+  final bool isProcessing;
+  final double processingProgress;
 
   const ConversationScreen({
     super.key,
@@ -57,6 +59,8 @@ class ConversationScreen extends StatefulWidget {
     this.pendingAttachments = const [],
     this.isUploading = false,
     this.onRemoveAttachment,
+    this.isProcessing = false,
+    this.processingProgress = 0.0,
   });
 
   @override
@@ -101,10 +105,13 @@ class _ConversationScreenState extends State<ConversationScreen> {
             ),
           ),
           // Attachment preview strip
-          if (!widget.isBlocked && widget.pendingAttachments.isNotEmpty)
+          if (!widget.isBlocked &&
+              (widget.pendingAttachments.isNotEmpty || widget.isProcessing))
             AttachmentPreviewStrip(
               attachments: widget.pendingAttachments,
               isUploading: widget.isUploading,
+              isProcessing: widget.isProcessing,
+              processingProgress: widget.processingProgress,
               onRemove: widget.onRemoveAttachment,
             ),
           // Compose area or blocked banner
@@ -115,6 +122,7 @@ class _ConversationScreenState extends State<ConversationScreen> {
               onSend: widget.onSend,
               onAttach: widget.onAttach,
               hasAttachments: widget.pendingAttachments.isNotEmpty,
+              isProcessing: widget.isProcessing,
             ),
         ],
       ),
