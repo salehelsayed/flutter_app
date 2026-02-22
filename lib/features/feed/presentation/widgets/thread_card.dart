@@ -693,6 +693,8 @@ class _ThreadCardState extends State<ThreadCard> with TickerProviderStateMixin {
       isUnread: message.isUnread,
       isIncoming: message.isIncoming,
       status: message.status,
+      senderPeerId: message.isIncoming ? widget.thread.contactPeerId : null,
+      senderLabel: message.isIncoming ? widget.thread.contactUsername : 'You',
       quotedText: quotedText,
       isQuoteUnavailable: isQuoteUnavailable,
       media: message.media,
