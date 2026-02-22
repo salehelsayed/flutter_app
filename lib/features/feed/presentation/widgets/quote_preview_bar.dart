@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_app/core/theme/app_colors.dart';
+import 'package:flutter_app/core/theme/feed_colors.dart';
 
 /// Compose preview bar shown above the expanded input when quoting a message.
 ///
@@ -25,7 +25,7 @@ class QuotePreviewBar extends StatelessWidget {
             width: 2,
             height: 36,
             decoration: BoxDecoration(
-              color: AppColors.tealAccent.withValues(alpha: 0.60),
+              color: FeedColors.accentTeal.withValues(alpha: 0.60),
               borderRadius: BorderRadius.circular(1),
             ),
           ),
@@ -41,7 +41,7 @@ class QuotePreviewBar extends StatelessWidget {
                   style: TextStyle(
                     fontSize: 11,
                     fontWeight: FontWeight.w500,
-                    color: AppColors.tealAccent.withValues(alpha: 0.60),
+                    color: FeedColors.accentTeal.withValues(alpha: 0.60),
                   ),
                 ),
                 const SizedBox(height: 2),

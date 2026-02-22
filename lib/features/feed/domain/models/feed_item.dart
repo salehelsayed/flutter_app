@@ -118,6 +118,9 @@ class ThreadFeedItem extends FeedItem {
     this.isBlocked = false,
   }) : super(type: FeedItemType.thread);
 
+  /// Maximum number of unread messages visible in open-mode preview.
+  static const int maxPreview = 3;
+
   bool get isMultiMessage => messages.length > 1;
   ThreadMessage get latestMessage => messages.last;
   int get additionalCount => messages.length - 1;
@@ -130,6 +133,43 @@ class ThreadFeedItem extends FeedItem {
 
   /// Whether the thread contains any sent (outgoing) message.
   bool get hasReply => messages.any((m) => !m.isIncoming);
+
+  /// All unread incoming messages in chronological order.
+  List<ThreadMessage> get unreadMessages =>
+      messages.where((m) => m.isUnread && m.isIncoming).toList();
+
+  /// First [maxPreview] unread messages for open-mode card.
+  List<ThreadMessage> get previewMessages {
+    final unread = unreadMessages;
+    if (unread.length <= maxPreview) return unread;
+    return unread.sublist(0, maxPreview);
+  }
+
+  /// True when read messages exist before the first unread.
+  bool get hasEarlierHistory {
+    final unread = unreadMessages;
+    if (unread.isEmpty) return messages.isNotEmpty;
+    final firstUnreadIndex = messages.indexOf(unread.first);
+    return firstUnreadIndex > 0;
+  }
+
+  /// Most recent outgoing message, or null if none.
+  ThreadMessage? get lastSentMessage {
+    for (var i = messages.length - 1; i >= 0; i--) {
+      if (!messages[i].isIncoming) return messages[i];
+    }
+    return null;
+  }
+
+  /// True for unread/active states (open-mode card), false for read/replied.
+  bool get isOpenMode =>
+      conversationState == ConversationState.unread ||
+      conversationState == ConversationState.active;
+
+  /// Single message to show in collapsed card:
+  /// last sent for replied, latest message for read.
+  ThreadMessage get collapsedPreviewMessage =>
+      lastSentMessage ?? latestMessage;
 }
 
 /// A feed item representing an incoming message from a contact.

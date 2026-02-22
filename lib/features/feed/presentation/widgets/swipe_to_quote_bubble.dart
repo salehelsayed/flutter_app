@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_app/core/theme/app_colors.dart';
+import 'package:flutter_app/core/theme/feed_colors.dart';
 
 /// Right-swipe gesture wrapper for received message bubbles.
 ///
@@ -133,12 +133,12 @@ class _SwipeToQuoteBubbleState extends State<SwipeToQuoteBubble>
                     height: 32,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      color: AppColors.tealAccent.withValues(alpha: 0.15),
+                      color: FeedColors.accentTeal.withValues(alpha: 0.15),
                     ),
                     child: Icon(
                       Icons.reply_rounded,
                       size: 18,
-                      color: AppColors.tealAccent.withValues(alpha: 0.80),
+                      color: FeedColors.accentTeal.withValues(alpha: 0.80),
                     ),
                   ),
                 ),
