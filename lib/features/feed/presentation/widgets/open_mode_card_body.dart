@@ -1,0 +1,123 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/inline_reply_input.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/scrollable_message_preview.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/unread_count_badge.dart';
+import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
+
+/// Body of a feed card in open mode (unread / active state).
+///
+/// Shows the friend header, scrollable unread message preview,
+/// and an inline reply input with "Reply..." hint.
+class OpenModeCardBody extends StatelessWidget {
+  final ThreadFeedItem thread;
+  final VoidCallback? onViewEarlier;
+  final ValueChanged<String>? onQuoteReply;
+  final ValueChanged<String>? onSend;
+  final bool sendEnabled;
+  final String initialText;
+  final bool shouldRequestFocus;
+  final ValueChanged<String>? onDraftChanged;
+  final ValueChanged<bool>? onInputFocusChanged;
+  final VoidCallback? onAttach;
+
+  const OpenModeCardBody({
+    super.key,
+    required this.thread,
+    this.onViewEarlier,
+    this.onQuoteReply,
+    this.onSend,
+    this.sendEnabled = true,
+    this.initialText = '',
+    this.shouldRequestFocus = false,
+    this.onDraftChanged,
+    this.onInputFocusChanged,
+    this.onAttach,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Friend indicator header
+        _buildHeader(),
+        // Scrollable unread messages
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+          child: ScrollableMessagePreview(
+            messages: thread.unreadMessages,
+            contactPeerId: thread.contactPeerId,
+            contactUsername: thread.contactUsername,
+            hasEarlierHistory: thread.hasEarlierHistory,
+            onViewEarlier: onViewEarlier,
+            onQuoteReply: onQuoteReply,
+          ),
+        ),
+        // Footer with reply input
+        _buildFooter(),
+      ],
+    );
+  }
+
+  Widget _buildHeader() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 18, 20, 12),
+      child: Row(
+        children: [
+          UserAvatar(peerId: thread.contactPeerId, size: 42),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  thread.contactUsername,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: Color.fromRGBO(255, 255, 255, 1.0),
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  thread.latestMessage.time,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w400,
+                    color: Color.fromRGBO(255, 255, 255, 0.55),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (thread.unreadCount > 0)
+            UnreadCountBadge(count: thread.unreadCount),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFooter() {
+    return Container(
+      decoration: const BoxDecoration(
+        border: Border(
+          top: BorderSide(color: Color.fromRGBO(255, 255, 255, 0.08)),
+        ),
+      ),
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 14),
+      child: InlineReplyInput(
+        hintText: 'Reply...',
+        onSend: (text) => onSend?.call(text),
+        enabled: sendEnabled,
+        initialText: initialText,
+        shouldRequestFocus: shouldRequestFocus,
+        onDraftChanged: onDraftChanged,
+        onFocusChanged: onInputFocusChanged,
+        onAttach: onAttach,
+      ),
+    );
+  }
+}

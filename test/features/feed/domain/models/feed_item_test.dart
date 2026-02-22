@@ -151,6 +151,215 @@ void main() {
     });
   });
 
+  group('ThreadFeedItem computed properties', () {
+    ThreadMessage _msg({
+      required String id,
+      bool isUnread = false,
+      bool isIncoming = true,
+      DateTime? timestamp,
+    }) {
+      final ts = timestamp ?? DateTime(2026, 2, 9, 15, 0);
+      return ThreadMessage(
+        id: id,
+        text: 'msg $id',
+        time: '3:00 PM',
+        timestamp: ts,
+        isUnread: isUnread,
+        isIncoming: isIncoming,
+      );
+    }
+
+    test('unreadMessages returns only unread incoming in chronological order',
+        () {
+      final item = ThreadFeedItem(
+        id: 'thread_1',
+        timestamp: DateTime(2026, 2, 9),
+        contactPeerId: 'peer1',
+        contactUsername: 'Alice',
+        messages: [
+          _msg(id: 'm1'), // read incoming
+          _msg(id: 'm2', isIncoming: false), // sent
+          _msg(id: 'm3', isUnread: true), // unread incoming
+          _msg(id: 'm4', isUnread: true), // unread incoming
+          _msg(id: 'm5', isUnread: true, isIncoming: false), // unread sent
+        ],
+      );
+
+      final unread = item.unreadMessages;
+      expect(unread.length, 2);
+      expect(unread[0].id, 'm3');
+      expect(unread[1].id, 'm4');
+    });
+
+    test('previewMessages returns first 3 unread when unread > 3', () {
+      final item = ThreadFeedItem(
+        id: 'thread_1',
+        timestamp: DateTime(2026, 2, 9),
+        contactPeerId: 'peer1',
+        contactUsername: 'Alice',
+        messages: [
+          _msg(id: 'm1', isUnread: true),
+          _msg(id: 'm2', isUnread: true),
+          _msg(id: 'm3', isUnread: true),
+          _msg(id: 'm4', isUnread: true),
+          _msg(id: 'm5', isUnread: true),
+        ],
+      );
+
+      final preview = item.previewMessages;
+      expect(preview.length, 3);
+      expect(preview[0].id, 'm1');
+      expect(preview[2].id, 'm3');
+    });
+
+    test('previewMessages returns all unread when unread <= 3', () {
+      final item = ThreadFeedItem(
+        id: 'thread_1',
+        timestamp: DateTime(2026, 2, 9),
+        contactPeerId: 'peer1',
+        contactUsername: 'Alice',
+        messages: [
+          _msg(id: 'm1', isUnread: true),
+          _msg(id: 'm2', isUnread: true),
+        ],
+      );
+
+      expect(item.previewMessages.length, 2);
+    });
+
+    test('hasEarlierHistory true when read messages exist before first unread',
+        () {
+      final item = ThreadFeedItem(
+        id: 'thread_1',
+        timestamp: DateTime(2026, 2, 9),
+        contactPeerId: 'peer1',
+        contactUsername: 'Alice',
+        messages: [
+          _msg(id: 'm1'), // read
+          _msg(id: 'm2'), // read
+          _msg(id: 'm3', isUnread: true), // unread
+        ],
+      );
+
+      expect(item.hasEarlierHistory, isTrue);
+    });
+
+    test('hasEarlierHistory false when all messages are unread', () {
+      final item = ThreadFeedItem(
+        id: 'thread_1',
+        timestamp: DateTime(2026, 2, 9),
+        contactPeerId: 'peer1',
+        contactUsername: 'Alice',
+        messages: [
+          _msg(id: 'm1', isUnread: true),
+          _msg(id: 'm2', isUnread: true),
+        ],
+      );
+
+      expect(item.hasEarlierHistory, isFalse);
+    });
+
+    test('isOpenMode true for unread, false for read', () {
+      final unread = ThreadFeedItem(
+        id: 'thread_1',
+        timestamp: DateTime(2026, 2, 9),
+        contactPeerId: 'peer1',
+        contactUsername: 'Alice',
+        messages: [_msg(id: 'm1')],
+        conversationState: ConversationState.unread,
+      );
+      expect(unread.isOpenMode, isTrue);
+
+      final active = ThreadFeedItem(
+        id: 'thread_2',
+        timestamp: DateTime(2026, 2, 9),
+        contactPeerId: 'peer1',
+        contactUsername: 'Alice',
+        messages: [_msg(id: 'm1')],
+        conversationState: ConversationState.active,
+      );
+      expect(active.isOpenMode, isTrue);
+
+      final read = ThreadFeedItem(
+        id: 'thread_3',
+        timestamp: DateTime(2026, 2, 9),
+        contactPeerId: 'peer1',
+        contactUsername: 'Alice',
+        messages: [_msg(id: 'm1')],
+        conversationState: ConversationState.read,
+      );
+      expect(read.isOpenMode, isFalse);
+
+      final replied = ThreadFeedItem(
+        id: 'thread_4',
+        timestamp: DateTime(2026, 2, 9),
+        contactPeerId: 'peer1',
+        contactUsername: 'Alice',
+        messages: [_msg(id: 'm1')],
+        conversationState: ConversationState.replied,
+      );
+      expect(replied.isOpenMode, isFalse);
+    });
+
+    test('lastSentMessage returns most recent outgoing, null when none', () {
+      final withSent = ThreadFeedItem(
+        id: 'thread_1',
+        timestamp: DateTime(2026, 2, 9),
+        contactPeerId: 'peer1',
+        contactUsername: 'Alice',
+        messages: [
+          _msg(id: 'm1'), // incoming
+          _msg(id: 'm2', isIncoming: false), // sent
+          _msg(id: 'm3'), // incoming
+          _msg(id: 'm4', isIncoming: false), // sent (latest)
+        ],
+      );
+      expect(withSent.lastSentMessage?.id, 'm4');
+
+      final noSent = ThreadFeedItem(
+        id: 'thread_2',
+        timestamp: DateTime(2026, 2, 9),
+        contactPeerId: 'peer1',
+        contactUsername: 'Alice',
+        messages: [
+          _msg(id: 'm1'),
+          _msg(id: 'm2'),
+        ],
+      );
+      expect(noSent.lastSentMessage, isNull);
+    });
+
+    test('collapsedPreviewMessage returns lastSentMessage or latestMessage',
+        () {
+      final withSent = ThreadFeedItem(
+        id: 'thread_1',
+        timestamp: DateTime(2026, 2, 9),
+        contactPeerId: 'peer1',
+        contactUsername: 'Alice',
+        messages: [
+          _msg(id: 'm1'),
+          _msg(id: 'm2', isIncoming: false),
+          _msg(id: 'm3'), // latestMessage
+        ],
+      );
+      // lastSentMessage is m2, so collapsedPreviewMessage = m2
+      expect(withSent.collapsedPreviewMessage.id, 'm2');
+
+      final noSent = ThreadFeedItem(
+        id: 'thread_2',
+        timestamp: DateTime(2026, 2, 9),
+        contactPeerId: 'peer1',
+        contactUsername: 'Alice',
+        messages: [
+          _msg(id: 'm1'),
+          _msg(id: 'm2'),
+        ],
+      );
+      // No sent, falls back to latestMessage = m2
+      expect(noSent.collapsedPreviewMessage.id, 'm2');
+    });
+  });
+
   group('ThreadMessage', () {
     test('stores all fields', () {
       final ts = DateTime(2026, 2, 9, 15, 30);

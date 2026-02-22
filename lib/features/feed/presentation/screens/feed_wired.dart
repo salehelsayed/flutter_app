@@ -32,6 +32,7 @@ import 'package:flutter_app/features/conversation/presentation/navigation/conver
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
 import 'package:flutter_app/features/feed/application/load_feed_use_case.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
+import 'package:flutter_app/features/feed/domain/models/session_reply.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/orbit/presentation/navigation/orbit_route_transition.dart';
@@ -93,6 +94,7 @@ class _FeedWiredState extends State<FeedWired> {
   String? _expandedCardId;
   final Map<String, String> _draftTexts = {};
   final Map<String, String> _activeQuoteMessageIds = {};
+  final SessionReplyTracker _sessionReplies = SessionReplyTracker();
   String? _activeFocusPeerId;
   StreamSubscription<ContactRequestModel>? _requestSubscription;
   StreamSubscription<ConversationMessage>? _chatSubscription;
@@ -422,6 +424,10 @@ class _FeedWiredState extends State<FeedWired> {
       if (result == SendChatMessageResult.success) {
         _draftTexts.remove(contactPeerId);
         _activeQuoteMessageIds.remove(contactPeerId);
+        _sessionReplies.track(
+          contactPeerId,
+          SessionReply.justNow(text),
+        );
         // Mark as read on successful inline reply
         await markConversationRead(
           messageRepo: widget.messageRepository,
@@ -817,6 +823,7 @@ class _FeedWiredState extends State<FeedWired> {
         onClearQuote: _onClearQuote,
         onAttach: _onAttach,
         onAvatarTap: _onAvatarTap,
+        sessionReplies: _sessionReplies,
       ),
     );
   }

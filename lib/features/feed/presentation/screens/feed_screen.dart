@@ -3,11 +3,12 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
+import 'package:flutter_app/features/feed/domain/models/session_reply.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/connection_card.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/feed_card.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/feed_header.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/feed_navigation_bar.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/session_divider.dart';
-import 'package:flutter_app/features/feed/presentation/widgets/thread_card.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
 
 /// Pure UI Feed screen.
@@ -40,6 +41,7 @@ class FeedScreen extends StatelessWidget {
   final void Function(String contactPeerId)? onClearQuote;
   final void Function(String contactPeerId)? onAttach;
   final VoidCallback? onAvatarTap;
+  final SessionReplyTracker? sessionReplies;
 
   const FeedScreen({
     super.key,
@@ -68,6 +70,7 @@ class FeedScreen extends StatelessWidget {
     this.onClearQuote,
     this.onAttach,
     this.onAvatarTap,
+    this.sessionReplies,
   });
 
   @override
@@ -234,47 +237,34 @@ class FeedScreen extends StatelessWidget {
         ),
       );
     } else if (item is ThreadFeedItem) {
-      final isExpanded = expandedCardId == item.id;
       widgets.add(
-        Padding(
-          padding: EdgeInsets.only(
-            bottom: item.isMultiMessage && !isExpanded ? 18 : 0,
-          ),
-          child: ThreadCard(
-            thread: item,
-            isExpanded: isExpanded,
-            onToggleExpand: onToggleExpand != null
-                ? () => onToggleExpand!(item.id)
-                : null,
-            onReply: onReplyToMessage != null
-                ? () => onReplyToMessage!(item.contactPeerId)
-                : null,
-            onInlineSend: onInlineSend != null
-                ? (text) => onInlineSend!(item.contactPeerId, text)
-                : null,
-            onViewFullConversation: onViewFullConversation != null
-                ? () => onViewFullConversation!(item.contactPeerId)
-                : null,
-            initialText: draftTexts?[item.contactPeerId] ?? '',
-            shouldRequestFocus: activeFocusPeerId == item.contactPeerId,
-            onDraftChanged: onDraftChanged != null
-                ? (text) => onDraftChanged!(item.contactPeerId, text)
-                : null,
-            onInputFocusChanged: onInputFocusChanged != null
-                ? (hasFocus) =>
-                      onInputFocusChanged!(item.contactPeerId, hasFocus)
-                : null,
-            activeQuoteMessageId: activeQuoteMessageIds?[item.contactPeerId],
-            onQuoteReply: onQuoteReply != null
-                ? (msgId) => onQuoteReply!(item.contactPeerId, msgId)
-                : null,
-            onClearQuote: onClearQuote != null
-                ? () => onClearQuote!(item.contactPeerId)
-                : null,
-            onAttach: onAttach != null
-                ? () => onAttach!(item.contactPeerId)
-                : null,
-          ),
+        FeedCard(
+          thread: item,
+          sessionReply: sessionReplies?.get(item.contactPeerId),
+          onToggleExpand: onToggleExpand != null
+              ? () => onToggleExpand!(item.id)
+              : null,
+          onInlineSend: onInlineSend != null
+              ? (text) => onInlineSend!(item.contactPeerId, text)
+              : null,
+          onViewFullConversation: onViewFullConversation != null
+              ? () => onViewFullConversation!(item.contactPeerId)
+              : null,
+          initialText: draftTexts?[item.contactPeerId] ?? '',
+          shouldRequestFocus: activeFocusPeerId == item.contactPeerId,
+          onDraftChanged: onDraftChanged != null
+              ? (text) => onDraftChanged!(item.contactPeerId, text)
+              : null,
+          onInputFocusChanged: onInputFocusChanged != null
+              ? (hasFocus) =>
+                    onInputFocusChanged!(item.contactPeerId, hasFocus)
+              : null,
+          onQuoteReply: onQuoteReply != null
+              ? (msgId) => onQuoteReply!(item.contactPeerId, msgId)
+              : null,
+          onAttach: onAttach != null
+              ? () => onAttach!(item.contactPeerId)
+              : null,
         ),
       );
     }

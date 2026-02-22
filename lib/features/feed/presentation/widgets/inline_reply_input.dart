@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_app/core/theme/app_colors.dart';
+import 'package:flutter_app/core/theme/feed_colors.dart';
 
 /// Pill-shaped single-line inline reply input with animated send button.
 ///
@@ -135,7 +135,7 @@ class _InlineReplyInputState extends State<InlineReplyInput>
           borderRadius: BorderRadius.circular(22),
           border: Border.all(
             color: _hasFocus
-                ? AppColors.tealAccent.withValues(alpha: 0.32)
+                ? FeedColors.accentTeal.withValues(alpha: 0.32)
                 : const Color.fromRGBO(255, 255, 255, 0.10),
           ),
           boxShadow: [
@@ -146,7 +146,7 @@ class _InlineReplyInputState extends State<InlineReplyInput>
             ),
             if (_hasFocus)
               BoxShadow(
-                color: AppColors.tealAccent.withValues(alpha: 0.10),
+                color: FeedColors.accentTeal.withValues(alpha: 0.10),
                 blurRadius: 14,
                 spreadRadius: 1,
               ),
@@ -228,23 +228,23 @@ class _InlineReplyInputState extends State<InlineReplyInput>
                         begin: Alignment.topLeft,
                         end: Alignment.bottomRight,
                         colors: [
-                          AppColors.tealAccent.withValues(
+                          FeedColors.accentTeal.withValues(
                             alpha: _hasText ? 0.42 : 0.24,
                           ),
-                          AppColors.tealAccent.withValues(
+                          FeedColors.accentTeal.withValues(
                             alpha: _hasText ? 0.28 : 0.16,
                           ),
                         ],
                       ),
                       border: Border.all(
-                        color: AppColors.tealAccent.withValues(
+                        color: FeedColors.accentTeal.withValues(
                           alpha: _hasText ? 0.58 : 0.24,
                         ),
                       ),
                       boxShadow: _hasText
                           ? [
                               BoxShadow(
-                                color: AppColors.tealAccent.withValues(
+                                color: FeedColors.accentTeal.withValues(
                                   alpha: 0.20,
                                 ),
                                 blurRadius: 10,
@@ -256,7 +256,7 @@ class _InlineReplyInputState extends State<InlineReplyInput>
                     child: Icon(
                       Icons.arrow_upward_rounded,
                       size: 18,
-                      color: AppColors.tealAccent.withValues(
+                      color: FeedColors.accentTeal.withValues(
                         alpha: _hasText ? 0.96 : 0.68,
                       ),
                     ),

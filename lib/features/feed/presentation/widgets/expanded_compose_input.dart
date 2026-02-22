@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_app/core/theme/app_colors.dart';
+import 'package:flutter_app/core/theme/feed_colors.dart';
 
 /// Multi-line auto-growing compose input for expanded thread cards.
 ///
@@ -196,12 +196,12 @@ class _ExpandedComposeInputState extends State<ExpandedComposeInput>
                   height: 36,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    color: AppColors.tealAccent.withValues(alpha: 0.20),
+                    color: FeedColors.accentTeal.withValues(alpha: 0.20),
                   ),
                   child: const Icon(
                     Icons.arrow_upward_rounded,
                     size: 20,
-                    color: AppColors.tealAccent,
+                    color: FeedColors.accentTeal,
                   ),
                 ),
               ),

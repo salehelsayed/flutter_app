@@ -1,6 +1,6 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
-import 'package:flutter_app/core/theme/app_colors.dart';
+import 'package:flutter_app/core/theme/feed_colors.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/shared/widgets/media/audio_player_widget.dart';
@@ -55,14 +55,12 @@ class MessageBubble extends StatelessWidget {
         child: Container(
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(24),
-            color: isIncoming
-                ? const Color.fromRGBO(255, 255, 255, 0.06)
-                : const Color.fromRGBO(255, 255, 255, 0.04),
+            color: _backgroundColor,
             border: Border.all(color: _borderColor),
             boxShadow: isUnread && isIncoming
                 ? [
                     BoxShadow(
-                      color: AppColors.warmOrange.withValues(alpha: 0.06),
+                      color: FeedColors.accentPurple.withValues(alpha: 0.06),
                       blurRadius: 8,
                       spreadRadius: 0,
                     ),
@@ -80,12 +78,12 @@ class MessageBubble extends StatelessWidget {
                   width: 60,
                   child: IgnorePointer(
                     child: DecoratedBox(
-                      decoration: const BoxDecoration(
+                      decoration: BoxDecoration(
                         gradient: LinearGradient(
                           begin: Alignment.centerLeft,
                           end: Alignment.centerRight,
                           colors: [
-                            Color.fromRGBO(78, 205, 196, 0.08),
+                            FeedColors.accentTeal.withValues(alpha: 0.08),
                             Colors.transparent,
                           ],
                         ),
@@ -101,12 +99,12 @@ class MessageBubble extends StatelessWidget {
                   width: 60,
                   child: IgnorePointer(
                     child: DecoratedBox(
-                      decoration: const BoxDecoration(
+                      decoration: BoxDecoration(
                         gradient: LinearGradient(
                           begin: Alignment.centerRight,
                           end: Alignment.centerLeft,
                           colors: [
-                            Color.fromRGBO(255, 255, 255, 0.04),
+                            FeedColors.accentTeal.withValues(alpha: 0.04),
                             Colors.transparent,
                           ],
                         ),
@@ -124,8 +122,8 @@ class MessageBubble extends StatelessWidget {
                   width: 3,
                   decoration: BoxDecoration(
                     color: isIncoming
-                        ? const Color(0xFF4ecdc4)
-                        : const Color.fromRGBO(255, 255, 255, 0.25),
+                        ? FeedColors.accentTeal
+                        : FeedColors.accentTeal.withValues(alpha: 0.25),
                     borderRadius: BorderRadius.only(
                       topLeft: isIncoming
                           ? const Radius.circular(24)
@@ -245,9 +243,14 @@ class MessageBubble extends StatelessWidget {
     );
   }
 
+  Color get _backgroundColor {
+    if (isUnread && isIncoming) return FeedColors.messageUnreadBg;
+    return isIncoming ? FeedColors.messageReceivedBg : FeedColors.messageSentBg;
+  }
+
   Color get _borderColor {
     if (isUnread && isIncoming) {
-      return AppColors.warmBorderTint;
+      return FeedColors.purpleBorderTint;
     }
     return isIncoming
         ? const Color.fromRGBO(255, 255, 255, 0.10)
