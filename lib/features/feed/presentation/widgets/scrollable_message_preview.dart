@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/feed_colors.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
 import 'package:flutter_app/features/feed/domain/utils/has_significant_time_gap.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/message_bubble.dart';
@@ -6,6 +8,8 @@ import 'package:flutter_app/features/feed/presentation/widgets/more_messages_hin
 import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bubble.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/time_gap_divider.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/view_earlier_link.dart';
+import 'package:flutter_app/shared/widgets/media/full_screen_image_viewer.dart';
+import 'package:flutter_app/shared/widgets/media/media_preview_text.dart';
 
 /// Scrollable preview of unread messages within an open-mode feed card.
 ///
@@ -18,6 +22,7 @@ class ScrollableMessagePreview extends StatefulWidget {
   final String contactUsername;
   final bool hasEarlierHistory;
   final VoidCallback? onViewEarlier;
+  final VoidCallback? onCollapse;
   final ValueChanged<String>? onQuoteReply;
   final int maxVisible;
 
@@ -28,6 +33,7 @@ class ScrollableMessagePreview extends StatefulWidget {
     required this.contactUsername,
     this.hasEarlierHistory = false,
     this.onViewEarlier,
+    this.onCollapse,
     this.onQuoteReply,
     this.maxVisible = 3,
   });
@@ -100,6 +106,7 @@ class _ScrollableMessagePreviewState extends State<ScrollableMessagePreview> {
         if (_isScrollable) _buildScrollable() else _buildStatic(),
         if (_isScrollable && _remainingCount > 0)
           MoreMessagesHint(count: _remainingCount),
+        if (widget.onCollapse != null) _buildCollapseHint(),
       ],
     );
   }
@@ -139,6 +146,76 @@ class _ScrollableMessagePreviewState extends State<ScrollableMessagePreview> {
     );
   }
 
+  Widget _buildCollapseHint() {
+    return GestureDetector(
+      onTap: widget.onCollapse,
+      behavior: HitTestBehavior.opaque,
+      child: const Center(
+        child: Padding(
+          padding: EdgeInsets.symmetric(vertical: 6),
+          child: Text(
+            'Collapse',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+              color: FeedColors.viewEarlierText,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _openMediaViewer(
+    BuildContext context,
+    List<MediaAttachment> media,
+    int tappedIndex,
+  ) {
+    final visual = media
+        .where((a) => a.mediaType == 'image' || a.mediaType == 'video')
+        .toList();
+    if (tappedIndex >= visual.length) return;
+
+    final tapped = visual[tappedIndex];
+    if (tapped.localPath == null || tapped.downloadStatus != 'done') return;
+
+    final allPaths = visual
+        .where((a) => a.localPath != null && a.downloadStatus == 'done')
+        .map((a) => a.localPath!)
+        .toList();
+
+    final startIndex = allPaths.indexOf(tapped.localPath!).clamp(0, allPaths.length - 1);
+
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => FullScreenImageViewer(
+          localPath: tapped.localPath!,
+          allPaths: allPaths,
+          initialIndex: startIndex,
+        ),
+      ),
+    );
+  }
+
+  /// Resolves quoted text for a message by looking up the quoted message
+  /// among sibling thread messages.
+  (String?, bool) _resolveQuotedText(
+    ThreadMessage msg,
+    List<ThreadMessage> allMessages,
+  ) {
+    if (msg.quotedMessageId == null) return (null, false);
+
+    final quoted = allMessages
+        .where((m) => m.id == msg.quotedMessageId)
+        .firstOrNull;
+
+    if (quoted == null) return (null, true); // unavailable
+
+    if (quoted.text.isNotEmpty) return (quoted.text, false);
+    if (quoted.media.isNotEmpty) return (mediaPreviewText(quoted.media), false);
+    return (null, true);
+  }
+
   List<Widget> _buildMessageWidgets(List<ThreadMessage> messages) {
     final widgets = <Widget>[];
     for (var i = 0; i < messages.length; i++) {
@@ -149,24 +226,31 @@ class _ScrollableMessagePreviewState extends State<ScrollableMessagePreview> {
           )) {
         widgets.add(TimeGapDivider(timeLabel: messages[i].time));
       } else if (i > 0) {
-        widgets.add(const SizedBox(height: 6));
+        widgets.add(const SizedBox(height: 2));
       }
 
+      final msg = messages[i];
+      final (quotedText, isQuoteUnavailable) = _resolveQuotedText(msg, messages);
+
       Widget bubble = MessageBubble(
-        text: messages[i].text,
-        time: messages[i].time,
-        isUnread: messages[i].isUnread,
-        isIncoming: messages[i].isIncoming,
-        status: messages[i].status,
-        senderPeerId:
-            messages[i].isIncoming ? widget.contactPeerId : null,
-        senderLabel:
-            messages[i].isIncoming ? widget.contactUsername : 'You',
+        text: msg.text,
+        time: msg.time,
+        isUnread: msg.isUnread,
+        isIncoming: msg.isIncoming,
+        status: msg.status,
+        senderPeerId: msg.isIncoming ? widget.contactPeerId : null,
+        senderLabel: msg.isIncoming ? widget.contactUsername : 'You',
+        media: msg.media,
+        onMediaTap: msg.media.isNotEmpty
+            ? (index) => _openMediaViewer(context, msg.media, index)
+            : null,
+        quotedText: quotedText,
+        isQuoteUnavailable: isQuoteUnavailable,
       );
 
-      if (messages[i].isIncoming && widget.onQuoteReply != null) {
+      if (msg.isIncoming && widget.onQuoteReply != null) {
         bubble = SwipeToQuoteBubble(
-          onQuoteTriggered: () => widget.onQuoteReply!(messages[i].id),
+          onQuoteTriggered: () => widget.onQuoteReply!(msg.id),
           child: bubble,
         );
       }

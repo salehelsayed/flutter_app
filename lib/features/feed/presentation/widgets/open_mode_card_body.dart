@@ -12,6 +12,7 @@ import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart'
 class OpenModeCardBody extends StatelessWidget {
   final ThreadFeedItem thread;
   final VoidCallback? onViewEarlier;
+  final VoidCallback? onCollapse;
   final ValueChanged<String>? onQuoteReply;
   final ValueChanged<String>? onSend;
   final bool sendEnabled;
@@ -25,6 +26,7 @@ class OpenModeCardBody extends StatelessWidget {
     super.key,
     required this.thread,
     this.onViewEarlier,
+    this.onCollapse,
     this.onQuoteReply,
     this.onSend,
     this.sendEnabled = true,
@@ -49,8 +51,9 @@ class OpenModeCardBody extends StatelessWidget {
             messages: thread.unreadMessages,
             contactPeerId: thread.contactPeerId,
             contactUsername: thread.contactUsername,
-            hasEarlierHistory: thread.hasEarlierHistory,
+            hasEarlierHistory: true,
             onViewEarlier: onViewEarlier,
+            onCollapse: onCollapse,
             onQuoteReply: onQuoteReply,
           ),
         ),

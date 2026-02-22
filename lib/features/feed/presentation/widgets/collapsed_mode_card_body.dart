@@ -133,14 +133,17 @@ class CollapsedModeCardBody extends StatelessWidget {
   Widget _buildPreviewContent() {
     final ThreadMessage previewMsg;
     final String? displayText;
+    final bool isMediaOnly;
 
     if (sessionReply != null) {
       // Show the session reply text
       displayText = sessionReply!.text;
       previewMsg = thread.latestMessage; // for label logic
+      isMediaOnly = false;
     } else {
       previewMsg = thread.collapsedPreviewMessage;
       displayText = _previewText(previewMsg);
+      isMediaOnly = previewMsg.text.isEmpty && previewMsg.media.isNotEmpty;
     }
 
     final isSent = sessionReply != null || !previewMsg.isIncoming;
@@ -162,6 +165,15 @@ class CollapsedModeCardBody extends StatelessWidget {
               color: labelColor,
             ),
           ),
+          if (isMediaOnly)
+            Padding(
+              padding: const EdgeInsets.only(right: 4, top: 2),
+              child: Icon(
+                mediaPreviewIcon(previewMsg.media),
+                size: 14,
+                color: const Color.fromRGBO(255, 255, 255, 0.55),
+              ),
+            ),
           Expanded(
             child: Text(
               displayText ?? '',

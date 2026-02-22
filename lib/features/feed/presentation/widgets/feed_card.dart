@@ -140,7 +140,7 @@ class _FeedCardState extends State<FeedCard>
         state == ConversationState.active) {
       return [
         BoxShadow(
-          color: FeedColors.purpleGlow,
+          color: FeedColors.cardBg,
           blurRadius: 12,
           spreadRadius: 0,
         ),
@@ -155,6 +155,7 @@ class _FeedCardState extends State<FeedCard>
     return OpenModeCardBody(
       thread: widget.thread,
       onViewEarlier: widget.onViewFullConversation,
+      onCollapse: widget.onToggleExpand,
       onQuoteReply: widget.onQuoteReply,
       onSend: (text) => widget.onInlineSend?.call(text),
       sendEnabled: enabled,

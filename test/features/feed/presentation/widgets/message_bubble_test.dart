@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/theme/feed_colors.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/message_bubble.dart';
+import 'package:flutter_app/shared/widgets/media/media_grid.dart';
 
 void main() {
   Widget wrap(Widget child) => MaterialApp(
@@ -36,8 +38,8 @@ void main() {
         isUnread: false,
       )));
 
-      // Verify it renders without error
-      expect(find.text('Reply'), findsOneWidget);
+      // Verify it renders without error (inline "You: Reply" in Text.rich)
+      expect(find.textContaining('Reply'), findsOneWidget);
     });
 
     testWidgets('unread message uses FeedColors.messageUnreadBg',
@@ -49,7 +51,7 @@ void main() {
         isUnread: true,
       )));
 
-      expect(find.text('New msg'), findsOneWidget);
+      expect(find.textContaining('New msg'), findsOneWidget);
     });
 
     testWidgets('renders incoming accent edge with teal', (tester) async {
@@ -75,8 +77,96 @@ void main() {
         isIncoming: true,
       )));
 
-      expect(find.text('Hello world'), findsOneWidget);
-      expect(find.text('3:30 PM'), findsOneWidget);
+      expect(find.textContaining('Hello world'), findsOneWidget);
+      expect(find.textContaining('3:30 PM'), findsOneWidget);
+    });
+  });
+
+  group('MessageBubble media', () {
+    testWidgets('renders MediaGrid when image media provided', (tester) async {
+      final media = [
+        MediaAttachment(
+          id: 'a1',
+          messageId: 'm1',
+          mime: 'image/jpeg',
+          size: 1000,
+          mediaType: 'image',
+          downloadStatus: 'pending',
+          createdAt: '2026-02-23T10:00:00Z',
+        ),
+      ];
+
+      await tester.pumpWidget(wrap(MessageBubble(
+        text: 'Check this',
+        time: '3:00 PM',
+        isIncoming: true,
+        media: media,
+      )));
+
+      expect(find.byType(MediaGrid), findsOneWidget);
+    });
+
+    testWidgets('no MediaGrid when media is empty', (tester) async {
+      await tester.pumpWidget(wrap(const MessageBubble(
+        text: 'No media',
+        time: '3:00 PM',
+        isIncoming: true,
+      )));
+
+      expect(find.byType(MediaGrid), findsNothing);
+    });
+
+    testWidgets('onMediaTap callback fires with correct index',
+        (tester) async {
+      int? tappedIndex;
+      final media = [
+        MediaAttachment(
+          id: 'a1',
+          messageId: 'm1',
+          mime: 'image/jpeg',
+          size: 1000,
+          mediaType: 'image',
+          downloadStatus: 'pending',
+          createdAt: '2026-02-23T10:00:00Z',
+        ),
+      ];
+
+      await tester.pumpWidget(wrap(MessageBubble(
+        text: '',
+        time: '3:00 PM',
+        isIncoming: true,
+        media: media,
+        onMediaTap: (index) => tappedIndex = index,
+      )));
+
+      // MediaGrid should exist
+      expect(find.byType(MediaGrid), findsOneWidget);
+      // Tap the cell — triggers GestureDetector inside MediaGridCell
+      await tester.tap(find.byType(MediaGrid));
+      expect(tappedIndex, 0);
+    });
+
+    testWidgets('renders quote bar when quotedText is provided',
+        (tester) async {
+      await tester.pumpWidget(wrap(const MessageBubble(
+        text: 'My reply',
+        time: '3:00 PM',
+        isIncoming: true,
+        quotedText: 'Original message',
+      )));
+
+      expect(find.text('Original message'), findsOneWidget);
+    });
+
+    testWidgets('renders unavailable quote bar', (tester) async {
+      await tester.pumpWidget(wrap(const MessageBubble(
+        text: 'My reply',
+        time: '3:00 PM',
+        isIncoming: true,
+        isQuoteUnavailable: true,
+      )));
+
+      expect(find.text('Message unavailable'), findsOneWidget);
     });
   });
 }
