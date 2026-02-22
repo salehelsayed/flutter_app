@@ -19,6 +19,7 @@ class FeedScreen extends StatelessWidget {
   final Uint8List? userAvatarBytes;
   final String? userPeerId;
   final List<FeedItem> feedItems;
+  final bool feedLoaded;
   final ValueChanged<String>? onUsernameChanged;
   final P2PService? p2pService;
   final void Function(String) onSwitchView;
@@ -46,6 +47,7 @@ class FeedScreen extends StatelessWidget {
     this.userAvatarBytes,
     this.userPeerId,
     required this.feedItems,
+    this.feedLoaded = true,
     this.onUsernameChanged,
     this.p2pService,
     required this.onSwitchView,
@@ -161,6 +163,7 @@ class FeedScreen extends StatelessWidget {
 
   List<Widget> _buildFeedCards() {
     if (feedItems.isEmpty) {
+      if (!feedLoaded) return [];
       return [
         const SizedBox(height: 12),
         _EmptyFeedStateCard(username: username),

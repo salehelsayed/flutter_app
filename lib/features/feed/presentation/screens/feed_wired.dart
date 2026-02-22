@@ -88,6 +88,7 @@ class _FeedWiredState extends State<FeedWired> {
   IdentityModel? _identity;
   String _activeTab = 'feed';
   final List<FeedItem> _feedItems = [];
+  bool _feedLoaded = false;
   int _totalUnreadCount = 0;
   String? _expandedCardId;
   final Map<String, String> _draftTexts = {};
@@ -180,6 +181,7 @@ class _FeedWiredState extends State<FeedWired> {
       setState(() {
         _feedItems.clear();
         _feedItems.addAll(items);
+        _feedLoaded = true;
       });
     } catch (e) {
       emitFlowEvent(
@@ -794,6 +796,7 @@ class _FeedWiredState extends State<FeedWired> {
         userAvatarBytes: _avatarBytes,
         userPeerId: _peerId,
         feedItems: _feedItems,
+        feedLoaded: _feedLoaded,
         onUsernameChanged: _onUsernameChanged,
         p2pService: widget.p2pService,
         onSwitchView: _onSwitchView,

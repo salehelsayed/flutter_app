@@ -177,21 +177,23 @@ class _ThreadCardState extends State<ThreadCard> with TickerProviderStateMixin {
         if (showStacks) ...[
           _buildStackLayer(
             state: state,
-            xOffset: 6,
-            yOffset: 12,
-            borderOpacity: 0.16,
-            fillOpacity: 0.018,
-            shadowOpacity: 0.13,
-            accentShadowOpacity: 0.05,
+            xOffset: 4,
+            yOffset: 8,
+            borderOpacity: 0.20,
+            fillOpacity: 0.06,
+            shadowOpacity: 0.16,
+            accentShadowOpacity: 0.08,
+            blurSigma: 6,
           ),
           _buildStackLayer(
             state: state,
-            xOffset: 3,
-            yOffset: 6,
-            borderOpacity: 0.22,
-            fillOpacity: 0.026,
-            shadowOpacity: 0.17,
-            accentShadowOpacity: 0.07,
+            xOffset: 2,
+            yOffset: 4,
+            borderOpacity: 0.28,
+            fillOpacity: 0.08,
+            shadowOpacity: 0.20,
+            accentShadowOpacity: 0.10,
+            blurSigma: 8,
           ),
         ],
         // Main card
@@ -218,42 +220,50 @@ class _ThreadCardState extends State<ThreadCard> with TickerProviderStateMixin {
     required double fillOpacity,
     required double shadowOpacity,
     required double accentShadowOpacity,
+    required double blurSigma,
   }) {
     return Positioned.fill(
       child: IgnorePointer(
         child: Transform.translate(
           offset: Offset(xOffset, yOffset),
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(24),
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  Colors.white.withValues(alpha: fillOpacity + 0.016),
-                  Colors.white.withValues(alpha: fillOpacity),
-                ],
-              ),
-              border: Border.all(
-                color: _stackLayerTint(state).withValues(alpha: borderOpacity),
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: shadowOpacity),
-                  blurRadius: 12,
-                  offset: const Offset(0, 9),
-                ),
-                if (state == ConversationState.unread ||
-                    state == ConversationState.active)
-                  BoxShadow(
-                    color: AppColors.warmOrange.withValues(
-                      alpha: accentShadowOpacity,
-                    ),
-                    blurRadius: 14,
-                    spreadRadius: -4,
-                    offset: const Offset(0, 8),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(24),
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: blurSigma, sigmaY: blurSigma),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(24),
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      Colors.white.withValues(alpha: fillOpacity + 0.016),
+                      Colors.white.withValues(alpha: fillOpacity),
+                    ],
                   ),
-              ],
+                  border: Border.all(
+                    color:
+                        _stackLayerTint(state).withValues(alpha: borderOpacity),
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: shadowOpacity),
+                      blurRadius: 12,
+                      offset: const Offset(0, 9),
+                    ),
+                    if (state == ConversationState.unread ||
+                        state == ConversationState.active)
+                      BoxShadow(
+                        color: AppColors.warmOrange.withValues(
+                          alpha: accentShadowOpacity,
+                        ),
+                        blurRadius: 14,
+                        spreadRadius: -4,
+                        offset: const Offset(0, 8),
+                      ),
+                  ],
+                ),
+              ),
             ),
           ),
         ),
