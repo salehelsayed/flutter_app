@@ -369,6 +369,8 @@ class _FeedWiredState extends State<FeedWired> {
       loadConversation(
         messageRepo: widget.messageRepository,
         contactPeerId: contactPeerId,
+        mediaAttachmentRepo: widget.mediaAttachmentRepository,
+        mediaFileManager: widget.mediaFileManager,
       ),
     ]);
 

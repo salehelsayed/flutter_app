@@ -20,9 +20,9 @@ class FeedColors {
   static const Color cardBorder = Color.fromRGBO(255, 255, 255, 0.08);
 
   // Message bubble backgrounds
-  static const Color messageReceivedBg = Color.fromRGBO(255, 255, 255, 0.03);
-  static const Color messageSentBg = Color.fromRGBO(78, 205, 196, 0.04);
-  static const Color messageUnreadBg = Color.fromRGBO(255, 255, 255, 0.05);
+  static const Color messageReceivedBg = Color.fromRGBO(255, 255, 255, 0.06);
+  static const Color messageSentBg = Color.fromRGBO(255, 255, 255, 0.04);
+  static const Color messageUnreadBg = Color.fromRGBO(255, 255, 255, 0.06);
 
   // UI hints
   static const Color moreMessagesHint = Color.fromRGBO(167, 139, 250, 0.7);

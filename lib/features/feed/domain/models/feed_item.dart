@@ -166,10 +166,8 @@ class ThreadFeedItem extends FeedItem {
       conversationState == ConversationState.unread ||
       conversationState == ConversationState.active;
 
-  /// Single message to show in collapsed card:
-  /// last sent for replied, latest message for read.
-  ThreadMessage get collapsedPreviewMessage =>
-      lastSentMessage ?? latestMessage;
+  /// Single message to show in collapsed card: always the latest message.
+  ThreadMessage get collapsedPreviewMessage => latestMessage;
 }
 
 /// A feed item representing an incoming message from a contact.

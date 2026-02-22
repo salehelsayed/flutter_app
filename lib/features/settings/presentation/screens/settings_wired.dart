@@ -245,7 +245,7 @@ class _SettingsWiredState extends State<SettingsWired> {
         identityRepo: widget.identityRepo,
         contactRepo: widget.contactRepo,
         p2pService: widget.p2pService,
-        filePath: picked.path,
+        filePath: processedPath,
         mime: 'image/jpeg',
       );
 

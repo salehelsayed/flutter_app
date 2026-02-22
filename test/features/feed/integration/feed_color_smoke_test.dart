@@ -85,9 +85,9 @@ void main() {
 
     testWidgets('MessageBubble colors match spec', (tester) async {
       // Smoke test: unread, read, and sent bubbles render correctly
-      expect(FeedColors.messageReceivedBg, const Color.fromRGBO(255, 255, 255, 0.03));
-      expect(FeedColors.messageSentBg, const Color.fromRGBO(78, 205, 196, 0.04));
-      expect(FeedColors.messageUnreadBg, const Color.fromRGBO(255, 255, 255, 0.05));
+      expect(FeedColors.messageReceivedBg, const Color.fromRGBO(255, 255, 255, 0.06));
+      expect(FeedColors.messageSentBg, const Color.fromRGBO(255, 255, 255, 0.04));
+      expect(FeedColors.messageUnreadBg, const Color.fromRGBO(255, 255, 255, 0.06));
     });
   });
 }

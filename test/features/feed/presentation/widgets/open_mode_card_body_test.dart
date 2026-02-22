@@ -55,8 +55,8 @@ void main() {
         (tester) async {
       await tester.pumpWidget(wrap(OpenModeCardBody(thread: _thread())));
       expect(find.byType(ScrollableMessagePreview), findsOneWidget);
-      expect(find.text('Unread 1'), findsOneWidget);
-      expect(find.text('Unread 2'), findsOneWidget);
+      expect(find.textContaining('Unread 1'), findsOneWidget);
+      expect(find.textContaining('Unread 2'), findsOneWidget);
     });
 
     testWidgets('shows ViewEarlierLink when hasEarlierHistory',

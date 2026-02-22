@@ -329,8 +329,7 @@ void main() {
       expect(noSent.lastSentMessage, isNull);
     });
 
-    test('collapsedPreviewMessage returns lastSentMessage or latestMessage',
-        () {
+    test('collapsedPreviewMessage always returns latestMessage', () {
       final withSent = ThreadFeedItem(
         id: 'thread_1',
         timestamp: DateTime(2026, 2, 9),
@@ -342,8 +341,8 @@ void main() {
           _msg(id: 'm3'), // latestMessage
         ],
       );
-      // lastSentMessage is m2, so collapsedPreviewMessage = m2
-      expect(withSent.collapsedPreviewMessage.id, 'm2');
+      // Always returns latest message regardless of direction
+      expect(withSent.collapsedPreviewMessage.id, 'm3');
 
       final noSent = ThreadFeedItem(
         id: 'thread_2',
@@ -355,7 +354,6 @@ void main() {
           _msg(id: 'm2'),
         ],
       );
-      // No sent, falls back to latestMessage = m2
       expect(noSent.collapsedPreviewMessage.id, 'm2');
     });
   });
