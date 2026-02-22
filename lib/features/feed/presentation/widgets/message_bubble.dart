@@ -1,14 +1,17 @@
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/app_colors.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/shared/widgets/media/audio_player_widget.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid.dart';
 
-/// Individual message bubble within an expanded thread card.
+/// Individual message card within an expanded thread card.
 ///
-/// Supports bidirectional display:
-/// - Received (isIncoming=true): full width, glass bg, normal brightness
-/// - Sent (isIncoming=false): 24px left margin, teal right accent, dimmer text
+/// Styled to match the conversation LetterCard: full-width glassmorphic card
+/// with backdrop blur, accent edge glow, and avatar header.
+/// - Received (isIncoming=true): teal left accent, avatar + contact name
+/// - Sent (isIncoming=false): white right accent, "You" label
 /// Unread received messages get warm/orange border tint with subtle glow.
 class MessageBubble extends StatelessWidget {
   final String text;
@@ -17,6 +20,7 @@ class MessageBubble extends StatelessWidget {
   final bool isIncoming;
   final String? status;
   final String? senderLabel;
+  final String? senderPeerId;
   final String? quotedText;
   final bool isQuoteUnavailable;
   final List<MediaAttachment> media;
@@ -30,6 +34,7 @@ class MessageBubble extends StatelessWidget {
     this.isIncoming = true,
     this.status,
     this.senderLabel,
+    this.senderPeerId,
     this.quotedText,
     this.isQuoteUnavailable = false,
     this.media = const [],
@@ -43,191 +48,273 @@ class MessageBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isSent = !isIncoming;
-
-    return Container(
-      width: double.infinity,
-      margin: EdgeInsets.only(left: isSent ? 24 : 0),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(14),
-        child: Stack(
-          children: [
-            // Main content with uniform border
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(14),
-                color: _backgroundColor,
-                border: Border.all(color: _borderColor),
-                boxShadow: isUnread && isIncoming
-                    ? [
-                        BoxShadow(
-                          color: AppColors.warmOrange.withValues(alpha: 0.06),
-                          blurRadius: 8,
-                          spreadRadius: 0,
-                        ),
-                      ]
-                    : null,
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (quotedText != null || isQuoteUnavailable)
-                    _buildQuoteBar(),
-                  if (_imageVideoMedia.isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 6),
-                      child: MediaGrid(media: _imageVideoMedia, onTap: onMediaTap),
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(24),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+        child: Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(24),
+            color: isIncoming
+                ? const Color.fromRGBO(255, 255, 255, 0.06)
+                : const Color.fromRGBO(255, 255, 255, 0.04),
+            border: Border.all(color: _borderColor),
+            boxShadow: isUnread && isIncoming
+                ? [
+                    BoxShadow(
+                      color: AppColors.warmOrange.withValues(alpha: 0.06),
+                      blurRadius: 8,
+                      spreadRadius: 0,
                     ),
-                  for (final audio in _audioMedia)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 6),
-                      child: AudioPlayerWidget(attachment: audio),
-                    ),
-                  if (text.isNotEmpty)
-                    Text(
-                      text,
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w400,
-                        color: Color.fromRGBO(
-                          255,
-                          255,
-                          255,
-                          isSent ? 0.70 : 0.88,
+                  ]
+                : null,
+          ),
+          child: Stack(
+            children: [
+              // Accent edge glow
+              if (isIncoming)
+                Positioned(
+                  left: 0,
+                  top: 0,
+                  bottom: 0,
+                  width: 60,
+                  child: IgnorePointer(
+                    child: DecoratedBox(
+                      decoration: const BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.centerLeft,
+                          end: Alignment.centerRight,
+                          colors: [
+                            Color.fromRGBO(78, 205, 196, 0.08),
+                            Colors.transparent,
+                          ],
                         ),
-                        height: 1.5,
                       ),
                     ),
-                  const SizedBox(height: 4),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: _buildTimestamp(),
                   ),
-                ],
-              ),
-            ),
-            // Teal right accent for sent messages
-            if (isSent)
+                )
+              else
+                Positioned(
+                  right: 0,
+                  top: 0,
+                  bottom: 0,
+                  width: 60,
+                  child: IgnorePointer(
+                    child: DecoratedBox(
+                      decoration: const BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.centerRight,
+                          end: Alignment.centerLeft,
+                          colors: [
+                            Color.fromRGBO(255, 255, 255, 0.04),
+                            Colors.transparent,
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              // Accent border edge
               Positioned(
-                right: 0,
+                left: isIncoming ? 0 : null,
+                right: isIncoming ? null : 0,
                 top: 0,
                 bottom: 0,
                 child: Container(
-                  width: 2,
+                  width: 3,
                   decoration: BoxDecoration(
-                    color: AppColors.tealAccent.withValues(alpha: 0.30),
-                    borderRadius: const BorderRadius.only(
-                      topRight: Radius.circular(14),
-                      bottomRight: Radius.circular(14),
+                    color: isIncoming
+                        ? const Color(0xFF4ecdc4)
+                        : const Color.fromRGBO(255, 255, 255, 0.25),
+                    borderRadius: BorderRadius.only(
+                      topLeft: isIncoming
+                          ? const Radius.circular(24)
+                          : Radius.zero,
+                      bottomLeft: isIncoming
+                          ? const Radius.circular(24)
+                          : Radius.zero,
+                      topRight: isIncoming
+                          ? Radius.zero
+                          : const Radius.circular(24),
+                      bottomRight: isIncoming
+                          ? Radius.zero
+                          : const Radius.circular(24),
                     ),
                   ),
                 ),
               ),
-          ],
+              // Card content
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Header: avatar, name, time
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
+                    child: Row(
+                      children: [
+                        if (senderPeerId != null) ...[
+                          UserAvatar(peerId: senderPeerId!, size: 32),
+                          const SizedBox(width: 10),
+                        ],
+                        Expanded(
+                          child: Text(
+                            senderLabel ?? (isIncoming ? '' : 'You'),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: isIncoming
+                                  ? FontWeight.w600
+                                  : FontWeight.w500,
+                              color: isIncoming
+                                  ? const Color.fromRGBO(255, 255, 255, 0.9)
+                                  : const Color.fromRGBO(255, 255, 255, 0.6),
+                            ),
+                          ),
+                        ),
+                        Text(
+                          time,
+                          style: const TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w400,
+                            color: Color.fromRGBO(255, 255, 255, 0.35),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  // Quote bar
+                  if (quotedText != null || isQuoteUnavailable)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+                      child: _buildQuoteBar(),
+                    ),
+                  // Media grid
+                  if (_imageVideoMedia.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(8, 0, 8, 4),
+                      child: MediaGrid(media: _imageVideoMedia, onTap: onMediaTap),
+                    ),
+                  // Audio players
+                  for (final audio in _audioMedia)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+                      child: AudioPlayerWidget(attachment: audio),
+                    ),
+                  // Body text
+                  if (text.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+                      child: Text(
+                        text,
+                        style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w400,
+                          color: isIncoming
+                              ? const Color.fromRGBO(255, 255, 255, 0.90)
+                              : const Color.fromRGBO(255, 255, 255, 0.80),
+                          height: 1.65,
+                          letterSpacing: 0.2,
+                        ),
+                      ),
+                    )
+                  else if (media.isNotEmpty)
+                    const SizedBox(height: 12),
+                  // Delivery status (sent only)
+                  if (!isIncoming && status != null)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                      child: Align(
+                        alignment: Alignment.centerRight,
+                        child: Semantics(
+                          label: 'Message status: ${_statusSemantic(status!)}',
+                          child: Icon(
+                            _statusIcon(status!),
+                            size: 14,
+                            color: _statusColor(status!),
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );
-  }
-
-  Color get _backgroundColor {
-    if (!isIncoming) {
-      return const Color.fromRGBO(255, 255, 255, 0.03);
-    }
-    return isUnread
-        ? const Color.fromRGBO(255, 255, 255, 0.07)
-        : const Color.fromRGBO(255, 255, 255, 0.04);
   }
 
   Color get _borderColor {
-    if (!isIncoming) {
-      return const Color.fromRGBO(255, 255, 255, 0.06);
-    }
-    if (isUnread) {
+    if (isUnread && isIncoming) {
       return AppColors.warmBorderTint;
     }
-    return const Color.fromRGBO(255, 255, 255, 0.06);
+    return isIncoming
+        ? const Color.fromRGBO(255, 255, 255, 0.10)
+        : const Color.fromRGBO(255, 255, 255, 0.08);
   }
 
   Widget _buildQuoteBar() {
-    final displayText = isQuoteUnavailable ? 'Message unavailable' : quotedText!;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: Row(
-        children: [
-          Container(
-            width: 2,
-            height: 16,
-            decoration: BoxDecoration(
-              color: const Color.fromRGBO(255, 255, 255, 0.15),
-              borderRadius: BorderRadius.circular(1),
-            ),
+    final displayText =
+        isQuoteUnavailable ? 'Message unavailable' : quotedText!;
+    return Row(
+      children: [
+        Container(
+          width: 2,
+          height: 16,
+          decoration: BoxDecoration(
+            color: const Color.fromRGBO(255, 255, 255, 0.15),
+            borderRadius: BorderRadius.circular(1),
           ),
-          const SizedBox(width: 6),
-          Expanded(
-            child: Text(
-              displayText,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w400,
-                fontStyle: isQuoteUnavailable ? FontStyle.italic : FontStyle.normal,
-                color: Color.fromRGBO(
-                  255,
-                  255,
-                  255,
-                  isQuoteUnavailable ? 0.20 : 0.30,
-                ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            displayText,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w400,
+              fontStyle:
+                  isQuoteUnavailable ? FontStyle.italic : FontStyle.normal,
+              color: Color.fromRGBO(
+                255,
+                255,
+                255,
+                isQuoteUnavailable ? 0.20 : 0.35,
               ),
             ),
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
-  Widget _buildTimestamp() {
-    if (!isIncoming) {
-      return Text.rich(
-        TextSpan(
-          children: [
-            TextSpan(
-              text: 'You',
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w500,
-                color: AppColors.tealAccent.withValues(alpha: 0.50),
-              ),
-            ),
-            const TextSpan(
-              text: ' \u00B7 ',
-              style: TextStyle(
-                fontSize: 11,
-                color: Color.fromRGBO(255, 255, 255, 0.25),
-              ),
-            ),
-            TextSpan(
-              text: time,
-              style: const TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w400,
-                color: Color.fromRGBO(255, 255, 255, 0.25),
-              ),
-            ),
-          ],
-        ),
-      );
-    }
+  static IconData _statusIcon(String status) {
+    if (status == 'delivered') return Icons.done_all_rounded;
+    if (status == 'queued') return Icons.done_all_rounded;
+    if (status == 'failed') return Icons.error_outline_rounded;
+    return Icons.done_rounded;
+  }
 
-    return Text(
-      time,
-      style: const TextStyle(
-        fontSize: 11,
-        fontWeight: FontWeight.w400,
-        color: Color.fromRGBO(255, 255, 255, 0.35),
-      ),
-    );
+  static Color _statusColor(String status) {
+    if (status == 'delivered') {
+      return const Color.fromRGBO(255, 255, 255, 0.45);
+    }
+    if (status == 'queued') {
+      return const Color.fromRGBO(255, 255, 255, 0.45);
+    }
+    if (status == 'failed') return const Color.fromRGBO(255, 100, 100, 0.60);
+    return const Color.fromRGBO(255, 255, 255, 0.25);
+  }
+
+  static String _statusSemantic(String status) {
+    if (status == 'delivered') return 'delivered';
+    if (status == 'queued') return 'delivered';
+    if (status == 'failed') return 'failed';
+    if (status == 'sending') return 'sending';
+    if (status == 'sent') return 'sent';
+    return status;
   }
 }
