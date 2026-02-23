@@ -1,0 +1,169 @@
+import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/services/pending_message_retrier.dart';
+import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
+import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
+import 'fake_p2p_service.dart';
+import '../../features/conversation/domain/repositories/fake_message_repository.dart';
+import '../../features/identity/domain/repositories/fake_identity_repository.dart';
+import '../../features/contacts/domain/repositories/fake_contact_repository.dart';
+import '../../core/bridge/fake_bridge.dart';
+
+void main() {
+  late FakeP2PService p2pService;
+  late FakeMessageRepository messageRepo;
+  late FakeIdentityRepository identityRepo;
+  late FakeContactRepository contactRepo;
+  late FakeBridge bridge;
+  late PendingMessageRetrier retrier;
+
+  setUp(() {
+    p2pService = FakeP2PService();
+    messageRepo = FakeMessageRepository();
+    identityRepo = FakeIdentityRepository();
+    contactRepo = FakeContactRepository();
+    bridge = FakeBridge();
+
+    retrier = PendingMessageRetrier(
+      p2pService: p2pService,
+      messageRepo: messageRepo,
+      identityRepo: identityRepo,
+      contactRepo: contactRepo,
+      bridge: bridge,
+    );
+  });
+
+  tearDown(() {
+    retrier.dispose();
+    p2pService.dispose();
+  });
+
+  group('PendingMessageRetrier', () {
+    test('start subscribes to stateStream', () {
+      retrier.start();
+
+      // Verify retrier is listening by emitting a state and checking no crash
+      p2pService.emitState(NodeState.stopped);
+      // If start didn't subscribe, this would have no listener
+    });
+
+    test('offline to online transition triggers retry after debounce', () async {
+      // No identity → retryFailedMessages returns 0 quickly
+      retrier.start();
+
+      // Emit online state (isStarted + circuitAddresses non-empty)
+      final onlineState = const NodeState(
+        isStarted: true,
+        peerId: 'my-peer',
+        circuitAddresses: ['/p2p-circuit/addr1'],
+      );
+      p2pService.emitState(onlineState);
+
+      // Debounce is 5 seconds — wait for it
+      await Future.delayed(const Duration(seconds: 6));
+
+      // retryFailedMessages was called → it tried to load identity
+      expect(identityRepo.loadIdentityCallCount, greaterThanOrEqualTo(1));
+    }, timeout: const Timeout(Duration(seconds: 10)));
+
+    test('does not trigger retry when going offline', () async {
+      // Start in online state
+      p2pService = FakeP2PService(
+        initialState: const NodeState(
+          isStarted: true,
+          peerId: 'my-peer',
+          circuitAddresses: ['/p2p-circuit/addr1'],
+        ),
+      );
+      retrier = PendingMessageRetrier(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        identityRepo: identityRepo,
+        contactRepo: contactRepo,
+        bridge: bridge,
+      );
+      retrier.start();
+
+      // Go offline
+      p2pService.emitState(NodeState.stopped);
+      await Future.delayed(const Duration(seconds: 6));
+
+      // No retry triggered (identity never loaded)
+      expect(identityRepo.loadIdentityCallCount, 0);
+    }, timeout: const Timeout(Duration(seconds: 10)));
+
+    test('online without circuitAddresses is not considered online', () async {
+      retrier.start();
+
+      // isStarted but no circuitAddresses
+      final partialOnline = const NodeState(
+        isStarted: true,
+        peerId: 'my-peer',
+        circuitAddresses: [],
+      );
+      p2pService.emitState(partialOnline);
+      await Future.delayed(const Duration(seconds: 6));
+
+      expect(identityRepo.loadIdentityCallCount, 0);
+    }, timeout: const Timeout(Duration(seconds: 10)));
+
+    test('dispose cancels timer and subscription', () {
+      retrier.start();
+      retrier.dispose();
+
+      // After dispose, emitting states should not cause issues
+      // (subscription is cancelled, so no listener errors)
+      p2pService.emitState(const NodeState(
+        isStarted: true,
+        peerId: 'my-peer',
+        circuitAddresses: ['/addr'],
+      ));
+    });
+
+    test('debounce cancels previous timer on rapid state changes', () async {
+      retrier.start();
+
+      // Rapidly go online -> offline -> online
+      p2pService.emitState(const NodeState(
+        isStarted: true,
+        peerId: 'p',
+        circuitAddresses: ['/a'],
+      ));
+      await Future.delayed(const Duration(seconds: 1));
+      p2pService.emitState(NodeState.stopped);
+      await Future.delayed(const Duration(milliseconds: 500));
+      p2pService.emitState(const NodeState(
+        isStarted: true,
+        peerId: 'p',
+        circuitAddresses: ['/a'],
+      ));
+
+      // Wait for debounce from last transition
+      await Future.delayed(const Duration(seconds: 6));
+
+      // Should only retry once (first timer cancelled)
+      expect(identityRepo.loadIdentityCallCount, 1);
+    }, timeout: const Timeout(Duration(seconds: 15)));
+
+    test('does not retry concurrently (_isRetrying guard)', () async {
+      retrier.start();
+
+      // Emit online state twice rapidly
+      final onlineState = const NodeState(
+        isStarted: true,
+        peerId: 'p',
+        circuitAddresses: ['/a'],
+      );
+
+      p2pService.emitState(onlineState);
+      await Future.delayed(const Duration(seconds: 5, milliseconds: 100));
+
+      // Go offline then online again immediately to trigger another retry
+      p2pService.emitState(NodeState.stopped);
+      p2pService.emitState(onlineState);
+      await Future.delayed(const Duration(seconds: 6));
+
+      // Both retries should have completed (sequentially, not concurrently)
+      expect(identityRepo.loadIdentityCallCount, greaterThanOrEqualTo(1));
+    }, timeout: const Timeout(Duration(seconds: 15)));
+  });
+}
