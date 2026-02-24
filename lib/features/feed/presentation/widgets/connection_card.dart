@@ -338,16 +338,20 @@ class _ConnectionCardState extends State<ConnectionCard>
           shape: const StadiumBorder(),
           padding: const EdgeInsets.symmetric(horizontal: 18),
         ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: const [
-            Icon(Icons.chat_bubble_outline_rounded, size: 18),
-            SizedBox(width: 8),
-            Text(
-              'Send Message',
-              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
-            ),
-          ],
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
+            children: const [
+              Icon(Icons.chat_bubble_outline_rounded, size: 18),
+              SizedBox(width: 8),
+              Text(
+                'Send Message',
+                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+              ),
+            ],
+          ),
         ),
       ),
     );

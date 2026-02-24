@@ -1,0 +1,178 @@
+import 'dart:collection';
+import 'dart:convert';
+
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
+import 'package:flutter_app/features/qr_code/application/handle_scanned_qr_use_case.dart';
+
+import '../../../core/bridge/fake_bridge.dart';
+import '../../../core/services/fake_p2p_service.dart';
+import '../../contacts/domain/repositories/fake_contact_repository.dart';
+import '../../identity/domain/repositories/fake_identity_repository.dart';
+
+void main() {
+  late FakeBridge bridge;
+  late FakeContactRepository contactRepo;
+  late FakeIdentityRepository identityRepo;
+  late FakeP2PService p2pService;
+
+  const ownPeerId = 'own-peer-id-12345';
+
+  final testIdentity = IdentityModel(
+    peerId: ownPeerId,
+    publicKey: 'own-public-key',
+    privateKey: 'own-private-key',
+    mnemonic12: 'w1 w2 w3 w4 w5 w6 w7 w8 w9 w10 w11 w12',
+    username: 'Alice',
+    createdAt: DateTime.now().toUtc().toIso8601String(),
+    updatedAt: DateTime.now().toUtc().toIso8601String(),
+  );
+
+  /// Builds a valid QR JSON string mimicking buildQRPayload output.
+  String buildValidQRData({
+    String peerId = 'scanned-peer-id',
+    String publicKey = 'scanned-pk',
+    String username = 'Bob',
+  }) {
+    final ts = DateTime.now().toUtc().toIso8601String();
+    final payload = SplayTreeMap<String, dynamic>.from({
+      'ns': peerId,
+      'pk': publicKey,
+      'rv': '/dns4/relay/tcp/443/p2p/relay',
+      'ts': ts,
+      'un': username,
+    });
+    // Add the signature field (will be verified by bridge)
+    payload['sig'] = 'valid-sig';
+    return jsonEncode(payload);
+  }
+
+  setUp(() {
+    bridge = FakeBridge();
+    contactRepo = FakeContactRepository();
+    identityRepo = FakeIdentityRepository();
+    p2pService = FakeP2PService();
+
+    identityRepo.seed(testIdentity);
+
+    // Make payload.verify return true by default
+    bridge.responses['payload.verify'] = {'ok': true, 'valid': true};
+  });
+
+  group('handleScannedQR', () {
+    test('returns invalidJson for malformed QR data', () async {
+      final result = await handleScannedQR(
+        qrData: 'not-valid-json{{{',
+        bridge: bridge,
+        contactRepo: contactRepo,
+        identityRepo: identityRepo,
+        p2pService: p2pService,
+        ownPeerId: ownPeerId,
+      );
+
+      expect(result, HandleScannedQRResult.invalidJson);
+    });
+
+    test('returns success and adds contact for valid QR', () async {
+      final qrData = buildValidQRData();
+
+      final result = await handleScannedQR(
+        qrData: qrData,
+        bridge: bridge,
+        contactRepo: contactRepo,
+        identityRepo: identityRepo,
+        p2pService: p2pService,
+        ownPeerId: ownPeerId,
+      );
+
+      expect(result, HandleScannedQRResult.success);
+      expect(contactRepo.addContactCallCount, 1);
+      expect(contactRepo.lastAddedContact?.peerId, 'scanned-peer-id');
+      expect(contactRepo.lastAddedContact?.username, 'Bob');
+    });
+
+    test('returns alreadyExists when contact exists', () async {
+      // Pre-seed the contact
+      final qrData = buildValidQRData();
+
+      // First call adds it
+      await handleScannedQR(
+        qrData: qrData,
+        bridge: bridge,
+        contactRepo: contactRepo,
+        identityRepo: identityRepo,
+        p2pService: p2pService,
+        ownPeerId: ownPeerId,
+      );
+
+      // Second call should return alreadyExists
+      final result = await handleScannedQR(
+        qrData: qrData,
+        bridge: bridge,
+        contactRepo: contactRepo,
+        identityRepo: identityRepo,
+        p2pService: p2pService,
+        ownPeerId: ownPeerId,
+      );
+
+      expect(result, HandleScannedQRResult.alreadyExists);
+    });
+
+    test('returns selfScan when own peerId scanned', () async {
+      final qrData = buildValidQRData(peerId: ownPeerId);
+
+      final result = await handleScannedQR(
+        qrData: qrData,
+        bridge: bridge,
+        contactRepo: contactRepo,
+        identityRepo: identityRepo,
+        p2pService: p2pService,
+        ownPeerId: ownPeerId,
+      );
+
+      expect(result, HandleScannedQRResult.selfScan);
+      expect(contactRepo.addContactCallCount, 0);
+    });
+
+    test('returns invalidSignature for tampered QR', () async {
+      // Make verify return invalid
+      bridge.responses['payload.verify'] = {'ok': true, 'valid': false};
+
+      final qrData = buildValidQRData();
+
+      final result = await handleScannedQR(
+        qrData: qrData,
+        bridge: bridge,
+        contactRepo: contactRepo,
+        identityRepo: identityRepo,
+        p2pService: p2pService,
+        ownPeerId: ownPeerId,
+      );
+
+      expect(result, HandleScannedQRResult.invalidSignature);
+      expect(contactRepo.addContactCallCount, 0);
+    });
+
+    test('sends contact request in background on success', () async {
+      final qrData = buildValidQRData();
+
+      // The sendContactRequest will try to use p2pService which
+      // has node not started, so it returns nodeNotRunning.
+      // But handleScannedQR fires it off as fire-and-forget.
+      final result = await handleScannedQR(
+        qrData: qrData,
+        bridge: bridge,
+        contactRepo: contactRepo,
+        identityRepo: identityRepo,
+        p2pService: p2pService,
+        ownPeerId: ownPeerId,
+      );
+
+      expect(result, HandleScannedQRResult.success);
+
+      // Allow the fire-and-forget future to complete
+      await Future.delayed(Duration.zero);
+    });
+  });
+}

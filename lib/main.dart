@@ -39,6 +39,7 @@ import 'package:flutter_app/core/local_discovery/bonsoir_discovery_service.dart'
 import 'package:flutter_app/core/local_discovery/local_ws_server.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/lifecycle/handle_app_resumed.dart';
 import 'package:flutter_app/core/theme/app_theme.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/startup_timing.dart';
@@ -412,35 +413,10 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     if (_isResuming) return;
     _isResuming = true;
 
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'APP_LIFECYCLE_RESUME_BEGIN',
-      details: {},
-    );
-
     try {
-      // 1. Check bridge health — reinitialize if dead
-      final bridgeOk = await widget.bridge.checkHealth();
-      if (!bridgeOk) {
-        await widget.bridge.reinitialize();
-      }
-
-      // 2. Immediate health check (re-dials relay, re-registers FCM)
-      await widget.p2pService.performImmediateHealthCheck();
-
-      // 3. Drain offline inbox (messages queued while backgrounded)
-      await widget.p2pService.drainOfflineInbox();
-
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'APP_LIFECYCLE_RESUME_COMPLETE',
-        details: {'bridgeWasHealthy': bridgeOk},
-      );
-    } catch (e) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'APP_LIFECYCLE_RESUME_ERROR',
-        details: {'error': e.toString()},
+      await handleAppResumed(
+        bridge: widget.bridge,
+        p2pService: widget.p2pService,
       );
     } finally {
       _isResuming = false;

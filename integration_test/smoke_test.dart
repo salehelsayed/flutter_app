@@ -12,6 +12,9 @@ import 'package:flutter_app/core/database/migrations/005_secret_null_checks.dart
 import 'package:flutter_app/core/database/migrations/006_read_at_column.dart';
 import 'package:flutter_app/core/database/migrations/007_archive_columns.dart';
 import 'package:flutter_app/core/database/migrations/008_block_columns.dart';
+import 'package:flutter_app/core/database/migrations/009_quoted_message_id.dart';
+import 'package:flutter_app/core/database/migrations/010_media_attachments.dart';
+import 'package:flutter_app/core/database/migrations/011_avatar_version.dart';
 import 'package:flutter_app/core/database/helpers/identity_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/contact_requests_db_helpers.dart';
@@ -65,7 +68,7 @@ void main() {
     final db = await openEncryptedDatabase(
       secureKeyStore: secureKeyStore,
       dbName: 'smoke_test.db',
-      version: 8,
+      version: 11,
       onCreate: (db, version) async {
         await runIdentityTableMigration(db);
         await runMessagesTableMigration(db);
@@ -74,6 +77,9 @@ void main() {
         await runReadAtColumnMigration(db);
         await runArchiveColumnsMigration(db);
         await runBlockColumnsMigration(db);
+        await runQuotedMessageIdMigration(db);
+        await runMediaAttachmentsMigration(db);
+        await runAvatarVersionMigration(db);
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) await runMessagesTableMigration(db);
@@ -82,6 +88,9 @@ void main() {
         if (oldVersion < 6) await runReadAtColumnMigration(db);
         if (oldVersion < 7) await runArchiveColumnsMigration(db);
         if (oldVersion < 8) await runBlockColumnsMigration(db);
+        if (oldVersion < 9) await runQuotedMessageIdMigration(db);
+        if (oldVersion < 10) await runMediaAttachmentsMigration(db);
+        if (oldVersion < 11) await runAvatarVersionMigration(db);
       },
     );
     print('[TEST] Database initialized');
