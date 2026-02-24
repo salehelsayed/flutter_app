@@ -57,15 +57,7 @@ class MessageBubble extends StatelessWidget {
             borderRadius: BorderRadius.circular(14),
             color: _backgroundColor,
             border: Border.all(color: _borderColor),
-            boxShadow: isUnread && isIncoming
-                ? [
-                    BoxShadow(
-                      color: FeedColors.accentPurple.withValues(alpha: 0.06),
-                      blurRadius: 8,
-                      spreadRadius: 0,
-                    ),
-                  ]
-                : null,
+            boxShadow: null,
           ),
           child: Stack(
             children: [
