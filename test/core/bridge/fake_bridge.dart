@@ -17,6 +17,7 @@ class FakeBridge implements Bridge {
   int sendCallCount = 0;
   int initializeCallCount = 0;
   int checkHealthCallCount = 0;
+  int reinitializeCallCount = 0;
 
   // Last arguments
   String? lastSentMessage;
@@ -26,6 +27,8 @@ class FakeBridge implements Bridge {
   bool checkHealthResult = true;
   bool throwOnSend = false;
   String? throwOnSendMessage;
+  bool throwOnCheckHealth = false;
+  bool throwOnReinitialize = false;
 
   FakeBridge({Map<String, Map<String, dynamic>>? initialResponses}) {
     if (initialResponses != null) {
@@ -68,11 +71,18 @@ class FakeBridge implements Bridge {
   @override
   Future<bool> checkHealth() async {
     checkHealthCallCount++;
+    if (throwOnCheckHealth) {
+      throw Exception('FakeBridge: checkHealth error');
+    }
     return checkHealthResult;
   }
 
   @override
   Future<void> reinitialize() async {
+    reinitializeCallCount++;
+    if (throwOnReinitialize) {
+      throw Exception('FakeBridge: reinitialize error');
+    }
     _isInitialized = true;
   }
 

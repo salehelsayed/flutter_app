@@ -24,6 +24,8 @@ class FakeP2PService implements P2PService {
   bool storeInInboxResult;
   List<Map<String, dynamic>> retrieveInboxResult;
   bool registerPushTokenResult;
+  bool throwOnHealthCheck;
+  bool throwOnDrainInbox;
 
   // Call tracking
   int startNodeCallCount = 0;
@@ -34,6 +36,8 @@ class FakeP2PService implements P2PService {
   int dialPeerCallCount = 0;
   int storeInInboxCallCount = 0;
   int retrieveInboxCallCount = 0;
+  int performImmediateHealthCheckCallCount = 0;
+  int drainOfflineInboxCallCount = 0;
 
   // Last arguments
   String? lastStartNodePrivateKey;
@@ -54,6 +58,8 @@ class FakeP2PService implements P2PService {
     this.storeInInboxResult = true,
     this.retrieveInboxResult = const [],
     this.registerPushTokenResult = true,
+    this.throwOnHealthCheck = false,
+    this.throwOnDrainInbox = false,
   })  : _currentState = initialState ?? NodeState.stopped,
         sendMessageWithReplyResult = sendMessageWithReplyResult ??
             const SendMessageResult(sent: true, reply: 'ack');
@@ -149,10 +155,20 @@ class FakeP2PService implements P2PService {
   }
 
   @override
-  Future<void> performImmediateHealthCheck() async {}
+  Future<void> performImmediateHealthCheck() async {
+    performImmediateHealthCheckCallCount++;
+    if (throwOnHealthCheck) {
+      throw Exception('FakeP2PService: health check error');
+    }
+  }
 
   @override
-  Future<void> drainOfflineInbox() async {}
+  Future<void> drainOfflineInbox() async {
+    drainOfflineInboxCallCount++;
+    if (throwOnDrainInbox) {
+      throw Exception('FakeP2PService: drain inbox error');
+    }
+  }
 
   @override
   bool isLocalPeer(String peerId) => false;
