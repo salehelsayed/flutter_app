@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/feed_colors.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
 import 'package:flutter_app/features/feed/domain/models/session_reply.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/inline_reply_input.dart';
@@ -131,27 +132,86 @@ class CollapsedModeCardBody extends StatelessWidget {
   }
 
   Widget _buildPreviewContent() {
-    final ThreadMessage previewMsg;
-    final String? displayText;
-    final bool isMediaOnly;
-
     if (sessionReply != null) {
-      // Show the session reply text
-      displayText = sessionReply!.text;
-      previewMsg = thread.latestMessage; // for label logic
-      isMediaOnly = false;
-    } else {
-      previewMsg = thread.collapsedPreviewMessage;
-      displayText = _previewText(previewMsg);
-      isMediaOnly = previewMsg.text.isEmpty && previewMsg.media.isNotEmpty;
+      return _buildSinglePreviewLine(
+        label: 'You',
+        labelColor: FeedColors.accentTeal.withValues(alpha: 0.70),
+        displayText: sessionReply!.text,
+        isMediaOnly: false,
+        media: const [],
+      );
     }
 
-    final isSent = sessionReply != null || !previewMsg.isIncoming;
+    final previewMessages = thread.collapsedPreviewMessages;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          for (final msg in previewMessages)
+            _buildMessagePreviewRow(msg),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMessagePreviewRow(ThreadMessage msg) {
+    final isSent = !msg.isIncoming;
     final label = isSent ? 'You' : thread.contactUsername;
     final labelColor = isSent
         ? FeedColors.accentTeal.withValues(alpha: 0.70)
         : const Color.fromRGBO(255, 255, 255, 0.70);
+    final displayText = _previewText(msg);
+    final isMediaOnly = msg.text.isEmpty && msg.media.isNotEmpty;
 
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '$label: ',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: labelColor,
+            ),
+          ),
+          if (isMediaOnly)
+            Padding(
+              padding: const EdgeInsets.only(right: 4, top: 2),
+              child: Icon(
+                mediaPreviewIcon(msg.media),
+                size: 14,
+                color: const Color.fromRGBO(255, 255, 255, 0.55),
+              ),
+            ),
+          Expanded(
+            child: Text(
+              displayText ?? '',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w400,
+                color: Color.fromRGBO(255, 255, 255, 0.85),
+                height: 1.5,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSinglePreviewLine({
+    required String label,
+    required Color labelColor,
+    required String? displayText,
+    required bool isMediaOnly,
+    required List<MediaAttachment> media,
+  }) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
       child: Row(
@@ -169,7 +229,7 @@ class CollapsedModeCardBody extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.only(right: 4, top: 2),
               child: Icon(
-                mediaPreviewIcon(previewMsg.media),
+                mediaPreviewIcon(media),
                 size: 14,
                 color: const Color.fromRGBO(255, 255, 255, 0.55),
               ),
