@@ -340,6 +340,45 @@ void main() {
       expect(find.text('Collapse'), findsOneWidget);
     });
 
+    testWidgets('clearing session reply while expanded shows ScrollableMessagePreview',
+        (tester) async {
+      final thread = ThreadFeedItem(
+        id: 'thread_1',
+        timestamp: DateTime(2026, 2, 9, 15, 0),
+        contactPeerId: 'peer1',
+        contactUsername: 'Alice',
+        messages: [
+          ThreadMessage(
+            id: 'm1',
+            text: 'Hi',
+            time: '3:00 PM',
+            timestamp: DateTime(2026, 2, 9, 15, 0),
+            isIncoming: true,
+          ),
+        ],
+        conversationState: ConversationState.replied,
+        lastRepliedAt: DateTime.now(),
+      );
+
+      final reply = SessionReply.justNow('My reply');
+
+      // Session reply + expanded → no ScrollableMessagePreview
+      await tester.pumpWidget(wrap(CollapsedModeCardBody(
+        thread: thread,
+        sessionReply: reply,
+        isExpanded: true,
+      )));
+      expect(find.byType(ScrollableMessagePreview), findsNothing);
+
+      // Clear session reply while still expanded → ScrollableMessagePreview appears
+      await tester.pumpWidget(wrap(CollapsedModeCardBody(
+        thread: thread,
+        sessionReply: null,
+        isExpanded: true,
+      )));
+      expect(find.byType(ScrollableMessagePreview), findsOneWidget);
+    });
+
     testWidgets('session reply with isExpanded does not show ScrollableMessagePreview',
         (tester) async {
       final thread = ThreadFeedItem(

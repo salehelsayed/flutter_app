@@ -205,6 +205,75 @@ void main() {
     );
 
     testWidgets(
+      'session reply cleared on incoming allows open mode to show',
+      (tester) async {
+        // Thread is active (unread) with a session reply → collapsed
+        final thread = ThreadFeedItem(
+          id: 'thread_1',
+          timestamp: DateTime(2026, 2, 9),
+          contactPeerId: 'peer1',
+          contactUsername: 'Alice',
+          messages: [
+            _msg('m1', isUnread: true),
+          ],
+          conversationState: ConversationState.active,
+        );
+
+        final reply = SessionReply.justNow('My reply');
+
+        // With session reply → CollapsedModeCardBody
+        await tester.pumpWidget(wrap(FeedCard(
+          thread: thread,
+          sessionReply: reply,
+        )));
+        expect(find.byType(CollapsedModeCardBody), findsOneWidget);
+        expect(find.byType(OpenModeCardBody), findsNothing);
+
+        // Session reply cleared → OpenModeCardBody
+        await tester.pumpWidget(wrap(FeedCard(
+          thread: thread,
+          sessionReply: null,
+        )));
+        await tester.pumpAndSettle();
+        expect(find.byType(OpenModeCardBody), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'tap to expand works after session reply is cleared',
+      (tester) async {
+        final thread = ThreadFeedItem(
+          id: 'thread_1',
+          timestamp: DateTime(2026, 2, 9),
+          contactPeerId: 'peer1',
+          contactUsername: 'Alice',
+          messages: [_msg('m1'), _msg('m2'), _msg('m3')],
+          conversationState: ConversationState.read,
+        );
+
+        final reply = SessionReply.justNow('My reply');
+
+        // With session reply + isExpanded → NO ScrollableMessagePreview
+        await tester.pumpWidget(wrap(FeedCard(
+          thread: thread,
+          sessionReply: reply,
+          isExpanded: true,
+        )));
+        await tester.pumpAndSettle();
+        expect(find.byType(ScrollableMessagePreview), findsNothing);
+
+        // Session reply cleared + isExpanded → ScrollableMessagePreview present
+        await tester.pumpWidget(wrap(FeedCard(
+          thread: thread,
+          sessionReply: null,
+          isExpanded: true,
+        )));
+        await tester.pumpAndSettle();
+        expect(find.byType(ScrollableMessagePreview), findsOneWidget);
+      },
+    );
+
+    testWidgets(
       'View earlier messages link fires onViewFullConversation',
       (tester) async {
         var navigated = false;

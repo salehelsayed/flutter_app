@@ -4,6 +4,7 @@ import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
 import 'package:flutter_app/features/feed/domain/models/session_reply.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/collapsed_mode_card_body.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/feed_card.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/open_mode_card_body.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/scrollable_message_preview.dart';
 
 void main() {
@@ -156,6 +157,80 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byType(ScrollableMessagePreview), findsNothing);
       expect(find.text('My reply'), findsOneWidget);
+    });
+
+    testWidgets('open-mode collapse does not expand the resulting collapsed card',
+        (tester) async {
+      final thread = ThreadFeedItem(
+        id: 'thread_1',
+        timestamp: DateTime(2026, 2, 9),
+        contactPeerId: 'peer1',
+        contactUsername: 'Alice',
+        messages: [
+          _msg('m1', isUnread: true),
+          _msg('m2', isUnread: true),
+        ],
+        unreadCount: 2,
+        conversationState: ConversationState.unread,
+      );
+
+      // Unread thread renders OpenModeCardBody
+      await tester.pumpWidget(wrap(FeedCard(thread: thread)));
+      await tester.pumpAndSettle();
+      expect(find.byType(OpenModeCardBody), findsOneWidget);
+
+      // After marking as read, re-render as read with isExpanded: false
+      final readThread = ThreadFeedItem(
+        id: 'thread_1',
+        timestamp: DateTime(2026, 2, 9),
+        contactPeerId: 'peer1',
+        contactUsername: 'Alice',
+        messages: [_msg('m1'), _msg('m2')],
+        conversationState: ConversationState.read,
+      );
+
+      await tester.pumpWidget(wrap(FeedCard(
+        thread: readThread,
+        isExpanded: false,
+      )));
+      await tester.pumpAndSettle();
+
+      // Should show CollapsedModeCardBody WITHOUT ScrollableMessagePreview
+      expect(find.byType(CollapsedModeCardBody), findsOneWidget);
+      expect(find.byType(ScrollableMessagePreview), findsNothing);
+    });
+
+    testWidgets('tap to expand after session reply shows expanded messages',
+        (tester) async {
+      final thread = ThreadFeedItem(
+        id: 'thread_1',
+        timestamp: DateTime(2026, 2, 9),
+        contactPeerId: 'peer1',
+        contactUsername: 'Alice',
+        messages: [_msg('m1'), _msg('m2'), _msg('m3')],
+        conversationState: ConversationState.replied,
+        lastRepliedAt: DateTime.now(),
+      );
+
+      final reply = SessionReply.justNow('My reply');
+
+      // Post-reply collapsed state: sessionReply non-null, isExpanded false
+      await tester.pumpWidget(wrap(FeedCard(
+        thread: thread,
+        sessionReply: reply,
+        isExpanded: false,
+      )));
+      await tester.pumpAndSettle();
+      expect(find.byType(ScrollableMessagePreview), findsNothing);
+
+      // Parent clears sessionReply on expand → card shows expanded content
+      await tester.pumpWidget(wrap(FeedCard(
+        thread: thread,
+        sessionReply: null,
+        isExpanded: true,
+      )));
+      await tester.pumpAndSettle();
+      expect(find.byType(ScrollableMessagePreview), findsOneWidget);
     });
 
     testWidgets('View earlier messages link navigates to full conversation',
