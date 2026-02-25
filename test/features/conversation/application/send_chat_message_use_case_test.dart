@@ -283,6 +283,69 @@ void main() {
       expect(messageRepo.saved, isEmpty);
     });
 
+    test('returns messageTooLong for text exceeding 10000 chars', () async {
+      final longText = 'a' * 10001;
+      final (result, message) = await sendChatMessage(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        targetPeerId: 'target-peer',
+        text: longText,
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me',
+      );
+
+      expect(result, SendChatMessageResult.messageTooLong);
+      expect(message, isNull);
+      expect(messageRepo.saved, isEmpty);
+    });
+
+    test('succeeds for text at exactly 10000 chars', () async {
+      final exactText = 'a' * 10000;
+      final (result, message) = await sendChatMessage(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        targetPeerId: 'target-peer',
+        text: exactText,
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me',
+      );
+
+      expect(result, SendChatMessageResult.success);
+      expect(message, isNotNull);
+    });
+
+    test('strips bidi characters from outgoing text', () async {
+      await sendChatMessage(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        targetPeerId: 'target-peer',
+        text: 'Hello\u200Bworld\u202A!',
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me',
+      );
+
+      expect(messageRepo.saved.length, 1);
+      expect(messageRepo.saved.first.text, 'Helloworld!');
+    });
+
+    test('strips bidi characters from outgoing senderUsername', () async {
+      await sendChatMessage(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        targetPeerId: 'target-peer',
+        text: 'Hello',
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me\u200B',
+      );
+
+      // The payload in the wire message should have the sanitized username
+      expect(p2pService.lastSentMessage, contains('"senderUsername":"Me"'));
+      expect(
+        p2pService.lastSentMessage,
+        isNot(contains('\u200B')),
+      );
+    });
+
     test('returns invalidMessage for whitespace-only text', () async {
       final (result, message) = await sendChatMessage(
         p2pService: p2pService,

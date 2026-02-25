@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/core/theme/feed_colors.dart';
 
 /// Pill-shaped single-line inline reply input with animated send button.
@@ -188,6 +189,7 @@ class _InlineReplyInputState extends State<InlineReplyInput>
                 focusNode: _focusNode,
                 enabled: widget.enabled,
                 maxLines: 1,
+                maxLength: maxMessageLength,
                 style: const TextStyle(
                   fontSize: 14,
                   color: Color.fromRGBO(255, 255, 255, 0.90),
@@ -201,6 +203,7 @@ class _InlineReplyInputState extends State<InlineReplyInput>
                     color: Color.fromRGBO(255, 255, 255, 0.40),
                   ),
                   border: InputBorder.none,
+                  counterText: '',
                   contentPadding: EdgeInsets.only(
                     left: widget.onAttach != null ? 6 : 14,
                     right: 10,

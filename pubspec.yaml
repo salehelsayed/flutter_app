@@ -46,6 +46,7 @@ dependencies:
   uuid: ^4.5.1
   just_audio: ^0.9.39
   flutter_image_compress: ^2.4.0
+  url_launcher: ^6.2.5
   video_compress: ^3.1.4
   firebase_core: ^3.8.1
   firebase_messaging: ^15.1.6

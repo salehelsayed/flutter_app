@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/core/theme/feed_colors.dart';
 
 /// Multi-line auto-growing compose input for expanded thread cards.
@@ -161,6 +162,7 @@ class _ExpandedComposeInputState extends State<ExpandedComposeInput>
                     focusNode: _focusNode,
                     enabled: widget.enabled,
                     maxLines: null,
+                    maxLength: maxMessageLength,
                     style: const TextStyle(
                       fontSize: 14,
                       color: Color.fromRGBO(255, 255, 255, 0.90),
@@ -173,6 +175,7 @@ class _ExpandedComposeInputState extends State<ExpandedComposeInput>
                         color: Color.fromRGBO(255, 255, 255, 0.40),
                       ),
                       border: InputBorder.none,
+                      counterText: '',
                       contentPadding: const EdgeInsets.symmetric(
                         horizontal: 16,
                         vertical: 12,

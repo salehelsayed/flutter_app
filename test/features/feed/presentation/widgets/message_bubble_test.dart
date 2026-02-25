@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/theme/feed_colors.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/message_bubble.dart';
+import 'package:flutter_app/shared/widgets/linkable_text.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid.dart';
 
 void main() {
@@ -167,6 +168,43 @@ void main() {
       )));
 
       expect(find.text('Message unavailable'), findsOneWidget);
+    });
+  });
+
+  group('URL links', () {
+    testWidgets('URL in message body renders as tappable link',
+        (tester) async {
+      await tester.pumpWidget(wrap(const MessageBubble(
+        text: 'Check https://example.com out',
+        time: '3:00 PM',
+        isIncoming: true,
+      )));
+
+      expect(find.byType(LinkableText), findsOneWidget);
+    });
+
+    testWidgets('name prefix preserved with linkable body', (tester) async {
+      await tester.pumpWidget(wrap(const MessageBubble(
+        text: 'Check https://example.com out',
+        time: '3:00 PM',
+        isIncoming: false,
+        senderLabel: 'You',
+      )));
+
+      expect(find.textContaining('You: '), findsOneWidget);
+      expect(find.textContaining('https://example.com'), findsOneWidget);
+    });
+
+    testWidgets('plain text without URLs still renders normally',
+        (tester) async {
+      await tester.pumpWidget(wrap(const MessageBubble(
+        text: 'Just a plain message',
+        time: '3:00 PM',
+        isIncoming: true,
+      )));
+
+      expect(find.byType(LinkableText), findsOneWidget);
+      expect(find.textContaining('Just a plain message'), findsOneWidget);
     });
   });
 }

@@ -4,6 +4,7 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/chat_console_logger.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_payload.dart';
@@ -15,6 +16,7 @@ enum SendChatMessageResult {
   success,
   nodeNotRunning,
   invalidMessage,
+  messageTooLong,
   peerNotFound,
   dialFailed,
   sendFailed,
@@ -68,6 +70,20 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     );
     return (SendChatMessageResult.invalidMessage, null);
   }
+
+  // 1b. Length check
+  if (isMessageTooLong(text)) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_SEND_INVALID',
+      details: {'reason': 'message_too_long', 'length': text.length},
+    );
+    return (SendChatMessageResult.messageTooLong, null);
+  }
+
+  // 1c. Sanitize text and username
+  text = sanitizeMessageText(text);
+  senderUsername = sanitizeUsername(senderUsername);
 
   // 2. Check P2P node
   if (!p2pService.currentState.isStarted) {

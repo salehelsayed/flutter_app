@@ -1,5 +1,6 @@
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/core/utils/chat_console_logger.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
@@ -113,6 +114,18 @@ handleIncomingChatMessage({
     emitFlowEvent(layer: 'FL', event: 'CHAT_MSG_RECEIVE_NOT_CHAT', details: {});
     return (HandleChatMessageResult.notChatMessage, null, null);
   }
+
+  // Sanitize incoming text and username to strip bidi control characters
+  payload = MessagePayload(
+    id: payload.id,
+    text: sanitizeMessageText(payload.text),
+    senderPeerId: payload.senderPeerId,
+    senderUsername: sanitizeUsername(payload.senderUsername),
+    timestamp: payload.timestamp,
+    quotedMessageId: payload.quotedMessageId,
+    media: payload.media,
+  );
+
   final textPreview = buildTextPreview(payload.text);
 
   // 2. Check sender is a known contact
