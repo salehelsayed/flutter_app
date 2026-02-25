@@ -18,6 +18,7 @@ class LetterCard extends StatelessWidget {
   final String time;
   final bool isIncoming;
   final String? status;
+  final String? transport;
   final String? quotedText;
   final bool isQuoteUnavailable;
   final List<MediaAttachment> media;
@@ -31,6 +32,7 @@ class LetterCard extends StatelessWidget {
     required this.time,
     required this.isIncoming,
     this.status,
+    this.transport,
     this.quotedText,
     this.isQuoteUnavailable = false,
     this.media = const [],
@@ -169,6 +171,14 @@ class LetterCard extends StatelessWidget {
                             color: Color.fromRGBO(255, 255, 255, 0.35),
                           ),
                         ),
+                        if (transport != null) ...[
+                          const SizedBox(width: 4),
+                          Icon(
+                            _transportIcon(transport!),
+                            size: 10,
+                            color: const Color.fromRGBO(255, 255, 255, 0.35),
+                          ),
+                        ],
                       ],
                     ),
                   ),
@@ -270,6 +280,19 @@ class LetterCard extends StatelessWidget {
         ),
       ],
     );
+  }
+
+  static IconData _transportIcon(String transport) {
+    switch (transport) {
+      case 'wifi':
+        return Icons.wifi;
+      case 'relay':
+        return Icons.cell_tower;
+      case 'inbox':
+        return Icons.inbox;
+      default:
+        return Icons.help_outline;
+    }
   }
 
   static IconData _statusIcon(String status) {

@@ -163,45 +163,57 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     wireJson: jsonString,
   );
 
-  // 4.5. Try local WiFi delivery first
+  // 4.5. Try local WiFi delivery first (dual-path: don't return early)
+  bool wifiSent = false;
   if (p2pService.isLocalPeer(targetPeerId)) {
     emitFlowEvent(
       layer: 'FL',
       event: 'CHAT_MSG_SEND_LOCAL_ATTEMPT',
       details: {'targetPeerId': targetPrefix},
     );
-    final localSent = await p2pService.sendLocalMessage(
-      targetPeerId, jsonString, senderPeerId);
-    if (localSent) {
-      final message = payload.toConversationMessage(
-        contactPeerId: targetPeerId,
-        isIncoming: false,
-        status: 'delivered',
-      );
-      await messageRepo.saveMessage(message);
-      await _persistMediaAttachments(
-          mediaAttachmentRepo, mediaAttachments, resolvedMessageId);
+    try {
+      final localSent = await p2pService.sendLocalMessage(
+        targetPeerId, jsonString, senderPeerId);
+      if (localSent) {
+        wifiSent = true;
+        final wifiMessage = payload.toConversationMessage(
+          contactPeerId: targetPeerId,
+          isIncoming: false,
+          status: 'sent',
+          transport: 'wifi',
+        );
+        await messageRepo.saveMessage(wifiMessage);
+        await _persistMediaAttachments(
+            mediaAttachmentRepo, mediaAttachments, resolvedMessageId);
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'CHAT_MSG_SEND_LOCAL_SUCCESS',
+          details: {
+            'id': resolvedMessageId.substring(0, 8),
+            'textPreview': textPreview,
+          },
+        );
+        logChatOutgoing(
+          messageId: resolvedMessageId,
+          toPeerId: targetPeerId,
+          status: 'sent',
+          text: text,
+        );
+        // DO NOT RETURN — fall through to relay/inbox for confirmation
+      } else {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'CHAT_MSG_SEND_LOCAL_FAILED',
+          details: {'targetPeerId': targetPrefix},
+        );
+      }
+    } catch (e) {
       emitFlowEvent(
         layer: 'FL',
-        event: 'CHAT_MSG_SEND_LOCAL_SUCCESS',
-        details: {
-          'id': resolvedMessageId.substring(0, 8),
-          'textPreview': textPreview,
-        },
+        event: 'CHAT_MSG_SEND_LOCAL_ERROR',
+        details: {'targetPeerId': targetPrefix, 'error': e.toString()},
       );
-      logChatOutgoing(
-        messageId: resolvedMessageId,
-        toPeerId: targetPeerId,
-        status: 'delivered',
-        text: text,
-      );
-      return (SendChatMessageResult.success, message);
     }
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'CHAT_MSG_SEND_LOCAL_FAILED',
-      details: {'targetPeerId': targetPrefix},
-    );
     // Fall through to relay path
   }
 
@@ -225,10 +237,13 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
           contactPeerId: targetPeerId,
           isIncoming: false,
           status: status,
+          transport: wifiSent ? 'wifi' : 'relay',
         );
         await messageRepo.saveMessage(message);
-        await _persistMediaAttachments(
-            mediaAttachmentRepo, mediaAttachments, resolvedMessageId);
+        if (!wifiSent) {
+          await _persistMediaAttachments(
+              mediaAttachmentRepo, mediaAttachments, resolvedMessageId);
+        }
 
         emitFlowEvent(
           layer: 'FL',
@@ -331,10 +346,13 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
         contactPeerId: targetPeerId,
         isIncoming: false,
         status: status,
+        transport: wifiSent ? 'wifi' : 'relay',
       );
       await messageRepo.saveMessage(message);
-      await _persistMediaAttachments(
-          mediaAttachmentRepo, mediaAttachments, resolvedMessageId);
+      if (!wifiSent) {
+        await _persistMediaAttachments(
+            mediaAttachmentRepo, mediaAttachments, resolvedMessageId);
+      }
 
       emitFlowEvent(
         layer: 'FL',
@@ -380,10 +398,13 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
         contactPeerId: targetPeerId,
         isIncoming: false,
         status: 'delivered',
+        transport: wifiSent ? 'wifi' : 'inbox',
       );
       await messageRepo.saveMessage(deliveredMessage);
-      await _persistMediaAttachments(
-          mediaAttachmentRepo, mediaAttachments, resolvedMessageId);
+      if (!wifiSent) {
+        await _persistMediaAttachments(
+            mediaAttachmentRepo, mediaAttachments, resolvedMessageId);
+      }
 
       emitFlowEvent(
         layer: 'FL',
@@ -413,7 +434,17 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     );
   }
 
-  // Inbox fallback failed — persist with failed status.
+  // Inbox fallback failed — if WiFi sent, that's our best effort.
+  if (wifiSent) {
+    return (SendChatMessageResult.success, payload.toConversationMessage(
+      contactPeerId: targetPeerId,
+      isIncoming: false,
+      status: 'sent',
+      transport: 'wifi',
+    ));
+  }
+
+  // No WiFi fallback — persist with failed status.
   final failedMessage = payload.toConversationMessage(
     contactPeerId: targetPeerId,
     isIncoming: false,

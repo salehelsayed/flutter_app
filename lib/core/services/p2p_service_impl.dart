@@ -43,7 +43,9 @@ class P2PServiceImpl implements P2PService {
   })  : _bridge = bridge,
         _localP2P = localP2PService {
     // Register event handlers on the bridge
-    _bridge.onMessageReceived = _handleMessageReceived;
+    _bridge.onMessageReceived = (msg) {
+      _handleMessageReceived(msg.copyWith(transport: 'relay'));
+    };
     _bridge.onPeerConnected = _handlePeerConnected;
     _bridge.onPeerDisconnected = _handlePeerDisconnected;
     _bridge.onAddressesUpdated = _handleAddressesUpdated;
@@ -56,6 +58,7 @@ class P2PServiceImpl implements P2PService {
         content: localMsg.content,
         timestamp: localMsg.timestamp.toIso8601String(),
         isIncoming: localMsg.isIncoming,
+        transport: 'wifi',
       ));
     });
   }
@@ -245,6 +248,7 @@ class P2PServiceImpl implements P2PService {
             content: content,
             timestamp: timestamp,
             isIncoming: true,
+            transport: 'inbox',
           ),
         );
         emitted++;

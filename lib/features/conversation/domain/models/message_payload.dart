@@ -206,6 +206,7 @@ class MessagePayload {
     required String contactPeerId,
     required bool isIncoming,
     String status = 'sent',
+    String? transport,
   }) {
     return ConversationMessage(
       id: id,
@@ -217,6 +218,7 @@ class MessagePayload {
       isIncoming: isIncoming,
       createdAt: DateTime.now().toUtc().toIso8601String(),
       quotedMessageId: quotedMessageId,
+      transport: transport,
     );
   }
 }

@@ -463,6 +463,86 @@ void main() {
       },
     );
 
+    group('transport tagging', () {
+      test('transport passes through to ConversationMessage', () async {
+        final message = buildP2PMessage(buildValidChatJson(id: 'msg-transport-001'));
+
+        final (result, msg, _) = await handleIncomingChatMessage(
+          message: message,
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+          transport: 'relay',
+        );
+
+        expect(result, HandleChatMessageResult.chatMessage);
+        expect(msg, isNotNull);
+        expect(msg!.transport, 'relay');
+        expect(messageRepo.saved.first.transport, 'relay');
+      });
+
+      test('wifi transport passes through', () async {
+        final message = buildP2PMessage(buildValidChatJson(id: 'msg-transport-002'));
+
+        final (result, msg, _) = await handleIncomingChatMessage(
+          message: message,
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+          transport: 'wifi',
+        );
+
+        expect(result, HandleChatMessageResult.chatMessage);
+        expect(msg!.transport, 'wifi');
+      });
+
+      test('inbox transport passes through', () async {
+        final message = buildP2PMessage(buildValidChatJson(id: 'msg-transport-003'));
+
+        final (result, msg, _) = await handleIncomingChatMessage(
+          message: message,
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+          transport: 'inbox',
+        );
+
+        expect(result, HandleChatMessageResult.chatMessage);
+        expect(msg!.transport, 'inbox');
+      });
+
+      test('null transport works for backward compat', () async {
+        final message = buildP2PMessage(buildValidChatJson(id: 'msg-transport-004'));
+
+        final (result, msg, _) = await handleIncomingChatMessage(
+          message: message,
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+        );
+
+        expect(result, HandleChatMessageResult.chatMessage);
+        expect(msg!.transport, isNull);
+        expect(messageRepo.saved.first.transport, isNull);
+      });
+    });
+
+    test(
+      'duplicate rejected even when transport differs (cross-transport dedup)',
+      () async {
+        messageRepo = FakeMessageRepository(existingIds: {'msg-uuid-001'});
+        final message = buildP2PMessage(buildValidChatJson());
+
+        // Same message ID arrives via relay after being delivered via wifi
+        final (result, msg, _) = await handleIncomingChatMessage(
+          message: message,
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+          transport: 'relay',
+        );
+
+        expect(result, HandleChatMessageResult.duplicate);
+        expect(msg, isNull);
+        expect(messageRepo.saved, isEmpty);
+      },
+    );
+
     group('media attachments', () {
       late FakeMediaAttachmentRepository mediaRepo;
 

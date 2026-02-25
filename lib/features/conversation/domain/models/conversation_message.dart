@@ -35,6 +35,9 @@ class ConversationMessage {
   /// The ID of the message being quoted (quote-reply). NULL means no quote.
   final String? quotedMessageId;
 
+  /// Transport type: 'wifi', 'relay', 'inbox', or null (unknown/pre-migration).
+  final String? transport;
+
   /// Transient media attachments — populated via copyWith() after batch-loading
   /// from media_attachments table. NOT serialized to DB.
   final List<MediaAttachment> media;
@@ -50,6 +53,7 @@ class ConversationMessage {
     required this.createdAt,
     this.readAt,
     this.quotedMessageId,
+    this.transport,
     this.media = const [],
   });
 
@@ -66,6 +70,7 @@ class ConversationMessage {
       createdAt: map['created_at'] as String,
       readAt: map['read_at'] as String?,
       quotedMessageId: map['quoted_message_id'] as String?,
+      transport: map['transport'] as String?,
     );
   }
 
@@ -82,6 +87,7 @@ class ConversationMessage {
       'created_at': createdAt,
       'read_at': readAt,
       'quoted_message_id': quotedMessageId,
+      'transport': transport,
     };
   }
 
@@ -97,6 +103,7 @@ class ConversationMessage {
     String? createdAt,
     String? readAt,
     String? quotedMessageId,
+    String? transport,
     List<MediaAttachment>? media,
   }) {
     return ConversationMessage(
@@ -110,6 +117,7 @@ class ConversationMessage {
       createdAt: createdAt ?? this.createdAt,
       readAt: readAt ?? this.readAt,
       quotedMessageId: quotedMessageId ?? this.quotedMessageId,
+      transport: transport ?? this.transport,
       media: media ?? this.media,
     );
   }

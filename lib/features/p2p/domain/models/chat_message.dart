@@ -5,6 +5,7 @@ class ChatMessage {
   final String content;
   final String timestamp;
   final bool isIncoming;
+  final String? transport;
 
   const ChatMessage({
     required this.from,
@@ -12,6 +13,7 @@ class ChatMessage {
     required this.content,
     required this.timestamp,
     required this.isIncoming,
+    this.transport,
   });
 
   factory ChatMessage.fromJson(Map<String, dynamic> json) {
@@ -51,6 +53,7 @@ class ChatMessage {
     String? content,
     String? timestamp,
     bool? isIncoming,
+    String? transport,
   }) {
     return ChatMessage(
       from: from ?? this.from,
@@ -58,6 +61,7 @@ class ChatMessage {
       content: content ?? this.content,
       timestamp: timestamp ?? this.timestamp,
       isIncoming: isIncoming ?? this.isIncoming,
+      transport: transport ?? this.transport,
     );
   }
 

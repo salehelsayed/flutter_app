@@ -347,6 +347,32 @@ void main() {
       );
     }
 
+    test('transport from ChatMessage flows through to ConversationMessage',
+        () async {
+      final senderPeerId = 'sender-peer-transport';
+      contactRepo.seedContact(_makeContact(senderPeerId));
+
+      final listener = createListener();
+      listener.start();
+
+      final emitted = <ConversationMessage>[];
+      listener.incomingMessageStream.listen(emitted.add);
+
+      // Create a ChatMessage with transport='wifi'
+      final chatMsg = _makeChatMessage(
+        from: senderPeerId,
+        id: 'msg-transport-flow',
+      ).copyWith(transport: 'wifi');
+      chatStreamController.add(chatMsg);
+
+      await Future.delayed(const Duration(milliseconds: 200));
+
+      expect(emitted.length, greaterThanOrEqualTo(1));
+      expect(emitted.first.transport, 'wifi');
+
+      listener.dispose();
+    });
+
     test('auto-downloads pending attachments and re-emits message with media', () async {
       final senderPeerId = 'sender-peer-001';
       contactRepo.seedContact(_makeContact(senderPeerId));

@@ -40,6 +40,7 @@ handleIncomingChatMessage({
   Bridge? bridge,
   String? ownMlKemSecretKey,
   MediaAttachmentRepository? mediaAttachmentRepo,
+  String? transport,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -177,6 +178,7 @@ handleIncomingChatMessage({
     contactPeerId: payload.senderPeerId,
     isIncoming: true,
     status: 'delivered',
+    transport: transport,
   );
   await messageRepo.saveMessage(conversationMessage);
 
