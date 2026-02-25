@@ -115,6 +115,9 @@ class _FakeP2PService implements P2PService {
   Future<void> drainOfflineInbox() async {}
 
   @override
+  bool isConnectedToPeer(String peerId) => false;
+
+  @override
   bool isLocalPeer(String peerId) => localPeerResult;
 
   @override
