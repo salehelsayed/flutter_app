@@ -312,6 +312,58 @@ void main() {
       },
     );
 
+    test('strips bidi characters from incoming message text', () async {
+      final json = jsonEncode({
+        'type': 'chat_message',
+        'version': '1',
+        'payload': {
+          'id': 'msg-bidi-001',
+          'text': 'Hello\u200Bworld\u202A!',
+          'senderPeerId': senderPeerId,
+          'senderUsername': 'Alice',
+          'timestamp': '2026-02-09T15:30:00.000Z',
+        },
+      });
+      final message = buildP2PMessage(json);
+
+      final (result, msg, _) = await handleIncomingChatMessage(
+        message: message,
+        messageRepo: messageRepo,
+        contactRepo: contactRepo,
+      );
+
+      expect(result, HandleChatMessageResult.chatMessage);
+      expect(msg, isNotNull);
+      expect(msg!.text, 'Helloworld!');
+      expect(messageRepo.saved.first.text, 'Helloworld!');
+    });
+
+    test('strips bidi characters from incoming senderUsername', () async {
+      final json = jsonEncode({
+        'type': 'chat_message',
+        'version': '1',
+        'payload': {
+          'id': 'msg-bidi-002',
+          'text': 'Hello!',
+          'senderPeerId': senderPeerId,
+          'senderUsername': 'Alice\u200B\u202A',
+          'timestamp': '2026-02-09T15:30:00.000Z',
+        },
+      });
+      final message = buildP2PMessage(json);
+
+      final (result, msg, updatedContact) = await handleIncomingChatMessage(
+        message: message,
+        messageRepo: messageRepo,
+        contactRepo: contactRepo,
+      );
+
+      expect(result, HandleChatMessageResult.chatMessage);
+      expect(msg, isNotNull);
+      // Username should match stored "Alice" after stripping bidi chars
+      expect(updatedContact, isNull);
+    });
+
     test('persisted message has correct fields', () async {
       final message = buildP2PMessage(
         buildValidChatJson(id: 'test-id-42', text: 'Custom text'),

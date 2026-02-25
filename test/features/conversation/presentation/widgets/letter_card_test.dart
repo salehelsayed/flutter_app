@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/letter_card.dart';
+import 'package:flutter_app/shared/widgets/linkable_text.dart';
 
 void main() {
   Widget buildTestWidget({
@@ -125,6 +126,40 @@ void main() {
         (sb) => sb.width == 32 && sb.height == 32,
       );
       expect(avatar32, isNotEmpty);
+    });
+
+    group('URL links', () {
+      testWidgets('URL in message body renders as tappable link',
+          (tester) async {
+        await tester.pumpWidget(
+          buildTestWidget(text: 'Check https://example.com out'),
+        );
+        expect(find.byType(LinkableText), findsOneWidget);
+      });
+
+      testWidgets('URL has underline decoration', (tester) async {
+        await tester.pumpWidget(
+          buildTestWidget(text: 'https://example.com'),
+        );
+        final richText = tester.widget<RichText>(
+          find.descendant(
+            of: find.byType(LinkableText),
+            matching: find.byType(RichText),
+          ),
+        );
+        final outer = richText.text as TextSpan;
+        final inner = outer.children![0] as TextSpan;
+        final urlSpan = inner.children!.whereType<TextSpan>().first;
+        expect(urlSpan.style?.decoration, TextDecoration.underline);
+      });
+
+      testWidgets('plain text without URLs still renders', (tester) async {
+        await tester.pumpWidget(
+          buildTestWidget(text: 'Just a plain message'),
+        );
+        expect(find.byType(LinkableText), findsOneWidget);
+        expect(find.textContaining('Just a plain message'), findsOneWidget);
+      });
     });
   });
 }

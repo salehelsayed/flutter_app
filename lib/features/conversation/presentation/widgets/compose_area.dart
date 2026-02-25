@@ -1,5 +1,6 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/utils/text_sanitizer.dart';
 
 /// Compose area at the bottom of the conversation screen.
 ///
@@ -159,6 +160,7 @@ class _ComposeAreaState extends State<ComposeArea>
                   controller: _controller,
                   focusNode: _focusNode,
                   maxLines: null,
+                  maxLength: maxMessageLength,
                   style: const TextStyle(
                     fontSize: 15,
                     color: Color.fromRGBO(255, 255, 255, 0.95),
@@ -176,6 +178,7 @@ class _ComposeAreaState extends State<ComposeArea>
                       ),
                     ),
                     border: InputBorder.none,
+                    counterText: '',
                     contentPadding: const EdgeInsets.symmetric(
                       horizontal: 16,
                       vertical: 12,

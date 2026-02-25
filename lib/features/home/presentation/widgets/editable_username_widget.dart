@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_app/core/theme/app_colors.dart';
+import 'package:flutter_app/core/utils/text_sanitizer.dart';
 
 /// Editable username display with mknoon/ prefix.
 class EditableUsernameWidget extends StatefulWidget {
@@ -60,7 +62,9 @@ class _EditableUsernameWidgetState extends State<EditableUsernameWidget> {
 
   void _finishEditing() {
     final newUsername = _controller.text.trim();
-    if (newUsername.isNotEmpty && newUsername != widget.username) {
+    if (newUsername.isNotEmpty &&
+        newUsername != widget.username &&
+        isValidUsername(newUsername)) {
       widget.onUsernameChanged?.call(newUsername);
     } else {
       _controller.text = widget.username;
@@ -98,6 +102,9 @@ class _EditableUsernameWidgetState extends State<EditableUsernameWidget> {
               controller: _controller,
               focusNode: _focusNode,
               maxLength: 20,
+              inputFormatters: [
+                FilteringTextInputFormatter.allow(RegExp(r'[a-zA-Z0-9_\-.]')),
+              ],
               style: const TextStyle(
                 color: AppColors.textPrimary,
                 fontSize: 15,

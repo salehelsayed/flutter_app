@@ -2,6 +2,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/feed_colors.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/shared/widgets/linkable_text.dart';
 import 'package:flutter_app/shared/widgets/media/audio_player_widget.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid.dart';
 
@@ -225,14 +226,12 @@ class MessageBubble extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         if (text.isNotEmpty)
-          Text.rich(
-            TextSpan(
-              children: [
-                if (name.isNotEmpty)
-                  TextSpan(text: '$name: ', style: nameStyle),
-                TextSpan(text: text, style: bodyStyle),
-              ],
-            ),
+          LinkableText(
+            text: text,
+            style: bodyStyle,
+            prefixSpans: name.isNotEmpty
+                ? [TextSpan(text: '$name: ', style: nameStyle)]
+                : null,
           )
         else if (name.isNotEmpty)
           Text(name, style: nameStyle),

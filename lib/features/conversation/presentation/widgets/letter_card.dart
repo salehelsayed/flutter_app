@@ -2,6 +2,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
+import 'package:flutter_app/shared/widgets/linkable_text.dart';
 import 'package:flutter_app/shared/widgets/media/audio_player_widget.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid.dart';
 
@@ -193,8 +194,8 @@ class LetterCard extends StatelessWidget {
                   if (text.isNotEmpty)
                     Padding(
                       padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
-                      child: Text(
-                        text,
+                      child: LinkableText(
+                        text: text,
                         style: TextStyle(
                           fontSize: 15,
                           fontWeight: FontWeight.w400,
