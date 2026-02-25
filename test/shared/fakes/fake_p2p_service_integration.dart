@@ -122,6 +122,9 @@ class FakeP2PService implements P2PService {
   Future<void> performImmediateHealthCheck() async {}
 
   @override
+  bool isConnectedToPeer(String peerId) => false;
+
+  @override
   bool isLocalPeer(String peerId) => false;
 
   @override

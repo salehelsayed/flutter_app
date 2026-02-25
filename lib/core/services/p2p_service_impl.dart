@@ -824,6 +824,12 @@ class P2PServiceImpl implements P2PService {
   }
 
   @override
+  bool isConnectedToPeer(String peerId) =>
+      _currentState.connections.any(
+        (c) => c.peerId == peerId && c.status == 'connected',
+      );
+
+  @override
   bool isLocalPeer(String peerId) => _localP2P?.isLocalPeer(peerId) ?? false;
 
   @override

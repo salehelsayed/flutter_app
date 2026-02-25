@@ -171,6 +171,9 @@ class FakeP2PService implements P2PService {
   }
 
   @override
+  bool isConnectedToPeer(String peerId) => false;
+
+  @override
   bool isLocalPeer(String peerId) => false;
 
   @override

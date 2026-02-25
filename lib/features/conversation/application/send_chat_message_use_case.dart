@@ -205,6 +205,59 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     // Fall through to relay path
   }
 
+  // 4.7. Fast path: if already connected, try sending directly (skip discover/dial)
+  if (p2pService.isConnectedToPeer(targetPeerId)) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_SEND_FAST_PATH_ATTEMPT',
+      details: {'targetPeerId': targetPrefix},
+    );
+
+    try {
+      final fastResult = await p2pService.sendMessageWithReply(
+        targetPeerId,
+        jsonString,
+      );
+
+      if (fastResult.sent) {
+        final status = fastResult.acknowledged ? 'delivered' : 'sent';
+        final message = payload.toConversationMessage(
+          contactPeerId: targetPeerId,
+          isIncoming: false,
+          status: status,
+        );
+        await messageRepo.saveMessage(message);
+        await _persistMediaAttachments(
+            mediaAttachmentRepo, mediaAttachments, resolvedMessageId);
+
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'CHAT_MSG_SEND_FAST_PATH_SUCCESS',
+          details: {
+            'id': resolvedMessageId.substring(0, 8),
+            'status': status,
+            'textPreview': textPreview,
+          },
+        );
+        logChatOutgoing(
+          messageId: resolvedMessageId,
+          toPeerId: targetPeerId,
+          status: status,
+          text: text,
+        );
+        return (SendChatMessageResult.success, message);
+      }
+    } catch (e) {
+      // Fast path failed — fall through to discover-dial-send
+    }
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_SEND_FAST_PATH_FAILED',
+      details: {'targetPeerId': targetPrefix},
+    );
+  }
+
   // 5. Discover → Dial → Send (with 3x retries and exponential backoff)
   const maxAttempts = 3;
   const baseDelay = Duration(milliseconds: 500);

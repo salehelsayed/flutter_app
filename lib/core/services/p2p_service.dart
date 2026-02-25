@@ -106,6 +106,12 @@ abstract class P2PService {
   /// Drain any queued offline inbox messages into the message stream.
   Future<void> drainOfflineInbox();
 
+  /// Returns true if we already have an active connection to the peer.
+  ///
+  /// Checks the current [NodeState.connections] for a matching peer with
+  /// status 'connected'. Used by the send fast path to skip discover/dial.
+  bool isConnectedToPeer(String peerId);
+
   /// Returns true if the peer is visible on the local WiFi network.
   bool isLocalPeer(String peerId);
 
