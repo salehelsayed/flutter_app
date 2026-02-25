@@ -176,6 +176,7 @@ class ChatMessageListener {
         bridge: bridge,
         ownMlKemSecretKey: ownSecretKey,
         mediaAttachmentRepo: mediaAttachmentRepo,
+        transport: message.transport,
       );
 
       if (updatedContact != null) {

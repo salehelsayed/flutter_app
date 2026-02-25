@@ -194,6 +194,7 @@ class _ConversationScreenState extends State<ConversationScreen> {
               time: _formatTime(message.timestamp),
               isIncoming: message.isIncoming,
               status: message.isIncoming ? null : message.status,
+              transport: message.transport,
               quotedText: quotedText,
               isQuoteUnavailable: isQuoteUnavailable,
               media: message.media,

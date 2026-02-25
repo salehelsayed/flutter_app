@@ -11,6 +11,7 @@ import 'package:flutter_app/core/database/migrations/008_block_columns.dart';
 import 'package:flutter_app/core/database/migrations/009_quoted_message_id.dart';
 import 'package:flutter_app/core/database/migrations/010_media_attachments.dart';
 import 'package:flutter_app/core/database/migrations/011_avatar_version.dart';
+import 'package:flutter_app/core/database/migrations/012_transport_column.dart';
 import 'package:flutter_app/core/database/encrypted_db_opener.dart';
 import 'package:flutter_app/core/database/helpers/identity_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
@@ -89,7 +90,7 @@ void main() async {
   final db = await openEncryptedDatabase(
     secureKeyStore: secureKeyStore,
     dbName: 'identity.db',
-    version: 11,
+    version: 12,
     onCreate: (db, version) async {
       await runIdentityTableMigration(db);
       await runMessagesTableMigration(db);
@@ -102,6 +103,7 @@ void main() async {
       await runQuotedMessageIdMigration(db);
       await runMediaAttachmentsMigration(db);
       await runAvatarVersionMigration(db);
+      await runTransportColumnMigration(db);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) {
@@ -131,6 +133,9 @@ void main() async {
       }
       if (oldVersion < 11) {
         await runAvatarVersionMigration(db);
+      }
+      if (oldVersion < 12) {
+        await runTransportColumnMigration(db);
       }
     },
   );

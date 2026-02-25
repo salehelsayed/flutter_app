@@ -10,6 +10,7 @@ void main() {
     String senderName = 'Alice',
     String text = 'Hello, this is a test message.',
     String time = '3:30 PM',
+    String? transport,
   }) {
     return MaterialApp(
       home: Scaffold(
@@ -21,6 +22,7 @@ void main() {
             time: time,
             isIncoming: isIncoming,
             status: status,
+            transport: transport,
           ),
         ),
       ),
@@ -126,6 +128,39 @@ void main() {
         (sb) => sb.width == 32 && sb.height == 32,
       );
       expect(avatar32, isNotEmpty);
+    });
+
+    group('transport icons', () {
+      testWidgets('shows wifi icon when transport is wifi', (tester) async {
+        await tester.pumpWidget(
+          buildTestWidget(transport: 'wifi'),
+        );
+        expect(find.byIcon(Icons.wifi), findsOneWidget);
+      });
+
+      testWidgets('shows relay icon when transport is relay', (tester) async {
+        await tester.pumpWidget(
+          buildTestWidget(transport: 'relay'),
+        );
+        expect(find.byIcon(Icons.cell_tower), findsOneWidget);
+      });
+
+      testWidgets('shows inbox icon when transport is inbox', (tester) async {
+        await tester.pumpWidget(
+          buildTestWidget(transport: 'inbox'),
+        );
+        expect(find.byIcon(Icons.inbox), findsOneWidget);
+      });
+
+      testWidgets('shows no transport icon when transport is null',
+          (tester) async {
+        await tester.pumpWidget(
+          buildTestWidget(transport: null),
+        );
+        expect(find.byIcon(Icons.wifi), findsNothing);
+        expect(find.byIcon(Icons.cell_tower), findsNothing);
+        expect(find.byIcon(Icons.inbox), findsNothing);
+      });
     });
 
     group('URL links', () {

@@ -3,6 +3,9 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
+import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
+import 'package:flutter_app/core/local_discovery/local_p2p_service.dart';
+import 'package:flutter_app/core/local_discovery/local_ws_server.dart';
 import 'package:flutter_app/core/utils/key_conversion.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
@@ -11,6 +14,71 @@ import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart'
 import 'package:flutter_app/features/p2p/domain/models/connection_state.dart';
 
 import '../bridge/fake_bridge.dart';
+
+// -- Fake local discovery types for transport tagging tests --
+
+class _LocalChatMessage extends LocalChatMessage {
+  const _LocalChatMessage({
+    required super.from,
+    required super.to,
+    required super.content,
+    required super.timestamp,
+    required super.isIncoming,
+  });
+}
+
+class _FakeLocalP2PService extends LocalP2PService {
+  final StreamController<LocalChatMessage> _controller;
+
+  _FakeLocalP2PService(this._controller)
+      : super(
+          discovery: _FakeLocalDiscoveryService(),
+          wsServer: _FakeLocalWsServer(),
+        );
+
+  @override
+  Stream<LocalChatMessage> get localMessageStream => _controller.stream;
+
+  @override
+  Future<void> start(String peerId) async {}
+
+  @override
+  Future<void> stop() async {}
+
+  @override
+  Future<void> restartAdvertising() async {}
+
+  @override
+  bool isLocalPeer(String peerId) => false;
+
+  @override
+  Future<bool> sendMessage(String peerId, String content, String fromPeerId) async => false;
+
+  @override
+  void dispose() {}
+}
+
+class _FakeLocalDiscoveryService implements LocalDiscoveryService {
+  @override
+  Future<void> startAdvertising(String peerId, int port) async {}
+  @override
+  Future<void> stopAdvertising() async {}
+  @override
+  Stream<Map<String, LocalPeer>> get discoveredPeersStream =>
+      const Stream.empty();
+  @override
+  Map<String, LocalPeer> get discoveredPeers => {};
+  @override
+  bool isLocalPeer(String peerId) => false;
+  @override
+  LocalPeer? getLocalPeer(String peerId) => null;
+  @override
+  void dispose() {}
+}
+
+class _FakeLocalWsServer extends LocalWsServer {
+  _FakeLocalWsServer() : super(idleTimeout: Duration.zero);
+}
 
 // ---------------------------------------------------------------------------
 // Test constants
@@ -790,6 +858,82 @@ void main() {
       // No additional bridge calls should have been made — empty circuit
       // means no re-registration.
       expect(bridge.sendCallCount, callCountBefore);
+    });
+  });
+
+  // =========================================================================
+  // incoming transport tagging
+  // =========================================================================
+
+  group('incoming transport tagging', () {
+    test('bridge relay messages tagged transport=relay', () async {
+      final message = ChatMessage(
+        from: 'sender',
+        to: 'receiver',
+        content: 'hello relay',
+        timestamp: '2024-01-01T00:00:00Z',
+        isIncoming: true,
+      );
+
+      final messageFuture = service.messageStream.first;
+      bridge.onMessageReceived!(message);
+
+      final received =
+          await messageFuture.timeout(const Duration(seconds: 1));
+      expect(received.transport, 'relay');
+    });
+
+    test('local WiFi messages tagged transport=wifi', () async {
+      final localMessageController =
+          StreamController<_LocalChatMessage>.broadcast();
+      final fakeLocalP2P = _FakeLocalP2PService(localMessageController);
+      final localService = P2PServiceImpl(
+        bridge: bridge,
+        localP2PService: fakeLocalP2P,
+      );
+      addTearDown(() {
+        localService.dispose();
+        localMessageController.close();
+      });
+
+      final messageFuture = localService.messageStream.first;
+      localMessageController.add(_LocalChatMessage(
+        from: 'local-sender',
+        to: 'local-receiver',
+        content: 'hello wifi',
+        timestamp: DateTime.now(),
+        isIncoming: true,
+      ));
+
+      final received =
+          await messageFuture.timeout(const Duration(seconds: 1));
+      expect(received.transport, 'wifi');
+      expect(received.from, 'local-sender');
+    });
+
+    test('inbox drain messages tagged transport=inbox', () async {
+      bridge.responses['node:start'] = _nodeStartOk();
+      bridge.responses['inbox:retrieve'] = {
+        'ok': true,
+        'messages': [
+          {
+            'from': 'inbox-sender',
+            'message': '{"type":"chat_message","version":"1","payload":{"id":"inbox-001","text":"hello"}}',
+            'timestamp': 1700000000000,
+          },
+        ],
+      };
+      bridge.responses['node:status'] = _nodeStatusOk();
+
+      await service.startNodeCore(_testBase64Key, _testPeerId);
+
+      final messageFuture = service.messageStream.first;
+      await service.drainOfflineInbox();
+
+      final received =
+          await messageFuture.timeout(const Duration(seconds: 1));
+      expect(received.transport, 'inbox');
+      expect(received.from, 'inbox-sender');
     });
   });
 

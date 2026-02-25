@@ -676,11 +676,11 @@ void main() {
       expect(result, SendChatMessageResult.success);
       expect(message, isNotNull);
       expect(message!.status, 'delivered');
+      expect(message.transport, 'wifi');
       expect(p2pService.localSendCallCount, 1);
-      // Should NOT have attempted relay path
-      expect(p2pService.discoverCallCount, 0);
-      expect(p2pService.dialCallCount, 0);
-      expect(p2pService.sendCallCount, 0);
+      // Dual-path: relay also attempted for confirmation
+      expect(p2pService.discoverCallCount, 1);
+      expect(p2pService.sendCallCount, 1);
     });
 
     test('falls through to relay when local send fails', () async {
@@ -984,6 +984,93 @@ void main() {
       });
     });
 
+    group('transport tagging', () {
+      test('local WiFi success sets transport to wifi', () async {
+        p2pService.localPeers.add('target-peer');
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'WiFi transport',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message!.transport, 'wifi');
+        expect(messageRepo.saved.last.transport, 'wifi');
+      });
+
+      test('fast path success sets transport to relay', () async {
+        p2pService.isConnectedToPeerFn = (id) => id == 'target-peer';
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Relay fast path',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message!.transport, 'relay');
+        expect(messageRepo.saved.first.transport, 'relay');
+      });
+
+      test('discover-dial-send success sets transport to relay', () async {
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Relay discover',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message!.transport, 'relay');
+        expect(messageRepo.saved.first.transport, 'relay');
+      });
+
+      test('inbox fallback success sets transport to inbox', () async {
+        p2pService.sendMessageResult = false;
+        p2pService.storeInInboxResult = true;
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Inbox transport',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message!.transport, 'inbox');
+        expect(messageRepo.saved.first.transport, 'inbox');
+      });
+
+      test('failed message has null transport', () async {
+        p2pService.sendMessageResult = false;
+        p2pService.storeInInboxResult = false;
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Failed transport',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+
+        expect(result, SendChatMessageResult.sendFailed);
+        expect(message!.transport, isNull);
+        expect(messageRepo.saved.first.transport, isNull);
+      });
+    });
+
     group('fast path (connected peer)', () {
       test('connected peer with ACK → delivered, 0 discover, 0 dial, 1 send',
           () async {
@@ -1106,7 +1193,8 @@ void main() {
         expect(p2pService.sendCallCount, 1);
       });
 
-      test('local WiFi succeeds → no fast path, no discover/dial', () async {
+      test('local WiFi succeeds → falls through to fast path for confirmation',
+          () async {
         p2pService.localPeers.add('target-peer');
         p2pService.isConnectedToPeerFn = (id) => id == 'target-peer';
 
@@ -1121,9 +1209,10 @@ void main() {
 
         expect(result, SendChatMessageResult.success);
         expect(message!.status, 'delivered');
+        expect(message.transport, 'wifi');
         expect(p2pService.localSendCallCount, 1);
-        // Fast path not reached since local succeeded
-        expect(p2pService.sendCallCount, 0);
+        // Dual-path: fast path used for confirmation
+        expect(p2pService.sendCallCount, 1);
         expect(p2pService.discoverCallCount, 0);
         expect(p2pService.dialCallCount, 0);
       });
@@ -1241,7 +1330,240 @@ void main() {
         expect(mediaRepo.saved[0].messageId, fixedId);
       });
     });
+
+    group('dual-path WiFi + relay', () {
+      test('WiFi success + relay ACK → delivered via wifi', () async {
+        p2pService.localPeers.add('target-peer');
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Dual path test',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message!.status, 'delivered');
+        expect(message.transport, 'wifi');
+        expect(p2pService.localSendCallCount, 1);
+        // Relay also attempted for confirmation
+        expect(p2pService.sendCallCount, greaterThan(0));
+      });
+
+      test('WiFi success + relay no-ACK → sent via wifi', () async {
+        p2pService = FakeP2PService(sendMessageReply: null);
+        p2pService.localPeers.add('target-peer');
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'No ACK test',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message!.status, 'sent');
+        expect(message.transport, 'wifi');
+      });
+
+      test('WiFi success + relay fail 3x + inbox → delivered via wifi',
+          () async {
+        p2pService = FakeP2PService(
+          sendMessageResult: false,
+          storeInInboxResult: true,
+        );
+        p2pService.localPeers.add('target-peer');
+        p2pService.localSendResult = true;
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Inbox fallback test',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message!.status, 'delivered');
+        expect(message.transport, 'wifi');
+      });
+
+      test('WiFi success + all fallbacks fail → sent via wifi', () async {
+        p2pService = FakeP2PService(
+          sendMessageResult: false,
+          storeInInboxResult: false,
+        );
+        p2pService.localPeers.add('target-peer');
+        p2pService.localSendResult = true;
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'All fail test',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message!.status, 'sent');
+        expect(message.transport, 'wifi');
+      });
+
+      test('WiFi throws exception → falls through to relay cleanly',
+          () async {
+        final customP2P = _ThrowOnLocalSendP2PService();
+
+        final (result, message) = await sendChatMessage(
+          p2pService: customP2P,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'WiFi error test',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message!.status, 'delivered');
+        expect(message.transport, 'relay');
+        expect(customP2P.localSendCallCount, 1);
+        expect(customP2P.discoverCallCount, 1);
+      });
+
+      test('WiFi success + fast path ACK → delivered via wifi', () async {
+        p2pService.localPeers.add('target-peer');
+        p2pService.isConnectedToPeerFn = (id) => id == 'target-peer';
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Fast path after WiFi',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message!.status, 'delivered');
+        expect(message.transport, 'wifi');
+        expect(p2pService.localSendCallCount, 1);
+        expect(p2pService.sendCallCount, 1); // fast path
+        expect(p2pService.discoverCallCount, 0);
+      });
+
+      test('WiFi success + fast fail + discover ACK → delivered via wifi',
+          () async {
+        final customP2P = _WiFiThenFastFailThenRelayP2PService();
+
+        final (result, message) = await sendChatMessage(
+          p2pService: customP2P,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'WiFi then relay',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message!.status, 'delivered');
+        expect(message.transport, 'wifi');
+        expect(customP2P.localSendCallCount, 1);
+        expect(customP2P.sendCallCount, 2); // fast + discover-dial
+        expect(customP2P.discoverCallCount, 1);
+      });
+    });
   });
+}
+
+/// P2P service where local WiFi send throws, used for dual-path exception test.
+class _ThrowOnLocalSendP2PService extends FakeP2PService {
+  _ThrowOnLocalSendP2PService() : super() {
+    localPeers.add('target-peer');
+  }
+
+  @override
+  Future<bool> sendLocalMessage(
+      String peerId, String message, String fromPeerId) async {
+    localSendCallCount++;
+    throw Exception('WiFi socket error');
+  }
+}
+
+/// P2P service: WiFi succeeds, fast path fails, discover-dial succeeds.
+class _WiFiThenFastFailThenRelayP2PService implements P2PService {
+  int sendCallCount = 0;
+  int discoverCallCount = 0;
+  int dialCallCount = 0;
+  int localSendCallCount = 0;
+
+  @override
+  NodeState get currentState => const NodeState(isStarted: true);
+  @override
+  Stream<NodeState> get stateStream => const Stream.empty();
+  @override
+  Stream<ChatMessage> get messageStream => const Stream.empty();
+  @override
+  Future<bool> startNode(String pk, String id) async => true;
+  @override
+  Future<bool> startNodeCore(String pk, String id) async => false;
+  @override
+  Future<void> warmBackground() async {}
+  @override
+  Future<bool> stopNode() async => true;
+
+  @override
+  bool isConnectedToPeer(String peerId) => true;
+
+  @override
+  bool isLocalPeer(String peerId) => peerId == 'target-peer';
+
+  @override
+  Future<bool> sendLocalMessage(
+      String peerId, String message, String fromPeerId) async {
+    localSendCallCount++;
+    return true;
+  }
+
+  @override
+  Future<SendMessageResult> sendMessageWithReply(
+      String peerId, String message) async {
+    sendCallCount++;
+    if (sendCallCount == 1) return const SendMessageResult(sent: false);
+    return const SendMessageResult(sent: true, reply: 'ack');
+  }
+
+  @override
+  Future<bool> sendMessage(String peerId, String message) async => true;
+  @override
+  Future<DiscoveredPeer?> discoverPeer(String peerId) async {
+    discoverCallCount++;
+    return const DiscoveredPeer(
+        id: 'target-peer', addresses: ['/ip4/127.0.0.1/tcp/4001']);
+  }
+
+  @override
+  Future<bool> dialPeer(String peerId, {List<String>? addresses}) async {
+    dialCallCount++;
+    return true;
+  }
+
+  @override
+  Future<bool> storeInInbox(String toPeerId, String message) async => false;
+  @override
+  Future<List<Map<String, dynamic>>> retrieveInbox() async => [];
+  @override
+  Future<bool> registerPushToken(String token, String platform) async => true;
+  @override
+  Future<void> performImmediateHealthCheck() async {}
+  @override
+  Future<void> drainOfflineInbox() async {}
+  @override
+  void dispose() {}
 }
 
 /// P2P service where fast path send fails (sent=false) then retry succeeds.
