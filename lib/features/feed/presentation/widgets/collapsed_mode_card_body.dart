@@ -4,6 +4,7 @@ import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
 import 'package:flutter_app/features/feed/domain/models/session_reply.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/inline_reply_input.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/replied_indicator.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/scrollable_message_preview.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/shared/widgets/media/media_preview_text.dart';
 
@@ -14,7 +15,11 @@ import 'package:flutter_app/shared/widgets/media/media_preview_text.dart';
 class CollapsedModeCardBody extends StatelessWidget {
   final ThreadFeedItem thread;
   final SessionReply? sessionReply;
+  final bool isExpanded;
   final VoidCallback? onTapExpand;
+  final VoidCallback? onCollapse;
+  final VoidCallback? onViewFullConversation;
+  final ValueChanged<String>? onQuoteReply;
   final ValueChanged<String>? onSend;
   final bool sendEnabled;
   final String initialText;
@@ -27,7 +32,11 @@ class CollapsedModeCardBody extends StatelessWidget {
     super.key,
     required this.thread,
     this.sessionReply,
+    this.isExpanded = false,
     this.onTapExpand,
+    this.onCollapse,
+    this.onViewFullConversation,
+    this.onQuoteReply,
     this.onSend,
     this.sendEnabled = true,
     this.initialText = '',
@@ -41,22 +50,34 @@ class CollapsedModeCardBody extends StatelessWidget {
       sessionReply != null ||
       thread.conversationState == ConversationState.replied;
 
+  /// True when expanded state should show ScrollableMessagePreview
+  /// (not during session reply collapse).
+  bool get _showExpandedMessages =>
+      isExpanded && sessionReply == null;
+
   @override
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Header + preview are tappable to expand/navigate
+        // Header is always tappable to toggle expand/collapse
         GestureDetector(
           onTap: onTapExpand,
           behavior: HitTestBehavior.opaque,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _buildHeader(),
-              _buildPreviewContent(),
-            ],
-          ),
+          child: _buildHeader(),
+        ),
+        // Content area: single-line preview or expanded messages
+        AnimatedSize(
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeInOut,
+          alignment: Alignment.topCenter,
+          child: _showExpandedMessages
+              ? _buildExpandedContent()
+              : GestureDetector(
+                  onTap: onTapExpand,
+                  behavior: HitTestBehavior.opaque,
+                  child: _buildPreviewContent(),
+                ),
         ),
         // Footer with input — not wrapped in the tap target
         _buildFooter(),
@@ -189,6 +210,18 @@ class CollapsedModeCardBody extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildExpandedContent() {
+    return ScrollableMessagePreview(
+      messages: thread.recentInteractionMessages,
+      contactPeerId: thread.contactPeerId,
+      contactUsername: thread.contactUsername,
+      hasEarlierHistory: thread.hasEarlierInteractionHistory,
+      onViewEarlier: onViewFullConversation,
+      onCollapse: onCollapse,
+      onQuoteReply: onQuoteReply,
     );
   }
 

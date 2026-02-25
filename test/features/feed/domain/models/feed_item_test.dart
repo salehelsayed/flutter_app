@@ -358,6 +358,217 @@ void main() {
     });
   });
 
+  group('recentInteractionMessages', () {
+    ThreadMessage _msg({
+      required String id,
+      bool isUnread = false,
+      bool isIncoming = true,
+    }) {
+      return ThreadMessage(
+        id: id,
+        text: 'msg $id',
+        time: '3:00 PM',
+        timestamp: DateTime(2026, 2, 9, 15, 0),
+        isUnread: isUnread,
+        isIncoming: isIncoming,
+      );
+    }
+
+    ThreadFeedItem _thread(List<ThreadMessage> messages) {
+      return ThreadFeedItem(
+        id: 'thread_1',
+        timestamp: DateTime(2026, 2, 9),
+        contactPeerId: 'peer1',
+        contactUsername: 'Alice',
+        messages: messages,
+        conversationState: ConversationState.read,
+      );
+    }
+
+    test('empty thread returns empty list', () {
+      final item = _thread([]);
+      expect(item.recentInteractionMessages, isEmpty);
+    });
+
+    test('1 unread incoming returns it', () {
+      final item = _thread([_msg(id: 'm1', isUnread: true)]);
+      expect(item.recentInteractionMessages.length, 1);
+      expect(item.recentInteractionMessages[0].id, 'm1');
+    });
+
+    test('3 read + 2 unread returns from first unread onward', () {
+      final item = _thread([
+        _msg(id: 'm1'),
+        _msg(id: 'm2'),
+        _msg(id: 'm3'),
+        _msg(id: 'm4', isUnread: true),
+        _msg(id: 'm5', isUnread: true),
+      ]);
+      final result = item.recentInteractionMessages;
+      expect(result.length, 2);
+      expect(result[0].id, 'm4');
+      expect(result[1].id, 'm5');
+    });
+
+    test('1 unread + 2 sent after returns all 3', () {
+      final item = _thread([
+        _msg(id: 'm1'),
+        _msg(id: 'm2', isUnread: true),
+        _msg(id: 'm3', isIncoming: false),
+        _msg(id: 'm4', isIncoming: false),
+      ]);
+      final result = item.recentInteractionMessages;
+      expect(result.length, 3);
+      expect(result[0].id, 'm2');
+      expect(result[1].id, 'm3');
+      expect(result[2].id, 'm4');
+    });
+
+    test('5 unread returns all 5', () {
+      final item = _thread([
+        _msg(id: 'm1', isUnread: true),
+        _msg(id: 'm2', isUnread: true),
+        _msg(id: 'm3', isUnread: true),
+        _msg(id: 'm4', isUnread: true),
+        _msg(id: 'm5', isUnread: true),
+      ]);
+      expect(item.recentInteractionMessages.length, 5);
+    });
+
+    test('0 unread, 7 total returns last 3 (maxPreview)', () {
+      final item = _thread([
+        _msg(id: 'm1'),
+        _msg(id: 'm2'),
+        _msg(id: 'm3'),
+        _msg(id: 'm4'),
+        _msg(id: 'm5'),
+        _msg(id: 'm6'),
+        _msg(id: 'm7'),
+      ]);
+      final result = item.recentInteractionMessages;
+      expect(result.length, 3);
+      expect(result[0].id, 'm5');
+      expect(result[1].id, 'm6');
+      expect(result[2].id, 'm7');
+    });
+
+    test('0 unread, 2 total returns both', () {
+      final item = _thread([
+        _msg(id: 'm1'),
+        _msg(id: 'm2'),
+      ]);
+      expect(item.recentInteractionMessages.length, 2);
+    });
+
+    test('interleaved: read, sent, unread, sent, unread → from first unread', () {
+      final item = _thread([
+        _msg(id: 'm1'),               // read incoming
+        _msg(id: 'm2', isIncoming: false),  // sent
+        _msg(id: 'm3', isUnread: true),     // unread incoming
+        _msg(id: 'm4', isIncoming: false),  // sent
+        _msg(id: 'm5', isUnread: true),     // unread incoming
+      ]);
+      final result = item.recentInteractionMessages;
+      expect(result.length, 3);
+      expect(result[0].id, 'm3');
+    });
+
+    test('only sent, 5 total returns last 3', () {
+      final item = _thread([
+        _msg(id: 'm1', isIncoming: false),
+        _msg(id: 'm2', isIncoming: false),
+        _msg(id: 'm3', isIncoming: false),
+        _msg(id: 'm4', isIncoming: false),
+        _msg(id: 'm5', isIncoming: false),
+      ]);
+      final result = item.recentInteractionMessages;
+      expect(result.length, 3);
+      expect(result[0].id, 'm3');
+    });
+
+    test('only 1 message returns that message', () {
+      final item = _thread([_msg(id: 'm1')]);
+      expect(item.recentInteractionMessages.length, 1);
+      expect(item.recentInteractionMessages[0].id, 'm1');
+    });
+  });
+
+  group('hasEarlierInteractionHistory', () {
+    ThreadMessage _msg({
+      required String id,
+      bool isUnread = false,
+      bool isIncoming = true,
+    }) {
+      return ThreadMessage(
+        id: id,
+        text: 'msg $id',
+        time: '3:00 PM',
+        timestamp: DateTime(2026, 2, 9, 15, 0),
+        isUnread: isUnread,
+        isIncoming: isIncoming,
+      );
+    }
+
+    ThreadFeedItem _thread(List<ThreadMessage> messages) {
+      return ThreadFeedItem(
+        id: 'thread_1',
+        timestamp: DateTime(2026, 2, 9),
+        contactPeerId: 'peer1',
+        contactUsername: 'Alice',
+        messages: messages,
+        conversationState: ConversationState.read,
+      );
+    }
+
+    test('empty thread returns false', () {
+      expect(_thread([]).hasEarlierInteractionHistory, isFalse);
+    });
+
+    test('all unread from start returns false', () {
+      final item = _thread([
+        _msg(id: 'm1', isUnread: true),
+        _msg(id: 'm2', isUnread: true),
+      ]);
+      expect(item.hasEarlierInteractionHistory, isFalse);
+    });
+
+    test('read messages before first unread returns true', () {
+      final item = _thread([
+        _msg(id: 'm1'),
+        _msg(id: 'm2'),
+        _msg(id: 'm3', isUnread: true),
+      ]);
+      expect(item.hasEarlierInteractionHistory, isTrue);
+    });
+
+    test('0 unread, more than maxPreview returns true', () {
+      final item = _thread([
+        _msg(id: 'm1'),
+        _msg(id: 'm2'),
+        _msg(id: 'm3'),
+        _msg(id: 'm4'),
+      ]);
+      expect(item.hasEarlierInteractionHistory, isTrue);
+    });
+
+    test('0 unread, exactly maxPreview returns false', () {
+      final item = _thread([
+        _msg(id: 'm1'),
+        _msg(id: 'm2'),
+        _msg(id: 'm3'),
+      ]);
+      expect(item.hasEarlierInteractionHistory, isFalse);
+    });
+
+    test('0 unread, less than maxPreview returns false', () {
+      final item = _thread([
+        _msg(id: 'm1'),
+        _msg(id: 'm2'),
+      ]);
+      expect(item.hasEarlierInteractionHistory, isFalse);
+    });
+  });
+
   group('ThreadMessage', () {
     test('stores all fields', () {
       final ts = DateTime(2026, 2, 9, 15, 30);

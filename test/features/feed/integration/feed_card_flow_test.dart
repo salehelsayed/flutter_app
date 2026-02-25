@@ -102,8 +102,9 @@ void main() {
     );
 
     testWidgets(
-      'tapping collapsed card fires onViewFullConversation',
+      'tapping collapsed card fires onToggleExpand (not onViewFullConversation)',
       (tester) async {
+        var toggled = false;
         var navigated = false;
         final thread = ThreadFeedItem(
           id: 'thread_1',
@@ -116,12 +117,14 @@ void main() {
 
         await tester.pumpWidget(wrap(FeedCard(
           thread: thread,
+          onToggleExpand: () => toggled = true,
           onViewFullConversation: () => navigated = true,
         )));
 
         // Tap on the name area of the collapsed card
         await tester.tap(find.text('Alice'));
-        expect(navigated, isTrue);
+        expect(toggled, isTrue);
+        expect(navigated, isFalse);
       },
     );
 

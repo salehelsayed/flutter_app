@@ -166,6 +166,29 @@ class ThreadFeedItem extends FeedItem {
       conversationState == ConversationState.unread ||
       conversationState == ConversationState.active;
 
+  /// Messages to show in expanded collapsed card: from first unread onward,
+  /// or tail context (last [maxPreview]) when all are read.
+  List<ThreadMessage> get recentInteractionMessages {
+    if (messages.isEmpty) return const [];
+    final firstUnreadIndex =
+        messages.indexWhere((m) => m.isUnread && m.isIncoming);
+    if (firstUnreadIndex >= 0) return messages.sublist(firstUnreadIndex);
+    // No unread — show tail context
+    if (messages.length <= maxPreview) return messages;
+    return messages.sublist(messages.length - maxPreview);
+  }
+
+  /// Whether messages exist before the interaction window shown in expanded
+  /// collapsed card (used to decide "View earlier messages" link).
+  bool get hasEarlierInteractionHistory {
+    if (messages.isEmpty) return false;
+    final firstUnreadIndex =
+        messages.indexWhere((m) => m.isUnread && m.isIncoming);
+    if (firstUnreadIndex > 0) return true;
+    if (firstUnreadIndex == 0) return false;
+    return messages.length > maxPreview;
+  }
+
   /// Single message to show in collapsed card: always the latest message.
   ThreadMessage get collapsedPreviewMessage => latestMessage;
 }

@@ -5,6 +5,7 @@ import 'package:flutter_app/features/feed/domain/models/session_reply.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/collapsed_mode_card_body.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/feed_card.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/open_mode_card_body.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/scrollable_message_preview.dart';
 
 void main() {
   Widget wrap(Widget child) => MaterialApp(
@@ -166,6 +167,107 @@ void main() {
       await tester.pump(const Duration(milliseconds: 600));
       // Card should be fully visible after animation
       expect(find.byType(FeedCard), findsOneWidget);
+    });
+  });
+
+  group('FeedCard expanded collapsed card', () {
+    testWidgets('isExpanded false + read state → no ScrollableMessagePreview',
+        (tester) async {
+      final thread = ThreadFeedItem(
+        id: 'thread_1',
+        timestamp: DateTime(2026, 2, 9),
+        contactPeerId: 'peer1',
+        contactUsername: 'Alice',
+        messages: [_msg('m1'), _msg('m2'), _msg('m3')],
+        conversationState: ConversationState.read,
+      );
+
+      await tester.pumpWidget(wrap(FeedCard(
+        thread: thread,
+        isExpanded: false,
+      )));
+      expect(find.byType(ScrollableMessagePreview), findsNothing);
+    });
+
+    testWidgets('isExpanded true + read state → ScrollableMessagePreview present',
+        (tester) async {
+      final thread = ThreadFeedItem(
+        id: 'thread_1',
+        timestamp: DateTime(2026, 2, 9),
+        contactPeerId: 'peer1',
+        contactUsername: 'Alice',
+        messages: [_msg('m1'), _msg('m2'), _msg('m3')],
+        conversationState: ConversationState.read,
+      );
+
+      await tester.pumpWidget(wrap(FeedCard(
+        thread: thread,
+        isExpanded: true,
+      )));
+      expect(find.byType(ScrollableMessagePreview), findsOneWidget);
+    });
+
+    testWidgets('unread state ignores isExpanded (always OpenModeCardBody)',
+        (tester) async {
+      final thread = ThreadFeedItem(
+        id: 'thread_1',
+        timestamp: DateTime(2026, 2, 9),
+        contactPeerId: 'peer1',
+        contactUsername: 'Alice',
+        messages: [_msg('m1', isUnread: true)],
+        conversationState: ConversationState.unread,
+      );
+
+      await tester.pumpWidget(wrap(FeedCard(
+        thread: thread,
+        isExpanded: true,
+      )));
+      expect(find.byType(OpenModeCardBody), findsOneWidget);
+      expect(find.byType(CollapsedModeCardBody), findsNothing);
+    });
+
+    testWidgets('tap fires onToggleExpand, not onViewFullConversation',
+        (tester) async {
+      var toggleFired = false;
+      var viewFired = false;
+      final thread = ThreadFeedItem(
+        id: 'thread_1',
+        timestamp: DateTime(2026, 2, 9),
+        contactPeerId: 'peer1',
+        contactUsername: 'Alice',
+        messages: [_msg('m1')],
+        conversationState: ConversationState.read,
+      );
+
+      await tester.pumpWidget(wrap(FeedCard(
+        thread: thread,
+        onToggleExpand: () => toggleFired = true,
+        onViewFullConversation: () => viewFired = true,
+      )));
+
+      await tester.tap(find.text('Alice'));
+      expect(toggleFired, isTrue);
+      expect(viewFired, isFalse);
+    });
+
+    testWidgets('blocked overlay still renders when expanded',
+        (tester) async {
+      final thread = ThreadFeedItem(
+        id: 'thread_1',
+        timestamp: DateTime(2026, 2, 9),
+        contactPeerId: 'peer1',
+        contactUsername: 'Alice',
+        messages: [_msg('m1')],
+        conversationState: ConversationState.read,
+        isBlocked: true,
+      );
+
+      await tester.pumpWidget(wrap(FeedCard(
+        thread: thread,
+        isExpanded: true,
+      )));
+      expect(find.text('Blocked'), findsOneWidget);
+      expect(find.byIcon(Icons.block), findsOneWidget);
     });
   });
 }

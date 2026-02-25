@@ -241,6 +241,7 @@ class FeedScreen extends StatelessWidget {
         FeedCard(
           thread: item,
           sessionReply: sessionReplies?.get(item.contactPeerId),
+          isExpanded: expandedCardId == item.id,
           onToggleExpand: onToggleExpand != null
               ? () => onToggleExpand!(item.id)
               : null,
