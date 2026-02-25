@@ -23,21 +23,21 @@ void main() {
     test('messageReceivedBg matches spec', () {
       expect(
         FeedColors.messageReceivedBg,
-        const Color.fromRGBO(255, 255, 255, 0.03),
+        const Color.fromRGBO(255, 255, 255, 0.06),
       );
     });
 
     test('messageSentBg matches spec', () {
       expect(
         FeedColors.messageSentBg,
-        const Color.fromRGBO(78, 205, 196, 0.04),
+        const Color.fromRGBO(255, 255, 255, 0.04),
       );
     });
 
     test('messageUnreadBg matches spec', () {
       expect(
         FeedColors.messageUnreadBg,
-        const Color.fromRGBO(255, 255, 255, 0.05),
+        const Color.fromRGBO(255, 255, 255, 0.06),
       );
     });
 

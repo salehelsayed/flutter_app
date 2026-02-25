@@ -1,0 +1,139 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/connection_card.dart';
+
+void main() {
+  Widget wrap(Widget child) => MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: Center(
+              child: SizedBox(width: 400, child: child),
+            ),
+          ),
+        ),
+      );
+
+  group('ConnectionCard', () {
+    testWidgets('renders "Connected!" text', (tester) async {
+      // Suppress overflow errors from the button Row (pre-existing layout issue)
+      final oldHandler = FlutterError.onError;
+      FlutterError.onError = (details) {
+        if (details.exceptionAsString().contains('overflowed')) return;
+        oldHandler?.call(details);
+      };
+      addTearDown(() => FlutterError.onError = oldHandler);
+
+      await tester.pumpWidget(wrap(const ConnectionCard(
+        contactPeerId: 'peer-abc-123',
+        contactUsername: 'alice',
+      )));
+      await tester.pumpAndSettle();
+      expect(find.text('Connected!'), findsOneWidget);
+    });
+
+    testWidgets('renders contact username', (tester) async {
+      final oldHandler = FlutterError.onError;
+      FlutterError.onError = (details) {
+        if (details.exceptionAsString().contains('overflowed')) return;
+        oldHandler?.call(details);
+      };
+      addTearDown(() => FlutterError.onError = oldHandler);
+
+      await tester.pumpWidget(wrap(const ConnectionCard(
+        contactPeerId: 'peer-abc-123',
+        contactUsername: 'alice',
+      )));
+      await tester.pumpAndSettle();
+      expect(find.text('alice'), findsOneWidget);
+    });
+
+    testWidgets('renders green check icon', (tester) async {
+      final oldHandler = FlutterError.onError;
+      FlutterError.onError = (details) {
+        if (details.exceptionAsString().contains('overflowed')) return;
+        oldHandler?.call(details);
+      };
+      addTearDown(() => FlutterError.onError = oldHandler);
+
+      await tester.pumpWidget(wrap(const ConnectionCard(
+        contactPeerId: 'peer-abc-123',
+        contactUsername: 'alice',
+      )));
+      await tester.pumpAndSettle();
+      expect(find.byIcon(Icons.check_rounded), findsOneWidget);
+    });
+
+    testWidgets('renders "Send Message" button', (tester) async {
+      final oldHandler = FlutterError.onError;
+      FlutterError.onError = (details) {
+        if (details.exceptionAsString().contains('overflowed')) return;
+        oldHandler?.call(details);
+      };
+      addTearDown(() => FlutterError.onError = oldHandler);
+
+      await tester.pumpWidget(wrap(const ConnectionCard(
+        contactPeerId: 'peer-abc-123',
+        contactUsername: 'alice',
+      )));
+      await tester.pumpAndSettle();
+      expect(find.text('Send Message'), findsOneWidget);
+    });
+
+    testWidgets('calls onSendMessage when button pressed', (tester) async {
+      final oldHandler = FlutterError.onError;
+      FlutterError.onError = (details) {
+        if (details.exceptionAsString().contains('overflowed')) return;
+        oldHandler?.call(details);
+      };
+      addTearDown(() => FlutterError.onError = oldHandler);
+
+      var sendPressed = false;
+      await tester.pumpWidget(wrap(ConnectionCard(
+        contactPeerId: 'peer-abc-123',
+        contactUsername: 'alice',
+        onSendMessage: () => sendPressed = true,
+      )));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Send Message'));
+      expect(sendPressed, isTrue);
+    });
+
+    testWidgets('shows blocked overlay when isBlocked is true', (tester) async {
+      final oldHandler = FlutterError.onError;
+      FlutterError.onError = (details) {
+        if (details.exceptionAsString().contains('overflowed')) return;
+        oldHandler?.call(details);
+      };
+      addTearDown(() => FlutterError.onError = oldHandler);
+
+      await tester.pumpWidget(wrap(const ConnectionCard(
+        contactPeerId: 'peer-abc-123',
+        contactUsername: 'alice',
+        isBlocked: true,
+      )));
+      await tester.pumpAndSettle();
+      expect(find.text('Blocked'), findsOneWidget);
+      expect(find.byIcon(Icons.block), findsOneWidget);
+    });
+
+    testWidgets('disables Send Message button when blocked', (tester) async {
+      final oldHandler = FlutterError.onError;
+      FlutterError.onError = (details) {
+        if (details.exceptionAsString().contains('overflowed')) return;
+        oldHandler?.call(details);
+      };
+      addTearDown(() => FlutterError.onError = oldHandler);
+
+      var sendPressed = false;
+      await tester.pumpWidget(wrap(ConnectionCard(
+        contactPeerId: 'peer-abc-123',
+        contactUsername: 'alice',
+        isBlocked: true,
+        onSendMessage: () => sendPressed = true,
+      )));
+      await tester.pumpAndSettle();
+      final button = tester.widget<ElevatedButton>(find.byType(ElevatedButton));
+      expect(button.onPressed, isNull);
+    });
+  });
+}

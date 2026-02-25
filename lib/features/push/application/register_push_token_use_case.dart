@@ -7,6 +7,8 @@ enum RegisterPushTokenResult { success, noToken, failed }
 
 Future<RegisterPushTokenResult> registerPushToken({
   required P2PService p2pService,
+  Future<String?> Function()? getTokenFn,
+  String Function()? getPlatformFn,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -14,7 +16,10 @@ Future<RegisterPushTokenResult> registerPushToken({
     details: {},
   );
 
-  final token = await FirebaseMessaging.instance.getToken();
+  final effectiveGetToken = getTokenFn ?? () => FirebaseMessaging.instance.getToken();
+  final effectiveGetPlatform = getPlatformFn ?? () => Platform.isIOS ? 'ios' : 'android';
+
+  final token = await effectiveGetToken();
   if (token == null) {
     emitFlowEvent(
       layer: 'FL',
@@ -24,7 +29,7 @@ Future<RegisterPushTokenResult> registerPushToken({
     return RegisterPushTokenResult.noToken;
   }
 
-  final platform = Platform.isIOS ? 'ios' : 'android';
+  final platform = effectiveGetPlatform();
 
   emitFlowEvent(
     layer: 'FL',
