@@ -76,7 +76,12 @@ class CollapsedModeCardBody extends StatelessWidget {
               : GestureDetector(
                   onTap: onTapExpand,
                   behavior: HitTestBehavior.opaque,
-                  child: _buildPreviewContent(),
+                  child: Column(
+                    children: [
+                      _buildPreviewContent(),
+                      _buildExpandHint(),
+                    ],
+                  ),
                 ),
         ),
         // Footer with input — not wrapped in the tap target
@@ -222,6 +227,22 @@ class CollapsedModeCardBody extends StatelessWidget {
       onViewEarlier: onViewFullConversation,
       onCollapse: onCollapse,
       onQuoteReply: onQuoteReply,
+    );
+  }
+
+  Widget _buildExpandHint() {
+    return const Center(
+      child: Padding(
+        padding: EdgeInsets.only(bottom: 8),
+        child: Text(
+          'Tap to expand',
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w500,
+            color: FeedColors.viewEarlierText,
+          ),
+        ),
+      ),
     );
   }
 

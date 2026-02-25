@@ -148,6 +148,83 @@ void main() {
       await tester.tap(find.text('Alice'));
       expect(tapped, isTrue);
     });
+    testWidgets('collapsed card shows "Tap to expand" hint', (tester) async {
+      final thread = ThreadFeedItem(
+        id: 'thread_1',
+        timestamp: DateTime(2026, 2, 9),
+        contactPeerId: 'peer1',
+        contactUsername: 'Alice',
+        messages: [
+          ThreadMessage(
+            id: 'm1',
+            text: 'Hi',
+            time: '2:00 PM',
+            timestamp: DateTime(2026, 2, 9, 14, 0),
+            isIncoming: true,
+          ),
+        ],
+        conversationState: ConversationState.read,
+      );
+
+      await tester.pumpWidget(wrap(CollapsedModeCardBody(
+        thread: thread,
+        isExpanded: false,
+      )));
+      expect(find.text('Tap to expand'), findsOneWidget);
+    });
+
+    testWidgets('expanded card hides "Tap to expand" hint', (tester) async {
+      final thread = ThreadFeedItem(
+        id: 'thread_1',
+        timestamp: DateTime(2026, 2, 9),
+        contactPeerId: 'peer1',
+        contactUsername: 'Alice',
+        messages: [
+          ThreadMessage(
+            id: 'm1',
+            text: 'Hi',
+            time: '2:00 PM',
+            timestamp: DateTime(2026, 2, 9, 14, 0),
+            isIncoming: true,
+          ),
+        ],
+        conversationState: ConversationState.read,
+      );
+
+      await tester.pumpWidget(wrap(CollapsedModeCardBody(
+        thread: thread,
+        isExpanded: true,
+      )));
+      expect(find.text('Tap to expand'), findsNothing);
+    });
+
+    testWidgets('session reply still shows "Tap to expand" hint', (tester) async {
+      final thread = ThreadFeedItem(
+        id: 'thread_1',
+        timestamp: DateTime(2026, 2, 9),
+        contactPeerId: 'peer1',
+        contactUsername: 'Alice',
+        messages: [
+          ThreadMessage(
+            id: 'm1',
+            text: 'Hello',
+            time: '2:00 PM',
+            timestamp: DateTime(2026, 2, 9, 14, 0),
+            isIncoming: true,
+          ),
+        ],
+        conversationState: ConversationState.unread,
+      );
+
+      final reply = SessionReply(text: 'Quick reply', time: DateTime.now());
+
+      await tester.pumpWidget(wrap(CollapsedModeCardBody(
+        thread: thread,
+        sessionReply: reply,
+        isExpanded: false,
+      )));
+      expect(find.text('Tap to expand'), findsOneWidget);
+    });
   });
 
   group('CollapsedModeCardBody expanded state', () {
