@@ -105,11 +105,11 @@
 │     │  • ML-KEM-768 keygen   │ │  • contacts table    │ │  storage]  │  │
 │  │  │  • libp2p peer ID       │ │  • contact_requests  │ │            ││  │
 │     │  • Payload sign/verify  │ │  • messages table    │ │ • private  │  │
-│  │  │  • Message encrypt/     │ │  • avatar BLOB store │ │   _key     ││  │
-│     │    decrypt              │ │  • 256-bit AES       │ │ • mnemonic │  │
-│  │  │  • P2P node management  │ │    encrypted         │ │   12       ││  │
-│     │  • Peer discovery &     │ │                      │ │ • ml_kem_  │  │
-│  │  │    relay                │ │                      │ │   secret   ││  │
+│  │  │  • Message encrypt/     │ │  • media_attachments │ │   _key     ││  │
+│     │    decrypt              │ │    table             │ │ • mnemonic │  │
+│  │  │  • P2P node management  │ │  • avatar BLOB store │ │   12       ││  │
+│     │  • Peer discovery &     │ │  • 256-bit AES       │ │ • ml_kem_  │  │
+│  │  │    relay                │ │    encrypted         │ │   secret   ││  │
 │     │  • Message send/receive │ │                      │ │ • db_enc   │  │
 │  │  │  • Offline inbox store/ │ │                      │ │   _key     ││  │
 │     │    retrieve             │ │                      │ │            │  │
@@ -135,7 +135,7 @@
 |-----------|------------|-------------|
 | Flutter Application | Dart/Flutter | Main application with UI, business logic, P2P service, local WiFi discovery (mDNS), and data access |
 | Go Native Library | gomobile bind → .xcframework (iOS) + .aar (Android) | Executes crypto operations (BIP39, Ed25519, ML-KEM-768) and P2P networking (libp2p node, rendezvous, relay, inbox); communicates with Flutter via MethodChannel/EventChannel through platform wrappers (GoBridge.swift / GoBridge.kt) |
-| SQLCipher Database | sqflite_sqlcipher | 256-bit AES encrypted SQLite database; persists identity, contacts, contact requests, messages, and avatar BLOBs locally |
+| SQLCipher Database | sqflite_sqlcipher | 256-bit AES encrypted SQLite database (v11); persists identity, contacts, contact requests, messages, media attachments, and avatar BLOBs locally |
 | Secure Storage | flutter_secure_storage | OS-backed secret storage: iOS Keychain (device-bound, kSecAttrAccessibleWhenUnlockedThisDeviceOnly), Android EncryptedSharedPreferences; holds identity secrets and DB encryption key |
 | Rendezvous / Relay Server | libp2p | External server for peer discovery, NAT traversal relay, and offline message inbox |
 | Firebase Cloud Messaging | Firebase SDK | External push notification service; relay server sends FCM push when storing offline inbox messages |
@@ -145,7 +145,7 @@
 | From | To | Protocol | Description |
 |------|-----|----------|-------------|
 | Flutter App | Go Native Library | MethodChannel / EventChannel via platform wrappers | Request/response for identity, signing, crypto, and P2P operations; push events (message:received, peer:connected, peer:disconnected) delivered via EventChannel |
-| Flutter App | SQLCipher DB | SQL via sqflite_sqlcipher | CRUD operations for identity, contacts, contact requests, messages, and avatar BLOBs (256-bit AES encrypted at rest) |
+| Flutter App | SQLCipher DB | SQL via sqflite_sqlcipher | CRUD operations for identity, contacts, contact requests, messages, media attachments, and avatar BLOBs (256-bit AES encrypted at rest) |
 | Flutter App | Secure Storage | flutter_secure_storage API | Read/write identity secrets (private_key, mnemonic12, ml_kem_secret_key) and DB encryption key |
 | Go Native Library | Rendezvous Server | libp2p (QUIC / WebSocket) | Peer discovery, relay circuits, messaging, and offline inbox protocol (`/mknoon/inbox/1.0.0`) |
 | Flutter App | Firebase Cloud Messaging | HTTPS (FCM SDK) | Registers device token, receives push notifications for offline inbox messages |
@@ -225,8 +225,20 @@
 │  │  │  │              FeedScreen [Widget]                          │   │  │ │
 │  │  │  │                                                           │   │  │ │
 │  │  │  │  ┌────────────────┐  ┌────────────────┐  ┌────────────┐  │   │  │ │
-│  │  │  │  │FeedHeader      │  │ConnectionCard  │  │MessageFeed │  │   │  │ │
-│  │  │  │  │(username+avatar)│  │(inline badge)  │  │Card (reply)│  │   │  │ │
+│  │  │  │  │FeedHeader      │  │ConnectionCard  │  │FeedCard    │  │   │  │ │
+│  │  │  │  │(username+avatar)│  │(inline badge)  │  │(open/coll.)│  │   │  │ │
+│  │  │  │  └────────────────┘  └────────────────┘  └────────────┘  │   │  │ │
+│  │  │  │  ┌────────────────┐  ┌────────────────┐  ┌────────────┐  │   │  │ │
+│  │  │  │  │CollapsedMode   │  │OpenModeCard    │  │InlineReply │  │   │  │ │
+│  │  │  │  │CardBody        │  │Body            │  │Input       │  │   │  │ │
+│  │  │  │  └────────────────┘  └────────────────┘  └────────────┘  │   │  │ │
+│  │  │  │  ┌────────────────┐  ┌────────────────┐  ┌────────────┐  │   │  │ │
+│  │  │  │  │ScrollableMsg   │  │SwipeToQuote    │  │QuotePreview│  │   │  │ │
+│  │  │  │  │Preview         │  │Bubble          │  │Bar         │  │   │  │ │
+│  │  │  │  └────────────────┘  └────────────────┘  └────────────┘  │   │  │ │
+│  │  │  │  ┌────────────────┐  ┌────────────────┐  ┌────────────┐  │   │  │ │
+│  │  │  │  │ViewEarlierLink │  │MoreMessages    │  │RepliedIndic│  │   │  │ │
+│  │  │  │  │                │  │Hint            │  │ator        │  │   │  │ │
 │  │  │  │  └────────────────┘  └────────────────┘  └────────────┘  │   │  │ │
 │  │  │  │  ┌────────────────┐  ┌────────────────┐  ┌────────────┐  │   │  │ │
 │  │  │  │  │FeedNavBar      │  │NavBarButton    │  │UnreadCount │  │   │  │ │
@@ -248,6 +260,10 @@
 │  │  │  │  │EmptyConversatio│  │CompactOrigin   │  │DateSeparat.│  │   │  │ │
 │  │  │  │  │nState (glow)   │  │Marker          │  │(day divide)│  │   │  │ │
 │  │  │  │  └────────────────┘  └────────────────┘  └────────────┘  │   │  │ │
+│  │  │  │  ┌────────────────┐                                      │   │  │ │
+│  │  │  │  │AttachmentPrevie│                                      │   │  │ │
+│  │  │  │  │wStrip          │                                      │   │  │ │
+│  │  │  │  └────────────────┘                                      │   │  │ │
 │  │  │  └──────────────────────────────────────────────────────────┘   │  │ │
 │  │  └─────────────────────────────────────────────────────────────────┘  │ │
 │  │                                                                        │ │
@@ -276,11 +292,37 @@
 │  │  └─────────────────────────────────────────────────────────────────┘  │ │
 │  │                                                                        │ │
 │  │  ┌─────────────────────────────────────────────────────────────────┐  │ │
+│  │  │                    SETTINGS FEATURE                              │  │ │
+│  │  │  ┌──────────────────────────────────────────────────────────┐   │  │ │
+│  │  │  │         SettingsScreen [Widget]                          │   │  │ │
+│  │  │  │  ┌────────────────┐  ┌────────────────┐  ┌────────────┐ │   │  │ │
+│  │  │  │  │SettingsProfile │  │SettingsPeerId  │  │SettingsReco│ │   │  │ │
+│  │  │  │  │Section         │  │Card            │  │vPhraseCard │ │   │  │ │
+│  │  │  │  └────────────────┘  └────────────────┘  └────────────┘ │   │  │ │
+│  │  │  │  ┌────────────────┐                                     │   │  │ │
+│  │  │  │  │ImageQuality    │                                     │   │  │ │
+│  │  │  │  │Toggle          │                                     │   │  │ │
+│  │  │  │  └────────────────┘                                     │   │  │ │
+│  │  │  └──────────────────────────────────────────────────────────┘   │  │ │
+│  │  └─────────────────────────────────────────────────────────────────┘  │ │
+│  │                                                                        │ │
+│  │  ┌─────────────────────────────────────────────────────────────────┐  │ │
 │  │  │                    SHARED WIDGETS                                │  │ │
 │  │  │  ┌──────────────────┐  ┌──────────────────┐  ┌────────────────┐ │  │ │
 │  │  │  │AmbientBackground │  │GlassmorphicCont. │  │ChoiceCard      │ │  │ │
 │  │  │  │(animated glows)  │  │(frosted glass)   │  │(tap animation) │ │  │ │
 │  │  │  └──────────────────┘  └──────────────────┘  └────────────────┘ │  │ │
+│  │  │  ┌──────────────────┐  ┌──────────────────┐  ┌────────────────┐ │  │ │
+│  │  │  │MediaGrid         │  │MediaGridCell     │  │MediaDisplay    │ │  │ │
+│  │  │  │                  │  │                  │  │Helpers         │ │  │ │
+│  │  │  └──────────────────┘  └──────────────────┘  └────────────────┘ │  │ │
+│  │  │  ┌──────────────────┐  ┌──────────────────┐  ┌────────────────┐ │  │ │
+│  │  │  │MediaPreviewText  │  │FullScreenImage   │  │VideoThumbnail │ │  │ │
+│  │  │  │                  │  │Viewer            │  │Overlay         │ │  │ │
+│  │  │  └──────────────────┘  └──────────────────┘  └────────────────┘ │  │ │
+│  │  │  ┌──────────────────┐                                           │  │ │
+│  │  │  │AudioPlayerWidget │                                           │  │ │
+│  │  │  └──────────────────┘                                           │  │ │
 │  │  └─────────────────────────────────────────────────────────────────┘  │ │
 │  └────────────────────────────────────────────────────────────────────────┘ │
 │                                                                              │
@@ -342,6 +384,10 @@
 │  │  │ ChatMessageListener                      │                         │ │
 │  │  │ [Service: monitors chatMessageStream]    │                         │ │
 │  │  └──────────────────────────────────────────┘                         │ │
+│  │  ┌──────────────────┐  ┌──────────────────┐                          │ │
+│  │  │ uploadMedia()    │  │ downloadMedia()  │                          │ │
+│  │  │ [Use Case]       │  │ [Use Case]       │                          │ │
+│  │  └──────────────────┘  └──────────────────┘                          │ │
 │  │  ┌──────────────────────────────────────────┐                         │ │
 │  │  │ markConversationRead()                   │                         │ │
 │  │  │ [Use Case]                               │                         │ │
@@ -372,6 +418,18 @@
 │  │  │ registerPushToken()                      │                         │ │
 │  │  │ [Use Case]                               │                         │ │
 │  │  └──────────────────────────────────────────┘                         │ │
+│  │                                                                        │ │
+│  │  ── Settings ────────────────────────────────────────────────────── │ │
+│  │  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────────┐ │ │
+│  │  │ getImageQuality  │  │ setImageQuality  │  │ uploadProfile        │ │ │
+│  │  │ Preference()     │  │ Preference()     │  │ Picture()            │ │ │
+│  │  │ [Use Case]       │  │ [Use Case]       │  │ [Use Case]           │ │ │
+│  │  └──────────────────┘  └──────────────────┘  └──────────────────────┘ │ │
+│  │  ┌──────────────────┐  ┌──────────────────────────────────────────┐   │ │
+│  │  │ downloadProfile  │  │ ProfileUpdateListener                    │   │ │
+│  │  │ Picture()        │  │ [Service: monitors profile updates]      │   │ │
+│  │  │ [Use Case]       │  │                                          │   │ │
+│  │  └──────────────────┘  └──────────────────────────────────────────┘   │ │
 │  └────────────────────────────────────────────────────────────────────────┘ │
 │                                                                              │
 │  ┌────────────────────────────────────────────────────────────────────────┐ │
@@ -397,7 +455,14 @@
 │  │  ┌──────────────────┐  ┌──────────────────┐                           │ │
 │  │  │ Conversation     │  │ MessagePayload   │                           │ │
 │  │  │ Message [Model]  │  │ [Wire Model]     │                           │ │
+│  │  │ (+quotedMessageId│  │ (+quoted msg &   │                           │ │
+│  │  │  +media list)    │  │  media support)  │                           │ │
 │  │  └──────────────────┘  └──────────────────┘                           │ │
+│  │  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────────┐ │ │
+│  │  │ MediaAttachment  │  │ SessionReply +   │  │ ImageQuality         │ │ │
+│  │  │ [Model]          │  │ SessionReply     │  │ Preference [Enum]    │ │ │
+│  │  │                  │  │ Tracker [Model]  │  │                      │ │ │
+│  │  └──────────────────┘  └──────────────────┘  └──────────────────────┘ │ │
 │  │  ┌──────────────────┐                                                 │ │
 │  │  │ OrbitFriend       │  Composite: ContactModel + messageCount        │ │
 │  │  │ [Orbit Model]    │  + lastActivity + lastMessageTimestamp          │ │
@@ -415,6 +480,10 @@
 │  │  └──────────────────────────────────────────┘                         │ │
 │  │  ┌──────────────────────────────────────────┐                         │ │
 │  │  │  MessageRepository                       │                         │ │
+│  │  │  [Interface + Impl]                      │                         │ │
+│  │  └──────────────────────────────────────────┘                         │ │
+│  │  ┌──────────────────────────────────────────┐                         │ │
+│  │  │  MediaAttachmentRepository               │                         │ │
 │  │  │  [Interface + Impl]                      │                         │ │
 │  │  └──────────────────────────────────────────┘                         │ │
 │  └────────────────────────────────────────────────────────────────────────┘ │
@@ -492,8 +561,22 @@
 │  │  │  archived_at to contacts │  │  blocked_at to contacts         │   │ │
 │  │  └──────────────────────────┘  └──────────────────────────────────┘   │ │
 │  │  ┌──────────────────────────┐                                         │ │
-│  │  │  encrypted_db_opener     │  Opens SQLCipher DB with key from      │ │
-│  │  │                          │  secure storage; handles plaintext→    │ │
+│  │  │  009_quoted_message_id   │  Adds quoted_message_id TEXT column    │ │
+│  │  │  migration (v9)          │  to messages table                    │ │
+│  │  └──────────────────────────┘                                         │ │
+│  │  ┌──────────────────────────┐  ┌──────────────────────────────────┐   │ │
+│  │  │  010_media_attachments   │  │  011_avatar_version              │   │ │
+│  │  │  migration (v10)         │  │  migration (v11)                 │   │ │
+│  │  │  Creates media_attach-   │  │  Adds avatar_version INTEGER    │   │ │
+│  │  │  ments table + indexes   │  │  to identity and contacts       │   │ │
+│  │  └──────────────────────────┘  └──────────────────────────────────┘   │ │
+│  │  ┌──────────────────────────┐                                         │ │
+│  │  │  media_attachments_db_   │  Media attachments CRUD helpers        │ │
+│  │  │  helpers                 │  (save, load, update, delete)          │ │
+│  │  └──────────────────────────┘                                         │ │
+│  │  ┌──────────────────────────┐                                         │ │
+│  │  │  encrypted_db_opener     │  Opens SQLCipher DB (v11) with key    │ │
+│  │  │                          │  from secure storage; handles plain→  │ │
 │  │  │                          │  encrypted migration                   │ │
 │  │  └──────────────────────────┘                                         │ │
 │  │                                                                        │ │
@@ -519,10 +602,19 @@
 │  │  │  (logging utility)       │  │  (rendezvous address)            │   │ │
 │  │  └──────────────────────────┘  └──────────────────────────────────┘   │ │
 │  │                                                                        │ │
+│  │  ── Media ────────────────────────────────────────────────────────── │ │
+│  │  ┌──────────────────────────┐  ┌──────────────────────────────────┐   │ │
+│  │  │  ImageProcessor           │  │  MediaFileManager               │   │ │
+│  │  │  (EXIF strip, quality)    │  │  (local file paths)             │   │ │
+│  │  └──────────────────────────┘  └──────────────────────────────────┘   │ │
+│  │                                                                        │ │
 │  │  ── Theme ─────────────────────────────────────────────────────────── │ │
 │  │  ┌──────────────────────────┐  ┌──────────────────────────────────┐   │ │
 │  │  │  AppColors / AppTheme    │  │  GlassmorphicContainer           │   │ │
 │  │  └──────────────────────────┘  └──────────────────────────────────┘   │ │
+│  │  ┌──────────────────────────┐                                         │ │
+│  │  │  FeedColors              │  Purple/teal palette for feed cards    │ │
+│  │  └──────────────────────────┘                                         │ │
 │  └────────────────────────────────────────────────────────────────────────┘ │
 └──────────────────┬─────────────────────────────────┬───────────────────────┘
                    │                                 │
@@ -549,9 +641,16 @@
 │  │  mlkem.keygen              │  │  │  │  ml_kem_public_key TEXT (v3)  │  │
 │  │  message.encrypt           │  │  │  │  ml_kem_secret_key TEXT       │  │
 │  │  message.decrypt           │  │  │  │   CHECK(..IS NULL) (v5)      │  │
-│                                  │  │  │  Constraint: id = 1 always     │  │
-│  ┌────────────────────────────┐  │  │  │  Secrets → Secure Storage      │  │
-│  │    Identity Module         │  │  │  └────────────────────────────────┘  │
+│  │  media.upload              │  │  │  │  avatar_version INT (v11)    │  │
+│  │  media.download            │  │  │  │  Constraint: id = 1 always     │  │
+│  │  media.delete              │  │  │  │  Secrets → Secure Storage      │  │
+│  │  media.list                │  │  │  └────────────────────────────────┘  │
+│  │  profile.upload            │  │  │                                      │
+│  │  profile.download          │  │  │                                      │
+│  └──────────┴─────────────────┘  │  │                                      │
+│                                  │  │                                      │
+│  ┌────────────────────────────┐  │  │                                      │
+│  │    Identity Module         │  │  │                                      │
 │  │    (identity/)             │  │  │                                      │
 │  │                            │  │  │                                      │
 │  │  GenerateIdentity()        │  │  │  ┌────────────────────────────────┐  │
@@ -569,6 +668,7 @@
 │                                  │  │  │  archived_at TEXT (v7)         │  │
 │                                  │  │  │  is_blocked INT NOT NULL (v8)  │  │
 │                                  │  │  │  blocked_at TEXT (v8)          │  │
+│                                  │  │  │  avatar_version INT (v11)     │  │
 │                                  │  │  └────────────────────────────────┘  │
 │                                  │  │                                      │
 │  ┌────────────────────────────┐  │  │  ┌────────────────────────────────┐  │
@@ -599,16 +699,30 @@
 │  │  • libp2p (Go)             │  │  │  │  is_incoming INTEGER NOT NULL  │  │
 │  │  • Circuit relay v2        │  │  │  │  created_at TEXT NOT NULL      │  │
 │  │  • Hole punching           │  │  │  │  read_at TEXT (v6)            │  │
-│  │  • NAT port mapping        │  │  │  │  INDEX idx_messages_contact    │  │
+│  │  • NAT port mapping        │  │  │  │  quoted_message_id TEXT (v9)  │  │
+│  │  • Media upload/download   │  │  │  │  INDEX idx_messages_contact    │  │
 │  └────────────────────────────┘  │  │  │  INDEX idx_messages_ts         │  │
 │                                  │  │  └────────────────────────────────┘  │
 │  ┌────────────────────────────┐  │  │                                      │
-│  │    Platform Wrappers       │  │  └──────────────────────────────────────┘
-│  │                            │  │
-│  │  GoBridge.swift (iOS)      │  │
-│  │  GoBridge.kt   (Android)  │  │
-│  │  MethodChannel + EventChan │  │
-│  └────────────────────────────┘  │
+│  │    Media Module            │  │  │  ┌────────────────────────────────┐  │
+│  │    (node/media.go)         │  │  │  │    media_attachments table     │  │
+│  │                            │  │  │  │    (v10 migration)             │  │
+│  │  Media upload/download     │  │  │  │                                │  │
+│  │  Media delete/list         │  │  │  │  id TEXT PRIMARY KEY           │  │
+│  │  Profile upload/download   │  │  │  │  message_id TEXT NOT NULL      │  │
+│  │                            │  │  │  │  mime TEXT                     │  │
+│  │  Protocol:                 │  │  │  │  size INTEGER                  │  │
+│  │  /mknoon/media/1.0.0      │  │  │  │  media_type TEXT               │  │
+│  └────────────────────────────┘  │  │  │  width INTEGER                 │  │
+│                                  │  │  │  height INTEGER                │  │
+│  ┌────────────────────────────┐  │  │  │  duration_ms INTEGER           │  │
+│  │    Platform Wrappers       │  │  │  │  local_path TEXT               │  │
+│  │                            │  │  │  │  download_status TEXT          │  │
+│  │  GoBridge.swift (iOS)      │  │  │  │  DEFAULT 'pending'            │  │
+│  │  GoBridge.kt   (Android)  │  │  │  │  created_at TEXT NOT NULL      │  │
+│  │  MethodChannel + EventChan │  │  │  └────────────────────────────────┘  │
+│  └────────────────────────────┘  │  │                                      │
+│                                  │  └──────────────────────────────────────┘
 └──────────────────────────────────┘
 ```
 
@@ -647,9 +761,18 @@
 | NavBarButton | Widget | Individual nav bar tab button (active/inactive states) with optional badge overlay |
 | UnreadCountBadge | Widget | Circular count badge for unread messages (shows 99+ max) |
 | ConnectionCard | Widget | Card displaying a contact connection with ring avatar and inline green checkmark badge |
-| MessageFeedCard | Widget | Incoming message card with contact avatar, message preview, and reply button |
-| ThreadCard | Widget | Thread card displaying grouped messages from a contact |
-| MessageBubble | Widget | Single message bubble within a thread card |
+| FeedCard | Widget | Feed card with open/collapsed modes, supports inline reply and swipe-to-quote |
+| CollapsedModeCardBody | Widget | Collapsed mode card body showing latest message preview |
+| OpenModeCardBody | Widget | Open mode card body showing scrollable message list |
+| ExpandedComposeInput | Widget | Multi-line auto-growing compose input for expanded thread cards |
+| InlineReplyInput | Widget | Inline reply input field within feed cards |
+| ScrollableMessagePreview | Widget | Scrollable message preview within feed cards |
+| SwipeToQuoteBubble | Widget | Swipe-to-quote bubble for quoting messages in feed |
+| QuotePreviewBar | Widget | Quote preview bar showing quoted message context |
+| ViewEarlierLink | Widget | Link to view earlier messages in a feed card |
+| MoreMessagesHint | Widget | Hint indicating more messages available |
+| RepliedIndicator | Widget | Indicator showing a message has been replied to |
+| MessageBubble | Widget | Single message bubble within a feed card |
 | SessionDivider | Widget | Session divider between message groups in feed |
 | TimeGapDivider | Widget | Time gap divider for significant time pauses between messages |
 | CheckmarkBurstAnimation | Widget | Animated checkmark with expanding ring burst effect (unused/orphaned) |
@@ -664,6 +787,7 @@
 | CompactOriginMarker | Widget | Compact connection origin marker at top of conversation (48px avatar) |
 | DateSeparator | Widget | Date divider between letter cards spanning different days with gradient lines |
 | BlockedBanner | Widget | Banner displayed when conversation contact is blocked, with "Unblock" button |
+| AttachmentPreviewStrip | Widget | Horizontal strip showing attachment previews before sending |
 | ConversationRouteTransition | Route | Slide-up page transition (420ms easeOutCubic) |
 | **Orbit Feature** | | |
 | OrbitScreen | Widget | Pure UI: AmbientBackground, Scaffold, 4-layer Stack (scrollable content, close button, floating search trigger, search dock) |
@@ -688,11 +812,34 @@
 | requestPushPermission() | Use Case | Requests notification permission from user |
 | registerPushToken() | Use Case | Registers FCM token with relay server via P2P inbox protocol |
 | firebaseMessagingBackgroundHandler | Service | Firebase background message handler (@pragma entry-point) |
+| **Settings Feature** | | |
+| SettingsScreen | Widget | Pure UI for settings display |
+| SettingsWired | Widget | Settings business logic: profile editing, image quality, peer ID, recovery phrase |
+| SettingsProfileSection | Widget | Profile section with avatar, username editing, and profile picture upload |
+| SettingsPeerIdCard | Widget | Card displaying the user's peer ID with copy functionality |
+| SettingsRecoveryPhraseCard | Widget | Card displaying the recovery phrase with reveal/hide toggle |
+| ImageQualityToggle | Widget | Toggle for image quality preference (compressed/original) |
+| **Settings Use Cases** | | |
+| getImageQualityPreference() | Use Case | Reads image quality preference from SecureKeyStore |
+| setImageQualityPreference() | Use Case | Writes image quality preference to SecureKeyStore |
+| uploadProfilePicture() | Use Case | Uploads profile picture to relay via media protocol |
+| downloadProfilePicture() | Use Case | Downloads profile picture from relay via media protocol |
+| ProfileUpdateListener | Service | Monitors profile update events from P2P stream |
+| **Conversation Use Cases (Media)** | | |
+| uploadMedia() | Use Case | Uploads media attachment to relay, updates local attachment record |
+| downloadMedia() | Use Case | Downloads media attachment from relay, saves locally, updates record |
 | **Shared Widgets** | | |
 | AmbientBackground | Widget | Animated green/red glow background |
 | GlassmorphicContainer | Widget | Frosted glass effect container |
 | ChoiceCard | Widget | Tappable card with scale animation |
 | IdentityLoadingCard | Widget | Loading card displayed during identity generation/restore |
+| MediaGrid | Widget | Grid layout for displaying media attachments |
+| MediaGridCell | Widget | Individual cell in the media grid |
+| MediaDisplayHelpers | Utility | Helper functions for media display (mime type checks, formatting) |
+| MediaPreviewText | Widget | Text preview for media attachments (caption display) |
+| FullScreenImageViewer | Widget | Full-screen image viewer with zoom and pan |
+| VideoThumbnailOverlay | Widget | Video thumbnail with play button overlay |
+| AudioPlayerWidget | Widget | Audio player with playback controls and progress bar |
 | **Identity Use Cases** | | |
 | decideStartupRoute() | Use Case | Checks identity + contact count → 3-way routing decision |
 | generateNewIdentity() | Use Case | Orchestrates identity generation via Go bridge |
@@ -732,11 +879,11 @@
 | **Orbit Use Cases** | | |
 | loadOrbitData() | Use Case | Loads all contacts with message counts + unread counts from MessageRepository, sorted by messageCount descending; returns List<OrbitFriend> |
 | **Core Services** | | |
-| IncomingMessageRouter | Service | Routes P2P messages by envelope type to contactRequestStream, chatMessageStream, unknownStream; stream subscription has onError/onDone handlers |
+| IncomingMessageRouter | Service | Routes P2P messages by envelope type to contactRequestStream, chatMessageStream, profileUpdateStream, unknownStream; stream subscription has onError/onDone handlers |
 | **Stream Error Handling** | Convention | All `.listen()` calls across IncomingMessageRouter (1), ContactRequestListener (1), ChatMessageListener (1), FeedWired (3), ConversationWired (2), FirstTimeExperienceWired (1), OrbitWired (3) include `onError` and `onDone` callbacks for resilience |
 | **Domain** | | |
-| IdentityModel | Entity | Immutable data class for identity (peerId, keys, mnemonic, username, avatarBlob, mlKemPublicKey?, mlKemSecretKey?); secrets (privateKey, mnemonic12, mlKemSecretKey) stored in SecureKeyStore, DB columns always NULL |
-| ContactModel | Entity | Contact from QR scan (peerId, publicKey, rendezvous, username, signature, scannedAt, mlKemPublicKey?, isArchived, archivedAt?, isBlocked, blockedAt?) |
+| IdentityModel | Entity | Immutable data class for identity (peerId, keys, mnemonic, username, avatarBlob, mlKemPublicKey?, mlKemSecretKey?, avatarVersion?); secrets (privateKey, mnemonic12, mlKemSecretKey) stored in SecureKeyStore, DB columns always NULL |
+| ContactModel | Entity | Contact from QR scan (peerId, publicKey, rendezvous, username, signature, scannedAt, mlKemPublicKey?, isArchived, archivedAt?, isBlocked, blockedAt?, avatarVersion?) |
 | ContactRequestModel | Entity | Incoming request (peerId, publicKey, rendezvous, username, signature, status, mlKemPublicKey?) |
 | NodeState | P2P Model | P2P node state (peerId, isStarted, listenAddresses, connections) |
 | DiscoveredPeer | P2P Model | Discovered peer (id, addresses) |
@@ -749,13 +896,17 @@
 | ThreadMessage | Data Class | Single message within a thread group (id, text, time, timestamp, isUnread) |
 | MessageFeedItem | Entity | Feed item for incoming messages (extends FeedItem, contactPeerId, messageText, messageTime, unreadCount) |
 | FeedItemType | Enum | Feed item types: connection, message, thread |
-| ConversationMessage | Entity | Message in a conversation (id, contactPeerId, senderPeerId, text, status, isIncoming, readAt?) |
-| MessagePayload | Wire Model | Chat message envelope: v1 plaintext `{ "type": "chat_message", "version": "1", "payload": {...} }` or v2 encrypted `{ "type": "chat_message", "version": "2", "senderPeerId": "...", "encrypted": { "kem", "ciphertext", "nonce" } }` |
+| ConversationMessage | Entity | Message in a conversation (id, contactPeerId, senderPeerId, text, status, isIncoming, readAt?, quotedMessageId?, media: List\<MediaAttachment\>) |
+| MessagePayload | Wire Model | Chat message envelope: v1 plaintext `{ "type": "chat_message", "version": "1", "payload": {...} }` or v2 encrypted `{ "type": "chat_message", "version": "2", "senderPeerId": "...", "encrypted": { "kem", "ciphertext", "nonce" } }`; supports quoted message and media attachment references |
+| MediaAttachment | Entity | Media attachment (id, messageId, mime, size, mediaType, width?, height?, durationMs?, localPath?, downloadStatus, createdAt) |
+| SessionReply + SessionReplyTracker | Data Class + Tracker | Session reply model for inline feed replies + tracker for managing reply state across feed cards |
+| ImageQualityPreference | Enum | Image quality preference: compressed (85%), original (100%) |
 | OrbitFriend | Composite Model | ContactModel + messageCount (int) + lastActivity (String) + lastMessageTimestamp (DateTime?) + unreadCount (int, default 0); used by Orbit feature for ranking friends by conversation activity |
 | IdentityRepository | Interface + Impl | Abstracts identity persistence; IdentityRepositoryImpl takes SecureKeyStore, reads secrets from secure storage (falls back to DB for pre-migration), writes secrets only to secure storage |
 | ContactRepository | Interface + Impl | Abstracts contact persistence (add, get, getAll, delete, exists, count, archiveContact, unarchiveContact, getActiveContacts, getArchivedContacts, blockContact, unblockContact) |
 | ContactRequestRepository | Interface + Impl | Abstracts request persistence (add, get, getPending, updateStatus, delete, exists) |
 | MessageRepository | Interface + Impl | Abstracts message persistence (save, getForContact, getLatest, updateStatus, exists, getMessageCountForContact, markConversationAsRead, getUnreadCountForContact, getTotalUnreadCount, getTotalUnreadCountExcludingArchived, deleteMessagesForContact, getFailedOutgoingMessages, getMessagesPage) |
+| MediaAttachmentRepository | Interface + Impl | Abstracts media attachment persistence (saveAttachment, getAttachmentsForMessage, getAttachmentsForMessages, updateLocalPath, updateDownloadStatus, deleteForMessage, deleteForContact, getPendingDownloads) |
 | **Core** | | |
 | GoBridgeClient | Bridge Client | Sends requests to Go native library via MethodChannel, receives push events via EventChannel; checkHealth() probes bridge liveness (node:status, 5s timeout); reinitialize() re-initializes Go bridge preserving callbacks; send() catches PlatformException and returns `{errorCode: 'PLATFORM_ERROR'}`; platform wrappers: GoBridge.swift (iOS) + GoBridge.kt (Android) |
 | P2PBridgeClient | Bridge Client | P2P-specific bridge calls (start, stop, status, register, discover, dial, disconnect, send, inbox store/retrieve, inbox register token) |
@@ -779,15 +930,18 @@
 | FlutterSecureKeyStore | Impl | iOS Keychain (kSecAttrAccessibleWhenUnlockedThisDeviceOnly, device-bound) / Android EncryptedSharedPreferences; stores identity_private_key, identity_mnemonic12, identity_ml_kem_secret_key, db_encryption_key |
 | encrypted_db_opener | DB Setup | Opens SQLCipher-encrypted database with key from SecureKeyStore; handles plaintext-to-encrypted migration |
 | migrate_secrets_to_secure_storage | Migration | One-time migration of secrets from DB columns to SecureKeyStore with secrets_migrated sentinel |
-| Database Helpers | DB Access | Low-level SQL operations for all 4 tables (via sqflite_sqlcipher) |
+| Database Helpers | DB Access | Low-level SQL operations for all 5 tables (identity, contacts, contact_requests, messages, media_attachments via sqflite_sqlcipher) |
+| ImageProcessor | Media | EXIF stripping, image quality compression (85% compressed / 100% original), avatar processing (512x512, quality 80) |
+| MediaFileManager | Media | Local file path management for media attachments |
 | AppColors / AppTheme | Theme | Color constants and ThemeData for dark theme |
+| FeedColors | Theme | Purple/teal palette for feed card styling |
 | GlassmorphicContainer | Theme | Frosted glass effect widget |
 
 ### Go Native Library Components
 
 | Component | Responsibility |
 |-----------|----------------|
-| Bridge Entry (bridge/bridge.go) | Routes incoming requests to handlers via command dispatch; JSON request/response encoding |
+| Bridge Entry (bridge/bridge.go) | Routes incoming requests to handlers via command dispatch; JSON request/response encoding; supports identity, crypto, P2P, inbox, media, and profile commands |
 | Identity Module (identity/) | `identity.generate` → BIP39 mnemonic + Ed25519 keypair + ML-KEM-768 keypair; `identity.restore` → derive from mnemonic + fresh ML-KEM-768 |
 | Signing Module (bridge/bridge.go) | `payload.sign` → Ed25519 signing; `payload.verify` → Ed25519 signature verification |
 | Crypto Module (crypto/) | `mlkem.keygen` → ML-KEM-768 keypair; `message.encrypt` → KEM encapsulate + AES-256-GCM; `message.decrypt` → KEM decapsulate + AES-256-GCM |
@@ -795,7 +949,8 @@
 | Rendezvous Module (node/rendezvous.go) | Peer registration and discovery with signed peer records via protobuf protocol |
 | Chat Protocol (node/node.go) | `/mknoon/chat/1.0.0` — bidirectional message exchange with ACK replies, 4-byte big-endian length-prefixed frames |
 | Inbox Module (node/inbox.go) | `/mknoon/inbox/1.0.0` — offline message store/retrieve/register FCM token via relay server |
-| Event System (node/node.go) | Push events to Flutter: `message:received`, `peer:connected`, `peer:disconnected` via callback interface |
+| Media Module (node/media.go) | Media upload/download/delete/list and profile upload/download via relay `/mknoon/media/1.0.0` protocol |
+| Event System (node/node.go) | Push events to Flutter: `message:received`, `peer:connected`, `peer:disconnected`, `addresses:updated` via callback interface |
 | Platform Wrappers | GoBridge.swift (iOS) + GoBridge.kt (Android) — bridge MethodChannel/EventChannel to Go library |
 
 ---
@@ -873,6 +1028,7 @@
   │ + updatedAt: String                 │
   │ + mlKemPublicKey: String?           │
   │ + mlKemSecretKey: String?           │
+  │ + avatarVersion: int?               │
   ├─────────────────────────────────────┤
   │ + fromJson(Map): IdentityModel      │
   │ + toJson(): Map                     │
@@ -920,6 +1076,7 @@
   │ + archivedAt: String?               │
   │ + isBlocked: bool (default false)   │
   │ + blockedAt: String?                │
+  │ + avatarVersion: int?               │
   ├─────────────────────────────────────┤
   │ + fromQRPayload(Map): ContactModel  │
   │ + fromMap(Map): ContactModel        │
@@ -1344,6 +1501,8 @@
   │ + isIncoming: bool                  │
   │ + createdAt: String                 │
   │ + readAt: String?                   │
+  │ + quotedMessageId: String?          │
+  │ + media: List<MediaAttachment>      │
   ├─────────────────────────────────────┤
   │ + fromMap(Map): ConversationMessage │
   │ + toMap(): Map                      │
@@ -1420,6 +1579,56 @@
   └─────────────────────────────────────┘
 
 
+  ── Media Attachment Domain ──────────────────────────────────────────────
+
+  ┌─────────────────────────────────────┐
+  │       MediaAttachment               │
+  ├─────────────────────────────────────┤
+  │ + id: String                        │
+  │ + messageId: String                 │
+  │ + mime: String                      │
+  │ + size: int                         │
+  │ + mediaType: MediaType              │
+  │ + width: int?                       │
+  │ + height: int?                      │
+  │ + durationMs: int?                  │
+  │ + localPath: String?                │
+  │ + downloadStatus: DownloadStatus    │
+  │ + createdAt: String                 │
+  ├─────────────────────────────────────┤
+  │ + fromMap(Map): MediaAttachment     │
+  │ + toMap(): Map                      │
+  └─────────────────────────────────────┘
+
+  ┌─────────────────────────────────────┐
+  │         <<abstract>>                │
+  │     MediaAttachmentRepository       │
+  ├─────────────────────────────────────┤
+  │ + saveAttachment(Model): void       │
+  │ + getAttachmentsForMessage(): List  │
+  │ + getAttachmentsForMessages(): Map  │
+  │ + updateLocalPath(id, path): void   │
+  │ + updateDownloadStatus(): void      │
+  │ + deleteForMessage(id): void        │
+  │ + deleteForContact(peerId): void    │
+  │ + getPendingDownloads(): List       │
+  └──────────────────┬──────────────────┘
+                     │ implements
+                     ▼
+  ┌─────────────────────────────────────┐
+  │   MediaAttachmentRepositoryImpl     │
+  ├─────────────────────────────────────┤
+  │ - dbSaveAttachment: Function        │
+  │ - dbLoadAttachments: Function       │
+  │ - dbLoadAttachmentsForMsgs: Fn      │
+  │ - dbUpdateLocalPath: Function       │
+  │ - dbUpdateDownloadStatus: Fn        │
+  │ - dbDeleteForMessage: Function      │
+  │ - dbDeleteForContact: Function      │
+  │ - dbLoadPendingDownloads: Function  │
+  └─────────────────────────────────────┘
+
+
   ── Conversation Services ──────────────────────────────────────────────
 
   ┌─────────────────────────────────────┐
@@ -1457,6 +1666,7 @@
   │ + contactRequestStream: Stream      │
   │ + chatMessageStream: Stream         │
   │ + unknownMessageStream: Stream      │
+  │ + profileUpdateStream: Stream<ChatMessage> │
   │ + start(): void                     │
   │ + stop(): void                      │
   │ + dispose(): void                   │
@@ -1616,6 +1826,9 @@
   │ + peerId?: string                   │
   │ + peers?: []                        │
   │ + messages?: []                     │
+  │ + id?: string (media ID)           │
+  │ + data?: string (base64 media)     │
+  │ + files?: [] (media list)          │
   │ + errorCode?: string                │
   │ + errorMessage?: string             │
   └─────────────────────────────────────┘
@@ -1627,7 +1840,8 @@
   │ + event: string                     │
   │   ("message:received" |            │
   │    "peer:connected" |              │
-  │    "peer:disconnected")            │
+  │    "peer:disconnected" |           │
+  │    "addresses:updated")            │
   │ + data: object                      │
   │   (message content or peer info)   │
   └─────────────────────────────────────┘
@@ -1655,6 +1869,12 @@
   │  inbox:store       → inboxStore     │
   │  inbox:retrieve    → inboxRetrieve  │
   │  inbox:register_token → inboxReg.T. │
+  │  media:upload      → mediaUpload    │
+  │  media:download    → mediaDownload  │
+  │  media:delete      → mediaDelete    │
+  │  media:list        → mediaList      │
+  │  profile:upload    → profileUpload  │
+  │  profile:download  → profileDownload│
   └─────────────────────────────────────┘
 
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -1801,6 +2021,46 @@
   ): Future<void>
 
 
+  FLUTTER USE CASES - SETTINGS:
+  ─────────────────────────────
+  getImageQualityPreference(
+    secureKeyStore: SecureKeyStore
+  ): Future<ImageQualityPreference>
+
+  setImageQualityPreference(
+    secureKeyStore: SecureKeyStore,
+    preference: ImageQualityPreference
+  ): Future<void>
+
+  uploadProfilePicture(
+    bridge: Bridge,
+    imageBytes: Uint8List,
+    imageProcessor: ImageProcessor
+  ): Future<bool>
+
+  downloadProfilePicture(
+    bridge: Bridge,
+    peerId: String
+  ): Future<Uint8List?>
+
+
+  FLUTTER USE CASES - MEDIA:
+  ──────────────────────────
+  uploadMedia(
+    bridge: Bridge,
+    filePath: String,
+    imageProcessor: ImageProcessor,
+    mediaAttachmentRepo: MediaAttachmentRepository
+  ): Future<String?>   // Returns media ID on success
+
+  downloadMedia(
+    bridge: Bridge,
+    mediaId: String,
+    mediaAttachmentRepo: MediaAttachmentRepository,
+    mediaFileManager: MediaFileManager
+  ): Future<String?>   // Returns local path on success
+
+
   FLUTTER USE CASES - CONTACTS:
   ─────────────────────────────
   addContact(
@@ -1943,6 +2203,31 @@
   runReadAtColumnMigration(db: Database): Future<void>    ← adds read_at TEXT to messages (v6)
   runArchiveColumnsMigration(db: Database): Future<void>  ← adds is_archived, archived_at to contacts (v7)
   runBlockColumnsMigration(db: Database): Future<void>    ← adds is_blocked, blocked_at to contacts (v8)
+  runQuotedMessageIdMigration(db: Database): Future<void> ← adds quoted_message_id TEXT to messages (v9)
+  runMediaAttachmentsMigration(db: Database): Future<void> ← creates media_attachments table + indexes (v10)
+  runAvatarVersionMigration(db: Database): Future<void>   ← adds avatar_version INT to identity and contacts (v11)
+
+
+  FLUTTER DB HELPERS - MEDIA ATTACHMENTS:
+  ───────────────────────────────────────
+  dbSaveAttachment(db: Database, row: Map<String, Object?>): Future<void>
+  dbLoadAttachmentsForMessage(db: Database, messageId: String): Future<List<Map>>
+  dbLoadAttachmentsForMessages(db: Database, messageIds: List<String>): Future<List<Map>>
+  dbUpdateAttachmentLocalPath(db: Database, id: String, localPath: String): Future<void>
+  dbUpdateAttachmentDownloadStatus(db: Database, id: String, status: String): Future<void>
+  dbDeleteAttachmentsForMessage(db: Database, messageId: String): Future<void>
+  dbDeleteAttachmentsForContact(db: Database, contactPeerId: String): Future<void>
+  dbLoadPendingDownloads(db: Database): Future<List<Map>>
+
+
+  FLUTTER BRIDGE HELPERS - MEDIA:
+  ───────────────────────────────
+  callMediaUpload(bridge: Bridge, {data: String, meta: Map}): Future<Map<String, dynamic>>
+  callMediaDownload(bridge: Bridge, {id: String}): Future<Map<String, dynamic>>
+  callMediaDelete(bridge: Bridge, {id: String}): Future<Map<String, dynamic>>
+  callMediaList(bridge: Bridge): Future<Map<String, dynamic>>
+  callProfileUpload(bridge: Bridge, {peerId: String, data: String}): Future<Map<String, dynamic>>
+  callProfileDownload(bridge: Bridge, {peerId: String}): Future<Map<String, dynamic>>
 
 
   FLUTTER UTILS:
@@ -1998,6 +2283,12 @@
   handleInboxStore(payload) → {ok}
   handleInboxRetrieve(payload) → {ok, messages}
   handleInboxRegisterToken(payload) → {ok}               // FCM token registration
+  handleMediaUpload(payload) → {ok, id, ...}             // Media upload to relay
+  handleMediaDownload(payload) → {ok, data, ...}         // Media download from relay
+  handleMediaDelete(payload) → {ok}                      // Media delete from relay
+  handleMediaList(payload) → {ok, files}                 // List media on relay
+  handleProfileUpload(payload) → {ok}                    // Profile picture upload
+  handleProfileDownload(payload) → {ok, data}            // Profile picture download
 
   GO NODE FUNCTIONS (go-mknoon/node/):
   ─────────────────────────────────────
@@ -2012,6 +2303,12 @@
   Node.StoreInbox(toPeerId, message) error               // /mknoon/inbox/1.0.0
   Node.RetrieveInbox() []InboxMessage
   Node.RegisterInboxToken(token, platform) error          // FCM push registration
+  Node.MediaUpload(data, meta) (MediaMeta, error)        // /mknoon/media/1.0.0 upload
+  Node.MediaDownload(id) ([]byte, error)                 // /mknoon/media/1.0.0 download
+  Node.MediaDelete(id) error                             // /mknoon/media/1.0.0 delete
+  Node.MediaList() []MediaMeta                           // /mknoon/media/1.0.0 list
+  Node.ProfileUpload(peerId, data) error                 // Profile picture upload
+  Node.ProfileDownload(peerId) ([]byte, error)           // Profile picture download
   Node.SetEventCallback(callback)                         // Push events to Flutter
 
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -2268,7 +2565,7 @@
 
 ```
 lib/
-├── main.dart                                    # App entry point, Firebase init, SecureKeyStore + encrypted DB setup (v8), secret migration, DI; MyApp = StatefulWidget + WidgetsBindingObserver (lifecycle, push listeners, orderly dispose)
+├── main.dart                                    # App entry point, Firebase init, SecureKeyStore + encrypted DB setup (v11), secret migration, DI; MyApp = StatefulWidget + WidgetsBindingObserver (lifecycle, push listeners, orderly dispose)
 ├── smoke_test_main.dart                         # Smoke test entry point
 ├── smoke_test_restore.dart                      # Smoke test for identity restore
 ├── smoke_test_messages.dart                     # Smoke test for messages DB layer
@@ -2290,12 +2587,16 @@ lib/
 │   │   │   ├── 005_secret_null_checks.dart     # Schema v5 (CHECK constraints + avatar_blob BLOB)
 │   │   │   ├── 006_read_at_column.dart         # Schema v6 (read_at TEXT on messages table)
 │   │   │   ├── 007_archive_columns.dart        # Schema v7 (is_archived, archived_at on contacts)
-│   │   │   └── 008_block_columns.dart          # Schema v8 (is_blocked, blocked_at on contacts)
+│   │   │   ├── 008_block_columns.dart          # Schema v8 (is_blocked, blocked_at on contacts)
+│   │   │   ├── 009_quoted_message_id.dart     # Schema v9 (quoted_message_id TEXT on messages)
+│   │   │   ├── 010_media_attachments.dart     # Schema v10 (media_attachments table + indexes)
+│   │   │   └── 011_avatar_version.dart        # Schema v11 (avatar_version INTEGER on identity and contacts)
 │   │   └── helpers/
 │   │       ├── identity_db_helpers.dart        # Identity DB CRUD
 │   │       ├── contacts_db_helpers.dart        # Contacts DB CRUD
 │   │       ├── contact_requests_db_helpers.dart # Contact Requests DB CRUD
-│   │       └── messages_db_helpers.dart        # Messages DB CRUD
+│   │       ├── messages_db_helpers.dart        # Messages DB CRUD
+│   │       └── media_attachments_db_helpers.dart # Media Attachments DB CRUD
 │   ├── secure_storage/
 │   │   ├── secure_key_store.dart                 # SecureKeyStore abstract interface
 │   │   └── flutter_secure_key_store.dart         # FlutterSecureKeyStore impl (iOS Keychain / Android EncryptedSharedPrefs)
@@ -2307,9 +2608,14 @@ lib/
 │   │   ├── chat_message_listener.dart          # Stub ChatMessageListener (core-level; real impl in features/conversation)
 │   │   ├── contact_request_listener.dart       # Stub ContactRequestListener (core-level; real impl in features/contact_request)
 │   │   └── chat_message.dart                   # ChatMessage type re-export
+│   ├── media/
+│   │   ├── image_processor.dart                # ImageProcessor: EXIF strip, quality compress (injectable CompressFileFn)
+│   │   ├── media_file_manager.dart             # MediaFileManager: local file path management for attachments
+│   │   └── video_process_result.dart           # VideoProcessResult data class
 │   ├── theme/
 │   │   ├── app_colors.dart                     # Color constants (Custom1 dark)
 │   │   ├── app_theme.dart                      # ThemeData configuration
+│   │   ├── feed_colors.dart                    # FeedColors: purple/teal palette for feed cards
 │   │   └── glassmorphism.dart                  # GlassmorphicContainer widget
 │   ├── config/
 │   │   └── startup_config.dart                 # StartupConfig class with deferredStartupMode flag
@@ -2339,15 +2645,18 @@ lib/
 │   │           ├── scan_friend_card.dart               # Scan action card
 │   │           ├── empty_circle_state.dart             # Pulsing circles
 │   │           ├── ring_avatar.dart                    # RingAvatar widget
-│   │           └── ring_avatar_painter.dart            # Canvas renderer
+│   │           ├── ring_avatar_painter.dart            # Canvas renderer
+│   │           └── user_avatar.dart                    # UserAvatar widget (profile picture or RingAvatar fallback)
 │   │
 │   ├── feed/
 │   │   ├── domain/
 │   │   │   ├── models/
-│   │   │   │   └── feed_item.dart              # FeedItem base + ConnectionFeedItem + MessageFeedItem + ThreadFeedItem + ThreadMessage
+│   │   │   │   ├── feed_item.dart              # FeedItem base + ConnectionFeedItem + MessageFeedItem + ThreadFeedItem + ThreadMessage
+│   │   │   │   └── session_reply.dart         # SessionReply + SessionReplyTracker models
 │   │   │   └── utils/
 │   │   │       ├── format_message_time.dart    # Message timestamp formatting + formatRelativeTime()
 │   │   │       ├── group_messages_into_threads.dart  # Groups incoming messages into ThreadFeedItems by contact and read session
+│   │   │       ├── split_thread_by_time_gap.dart     # Splits thread messages by significant time gaps
 │   │   │       └── has_significant_time_gap.dart     # Returns true if gap >= 2h or crosses AM/PM boundary
 │   │   ├── application/
 │   │   │   └── load_feed_use_case.dart         # Load initial feed from DB
@@ -2360,9 +2669,18 @@ lib/
 │   │       │   ├── feed_navigation_bar.dart    # Bottom glass nav bar (3 tabs)
 │   │       │   ├── nav_bar_button.dart         # Individual nav button widget
 │   │       │   ├── connection_card.dart        # Contact connection card
-│   │       │   ├── message_feed_card.dart     # Incoming message card with reply
-│   │       │   ├── message_bubble.dart        # Single message bubble within thread card
-│   │       │   ├── thread_card.dart           # Thread card: grouped messages by contact
+│   │       │   ├── feed_card.dart             # FeedCard: open/collapsed modes (replaces message_feed_card + thread_card)
+│   │       │   ├── collapsed_mode_card_body.dart  # Collapsed mode card body
+│   │       │   ├── open_mode_card_body.dart    # Open mode card body with scrollable messages
+│   │       │   ├── expanded_compose_input.dart # Multi-line auto-growing compose input for expanded thread cards
+│   │       │   ├── inline_reply_input.dart    # Inline reply input within feed cards
+│   │       │   ├── scrollable_message_preview.dart  # Scrollable message preview
+│   │       │   ├── swipe_to_quote_bubble.dart # Swipe-to-quote bubble
+│   │       │   ├── quote_preview_bar.dart     # Quote preview bar
+│   │       │   ├── view_earlier_link.dart     # View earlier messages link
+│   │       │   ├── more_messages_hint.dart    # More messages hint
+│   │       │   ├── replied_indicator.dart     # Replied indicator
+│   │       │   ├── message_bubble.dart        # Single message bubble within feed card
 │   │       │   ├── session_divider.dart       # Session divider between message groups
 │   │       │   ├── time_gap_divider.dart      # Time gap divider for significant pauses
 │   │       │   ├── unread_count_badge.dart   # Circular unread count badge
@@ -2373,17 +2691,22 @@ lib/
 │   ├── conversation/
 │   │   ├── domain/
 │   │   │   ├── models/
-│   │   │   │   ├── conversation_message.dart   # ConversationMessage model
-│   │   │   │   └── message_payload.dart        # Wire-format envelope model
+│   │   │   │   ├── conversation_message.dart   # ConversationMessage model (+ quotedMessageId, media list)
+│   │   │   │   ├── message_payload.dart        # Wire-format envelope model (+ quoted msg, media support)
+│   │   │   │   └── media_attachment.dart       # MediaAttachment model + MediaType enum + DownloadStatus enum
 │   │   │   └── repositories/
 │   │   │       ├── message_repository.dart     # Abstract interface
-│   │   │       └── message_repository_impl.dart # DB-backed implementation
+│   │   │       ├── message_repository_impl.dart # DB-backed implementation
+│   │   │       ├── media_attachment_repository.dart      # MediaAttachmentRepository abstract interface
+│   │   │       └── media_attachment_repository_impl.dart # DB-backed implementation
 │   │   ├── application/
 │   │   │   ├── send_chat_message_use_case.dart # Send: encrypt (v2) or plaintext (v1), 3x retry, inbox fallback
 │   │   │   ├── handle_incoming_chat_message_use_case.dart  # Receive: decrypt v2 or parse v1
 │   │   │   ├── load_conversation_use_case.dart # Load messages for contact
 │   │   │   ├── mark_conversation_read_use_case.dart # Mark unread messages as read
 │   │   │   ├── retry_failed_messages_use_case.dart  # Retry failed outgoing messages on reconnect
+│   │   │   ├── upload_media_use_case.dart      # Upload media attachment to relay
+│   │   │   ├── download_media_use_case.dart    # Download media attachment from relay
 │   │   │   └── chat_message_listener.dart      # Background chat listener + ML-KEM decryption; rejects blocked contacts, suppresses UI for archived
 │   │   └── presentation/
 │   │       ├── screens/
@@ -2396,7 +2719,8 @@ lib/
 │   │       │   ├── conversation_header.dart    # Frosted-glass header
 │   │       │   ├── compact_origin_marker.dart  # Connection origin marker
 │   │       │   ├── date_separator.dart         # Date divider
-│   │       │   └── blocked_banner.dart         # Blocked contact banner with "Unblock" button
+│   │       │   ├── blocked_banner.dart         # Blocked contact banner with "Unblock" button
+│   │       │   └── attachment_preview_strip.dart # Horizontal strip showing attachment previews
 │   │       └── navigation/
 │   │           └── conversation_route_transition.dart
 │   │
@@ -2427,6 +2751,26 @@ lib/
 │   │           ├── qr_action_cards.dart            # QR action cards (My QR / Scan QR)
 │   │           ├── orbit_search_trigger.dart       # Floating glass pill search button
 │   │           └── orbit_search_dock.dart          # Bottom-docked search TextField
+│   │
+│   ├── settings/
+│   │   ├── application/
+│   │   │   ├── get_image_quality_preference_use_case.dart   # Read image quality preference from SecureKeyStore
+│   │   │   ├── set_image_quality_preference_use_case.dart   # Write image quality preference to SecureKeyStore
+│   │   │   ├── upload_profile_picture_use_case.dart         # Upload profile picture to relay
+│   │   │   ├── download_profile_picture_use_case.dart       # Download profile picture from relay
+│   │   │   └── profile_update_listener.dart                 # Monitors profile update events
+│   │   ├── domain/
+│   │   │   └── models/
+│   │   │       └── image_quality_preference.dart            # ImageQualityPreference enum
+│   │   └── presentation/
+│   │       ├── screens/
+│   │       │   ├── settings_screen.dart                     # Pure UI settings display
+│   │       │   └── settings_wired.dart                      # Settings business logic
+│   │       └── widgets/
+│   │           ├── settings_profile_section.dart             # Profile section widget
+│   │           ├── settings_peer_id_card.dart                # Peer ID display card
+│   │           ├── settings_recovery_phrase_card.dart        # Recovery phrase card
+│   │           └── image_quality_toggle.dart                 # Image quality toggle widget
 │   │
 │   ├── push/
 │   │   ├── background_message_handler.dart         # @pragma('vm:entry-point') Firebase handler; defers inbox drain to next app resume
@@ -2522,12 +2866,23 @@ lib/
 │       └── presentation/
 │           └── widgets/
 │               └── connection_status_indicator.dart  # Online/Offline badge
+│
+├── shared/
+│   └── widgets/
+│       └── media/
+│           ├── media_grid.dart                       # Grid layout for media attachments
+│           ├── media_grid_cell.dart                   # Individual cell in the media grid
+│           ├── media_display_helpers.dart             # Media display helper functions
+│           ├── media_preview_text.dart                # Text preview for media attachments
+│           ├── full_screen_image_viewer.dart          # Full-screen image viewer with zoom
+│           ├── video_thumbnail_overlay.dart           # Video thumbnail with play overlay
+│           └── audio_player_widget.dart               # Audio player with controls
 
 go-mknoon/
 ├── Makefile                                    # Build targets: `make all` (iOS + Android), `make ios`, `make android`
 ├── go.mod / go.sum                             # Go module dependencies
 ├── bridge/
-│   └── bridge.go                               # HandleCommand() dispatch → identity, crypto, node, inbox handlers
+│   └── bridge.go                               # HandleCommand() dispatch → identity, crypto, node, inbox, media handlers
 ├── identity/
 │   ├── generate.go                             # BIP39 mnemonic + Ed25519 keypair + ML-KEM-768 keygen
 │   └── restore.go                              # Restore Ed25519 from mnemonic + fresh ML-KEM-768
@@ -2538,7 +2893,8 @@ go-mknoon/
 ├── node/
 │   ├── node.go                                 # libp2p host lifecycle, chat protocol (/mknoon/chat/1.0.0), event broadcasting
 │   ├── rendezvous.go                           # Rendezvous register/discover with protobuf signed peer records
-│   └── inbox.go                                # Offline inbox protocol (/mknoon/inbox/1.0.0): store/retrieve/register FCM token
+│   ├── inbox.go                                # Offline inbox protocol (/mknoon/inbox/1.0.0): store/retrieve/register FCM token
+│   └── media.go                                # Media protocol (/mknoon/media/1.0.0): upload/download/delete/list + profile upload/download
 ├── stub/
 │   └── gosigar/                                # iOS stub for gosigar (libproc.h not available)
 └── testdata/
@@ -3109,7 +3465,7 @@ The application initialization sequence is defined in `lib/main.dart`. Understan
     ├─► SecureKeyStore instantiation (FlutterSecureKeyStore)
     │       iOS Keychain (device-bound) / Android EncryptedSharedPreferences
     │
-    ├─► openEncryptedDatabase('identity.db', version: 8, secureKeyStore)
+    ├─► openEncryptedDatabase('identity.db', version: 11, secureKeyStore)
     │       │
     │       ├─► Read/generate db_encryption_key from SecureKeyStore
     │       │       Random 256-bit key, stored as base64 in secure storage
@@ -3139,10 +3495,19 @@ The application initialization sequence is defined in `lib/main.dart`. Understan
     │       │       ├─► runArchiveColumnsMigration(db)
     │       │       │       Adds is_archived, archived_at to contacts (v7)
     │       │       │
-    │       │       └─► runBlockColumnsMigration(db)
-    │       │               Adds is_blocked, blocked_at to contacts (v8)
+    │       │       ├─► runBlockColumnsMigration(db)
+    │       │       │       Adds is_blocked, blocked_at to contacts (v8)
+    │       │       │
+    │       │       ├─► runQuotedMessageIdMigration(db)
+    │       │       │       Adds quoted_message_id TEXT to messages (v9)
+    │       │       │
+    │       │       ├─► runMediaAttachmentsMigration(db)
+    │       │       │       Creates media_attachments table + indexes (v10)
+    │       │       │
+    │       │       └─► runAvatarVersionMigration(db)
+    │       │               Adds avatar_version INTEGER to identity and contacts (v11)
     │       │
-    │       └─► onUpgrade callback (v1→v2→v3→v4→v5→v6→v7→v8)
+    │       └─► onUpgrade callback (v1→v2→v3→v4→v5→v6→v7→v8→v9→v10→v11)
     │               │
     │               ├─► runMessagesTableMigration(db)                (v1 → v2)
     │               │       Creates messages table for existing installs
@@ -3163,8 +3528,17 @@ The application initialization sequence is defined in `lib/main.dart`. Understan
     │               ├─► runArchiveColumnsMigration(db)             (v6 → v7)
     │               │       Adds is_archived, archived_at to contacts
     │               │
-    │               └─► runBlockColumnsMigration(db)               (v7 → v8)
-    │                       Adds is_blocked, blocked_at to contacts
+    │               ├─► runBlockColumnsMigration(db)               (v7 → v8)
+    │               │       Adds is_blocked, blocked_at to contacts
+    │               │
+    │               ├─► runQuotedMessageIdMigration(db)          (v8 → v9)
+    │               │       Adds quoted_message_id TEXT to messages
+    │               │
+    │               ├─► runMediaAttachmentsMigration(db)         (v9 → v10)
+    │               │       Creates media_attachments table + indexes
+    │               │
+    │               └─► runAvatarVersionMigration(db)            (v10 → v11)
+    │                       Adds avatar_version INTEGER to identity and contacts
     │
     ├─► migrateSecretsToSecureStorage(db, secureKeyStore)
     │       One-time migration: reads secrets from DB, writes to SecureKeyStore
@@ -3274,10 +3648,10 @@ The application initialization sequence is defined in `lib/main.dart`. Understan
 
 | File | Responsibility |
 |------|----------------|
-| `lib/main.dart` | Entry point, Firebase init, SecureKeyStore + encrypted DB setup (v8), secret migration, repository + service + listener + PendingMessageRetrier DI; MyApp is StatefulWidget + WidgetsBindingObserver with app-resume lifecycle (bridge health check → reinitialize if dead → P2P health check → drain inbox), foreground push listeners (Firebase onMessage/onMessageOpenedApp → inbox drain), and orderly dispose chain (pendingMessageRetrier → chatMessageListener → contactRequestListener → messageRouter → p2pService → bridge) |
+| `lib/main.dart` | Entry point, Firebase init, SecureKeyStore + encrypted DB setup (v11), secret migration, repository + service + listener + PendingMessageRetrier DI; MyApp is StatefulWidget + WidgetsBindingObserver with app-resume lifecycle (bridge health check → reinitialize if dead → P2P health check → drain inbox), foreground push listeners (Firebase onMessage/onMessageOpenedApp → inbox drain), and orderly dispose chain (pendingMessageRetrier → chatMessageListener → contactRequestListener → messageRouter → p2pService → bridge) |
 | `lib/core/secure_storage/secure_key_store.dart` | SecureKeyStore abstract interface |
 | `lib/core/secure_storage/flutter_secure_key_store.dart` | FlutterSecureKeyStore production impl (iOS Keychain / Android EncryptedSharedPreferences) |
-| `lib/core/database/encrypted_db_opener.dart` | Opens SQLCipher DB with key from secure storage; handles plaintext-to-encrypted migration |
+| `lib/core/database/encrypted_db_opener.dart` | Opens SQLCipher DB (v11) with key from secure storage; handles plaintext-to-encrypted migration |
 | `lib/core/database/migrate_secrets_to_secure_storage.dart` | One-time DB-to-secure-storage secret migration with sentinel |
 | `lib/core/database/migrations/001_identity_table.dart` | Schema v1 migration (3 tables) |
 | `lib/core/database/migrations/002_messages_table.dart` | Schema v2 migration (messages table) |
@@ -3287,6 +3661,9 @@ The application initialization sequence is defined in `lib/main.dart`. Understan
 | `lib/core/database/migrations/006_read_at_column.dart` | Schema v6 migration (read_at TEXT column on messages table) |
 | `lib/core/database/migrations/007_archive_columns.dart` | Schema v7 migration (is_archived, archived_at on contacts table) |
 | `lib/core/database/migrations/008_block_columns.dart` | Schema v8 migration (is_blocked, blocked_at on contacts table) |
+| `lib/core/database/migrations/009_quoted_message_id.dart` | Schema v9 migration (quoted_message_id TEXT on messages table) |
+| `lib/core/database/migrations/010_media_attachments.dart` | Schema v10 migration (media_attachments table + indexes) |
+| `lib/core/database/migrations/011_avatar_version.dart` | Schema v11 migration (avatar_version INTEGER on identity and contacts) |
 | `lib/core/services/incoming_message_router.dart` | P2P message routing by type |
 | `lib/core/services/pending_message_retrier.dart` | Retries failed outgoing messages on P2P reconnect (5s debounce) |
 | `lib/core/bridge/go_bridge_client.dart` | Go native bridge initialization + event handlers (MethodChannel/EventChannel) |
@@ -3305,7 +3682,7 @@ To add a new initialization step:
 1. Add async initialization code in `main()` before `runApp()`
 2. Inject dependencies into `MyApp` constructor
 3. Pass dependencies through `StartupRouter` to child widgets
-4. For new migrations, create `009_*.dart` and update `openEncryptedDatabase` version (currently v8)
+4. For new migrations, create `012_*.dart` and update `openEncryptedDatabase` version (currently v11)
 5. For new P2P event handlers, register on `GoBridgeClient` in `P2PServiceImpl`
 6. For new secrets, add read/write methods to `SecureKeyStore` and update `FlutterSecureKeyStore`
 
@@ -3503,3 +3880,9 @@ The Dart `GoBridgeClient._cmdMap` maps command strings (used by Dart callers) to
 | `inbox:store` | `inboxStore` | Inbox module | Store message in offline inbox on relay |
 | `inbox:retrieve` | `inboxRetrieve` | Inbox module | Retrieve messages from offline inbox |
 | `inbox:register_token` | `inboxRegisterToken` | Inbox module | Register FCM device token for push notifications |
+| `media:upload` | `mediaUpload` | Media module | Upload media to relay via /mknoon/media/1.0.0 |
+| `media:download` | `mediaDownload` | Media module | Download media from relay via /mknoon/media/1.0.0 |
+| `media:delete` | `mediaDelete` | Media module | Delete media from relay via /mknoon/media/1.0.0 |
+| `media:list` | `mediaList` | Media module | List media on relay via /mknoon/media/1.0.0 |
+| `profile:upload` | `profileUpload` | Media module | Upload profile picture to relay |
+| `profile:download` | `profileDownload` | Media module | Download profile picture from relay |
