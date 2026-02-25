@@ -15,8 +15,13 @@ import 'package:flutter_app/features/conversation/application/chat_message_liste
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/feed/presentation/screens/feed_wired.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/collapsed_mode_card_body.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/open_mode_card_body.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/scrollable_message_preview.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
+import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
+import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 
 import '../../../../core/bridge/fake_bridge.dart';
 import '../../../../core/secure_storage/fake_secure_key_store.dart';
@@ -379,6 +384,50 @@ void main() {
       expect(find.text('Remember'), findsOneWidget);
     });
 
+    testWidgets('collapse from open-mode card does not expand collapsed card',
+        (tester) async {
+      // Suppress RenderFlex overflow errors from card layouts in test surface
+      final originalOnError = FlutterError.onError;
+      FlutterError.onError = (details) {
+        if (details.toString().contains('overflowed')) return;
+        originalOnError?.call(details);
+      };
+      addTearDown(() => FlutterError.onError = originalOnError);
+
+      identityRepo.seed(testIdentity);
+      contactRepo.seed([testContact]);
+
+      // One unread incoming message → open-mode card
+      await messageRepo.saveMessage(ConversationMessage(
+        id: 'msg-unread-1',
+        contactPeerId: 'contact-peer-id',
+        text: 'Hey there!',
+        senderPeerId: 'contact-peer-id',
+        timestamp: DateTime.now().toUtc().toIso8601String(),
+        isIncoming: true,
+        status: 'delivered',
+        createdAt: DateTime.now().toUtc().toIso8601String(),
+      ));
+
+      await tester.pumpWidget(buildFeedWired());
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // Should have OpenModeCardBody (unread message)
+      expect(find.byType(OpenModeCardBody), findsOneWidget);
+
+      // Tap "Collapse" link
+      await tester.tap(find.text('Collapse'));
+      // Pump through markConversationRead + refreshFeed
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // Card should now be CollapsedModeCardBody without ScrollableMessagePreview
+      expect(find.byType(CollapsedModeCardBody), findsOneWidget);
+      expect(find.byType(ScrollableMessagePreview), findsNothing);
+    });
+
     testWidgets('loads image quality preference from SecureKeyStore',
         (tester) async {
       identityRepo.seed(testIdentity);
@@ -408,6 +457,146 @@ void main() {
 
       // No crash means the preference was loaded successfully.
       expect(find.byType(FeedWired), findsOneWidget);
+    });
+
+    testWidgets('incoming message clears session reply so card shows open mode',
+        (tester) async {
+      // Suppress RenderFlex overflow errors from card layouts in test surface
+      final originalOnError = FlutterError.onError;
+      FlutterError.onError = (details) {
+        if (details.toString().contains('overflowed')) return;
+        originalOnError?.call(details);
+      };
+      addTearDown(() => FlutterError.onError = originalOnError);
+
+      identityRepo.seed(testIdentity);
+      contactRepo.seed([testContact]);
+
+      final fakeChatListener = _FakeChatMessageListener(
+        messageRepo: messageRepo,
+        contactRepo: contactRepo,
+      );
+
+      // Seed an incoming read message (readAt set → treated as read)
+      await messageRepo.saveMessage(ConversationMessage(
+        id: 'msg-in-1',
+        contactPeerId: 'contact-peer-id',
+        text: 'Hi from Bob',
+        senderPeerId: 'contact-peer-id',
+        timestamp: DateTime.now().subtract(const Duration(hours: 1)).toUtc().toIso8601String(),
+        isIncoming: true,
+        status: 'read',
+        readAt: DateTime.now().subtract(const Duration(hours: 1)).toUtc().toIso8601String(),
+        createdAt: DateTime.now().subtract(const Duration(hours: 1)).toUtc().toIso8601String(),
+      ));
+
+      await tester.pumpWidget(buildFeedWired(
+        chatMessageListener: fakeChatListener,
+      ));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // Card should be in collapsed mode (read state)
+      expect(find.byType(CollapsedModeCardBody), findsOneWidget);
+
+      // Now seed a NEW unread incoming message and emit it
+      await messageRepo.saveMessage(ConversationMessage(
+        id: 'msg-in-2',
+        contactPeerId: 'contact-peer-id',
+        text: 'New message from Bob!',
+        senderPeerId: 'contact-peer-id',
+        timestamp: DateTime.now().toUtc().toIso8601String(),
+        isIncoming: true,
+        status: 'delivered',
+        createdAt: DateTime.now().toUtc().toIso8601String(),
+      ));
+
+      fakeChatListener.emitIncomingMessage(ConversationMessage(
+        id: 'msg-in-2',
+        contactPeerId: 'contact-peer-id',
+        text: 'New message from Bob!',
+        senderPeerId: 'contact-peer-id',
+        timestamp: DateTime.now().toUtc().toIso8601String(),
+        isIncoming: true,
+        status: 'delivered',
+        createdAt: DateTime.now().toUtc().toIso8601String(),
+      ));
+
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // Card should switch to open mode (session reply cleared + unread message)
+      expect(find.byType(OpenModeCardBody), findsOneWidget);
+    });
+
+    testWidgets('tap to expand works after inline reply from collapsed card',
+        (tester) async {
+      // Suppress RenderFlex overflow errors from card layouts in test surface
+      final originalOnError = FlutterError.onError;
+      FlutterError.onError = (details) {
+        if (details.toString().contains('overflowed')) return;
+        originalOnError?.call(details);
+      };
+      addTearDown(() => FlutterError.onError = originalOnError);
+
+      identityRepo.seed(testIdentity);
+      contactRepo.seed([testContact]);
+
+      // Seed a read incoming message (readAt set)
+      await messageRepo.saveMessage(ConversationMessage(
+        id: 'msg-read-1',
+        contactPeerId: 'contact-peer-id',
+        text: 'Hey from Bob',
+        senderPeerId: 'contact-peer-id',
+        timestamp: DateTime.now().subtract(const Duration(hours: 1)).toUtc().toIso8601String(),
+        isIncoming: true,
+        status: 'read',
+        readAt: DateTime.now().subtract(const Duration(hours: 1)).toUtc().toIso8601String(),
+        createdAt: DateTime.now().subtract(const Duration(hours: 1)).toUtc().toIso8601String(),
+      ));
+
+      // Configure P2P for successful send
+      p2pService = FakeP2PService(
+        initialState: const NodeState(isStarted: true),
+        discoverPeerResult: const DiscoveredPeer(
+          id: 'contact-peer-id',
+          addresses: ['/ip4/127.0.0.1/tcp/4001'],
+        ),
+      );
+
+      await tester.pumpWidget(buildFeedWired());
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // Card should be in collapsed mode with Continue... input
+      expect(find.byType(CollapsedModeCardBody), findsOneWidget);
+      expect(find.text('Continue...'), findsOneWidget);
+
+      // Enter text and send
+      await tester.enterText(find.byType(TextField).first, 'My reply');
+      await tester.pump();
+      final sendButton = find.byIcon(Icons.arrow_upward_rounded).first;
+      await tester.ensureVisible(sendButton);
+      await tester.pump();
+      await tester.tap(sendButton);
+
+      // Pump through async send + markConversationRead + refreshFeed
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // Card should show session reply text (collapsed with "Just now")
+      expect(find.byType(CollapsedModeCardBody), findsOneWidget);
+
+      // Now tap "Tap to expand"
+      await tester.tap(find.text('Tap to expand'));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 300));
+
+      // After fix: ScrollableMessagePreview should appear
+      expect(find.byType(ScrollableMessagePreview), findsOneWidget);
     });
 
     testWidgets('disposes stream subscriptions without errors',

@@ -48,10 +48,28 @@ class InMemoryMessageRepository implements MessageRepository {
   }
 
   @override
-  Future<int> markConversationAsRead(String contactPeerId) async => 0;
+  Future<int> markConversationAsRead(String contactPeerId) async {
+    final now = DateTime.now().toUtc().toIso8601String();
+    var count = 0;
+    for (final entry in _messages.entries.toList()) {
+      final m = entry.value;
+      if (m.contactPeerId == contactPeerId && m.isIncoming && m.readAt == null) {
+        _messages[entry.key] = m.copyWith(readAt: now);
+        count++;
+      }
+    }
+    return count;
+  }
 
   @override
-  Future<int> getUnreadCountForContact(String contactPeerId) async => 0;
+  Future<int> getUnreadCountForContact(String contactPeerId) async {
+    return _messages.values
+        .where((m) =>
+            m.contactPeerId == contactPeerId &&
+            m.isIncoming &&
+            m.readAt == null)
+        .length;
+  }
 
   @override
   Future<int> getTotalUnreadCount() async => 0;

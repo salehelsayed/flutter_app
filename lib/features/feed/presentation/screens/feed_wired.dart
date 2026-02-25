@@ -311,6 +311,7 @@ class _FeedWiredState extends State<FeedWired> {
 
   void _onIncomingChatMessage(ConversationMessage message) {
     if (!mounted) return;
+    _sessionReplies.clear(message.contactPeerId);
     _refreshFeed();
   }
 
@@ -747,6 +748,11 @@ class _FeedWiredState extends State<FeedWired> {
       ).then((_) {
         if (mounted) _refreshFeed();
       });
+      // Ensure the resulting collapsed card is NOT expanded
+      setState(() {
+        _expandedCardId = null;
+      });
+      return;
     }
 
     // Clear quote when collapsing
@@ -755,6 +761,11 @@ class _FeedWiredState extends State<FeedWired> {
       if (collapsingItem != null) {
         _activeQuoteMessageIds.remove(collapsingItem.contactPeerId);
       }
+    }
+
+    // Clear session reply when expanding so expanded messages become visible
+    if (_expandedCardId != cardId && item != null) {
+      _sessionReplies.clear(item.contactPeerId);
     }
 
     setState(() {
