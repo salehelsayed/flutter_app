@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
 import 'package:flutter_app/features/feed/domain/models/session_reply.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/collapsed_mode_card_body.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/scrollable_message_preview.dart';
 
 void main() {
   Widget wrap(Widget child) => MaterialApp(
@@ -146,6 +147,150 @@ void main() {
       // Tap on the name (part of the GestureDetector area)
       await tester.tap(find.text('Alice'));
       expect(tapped, isTrue);
+    });
+  });
+
+  group('CollapsedModeCardBody expanded state', () {
+    ThreadFeedItem _readThread({int messageCount = 3}) {
+      return ThreadFeedItem(
+        id: 'thread_1',
+        timestamp: DateTime(2026, 2, 9, 15, 0),
+        contactPeerId: 'peer1',
+        contactUsername: 'Alice',
+        messages: List.generate(
+          messageCount,
+          (i) => ThreadMessage(
+            id: 'm${i + 1}',
+            text: 'Message ${i + 1}',
+            time: '3:0$i PM',
+            timestamp: DateTime(2026, 2, 9, 15, i),
+            isIncoming: true,
+          ),
+        ),
+        conversationState: ConversationState.read,
+      );
+    }
+
+    testWidgets('isExpanded false does not show ScrollableMessagePreview',
+        (tester) async {
+      await tester.pumpWidget(wrap(CollapsedModeCardBody(
+        thread: _readThread(),
+        isExpanded: false,
+      )));
+      expect(find.byType(ScrollableMessagePreview), findsNothing);
+    });
+
+    testWidgets('isExpanded true shows ScrollableMessagePreview',
+        (tester) async {
+      await tester.pumpWidget(wrap(CollapsedModeCardBody(
+        thread: _readThread(),
+        isExpanded: true,
+      )));
+      expect(find.byType(ScrollableMessagePreview), findsOneWidget);
+    });
+
+    testWidgets('header still shows username when expanded', (tester) async {
+      await tester.pumpWidget(wrap(CollapsedModeCardBody(
+        thread: _readThread(),
+        isExpanded: true,
+      )));
+      expect(find.text('Alice'), findsOneWidget);
+    });
+
+    testWidgets('InlineReplyInput still present when expanded',
+        (tester) async {
+      await tester.pumpWidget(wrap(CollapsedModeCardBody(
+        thread: _readThread(),
+        isExpanded: true,
+      )));
+      expect(find.text('Continue...'), findsOneWidget);
+    });
+
+    testWidgets('single-line preview hidden when expanded', (tester) async {
+      final thread = ThreadFeedItem(
+        id: 'thread_1',
+        timestamp: DateTime(2026, 2, 9, 15, 0),
+        contactPeerId: 'peer1',
+        contactUsername: 'Alice',
+        messages: [
+          ThreadMessage(
+            id: 'm1',
+            text: 'Preview line text',
+            time: '3:00 PM',
+            timestamp: DateTime(2026, 2, 9, 15, 0),
+            isIncoming: true,
+          ),
+        ],
+        conversationState: ConversationState.read,
+      );
+
+      // Not expanded: preview text visible as "Alice: Preview line text"
+      await tester.pumpWidget(wrap(CollapsedModeCardBody(
+        thread: thread,
+        isExpanded: false,
+      )));
+      // The preview shows "Alice: " label and "Preview line text"
+      expect(find.text('Preview line text'), findsOneWidget);
+
+      // Expanded: preview text replaced by ScrollableMessagePreview
+      await tester.pumpWidget(wrap(CollapsedModeCardBody(
+        thread: thread,
+        isExpanded: true,
+      )));
+      await tester.pumpAndSettle();
+      expect(find.byType(ScrollableMessagePreview), findsOneWidget);
+    });
+
+    testWidgets('tap header fires onTapExpand in expanded state',
+        (tester) async {
+      var tapped = false;
+      await tester.pumpWidget(wrap(CollapsedModeCardBody(
+        thread: _readThread(),
+        isExpanded: true,
+        onTapExpand: () => tapped = true,
+      )));
+
+      await tester.tap(find.text('Alice'));
+      expect(tapped, isTrue);
+    });
+
+    testWidgets('Collapse link present in expanded state', (tester) async {
+      await tester.pumpWidget(wrap(CollapsedModeCardBody(
+        thread: _readThread(),
+        isExpanded: true,
+        onCollapse: () {},
+      )));
+      expect(find.text('Collapse'), findsOneWidget);
+    });
+
+    testWidgets('session reply with isExpanded does not show ScrollableMessagePreview',
+        (tester) async {
+      final thread = ThreadFeedItem(
+        id: 'thread_1',
+        timestamp: DateTime(2026, 2, 9, 15, 0),
+        contactPeerId: 'peer1',
+        contactUsername: 'Alice',
+        messages: [
+          ThreadMessage(
+            id: 'm1',
+            text: 'Hi',
+            time: '3:00 PM',
+            timestamp: DateTime(2026, 2, 9, 15, 0),
+            isIncoming: true,
+          ),
+        ],
+        conversationState: ConversationState.unread,
+      );
+
+      final reply = SessionReply.justNow('My reply');
+      await tester.pumpWidget(wrap(CollapsedModeCardBody(
+        thread: thread,
+        sessionReply: reply,
+        isExpanded: true,
+      )));
+      // Session reply overrides expanded — shows single-line preview, not ScrollableMessagePreview
+      expect(find.byType(ScrollableMessagePreview), findsNothing);
+      expect(find.text('My reply'), findsOneWidget);
     });
   });
 }

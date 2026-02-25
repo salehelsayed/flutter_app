@@ -13,6 +13,7 @@ import 'package:flutter_app/features/feed/presentation/widgets/open_mode_card_bo
 class FeedCard extends StatefulWidget {
   final ThreadFeedItem thread;
   final SessionReply? sessionReply;
+  final bool isExpanded;
   final VoidCallback? onToggleExpand;
   final ValueChanged<String>? onInlineSend;
   final VoidCallback? onViewFullConversation;
@@ -27,6 +28,7 @@ class FeedCard extends StatefulWidget {
     super.key,
     required this.thread,
     this.sessionReply,
+    this.isExpanded = false,
     this.onToggleExpand,
     this.onInlineSend,
     this.onViewFullConversation,
@@ -173,7 +175,11 @@ class _FeedCardState extends State<FeedCard>
     return CollapsedModeCardBody(
       thread: widget.thread,
       sessionReply: widget.sessionReply,
-      onTapExpand: widget.onViewFullConversation,
+      isExpanded: widget.isExpanded,
+      onTapExpand: widget.onToggleExpand,
+      onCollapse: widget.onToggleExpand,
+      onViewFullConversation: widget.onViewFullConversation,
+      onQuoteReply: widget.onQuoteReply,
       onSend: (text) => widget.onInlineSend?.call(text),
       sendEnabled: enabled,
       initialText: widget.initialText,
