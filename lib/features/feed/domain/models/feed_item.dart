@@ -166,12 +166,6 @@ class ThreadFeedItem extends FeedItem {
       conversationState == ConversationState.unread ||
       conversationState == ConversationState.active;
 
-  /// Last 3 messages to show in collapsed card (chronological order).
-  List<ThreadMessage> get collapsedPreviewMessages {
-    if (messages.length <= 3) return messages;
-    return messages.sublist(messages.length - 3);
-  }
-
   /// Single message to show in collapsed card: always the latest message.
   ThreadMessage get collapsedPreviewMessage => latestMessage;
 }
