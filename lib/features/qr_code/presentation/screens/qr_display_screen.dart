@@ -1,182 +1,185 @@
-import 'package:flutter/foundation.dart';
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:qr_flutter/qr_flutter.dart';
+import 'package:flutter_app/core/theme/app_colors.dart';
+import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
+import 'package:flutter_app/features/home/presentation/widgets/qr_code_section.dart';
+import 'package:flutter_app/features/home/presentation/widgets/scan_friend_card.dart';
+import 'package:flutter_app/features/home/presentation/widgets/empty_circle_state.dart';
 
-/// Screen that displays the user's QR code for identity sharing.
+/// Screen that displays the user's QR code with FTE-style layout.
 ///
-/// This is a pure layout widget with no business logic.
-/// All actions are handled via callbacks.
-class QRDisplayScreen extends StatelessWidget {
-  /// The JSON string to encode in the QR code.
-  final String qrData;
+/// Shows AmbientBackground, QRCodeSection, ScanFriendCard, and
+/// EmptyCircleState with staggered entrance animations.
+class QRDisplayScreen extends StatefulWidget {
+  /// The JSON string to encode in the QR code (null while loading).
+  final String? qrData;
 
-  /// The user's peerID for display (will be truncated).
-  final String peerId;
-
-  /// Called when the user presses the back/close button.
+  /// Called when the user presses the close button.
   final VoidCallback onClose;
 
-  /// Called when the user presses the share button.
-  /// If null, the share button is not shown.
-  final VoidCallback? onShare;
+  /// Called when the user taps "Scan a friend's code".
+  final VoidCallback? onScanPressed;
 
   const QRDisplayScreen({
     super.key,
     required this.qrData,
-    required this.peerId,
     required this.onClose,
-    this.onShare,
+    this.onScanPressed,
   });
 
-  /// Truncates the peerID for display.
-  /// Example: "12D3KooWAbcdefghijk..." → "12D3KooW...ghijk"
-  String _truncatePeerId(String id) {
-    if (id.length <= 12) return id;
-    return '${id.substring(0, 8)}...${id.substring(id.length - 4)}';
-  }
+  @override
+  State<QRDisplayScreen> createState() => _QRDisplayScreenState();
+}
 
-  void _copyQRData(BuildContext context) {
-    Clipboard.setData(ClipboardData(text: qrData));
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('QR data copied to clipboard!'),
-        duration: Duration(seconds: 2),
+class _QRDisplayScreenState extends State<QRDisplayScreen>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<double> _qrOpacity;
+  late Animation<Offset> _qrSlide;
+  late Animation<double> _scanOpacity;
+  late Animation<Offset> _scanSlide;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 850),
+    );
+    const smoothCurve = Curves.easeOutCubic;
+
+    // QR section entrance
+    _qrOpacity = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(
+        parent: _controller,
+        curve: const Interval(0.00, 0.42, curve: smoothCurve),
       ),
     );
+    _qrSlide =
+        Tween<Offset>(begin: const Offset(0, 0.16), end: Offset.zero).animate(
+      CurvedAnimation(
+        parent: _controller,
+        curve: const Interval(0.00, 0.42, curve: smoothCurve),
+      ),
+    );
+
+    // Scan card entrance (slight stagger)
+    _scanOpacity = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(
+        parent: _controller,
+        curve: const Interval(0.03, 0.45, curve: smoothCurve),
+      ),
+    );
+    _scanSlide =
+        Tween<Offset>(begin: const Offset(0, 0.16), end: Offset.zero).animate(
+      CurvedAnimation(
+        parent: _controller,
+        curve: const Interval(0.03, 0.45, curve: smoothCurve),
+      ),
+    );
+
+    _controller.forward();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final screenWidth = MediaQuery.of(context).size.width;
-    final qrSize = (screenWidth * 0.7).clamp(256.0, 300.0);
+    final screenHeight = MediaQuery.of(context).size.height;
+    final t = ((screenHeight - 650) / 250).clamp(0.0, 1.0);
+    final horizontalPadding = lerpDouble(20, 24, t)!;
+    final topGap = lerpDouble(48, 64, t)!;
+    final sectionGap = lerpDouble(8, 16, t)!;
+    final lowerGap = lerpDouble(8, 32, t)!;
+    final bottomGap = lerpDouble(4, 16, t)!;
 
     return Scaffold(
-      appBar: AppBar(
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: onClose,
-        ),
-        title: const Text('My QR Code'),
-        centerTitle: true,
-        elevation: 0,
-      ),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24.0),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const SizedBox(height: 24),
-
-              // QR Code Container
-              GestureDetector(
-                onLongPress: kDebugMode ? () => _copyQRData(context) : null,
-                child: Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(16),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.1),
-                        blurRadius: 10,
-                        offset: const Offset(0, 4),
+      body: AmbientBackground(
+        child: Stack(
+          children: [
+            // Main content
+            SafeArea(
+              child: Padding(
+                padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    return SingleChildScrollView(
+                      child: ConstrainedBox(
+                        constraints:
+                            BoxConstraints(minHeight: constraints.maxHeight),
+                        child: Column(
+                          children: [
+                            // Top gap for close button
+                            SizedBox(height: topGap),
+                            // QR code section
+                            AnimatedBuilder(
+                              animation: _controller,
+                              builder: (context, child) {
+                                return Opacity(
+                                  opacity: _qrOpacity.value,
+                                  child: SlideTransition(
+                                    position: _qrSlide,
+                                    child: child,
+                                  ),
+                                );
+                              },
+                              child: RepaintBoundary(
+                                child: QRCodeSection(
+                                  qrData: widget.qrData,
+                                  scaleFactor: t,
+                                ),
+                              ),
+                            ),
+                            SizedBox(height: sectionGap),
+                            // Scan friend card
+                            AnimatedBuilder(
+                              animation: _controller,
+                              builder: (context, child) {
+                                return Opacity(
+                                  opacity: _scanOpacity.value,
+                                  child: SlideTransition(
+                                    position: _scanSlide,
+                                    child: child,
+                                  ),
+                                );
+                              },
+                              child: RepaintBoundary(
+                                child: ScanFriendCard(
+                                    onTap: widget.onScanPressed),
+                              ),
+                            ),
+                            SizedBox(height: lowerGap),
+                            // Empty circle state (always visible)
+                            const RepaintBoundary(
+                              child: TickerMode(
+                                enabled: true,
+                                child: EmptyCircleState(),
+                              ),
+                            ),
+                            SizedBox(height: bottomGap),
+                          ],
+                        ),
                       ),
-                    ],
-                  ),
-                  child: Semantics(
-                    label: 'QR code for sharing your identity',
-                    child: QrImageView(
-                      data: qrData,
-                      version: QrVersions.auto,
-                      size: qrSize,
-                      backgroundColor: Colors.white,
-                      errorCorrectionLevel: QrErrorCorrectLevel.M,
-                      padding: const EdgeInsets.all(8),
-                    ),
-                  ),
+                    );
+                  },
                 ),
               ),
-              if (kDebugMode)
-                const Padding(
-                  padding: EdgeInsets.only(top: 8),
-                  child: Text(
-                    'Long-press QR to copy data',
-                    style: TextStyle(color: Colors.white38, fontSize: 10),
-                  ),
-                ),
-
-              const SizedBox(height: 32),
-
-              // Instruction Text
-              Text(
-                'Scan to connect with me',
-                style: theme.textTheme.titleMedium?.copyWith(
-                  color: theme.colorScheme.onSurface.withOpacity(0.8),
-                ),
-                textAlign: TextAlign.center,
+            ),
+            // Floating close button (top-left)
+            Positioned(
+              top: MediaQuery.of(context).padding.top + 8,
+              left: 8,
+              child: IconButton(
+                icon: const Icon(Icons.close, color: AppColors.textPrimary),
+                onPressed: widget.onClose,
               ),
-
-              const SizedBox(height: 24),
-
-              // PeerID Card
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 20,
-                  vertical: 16,
-                ),
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.surfaceVariant.withOpacity(0.5),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: theme.colorScheme.outline.withOpacity(0.2),
-                  ),
-                ),
-                child: Column(
-                  children: [
-                    Text(
-                      _truncatePeerId(peerId),
-                      style: theme.textTheme.bodyLarge?.copyWith(
-                        fontFamily: 'monospace',
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Your Peer ID',
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSurface.withOpacity(0.6),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-
-              const SizedBox(height: 32),
-
-              // Share Button (conditional)
-              if (onShare != null) ...[
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    onPressed: onShare,
-                    icon: const Icon(Icons.share),
-                    label: const Text('Share QR Code'),
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-
-              const SizedBox(height: 24),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );

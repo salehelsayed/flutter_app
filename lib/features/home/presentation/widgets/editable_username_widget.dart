@@ -96,8 +96,7 @@ class _EditableUsernameWidgetState extends State<EditableUsernameWidget> {
               fontWeight: FontWeight.w600,
             ),
           ),
-          SizedBox(
-            width: 150,
+          Flexible(
             child: TextField(
               controller: _controller,
               focusNode: _focusNode,
@@ -136,12 +135,15 @@ class _EditableUsernameWidgetState extends State<EditableUsernameWidget> {
               fontWeight: FontWeight.w400,
             ),
           ),
-          Text(
-            '@${widget.username}',
-            style: const TextStyle(
-              color: AppColors.textPrimary,
-              fontSize: 15,
-              fontWeight: FontWeight.w600,
+          Flexible(
+            child: Text(
+              '@${widget.username}',
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: AppColors.textPrimary,
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
           const SizedBox(width: 8),

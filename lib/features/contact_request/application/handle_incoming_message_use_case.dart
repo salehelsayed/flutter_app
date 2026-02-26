@@ -19,6 +19,9 @@ enum HandleMessageResult {
   /// Sender is already a contact.
   alreadyContact,
 
+  /// Existing contact's ML-KEM key was updated from verified payload.
+  contactKeyUpdated,
+
   /// Not a contact request message (regular chat).
   regularMessage,
 
@@ -164,9 +167,26 @@ Future<(HandleMessageResult, ContactRequestModel?)> handleIncomingMessage({
     return (HandleMessageResult.invalidMessage, null);
   }
 
-  // 8. Check if already a contact
+  // 8. Check if already a contact (and update ML-KEM key if missing)
   final isContact = await contactRepo.contactExists(peerId);
   if (isContact) {
+    final mlkemFromPayload = payload['mlkem'] as String?;
+    final existingContact = await contactRepo.getContact(peerId);
+
+    if (existingContact != null &&
+        existingContact.mlKemPublicKey == null &&
+        mlkemFromPayload != null) {
+      await contactRepo.addContact(
+        existingContact.copyWith(mlKemPublicKey: mlkemFromPayload),
+      );
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONTACT_REQUEST_KEY_UPDATED',
+        details: {'peerId': peerIdPrefix},
+      );
+      return (HandleMessageResult.contactKeyUpdated, null);
+    }
+
     emitFlowEvent(
       layer: 'FL',
       event: 'CONTACT_REQUEST_ALREADY_CONTACT',

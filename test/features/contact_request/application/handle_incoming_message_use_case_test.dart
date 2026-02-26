@@ -75,18 +75,19 @@ class _FakeContactRequestRepo implements ContactRequestRepository {
 }
 
 class _FakeContactRepo implements ContactRepository {
-  final Set<String> _contacts = {};
+  final Map<String, ContactModel> _contacts = {};
 
   @override
   Future<void> addContact(ContactModel contact) async {
-    _contacts.add(contact.peerId);
+    _contacts[contact.peerId] = contact;
   }
 
   @override
-  Future<ContactModel?> getContact(String peerId) async => null;
+  Future<ContactModel?> getContact(String peerId) async => _contacts[peerId];
 
   @override
-  Future<List<ContactModel>> getAllContacts() async => [];
+  Future<List<ContactModel>> getAllContacts() async =>
+      _contacts.values.toList();
 
   @override
   Future<void> deleteContact(String peerId) async {
@@ -95,7 +96,7 @@ class _FakeContactRepo implements ContactRepository {
 
   @override
   Future<bool> contactExists(String peerId) async =>
-      _contacts.contains(peerId);
+      _contacts.containsKey(peerId);
 
   @override
   Future<int> getContactCount() async => _contacts.length;
@@ -286,7 +287,15 @@ void main() {
   });
 
   test('alreadyContact: sender is already a contact', () async {
-    contactRepo._contacts.add(_senderPeerId);
+    contactRepo._contacts[_senderPeerId] = ContactModel(
+      peerId: _senderPeerId,
+      publicKey: 'senderPublicKey',
+      rendezvous: '/dns4/mknoun.xyz/tcp/4001/wss/p2p/relay',
+      username: 'Alice',
+      signature: 'sig',
+      scannedAt: DateTime.now().toIso8601String(),
+      mlKemPublicKey: 'existingKey',
+    );
     final payload = _validPayload();
     final message = _makeChatMessage(_contactRequestMessage(payload));
 
@@ -342,5 +351,123 @@ void main() {
 
     expect(result, equals(HandleMessageResult.contactRequest));
     expect(request!.mlKemPublicKey, equals('senderMlKemPublicKey'));
+  });
+
+  test('contactKeyUpdated: contact has no key but payload has one', () async {
+    contactRepo._contacts[_senderPeerId] = ContactModel(
+      peerId: _senderPeerId,
+      publicKey: 'senderPublicKey',
+      rendezvous: '/dns4/mknoun.xyz/tcp/4001/wss/p2p/relay',
+      username: 'Alice',
+      signature: 'sig',
+      scannedAt: DateTime.now().toIso8601String(),
+      mlKemPublicKey: null,
+    );
+
+    final payload = _validPayload();
+    payload['mlkem'] = 'senderMlKemPub';
+    final message = _makeChatMessage(_contactRequestMessage(payload));
+
+    final (result, request) = await handleIncomingMessage(
+      message: message,
+      bridge: bridge,
+      requestRepo: requestRepo,
+      contactRepo: contactRepo,
+      ownPeerId: _ownPeerId,
+    );
+
+    expect(result, equals(HandleMessageResult.contactKeyUpdated));
+    expect(request, isNull);
+
+    // Verify the contact was updated with the ML-KEM key
+    final updated = await contactRepo.getContact(_senderPeerId);
+    expect(updated!.mlKemPublicKey, equals('senderMlKemPub'));
+  });
+
+  test('alreadyContact: contact already has a key, no overwrite', () async {
+    contactRepo._contacts[_senderPeerId] = ContactModel(
+      peerId: _senderPeerId,
+      publicKey: 'senderPublicKey',
+      rendezvous: '/dns4/mknoun.xyz/tcp/4001/wss/p2p/relay',
+      username: 'Alice',
+      signature: 'sig',
+      scannedAt: DateTime.now().toIso8601String(),
+      mlKemPublicKey: 'existingKey',
+    );
+
+    final payload = _validPayload();
+    payload['mlkem'] = 'newKey';
+    final message = _makeChatMessage(_contactRequestMessage(payload));
+
+    final (result, _) = await handleIncomingMessage(
+      message: message,
+      bridge: bridge,
+      requestRepo: requestRepo,
+      contactRepo: contactRepo,
+      ownPeerId: _ownPeerId,
+    );
+
+    expect(result, equals(HandleMessageResult.alreadyContact));
+
+    // Key unchanged
+    final contact = await contactRepo.getContact(_senderPeerId);
+    expect(contact!.mlKemPublicKey, equals('existingKey'));
+  });
+
+  test('alreadyContact: payload has no mlkem field, no update', () async {
+    contactRepo._contacts[_senderPeerId] = ContactModel(
+      peerId: _senderPeerId,
+      publicKey: 'senderPublicKey',
+      rendezvous: '/dns4/mknoun.xyz/tcp/4001/wss/p2p/relay',
+      username: 'Alice',
+      signature: 'sig',
+      scannedAt: DateTime.now().toIso8601String(),
+      mlKemPublicKey: null,
+    );
+
+    final payload = _validPayload();
+    // No 'mlkem' key in payload
+    final message = _makeChatMessage(_contactRequestMessage(payload));
+
+    final (result, _) = await handleIncomingMessage(
+      message: message,
+      bridge: bridge,
+      requestRepo: requestRepo,
+      contactRepo: contactRepo,
+      ownPeerId: _ownPeerId,
+    );
+
+    expect(result, equals(HandleMessageResult.alreadyContact));
+
+    // Key still null
+    final contact = await contactRepo.getContact(_senderPeerId);
+    expect(contact!.mlKemPublicKey, isNull);
+  });
+
+  test('contactKeyUpdated: returned ContactRequestModel is null', () async {
+    contactRepo._contacts[_senderPeerId] = ContactModel(
+      peerId: _senderPeerId,
+      publicKey: 'senderPublicKey',
+      rendezvous: '/dns4/mknoun.xyz/tcp/4001/wss/p2p/relay',
+      username: 'Alice',
+      signature: 'sig',
+      scannedAt: DateTime.now().toIso8601String(),
+      mlKemPublicKey: null,
+    );
+
+    final payload = _validPayload();
+    payload['mlkem'] = 'senderMlKemPub';
+    final message = _makeChatMessage(_contactRequestMessage(payload));
+
+    final (result, request) = await handleIncomingMessage(
+      message: message,
+      bridge: bridge,
+      requestRepo: requestRepo,
+      contactRepo: contactRepo,
+      ownPeerId: _ownPeerId,
+    );
+
+    expect(result, equals(HandleMessageResult.contactKeyUpdated));
+    expect(request, isNull);
   });
 }

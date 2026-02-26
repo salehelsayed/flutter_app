@@ -1,10 +1,12 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contact_request/application/handle_incoming_message_use_case.dart';
 import 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart';
 import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository.dart';
+import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 
@@ -21,6 +23,7 @@ class ContactRequestListener {
 
   StreamSubscription<ChatMessage>? _subscription;
   final _requestController = StreamController<ContactRequestModel>.broadcast();
+  final _contactKeyUpdatedController = StreamController<ContactModel>.broadcast();
 
   ContactRequestListener({
     required this.contactRequestStream,
@@ -32,6 +35,10 @@ class ContactRequestListener {
 
   /// Stream of new contact requests for the UI to listen to.
   Stream<ContactRequestModel> get requestStream => _requestController.stream;
+
+  /// Stream of contacts whose ML-KEM key was updated from a verified payload.
+  Stream<ContactModel> get contactKeyUpdatedStream =>
+      _contactKeyUpdatedController.stream;
 
   /// Starts listening for incoming P2P messages.
   void start() {
@@ -72,6 +79,7 @@ class ContactRequestListener {
   void dispose() {
     stop();
     _requestController.close();
+    _contactKeyUpdatedController.close();
   }
 
   Future<void> _onMessage(ChatMessage message) async {
@@ -99,6 +107,32 @@ class ContactRequestListener {
         );
 
         _requestController.add(request);
+      } else if (result == HandleMessageResult.contactKeyUpdated) {
+        // Extract peerId from payload (message.from may be 'unknown').
+        String? peerId;
+        try {
+          final json = jsonDecode(message.content) as Map<String, dynamic>;
+          final payload = json['payload'] as Map<String, dynamic>?;
+          peerId = payload?['ns'] as String?;
+        } catch (_) {}
+        peerId ??= message.from;
+
+        final peerPrefix = peerId.length > 10
+            ? peerId.substring(0, 10)
+            : peerId;
+
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'CONTACT_REQUEST_LISTENER_KEY_UPDATED',
+          details: {'peerId': peerPrefix},
+        );
+
+        // Broadcast the updated contact so UI screens refresh their
+        // cached copy (e.g. ConversationWired picks up the new ML-KEM key).
+        final updatedContact = await contactRepo.getContact(peerId);
+        if (updatedContact != null) {
+          _contactKeyUpdatedController.add(updatedContact);
+        }
       }
     } catch (e) {
       emitFlowEvent(

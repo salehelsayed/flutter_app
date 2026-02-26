@@ -36,9 +36,7 @@ void main() {
 
     testWidgets('onTapDown called on long press start', (tester) async {
       var called = false;
-      await tester.pumpWidget(buildTestWidget(
-        onTapDown: () => called = true,
-      ));
+      await tester.pumpWidget(buildTestWidget(onTapDown: () => called = true));
 
       final gesture = await tester.startGesture(
         tester.getCenter(find.byType(VoiceRecordButton)),
@@ -52,10 +50,14 @@ void main() {
     testWidgets('onTapUp called on long press end', (tester) async {
       var downCalled = false;
       var upCalled = false;
-      await tester.pumpWidget(buildTestWidget(
-        onTapDown: () => downCalled = true,
-        onTapUp: () => upCalled = true,
-      ));
+      var cancelCalled = false;
+      await tester.pumpWidget(
+        buildTestWidget(
+          onTapDown: () => downCalled = true,
+          onTapUp: () => upCalled = true,
+          onTapCancel: () => cancelCalled = true,
+        ),
+      );
 
       // Start long press
       final gesture = await tester.startGesture(
@@ -68,14 +70,44 @@ void main() {
       await gesture.up();
       await tester.pump();
       expect(upCalled, true);
+      expect(cancelCalled, false);
     });
 
-    testWidgets('onTapCancel called when drag exits button bounds',
-        (tester) async {
+    testWidgets('drag-left cancel prevents send on release', (tester) async {
+      var downCalled = false;
+      var upCalled = false;
       var cancelCalled = false;
-      await tester.pumpWidget(buildTestWidget(
-        onTapCancel: () => cancelCalled = true,
-      ));
+      await tester.pumpWidget(
+        buildTestWidget(
+          onTapDown: () => downCalled = true,
+          onTapUp: () => upCalled = true,
+          onTapCancel: () => cancelCalled = true,
+        ),
+      );
+
+      final center = tester.getCenter(find.byType(VoiceRecordButton));
+      final gesture = await tester.startGesture(center);
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(downCalled, true);
+
+      // Exceed cancel threshold.
+      await gesture.moveBy(const Offset(-120, 0));
+      await tester.pump();
+      expect(cancelCalled, true);
+
+      // Releasing should not send after cancel.
+      await gesture.up();
+      await tester.pump();
+      expect(upCalled, false);
+    });
+
+    testWidgets('onTapCancel called when drag exits button bounds', (
+      tester,
+    ) async {
+      var cancelCalled = false;
+      await tester.pumpWidget(
+        buildTestWidget(onTapCancel: () => cancelCalled = true),
+      );
 
       final center = tester.getCenter(find.byType(VoiceRecordButton));
       final gesture = await tester.startGesture(center);

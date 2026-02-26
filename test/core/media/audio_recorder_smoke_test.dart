@@ -1,15 +1,18 @@
 /// Smoke test for [RecordAudioRecorderService] on a real device.
 ///
 /// Requires a real device with microphone access — skipped in CI.
-/// Run with: flutter test test/core/media/audio_recorder_smoke_test.dart -d <device>
+/// Run with: flutter test test/core/media/audio_recorder_smoke_test.dart -d deviceId
 @Tags(['device'])
 library;
 
 import 'dart:io';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/media/record_audio_recorder_service.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   group('RecordAudioRecorderService smoke', () {
     late RecordAudioRecorderService recorder;
 
@@ -22,7 +25,7 @@ void main() {
     });
 
     test('records audio and produces a valid .m4a file', () async {
-      final hasPermission = await recorder.hasPermission();
+      final hasPermission = await _safeHasPermission(recorder);
       if (!hasPermission) {
         // Skip on CI / devices without mic permission
         return;
@@ -50,7 +53,7 @@ void main() {
     });
 
     test('cancel discards the recording file', () async {
-      final hasPermission = await recorder.hasPermission();
+      final hasPermission = await _safeHasPermission(recorder);
       if (!hasPermission) return;
 
       await recorder.start(outputPath: '');
@@ -63,4 +66,13 @@ void main() {
       // File should have been cleaned up by cancel()
     });
   });
+}
+
+Future<bool> _safeHasPermission(RecordAudioRecorderService recorder) async {
+  try {
+    return await recorder.hasPermission();
+  } on MissingPluginException {
+    // Plugin isn't available in this test harness.
+    return false;
+  }
 }
