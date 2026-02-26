@@ -1,17 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/amplitude_bars.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/recording_overlay.dart';
 
 void main() {
   Widget buildTestWidget({
     Duration elapsed = Duration.zero,
     VoidCallback? onCancel,
+    List<double> amplitudeValues = const [],
   }) {
     return MaterialApp(
       home: Scaffold(
         body: RecordingOverlay(
           elapsed: elapsed,
           onCancel: onCancel ?? () {},
+          amplitudeValues: amplitudeValues,
         ),
       ),
     );
@@ -64,6 +67,43 @@ void main() {
         elapsed: const Duration(minutes: 2, seconds: 35),
       ));
       expect(find.text('2:35'), findsOneWidget);
+    });
+
+    testWidgets('renders AmplitudeBars when amplitudeValues provided',
+        (tester) async {
+      await tester.pumpWidget(buildTestWidget(
+        amplitudeValues: [0.1, 0.5, 0.8, 0.3],
+      ));
+      expect(find.byType(AmplitudeBars), findsOneWidget);
+    });
+
+    testWidgets('renders AmplitudeBars even with empty values',
+        (tester) async {
+      await tester.pumpWidget(buildTestWidget());
+      expect(find.byType(AmplitudeBars), findsOneWidget);
+    });
+
+    testWidgets('red dot and cancel hint still present with amplitude bars',
+        (tester) async {
+      await tester.pumpWidget(buildTestWidget(
+        elapsed: const Duration(seconds: 7),
+        amplitudeValues: [0.2, 0.4, 0.6],
+      ));
+
+      // Red dot still there
+      final redDot = find.byWidgetPredicate(
+        (w) =>
+            w is Container &&
+            w.decoration is BoxDecoration &&
+            (w.decoration as BoxDecoration).color == Colors.red,
+      );
+      expect(redDot, findsOneWidget);
+
+      // Time still there
+      expect(find.text('0:07'), findsOneWidget);
+
+      // Cancel hint still there
+      expect(find.text('Slide to cancel'), findsOneWidget);
     });
   });
 }

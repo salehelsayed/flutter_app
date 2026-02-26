@@ -12,5 +12,6 @@ abstract class AudioRecorderService {
   Future<void> cancel();
   bool get isRecording;
   Stream<Duration> get durationStream;
+  Stream<double> get amplitudeStream;
   Future<void> dispose();
 }

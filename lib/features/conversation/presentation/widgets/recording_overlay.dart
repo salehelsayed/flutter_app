@@ -1,16 +1,20 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/amplitude_bars.dart';
 
 /// Overlay shown above the compose area during active recording.
 ///
-/// Displays a red recording indicator, elapsed time, and "Slide to cancel" hint.
+/// Displays a red recording indicator, elapsed time, amplitude bars,
+/// and "Slide to cancel" hint.
 class RecordingOverlay extends StatelessWidget {
   final Duration elapsed;
   final VoidCallback onCancel;
+  final List<double> amplitudeValues;
 
   const RecordingOverlay({
     super.key,
     required this.elapsed,
     required this.onCancel,
+    this.amplitudeValues = const [],
   });
 
   String _formatDuration(Duration d) {
@@ -49,7 +53,12 @@ class RecordingOverlay extends StatelessWidget {
               fontFeatures: [FontFeature.tabularFigures()],
             ),
           ),
-          const Spacer(),
+          Expanded(
+            child: SizedBox(
+              height: 24,
+              child: AmplitudeBars(values: amplitudeValues),
+            ),
+          ),
           // Slide to cancel hint
           GestureDetector(
             onTap: onCancel,

@@ -11,12 +11,16 @@ class FakeAudioRecorderService implements AudioRecorderService {
   bool shouldFailStart = false;
   final List<String> deletedPaths = [];
   final _durationController = StreamController<Duration>.broadcast();
+  final _amplitudeController = StreamController<double>.broadcast();
 
   @override
   bool get isRecording => _isRecording;
 
   @override
   Stream<Duration> get durationStream => _durationController.stream;
+
+  @override
+  Stream<double> get amplitudeStream => _amplitudeController.stream;
 
   @override
   Future<bool> hasPermission() async => permissionGranted;
@@ -67,8 +71,14 @@ class FakeAudioRecorderService implements AudioRecorderService {
     _durationController.add(duration);
   }
 
+  /// Manually emit a normalized amplitude value for testing.
+  void emitAmplitude(double value) {
+    _amplitudeController.add(value);
+  }
+
   @override
   Future<void> dispose() async {
     await _durationController.close();
+    await _amplitudeController.close();
   }
 }

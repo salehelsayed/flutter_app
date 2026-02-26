@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_screen.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/attachment_preview_strip.dart';
 
@@ -49,6 +50,7 @@ void main() {
     String text = 'Hello!',
     String timestamp = '2026-02-09T15:30:00.000Z',
     String status = 'delivered',
+    List<MediaAttachment> media = const [],
   }) {
     return ConversationMessage(
       id: id,
@@ -61,6 +63,7 @@ void main() {
       status: status,
       isIncoming: isIncoming,
       createdAt: '2026-02-09T15:30:01.000Z',
+      media: media,
     );
   }
 
@@ -83,11 +86,11 @@ void main() {
     });
 
     testWidgets('shows letter cards when messages present', (tester) async {
-      await tester.pumpWidget(buildTestWidget(
-        messages: [
-          makeMessage(id: 'msg-1', text: 'First message'),
-        ],
-      ));
+      await tester.pumpWidget(
+        buildTestWidget(
+          messages: [makeMessage(id: 'msg-1', text: 'First message')],
+        ),
+      );
       await pumpFrames(tester);
 
       expect(find.text('First message'), findsOneWidget);
@@ -105,9 +108,7 @@ void main() {
     });
 
     testWidgets('compose area visible with messages too', (tester) async {
-      await tester.pumpWidget(buildTestWidget(
-        messages: [makeMessage()],
-      ));
+      await tester.pumpWidget(buildTestWidget(messages: [makeMessage()]));
       await pumpFrames(tester);
 
       expect(find.text('Write something...'), findsOneWidget);
@@ -120,22 +121,24 @@ void main() {
       expect(find.text('Alice'), findsOneWidget);
     });
 
-    testWidgets('shows origin marker when messages present and no more older', (tester) async {
-      await tester.pumpWidget(buildTestWidget(
-        messages: [makeMessage()],
-        hasMoreOlderMessages: false,
-      ));
+    testWidgets('shows origin marker when messages present and no more older', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        buildTestWidget(messages: [makeMessage()], hasMoreOlderMessages: false),
+      );
       await pumpFrames(tester);
 
       // Compact origin marker shows "Connected!" text
       expect(find.text('Connected!'), findsWidgets);
     });
 
-    testWidgets('hides origin marker when hasMoreOlderMessages is true', (tester) async {
-      await tester.pumpWidget(buildTestWidget(
-        messages: [makeMessage()],
-        hasMoreOlderMessages: true,
-      ));
+    testWidgets('hides origin marker when hasMoreOlderMessages is true', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        buildTestWidget(messages: [makeMessage()], hasMoreOlderMessages: true),
+      );
       await pumpFrames(tester);
 
       // Origin marker should not appear — more messages above
@@ -143,17 +146,67 @@ void main() {
       expect(find.text('Connected!'), findsNothing);
     });
 
-    testWidgets('shows loading indicator when isLoadingMore is true', (tester) async {
-      await tester.pumpWidget(buildTestWidget(
-        messages: [makeMessage()],
-        isLoadingMore: true,
-        hasMoreOlderMessages: true,
-      ));
+    testWidgets('shows loading indicator when isLoadingMore is true', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        buildTestWidget(
+          messages: [makeMessage()],
+          isLoadingMore: true,
+          hasMoreOlderMessages: true,
+        ),
+      );
       await pumpFrames(tester);
 
       expect(find.byType(CircularProgressIndicator), findsOneWidget);
     });
 
+    testWidgets('keeps stable message/audio keys across list updates', (
+      tester,
+    ) async {
+      MediaAttachment makeAudio(String id) => MediaAttachment(
+        id: id,
+        messageId: '',
+        mime: 'audio/mp4',
+        size: 1234,
+        mediaType: 'audio',
+        durationMs: 1000,
+        localPath: '/tmp/$id.m4a',
+        downloadStatus: 'done',
+        createdAt: '2026-02-09T15:30:00.000Z',
+      );
+
+      final first = makeMessage(
+        id: 'msg-1',
+        isIncoming: false,
+        text: '',
+        media: [makeAudio('aud-1')],
+      );
+      final second = makeMessage(
+        id: 'msg-2',
+        isIncoming: false,
+        text: '',
+        media: [makeAudio('aud-2')],
+      );
+
+      await tester.pumpWidget(
+        buildTestWidget(messages: [first], initialLoadDone: true),
+      );
+      await pumpFrames(tester);
+
+      expect(find.byKey(const ValueKey('msg-msg-1')), findsOneWidget);
+      expect(find.byKey(const ValueKey('aud-1')), findsOneWidget);
+
+      await tester.pumpWidget(
+        buildTestWidget(messages: [first, second], initialLoadDone: true),
+      );
+      await pumpFrames(tester);
+
+      expect(find.byKey(const ValueKey('msg-msg-1')), findsOneWidget);
+      expect(find.byKey(const ValueKey('msg-msg-2')), findsOneWidget);
+      expect(find.byKey(const ValueKey('aud-1')), findsOneWidget);
+      expect(find.byKey(const ValueKey('aud-2')), findsOneWidget);
+    });
   });
 
   group('ConversationScreen attachments', () {
@@ -176,47 +229,53 @@ void main() {
       }
     });
 
-    testWidgets('shows AttachmentPreviewStrip when pendingAttachments not empty',
-        (tester) async {
-      await tester.pumpWidget(buildTestWidget(
-        messages: [makeMessage()],
-        pendingAttachments: testFiles,
-        onRemoveAttachment: (_) {},
-        initialLoadDone: true,
-      ));
-      await pumpFrames(tester);
+    testWidgets(
+      'shows AttachmentPreviewStrip when pendingAttachments not empty',
+      (tester) async {
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: [makeMessage()],
+            pendingAttachments: testFiles,
+            onRemoveAttachment: (_) {},
+            initialLoadDone: true,
+          ),
+        );
+        await pumpFrames(tester);
 
-      expect(find.byType(AttachmentPreviewStrip), findsOneWidget);
-      expect(find.byType(Image), findsNWidgets(2));
-    });
+        expect(find.byType(AttachmentPreviewStrip), findsOneWidget);
+        expect(find.byType(Image), findsNWidgets(2));
+      },
+    );
 
-    testWidgets('hides AttachmentPreviewStrip when pendingAttachments is empty',
-        (tester) async {
-      await tester.pumpWidget(buildTestWidget(
-        pendingAttachments: [],
-      ));
-      await tester.pump();
+    testWidgets(
+      'hides AttachmentPreviewStrip when pendingAttachments is empty',
+      (tester) async {
+        await tester.pumpWidget(buildTestWidget(pendingAttachments: []));
+        await tester.pump();
 
-      expect(find.byType(AttachmentPreviewStrip), findsNothing);
-    });
+        expect(find.byType(AttachmentPreviewStrip), findsNothing);
+      },
+    );
 
-    testWidgets('hides preview strip when blocked even if attachments exist',
-        (tester) async {
-      await tester.pumpWidget(buildTestWidget(
-        pendingAttachments: testFiles,
-        isBlocked: true,
-      ));
+    testWidgets('hides preview strip when blocked even if attachments exist', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        buildTestWidget(pendingAttachments: testFiles, isBlocked: true),
+      );
       await tester.pump();
 
       expect(find.byType(AttachmentPreviewStrip), findsNothing);
     });
 
     testWidgets('passes hasAttachments to ComposeArea', (tester) async {
-      await tester.pumpWidget(buildTestWidget(
-        messages: [makeMessage()],
-        pendingAttachments: testFiles,
-        initialLoadDone: true,
-      ));
+      await tester.pumpWidget(
+        buildTestWidget(
+          messages: [makeMessage()],
+          pendingAttachments: testFiles,
+          initialLoadDone: true,
+        ),
+      );
       // Use pumpFrames because AmbientBackground has repeating animation
       await pumpFrames(tester);
       await pumpFrames(tester);
@@ -228,12 +287,13 @@ void main() {
       expect(fullOpacity, isNotEmpty);
     });
 
-    testWidgets('onAttach callback is passed through to ComposeArea',
-        (tester) async {
+    testWidgets('onAttach callback is passed through to ComposeArea', (
+      tester,
+    ) async {
       var attachCalled = false;
-      await tester.pumpWidget(buildTestWidget(
-        onAttach: () => attachCalled = true,
-      ));
+      await tester.pumpWidget(
+        buildTestWidget(onAttach: () => attachCalled = true),
+      );
       await tester.pump();
 
       await tester.tap(find.byIcon(Icons.add_circle_outline));

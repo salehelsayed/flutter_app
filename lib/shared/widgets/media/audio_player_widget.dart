@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
@@ -20,6 +22,8 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget> {
   Duration _position = Duration.zero;
   Duration _duration = Duration.zero;
   bool _isLoaded = false;
+  String? _loadedPath;
+  int _loadVersion = 0;
 
   bool get _isAvailable =>
       widget.attachment.localPath != null &&
@@ -59,19 +63,70 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget> {
   }
 
   Future<void> _loadAudio() async {
+    final path = widget.attachment.localPath;
+    if (path == null || !_isAvailable) return;
+    if (_isLoaded && _loadedPath == path) return;
+    final loadVersion = ++_loadVersion;
+
     try {
-      await _player.setFilePath(widget.attachment.localPath!);
-      if (mounted) setState(() => _isLoaded = true);
+      await _player.setFilePath(path);
+      if (!mounted || loadVersion != _loadVersion) return;
+      if (mounted) {
+        setState(() {
+          _isLoaded = true;
+          _loadedPath = path;
+          _position = Duration.zero;
+        });
+      }
     } catch (_) {
       // File may be corrupted or missing — stay in disabled state
+      if (!mounted || loadVersion != _loadVersion) return;
+      if (mounted) {
+        setState(() {
+          _isLoaded = false;
+          _loadedPath = null;
+        });
+      }
     }
   }
 
   @override
   void didUpdateWidget(AudioPlayerWidget oldWidget) {
     super.didUpdateWidget(oldWidget);
+    final sourceChanged =
+        oldWidget.attachment.id != widget.attachment.id ||
+        oldWidget.attachment.localPath != widget.attachment.localPath ||
+        oldWidget.attachment.downloadStatus != widget.attachment.downloadStatus;
+
+    if (sourceChanged) {
+      unawaited(_reloadAudioForNewAttachment());
+      return;
+    }
+
     if (!_isLoaded && _isAvailable) {
       _loadAudio();
+    }
+  }
+
+  Future<void> _reloadAudioForNewAttachment() async {
+    _loadVersion++;
+
+    try {
+      await _player.stop();
+    } catch (_) {}
+
+    if (mounted) {
+      setState(() {
+        _isPlaying = false;
+        _position = Duration.zero;
+        _duration = Duration.zero;
+        _isLoaded = false;
+        _loadedPath = null;
+      });
+    }
+
+    if (_isAvailable) {
+      await _loadAudio();
     }
   }
 
@@ -92,7 +147,9 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget> {
 
   void _onSeek(double value) {
     if (!_isLoaded || _duration.inMilliseconds == 0) return;
-    _player.seek(Duration(milliseconds: (value * _duration.inMilliseconds).round()));
+    _player.seek(
+      Duration(milliseconds: (value * _duration.inMilliseconds).round()),
+    );
   }
 
   @override
@@ -104,8 +161,8 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget> {
 
     final durationText = _isAvailable && _isLoaded
         ? (_isPlaying
-            ? '${formatDurationMs(_position.inMilliseconds)} / ${formatDurationMs(totalMs)}'
-            : formatDurationMs(totalMs))
+              ? '${formatDurationMs(_position.inMilliseconds)} / ${formatDurationMs(totalMs)}'
+              : formatDurationMs(totalMs))
         : '--:--';
 
     final hasWaveform = widget.attachment.waveform != null;
@@ -148,18 +205,23 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget> {
                     data: SliderThemeData(
                       trackHeight: 3,
                       activeTrackColor: const Color(0xFF4ecdc4),
-                      inactiveTrackColor:
-                          const Color.fromRGBO(255, 255, 255, 0.15),
+                      inactiveTrackColor: const Color.fromRGBO(
+                        255,
+                        255,
+                        255,
+                        0.15,
+                      ),
                       thumbColor: const Color(0xFF4ecdc4),
-                      thumbShape:
-                          const RoundSliderThumbShape(enabledThumbRadius: 5),
-                      overlayShape:
-                          const RoundSliderOverlayShape(overlayRadius: 10),
+                      thumbShape: const RoundSliderThumbShape(
+                        enabledThumbRadius: 5,
+                      ),
+                      overlayShape: const RoundSliderOverlayShape(
+                        overlayRadius: 10,
+                      ),
                     ),
                     child: Slider(
                       value: progress.clamp(0.0, 1.0),
-                      onChanged:
-                          _isAvailable && _isLoaded ? _onSeek : null,
+                      onChanged: _isAvailable && _isLoaded ? _onSeek : null,
                     ),
                   ),
           ),

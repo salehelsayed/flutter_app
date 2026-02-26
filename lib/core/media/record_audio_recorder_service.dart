@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
+import 'package:flutter_app/core/media/normalize_amplitude.dart';
 import 'package:flutter_app/features/conversation/domain/models/audio_recording.dart';
 
 /// Production implementation of [AudioRecorderService] using the `record` package.
@@ -20,12 +21,17 @@ class RecordAudioRecorderService implements AudioRecorderService {
   Timer? _ticker;
   Timer? _maxDurationTimer;
   final _durationController = StreamController<Duration>.broadcast();
+  final _amplitudeController = StreamController<double>.broadcast();
+  StreamSubscription<Amplitude>? _amplitudeBridgeSub;
 
   @override
   bool get isRecording => _isRecording;
 
   @override
   Stream<Duration> get durationStream => _durationController.stream;
+
+  @override
+  Stream<double> get amplitudeStream => _amplitudeController.stream;
 
   @override
   Future<bool> hasPermission() => _recorder.hasPermission();
@@ -36,7 +42,19 @@ class RecordAudioRecorderService implements AudioRecorderService {
   @override
   Future<void> start({required String? outputPath}) async {
     if (_isRecording) {
-      throw StateError('Already recording');
+      // Force-stop stale recording so we can start fresh.
+      _ticker?.cancel();
+      _maxDurationTimer?.cancel();
+      _startTime = null;
+      try {
+        await _recorder.stop();
+      } catch (_) {}
+      if (_currentOutputPath != null) {
+        final old = File(_currentOutputPath!);
+        if (await old.exists()) await old.delete();
+      }
+      _currentOutputPath = null;
+      _isRecording = false;
     }
 
     final path = (outputPath == null || outputPath.isEmpty)
@@ -55,6 +73,7 @@ class RecordAudioRecorderService implements AudioRecorderService {
 
     _isRecording = true;
     _startTime = DateTime.now();
+    _ensureAmplitudeStreamBridge();
 
     _ticker = Timer.periodic(_tickInterval, (_) {
       if (_startTime != null) {
@@ -98,11 +117,7 @@ class RecordAudioRecorderService implements AudioRecorderService {
     final size = await file.exists() ? await file.length() : 0;
     _currentOutputPath = null;
 
-    return AudioRecording(
-      filePath: path,
-      durationMs: elapsed,
-      sizeBytes: size,
-    );
+    return AudioRecording(filePath: path, durationMs: elapsed, sizeBytes: size);
   }
 
   @override
@@ -127,8 +142,20 @@ class RecordAudioRecorderService implements AudioRecorderService {
   Future<void> dispose() async {
     _ticker?.cancel();
     _maxDurationTimer?.cancel();
+    await _amplitudeBridgeSub?.cancel();
+    _amplitudeBridgeSub = null;
     await _durationController.close();
+    await _amplitudeController.close();
     _recorder.dispose();
+  }
+
+  void _ensureAmplitudeStreamBridge() {
+    if (_amplitudeBridgeSub != null) return;
+    _amplitudeBridgeSub = _recorder.onAmplitudeChanged(_tickInterval).listen((
+      event,
+    ) {
+      _amplitudeController.add(normalizeAmplitude(event.current));
+    });
   }
 
   Future<String> _defaultOutputPath() async {

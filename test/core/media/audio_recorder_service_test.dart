@@ -86,5 +86,35 @@ void main() {
 
       expect(result, isNull);
     });
+
+    test('amplitudeStream emits values when emitAmplitude() called', () async {
+      final values = <double>[];
+      final sub = recorder.amplitudeStream.listen(values.add);
+
+      recorder.emitAmplitude(0.5);
+      recorder.emitAmplitude(0.8);
+
+      await Future<void>.delayed(Duration.zero);
+      expect(values, [0.5, 0.8]);
+
+      await sub.cancel();
+    });
+
+    test('amplitudeStream is a broadcast stream (multi-listener safe)',
+        () async {
+      final values1 = <double>[];
+      final values2 = <double>[];
+      final sub1 = recorder.amplitudeStream.listen(values1.add);
+      final sub2 = recorder.amplitudeStream.listen(values2.add);
+
+      recorder.emitAmplitude(0.3);
+
+      await Future<void>.delayed(Duration.zero);
+      expect(values1, [0.3]);
+      expect(values2, [0.3]);
+
+      await sub1.cancel();
+      await sub2.cancel();
+    });
   });
 }
