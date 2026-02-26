@@ -4,8 +4,10 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -42,6 +44,8 @@ class FirstTimeExperienceWired extends StatefulWidget {
   final MediaFileManager mediaFileManager;
   final ImageProcessor imageProcessor;
   final SecureKeyStore secureKeyStore;
+  final ActiveConversationTracker? conversationTracker;
+  final AudioRecorderService? audioRecorderService;
 
   const FirstTimeExperienceWired({
     super.key,
@@ -57,6 +61,8 @@ class FirstTimeExperienceWired extends StatefulWidget {
     required this.mediaFileManager,
     required this.imageProcessor,
     required this.secureKeyStore,
+    this.conversationTracker,
+    this.audioRecorderService,
   });
 
   @override
@@ -148,6 +154,8 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
             mediaFileManager: widget.mediaFileManager,
             secureKeyStore: widget.secureKeyStore,
             imageProcessor: widget.imageProcessor,
+            conversationTracker: widget.conversationTracker,
+            audioRecorderService: widget.audioRecorderService,
           ),
         ),
       );
@@ -398,6 +406,8 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
           secureKeyStore: widget.secureKeyStore,
           imageProcessor: widget.imageProcessor,
           ownPeerId: _identity!.peerId,
+          conversationTracker: widget.conversationTracker,
+          audioRecorderService: widget.audioRecorderService,
         ),
       ),
     );

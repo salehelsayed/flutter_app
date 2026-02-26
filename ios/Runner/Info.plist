@@ -72,6 +72,8 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>This app needs microphone access to record voice messages</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Discover contacts on your local WiFi network for faster messaging</string>
 	<key>NSBonjourServices</key>

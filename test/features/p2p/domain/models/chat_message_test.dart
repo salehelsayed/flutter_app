@@ -148,5 +148,43 @@ void main() {
         expect(str, contains('true'));
       });
     });
+
+    group('transport contract', () {
+      test('fromJson ignores transport key in JSON', () {
+        final msg = ChatMessage.fromJson({
+          'from': 'peer-a',
+          'to': 'peer-b',
+          'content': 'hello',
+          'timestamp': '2026-01-01T00:00:00.000Z',
+          'isIncoming': true,
+          'transport': 'wifi',
+        });
+        expect(msg.transport, isNull);
+      });
+
+      test('toJson excludes transport', () {
+        final tagged = baseMsg.copyWith(transport: 'relay');
+        final json = tagged.toJson();
+        expect(json.containsKey('transport'), isFalse);
+      });
+
+      test('copyWith sets transport', () {
+        final tagged = baseMsg.copyWith(transport: 'relay');
+        expect(tagged.transport, 'relay');
+      });
+
+      test('copyWith(transport) preserves existing when null passed', () {
+        final tagged = baseMsg.copyWith(transport: 'wifi');
+        final copy = tagged.copyWith(content: 'updated');
+        expect(copy.transport, 'wifi');
+      });
+
+      test('equality ignores transport', () {
+        final wifi = baseMsg.copyWith(transport: 'wifi');
+        final relay = baseMsg.copyWith(transport: 'relay');
+        expect(wifi, equals(relay));
+        expect(wifi.hashCode, equals(relay.hashCode));
+      });
+    });
   });
 }

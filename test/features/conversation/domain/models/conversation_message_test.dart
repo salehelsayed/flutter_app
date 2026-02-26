@@ -156,5 +156,33 @@ void main() {
         expect(copy.text, 'new text');
       });
     });
+
+    group('transport', () {
+      test('toMap includes transport key', () {
+        final withTransport = testMessage.copyWith(transport: 'wifi');
+        final map = withTransport.toMap();
+        expect(map['transport'], 'wifi');
+      });
+
+      test('fromMap reads transport', () {
+        final map = testMessage.toMap();
+        map['transport'] = 'relay';
+        final restored = ConversationMessage.fromMap(map);
+        expect(restored.transport, 'relay');
+      });
+
+      test('null transport round-trip', () {
+        final map = testMessage.toMap();
+        // transport is null by default on testMessage
+        expect(map['transport'], isNull);
+        final restored = ConversationMessage.fromMap(map);
+        expect(restored.transport, isNull);
+      });
+
+      test('copyWith sets transport', () {
+        final tagged = testMessage.copyWith(transport: 'inbox');
+        expect(tagged.transport, 'inbox');
+      });
+    });
   });
 }

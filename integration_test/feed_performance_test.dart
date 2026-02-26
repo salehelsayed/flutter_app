@@ -255,8 +255,7 @@ void _assertThresholds(
   stats.printSummary(label);
 
   if (!stats.hasData) {
-    debugPrint('[$label] No FrameTiming data — skipping assertions');
-    return;
+    fail('[$label] No FrameTiming data collected — cannot validate performance');
   }
 
   expect(stats.average, lessThan(maxAvgMs),

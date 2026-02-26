@@ -56,6 +56,39 @@ Future<Map<String, dynamic>> callP2PNodeStart(
   return response;
 }
 
+/// Calls the bridge to perform a full Stop() + Start() restart of the
+/// libp2p node to recover circuit addresses. This is the correct recovery
+/// path after the app returns from background and the relay connection has
+/// dropped.
+///
+/// A full restart is needed because go-libp2p's AutoRelay does not
+/// reliably re-reserve after disconnection.
+///
+/// Returns: `{ "ok": true }` on success.
+Future<Map<String, dynamic>> callP2PRelayReconnect(Bridge bridge) async {
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'P2P_RELAY_RECONNECT_REQUEST',
+    details: {},
+  );
+
+  final request = {
+    'cmd': 'relay:reconnect',
+    'payload': <String, dynamic>{},
+  };
+
+  final responseJson = await bridge.send(jsonEncode(request));
+  final response = jsonDecode(responseJson) as Map<String, dynamic>;
+
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'P2P_RELAY_RECONNECT_RESPONSE',
+    details: {'ok': response['ok']},
+  );
+
+  return response;
+}
+
 /// Calls the bridge to stop the P2P node.
 ///
 /// Returns: `{ "ok": true, "stopped": true }` on success.

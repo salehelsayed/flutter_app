@@ -454,6 +454,36 @@ func RendezvousDiscover(paramsJSON string) (result string) {
 	})
 }
 
+// --- Relay ---
+
+// RelayReconnect performs a full Stop() + Start() restart of the libp2p
+// node to recover circuit addresses. Use this to recover from background →
+// foreground transitions where the relay connection has dropped.
+// Returns JSON: { "ok": true }
+func RelayReconnect() (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+		}
+	}()
+
+	nodeMu.Lock()
+	n := singletonNode
+	nodeMu.Unlock()
+
+	if n == nil {
+		return errJSON("NOT_INITIALIZED", "call Initialize first")
+	}
+
+	if err := n.ReconnectRelays(); err != nil {
+		return errJSON("RELAY_ERROR", err.Error())
+	}
+
+	return okJSON(map[string]interface{}{
+		"ok": true,
+	})
+}
+
 // --- Peer Operations ---
 
 // DialPeer connects to a peer.

@@ -74,6 +74,10 @@ class GoBridge: NSObject {
         case "rendezvousDiscover":
             runOnBackground({ BridgeRendezvousDiscover(args ?? "") }, result: result)
 
+        // Relay
+        case "relayReconnect":
+            runOnBackground({ BridgeRelayReconnect() }, result: result)
+
         // Peer operations
         case "dialPeer":
             runOnBackground({ BridgeDialPeer(args ?? "") }, result: result)

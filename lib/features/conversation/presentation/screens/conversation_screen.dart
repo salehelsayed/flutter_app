@@ -38,6 +38,11 @@ class ConversationScreen extends StatefulWidget {
   final ValueChanged<int>? onRemoveAttachment;
   final bool isProcessing;
   final double processingProgress;
+  final VoidCallback? onRecordStart;
+  final VoidCallback? onRecordStop;
+  final VoidCallback? onRecordCancel;
+  final bool isRecording;
+  final Duration recordingDuration;
 
   const ConversationScreen({
     super.key,
@@ -61,6 +66,11 @@ class ConversationScreen extends StatefulWidget {
     this.onRemoveAttachment,
     this.isProcessing = false,
     this.processingProgress = 0.0,
+    this.onRecordStart,
+    this.onRecordStop,
+    this.onRecordCancel,
+    this.isRecording = false,
+    this.recordingDuration = Duration.zero,
   });
 
   @override
@@ -123,6 +133,11 @@ class _ConversationScreenState extends State<ConversationScreen> {
               onAttach: widget.onAttach,
               hasAttachments: widget.pendingAttachments.isNotEmpty,
               isProcessing: widget.isProcessing,
+              onRecordStart: widget.onRecordStart,
+              onRecordStop: widget.onRecordStop,
+              onRecordCancel: widget.onRecordCancel,
+              isRecording: widget.isRecording,
+              recordingDuration: widget.recordingDuration,
             ),
         ],
       ),

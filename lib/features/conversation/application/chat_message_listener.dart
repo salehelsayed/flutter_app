@@ -1,7 +1,10 @@
 import 'dart:async';
 
+import 'package:flutter/widgets.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
+import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/application/download_media_use_case.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
@@ -12,6 +15,7 @@ import 'package:flutter_app/features/conversation/domain/models/media_attachment
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
+import 'package:flutter_app/features/push/application/show_notification_use_case.dart';
 
 /// Listener service that monitors P2P messages for chat messages.
 ///
@@ -26,6 +30,9 @@ class ChatMessageListener {
   final Future<String?> Function()? getOwnMlKemSecretKey;
   final MediaAttachmentRepository? mediaAttachmentRepo;
   final MediaFileManager? mediaFileManager;
+  final NotificationService? notificationService;
+  final ActiveConversationTracker? conversationTracker;
+  final AppLifecycleState Function()? getAppLifecycleState;
 
   StreamSubscription<ChatMessage>? _subscription;
   final _messageController = StreamController<ConversationMessage>.broadcast();
@@ -39,6 +46,9 @@ class ChatMessageListener {
     this.getOwnMlKemSecretKey,
     this.mediaAttachmentRepo,
     this.mediaFileManager,
+    this.notificationService,
+    this.conversationTracker,
+    this.getAppLifecycleState,
   });
 
   /// Stream of new incoming chat messages for the UI to listen to.
@@ -219,6 +229,23 @@ class ChatMessageListener {
         );
 
         _messageController.add(conversationMessage);
+
+        // Show local notification (suppressed if viewing this conversation)
+        if (notificationService != null &&
+            conversationTracker != null &&
+            getAppLifecycleState != null) {
+          final username = senderContact?.username ??
+              (updatedContact?.username) ??
+              'Unknown';
+          maybeShowNotification(
+            notificationService: notificationService!,
+            conversationTracker: conversationTracker!,
+            getAppLifecycleState: getAppLifecycleState!,
+            contactPeerId: conversationMessage.contactPeerId,
+            senderUsername: username,
+            messageText: conversationMessage.text,
+          );
+        }
 
         // Fire-and-forget: auto-download media attachments
         if (bridge != null &&

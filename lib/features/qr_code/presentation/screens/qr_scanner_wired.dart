@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/theme/app_colors.dart';
@@ -45,6 +47,8 @@ class QRScannerWired extends StatelessWidget {
   final SecureKeyStore secureKeyStore;
   final ImageProcessor imageProcessor;
   final String ownPeerId;
+  final ActiveConversationTracker? conversationTracker;
+  final AudioRecorderService? audioRecorderService;
 
   const QRScannerWired({
     super.key,
@@ -61,6 +65,8 @@ class QRScannerWired extends StatelessWidget {
     required this.secureKeyStore,
     required this.imageProcessor,
     required this.ownPeerId,
+    this.conversationTracker,
+    this.audioRecorderService,
   });
 
   @override
@@ -262,6 +268,8 @@ class QRScannerWired extends StatelessWidget {
                         mediaFileManager: mediaFileManager,
                         secureKeyStore: secureKeyStore,
                         imageProcessor: imageProcessor,
+                        conversationTracker: conversationTracker,
+                        audioRecorderService: audioRecorderService,
                       ),
                     ),
                     (route) => false,

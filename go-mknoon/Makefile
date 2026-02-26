@@ -1,4 +1,4 @@
-.PHONY: ios android all clean test
+.PHONY: ios android all clean test testpeer
 
 MODULE := github.com/mknoon/go-mknoon
 BIND_PKG := $(MODULE)/bridge
@@ -34,6 +34,9 @@ android:
 
 clean:
 	rm -rf $(IOS_OUT) $(ANDROID_OUT) GoMknoon-sources.jar
+
+testpeer:
+	go build -o bin/testpeer ./cmd/testpeer
 
 test:
 	go test ./...

@@ -32,5 +32,7 @@
 	<string>This app needs camera access to take your profile photo</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>This app needs photo library access to select your profile photo</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>This app needs microphone access to record voice messages</string>
 </dict>
 </plist>

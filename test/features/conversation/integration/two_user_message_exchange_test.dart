@@ -193,6 +193,9 @@ void main() {
         username: 'Stranger',
         network: network,
       );
+      // Stranger has Bob as contact (so V2 encryption works),
+      // but Bob does NOT have stranger (so incoming message is rejected)
+      stranger.addContact(bob);
       stranger.start();
 
       // Stranger sends to Bob

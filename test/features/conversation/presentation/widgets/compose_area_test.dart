@@ -218,4 +218,125 @@ void main() {
       expect(icon.color, const Color.fromRGBO(255, 255, 255, 0.15));
     });
   });
+
+  group('ComposeArea voice recording', () {
+    Widget buildVoiceWidget({
+      ValueChanged<String>? onSend,
+      VoidCallback? onAttach,
+      bool hasAttachments = false,
+      bool isProcessing = false,
+      VoidCallback? onRecordStart,
+      VoidCallback? onRecordStop,
+      VoidCallback? onRecordCancel,
+      bool isRecording = false,
+      Duration recordingDuration = Duration.zero,
+    }) {
+      return MaterialApp(
+        home: Scaffold(
+          body: Column(
+            children: [
+              const Spacer(),
+              ComposeArea(
+                onSend: onSend ?? (_) {},
+                onAttach: onAttach,
+                hasAttachments: hasAttachments,
+                isProcessing: isProcessing,
+                onRecordStart: onRecordStart,
+                onRecordStop: onRecordStop,
+                onRecordCancel: onRecordCancel,
+                isRecording: isRecording,
+                recordingDuration: recordingDuration,
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    testWidgets('mic button visible when text is empty and no attachments',
+        (tester) async {
+      await tester.pumpWidget(buildVoiceWidget(
+        onRecordStart: () {},
+        onRecordStop: () {},
+        onRecordCancel: () {},
+      ));
+
+      expect(find.byIcon(Icons.mic_rounded), findsOneWidget);
+    });
+
+    testWidgets('send button visible when text is non-empty',
+        (tester) async {
+      await tester.pumpWidget(buildVoiceWidget(
+        onRecordStart: () {},
+        onRecordStop: () {},
+        onRecordCancel: () {},
+      ));
+
+      await tester.enterText(find.byType(TextField), 'Hello');
+      await tester.pumpAndSettle();
+
+      expect(find.text('Send'), findsOneWidget);
+      // Mic button should be gone
+      expect(find.byIcon(Icons.mic_rounded), findsNothing);
+    });
+
+    testWidgets('send button visible when hasAttachments is true',
+        (tester) async {
+      await tester.pumpWidget(buildVoiceWidget(
+        hasAttachments: true,
+        onRecordStart: () {},
+        onRecordStop: () {},
+        onRecordCancel: () {},
+      ));
+      await tester.pumpAndSettle();
+
+      // Mic button should not be shown
+      expect(find.byIcon(Icons.mic_rounded), findsNothing);
+    });
+
+    testWidgets('recording overlay appears when isRecording is true',
+        (tester) async {
+      await tester.pumpWidget(buildVoiceWidget(
+        isRecording: true,
+        recordingDuration: const Duration(seconds: 3),
+        onRecordStart: () {},
+        onRecordStop: () {},
+        onRecordCancel: () {},
+      ));
+
+      expect(find.text('0:03'), findsOneWidget);
+      expect(find.text('Slide to cancel'), findsOneWidget);
+    });
+
+    testWidgets('recording overlay disappears when isRecording is false',
+        (tester) async {
+      await tester.pumpWidget(buildVoiceWidget(
+        isRecording: false,
+        onRecordStart: () {},
+        onRecordStop: () {},
+        onRecordCancel: () {},
+      ));
+
+      expect(find.text('Slide to cancel'), findsNothing);
+    });
+
+    testWidgets('text field hidden during recording', (tester) async {
+      await tester.pumpWidget(buildVoiceWidget(
+        isRecording: true,
+        onRecordStart: () {},
+        onRecordStop: () {},
+        onRecordCancel: () {},
+      ));
+
+      // TextField should not be visible (recording overlay replaces it)
+      expect(find.byType(TextField), findsNothing);
+    });
+
+    testWidgets('mic button not shown without onRecordStart callback',
+        (tester) async {
+      await tester.pumpWidget(buildVoiceWidget());
+      // Without onRecordStart, no mic button
+      expect(find.byIcon(Icons.mic_rounded), findsNothing);
+    });
+  });
 }

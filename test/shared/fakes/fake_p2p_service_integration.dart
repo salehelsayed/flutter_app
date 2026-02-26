@@ -29,6 +29,26 @@ class FakeP2PService implements P2PService {
   /// How many times [sendLocalMessage] has been called.
   int localSendCallCount = 0;
 
+  /// Current transport mode for test assertions.
+  /// Can be 'wifi', 'relay', or 'inbox'. Defaults to 'relay'.
+  String transportMode = 'relay';
+
+  /// Peers that we consider "connected" for [isConnectedToPeer].
+  final Set<String> connectedPeers = {};
+
+  /// Whether this node is registered (online) on the network.
+  bool get isOnline => network.hasPeer(peerId);
+
+  /// Simulate a transport switch. Updates [transportMode] and adjusts
+  /// [localPeers] accordingly.
+  void simulateTransportSwitch(String newTransport) {
+    transportMode = newTransport;
+    // When switching away from wifi, clear local peers to reflect reality
+    if (newTransport != 'wifi') {
+      localPeers.clear();
+    }
+  }
+
   FakeP2PService({required this.peerId, required this.network}) {
     network.register(this);
   }
@@ -139,7 +159,7 @@ class FakeP2PService implements P2PService {
   Future<void> performImmediateHealthCheck() async {}
 
   @override
-  bool isConnectedToPeer(String peerId) => false;
+  bool isConnectedToPeer(String peerId) => connectedPeers.contains(peerId);
 
   @override
   bool isLocalPeer(String peerId) => localPeers.contains(peerId);

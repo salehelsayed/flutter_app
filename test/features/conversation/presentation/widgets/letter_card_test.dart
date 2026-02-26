@@ -161,6 +161,14 @@ void main() {
         expect(find.byIcon(Icons.cell_tower), findsNothing);
         expect(find.byIcon(Icons.inbox), findsNothing);
       });
+
+      testWidgets('unrecognized transport shows help_outline icon',
+          (tester) async {
+        await tester.pumpWidget(
+          buildTestWidget(transport: 'carrier_pigeon'),
+        );
+        expect(find.byIcon(Icons.help_outline), findsOneWidget);
+      });
     });
 
     group('URL links', () {
