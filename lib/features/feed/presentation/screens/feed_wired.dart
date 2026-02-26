@@ -15,6 +15,7 @@ import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/settings/application/image_quality_preference_use_cases.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/contact_request/application/accept_and_reciprocate_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/accept_contact_request_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
 import 'package:flutter_app/features/contact_request/application/decline_contact_request_use_case.dart';
@@ -258,10 +259,13 @@ class _FeedWiredState extends State<FeedWired> {
   ) async {
     Navigator.pop(ctx);
 
-    final result = await acceptContactRequest(
+    final result = await acceptAndReciprocateContactRequest(
       requestRepo: widget.contactRequestRepository,
       contactRepo: widget.contactRepository,
       peerId: request.peerId,
+      p2pService: widget.p2pService,
+      identityRepo: widget.repository,
+      bridge: widget.bridge,
     );
 
     if (!mounted) return;

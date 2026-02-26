@@ -8,15 +8,18 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/services/incoming_message_router.dart';
+import 'package:flutter_app/features/contact_request/application/accept_and_reciprocate_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/accept_contact_request_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
 import 'package:flutter_app/features/contact_request/application/decline_contact_request_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/handle_incoming_message_use_case.dart';
 import 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
+import '../../../features/identity/domain/repositories/fake_identity_repository.dart';
 import '../../../shared/fakes/fake_p2p_network.dart';
 import '../../../shared/fakes/fake_p2p_service_integration.dart';
 import '../../../shared/fakes/in_memory_contact_repository.dart';
@@ -79,13 +82,29 @@ void main() {
   late FakeBridge bridge;
   late InMemoryContactRequestRepository requestRepo;
   late InMemoryContactRepository contactRepo;
+  late FakeIdentityRepository identityRepo;
+  late FakeP2PNetwork network;
+  late FakeP2PService p2pService;
 
   setUp(() {
     bridge = FakeBridge(initialResponses: {
       'payload.verify': {'ok': true, 'valid': true},
+      'payload.sign': {'ok': true, 'signature': 'fakeSig'},
     });
     requestRepo = InMemoryContactRequestRepository();
     contactRepo = InMemoryContactRepository();
+    identityRepo = FakeIdentityRepository()
+      ..seed(IdentityModel(
+        peerId: ownPeerId,
+        publicKey: 'ownPubKey',
+        privateKey: 'ownPrivKey',
+        mnemonic12: 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about',
+        mlKemPublicKey: 'ownMlKemPub',
+        createdAt: '2024-01-01T00:00:00Z',
+        updatedAt: '2024-01-01T00:00:00Z',
+      ));
+    network = FakeP2PNetwork();
+    p2pService = FakeP2PService(peerId: ownPeerId, network: network);
   });
 
   group('Contact request flow', () {
@@ -115,11 +134,14 @@ void main() {
       expect(stored, isNotNull);
       expect(stored!.status, ContactRequestStatus.pending);
 
-      // Accept
-      final acceptResult = await acceptContactRequest(
+      // Accept (with reciprocal send)
+      final acceptResult = await acceptAndReciprocateContactRequest(
         requestRepo: requestRepo,
         contactRepo: contactRepo,
         peerId: bobPeerId,
+        p2pService: p2pService,
+        identityRepo: identityRepo,
+        bridge: bridge,
       );
 
       expect(acceptResult, AcceptContactRequestResult.success);
@@ -282,6 +304,117 @@ void main() {
       expect(receivedRequest.peerId, bobPeerId);
       expect(receivedRequest.username, 'Bob');
       expect(receivedRequest.status, ContactRequestStatus.pending);
+
+      listener.dispose();
+      router.dispose();
+      p2pService.dispose();
+    });
+
+    test('2i. Reciprocal contact_request updates ML-KEM key on existing contact',
+        () async {
+      // Seed Bob as existing contact WITHOUT ML-KEM key (simulates
+      // User-A who scanned Bob's QR — QR has no mlkem field).
+      contactRepo.addTestContact(
+        ContactModel(
+          peerId: bobPeerId,
+          publicKey: 'pk-bob',
+          rendezvous: '/dns4/relay/tcp/443/p2p/relay',
+          username: 'Bob',
+          signature: 'sig-bob',
+          scannedAt: '2026-01-01T00:00:00Z',
+          mlKemPublicKey: null,
+        ),
+      );
+
+      // Bob sends a reciprocal contact_request carrying his ML-KEM key.
+      final message = buildContactRequestMessage(
+        fromPeerId: bobPeerId,
+        username: 'Bob',
+        mlKem: 'bobMlKemPublicKey',
+      );
+
+      final (result, request) = await handleIncomingMessage(
+        message: message,
+        bridge: bridge,
+        requestRepo: requestRepo,
+        contactRepo: contactRepo,
+        ownPeerId: ownPeerId,
+      );
+
+      expect(result, HandleMessageResult.contactKeyUpdated);
+      expect(request, isNull);
+
+      // Verify the contact now has Bob's ML-KEM key.
+      final updatedContact = await contactRepo.getContact(bobPeerId);
+      expect(updatedContact, isNotNull);
+      expect(updatedContact!.mlKemPublicKey, 'bobMlKemPublicKey');
+
+      // Other fields preserved.
+      expect(updatedContact.username, 'Bob');
+      expect(updatedContact.publicKey, 'pk-bob');
+
+      // No contact request was stored (it's an existing contact).
+      expect(requestRepo.count, 0);
+    });
+
+    test('2j. Stream-based key update via ContactRequestListener', () async {
+      // Full chain: P2P message → router → listener → contactKeyUpdatedStream
+      final network = FakeP2PNetwork();
+      final p2pService = FakeP2PService(peerId: ownPeerId, network: network);
+
+      // Seed Bob as contact without ML-KEM key
+      contactRepo.addTestContact(
+        ContactModel(
+          peerId: bobPeerId,
+          publicKey: 'pk-bob',
+          rendezvous: '/dns4/relay/tcp/443/p2p/relay',
+          username: 'Bob',
+          signature: 'sig-bob',
+          scannedAt: '2026-01-01T00:00:00Z',
+          mlKemPublicKey: null,
+        ),
+      );
+
+      final router = IncomingMessageRouter(p2pService: p2pService);
+      router.start();
+
+      final listener = ContactRequestListener(
+        contactRequestStream: router.contactRequestStream,
+        requestRepo: requestRepo,
+        contactRepo: contactRepo,
+        bridge: bridge,
+        getOwnPeerId: () => ownPeerId,
+      );
+      listener.start();
+
+      final updateFuture = listener.contactKeyUpdatedStream.first;
+
+      // Inject reciprocal contact request with Bob's ML-KEM key
+      p2pService.injectIncomingMessage(
+        buildContactRequestMessage(
+          fromPeerId: bobPeerId,
+          username: 'Bob',
+          mlKem: 'bobMlKemPublicKey',
+        ),
+      );
+
+      final updatedContact = await updateFuture.timeout(
+        const Duration(seconds: 2),
+        onTimeout: () =>
+            throw StateError('Listener never emitted ContactModel'),
+      );
+
+      // Stream emits the updated contact with the ML-KEM key
+      expect(updatedContact.peerId, bobPeerId);
+      expect(updatedContact.mlKemPublicKey, 'bobMlKemPublicKey');
+      expect(updatedContact.username, 'Bob');
+
+      // DB also updated
+      final dbContact = await contactRepo.getContact(bobPeerId);
+      expect(dbContact!.mlKemPublicKey, 'bobMlKemPublicKey');
+
+      // No contact request stored
+      expect(requestRepo.count, 0);
 
       listener.dispose();
       router.dispose();
