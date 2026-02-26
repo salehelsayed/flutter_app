@@ -19,6 +19,7 @@ class ComposeArea extends StatefulWidget {
   final VoidCallback? onRecordCancel;
   final bool isRecording;
   final Duration recordingDuration;
+  final List<double> amplitudeValues;
 
   const ComposeArea({
     super.key,
@@ -31,6 +32,7 @@ class ComposeArea extends StatefulWidget {
     this.onRecordCancel,
     this.isRecording = false,
     this.recordingDuration = Duration.zero,
+    this.amplitudeValues = const [],
   });
 
   @override
@@ -148,6 +150,7 @@ class _ComposeAreaState extends State<ComposeArea>
                 RecordingOverlay(
                   elapsed: widget.recordingDuration,
                   onCancel: widget.onRecordCancel ?? () {},
+                  amplitudeValues: widget.amplitudeValues,
                 )
               else
                 // Text input

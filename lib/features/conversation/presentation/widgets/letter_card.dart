@@ -39,8 +39,9 @@ class LetterCard extends StatelessWidget {
     this.onMediaTap,
   });
 
-  List<MediaAttachment> get _imageVideoMedia =>
-      media.where((a) => a.mediaType == 'image' || a.mediaType == 'video').toList();
+  List<MediaAttachment> get _imageVideoMedia => media
+      .where((a) => a.mediaType == 'image' || a.mediaType == 'video')
+      .toList();
   List<MediaAttachment> get _audioMedia =>
       media.where((a) => a.mediaType == 'audio').toList();
 
@@ -192,13 +193,19 @@ class LetterCard extends StatelessWidget {
                   if (_imageVideoMedia.isNotEmpty)
                     Padding(
                       padding: const EdgeInsets.fromLTRB(8, 0, 8, 4),
-                      child: MediaGrid(media: _imageVideoMedia, onTap: onMediaTap),
+                      child: MediaGrid(
+                        media: _imageVideoMedia,
+                        onTap: onMediaTap,
+                      ),
                     ),
                   // Audio players
                   for (final audio in _audioMedia)
                     Padding(
                       padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
-                      child: AudioPlayerWidget(attachment: audio),
+                      child: AudioPlayerWidget(
+                        key: ValueKey(audio.id),
+                        attachment: audio,
+                      ),
                     ),
                   // Body text (only if non-empty)
                   if (text.isNotEmpty)
@@ -245,8 +252,9 @@ class LetterCard extends StatelessWidget {
   }
 
   Widget _buildQuoteBar() {
-    final displayText =
-        isQuoteUnavailable ? 'Message unavailable' : quotedText!;
+    final displayText = isQuoteUnavailable
+        ? 'Message unavailable'
+        : quotedText!;
     return Row(
       children: [
         Container(

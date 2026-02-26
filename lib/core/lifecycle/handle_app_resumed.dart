@@ -2,15 +2,21 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/contact_request/application/retry_incomplete_key_exchanges_use_case.dart';
+import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
+import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 
 /// Handles app resume lifecycle recovery.
 ///
 /// Checks bridge health (reinitializes if dead), triggers P2P health check,
-/// and drains the offline inbox. Returns whether the bridge was healthy.
+/// drains the offline inbox, and retries incomplete key exchanges.
+/// Returns whether the bridge was healthy.
 /// Catches all errors so callers never see exceptions.
 Future<bool?> handleAppResumed({
   required Bridge bridge,
   required P2PService p2pService,
+  ContactRepository? contactRepo,
+  IdentityRepository? identityRepo,
 }) async {
   final resumeStart = DateTime.now();
   debugPrint('[RESUME] ====== APP RESUME BEGIN ====== ${resumeStart.toIso8601String()}');
@@ -60,6 +66,21 @@ Future<bool?> handleAppResumed({
     await p2pService.drainOfflineInbox();
     final drainMs = DateTime.now().difference(drainStart).inMilliseconds;
     debugPrint('[RESUME] Step 3: drainOfflineInbox() done (took ${drainMs}ms)');
+
+    // 4. Retry incomplete key exchanges (contacts without ML-KEM key)
+    if (contactRepo != null && identityRepo != null) {
+      final retryStart = DateTime.now();
+      debugPrint('[RESUME] Step 4: retryIncompleteKeyExchanges() starting...');
+      final retried = await retryIncompleteKeyExchanges(
+        contactRepo: contactRepo,
+        identityRepo: identityRepo,
+        p2pService: p2pService,
+        bridge: bridge,
+      );
+      final retryMs = DateTime.now().difference(retryStart).inMilliseconds;
+      debugPrint('[RESUME] Step 4: retryIncompleteKeyExchanges() done '
+          '(retried=$retried, took ${retryMs}ms)');
+    }
 
     final totalMs = DateTime.now().difference(resumeStart).inMilliseconds;
     debugPrint('[RESUME] ====== APP RESUME COMPLETE ====== total ${totalMs}ms, bridgeWasHealthy=$bridgeOk');

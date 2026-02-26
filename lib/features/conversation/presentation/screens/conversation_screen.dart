@@ -43,6 +43,7 @@ class ConversationScreen extends StatefulWidget {
   final VoidCallback? onRecordCancel;
   final bool isRecording;
   final Duration recordingDuration;
+  final List<double> amplitudeValues;
 
   const ConversationScreen({
     super.key,
@@ -71,6 +72,7 @@ class ConversationScreen extends StatefulWidget {
     this.onRecordCancel,
     this.isRecording = false,
     this.recordingDuration = Duration.zero,
+    this.amplitudeValues = const [],
   });
 
   @override
@@ -138,6 +140,7 @@ class _ConversationScreenState extends State<ConversationScreen> {
               onRecordCancel: widget.onRecordCancel,
               isRecording: widget.isRecording,
               recordingDuration: widget.recordingDuration,
+              amplitudeValues: widget.amplitudeValues,
             ),
         ],
       ),
@@ -202,9 +205,7 @@ class _ConversationScreenState extends State<ConversationScreen> {
 
             final letterCard = LetterCard(
               senderPeerId: message.senderPeerId,
-              senderName: message.isIncoming
-                  ? widget.contactUsername
-                  : 'You',
+              senderName: message.isIncoming ? widget.contactUsername : 'You',
               text: message.text,
               time: _formatTime(message.timestamp),
               isIncoming: message.isIncoming,
@@ -215,22 +216,31 @@ class _ConversationScreenState extends State<ConversationScreen> {
               media: message.media,
               onMediaTap: (index) {
                 final visual = message.media
-                    .where((a) => a.mediaType == 'image' || a.mediaType == 'video')
+                    .where(
+                      (a) => a.mediaType == 'image' || a.mediaType == 'video',
+                    )
                     .toList();
                 if (index < visual.length && visual[index].localPath != null) {
                   final allPaths = visual
-                      .where((a) => a.localPath != null && a.downloadStatus == 'done')
+                      .where(
+                        (a) =>
+                            a.localPath != null && a.downloadStatus == 'done',
+                      )
                       .map((a) => a.localPath!)
                       .toList();
                   final tappedPath = visual[index].localPath!;
-                  final startIndex = allPaths.indexOf(tappedPath).clamp(0, allPaths.length - 1);
-                  Navigator.of(context).push(MaterialPageRoute(
-                    builder: (_) => FullScreenImageViewer(
-                      localPath: tappedPath,
-                      allPaths: allPaths,
-                      initialIndex: startIndex,
+                  final startIndex = allPaths
+                      .indexOf(tappedPath)
+                      .clamp(0, allPaths.length - 1);
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => FullScreenImageViewer(
+                        localPath: tappedPath,
+                        allPaths: allPaths,
+                        initialIndex: startIndex,
+                      ),
                     ),
-                  ));
+                  );
                 }
               },
             );
@@ -238,6 +248,7 @@ class _ConversationScreenState extends State<ConversationScreen> {
             final shouldAnimate = !widget.initialLoadDone || isNew;
 
             return Padding(
+              key: ValueKey('msg-${message.id}'),
               padding: const EdgeInsets.only(bottom: 16),
               child: shouldAnimate
                   ? _AnimatedLetterCard(
@@ -292,8 +303,18 @@ class _ConversationScreenState extends State<ConversationScreen> {
   }
 
   static const _months = [
-    'January', 'February', 'March', 'April', 'May', 'June',
-    'July', 'August', 'September', 'October', 'November', 'December',
+    'January',
+    'February',
+    'March',
+    'April',
+    'May',
+    'June',
+    'July',
+    'August',
+    'September',
+    'October',
+    'November',
+    'December',
   ];
 
   String _formatDateLabel(String isoTimestamp) {
@@ -370,9 +391,7 @@ class _AnimatedLetterCardState extends State<_AnimatedLetterCard>
 
     final curve = CurvedAnimation(
       parent: _controller,
-      curve: widget.isNewMessage
-          ? const Cubic(0.16, 1, 0.3, 1)
-          : Curves.ease,
+      curve: widget.isNewMessage ? const Cubic(0.16, 1, 0.3, 1) : Curves.ease,
     );
 
     _opacity = Tween<double>(begin: 0, end: 1).animate(curve);
@@ -435,10 +454,9 @@ class _DisplayItem {
   factory _DisplayItem.message(
     ConversationMessage msg, {
     bool isLastAndWasEmpty = false,
-  }) =>
-      _DisplayItem._(
-        type: _ItemType.message,
-        message: msg,
-        isLastAndWasEmpty: isLastAndWasEmpty,
-      );
+  }) => _DisplayItem._(
+    type: _ItemType.message,
+    message: msg,
+    isLastAndWasEmpty: isLastAndWasEmpty,
+  );
 }
