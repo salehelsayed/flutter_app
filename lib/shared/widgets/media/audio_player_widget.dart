@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'media_display_helpers.dart';
+import 'waveform_seek_bar.dart';
 
 /// Inline audio player with play/pause button, progress bar, and duration.
 class AudioPlayerWidget extends StatefulWidget {
@@ -107,6 +108,8 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget> {
             : formatDurationMs(totalMs))
         : '--:--';
 
+    final hasWaveform = widget.attachment.waveform != null;
+
     return Row(
       children: [
         // Play/pause button
@@ -131,24 +134,34 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget> {
           ),
         ),
         const SizedBox(width: 8),
-        // Progress slider
+        // Progress: waveform bars or slider
         Expanded(
           child: SizedBox(
             height: 28,
-            child: SliderTheme(
-              data: SliderThemeData(
-                trackHeight: 3,
-                activeTrackColor: const Color(0xFF4ecdc4),
-                inactiveTrackColor: const Color.fromRGBO(255, 255, 255, 0.15),
-                thumbColor: const Color(0xFF4ecdc4),
-                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 5),
-                overlayShape: const RoundSliderOverlayShape(overlayRadius: 10),
-              ),
-              child: Slider(
-                value: progress.clamp(0.0, 1.0),
-                onChanged: _isAvailable && _isLoaded ? _onSeek : null,
-              ),
-            ),
+            child: hasWaveform
+                ? WaveformSeekBar(
+                    waveform: widget.attachment.waveform,
+                    progress: progress.clamp(0.0, 1.0),
+                    onSeek: _isAvailable && _isLoaded ? _onSeek : null,
+                  )
+                : SliderTheme(
+                    data: SliderThemeData(
+                      trackHeight: 3,
+                      activeTrackColor: const Color(0xFF4ecdc4),
+                      inactiveTrackColor:
+                          const Color.fromRGBO(255, 255, 255, 0.15),
+                      thumbColor: const Color(0xFF4ecdc4),
+                      thumbShape:
+                          const RoundSliderThumbShape(enabledThumbRadius: 5),
+                      overlayShape:
+                          const RoundSliderOverlayShape(overlayRadius: 10),
+                    ),
+                    child: Slider(
+                      value: progress.clamp(0.0, 1.0),
+                      onChanged:
+                          _isAvailable && _isLoaded ? _onSeek : null,
+                    ),
+                  ),
           ),
         ),
         const SizedBox(width: 8),

@@ -12,6 +12,7 @@ import 'package:flutter_app/core/database/migrations/009_quoted_message_id.dart'
 import 'package:flutter_app/core/database/migrations/010_media_attachments.dart';
 import 'package:flutter_app/core/database/migrations/011_avatar_version.dart';
 import 'package:flutter_app/core/database/migrations/012_transport_column.dart';
+import 'package:flutter_app/core/database/migrations/013_waveform_column.dart';
 import 'package:flutter_app/core/database/encrypted_db_opener.dart';
 import 'package:flutter_app/core/database/helpers/identity_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
@@ -31,6 +32,7 @@ import 'package:flutter_app/features/conversation/application/chat_message_liste
 import 'package:flutter_app/features/settings/application/profile_update_listener.dart';
 import 'package:flutter_app/core/services/incoming_message_router.dart';
 import 'package:flutter_app/core/services/pending_message_retrier.dart';
+import 'package:flutter_app/features/contact_request/application/key_exchange_retrier.dart';
 import 'package:flutter_app/features/identity/presentation/startup_router.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/go_bridge_client.dart';
@@ -97,7 +99,7 @@ void main() async {
   final db = await openEncryptedDatabase(
     secureKeyStore: secureKeyStore,
     dbName: 'identity.db',
-    version: 12,
+    version: 13,
     onCreate: (db, version) async {
       await runIdentityTableMigration(db);
       await runMessagesTableMigration(db);
@@ -111,6 +113,7 @@ void main() async {
       await runMediaAttachmentsMigration(db);
       await runAvatarVersionMigration(db);
       await runTransportColumnMigration(db);
+      await runWaveformColumnMigration(db);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) {
@@ -143,6 +146,9 @@ void main() async {
       }
       if (oldVersion < 12) {
         await runTransportColumnMigration(db);
+      }
+      if (oldVersion < 13) {
+        await runWaveformColumnMigration(db);
       }
     },
   );
@@ -318,12 +324,21 @@ void main() async {
     bridge: bridge,
   );
 
-  // Start router first, then listeners, then retrier
+  // Create key exchange retrier
+  final keyExchangeRetrier = KeyExchangeRetrier(
+    p2pService: p2pService,
+    contactRepo: contactRepository,
+    identityRepo: repository,
+    bridge: bridge,
+  );
+
+  // Start router first, then listeners, then retriers
   messageRouter.start();
   contactRequestListener.start();
   chatMessageListener.start();
   profileUpdateListener.start();
   pendingMessageRetrier.start();
+  keyExchangeRetrier.start();
 
   // Forward profile avatar updates through chatMessageListener so
   // FeedWired/OrbitWired (which subscribe to contactUpdatedStream) refresh.
@@ -348,6 +363,7 @@ void main() async {
     profileUpdateListener: profileUpdateListener,
     messageRouter: messageRouter,
     pendingMessageRetrier: pendingMessageRetrier,
+    keyExchangeRetrier: keyExchangeRetrier,
     bridge: bridge,
     p2pService: p2pService,
     mediaFileManager: mediaFileManager,
@@ -372,6 +388,7 @@ class MyApp extends StatefulWidget {
   final ProfileUpdateListener profileUpdateListener;
   final IncomingMessageRouter messageRouter;
   final PendingMessageRetrier pendingMessageRetrier;
+  final KeyExchangeRetrier keyExchangeRetrier;
   final Bridge bridge;
   final P2PServiceImpl p2pService;
   final MediaFileManager mediaFileManager;
@@ -396,6 +413,7 @@ class MyApp extends StatefulWidget {
     required this.profileUpdateListener,
     required this.messageRouter,
     required this.pendingMessageRetrier,
+    required this.keyExchangeRetrier,
     required this.bridge,
     required this.p2pService,
     required this.mediaFileManager,
@@ -465,7 +483,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
 
-    // Orderly teardown: retrier → listeners → router → service → bridge
+    // Orderly teardown: retriers → listeners → router → service → bridge
+    widget.keyExchangeRetrier.dispose();
     widget.pendingMessageRetrier.dispose();
     widget.profileUpdateListener.dispose();
     widget.chatMessageListener.dispose();
@@ -505,6 +524,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       await handleAppResumed(
         bridge: widget.bridge,
         p2pService: widget.p2pService,
+        contactRepo: widget.contactRepository,
+        identityRepo: widget.repository,
       );
     } finally {
       _isResuming = false;
