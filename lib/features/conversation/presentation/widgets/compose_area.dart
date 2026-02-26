@@ -1,16 +1,24 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/utils/text_sanitizer.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/recording_overlay.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/voice_record_button.dart';
 
 /// Compose area at the bottom of the conversation screen.
 ///
 /// Auto-growing text field with glassmorphic styling,
 /// animated send button (hidden when empty), and + attachment button.
+/// When text is empty and no attachments: shows mic button for voice recording.
 class ComposeArea extends StatefulWidget {
   final ValueChanged<String> onSend;
   final VoidCallback? onAttach;
   final bool hasAttachments;
   final bool isProcessing;
+  final VoidCallback? onRecordStart;
+  final VoidCallback? onRecordStop;
+  final VoidCallback? onRecordCancel;
+  final bool isRecording;
+  final Duration recordingDuration;
 
   const ComposeArea({
     super.key,
@@ -18,6 +26,11 @@ class ComposeArea extends StatefulWidget {
     this.onAttach,
     this.hasAttachments = false,
     this.isProcessing = false,
+    this.onRecordStart,
+    this.onRecordStop,
+    this.onRecordCancel,
+    this.isRecording = false,
+    this.recordingDuration = Duration.zero,
   });
 
   @override
@@ -103,6 +116,13 @@ class _ComposeAreaState extends State<ComposeArea>
     super.dispose();
   }
 
+  bool get _shouldShowSendButton => _hasText || widget.hasAttachments;
+
+  bool get _shouldShowMicButton =>
+      !_shouldShowSendButton &&
+      !widget.isRecording &&
+      widget.onRecordStart != null;
+
   @override
   Widget build(BuildContext context) {
     final bottomPadding = MediaQuery.of(context).padding.bottom;
@@ -126,66 +146,74 @@ class _ComposeAreaState extends State<ComposeArea>
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // Text input
-              AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                constraints: const BoxConstraints(
-                  minHeight: 44,
-                  maxHeight: 160,
-                ),
-                decoration: BoxDecoration(
-                  color: const Color.fromRGBO(255, 255, 255, 0.06),
-                  borderRadius: BorderRadius.circular(22),
-                  border: Border.all(
-                    color: _hasFocus
-                        ? const Color.fromRGBO(255, 255, 255, 0.20)
-                        : const Color.fromRGBO(255, 255, 255, 0.10),
+              // Recording overlay replaces text input when recording
+              if (widget.isRecording)
+                RecordingOverlay(
+                  elapsed: widget.recordingDuration,
+                  onCancel: widget.onRecordCancel ?? () {},
+                )
+              else
+                // Text input
+                AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  constraints: const BoxConstraints(
+                    minHeight: 44,
+                    maxHeight: 160,
                   ),
-                  boxShadow: _hasFocus
-                      ? const [
-                          BoxShadow(
-                            color: Color.fromRGBO(255, 255, 255, 0.08),
-                            blurRadius: 0,
-                            spreadRadius: 1,
-                          ),
-                          BoxShadow(
-                            color: Color.fromRGBO(0, 0, 0, 0.3),
-                            blurRadius: 20,
-                            offset: Offset(0, 4),
-                          ),
-                        ]
-                      : null,
-                ),
-                child: TextField(
-                  controller: _controller,
-                  focusNode: _focusNode,
-                  maxLines: null,
-                  maxLength: maxMessageLength,
-                  style: const TextStyle(
-                    fontSize: 15,
-                    color: Color.fromRGBO(255, 255, 255, 0.95),
-                    height: 1.5,
+                  decoration: BoxDecoration(
+                    color: const Color.fromRGBO(255, 255, 255, 0.06),
+                    borderRadius: BorderRadius.circular(22),
+                    border: Border.all(
+                      color: _hasFocus
+                          ? const Color.fromRGBO(255, 255, 255, 0.20)
+                          : const Color.fromRGBO(255, 255, 255, 0.10),
+                    ),
+                    boxShadow: _hasFocus
+                        ? const [
+                            BoxShadow(
+                              color: Color.fromRGBO(255, 255, 255, 0.08),
+                              blurRadius: 0,
+                              spreadRadius: 1,
+                            ),
+                            BoxShadow(
+                              color: Color.fromRGBO(0, 0, 0, 0.3),
+                              blurRadius: 20,
+                              offset: Offset(0, 4),
+                            ),
+                          ]
+                        : null,
                   ),
-                  decoration: InputDecoration(
-                    hintText: 'Write something...',
-                    hintStyle: TextStyle(
+                  child: TextField(
+                    controller: _controller,
+                    focusNode: _focusNode,
+                    maxLines: null,
+                    maxLength: maxMessageLength,
+                    enabled: !widget.isRecording,
+                    style: const TextStyle(
                       fontSize: 15,
-                      color: Color.fromRGBO(
-                        255,
-                        255,
-                        255,
-                        _hasFocus ? 0.2 : 0.3,
+                      color: Color.fromRGBO(255, 255, 255, 0.95),
+                      height: 1.5,
+                    ),
+                    decoration: InputDecoration(
+                      hintText: 'Write something...',
+                      hintStyle: TextStyle(
+                        fontSize: 15,
+                        color: Color.fromRGBO(
+                          255,
+                          255,
+                          255,
+                          _hasFocus ? 0.2 : 0.3,
+                        ),
+                      ),
+                      border: InputBorder.none,
+                      counterText: '',
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 12,
                       ),
                     ),
-                    border: InputBorder.none,
-                    counterText: '',
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 12,
-                    ),
                   ),
                 ),
-              ),
               const SizedBox(height: 8),
               // Action row
               Row(
@@ -193,7 +221,9 @@ class _ComposeAreaState extends State<ComposeArea>
                 children: [
                   // Attachment button
                   GestureDetector(
-                    onTap: widget.isProcessing ? null : widget.onAttach,
+                    onTap: widget.isProcessing || widget.isRecording
+                        ? null
+                        : widget.onAttach,
                     behavior: HitTestBehavior.opaque,
                     child: SizedBox(
                       width: 44,
@@ -219,56 +249,64 @@ class _ComposeAreaState extends State<ComposeArea>
                         color: Color.fromRGBO(255, 255, 255, 0.25),
                       ),
                     ),
-                  // Send button
-                  AnimatedBuilder(
-                    animation: _sendButtonController,
-                    builder: (context, child) {
-                      return Opacity(
-                        opacity: _sendOpacity.value,
-                        child: Transform.scale(
-                          scale: _sendScale.value,
-                          child: child,
-                        ),
-                      );
-                    },
-                    child: GestureDetector(
-                      onTap: !widget.isProcessing && (_hasText || widget.hasAttachments)
-                          ? _onSendPressed
-                          : null,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 20,
-                          vertical: 10,
-                        ),
-                        decoration: BoxDecoration(
-                          color: const Color.fromRGBO(29, 185, 84, 0.15),
-                          borderRadius: BorderRadius.circular(100),
-                          border: Border.all(
-                            color: const Color.fromRGBO(29, 185, 84, 0.3),
+                  // Mic button or Send button
+                  if (_shouldShowMicButton)
+                    VoiceRecordButton(
+                      onTapDown: widget.onRecordStart!,
+                      onTapUp: widget.onRecordStop ?? () {},
+                      onTapCancel: widget.onRecordCancel ?? () {},
+                    )
+                  else
+                    // Send button
+                    AnimatedBuilder(
+                      animation: _sendButtonController,
+                      builder: (context, child) {
+                        return Opacity(
+                          opacity: _sendOpacity.value,
+                          child: Transform.scale(
+                            scale: _sendScale.value,
+                            child: child,
                           ),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: const [
-                            Icon(
-                              Icons.send_rounded,
-                              size: 18,
-                              color: Color(0xFF1DB954),
+                        );
+                      },
+                      child: GestureDetector(
+                        onTap: !widget.isProcessing && (_hasText || widget.hasAttachments)
+                            ? _onSendPressed
+                            : null,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 20,
+                            vertical: 10,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color.fromRGBO(29, 185, 84, 0.15),
+                            borderRadius: BorderRadius.circular(100),
+                            border: Border.all(
+                              color: const Color.fromRGBO(29, 185, 84, 0.3),
                             ),
-                            SizedBox(width: 6),
-                            Text(
-                              'Send',
-                              style: TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w600,
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: const [
+                              Icon(
+                                Icons.send_rounded,
+                                size: 18,
                                 color: Color(0xFF1DB954),
                               ),
-                            ),
-                          ],
+                              SizedBox(width: 6),
+                              Text(
+                                'Send',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                  color: Color(0xFF1DB954),
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                     ),
-                  ),
                 ],
               ),
             ],

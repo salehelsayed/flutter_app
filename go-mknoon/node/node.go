@@ -44,6 +44,7 @@ type Node struct {
 	relayReady      chan struct{}
 	relayReadyOnce  sync.Once
 	startedAt       time.Time // for startup timing instrumentation
+	lastConfig      *NodeConfig // saved for Restart()
 }
 
 type connectionInfo struct {
@@ -76,6 +77,10 @@ func (n *Node) Start(cfg NodeConfig) (*NodeState, error) {
 	if n.isStarted {
 		return nil, fmt.Errorf("node already started")
 	}
+
+	// Save config for Restart().
+	cfgCopy := cfg
+	n.lastConfig = &cfgCopy
 
 	// Decode private key from hex
 	keyBytes, err := hex.DecodeString(cfg.PrivateKeyHex)
@@ -243,6 +248,9 @@ func (n *Node) Stop() error {
 
 	n.isStarted = false
 	n.connections = make(map[string]connectionInfo)
+	n.host = nil
+	n.eventSub = nil
+	n.relayReadyOnce = sync.Once{} // reset so next Start() can use it
 	return nil
 }
 
@@ -349,6 +357,69 @@ func (n *Node) connectToRelay(relayAddr string) error {
 	}
 
 	log.Printf("[NODE] Connected to relay: %s", addrInfo.ID.String()[:20])
+	return nil
+}
+
+// ReconnectRelays performs a full node restart to recover circuit addresses.
+//
+// go-libp2p's AutoRelay (v0.38.2) does NOT reliably re-reserve circuit
+// addresses after a relay disconnection — it reconnects but never
+// re-reserves.  Neither force-disconnecting + reconnecting, clearing
+// the peerstore, nor calling client.Reserve() manually fixes this,
+// because AutoRelay manages h.Addrs() independently and doesn't pick
+// up externally-created reservations.
+//
+// A full Stop() + Start() with the saved NodeConfig creates a fresh
+// libp2p host + AutoRelay, which reliably obtains circuit addresses
+// on startup (~700ms).
+func (n *Node) ReconnectRelays() error {
+	n.mu.RLock()
+	cfg := n.lastConfig
+	started := n.isStarted
+	n.mu.RUnlock()
+
+	if !started {
+		return fmt.Errorf("node not started")
+	}
+	if cfg == nil {
+		return fmt.Errorf("no saved config — cannot restart")
+	}
+
+	log.Printf("[NODE] ReconnectRelays: performing full node restart")
+
+	// Stop the current node (closes host, cancels context, clears state).
+	if err := n.Stop(); err != nil {
+		log.Printf("[NODE] ReconnectRelays: Stop() error (continuing): %v", err)
+	}
+
+	// Re-start with the saved config (creates fresh host + AutoRelay).
+	// Disable auto-register since we don't need rendezvous re-registration
+	// on recovery — just circuit address restoration.
+	restartCfg := *cfg
+	restartCfg.AutoRegister = false
+
+	state, err := n.Start(restartCfg)
+	if err != nil {
+		return fmt.Errorf("restart Start() failed: %w", err)
+	}
+
+	// Restore original AutoRegister so future recoveries preserve it.
+	// Start() saved restartCfg (with AutoRegister=false) into lastConfig;
+	// we need the original value for rendezvous TTL re-registration.
+	n.mu.Lock()
+	n.lastConfig.AutoRegister = cfg.AutoRegister
+	n.mu.Unlock()
+
+	log.Printf("[NODE] ReconnectRelays: node restarted, peerId=%s, waiting for circuit addresses...",
+		state.PeerId)
+
+	// Wait for AutoRelay to obtain circuit addresses (same as first startup).
+	if ok := n.waitForCircuitAddress(10 * time.Second); ok {
+		log.Printf("[NODE] ReconnectRelays: circuit addresses obtained ✓")
+	} else {
+		log.Printf("[NODE] ReconnectRelays: WARNING — no circuit addresses after 10s")
+	}
+
 	return nil
 }
 

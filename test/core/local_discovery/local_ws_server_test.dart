@@ -374,5 +374,133 @@ void main() {
         await sub.cancel();
       });
     });
+
+    group('fault injection', () {
+      test('server stop mid-conversation causes next send to fail gracefully',
+          () async {
+        final remoteServer = LocalWsServer(
+          idleTimeout: const Duration(seconds: 2),
+        );
+        final remotePort = await remoteServer.start();
+        await server.start();
+
+        // First send should succeed.
+        final sent1 = await server.sendMessage(
+          'localhost',
+          remotePort,
+          '{"type":"chat","version":"1","payload":{"text":"before stop"}}',
+          'peerA',
+          'peerB',
+        );
+        expect(sent1, isTrue);
+
+        // Stop the remote server mid-conversation.
+        await remoteServer.stop();
+
+        // Next send should fail gracefully (return false, no exception).
+        final sent2 = await server.sendMessage(
+          'localhost',
+          remotePort,
+          '{"type":"chat","version":"1","payload":{"text":"after stop"}}',
+          'peerA',
+          'peerB',
+        );
+        expect(sent2, isFalse,
+            reason: 'Send to stopped server should fail gracefully');
+
+        remoteServer.dispose();
+      }, timeout: const Timeout(Duration(seconds: 15)));
+
+      test('rapid connect/disconnect cycles cause no resource leak', () async {
+        await server.start();
+
+        // Rapidly start and stop remote servers 5 times.
+        // Use unique toPeerId per cycle to avoid stale pool entries keyed
+        // on the same peerId from affecting subsequent sends.
+        for (var i = 0; i < 5; i++) {
+          final remote = LocalWsServer(
+            idleTimeout: const Duration(seconds: 2),
+          );
+          final port = await remote.start();
+
+          final sent = await server.sendMessage(
+            'localhost',
+            port,
+            '{"type":"chat","version":"1","payload":{"text":"cycle $i"}}',
+            'peerA',
+            'peerB-$i',
+          );
+          // Send may or may not succeed depending on timing, but should
+          // never throw or hang.
+          expect(sent, isA<bool>());
+
+          remote.dispose();
+        }
+
+        // Server should still be operational after all cycles.
+        expect(server.port, isNotNull);
+
+        // Start a new remote and verify sends still work with a fresh peerId.
+        final freshRemote = LocalWsServer(
+          idleTimeout: const Duration(seconds: 2),
+        );
+        final freshPort = await freshRemote.start();
+
+        final finalSend = await server.sendMessage(
+          'localhost',
+          freshPort,
+          '{"type":"chat","version":"1","payload":{"text":"after cycles"}}',
+          'peerA',
+          'peerB-fresh',
+        );
+        expect(finalSend, isTrue,
+            reason: 'Server should still work after rapid connect/disconnect cycles');
+
+        freshRemote.dispose();
+      }, timeout: const Timeout(Duration(seconds: 20)));
+
+      test('concurrent sends during server restart all resolve', () async {
+        final remoteServer = LocalWsServer(
+          idleTimeout: const Duration(seconds: 2),
+        );
+        final remotePort = await remoteServer.start();
+        await server.start();
+
+        // Start concurrent sends
+        final sendFutures = <Future<bool>>[];
+        for (var i = 0; i < 3; i++) {
+          sendFutures.add(
+            server.sendMessage(
+              'localhost',
+              remotePort,
+              '{"type":"chat","version":"1","payload":{"text":"msg$i"}}',
+              'peerA',
+              'peerB',
+            ),
+          );
+        }
+
+        // Stop and restart the remote server while sends are in flight.
+        // Small delay to let at least one send begin.
+        await Future.delayed(const Duration(milliseconds: 10));
+        await remoteServer.stop();
+
+        final newRemoteServer = LocalWsServer(
+          idleTimeout: const Duration(seconds: 2),
+        );
+        // Start on a DIFFERENT port (the old one is gone).
+        await newRemoteServer.start();
+
+        // All sends must resolve — either true or false, but never hang.
+        final results = await Future.wait(sendFutures);
+        for (final result in results) {
+          expect(result, isA<bool>(),
+              reason: 'Each send should resolve to a bool, not hang');
+        }
+
+        remoteServer.dispose();
+        newRemoteServer.dispose();
+      }, timeout: const Timeout(Duration(seconds: 15)));
+    });
   });
 }

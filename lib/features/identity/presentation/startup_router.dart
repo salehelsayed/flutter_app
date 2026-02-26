@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
+import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
@@ -72,6 +74,12 @@ class StartupRouter extends StatefulWidget {
   /// The image processor for EXIF stripping and compression.
   final ImageProcessor imageProcessor;
 
+  /// Tracks which conversation is currently open (for notification suppression).
+  final ActiveConversationTracker? conversationTracker;
+
+  /// The audio recorder service for voice messages.
+  final AudioRecorderService? audioRecorderService;
+
   const StartupRouter({
     super.key,
     required this.repository,
@@ -86,6 +94,8 @@ class StartupRouter extends StatefulWidget {
     required this.mediaFileManager,
     required this.secureKeyStore,
     required this.imageProcessor,
+    this.conversationTracker,
+    this.audioRecorderService,
   });
 
   @override
@@ -150,6 +160,8 @@ class _StartupRouterState extends State<StartupRouter> {
                 mediaFileManager: widget.mediaFileManager,
                 secureKeyStore: widget.secureKeyStore,
                 imageProcessor: widget.imageProcessor,
+                conversationTracker: widget.conversationTracker,
+                audioRecorderService: widget.audioRecorderService,
               ),
             ),
           );
@@ -179,6 +191,8 @@ class _StartupRouterState extends State<StartupRouter> {
             mediaFileManager: widget.mediaFileManager,
             secureKeyStore: widget.secureKeyStore,
             imageProcessor: widget.imageProcessor,
+            conversationTracker: widget.conversationTracker,
+            audioRecorderService: widget.audioRecorderService,
           );
           StartupTiming.instance.mark('route_pushed');
 
@@ -217,6 +231,8 @@ class _StartupRouterState extends State<StartupRouter> {
                         mediaFileManager: widget.mediaFileManager,
                         secureKeyStore: widget.secureKeyStore,
                         imageProcessor: widget.imageProcessor,
+                        conversationTracker: widget.conversationTracker,
+                        audioRecorderService: widget.audioRecorderService,
                       ),
                     ),
                   );
@@ -385,6 +401,8 @@ class _StartupRouterState extends State<StartupRouter> {
     required MediaFileManager mediaFileManager,
     required SecureKeyStore secureKeyStore,
     required ImageProcessor imageProcessor,
+    ActiveConversationTracker? conversationTracker,
+    AudioRecorderService? audioRecorderService,
   }) {
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(
@@ -401,6 +419,8 @@ class _StartupRouterState extends State<StartupRouter> {
           mediaFileManager: mediaFileManager,
           secureKeyStore: secureKeyStore,
           imageProcessor: imageProcessor,
+          conversationTracker: conversationTracker,
+          audioRecorderService: audioRecorderService,
         ),
       ),
     );

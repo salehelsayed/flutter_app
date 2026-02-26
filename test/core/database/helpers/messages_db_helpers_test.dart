@@ -9,6 +9,7 @@ import 'package:flutter_app/core/database/migrations/006_read_at_column.dart';
 import 'package:flutter_app/core/database/migrations/007_archive_columns.dart';
 import 'package:flutter_app/core/database/migrations/008_block_columns.dart';
 import 'package:flutter_app/core/database/migrations/009_quoted_message_id.dart';
+import 'package:flutter_app/core/database/migrations/012_transport_column.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
 
@@ -31,6 +32,7 @@ void main() {
     await runArchiveColumnsMigration(db);
     await runBlockColumnsMigration(db);
     await runQuotedMessageIdMigration(db);
+    await runTransportColumnMigration(db);
   });
 
   tearDown(() async {
@@ -48,6 +50,7 @@ void main() {
     String createdAt = '2026-01-01T00:00:00.000Z',
     String? readAt,
     String? quotedMessageId,
+    String? transport,
   }) {
     return {
       'id': id,
@@ -60,6 +63,7 @@ void main() {
       'created_at': createdAt,
       'read_at': readAt,
       'quoted_message_id': quotedMessageId,
+      'transport': transport,
     };
   }
 
@@ -657,6 +661,63 @@ void main() {
       expect(result, isNotNull);
       expect(result!['id'], 'msg-exists');
       expect(result['text'], 'Hello world');
+    });
+  });
+
+  group('transport column round-trip', () {
+    test('insert+load transport=wifi', () async {
+      await dbInsertMessage(db, makeMessageRow(transport: 'wifi'));
+
+      final row = await dbLoadMessage(db, 'msg-001');
+      expect(row, isNotNull);
+      expect(row!['transport'], 'wifi');
+    });
+
+    test('insert+load transport=relay', () async {
+      await dbInsertMessage(db, makeMessageRow(transport: 'relay'));
+
+      final row = await dbLoadMessage(db, 'msg-001');
+      expect(row!['transport'], 'relay');
+    });
+
+    test('insert+load transport=inbox', () async {
+      await dbInsertMessage(db, makeMessageRow(transport: 'inbox'));
+
+      final row = await dbLoadMessage(db, 'msg-001');
+      expect(row!['transport'], 'inbox');
+    });
+
+    test('null transport round-trip', () async {
+      await dbInsertMessage(db, makeMessageRow(transport: null));
+
+      final row = await dbLoadMessage(db, 'msg-001');
+      expect(row!['transport'], isNull);
+    });
+
+    test('INSERT OR REPLACE overwrites transport', () async {
+      await dbInsertMessage(db, makeMessageRow(transport: 'wifi'));
+      await dbInsertMessage(db, makeMessageRow(transport: 'relay'));
+
+      final row = await dbLoadMessage(db, 'msg-001');
+      expect(row!['transport'], 'relay');
+    });
+
+    test('transport appears in dbLoadMessagesPage results', () async {
+      await dbInsertMessage(db, makeMessageRow(
+        id: 'msg-wifi',
+        transport: 'wifi',
+        timestamp: '2026-01-01T00:00:00.000Z',
+      ));
+      await dbInsertMessage(db, makeMessageRow(
+        id: 'msg-relay',
+        transport: 'relay',
+        timestamp: '2026-01-02T00:00:00.000Z',
+      ));
+
+      final results = await dbLoadMessagesPage(db, 'peer-a');
+      expect(results.length, 2);
+      expect(results[0]['transport'], 'wifi');
+      expect(results[1]['transport'], 'relay');
     });
   });
 }

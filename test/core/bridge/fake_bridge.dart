@@ -104,3 +104,42 @@ class FakeBridge implements Bridge {
   void Function(List<String> listenAddresses, List<String> circuitAddresses)?
       onAddressesUpdated;
 }
+
+/// A [FakeBridge] that passes plaintext through encrypt/decrypt transparently.
+///
+/// - `message.encrypt`: returns the plaintext as-is in the `ciphertext` field
+/// - `message.decrypt`: returns the `ciphertext` field as-is in `plaintext`
+///
+/// This allows integration tests to exercise the full V2 encrypted path
+/// without needing real cryptography.
+class PassthroughCryptoBridge extends FakeBridge {
+  @override
+  Future<String> send(String message) async {
+    sendCallCount++;
+    lastSentMessage = message;
+
+    final parsed = jsonDecode(message) as Map<String, dynamic>;
+    final cmd = parsed['cmd'] as String?;
+    lastCommand = cmd;
+
+    if (cmd == 'message.encrypt') {
+      final payload = parsed['payload'] as Map<String, dynamic>;
+      return jsonEncode({
+        'ok': true,
+        'kem': 'fake-kem',
+        'ciphertext': payload['plaintext'],
+        'nonce': 'fake-nonce',
+      });
+    }
+
+    if (cmd == 'message.decrypt') {
+      final payload = parsed['payload'] as Map<String, dynamic>;
+      return jsonEncode({
+        'ok': true,
+        'plaintext': payload['ciphertext'],
+      });
+    }
+
+    return super.send(message);
+  }
+}

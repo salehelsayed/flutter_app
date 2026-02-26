@@ -4,8 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:uuid/uuid.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -20,6 +22,7 @@ import 'package:flutter_app/features/conversation/application/load_conversation_
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/application/mark_conversation_read_use_case.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
+import 'package:flutter_app/features/conversation/application/send_voice_message_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
@@ -79,6 +82,8 @@ class ConversationWired extends StatefulWidget {
   final ImageProcessor? imageProcessor;
   final ImageQualityPreference qualityPreference;
   final ImageQualityPreference videoQualityPreference;
+  final ActiveConversationTracker? conversationTracker;
+  final AudioRecorderService? audioRecorderService;
 
   const ConversationWired({
     super.key,
@@ -97,6 +102,8 @@ class ConversationWired extends StatefulWidget {
     this.imageProcessor,
     this.qualityPreference = ImageQualityPreference.compressed,
     this.videoQualityPreference = ImageQualityPreference.compressed,
+    this.conversationTracker,
+    this.audioRecorderService,
   });
 
   @override
@@ -124,10 +131,16 @@ class _ConversationWiredState extends State<ConversationWired> {
   double _processingProgress = 0.0;
   static const _maxAttachments = 10;
 
+  // Voice recording state
+  bool _isRecording = false;
+  Duration _recordingDuration = Duration.zero;
+  StreamSubscription<Duration>? _durationSub;
+
   @override
   void initState() {
     super.initState();
     _contact = widget.contact;
+    widget.conversationTracker?.setActive(widget.contact.peerId);
     if (widget.initialAttachments != null && widget.initialAttachments!.isNotEmpty) {
       _pendingAttachments = widget.initialAttachments!
           .map((f) => _PendingMedia(file: f))
@@ -468,6 +481,8 @@ class _ConversationWiredState extends State<ConversationWired> {
         SendChatMessageResult.dialFailed =>
           'Could not connect to contact. Message saved.',
         SendChatMessageResult.invalidMessage => 'Message cannot be empty.',
+        SendChatMessageResult.encryptionRequired =>
+          'Cannot send: contact does not support encryption.',
         _ => 'Failed to send message. Message saved.',
       };
       ScaffoldMessenger.of(context).showSnackBar(
@@ -494,6 +509,8 @@ class _ConversationWiredState extends State<ConversationWired> {
       'avi': 'video/x-msvideo',
       'mkv': 'video/x-matroska',
       'm4v': 'video/x-m4v',
+      'm4a': 'audio/mp4',
+      'aac': 'audio/aac',
     };
     return map[ext] ?? 'application/octet-stream';
   }
@@ -675,6 +692,184 @@ class _ConversationWiredState extends State<ConversationWired> {
       quality: widget.qualityPreference,
     );
     return _PendingMedia(file: File(processed));
+  }
+
+  // -- Voice recording --
+
+  Future<void> _onRecordStart() async {
+    final recorder = widget.audioRecorderService;
+    if (recorder == null) return;
+
+    final hasPermission = await recorder.requestPermission();
+    if (!hasPermission) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Microphone permission is required to record voice messages.'),
+            backgroundColor: Colors.red[700],
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+      return;
+    }
+
+    try {
+      // outputPath is handled internally by the recorder service (temp dir)
+      await recorder.start(outputPath: '');
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONV_FL_RECORD_START_ERROR',
+        details: {'error': e.toString()},
+      );
+      return;
+    }
+
+    _durationSub = recorder.durationStream.listen((d) {
+      if (mounted) setState(() => _recordingDuration = d);
+    });
+
+    if (mounted) {
+      setState(() {
+        _isRecording = true;
+        _recordingDuration = Duration.zero;
+      });
+    }
+
+    emitFlowEvent(layer: 'FL', event: 'CONV_FL_RECORD_STARTED', details: {});
+  }
+
+  Future<void> _onRecordStop() async {
+    final recorder = widget.audioRecorderService;
+    if (recorder == null || !_isRecording) return;
+
+    await _durationSub?.cancel();
+    _durationSub = null;
+
+    final recording = await recorder.stop();
+
+    if (mounted) {
+      setState(() => _isRecording = false);
+    }
+
+    if (recording == null) {
+      emitFlowEvent(layer: 'FL', event: 'CONV_FL_RECORD_TOO_SHORT', details: {});
+      return;
+    }
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CONV_FL_RECORD_STOPPED',
+      details: {'durationMs': recording.durationMs},
+    );
+
+    // Send the voice message
+    final identity = _identity;
+    if (identity == null) return;
+
+    final now = DateTime.now().toUtc().toIso8601String();
+    final optimisticMessage = ConversationMessage(
+      id: _uuid.v4(),
+      contactPeerId: _contact.peerId,
+      senderPeerId: identity.peerId,
+      text: '',
+      timestamp: now,
+      status: 'sending',
+      isIncoming: false,
+      createdAt: now,
+      media: [
+        MediaAttachment(
+          id: _uuid.v4(),
+          messageId: '',
+          mime: recording.mime,
+          size: recording.sizeBytes,
+          mediaType: 'audio',
+          durationMs: recording.durationMs,
+          localPath: recording.filePath,
+          downloadStatus: 'done',
+          createdAt: now,
+        ),
+      ],
+    );
+
+    if (mounted) {
+      setState(() {
+        _upsertMessageById(optimisticMessage);
+        _isUploading = true;
+      });
+      _scrollToBottom();
+    }
+
+    try {
+      await widget.messageRepo.saveMessage(optimisticMessage);
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONV_FL_VOICE_OPTIMISTIC_SAVE_ERROR',
+        details: {'error': e.toString()},
+      );
+    }
+
+    // Upload + send
+    final result = await sendVoiceMessage(
+      p2pService: widget.p2pService,
+      messageRepo: widget.messageRepo,
+      targetPeerId: _contact.peerId,
+      senderPeerId: identity.peerId,
+      senderUsername: identity.username,
+      recording: recording,
+      bridge: widget.bridge!,
+      recipientMlKemPublicKey: _contact.mlKemPublicKey,
+      mediaAttachmentRepo: widget.mediaAttachmentRepo,
+      mediaFileManager: widget.mediaFileManager,
+    );
+
+    if (mounted) {
+      setState(() => _isUploading = false);
+    }
+
+    if (result == SendVoiceMessageResult.success) {
+      _updateLocalMessageStatus(optimisticMessage.id, 'delivered');
+      await _persistMessageStatus(optimisticMessage.id, 'delivered');
+    } else {
+      _updateLocalMessageStatus(optimisticMessage.id, 'failed');
+      await _persistMessageStatus(optimisticMessage.id, 'failed');
+
+      if (mounted) {
+        final snackText = switch (result) {
+          SendVoiceMessageResult.uploadFailed =>
+            'Failed to upload voice message. Try again.',
+          _ => 'Failed to send voice message.',
+        };
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(snackText),
+            backgroundColor: Colors.red[700],
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _onRecordCancel() async {
+    final recorder = widget.audioRecorderService;
+    if (recorder == null || !_isRecording) return;
+
+    await _durationSub?.cancel();
+    _durationSub = null;
+
+    await recorder.cancel();
+
+    if (mounted) {
+      setState(() {
+        _isRecording = false;
+        _recordingDuration = Duration.zero;
+      });
+    }
+
+    emitFlowEvent(layer: 'FL', event: 'CONV_FL_RECORD_CANCELLED', details: {});
   }
 
   void _removeAttachment(int index) {
@@ -931,9 +1126,15 @@ class _ConversationWiredState extends State<ConversationWired> {
 
   @override
   void dispose() {
+    widget.conversationTracker?.clear();
     _scrollController.removeListener(_onScroll);
     _incomingSubscription?.cancel();
     _contactUpdateSubscription?.cancel();
+    _durationSub?.cancel();
+    // Cancel active recording on dispose
+    if (_isRecording) {
+      widget.audioRecorderService?.cancel();
+    }
     _scrollController.dispose();
     super.dispose();
   }
@@ -962,6 +1163,11 @@ class _ConversationWiredState extends State<ConversationWired> {
         onRemoveAttachment: _removeAttachment,
         isProcessing: _isProcessingVideo,
         processingProgress: _processingProgress,
+        onRecordStart: widget.audioRecorderService != null ? _onRecordStart : null,
+        onRecordStop: widget.audioRecorderService != null ? _onRecordStop : null,
+        onRecordCancel: widget.audioRecorderService != null ? _onRecordCancel : null,
+        isRecording: _isRecording,
+        recordingDuration: _recordingDuration,
       ),
     );
   }

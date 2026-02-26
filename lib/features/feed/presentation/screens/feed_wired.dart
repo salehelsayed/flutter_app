@@ -6,8 +6,10 @@ import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/settings/application/image_quality_preference_use_cases.dart';
@@ -61,6 +63,8 @@ class FeedWired extends StatefulWidget {
   final MediaFileManager mediaFileManager;
   final SecureKeyStore secureKeyStore;
   final ImageProcessor imageProcessor;
+  final ActiveConversationTracker? conversationTracker;
+  final AudioRecorderService? audioRecorderService;
 
   const FeedWired({
     super.key,
@@ -76,6 +80,8 @@ class FeedWired extends StatefulWidget {
     required this.mediaFileManager,
     required this.secureKeyStore,
     required this.imageProcessor,
+    this.conversationTracker,
+    this.audioRecorderService,
   });
 
   @override
@@ -359,6 +365,8 @@ class _FeedWiredState extends State<FeedWired> {
           imageProcessor: widget.imageProcessor,
           qualityPreference: _qualityPreference,
           videoQualityPreference: _videoQualityPreference,
+          conversationTracker: widget.conversationTracker,
+          audioRecorderService: widget.audioRecorderService,
         ),
       ),
     ).then((_) => _refreshFeed());
@@ -395,6 +403,8 @@ class _FeedWiredState extends State<FeedWired> {
           imageProcessor: widget.imageProcessor,
           qualityPreference: _qualityPreference,
           videoQualityPreference: _videoQualityPreference,
+          conversationTracker: widget.conversationTracker,
+          audioRecorderService: widget.audioRecorderService,
         ),
       ),
     ).then((_) => _refreshFeed());
@@ -438,9 +448,12 @@ class _FeedWiredState extends State<FeedWired> {
         );
         await _refreshFeed();
       } else {
+        final errorText = result == SendChatMessageResult.encryptionRequired
+            ? 'Cannot send: contact does not support encryption.'
+            : 'Message failed to send. Try again.';
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: const Text('Message failed to send. Try again.'),
+            content: Text(errorText),
             backgroundColor: Colors.red[700],
             behavior: SnackBarBehavior.floating,
           ),
@@ -598,6 +611,8 @@ class _FeedWiredState extends State<FeedWired> {
             imageProcessor: widget.imageProcessor,
             qualityPreference: _qualityPreference,
             videoQualityPreference: _videoQualityPreference,
+            conversationTracker: widget.conversationTracker,
+            audioRecorderService: widget.audioRecorderService,
           ),
         ),
       ).then((_) => _refreshFeed());
@@ -672,6 +687,8 @@ class _FeedWiredState extends State<FeedWired> {
             mediaFileManager: widget.mediaFileManager,
             secureKeyStore: widget.secureKeyStore,
             imageProcessor: widget.imageProcessor,
+            conversationTracker: widget.conversationTracker,
+            audioRecorderService: widget.audioRecorderService,
           ),
         ),
       ).then((_) => _refreshFeed());

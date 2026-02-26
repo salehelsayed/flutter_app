@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/handle_incoming_chat_message_use_case.dart';
@@ -9,6 +10,7 @@ import 'package:flutter_app/features/conversation/domain/models/media_attachment
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
+import 'package:flutter_app/features/p2p/domain/models/connection_state.dart';
 
 // -- Fake Contact Repository --
 class FakeContactRepository implements ContactRepository {
@@ -153,13 +155,15 @@ class FakeMediaAttachmentRepository implements MediaAttachmentRepository {
 
   @override
   Future<List<MediaAttachment>> getAttachmentsForMessage(
-      String messageId) async {
+    String messageId,
+  ) async {
     return saved.where((a) => a.messageId == messageId).toList();
   }
 
   @override
   Future<Map<String, List<MediaAttachment>>> getAttachmentsForMessages(
-      List<String> messageIds) async => {};
+    List<String> messageIds,
+  ) async => {};
 
   @override
   Future<void> updateLocalPath(String id, String localPath) async {}
@@ -175,6 +179,48 @@ class FakeMediaAttachmentRepository implements MediaAttachmentRepository {
 
   @override
   Future<List<MediaAttachment>> getPendingDownloads() async => [];
+}
+
+class FakeDecryptBridge implements Bridge {
+  Map<String, dynamic> decryptResponse = {'ok': true, 'plaintext': '{}'};
+  int decryptCallCount = 0;
+
+  @override
+  Future<String> send(String message) async {
+    final req = jsonDecode(message) as Map<String, dynamic>;
+    if (req['cmd'] == 'message.decrypt') {
+      decryptCallCount++;
+      return jsonEncode(decryptResponse);
+    }
+    return jsonEncode({'ok': true});
+  }
+
+  @override
+  bool get isInitialized => true;
+
+  @override
+  Future<void> initialize() async {}
+
+  @override
+  Future<bool> checkHealth() async => true;
+
+  @override
+  Future<void> reinitialize() async {}
+
+  @override
+  void dispose() {}
+
+  @override
+  void Function(ChatMessage p1)? onMessageReceived;
+
+  @override
+  void Function(ConnectionState p1)? onPeerConnected;
+
+  @override
+  void Function(ConnectionState p1)? onPeerDisconnected;
+
+  @override
+  void Function(List<String> p1, List<String> p2)? onAddressesUpdated;
 }
 
 Future<List<String>> capturePrintedLines(Future<void> Function() action) async {
@@ -217,6 +263,20 @@ void main() {
         'senderUsername': 'Alice',
         'timestamp': '2026-02-09T15:30:00.000Z',
       },
+    });
+  }
+
+  String buildV2EncryptedEnvelopeJson({
+    String senderId = senderPeerId,
+    String kem = 'kem-blob',
+    String ciphertext = 'cipher-blob',
+    String nonce = 'nonce-blob',
+  }) {
+    return jsonEncode({
+      'type': 'chat_message',
+      'version': '2',
+      'senderPeerId': senderId,
+      'encrypted': {'kem': kem, 'ciphertext': ciphertext, 'nonce': nonce},
     });
   }
 
@@ -285,6 +345,87 @@ void main() {
       expect(result, HandleChatMessageResult.duplicate);
       expect(msg, isNull);
       expect(messageRepo.saved, isEmpty);
+    });
+
+    group('v2 encrypted envelopes', () {
+      test(
+        'returns notChatMessage when v2 envelope lacks bridge/key',
+        () async {
+          final message = buildP2PMessage(buildV2EncryptedEnvelopeJson());
+
+          final (result, msg, _) = await handleIncomingChatMessage(
+            message: message,
+            messageRepo: messageRepo,
+            contactRepo: contactRepo,
+          );
+
+          expect(result, HandleChatMessageResult.notChatMessage);
+          expect(msg, isNull);
+          expect(messageRepo.saved, isEmpty);
+        },
+      );
+
+      test(
+        'returns notChatMessage when bridge decrypt reports failure',
+        () async {
+          final bridge = FakeDecryptBridge()
+            ..decryptResponse = {
+              'ok': false,
+              'errorCode': 'DECRYPT_FAILED',
+              'errorMessage': 'cannot decrypt',
+            };
+          final message = buildP2PMessage(buildV2EncryptedEnvelopeJson());
+
+          final (result, msg, _) = await handleIncomingChatMessage(
+            message: message,
+            messageRepo: messageRepo,
+            contactRepo: contactRepo,
+            bridge: bridge,
+            ownMlKemSecretKey: 'own-secret-key',
+          );
+
+          expect(result, HandleChatMessageResult.notChatMessage);
+          expect(msg, isNull);
+          expect(messageRepo.saved, isEmpty);
+          expect(bridge.decryptCallCount, 1);
+        },
+      );
+
+      test(
+        'decrypts v2 envelope and persists message for known contact',
+        () async {
+          final bridge = FakeDecryptBridge()
+            ..decryptResponse = {
+              'ok': true,
+              'plaintext': jsonEncode({
+                'id': 'msg-v2-001',
+                'text': 'Hello from encrypted payload',
+                'senderPeerId': senderPeerId,
+                'senderUsername': 'Alice',
+                'timestamp': '2026-02-09T15:30:00.000Z',
+              }),
+            };
+          final message = buildP2PMessage(buildV2EncryptedEnvelopeJson());
+
+          final (result, msg, _) = await handleIncomingChatMessage(
+            message: message,
+            messageRepo: messageRepo,
+            contactRepo: contactRepo,
+            bridge: bridge,
+            ownMlKemSecretKey: 'own-secret-key',
+            transport: 'relay',
+          );
+
+          expect(result, HandleChatMessageResult.chatMessage);
+          expect(msg, isNotNull);
+          expect(msg!.id, 'msg-v2-001');
+          expect(msg.text, 'Hello from encrypted payload');
+          expect(msg.transport, 'relay');
+          expect(messageRepo.saved, hasLength(1));
+          expect(messageRepo.saved.first.id, 'msg-v2-001');
+          expect(bridge.decryptCallCount, 1);
+        },
+      );
     });
 
     test(
@@ -465,7 +606,9 @@ void main() {
 
     group('transport tagging', () {
       test('transport passes through to ConversationMessage', () async {
-        final message = buildP2PMessage(buildValidChatJson(id: 'msg-transport-001'));
+        final message = buildP2PMessage(
+          buildValidChatJson(id: 'msg-transport-001'),
+        );
 
         final (result, msg, _) = await handleIncomingChatMessage(
           message: message,
@@ -481,7 +624,9 @@ void main() {
       });
 
       test('wifi transport passes through', () async {
-        final message = buildP2PMessage(buildValidChatJson(id: 'msg-transport-002'));
+        final message = buildP2PMessage(
+          buildValidChatJson(id: 'msg-transport-002'),
+        );
 
         final (result, msg, _) = await handleIncomingChatMessage(
           message: message,
@@ -495,7 +640,9 @@ void main() {
       });
 
       test('inbox transport passes through', () async {
-        final message = buildP2PMessage(buildValidChatJson(id: 'msg-transport-003'));
+        final message = buildP2PMessage(
+          buildValidChatJson(id: 'msg-transport-003'),
+        );
 
         final (result, msg, _) = await handleIncomingChatMessage(
           message: message,
@@ -509,7 +656,9 @@ void main() {
       });
 
       test('null transport works for backward compat', () async {
-        final message = buildP2PMessage(buildValidChatJson(id: 'msg-transport-004'));
+        final message = buildP2PMessage(
+          buildValidChatJson(id: 'msg-transport-004'),
+        );
 
         final (result, msg, _) = await handleIncomingChatMessage(
           message: message,
@@ -540,6 +689,30 @@ void main() {
         expect(result, HandleChatMessageResult.duplicate);
         expect(msg, isNull);
         expect(messageRepo.saved, isEmpty);
+      },
+    );
+
+    test(
+      'still accepts V1 plaintext messages for backward compatibility',
+      () async {
+        // V1 plaintext message — must still be accepted on the receive path
+        // even though the send path now requires V2 encryption
+        final message = buildP2PMessage(buildValidChatJson(
+          id: 'msg-v1-compat-001',
+          text: 'Hello from older peer',
+        ));
+
+        final (result, msg, _) = await handleIncomingChatMessage(
+          message: message,
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+        );
+
+        expect(result, HandleChatMessageResult.chatMessage);
+        expect(msg, isNotNull);
+        expect(msg!.id, 'msg-v1-compat-001');
+        expect(msg.text, 'Hello from older peer');
+        expect(messageRepo.saved.length, 1);
       },
     );
 
@@ -588,9 +761,9 @@ void main() {
           },
         ];
 
-        final message = buildP2PMessage(buildChatJsonWithMedia(
-          media: mediaArray,
-        ));
+        final message = buildP2PMessage(
+          buildChatJsonWithMedia(media: mediaArray),
+        );
 
         final (result, msg, _) = await handleIncomingChatMessage(
           message: message,
@@ -639,9 +812,9 @@ void main() {
             'mediaType': 'image',
           },
         ];
-        final message = buildP2PMessage(buildChatJsonWithMedia(
-          media: mediaArray,
-        ));
+        final message = buildP2PMessage(
+          buildChatJsonWithMedia(media: mediaArray),
+        );
 
         final (result, msg, _) = await handleIncomingChatMessage(
           message: message,
@@ -664,11 +837,13 @@ void main() {
             'mediaType': 'image',
           },
         ];
-        final message = buildP2PMessage(buildChatJsonWithMedia(
-          id: 'msg-with-media-001',
-          text: 'Photo attached',
-          media: mediaArray,
-        ));
+        final message = buildP2PMessage(
+          buildChatJsonWithMedia(
+            id: 'msg-with-media-001',
+            text: 'Photo attached',
+            media: mediaArray,
+          ),
+        );
 
         await handleIncomingChatMessage(
           message: message,

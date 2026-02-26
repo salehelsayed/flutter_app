@@ -273,10 +273,20 @@ Future<List<String>> capturePrintedLines(Future<void> Function() action) async {
 void main() {
   late FakeP2PService p2pService;
   late FakeMessageRepository messageRepo;
+  late FakeBridge defaultEncryptBridge;
+  const defaultMlKemKey = 'test-recipient-mlkem-pub-key';
 
   setUp(() {
     p2pService = FakeP2PService();
     messageRepo = FakeMessageRepository();
+    defaultEncryptBridge = FakeBridge(initialResponses: {
+      'message.encrypt': {
+        'ok': true,
+        'kem': 'fake-kem',
+        'ciphertext': 'fake-ct',
+        'nonce': 'fake-nonce',
+      },
+    });
   });
 
   group('sendChatMessage', () {
@@ -320,6 +330,8 @@ void main() {
         text: exactText,
         senderPeerId: 'my-peer',
         senderUsername: 'Me',
+        bridge: defaultEncryptBridge,
+        recipientMlKemPublicKey: defaultMlKemKey,
       );
 
       expect(result, SendChatMessageResult.success);
@@ -334,6 +346,8 @@ void main() {
         text: 'Hello\u200Bworld\u202A!',
         senderPeerId: 'my-peer',
         senderUsername: 'Me',
+        bridge: defaultEncryptBridge,
+        recipientMlKemPublicKey: defaultMlKemKey,
       );
 
       expect(messageRepo.saved.length, 1);
@@ -348,14 +362,15 @@ void main() {
         text: 'Hello',
         senderPeerId: 'my-peer',
         senderUsername: 'Me\u200B',
+        bridge: defaultEncryptBridge,
+        recipientMlKemPublicKey: defaultMlKemKey,
       );
 
-      // The payload in the wire message should have the sanitized username
-      expect(p2pService.lastSentMessage, contains('"senderUsername":"Me"'));
-      expect(
-        p2pService.lastSentMessage,
-        isNot(contains('\u200B')),
-      );
+      // With V2 encryption, inner payload is encrypted — verify via bridge call
+      final bridgeReq = jsonDecode(defaultEncryptBridge.lastSentMessage!) as Map<String, dynamic>;
+      final plaintext = bridgeReq['payload']?['plaintext'] as String? ?? '';
+      expect(plaintext, contains('"senderUsername":"Me"'));
+      expect(plaintext, isNot(contains('\u200B')));
     });
 
     test('returns invalidMessage for whitespace-only text', () async {
@@ -398,6 +413,8 @@ void main() {
         text: 'Hello!',
         senderPeerId: 'my-peer',
         senderUsername: 'Me',
+        bridge: defaultEncryptBridge,
+        recipientMlKemPublicKey: defaultMlKemKey,
       );
 
       expect(result, SendChatMessageResult.success);
@@ -413,7 +430,7 @@ void main() {
       expect(messageRepo.saved.first.id, message.id);
     });
 
-    test('sends correct JSON envelope via P2P', () async {
+    test('sends correct V2 JSON envelope via P2P', () async {
       await sendChatMessage(
         p2pService: p2pService,
         messageRepo: messageRepo,
@@ -421,12 +438,18 @@ void main() {
         text: 'Hello!',
         senderPeerId: 'my-peer',
         senderUsername: 'Me',
+        bridge: defaultEncryptBridge,
+        recipientMlKemPublicKey: defaultMlKemKey,
       );
 
       expect(p2pService.lastSentPeerId, 'target-peer');
       expect(p2pService.lastSentMessage, isNotNull);
-      expect(p2pService.lastSentMessage, contains('"type":"chat_message"'));
-      expect(p2pService.lastSentMessage, contains('"text":"Hello!"'));
+      final wireJson =
+          jsonDecode(p2pService.lastSentMessage!) as Map<String, dynamic>;
+      expect(wireJson['type'], 'chat_message');
+      expect(wireJson['version'], '2');
+      expect(wireJson['senderPeerId'], 'my-peer');
+      expect(wireJson['encrypted'], isNotNull);
     });
 
     test('uses provided messageId and timestamp when passed', () async {
@@ -442,6 +465,8 @@ void main() {
         senderUsername: 'Me',
         messageId: fixedMessageId,
         timestamp: fixedTimestamp,
+        bridge: defaultEncryptBridge,
+        recipientMlKemPublicKey: defaultMlKemKey,
       );
 
       expect(result, SendChatMessageResult.success);
@@ -450,11 +475,11 @@ void main() {
       expect(message.timestamp, fixedTimestamp);
       expect(messageRepo.saved.first.id, fixedMessageId);
       expect(messageRepo.saved.first.timestamp, fixedTimestamp);
-      expect(p2pService.lastSentMessage, contains('"id":"$fixedMessageId"'));
-      expect(
-        p2pService.lastSentMessage,
-        contains('"timestamp":"$fixedTimestamp"'),
-      );
+      // V2 envelope — inner payload is encrypted, check persisted message
+      final wireJson =
+          jsonDecode(p2pService.lastSentMessage!) as Map<String, dynamic>;
+      expect(wireJson['version'], '2');
+      expect(wireJson['encrypted'], isNotNull);
     });
 
     test('logs CHAT_OUT with delivered status and text preview', () async {
@@ -466,6 +491,8 @@ void main() {
           text: 'Hello from logger',
           senderPeerId: 'my-peer',
           senderUsername: 'Me',
+          bridge: defaultEncryptBridge,
+          recipientMlKemPublicKey: defaultMlKemKey,
         );
       });
 
@@ -492,6 +519,8 @@ void main() {
           text: 'Hello!',
           senderPeerId: 'my-peer',
           senderUsername: 'Me',
+          bridge: defaultEncryptBridge,
+          recipientMlKemPublicKey: defaultMlKemKey,
         );
 
         expect(result, SendChatMessageResult.sendFailed);
@@ -516,6 +545,8 @@ void main() {
           text: 'Hello queued!',
           senderPeerId: 'my-peer',
           senderUsername: 'Me',
+          bridge: defaultEncryptBridge,
+          recipientMlKemPublicKey: defaultMlKemKey,
         );
 
         expect(result, SendChatMessageResult.success);
@@ -526,17 +557,14 @@ void main() {
         expect(p2pService.storeInInboxCallCount, 1);
         expect(p2pService.lastInboxPeerId, 'target-peer');
         expect(p2pService.lastInboxMessage, isNotNull);
-        expect(p2pService.lastInboxMessage, contains('"type":"chat_message"'));
+        final wireJson =
+            jsonDecode(p2pService.lastInboxMessage!) as Map<String, dynamic>;
+        expect(wireJson['type'], 'chat_message');
+        expect(wireJson['version'], '2');
       },
     );
 
     test('returns sendFailed when P2P throws exception', () async {
-      // Make discover succeed but sendMessageWithReply throw
-      p2pService = FakeP2PService();
-      p2pService.shouldThrow = true;
-      // Override discoverPeer so it doesn't throw (shouldThrow only affects send)
-      // Actually, shouldThrow in our fake affects discover on first call too.
-      // Let's use a cleaner approach:
       final customP2P = _ThrowOnSendP2PService();
 
       final (result, message) = await sendChatMessage(
@@ -546,6 +574,8 @@ void main() {
         text: 'Hello!',
         senderPeerId: 'my-peer',
         senderUsername: 'Me',
+        bridge: defaultEncryptBridge,
+        recipientMlKemPublicKey: defaultMlKemKey,
       );
 
       expect(result, SendChatMessageResult.sendFailed);
@@ -565,6 +595,8 @@ void main() {
           text: 'Hello!',
           senderPeerId: 'my-peer',
           senderUsername: 'Me',
+          bridge: defaultEncryptBridge,
+          recipientMlKemPublicKey: defaultMlKemKey,
         );
 
         expect(result, SendChatMessageResult.peerNotFound);
@@ -588,6 +620,8 @@ void main() {
           text: 'Hello!',
           senderPeerId: 'my-peer',
           senderUsername: 'Me',
+          bridge: defaultEncryptBridge,
+          recipientMlKemPublicKey: defaultMlKemKey,
         );
 
         expect(result, SendChatMessageResult.dialFailed);
@@ -609,6 +643,8 @@ void main() {
         text: 'Hello!',
         senderPeerId: 'my-peer',
         senderUsername: 'Me',
+        bridge: defaultEncryptBridge,
+        recipientMlKemPublicKey: defaultMlKemKey,
       );
 
       expect(result, SendChatMessageResult.success);
@@ -626,6 +662,8 @@ void main() {
         text: 'Hello!',
         senderPeerId: 'my-peer',
         senderUsername: 'Me',
+        bridge: defaultEncryptBridge,
+        recipientMlKemPublicKey: defaultMlKemKey,
       );
 
       expect(result, SendChatMessageResult.success);
@@ -642,6 +680,8 @@ void main() {
         text: 'Hello!',
         senderPeerId: 'my-peer',
         senderUsername: 'Me',
+        bridge: defaultEncryptBridge,
+        recipientMlKemPublicKey: defaultMlKemKey,
       );
 
       expect(result, SendChatMessageResult.success);
@@ -658,6 +698,8 @@ void main() {
         text: 'Hello!',
         senderPeerId: 'my-peer',
         senderUsername: 'Me',
+        bridge: defaultEncryptBridge,
+        recipientMlKemPublicKey: defaultMlKemKey,
       );
 
       expect(result, SendChatMessageResult.success);
@@ -674,6 +716,8 @@ void main() {
         text: 'Hello local!',
         senderPeerId: 'my-peer',
         senderUsername: 'Me',
+        bridge: defaultEncryptBridge,
+        recipientMlKemPublicKey: defaultMlKemKey,
       );
 
       expect(result, SendChatMessageResult.success);
@@ -697,6 +741,8 @@ void main() {
         text: 'Hello fallback!',
         senderPeerId: 'my-peer',
         senderUsername: 'Me',
+        bridge: defaultEncryptBridge,
+        recipientMlKemPublicKey: defaultMlKemKey,
       );
 
       expect(result, SendChatMessageResult.success);
@@ -718,6 +764,8 @@ void main() {
         text: 'Hello relay!',
         senderPeerId: 'my-peer',
         senderUsername: 'Me',
+        bridge: defaultEncryptBridge,
+        recipientMlKemPublicKey: defaultMlKemKey,
       );
 
       expect(result, SendChatMessageResult.success);
@@ -738,6 +786,8 @@ void main() {
         senderPeerId: 'my-peer',
         senderUsername: 'Me',
         quotedMessageId: 'original-msg-001',
+        bridge: defaultEncryptBridge,
+        recipientMlKemPublicKey: defaultMlKemKey,
       );
 
       expect(result, SendChatMessageResult.success);
@@ -746,7 +796,7 @@ void main() {
       expect(messageRepo.saved.first.quotedMessageId, 'original-msg-001');
     });
 
-    test('quotedMessageId included in wire JSON envelope', () async {
+    test('quotedMessageId included in encrypted inner payload', () async {
       await sendChatMessage(
         p2pService: p2pService,
         messageRepo: messageRepo,
@@ -755,9 +805,14 @@ void main() {
         senderPeerId: 'my-peer',
         senderUsername: 'Me',
         quotedMessageId: 'quoted-123',
+        bridge: defaultEncryptBridge,
+        recipientMlKemPublicKey: defaultMlKemKey,
       );
 
-      expect(p2pService.lastSentMessage, contains('"quotedMessageId":"quoted-123"'));
+      // V2 envelope — inner payload is encrypted, verify via bridge plaintext
+      final bridgeReq = jsonDecode(defaultEncryptBridge.lastSentMessage!) as Map<String, dynamic>;
+      final plaintext = bridgeReq['payload']?['plaintext'] as String? ?? '';
+      expect(plaintext, contains('"quotedMessageId":"quoted-123"'));
     });
 
     test('quotedMessageId is null when not provided', () async {
@@ -768,12 +823,16 @@ void main() {
         text: 'Normal message',
         senderPeerId: 'my-peer',
         senderUsername: 'Me',
+        bridge: defaultEncryptBridge,
+        recipientMlKemPublicKey: defaultMlKemKey,
       );
 
       expect(message, isNotNull);
       expect(message!.quotedMessageId, isNull);
-      // No quotedMessageId key in wire JSON
-      expect(p2pService.lastSentMessage, isNot(contains('quotedMessageId')));
+      // V2 envelope — inner payload is encrypted, verify via bridge plaintext
+      final bridgeReq = jsonDecode(defaultEncryptBridge.lastSentMessage!) as Map<String, dynamic>;
+      final plaintext = bridgeReq['payload']?['plaintext'] as String? ?? '';
+      expect(plaintext, isNot(contains('quotedMessageId')));
     });
 
     group('media attachments', () {
@@ -817,6 +876,8 @@ void main() {
           senderUsername: 'Me',
           mediaAttachments: testMedia,
           mediaAttachmentRepo: mediaRepo,
+          bridge: defaultEncryptBridge,
+          recipientMlKemPublicKey: defaultMlKemKey,
         );
 
         expect(result, SendChatMessageResult.success);
@@ -854,7 +915,7 @@ void main() {
         expect(result, SendChatMessageResult.invalidMessage);
       });
 
-      test('includes media array in wire JSON', () async {
+      test('includes media array in encrypted inner payload', () async {
         await sendChatMessage(
           p2pService: p2pService,
           messageRepo: messageRepo,
@@ -864,15 +925,20 @@ void main() {
           senderUsername: 'Me',
           mediaAttachments: testMedia,
           mediaAttachmentRepo: mediaRepo,
+          bridge: defaultEncryptBridge,
+          recipientMlKemPublicKey: defaultMlKemKey,
         );
 
-        expect(p2pService.lastSentMessage, contains('"media"'));
-        expect(p2pService.lastSentMessage, contains('"blob-001"'));
-        expect(p2pService.lastSentMessage, contains('"blob-002"'));
-        expect(p2pService.lastSentMessage, contains('"image/jpeg"'));
+        // V2: inner payload is encrypted — verify via bridge plaintext
+        final bridgeReq = jsonDecode(defaultEncryptBridge.lastSentMessage!) as Map<String, dynamic>;
+        final plaintext = bridgeReq['payload']?['plaintext'] as String? ?? '';
+        expect(plaintext, contains('"media"'));
+        expect(plaintext, contains('"blob-001"'));
+        expect(plaintext, contains('"blob-002"'));
+        expect(plaintext, contains('"image/jpeg"'));
       });
 
-      test('omits media from wire JSON when null', () async {
+      test('omits media from encrypted inner payload when null', () async {
         await sendChatMessage(
           p2pService: p2pService,
           messageRepo: messageRepo,
@@ -880,9 +946,14 @@ void main() {
           text: 'No media',
           senderPeerId: 'my-peer',
           senderUsername: 'Me',
+          bridge: defaultEncryptBridge,
+          recipientMlKemPublicKey: defaultMlKemKey,
         );
 
-        expect(p2pService.lastSentMessage, isNot(contains('"media"')));
+        // V2: verify inner payload has no media via bridge plaintext
+        final bridgeReq = jsonDecode(defaultEncryptBridge.lastSentMessage!) as Map<String, dynamic>;
+        final plaintext = bridgeReq['payload']?['plaintext'] as String? ?? '';
+        expect(plaintext, isNot(contains('"media"')));
       });
 
       test('persists media attachments with correct messageId on success',
@@ -899,6 +970,8 @@ void main() {
           messageId: fixedId,
           mediaAttachments: testMedia,
           mediaAttachmentRepo: mediaRepo,
+          bridge: defaultEncryptBridge,
+          recipientMlKemPublicKey: defaultMlKemKey,
         );
 
         expect(result, SendChatMessageResult.success);
@@ -924,6 +997,8 @@ void main() {
           messageId: fixedId,
           mediaAttachments: testMedia,
           mediaAttachmentRepo: mediaRepo,
+          bridge: defaultEncryptBridge,
+          recipientMlKemPublicKey: defaultMlKemKey,
         );
 
         expect(result, SendChatMessageResult.success);
@@ -947,6 +1022,8 @@ void main() {
           messageId: fixedId,
           mediaAttachments: testMedia,
           mediaAttachmentRepo: mediaRepo,
+          bridge: defaultEncryptBridge,
+          recipientMlKemPublicKey: defaultMlKemKey,
         );
 
         expect(result, SendChatMessageResult.sendFailed);
@@ -964,6 +1041,8 @@ void main() {
           senderUsername: 'Me',
           mediaAttachments: testMedia,
           mediaAttachmentRepo: null,
+          bridge: defaultEncryptBridge,
+          recipientMlKemPublicKey: defaultMlKemKey,
         );
 
         expect(result, SendChatMessageResult.success);
@@ -980,6 +1059,8 @@ void main() {
           senderUsername: 'Me',
           mediaAttachments: [],
           mediaAttachmentRepo: mediaRepo,
+          bridge: defaultEncryptBridge,
+          recipientMlKemPublicKey: defaultMlKemKey,
         );
 
         expect(result, SendChatMessageResult.success);
@@ -998,6 +1079,8 @@ void main() {
           text: 'WiFi transport',
           senderPeerId: 'my-peer',
           senderUsername: 'Me',
+          bridge: defaultEncryptBridge,
+          recipientMlKemPublicKey: defaultMlKemKey,
         );
 
         expect(result, SendChatMessageResult.success);
@@ -1015,6 +1098,8 @@ void main() {
           text: 'Relay fast path',
           senderPeerId: 'my-peer',
           senderUsername: 'Me',
+          bridge: defaultEncryptBridge,
+          recipientMlKemPublicKey: defaultMlKemKey,
         );
 
         expect(result, SendChatMessageResult.success);
@@ -1030,6 +1115,8 @@ void main() {
           text: 'Relay discover',
           senderPeerId: 'my-peer',
           senderUsername: 'Me',
+          bridge: defaultEncryptBridge,
+          recipientMlKemPublicKey: defaultMlKemKey,
         );
 
         expect(result, SendChatMessageResult.success);
@@ -1048,6 +1135,8 @@ void main() {
           text: 'Inbox transport',
           senderPeerId: 'my-peer',
           senderUsername: 'Me',
+          bridge: defaultEncryptBridge,
+          recipientMlKemPublicKey: defaultMlKemKey,
         );
 
         expect(result, SendChatMessageResult.success);
@@ -1066,6 +1155,8 @@ void main() {
           text: 'Failed transport',
           senderPeerId: 'my-peer',
           senderUsername: 'Me',
+          bridge: defaultEncryptBridge,
+          recipientMlKemPublicKey: defaultMlKemKey,
         );
 
         expect(result, SendChatMessageResult.sendFailed);
@@ -1086,6 +1177,8 @@ void main() {
           text: 'Fast hello!',
           senderPeerId: 'my-peer',
           senderUsername: 'Me',
+          bridge: defaultEncryptBridge,
+          recipientMlKemPublicKey: defaultMlKemKey,
         );
 
         expect(result, SendChatMessageResult.success);
@@ -1107,6 +1200,8 @@ void main() {
           text: 'Fast no ack!',
           senderPeerId: 'my-peer',
           senderUsername: 'Me',
+          bridge: defaultEncryptBridge,
+          recipientMlKemPublicKey: defaultMlKemKey,
         );
 
         expect(result, SendChatMessageResult.success);
@@ -1127,6 +1222,8 @@ void main() {
           text: 'Retry hello!',
           senderPeerId: 'my-peer',
           senderUsername: 'Me',
+          bridge: defaultEncryptBridge,
+          recipientMlKemPublicKey: defaultMlKemKey,
         );
 
         expect(result, SendChatMessageResult.success);
@@ -1148,6 +1245,8 @@ void main() {
           text: 'Throw then retry!',
           senderPeerId: 'my-peer',
           senderUsername: 'Me',
+          bridge: defaultEncryptBridge,
+          recipientMlKemPublicKey: defaultMlKemKey,
         );
 
         expect(result, SendChatMessageResult.success);
@@ -1169,6 +1268,8 @@ void main() {
           text: 'Inbox fallback!',
           senderPeerId: 'my-peer',
           senderUsername: 'Me',
+          bridge: defaultEncryptBridge,
+          recipientMlKemPublicKey: defaultMlKemKey,
         );
 
         expect(result, SendChatMessageResult.success);
@@ -1187,6 +1288,8 @@ void main() {
           text: 'Normal path!',
           senderPeerId: 'my-peer',
           senderUsername: 'Me',
+          bridge: defaultEncryptBridge,
+          recipientMlKemPublicKey: defaultMlKemKey,
         );
 
         expect(result, SendChatMessageResult.success);
@@ -1208,6 +1311,8 @@ void main() {
           text: 'Local wins!',
           senderPeerId: 'my-peer',
           senderUsername: 'Me',
+          bridge: defaultEncryptBridge,
+          recipientMlKemPublicKey: defaultMlKemKey,
         );
 
         expect(result, SendChatMessageResult.success);
@@ -1233,6 +1338,8 @@ void main() {
           text: 'Fast after local!',
           senderPeerId: 'my-peer',
           senderUsername: 'Me',
+          bridge: defaultEncryptBridge,
+          recipientMlKemPublicKey: defaultMlKemKey,
         );
 
         expect(result, SendChatMessageResult.success);
@@ -1255,6 +1362,8 @@ void main() {
             text: 'Flow event test',
             senderPeerId: 'my-peer',
             senderUsername: 'Me',
+            bridge: defaultEncryptBridge,
+            recipientMlKemPublicKey: defaultMlKemKey,
           );
         });
 
@@ -1279,6 +1388,8 @@ void main() {
             text: 'Flow fail test',
             senderPeerId: 'my-peer',
             senderUsername: 'Me',
+            bridge: defaultEncryptBridge,
+            recipientMlKemPublicKey: defaultMlKemKey,
           );
         });
 
@@ -1322,6 +1433,8 @@ void main() {
           messageId: fixedId,
           mediaAttachments: testMedia,
           mediaAttachmentRepo: mediaRepo,
+          bridge: defaultEncryptBridge,
+          recipientMlKemPublicKey: defaultMlKemKey,
         );
 
         expect(result, SendChatMessageResult.success);
@@ -1345,6 +1458,8 @@ void main() {
           text: 'Dual path test',
           senderPeerId: 'my-peer',
           senderUsername: 'Me',
+          bridge: defaultEncryptBridge,
+          recipientMlKemPublicKey: defaultMlKemKey,
         );
 
         expect(result, SendChatMessageResult.success);
@@ -1366,6 +1481,8 @@ void main() {
           text: 'No ACK test',
           senderPeerId: 'my-peer',
           senderUsername: 'Me',
+          bridge: defaultEncryptBridge,
+          recipientMlKemPublicKey: defaultMlKemKey,
         );
 
         expect(result, SendChatMessageResult.success);
@@ -1389,6 +1506,8 @@ void main() {
           text: 'Inbox fallback test',
           senderPeerId: 'my-peer',
           senderUsername: 'Me',
+          bridge: defaultEncryptBridge,
+          recipientMlKemPublicKey: defaultMlKemKey,
         );
 
         expect(result, SendChatMessageResult.success);
@@ -1411,6 +1530,8 @@ void main() {
           text: 'All fail test',
           senderPeerId: 'my-peer',
           senderUsername: 'Me',
+          bridge: defaultEncryptBridge,
+          recipientMlKemPublicKey: defaultMlKemKey,
         );
 
         expect(result, SendChatMessageResult.success);
@@ -1429,6 +1550,8 @@ void main() {
           text: 'WiFi error test',
           senderPeerId: 'my-peer',
           senderUsername: 'Me',
+          bridge: defaultEncryptBridge,
+          recipientMlKemPublicKey: defaultMlKemKey,
         );
 
         expect(result, SendChatMessageResult.success);
@@ -1449,6 +1572,8 @@ void main() {
           text: 'Fast path after WiFi',
           senderPeerId: 'my-peer',
           senderUsername: 'Me',
+          bridge: defaultEncryptBridge,
+          recipientMlKemPublicKey: defaultMlKemKey,
         );
 
         expect(result, SendChatMessageResult.success);
@@ -1470,6 +1595,8 @@ void main() {
           text: 'WiFi then relay',
           senderPeerId: 'my-peer',
           senderUsername: 'Me',
+          bridge: defaultEncryptBridge,
+          recipientMlKemPublicKey: defaultMlKemKey,
         );
 
         expect(result, SendChatMessageResult.success);
@@ -1496,6 +1623,8 @@ void main() {
             text: 'WiFi save fails once',
             senderPeerId: 'my-peer',
             senderUsername: 'Me',
+            bridge: defaultEncryptBridge,
+            recipientMlKemPublicKey: defaultMlKemKey,
           );
 
           // WiFi send succeeded, saveMessage threw on 1st call,
@@ -1528,6 +1657,8 @@ void main() {
             text: 'WiFi save always fails',
             senderPeerId: 'my-peer',
             senderUsername: 'Me',
+            bridge: defaultEncryptBridge,
+            recipientMlKemPublicKey: defaultMlKemKey,
           );
 
           // After fix: wifiSent stays false because saveMessage throws before
@@ -1543,10 +1674,6 @@ void main() {
       test(
         'WiFi send succeeds but saveMessage throws — media attachments saved by relay fallback',
         () async {
-          // Setup: WiFi send works, saveMessage throws (so _persistMediaAttachments
-          // at line 186 is never reached). wifiSent stays false. Relay succeeds
-          // and saves the message, and since `wifiSent` is false, the relay
-          // path's `if (!wifiSent)` guard allows _persistMediaAttachments.
           final throwingRepo = _ThrowOnSaveMessageRepository(throwCount: 1);
           final mediaRepo = FakeMediaAttachmentRepository();
           p2pService.localPeers.add('target-peer');
@@ -1576,6 +1703,8 @@ void main() {
             messageId: fixedId,
             mediaAttachments: testMedia,
             mediaAttachmentRepo: mediaRepo,
+            bridge: defaultEncryptBridge,
+            recipientMlKemPublicKey: defaultMlKemKey,
           );
 
           // After fix: wifiSent stays false because saveMessage throws before
@@ -1605,6 +1734,8 @@ void main() {
             text: 'WiFi fail relay saves',
             senderPeerId: 'my-peer',
             senderUsername: 'Me',
+            bridge: defaultEncryptBridge,
+            recipientMlKemPublicKey: defaultMlKemKey,
           );
 
           expect(result, SendChatMessageResult.success);
@@ -1632,6 +1763,8 @@ void main() {
             text: 'Everything fails',
             senderPeerId: 'my-peer',
             senderUsername: 'Me',
+            bridge: defaultEncryptBridge,
+            recipientMlKemPublicKey: defaultMlKemKey,
           );
 
           // Relay send fails 3x, inbox fails, final persist throws →
@@ -1645,8 +1778,6 @@ void main() {
       test(
         'WiFi success with media — media persisted once, not duplicated by relay',
         () async {
-          // Happy path: WiFi succeeds, both saveMessage and media persist succeed.
-          // wifiSent = true, so relay path's `if (!wifiSent)` skips media.
           final mediaRepo = FakeMediaAttachmentRepository();
           p2pService.localPeers.add('target-peer');
 
@@ -1675,6 +1806,8 @@ void main() {
             messageId: fixedId,
             mediaAttachments: testMedia,
             mediaAttachmentRepo: mediaRepo,
+            bridge: defaultEncryptBridge,
+            recipientMlKemPublicKey: defaultMlKemKey,
           );
 
           expect(result, SendChatMessageResult.success);
@@ -1788,33 +1921,28 @@ void main() {
       );
 
       test(
-        'sends v1 plaintext envelope when bridge is null',
+        'returns encryptionRequired when bridge is null',
         () async {
           final (result, message) = await sendChatMessage(
             p2pService: p2pService,
             messageRepo: messageRepo,
             targetPeerId: 'target-peer',
-            text: 'No bridge v1',
+            text: 'No bridge',
             senderPeerId: 'my-peer',
             senderUsername: 'Me',
             bridge: null,
             recipientMlKemPublicKey: 'some-mlkem-key',
           );
 
-          expect(result, SendChatMessageResult.success);
-          expect(message, isNotNull);
-
-          // Verify wire JSON is v1 plaintext
-          final wireJson =
-              jsonDecode(p2pService.lastSentMessage!) as Map<String, dynamic>;
-          expect(wireJson['version'], '1');
-          expect(wireJson['payload'], isNotNull);
-          expect(wireJson.containsKey('encrypted'), isFalse);
+          expect(result, SendChatMessageResult.encryptionRequired);
+          expect(message, isNull);
+          expect(messageRepo.saved, isEmpty);
+          expect(p2pService.sendCallCount, 0);
         },
       );
 
       test(
-        'sends v1 plaintext envelope when recipientMlKemPublicKey is null',
+        'returns encryptionRequired when recipientMlKemPublicKey is null',
         () async {
           final bridge = FakeBridge();
 
@@ -1822,23 +1950,16 @@ void main() {
             p2pService: p2pService,
             messageRepo: messageRepo,
             targetPeerId: 'target-peer',
-            text: 'No mlkem key v1',
+            text: 'No mlkem key',
             senderPeerId: 'my-peer',
             senderUsername: 'Me',
             bridge: bridge,
             recipientMlKemPublicKey: null,
           );
 
-          expect(result, SendChatMessageResult.success);
-          expect(message, isNotNull);
-
-          // Verify wire JSON is v1 plaintext
-          final wireJson =
-              jsonDecode(p2pService.lastSentMessage!) as Map<String, dynamic>;
-          expect(wireJson['version'], '1');
-          expect(wireJson['payload'], isNotNull);
-          expect(wireJson.containsKey('encrypted'), isFalse);
-          // Bridge should not have been called for encrypt
+          expect(result, SendChatMessageResult.encryptionRequired);
+          expect(message, isNull);
+          expect(messageRepo.saved, isEmpty);
           expect(bridge.sendCallCount, 0);
         },
       );
@@ -1900,6 +2021,145 @@ void main() {
           );
         },
       );
+    });
+
+    group('V2 enforcement', () {
+      test('returns encryptionRequired when recipientMlKemPublicKey is null',
+          () async {
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Hello!',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          bridge: defaultEncryptBridge,
+          recipientMlKemPublicKey: null,
+        );
+
+        expect(result, SendChatMessageResult.encryptionRequired);
+        expect(message, isNull);
+        expect(messageRepo.saved, isEmpty);
+        expect(p2pService.sendCallCount, 0);
+      });
+
+      test('returns encryptionRequired when bridge is null', () async {
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Hello!',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          bridge: null,
+          recipientMlKemPublicKey: defaultMlKemKey,
+        );
+
+        expect(result, SendChatMessageResult.encryptionRequired);
+        expect(message, isNull);
+        expect(messageRepo.saved, isEmpty);
+        expect(p2pService.sendCallCount, 0);
+      });
+
+      test('returns encryptionRequired when both bridge and key are null',
+          () async {
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Hello!',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          bridge: null,
+          recipientMlKemPublicKey: null,
+        );
+
+        expect(result, SendChatMessageResult.encryptionRequired);
+        expect(message, isNull);
+        expect(messageRepo.saved, isEmpty);
+      });
+
+      test('emits CHAT_MSG_SEND_ENCRYPTION_REQUIRED flow event when key missing',
+          () async {
+        final lines = await capturePrintedLines(() async {
+          await sendChatMessage(
+            p2pService: p2pService,
+            messageRepo: messageRepo,
+            targetPeerId: 'target-peer',
+            text: 'Hello!',
+            senderPeerId: 'my-peer',
+            senderUsername: 'Me',
+            bridge: defaultEncryptBridge,
+            recipientMlKemPublicKey: null,
+          );
+        });
+
+        expect(
+          lines.any((l) => l.contains('CHAT_MSG_SEND_ENCRYPTION_REQUIRED')),
+          isTrue,
+        );
+      });
+
+      test('does not persist any message to DB on encryptionRequired',
+          () async {
+        await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Hello!',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          bridge: null,
+          recipientMlKemPublicKey: null,
+        );
+
+        expect(messageRepo.saved, isEmpty);
+      });
+
+      test('sends V2 encrypted envelope over WiFi path', () async {
+        p2pService.localPeers.add('target-peer');
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Encrypted WiFi!',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          bridge: defaultEncryptBridge,
+          recipientMlKemPublicKey: defaultMlKemKey,
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message!.transport, 'wifi');
+        final wireJson =
+            jsonDecode(p2pService.lastSentMessage!) as Map<String, dynamic>;
+        expect(wireJson['version'], '2');
+        expect(wireJson['encrypted'], isNotNull);
+      });
+
+      test('sends V2 encrypted envelope via inbox fallback', () async {
+        p2pService.sendMessageResult = false;
+        p2pService.storeInInboxResult = true;
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Encrypted inbox!',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          bridge: defaultEncryptBridge,
+          recipientMlKemPublicKey: defaultMlKemKey,
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message!.transport, 'inbox');
+        final wireJson =
+            jsonDecode(p2pService.lastInboxMessage!) as Map<String, dynamic>;
+        expect(wireJson['version'], '2');
+        expect(wireJson['encrypted'], isNotNull);
+      });
     });
   });
 }

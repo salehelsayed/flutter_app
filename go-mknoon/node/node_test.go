@@ -267,6 +267,71 @@ func TestConcurrentRelayConnect(t *testing.T) {
 	t.Logf("concurrent relay connect completed in %v", elapsed)
 }
 
+func TestReconnectRelaysPreservesAutoRegister(t *testing.T) {
+	hexKey := generateTestKey(t)
+
+	n := NewNode()
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex:  hexKey,
+		RelayAddresses: []string{},
+		AutoRegister:   true,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer n.Stop()
+
+	// Verify AutoRegister was saved
+	n.mu.RLock()
+	if !n.lastConfig.AutoRegister {
+		t.Fatal("lastConfig.AutoRegister should be true after Start")
+	}
+	n.mu.RUnlock()
+
+	// ReconnectRelays temporarily sets AutoRegister=false for the restart,
+	// but must restore the original value so future recoveries preserve it.
+	if err := n.ReconnectRelays(); err != nil {
+		t.Fatalf("ReconnectRelays: %v", err)
+	}
+
+	n.mu.RLock()
+	autoReg := n.lastConfig.AutoRegister
+	n.mu.RUnlock()
+
+	if !autoReg {
+		t.Error("lastConfig.AutoRegister should be true after ReconnectRelays, got false")
+	}
+}
+
+func TestReconnectRelaysPreservesAutoRegisterMultipleCycles(t *testing.T) {
+	hexKey := generateTestKey(t)
+
+	n := NewNode()
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex:  hexKey,
+		RelayAddresses: []string{},
+		AutoRegister:   true,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer n.Stop()
+
+	for cycle := 1; cycle <= 3; cycle++ {
+		if err := n.ReconnectRelays(); err != nil {
+			t.Fatalf("ReconnectRelays cycle %d: %v", cycle, err)
+		}
+
+		n.mu.RLock()
+		autoReg := n.lastConfig.AutoRegister
+		n.mu.RUnlock()
+
+		if !autoReg {
+			t.Errorf("cycle %d: lastConfig.AutoRegister should be true, got false", cycle)
+		}
+	}
+}
+
 func TestRelayReadyChannelNotClosedOnFailure(t *testing.T) {
 	hexKey := generateTestKey(t)
 

@@ -182,12 +182,10 @@ void main() {
     print('[TEST] Starting P2P node...');
     final started = await p2pService.startNode(privateKey, peerId);
     if (!started) {
-      print('[TEST] SKIP: P2P node failed to start (relay unreachable)');
-      // Cleanup and skip gracefully
       p2pService.dispose();
       bridge.dispose();
       await db.close();
-      return;
+      fail('P2P node failed to start (relay unreachable)');
     }
     print('[TEST] P2P node started');
 

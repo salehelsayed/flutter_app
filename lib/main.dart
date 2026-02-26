@@ -38,9 +38,14 @@ import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/core/local_discovery/local_p2p_service.dart';
 import 'package:flutter_app/core/local_discovery/bonsoir_discovery_service.dart';
 import 'package:flutter_app/core/local_discovery/local_ws_server.dart';
+import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/record_audio_recorder_service.dart';
 import 'package:flutter_app/core/lifecycle/handle_app_resumed.dart';
+import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
+import 'package:flutter_app/core/notifications/flutter_notification_service.dart';
+import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/theme/app_theme.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/startup_timing.dart';
@@ -49,6 +54,8 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:path_provider/path_provider.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
+import 'package:flutter_app/features/conversation/presentation/navigation/conversation_route_transition.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/push/application/background_message_handler.dart';
 
@@ -236,6 +243,9 @@ void main() async {
   // Create image processor (EXIF stripping + quality compression)
   final imageProcessor = ImageProcessor();
 
+  // Create audio recorder service
+  final audioRecorderService = RecordAudioRecorderService();
+
   // Create and initialize the bridge (Go native)
   final Bridge bridge = GoBridgeClient();
   await bridge.initialize();
@@ -269,6 +279,11 @@ void main() async {
     getOwnPeerId: () => p2pService.currentState.peerId ?? '',
   );
 
+  // Create notification service and conversation tracker
+  final notificationService = FlutterNotificationService();
+  await notificationService.initialize();
+  final conversationTracker = ActiveConversationTracker();
+
   // Create chat message listener
   final chatMessageListener = ChatMessageListener(
     chatMessageStream: messageRouter.chatMessageStream,
@@ -281,6 +296,10 @@ void main() async {
     },
     mediaAttachmentRepo: mediaAttachmentRepository,
     mediaFileManager: mediaFileManager,
+    notificationService: notificationService,
+    conversationTracker: conversationTracker,
+    getAppLifecycleState: () =>
+        WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.resumed,
   );
 
   // Create profile update listener
@@ -328,7 +347,10 @@ void main() async {
     mediaFileManager: mediaFileManager,
     secureKeyStore: secureKeyStore,
     imageProcessor: imageProcessor,
+    audioRecorderService: audioRecorderService,
     isDesktop: isDesktop,
+    notificationService: notificationService,
+    conversationTracker: conversationTracker,
   ));
   StartupTiming.instance.mark('run_app_called');
 }
@@ -349,7 +371,12 @@ class MyApp extends StatefulWidget {
   final MediaFileManager mediaFileManager;
   final SecureKeyStore secureKeyStore;
   final ImageProcessor imageProcessor;
+  final AudioRecorderService audioRecorderService;
   final bool isDesktop;
+  final NotificationService notificationService;
+  final ActiveConversationTracker conversationTracker;
+
+  static final navigatorKey = GlobalKey<NavigatorState>();
 
   const MyApp({
     Key? key,
@@ -368,7 +395,10 @@ class MyApp extends StatefulWidget {
     required this.mediaFileManager,
     required this.secureKeyStore,
     required this.imageProcessor,
+    required this.audioRecorderService,
     required this.isDesktop,
+    required this.notificationService,
+    required this.conversationTracker,
   }) : super(key: key);
 
   @override
@@ -383,6 +413,46 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _setupForegroundPushListener();
+    _setupNotificationTapHandler();
+  }
+
+  void _setupNotificationTapHandler() {
+    widget.notificationService.onNotificationTap = _onNotificationTap;
+  }
+
+  Future<void> _onNotificationTap(String contactPeerId) async {
+    try {
+      final contact =
+          await widget.contactRepository.getContact(contactPeerId);
+      if (contact == null) return;
+
+      final navigator = MyApp.navigatorKey.currentState;
+      if (navigator == null) return;
+
+      navigator.push(
+        buildConversationSlideUpRoute(
+          builder: (_) => ConversationWired(
+            contact: contact,
+            identityRepo: widget.repository,
+            messageRepo: widget.messageRepository,
+            chatMessageListener: widget.chatMessageListener,
+            p2pService: widget.p2pService,
+            bridge: widget.bridge,
+            contactRepo: widget.contactRepository,
+            mediaAttachmentRepo: widget.mediaAttachmentRepository,
+            mediaFileManager: widget.mediaFileManager,
+            conversationTracker: widget.conversationTracker,
+            audioRecorderService: widget.audioRecorderService,
+          ),
+        ),
+      );
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'NOTIFICATION_TAP_NAV_ERROR',
+        details: {'error': e.toString()},
+      );
+    }
   }
 
   @override
@@ -397,12 +467,15 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     widget.messageRouter.dispose();
     widget.p2pService.dispose();
     widget.bridge.dispose();
+    widget.audioRecorderService.dispose();
+    widget.notificationService.dispose();
 
     super.dispose();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    debugPrint('[LIFECYCLE] AppLifecycleState changed → ${state.name}');
     emitFlowEvent(
       layer: 'FL',
       event: 'APP_LIFECYCLE_STATE_CHANGED',
@@ -415,8 +488,12 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   }
 
   Future<void> _onResumed() async {
-    if (_isResuming) return;
+    if (_isResuming) {
+      debugPrint('[LIFECYCLE] _onResumed() skipped — already resuming');
+      return;
+    }
     _isResuming = true;
+    debugPrint('[LIFECYCLE] _onResumed() starting handleAppResumed...');
 
     try {
       await handleAppResumed(
@@ -425,6 +502,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       );
     } finally {
       _isResuming = false;
+      debugPrint('[LIFECYCLE] _onResumed() finished');
     }
   }
 
@@ -462,6 +540,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'mknoon',
+      navigatorKey: MyApp.navigatorKey,
       theme: AppTheme.darkTheme,
       themeMode: ThemeMode.dark,
       home: StartupRouter(
@@ -477,6 +556,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         mediaFileManager: widget.mediaFileManager,
         secureKeyStore: widget.secureKeyStore,
         imageProcessor: widget.imageProcessor,
+        audioRecorderService: widget.audioRecorderService,
+        conversationTracker: widget.conversationTracker,
       ),
       debugShowCheckedModeBanner: false,
     );

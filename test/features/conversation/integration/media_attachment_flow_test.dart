@@ -251,7 +251,88 @@ void main() {
       expect(msg, isNull);
     });
 
-    test('6f. MediaAttachment.fromJson round-trip', () {
+    test('6f. Voice-only message (no text, audio attachment only)', () async {
+      final audioAttachment = makeAttachment(
+        id: 'blob-audio-001',
+        mime: 'audio/mp4',
+        size: 48000,
+        mediaType: 'audio',
+      );
+
+      final bobReceived = <ConversationMessage>[];
+      final sub = bob.chatListener.incomingMessageStream.listen(
+        (msg) => bobReceived.add(msg),
+      );
+
+      final (result, msg) = await alice.sendMessageWithMedia(
+        bob.peerId,
+        '', // no text — voice only
+        [audioAttachment],
+      );
+
+      expect(result, SendChatMessageResult.success);
+      expect(msg, isNotNull);
+      expect(msg!.text, isEmpty);
+
+      await Future.delayed(const Duration(milliseconds: 100));
+
+      expect(bobReceived.length, 1);
+      expect(bobMediaRepo.count, 1);
+
+      final pending = await bobMediaRepo.getPendingDownloads();
+      expect(pending.first.mime, 'audio/mp4');
+      expect(pending.first.mediaType, 'audio');
+      expect(pending.first.size, 48000);
+
+      await sub.cancel();
+    });
+
+    test('6g. Mixed media — image + audio in single message', () async {
+      final attachments = [
+        makeAttachment(
+          id: 'blob-img-mix',
+          mime: 'image/jpeg',
+          size: 2048,
+          mediaType: 'image',
+        ),
+        makeAttachment(
+          id: 'blob-aud-mix',
+          mime: 'audio/mp4',
+          size: 48000,
+          mediaType: 'audio',
+        ),
+      ];
+
+      final bobReceived = <ConversationMessage>[];
+      final sub = bob.chatListener.incomingMessageStream.listen(
+        (msg) => bobReceived.add(msg),
+      );
+
+      final (result, _) = await alice.sendMessageWithMedia(
+        bob.peerId,
+        'Photo with voice note',
+        attachments,
+      );
+
+      expect(result, SendChatMessageResult.success);
+      await Future.delayed(const Duration(milliseconds: 100));
+
+      // Both repos have 2 attachments
+      expect(aliceMediaRepo.count, 2);
+      expect(bobMediaRepo.count, 2);
+
+      // Bob has both types
+      final bobPending = await bobMediaRepo.getPendingDownloads();
+      final mimeTypes = bobPending.map((a) => a.mime).toSet();
+      expect(mimeTypes, containsAll(['image/jpeg', 'audio/mp4']));
+
+      final mediaTypes = bobPending.map((a) => a.mediaType).toSet();
+      expect(mediaTypes, containsAll(['image', 'audio']));
+
+      await sub.cancel();
+    });
+
+    test('6h. MediaAttachment.fromJson round-trip', () {
       final original = MediaAttachment(
         id: 'att-001',
         messageId: 'msg-001',

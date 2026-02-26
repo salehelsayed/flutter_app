@@ -71,6 +71,9 @@ class GoBridge(flutterEngine: FlutterEngine) : MethodChannel.MethodCallHandler,
             "rendezvousRegister" -> runOnBackground({ GoMknoon.rendezvousRegister(args ?: "") }, result)
             "rendezvousDiscover" -> runOnBackground({ GoMknoon.rendezvousDiscover(args ?: "") }, result)
 
+            // Relay
+            "relayReconnect" -> runOnBackground({ GoMknoon.relayReconnect() }, result)
+
             // Peer operations
             "dialPeer" -> runOnBackground({ GoMknoon.dialPeer(args ?: "") }, result)
             "disconnectPeer" -> runOnBackground({ GoMknoon.disconnectPeer(args ?: "") }, result)

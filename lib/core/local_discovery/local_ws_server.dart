@@ -93,8 +93,12 @@ class LocalWsServer {
         return;
       }
 
-      // Acknowledge receipt.
-      ws.add(jsonEncode({'ack': true}));
+      // Acknowledge receipt — echo back nonce for per-message correlation.
+      final nonce = json['nonce'] as String?;
+      ws.add(jsonEncode({
+        'ack': true,
+        if (nonce != null) 'nonce': nonce,
+      }));
 
       final message = LocalChatMessage(
         from: from,
@@ -129,21 +133,34 @@ class LocalWsServer {
     try {
       final ws = await _getOrCreateConnection(toPeerId, host, port);
 
+      // Generate a per-message nonce for ack correlation.
+      final nonce = DateTime.now().microsecondsSinceEpoch.toRadixString(36);
+
       final payload = jsonEncode({
         'from': fromPeerId,
         'to': toPeerId,
         'content': content,
+        'nonce': nonce,
       });
 
       ws.add(payload);
 
-      // Wait for ack.
-      await ws.firstWhere(
+      // Wait for ack on the broadcast stream (supports multiple sends on the
+      // same pooled connection — unlike ws.firstWhere which would fail with
+      // "Stream has already been listened to" on single-subscription streams).
+      //
+      // Per-message ack correlation: the server echoes back the nonce in the
+      // ack response. Each waiter matches only its own nonce, so concurrent
+      // sends on the same pooled connection resolve correctly.
+      final pooled = _outboundPool[toPeerId];
+      final ackStream = pooled?.ackStream ?? ws;
+
+      await ackStream.firstWhere(
         (event) {
           if (event is! String) return false;
           try {
             final json = jsonDecode(event) as Map<String, dynamic>;
-            return json['ack'] == true;
+            return json['ack'] == true && json['nonce'] == nonce;
           } catch (_) {
             return false;
           }
@@ -190,8 +207,23 @@ class LocalWsServer {
     final ws = await WebSocket.connect('ws://$host:$port')
         .timeout(const Duration(seconds: 5));
 
+    // Create a broadcast stream so multiple sends can each listen for acks
+    // without hitting the single-subscription limitation of WebSocket streams.
+    final broadcast = StreamController<dynamic>.broadcast();
+    final subscription = ws.listen(
+      broadcast.add,
+      onError: broadcast.addError,
+      onDone: () {
+        broadcast.close();
+        _removeFromPool(peerId);
+      },
+    );
+
     _outboundPool[peerId] = _PooledConnection(
       ws: ws,
+      ackStream: broadcast.stream,
+      broadcast: broadcast,
+      subscription: subscription,
       idleTimer: Timer(idleTimeout, () => _removeFromPool(peerId)),
     );
 
@@ -204,6 +236,9 @@ class LocalWsServer {
     pooled.idleTimer.cancel();
     _outboundPool[peerId] = _PooledConnection(
       ws: pooled.ws,
+      ackStream: pooled.ackStream,
+      broadcast: pooled.broadcast,
+      subscription: pooled.subscription,
       idleTimer: Timer(idleTimeout, () => _removeFromPool(peerId)),
     );
   }
@@ -212,6 +247,8 @@ class LocalWsServer {
     final pooled = _outboundPool.remove(peerId);
     if (pooled != null) {
       pooled.idleTimer.cancel();
+      pooled.subscription.cancel();
+      pooled.broadcast.close();
       pooled.ws.close().catchError((_) {});
     }
   }
@@ -246,7 +283,18 @@ class LocalWsServer {
 
 class _PooledConnection {
   final WebSocket ws;
+
+  /// Broadcast stream fed by [subscription]; allows multiple ack listeners.
+  final Stream<dynamic> ackStream;
+  final StreamController<dynamic> broadcast;
+  final StreamSubscription<dynamic> subscription;
   final Timer idleTimer;
 
-  _PooledConnection({required this.ws, required this.idleTimer});
+  _PooledConnection({
+    required this.ws,
+    required this.ackStream,
+    required this.broadcast,
+    required this.subscription,
+    required this.idleTimer,
+  });
 }

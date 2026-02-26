@@ -1,3 +1,4 @@
+import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/application/load_conversation_use_case.dart';
@@ -6,6 +7,7 @@ import 'package:flutter_app/features/conversation/domain/models/conversation_mes
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 
+import '../../core/bridge/fake_bridge.dart';
 import 'fake_p2p_network.dart';
 import 'fake_p2p_service_integration.dart';
 import 'in_memory_contact_repository.dart';
@@ -20,6 +22,7 @@ class TestUser {
   final InMemoryContactRepository contactRepo;
   final ChatMessageListener chatListener;
   final MediaAttachmentRepository? mediaAttachmentRepo;
+  final Bridge bridge;
 
   TestUser._({
     required this.peerId,
@@ -28,6 +31,7 @@ class TestUser {
     required this.messageRepo,
     required this.contactRepo,
     required this.chatListener,
+    required this.bridge,
     this.mediaAttachmentRepo,
   });
 
@@ -36,7 +40,10 @@ class TestUser {
     required String username,
     required FakeP2PNetwork network,
     MediaAttachmentRepository? mediaAttachmentRepo,
+    Bridge? bridge,
+    Future<String?> Function()? getOwnMlKemSecretKey,
   }) {
+    final effectiveBridge = bridge ?? PassthroughCryptoBridge();
     final p2p = FakeP2PService(peerId: peerId, network: network);
     final msgRepo = InMemoryMessageRepository();
     final contactRepo = InMemoryContactRepository();
@@ -45,6 +52,9 @@ class TestUser {
       messageRepo: msgRepo,
       contactRepo: contactRepo,
       mediaAttachmentRepo: mediaAttachmentRepo,
+      bridge: effectiveBridge,
+      getOwnMlKemSecretKey:
+          getOwnMlKemSecretKey ?? () async => 'test-own-mlkem-sk',
     );
 
     return TestUser._(
@@ -54,6 +64,7 @@ class TestUser {
       messageRepo: msgRepo,
       contactRepo: contactRepo,
       chatListener: listener,
+      bridge: effectiveBridge,
       mediaAttachmentRepo: mediaAttachmentRepo,
     );
   }
@@ -68,15 +79,22 @@ class TestUser {
         username: other.username,
         signature: 'sig-${other.peerId}',
         scannedAt: DateTime.now().toUtc().toIso8601String(),
+        mlKemPublicKey: 'test-mlkem-pk-${other.peerId}',
       ),
     );
+  }
+
+  /// Looks up the ML-KEM public key for a contact.
+  Future<String?> _mlKemKeyFor(String targetPeerId) async {
+    final contact = await contactRepo.getContact(targetPeerId);
+    return contact?.mlKemPublicKey;
   }
 
   /// Sends a message to the target peer.
   Future<(SendChatMessageResult, ConversationMessage?)> sendMessage(
     String targetPeerId,
     String text,
-  ) {
+  ) async {
     return sendChatMessage(
       p2pService: p2pService,
       messageRepo: messageRepo,
@@ -86,6 +104,8 @@ class TestUser {
       senderUsername: username,
       mediaAttachments: null,
       mediaAttachmentRepo: mediaAttachmentRepo,
+      bridge: bridge,
+      recipientMlKemPublicKey: await _mlKemKeyFor(targetPeerId),
     );
   }
 
@@ -94,7 +114,7 @@ class TestUser {
     String targetPeerId,
     String text,
     String quotedMessageId,
-  ) {
+  ) async {
     return sendChatMessage(
       p2pService: p2pService,
       messageRepo: messageRepo,
@@ -103,6 +123,8 @@ class TestUser {
       senderPeerId: peerId,
       senderUsername: username,
       quotedMessageId: quotedMessageId,
+      bridge: bridge,
+      recipientMlKemPublicKey: await _mlKemKeyFor(targetPeerId),
     );
   }
 
@@ -111,7 +133,7 @@ class TestUser {
     String targetPeerId,
     String text,
     List<MediaAttachment> attachments,
-  ) {
+  ) async {
     return sendChatMessage(
       p2pService: p2pService,
       messageRepo: messageRepo,
@@ -121,6 +143,8 @@ class TestUser {
       senderUsername: username,
       mediaAttachments: attachments,
       mediaAttachmentRepo: mediaAttachmentRepo,
+      bridge: bridge,
+      recipientMlKemPublicKey: await _mlKemKeyFor(targetPeerId),
     );
   }
 

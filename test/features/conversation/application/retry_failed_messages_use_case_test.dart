@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/conversation/application/retry_failed_messages_use_case.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
+import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
@@ -38,6 +39,21 @@ ConversationMessage makeFailedMessage({
     status: 'failed',
     isIncoming: false,
     createdAt: '2026-01-01T00:00:00.000Z',
+  );
+}
+
+ContactModel makeContact({
+  String peerId = 'peer-target',
+  String? mlKemPublicKey = 'test-mlkem-pk',
+}) {
+  return ContactModel(
+    peerId: peerId,
+    publicKey: 'test-pk',
+    rendezvous: '/ip4/127.0.0.1/tcp/4001',
+    username: 'TestUser',
+    signature: 'test-sig',
+    scannedAt: '2026-01-01T00:00:00.000Z',
+    mlKemPublicKey: mlKemPublicKey,
   );
 }
 
@@ -81,7 +97,14 @@ void main() {
       identityRepo = FakeIdentityRepository();
       messageRepo = FakeMessageRepository();
       contactRepo = FakeContactRepository();
-      bridge = FakeBridge();
+      bridge = FakeBridge(initialResponses: {
+        'message.encrypt': {
+          'ok': true,
+          'kem': 'fake-kem',
+          'ciphertext': 'fake-ct',
+          'nonce': 'fake-nonce',
+        },
+      });
     });
 
     test('returns 0 when no identity exists', () async {
@@ -123,6 +146,7 @@ void main() {
         () async {
       identityRepo.seed(makeIdentity());
       messageRepo.seed([makeFailedMessage()]);
+      contactRepo.seed([makeContact(peerId: 'peer-target')]);
 
       final p2pService = FakeP2PService(
         initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
@@ -152,6 +176,7 @@ void main() {
         () async {
       identityRepo.seed(makeIdentity());
       messageRepo.seed([makeFailedMessage()]);
+      contactRepo.seed([makeContact(peerId: 'peer-target')]);
 
       final p2pService = FakeP2PService(
         initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
@@ -180,6 +205,7 @@ void main() {
         () async {
       identityRepo.seed(makeIdentity());
       messageRepo.seed([makeFailedMessage()]);
+      contactRepo.seed([makeContact(peerId: 'peer-target')]);
 
       // discoverPeer returns null so sendChatMessage gets peerNotFound
       // and after 3 retries falls back to storeInInbox which also fails
@@ -209,6 +235,10 @@ void main() {
       messageRepo.seed([
         makeFailedMessage(id: 'msg-fail-001', contactPeerId: 'peer-a'),
         makeFailedMessage(id: 'msg-fail-002', contactPeerId: 'peer-b'),
+      ]);
+      contactRepo.seed([
+        makeContact(peerId: 'peer-a'),
+        makeContact(peerId: 'peer-b'),
       ]);
 
       // First call to sendMessageWithReply throws, second succeeds.
@@ -247,6 +277,11 @@ void main() {
         makeFailedMessage(id: 'msg-fail-001', contactPeerId: 'peer-a'),
         makeFailedMessage(id: 'msg-fail-002', contactPeerId: 'peer-b'),
         makeFailedMessage(id: 'msg-fail-003', contactPeerId: 'peer-c'),
+      ]);
+      contactRepo.seed([
+        makeContact(peerId: 'peer-a'),
+        makeContact(peerId: 'peer-b'),
+        makeContact(peerId: 'peer-c'),
       ]);
 
       final p2pService = FakeP2PService(
@@ -287,6 +322,9 @@ void main() {
           createdAt: '2026-01-01T00:00:00.000Z',
         ),
         makeFailedMessage(id: 'msg-fail-001', contactPeerId: 'peer-b'),
+      ]);
+      contactRepo.seed([
+        makeContact(peerId: 'peer-b'),
       ]);
 
       final p2pService = FakeP2PService(
@@ -332,6 +370,69 @@ void main() {
       );
 
       expect(count, 0);
+    });
+
+    test('skips message when contact has no ML-KEM key (encryptionRequired)',
+        () async {
+      identityRepo.seed(makeIdentity());
+      messageRepo.seed([makeFailedMessage()]);
+      // Contact exists but has no ML-KEM public key
+      contactRepo.seed([makeContact(peerId: 'peer-target', mlKemPublicKey: null)]);
+
+      final p2pService = FakeP2PService(
+        initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+        discoverPeerResult: const DiscoveredPeer(
+          id: 'peer-target',
+          addresses: ['/ip4/127.0.0.1/tcp/4001'],
+        ),
+        dialPeerResult: true,
+        sendMessageWithReplyResult:
+            const p2p.SendMessageResult(sent: true, reply: 'ack'),
+        storeInInboxResult: true,
+      );
+
+      final count = await retryFailedMessages(
+        messageRepo: messageRepo,
+        identityRepo: identityRepo,
+        contactRepo: contactRepo,
+        p2pService: p2pService,
+        bridge: bridge,
+      );
+
+      // encryptionRequired → message not retried successfully
+      expect(count, 0);
+      // sendMessageWithReply should never have been called
+      expect(p2pService.sendMessageWithReplyCallCount, 0);
+    });
+
+    test('skips message when contact does not exist (encryptionRequired)',
+        () async {
+      identityRepo.seed(makeIdentity());
+      messageRepo.seed([makeFailedMessage()]);
+      // No contact seeded — contactRepo returns null → mlKemPublicKey is null
+
+      final p2pService = FakeP2PService(
+        initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+        discoverPeerResult: const DiscoveredPeer(
+          id: 'peer-target',
+          addresses: ['/ip4/127.0.0.1/tcp/4001'],
+        ),
+        dialPeerResult: true,
+        sendMessageWithReplyResult:
+            const p2p.SendMessageResult(sent: true, reply: 'ack'),
+        storeInInboxResult: true,
+      );
+
+      final count = await retryFailedMessages(
+        messageRepo: messageRepo,
+        identityRepo: identityRepo,
+        contactRepo: contactRepo,
+        p2pService: p2pService,
+        bridge: bridge,
+      );
+
+      expect(count, 0);
+      expect(p2pService.sendMessageWithReplyCallCount, 0);
     });
 
     test('calls getFailedOutgoingMessages on messageRepo', () async {
