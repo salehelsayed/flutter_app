@@ -1,8 +1,12 @@
 package bridge
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"testing"
+
+	"github.com/libp2p/go-libp2p/core/crypto"
 )
 
 // parseJSON is a test helper that unmarshals a JSON string into a map.
@@ -449,4 +453,373 @@ func TestInboxRegisterToken_MissingPlatform(t *testing.T) {
 	result := InboxRegisterToken(`{"token": "fake-token"}`)
 	m := parseJSON(t, result)
 	assertNotOk(t, m, "INVALID_INPUT")
+}
+
+// ---------------------------------------------------------------------------
+// Helpers for node lifecycle tests
+// ---------------------------------------------------------------------------
+
+// generateTestKeyHex generates a valid Ed25519 private key hex string
+// suitable for StartNode input.
+func generateTestKeyHex(t *testing.T) string {
+	t.Helper()
+	priv, _, err := crypto.GenerateEd25519Key(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	raw, err := priv.Raw()
+	if err != nil {
+		t.Fatalf("raw key: %v", err)
+	}
+	return hex.EncodeToString(raw)
+}
+
+// startNodeJSON builds a valid JSON input string for StartNode.
+func startNodeJSON(t *testing.T, keyHex string) string {
+	t.Helper()
+	b, _ := json.Marshal(map[string]interface{}{
+		"privateKeyHex":  keyHex,
+		"relayAddresses": []string{},
+		"namespace":      "",
+		"autoRegister":   false,
+		"listenPort":     0,
+	})
+	return string(b)
+}
+
+// withNilSingleton temporarily sets the singleton node to nil for the
+// duration of one test, then restores the previous value.
+func withNilSingleton(t *testing.T) {
+	t.Helper()
+	nodeMu.Lock()
+	prev := singletonNode
+	singletonNode = nil
+	nodeMu.Unlock()
+
+	t.Cleanup(func() {
+		nodeMu.Lock()
+		singletonNode = prev
+		nodeMu.Unlock()
+	})
+}
+
+// withFreshSingletonNode creates a brand-new initialized (but not started)
+// singleton node, replacing whatever was there before. On cleanup it stops
+// the node (if started) and restores the previous singleton.
+func withFreshSingletonNode(t *testing.T) {
+	t.Helper()
+	nodeMu.Lock()
+	prev := singletonNode
+	singletonNode = nil // force Initialize to create a new one
+	nodeMu.Unlock()
+
+	Initialize(&noopCallback{})
+
+	t.Cleanup(func() {
+		StopNode() // safe even if not started
+		nodeMu.Lock()
+		singletonNode = prev
+		nodeMu.Unlock()
+	})
+}
+
+// ---------------------------------------------------------------------------
+// StartNode tests
+// ---------------------------------------------------------------------------
+
+func TestStartNode_NotInitialized(t *testing.T) {
+	withNilSingleton(t)
+	result := StartNode(`{"privateKeyHex":"aabb"}`)
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "NOT_INITIALIZED")
+}
+
+func TestStartNode_InvalidJSON(t *testing.T) {
+	withFreshSingletonNode(t)
+	result := StartNode("not valid json")
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "INVALID_INPUT")
+}
+
+func TestStartNode_MissingPrivateKeyHex(t *testing.T) {
+	withFreshSingletonNode(t)
+	result := StartNode(`{}`)
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "INVALID_INPUT")
+}
+
+func TestStartNode_InvalidPrivateKeyHex(t *testing.T) {
+	withFreshSingletonNode(t)
+	// "zzzz" is not valid hex, but even valid hex that doesn't decode
+	// to a proper Ed25519 key will error. Use something that IS valid hex
+	// but not a valid key.
+	input := startNodeJSON(t, "aabbccdd")
+	result := StartNode(input)
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "NODE_START_ERROR")
+}
+
+func TestStartNode_Success(t *testing.T) {
+	withFreshSingletonNode(t)
+
+	keyHex := generateTestKeyHex(t)
+	input := startNodeJSON(t, keyHex)
+	result := StartNode(input)
+	m := parseJSON(t, result)
+	assertOk(t, m)
+
+	// Verify isStarted
+	isStarted, _ := m["isStarted"].(bool)
+	if !isStarted {
+		t.Error("expected isStarted=true")
+	}
+
+	// Verify peerId is non-empty
+	peerId, _ := m["peerId"].(string)
+	if peerId == "" {
+		t.Error("expected non-empty peerId")
+	}
+
+	// Verify listenAddresses, circuitAddresses, connections are present
+	if _, ok := m["listenAddresses"]; !ok {
+		t.Error("response missing 'listenAddresses'")
+	}
+	if _, ok := m["circuitAddresses"]; !ok {
+		t.Error("response missing 'circuitAddresses'")
+	}
+	if _, ok := m["connections"]; !ok {
+		t.Error("response missing 'connections'")
+	}
+}
+
+func TestStartNode_AlreadyStarted(t *testing.T) {
+	withFreshSingletonNode(t)
+
+	keyHex := generateTestKeyHex(t)
+	input := startNodeJSON(t, keyHex)
+
+	// First start should succeed.
+	result1 := StartNode(input)
+	m1 := parseJSON(t, result1)
+	assertOk(t, m1)
+
+	// Second start should fail.
+	result2 := StartNode(input)
+	m2 := parseJSON(t, result2)
+	assertNotOk(t, m2, "NODE_START_ERROR")
+}
+
+// ---------------------------------------------------------------------------
+// StopNode tests
+// ---------------------------------------------------------------------------
+
+func TestStopNode_NotInitialized(t *testing.T) {
+	withNilSingleton(t)
+	result := StopNode()
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "NOT_INITIALIZED")
+}
+
+func TestStopNode_Success(t *testing.T) {
+	withFreshSingletonNode(t)
+
+	keyHex := generateTestKeyHex(t)
+	input := startNodeJSON(t, keyHex)
+	startResult := StartNode(input)
+	assertOk(t, parseJSON(t, startResult))
+
+	// Stop should succeed.
+	stopResult := StopNode()
+	m := parseJSON(t, stopResult)
+	assertOk(t, m)
+}
+
+func TestStopNode_NotStarted(t *testing.T) {
+	withFreshSingletonNode(t)
+	// Node is initialized but not started — Stop is a no-op, returns ok.
+	result := StopNode()
+	m := parseJSON(t, result)
+	assertOk(t, m)
+}
+
+// ---------------------------------------------------------------------------
+// NodeStatus tests
+// ---------------------------------------------------------------------------
+
+func TestNodeStatus_NotInitialized(t *testing.T) {
+	withNilSingleton(t)
+	result := NodeStatus()
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "NOT_INITIALIZED")
+}
+
+func TestNodeStatus_BeforeStart(t *testing.T) {
+	withFreshSingletonNode(t)
+	result := NodeStatus()
+	m := parseJSON(t, result)
+	assertOk(t, m)
+
+	isStarted, _ := m["isStarted"].(bool)
+	if isStarted {
+		t.Error("expected isStarted=false before Start")
+	}
+}
+
+func TestNodeStatus_AfterStart(t *testing.T) {
+	withFreshSingletonNode(t)
+
+	keyHex := generateTestKeyHex(t)
+	input := startNodeJSON(t, keyHex)
+	startResult := StartNode(input)
+	assertOk(t, parseJSON(t, startResult))
+
+	result := NodeStatus()
+	m := parseJSON(t, result)
+	assertOk(t, m)
+
+	isStarted, _ := m["isStarted"].(bool)
+	if !isStarted {
+		t.Error("expected isStarted=true after Start")
+	}
+
+	peerId, _ := m["peerId"].(string)
+	if peerId == "" {
+		t.Error("expected non-empty peerId after Start")
+	}
+}
+
+func TestNodeStatus_AfterStop(t *testing.T) {
+	withFreshSingletonNode(t)
+
+	keyHex := generateTestKeyHex(t)
+	input := startNodeJSON(t, keyHex)
+	startResult := StartNode(input)
+	assertOk(t, parseJSON(t, startResult))
+
+	stopResult := StopNode()
+	assertOk(t, parseJSON(t, stopResult))
+
+	result := NodeStatus()
+	m := parseJSON(t, result)
+	assertOk(t, m)
+
+	isStarted, _ := m["isStarted"].(bool)
+	if isStarted {
+		t.Error("expected isStarted=false after Stop")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// RelayReconnect tests
+// ---------------------------------------------------------------------------
+
+func TestRelayReconnect_NotInitialized(t *testing.T) {
+	withNilSingleton(t)
+	result := RelayReconnect()
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "NOT_INITIALIZED")
+}
+
+func TestRelayReconnect_NotStarted(t *testing.T) {
+	withFreshSingletonNode(t)
+	// Node is initialized but not started — ReconnectRelays returns error.
+	result := RelayReconnect()
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "RELAY_ERROR")
+}
+
+func TestRelayReconnect_Success(t *testing.T) {
+	withFreshSingletonNode(t)
+
+	keyHex := generateTestKeyHex(t)
+	input := startNodeJSON(t, keyHex)
+	startResult := StartNode(input)
+	assertOk(t, parseJSON(t, startResult))
+
+	// RelayReconnect does a full stop+start cycle. With no relay configured
+	// in the empty relayAddresses list, the waitForCircuitAddress will
+	// timeout (~10s) but should still succeed.
+	reconnectResult := RelayReconnect()
+	m := parseJSON(t, reconnectResult)
+	assertOk(t, m)
+
+	// Verify node is still started after reconnect.
+	statusResult := NodeStatus()
+	statusMap := parseJSON(t, statusResult)
+	assertOk(t, statusMap)
+
+	isStarted, _ := statusMap["isStarted"].(bool)
+	if !isStarted {
+		t.Error("expected isStarted=true after RelayReconnect")
+	}
+}
+
+func TestRelayReconnect_PreservesPeerId(t *testing.T) {
+	withFreshSingletonNode(t)
+
+	keyHex := generateTestKeyHex(t)
+	input := startNodeJSON(t, keyHex)
+	startResult := StartNode(input)
+	startMap := parseJSON(t, startResult)
+	assertOk(t, startMap)
+
+	peerIdBefore, _ := startMap["peerId"].(string)
+	if peerIdBefore == "" {
+		t.Fatal("expected non-empty peerId before reconnect")
+	}
+
+	// Reconnect — peer ID should be preserved (same private key).
+	reconnectResult := RelayReconnect()
+	assertOk(t, parseJSON(t, reconnectResult))
+
+	statusResult := NodeStatus()
+	statusMap := parseJSON(t, statusResult)
+	assertOk(t, statusMap)
+
+	peerIdAfter, _ := statusMap["peerId"].(string)
+	if peerIdAfter != peerIdBefore {
+		t.Errorf("peerId changed after reconnect: before=%q, after=%q",
+			peerIdBefore, peerIdAfter)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Full lifecycle test
+// ---------------------------------------------------------------------------
+
+func TestStartNode_StopNode_FullCycle(t *testing.T) {
+	withFreshSingletonNode(t)
+
+	keyHex := generateTestKeyHex(t)
+	input := startNodeJSON(t, keyHex)
+
+	// Start
+	startResult := StartNode(input)
+	startMap := parseJSON(t, startResult)
+	assertOk(t, startMap)
+
+	isStarted, _ := startMap["isStarted"].(bool)
+	if !isStarted {
+		t.Fatal("expected isStarted=true after Start")
+	}
+
+	peerId, _ := startMap["peerId"].(string)
+	if peerId == "" {
+		t.Fatal("expected non-empty peerId after Start")
+	}
+
+	// Stop
+	stopResult := StopNode()
+	stopMap := parseJSON(t, stopResult)
+	assertOk(t, stopMap)
+
+	// Verify stopped via status
+	statusResult := NodeStatus()
+	statusMap := parseJSON(t, statusResult)
+	assertOk(t, statusMap)
+
+	isStarted, _ = statusMap["isStarted"].(bool)
+	if isStarted {
+		t.Error("expected isStarted=false after Stop")
+	}
 }

@@ -16,6 +16,19 @@ class FakeP2PService implements P2PService {
   final FakeP2PNetwork network;
   final _messageController = StreamController<ChatMessage>.broadcast();
 
+  /// First N [sendMessageWithReply] calls return `sent: false`.
+  int sendFailCount = 0;
+  int _sendAttempts = 0;
+
+  /// Peers currently visible on local WiFi (for WiFi send tests).
+  final Set<String> localPeers = {};
+
+  /// Whether [sendLocalMessage] succeeds when the peer is local.
+  bool localSendResult = true;
+
+  /// How many times [sendLocalMessage] has been called.
+  int localSendCallCount = 0;
+
   FakeP2PService({required this.peerId, required this.network}) {
     network.register(this);
   }
@@ -77,7 +90,11 @@ class FakeP2PService implements P2PService {
     String targetPeerId,
     String message,
   ) async {
-    final delivered = network.deliver(peerId, targetPeerId, message);
+    _sendAttempts++;
+    if (_sendAttempts <= sendFailCount) {
+      return const SendMessageResult(sent: false);
+    }
+    final delivered = await network.deliver(peerId, targetPeerId, message);
     return SendMessageResult(
       sent: delivered,
       reply: delivered ? 'received: $message' : null,
@@ -125,12 +142,15 @@ class FakeP2PService implements P2PService {
   bool isConnectedToPeer(String peerId) => false;
 
   @override
-  bool isLocalPeer(String peerId) => false;
+  bool isLocalPeer(String peerId) => localPeers.contains(peerId);
 
   @override
   Future<bool> sendLocalMessage(
-      String peerId, String message, String fromPeerId) async =>
-      false;
+      String peerId, String message, String fromPeerId) async {
+    localSendCallCount++;
+    if (!localSendResult) return false;
+    return network.deliver(fromPeerId, peerId, message);
+  }
 
   @override
   Future<bool> startNodeCore(String privateKeyBase64, String peerId) async =>

@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/mknoon/go-mknoon/identity"
 	"github.com/mknoon/go-mknoon/node"
 	ma "github.com/multiformats/go-multiaddr"
@@ -717,5 +718,209 @@ func TestConcurrentRelayConnectTiming(t *testing.T) {
 	// With concurrent connections, should complete well under 15s.
 	if elapsed > 15*time.Second {
 		t.Errorf("relay connect took %v, expected < 15s for concurrent dial", elapsed)
+	}
+}
+
+// ---------- Circuit recovery helpers ----------
+
+// extractRelayPeerID parses the relay peer ID from a multiaddr string.
+// For example, given "/dns4/mknoun.xyz/udp/4002/quic-v1/p2p/12D3KooW...",
+// it returns "12D3KooW...".
+func extractRelayPeerID(t *testing.T, relayMultiaddr string) string {
+	t.Helper()
+	maddr, err := ma.NewMultiaddr(relayMultiaddr)
+	if err != nil {
+		t.Fatalf("extractRelayPeerID: parse multiaddr %q: %v", relayMultiaddr, err)
+	}
+	info, err := peer.AddrInfoFromP2pAddr(maddr)
+	if err != nil {
+		t.Fatalf("extractRelayPeerID: AddrInfoFromP2pAddr %q: %v", relayMultiaddr, err)
+	}
+	return info.ID.String()
+}
+
+// waitForCircuitAddresses polls n.Status() every 500ms until circuitAddresses
+// is non-empty or the timeout expires. Returns the addresses and whether they
+// were found.
+func waitForCircuitAddresses(n *node.Node, timeout time.Duration) ([]string, bool) {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		status := n.Status()
+		if raw, ok := status["circuitAddresses"]; ok {
+			if addrs, ok := raw.([]string); ok && len(addrs) > 0 {
+				return addrs, true
+			}
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	return nil, false
+}
+
+// ---------- Circuit recovery tests ----------
+
+func TestRelayCircuitRecoveryAfterDisconnect(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in -short mode")
+	}
+	requireRelay(t)
+
+	// Start node with event collector to observe circuit address events.
+	collector := &eventCollector{}
+	n, peerId := startNodeWithCallback(t, collector)
+
+	// Wait for initial circuit address via the addresses:updated event.
+	ev, ok := collector.waitForEvent("p2p-circuit", 30*time.Second)
+	if !ok {
+		t.Logf("all events: %v", collector.snapshot())
+		t.Fatal("did not receive addresses:updated event with circuit addresses within 30s")
+	}
+	t.Logf("initial circuit event: %s", ev)
+
+	// Verify Status() reports non-empty circuitAddresses.
+	initialAddrs, found := waitForCircuitAddresses(n, 5*time.Second)
+	if !found {
+		t.Fatal("Status() did not report circuit addresses after event was received")
+	}
+	t.Logf("initial circuit addresses: %v", initialAddrs)
+
+	// Extract relay peer ID and disconnect from it.
+	relayPeerID := extractRelayPeerID(t, relayAddr())
+	t.Logf("disconnecting relay peer: %s", relayPeerID)
+	if err := n.DisconnectPeer(relayPeerID); err != nil {
+		t.Fatalf("DisconnectPeer: %v", err)
+	}
+
+	// Let the disconnect propagate.
+	time.Sleep(2 * time.Second)
+
+	// Reconnect relays (full restart under the hood).
+	if err := n.ReconnectRelays(); err != nil {
+		t.Fatalf("ReconnectRelays: %v", err)
+	}
+
+	// Poll Status() for up to 15s waiting for circuit addresses to return.
+	recoveredAddrs, recovered := waitForCircuitAddresses(n, 15*time.Second)
+	if !recovered {
+		status := n.Status()
+		t.Logf("final status: %+v", status)
+		t.Fatal("circuit addresses did not recover within 15s after ReconnectRelays")
+	}
+	t.Logf("recovered circuit addresses: %v", recoveredAddrs)
+
+	// Verify recovered addresses contain /p2p-circuit.
+	for _, addr := range recoveredAddrs {
+		if !strings.Contains(addr, "/p2p-circuit") {
+			t.Errorf("recovered address %q does not contain /p2p-circuit", addr)
+		}
+	}
+
+	// Verify node is still started with a valid peerId.
+	state := n.State()
+	if !state.IsStarted {
+		t.Error("expected node to be started after recovery")
+	}
+	if state.PeerId != peerId {
+		t.Errorf("peerId changed after recovery: got %s, want %s", state.PeerId, peerId)
+	}
+}
+
+func TestRelayCircuitRecoveryPreservesPeerId(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in -short mode")
+	}
+	requireRelay(t)
+
+	collector := &eventCollector{}
+	n, originalPeerId := startNodeWithCallback(t, collector)
+
+	// Wait for initial circuit address.
+	_, ok := collector.waitForEvent("p2p-circuit", 30*time.Second)
+	if !ok {
+		t.Logf("all events: %v", collector.snapshot())
+		t.Fatal("did not receive circuit address event within 30s")
+	}
+
+	// Disconnect relay peer.
+	relayPeerID := extractRelayPeerID(t, relayAddr())
+	if err := n.DisconnectPeer(relayPeerID); err != nil {
+		t.Fatalf("DisconnectPeer: %v", err)
+	}
+	time.Sleep(2 * time.Second)
+
+	// Reconnect relays.
+	if err := n.ReconnectRelays(); err != nil {
+		t.Fatalf("ReconnectRelays: %v", err)
+	}
+
+	// Wait for circuit addresses to confirm recovery.
+	if _, ok := waitForCircuitAddresses(n, 15*time.Second); !ok {
+		t.Fatal("circuit addresses did not recover within 15s")
+	}
+
+	// Assert peerId is preserved.
+	recoveredPeerId := n.PeerId()
+	if recoveredPeerId != originalPeerId {
+		t.Errorf("peerId changed after disconnect+reconnect: got %s, want %s",
+			recoveredPeerId, originalPeerId)
+	}
+
+	state := n.State()
+	if state.PeerId != originalPeerId {
+		t.Errorf("State().PeerId changed: got %s, want %s", state.PeerId, originalPeerId)
+	}
+}
+
+func TestRelayCircuitRecoveryMultipleCycles(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in -short mode")
+	}
+	requireRelay(t)
+
+	collector := &eventCollector{}
+	n, peerId := startNodeWithCallback(t, collector)
+
+	relayPeerID := extractRelayPeerID(t, relayAddr())
+
+	for cycle := 1; cycle <= 2; cycle++ {
+		t.Logf("--- cycle %d ---", cycle)
+
+		// Wait for circuit address to appear.
+		_, ok := collector.waitForEvent("p2p-circuit", 30*time.Second)
+		if !ok {
+			t.Logf("all events: %v", collector.snapshot())
+			t.Fatalf("cycle %d: did not receive circuit address event within 30s", cycle)
+		}
+
+		addrs, found := waitForCircuitAddresses(n, 5*time.Second)
+		if !found {
+			t.Fatalf("cycle %d: Status() did not report circuit addresses", cycle)
+		}
+		t.Logf("cycle %d: circuit addresses before disconnect: %v", cycle, addrs)
+
+		// Disconnect from relay.
+		if err := n.DisconnectPeer(relayPeerID); err != nil {
+			t.Fatalf("cycle %d: DisconnectPeer: %v", cycle, err)
+		}
+		t.Logf("cycle %d: disconnected relay peer %s", cycle, relayPeerID)
+		time.Sleep(2 * time.Second)
+
+		// Reconnect relays.
+		if err := n.ReconnectRelays(); err != nil {
+			t.Fatalf("cycle %d: ReconnectRelays: %v", cycle, err)
+		}
+
+		// Verify circuit addresses recover.
+		recoveredAddrs, recovered := waitForCircuitAddresses(n, 15*time.Second)
+		if !recovered {
+			status := n.Status()
+			t.Logf("cycle %d: final status: %+v", cycle, status)
+			t.Fatalf("cycle %d: circuit addresses did not recover within 15s", cycle)
+		}
+		t.Logf("cycle %d: recovered circuit addresses: %v", cycle, recoveredAddrs)
+
+		// Verify peerId is stable across cycles.
+		if n.PeerId() != peerId {
+			t.Errorf("cycle %d: peerId changed: got %s, want %s", cycle, n.PeerId(), peerId)
+		}
 	}
 }

@@ -122,6 +122,218 @@ void main() {
       expect(sent, isFalse);
     });
 
+    group('nonce integrity', () {
+      Future<(HttpServer, int)> _startCustomAckServer(
+        void Function(WebSocket ws, Map<String, dynamic> json) onMessage,
+      ) async {
+        final httpServer =
+            await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        httpServer.listen((request) {
+          WebSocketTransformer.upgrade(request).then((ws) {
+            ws.listen((data) {
+              if (data is String) {
+                try {
+                  final json = jsonDecode(data) as Map<String, dynamic>;
+                  onMessage(ws, json);
+                } catch (_) {}
+              }
+            });
+          }).catchError((_) {});
+        });
+        return (httpServer, httpServer.port);
+      }
+
+      test('sendMessage times out when ack has wrong nonce', () async {
+        await server.start();
+
+        final (remoteHttp, remotePort) = await _startCustomAckServer(
+          (ws, json) {
+            ws.add(jsonEncode({'ack': true, 'nonce': 'wrong-nonce'}));
+          },
+        );
+
+        final sent = await server.sendMessage(
+          'localhost',
+          remotePort,
+          '{"type":"chat","version":"1","payload":{"text":"hi"}}',
+          'peerA',
+          'peerB',
+        );
+
+        expect(sent, isFalse);
+
+        await remoteHttp.close(force: true);
+      }, timeout: const Timeout(Duration(seconds: 10)));
+
+      test('sendMessage times out when ack has no nonce', () async {
+        await server.start();
+
+        final (remoteHttp, remotePort) = await _startCustomAckServer(
+          (ws, json) {
+            ws.add(jsonEncode({'ack': true}));
+          },
+        );
+
+        final sent = await server.sendMessage(
+          'localhost',
+          remotePort,
+          '{"type":"chat","version":"1","payload":{"text":"hi"}}',
+          'peerA',
+          'peerB',
+        );
+
+        expect(sent, isFalse);
+
+        await remoteHttp.close(force: true);
+      }, timeout: const Timeout(Duration(seconds: 10)));
+
+      test('sendMessage succeeds when ack echoes correct nonce', () async {
+        await server.start();
+
+        final (remoteHttp, remotePort) = await _startCustomAckServer(
+          (ws, json) {
+            ws.add(jsonEncode({'ack': true, 'nonce': json['nonce']}));
+          },
+        );
+
+        final sent = await server.sendMessage(
+          'localhost',
+          remotePort,
+          '{"type":"chat","version":"1","payload":{"text":"hi"}}',
+          'peerA',
+          'peerB',
+        );
+
+        expect(sent, isTrue);
+
+        await remoteHttp.close(force: true);
+      });
+
+      test('concurrent sends each resolve only their own nonce', () async {
+        await server.start();
+
+        final receivedNonces = <String>[];
+
+        final (remoteHttp, remotePort) = await _startCustomAckServer(
+          (ws, json) {
+            final nonce = json['nonce'] as String;
+            receivedNonces.add(nonce);
+            // Delay the first response so both messages arrive before any ack
+            if (receivedNonces.length == 1) {
+              Future.delayed(const Duration(milliseconds: 200), () {
+                ws.add(jsonEncode({'ack': true, 'nonce': nonce}));
+              });
+            } else {
+              ws.add(jsonEncode({'ack': true, 'nonce': nonce}));
+            }
+          },
+        );
+
+        // Use different toPeerIds so each send creates its own connection
+        // (the pool keys on toPeerId). Actually, let's use the same peer
+        // to exercise concurrent sends on the same pooled connection.
+        final results = await Future.wait([
+          server.sendMessage(
+            'localhost',
+            remotePort,
+            '{"type":"chat","version":"1","payload":{"text":"msg1"}}',
+            'peerA',
+            'peerB',
+          ),
+          server.sendMessage(
+            'localhost',
+            remotePort,
+            '{"type":"chat","version":"1","payload":{"text":"msg2"}}',
+            'peerA',
+            'peerB',
+          ),
+        ]);
+
+        expect(results, everyElement(isTrue));
+        expect(receivedNonces, hasLength(2));
+        expect(receivedNonces[0], isNot(equals(receivedNonces[1])));
+
+        await remoteHttp.close(force: true);
+      });
+
+      test(
+          'concurrent sends do not cross-ack when acks arrive in swapped order',
+          () async {
+        await server.start();
+
+        final collected = <(WebSocket, String)>[];
+        final allReceived = Completer<void>();
+
+        final (remoteHttp, remotePort) = await _startCustomAckServer(
+          (ws, json) {
+            final nonce = json['nonce'] as String;
+            collected.add((ws, nonce));
+            if (collected.length == 2 && !allReceived.isCompleted) {
+              // Ack in reverse order
+              final (ws2, nonce2) = collected[1];
+              final (ws1, nonce1) = collected[0];
+              ws2.add(jsonEncode({'ack': true, 'nonce': nonce2}));
+              ws1.add(jsonEncode({'ack': true, 'nonce': nonce1}));
+              allReceived.complete();
+            }
+          },
+        );
+
+        final results = await Future.wait([
+          server.sendMessage(
+            'localhost',
+            remotePort,
+            '{"type":"chat","version":"1","payload":{"text":"msg1"}}',
+            'peerA',
+            'peerB',
+          ),
+          server.sendMessage(
+            'localhost',
+            remotePort,
+            '{"type":"chat","version":"1","payload":{"text":"msg2"}}',
+            'peerA',
+            'peerB',
+          ),
+        ]);
+
+        expect(results, everyElement(isTrue));
+
+        await remoteHttp.close(force: true);
+      });
+
+      test('wrong nonce ack does not satisfy any pending send', () async {
+        await server.start();
+
+        final (remoteHttp, remotePort) = await _startCustomAckServer(
+          (ws, json) {
+            // Always reply with a fabricated nonce — never the real one
+            ws.add(jsonEncode({'ack': true, 'nonce': 'fabricated-nonce'}));
+          },
+        );
+
+        final results = await Future.wait([
+          server.sendMessage(
+            'localhost',
+            remotePort,
+            '{"type":"chat","version":"1","payload":{"text":"msg1"}}',
+            'peerA',
+            'peerB',
+          ),
+          server.sendMessage(
+            'localhost',
+            remotePort,
+            '{"type":"chat","version":"1","payload":{"text":"msg2"}}',
+            'peerA',
+            'peerB',
+          ),
+        ]);
+
+        expect(results, everyElement(isFalse));
+
+        await remoteHttp.close(force: true);
+      }, timeout: const Timeout(Duration(seconds: 15)));
+    });
+
     group('two servers exchange messages', () {
       late LocalWsServer serverA;
       late LocalWsServer serverB;
