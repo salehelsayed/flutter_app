@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
@@ -12,6 +13,8 @@ import 'package:flutter_app/features/p2p/domain/models/connection_state.dart'
     as p2p;
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
+
+import '../../../core/bridge/fake_bridge.dart';
 
 // -- Fake P2P Service --
 class FakeP2PService implements P2PService {
@@ -1477,6 +1480,427 @@ void main() {
         expect(customP2P.discoverCallCount, 1);
       });
     });
+
+    group('WiFi persistence-failure regression', () {
+      test(
+        'WiFi send succeeds but saveMessage throws — relay fallback persists message',
+        () async {
+          // Setup: Bob is a local peer, local send succeeds, relay also succeeds
+          final throwingRepo = _ThrowOnSaveMessageRepository(throwCount: 1);
+          p2pService.localPeers.add('target-peer');
+
+          final (result, message) = await sendChatMessage(
+            p2pService: p2pService,
+            messageRepo: throwingRepo,
+            targetPeerId: 'target-peer',
+            text: 'WiFi save fails once',
+            senderPeerId: 'my-peer',
+            senderUsername: 'Me',
+          );
+
+          // WiFi send succeeded, saveMessage threw on 1st call,
+          // wifiSent stays false, relay fallback persisted on 2nd call.
+          expect(result, SendChatMessageResult.success);
+          expect(message, isNotNull);
+          expect(throwingRepo.saveAttemptCount, 2);
+          expect(throwingRepo.saved.length, 1);
+          expect(throwingRepo.saved.first.transport, 'relay');
+        },
+      );
+
+      test(
+        'WiFi send succeeds but saveMessage always throws — returns sendFailed with null message',
+        () async {
+          // Setup: WiFi succeeds but every saveMessage call throws.
+          // Relay send also fails so we go through all fallbacks.
+          final throwingRepo = _ThrowOnSaveMessageRepository(throwCount: 999);
+          p2pService = FakeP2PService(
+            sendMessageResult: false,
+            storeInInboxResult: false,
+          );
+          p2pService.localPeers.add('target-peer');
+          p2pService.localSendResult = true;
+
+          final (result, message) = await sendChatMessage(
+            p2pService: p2pService,
+            messageRepo: throwingRepo,
+            targetPeerId: 'target-peer',
+            text: 'WiFi save always fails',
+            senderPeerId: 'my-peer',
+            senderUsername: 'Me',
+          );
+
+          // After fix: wifiSent stays false because saveMessage throws before
+          // the flag is set. All relay/inbox paths fail. The final "persist
+          // with failed status" block also throws, caught by the new try-catch,
+          // which returns (sendFailed, null).
+          expect(result, SendChatMessageResult.sendFailed);
+          expect(message, isNull);
+          expect(throwingRepo.saved, isEmpty);
+        },
+      );
+
+      test(
+        'WiFi send succeeds but saveMessage throws — media attachments saved by relay fallback',
+        () async {
+          // Setup: WiFi send works, saveMessage throws (so _persistMediaAttachments
+          // at line 186 is never reached). wifiSent stays false. Relay succeeds
+          // and saves the message, and since `wifiSent` is false, the relay
+          // path's `if (!wifiSent)` guard allows _persistMediaAttachments.
+          final throwingRepo = _ThrowOnSaveMessageRepository(throwCount: 1);
+          final mediaRepo = FakeMediaAttachmentRepository();
+          p2pService.localPeers.add('target-peer');
+
+          const fixedId = 'msg-wifi-media-recovered';
+          final testMedia = [
+            const MediaAttachment(
+              id: 'blob-wifi-001',
+              messageId: '',
+              mime: 'image/jpeg',
+              size: 245000,
+              mediaType: 'image',
+              width: 1920,
+              height: 1080,
+              downloadStatus: 'done',
+              createdAt: '2026-02-20T10:00:00.000Z',
+            ),
+          ];
+
+          final (result, message) = await sendChatMessage(
+            p2pService: p2pService,
+            messageRepo: throwingRepo,
+            targetPeerId: 'target-peer',
+            text: 'WiFi media recovered',
+            senderPeerId: 'my-peer',
+            senderUsername: 'Me',
+            messageId: fixedId,
+            mediaAttachments: testMedia,
+            mediaAttachmentRepo: mediaRepo,
+          );
+
+          // After fix: wifiSent stays false because saveMessage throws before
+          // the flag is set. Relay path succeeds on 2nd saveMessage call,
+          // and since wifiSent is false, media attachments are persisted.
+          expect(result, SendChatMessageResult.success);
+          expect(message, isNotNull);
+          expect(throwingRepo.saved.length, 1);
+          expect(mediaRepo.saved.length, 1,
+              reason: 'Media attachments are now saved by the relay fallback '
+                  'because wifiSent stays false when WiFi persistence fails');
+          expect(mediaRepo.saved.first.messageId, fixedId);
+        },
+      );
+
+      test(
+        'WiFi saveMessage throws — relay saves with relay transport',
+        () async {
+          // throwCount: 1 so WiFi persistence fails, relay succeeds
+          final throwingRepo = _ThrowOnSaveMessageRepository(throwCount: 1);
+          p2pService.localPeers.add('target-peer');
+
+          final (result, message) = await sendChatMessage(
+            p2pService: p2pService,
+            messageRepo: throwingRepo,
+            targetPeerId: 'target-peer',
+            text: 'WiFi fail relay saves',
+            senderPeerId: 'my-peer',
+            senderUsername: 'Me',
+          );
+
+          expect(result, SendChatMessageResult.success);
+          expect(message, isNotNull);
+          expect(message!.transport, 'relay');
+          expect(throwingRepo.saved.length, 1);
+          expect(throwingRepo.saved.first.transport, 'relay');
+        },
+      );
+
+      test(
+        'all paths fail + final persist throws — returns sendFailed with null',
+        () async {
+          // No WiFi peer, relay fails, inbox fails, saveMessage always throws
+          final throwingRepo = _ThrowOnSaveMessageRepository(throwCount: 999);
+          p2pService = FakeP2PService(
+            sendMessageResult: false,
+            storeInInboxResult: false,
+          );
+
+          final (result, message) = await sendChatMessage(
+            p2pService: p2pService,
+            messageRepo: throwingRepo,
+            targetPeerId: 'target-peer',
+            text: 'Everything fails',
+            senderPeerId: 'my-peer',
+            senderUsername: 'Me',
+          );
+
+          // Relay send fails 3x, inbox fails, final persist throws →
+          // new try-catch returns (sendFailed, null).
+          expect(result, SendChatMessageResult.sendFailed);
+          expect(message, isNull);
+          expect(throwingRepo.saved, isEmpty);
+        },
+      );
+
+      test(
+        'WiFi success with media — media persisted once, not duplicated by relay',
+        () async {
+          // Happy path: WiFi succeeds, both saveMessage and media persist succeed.
+          // wifiSent = true, so relay path's `if (!wifiSent)` skips media.
+          final mediaRepo = FakeMediaAttachmentRepository();
+          p2pService.localPeers.add('target-peer');
+
+          const fixedId = 'msg-wifi-media-happy';
+          final testMedia = [
+            const MediaAttachment(
+              id: 'blob-happy-001',
+              messageId: '',
+              mime: 'image/jpeg',
+              size: 245000,
+              mediaType: 'image',
+              width: 1920,
+              height: 1080,
+              downloadStatus: 'done',
+              createdAt: '2026-02-20T10:00:00.000Z',
+            ),
+          ];
+
+          final (result, message) = await sendChatMessage(
+            p2pService: p2pService,
+            messageRepo: messageRepo,
+            targetPeerId: 'target-peer',
+            text: 'WiFi media happy path',
+            senderPeerId: 'my-peer',
+            senderUsername: 'Me',
+            messageId: fixedId,
+            mediaAttachments: testMedia,
+            mediaAttachmentRepo: mediaRepo,
+          );
+
+          expect(result, SendChatMessageResult.success);
+          expect(message, isNotNull);
+          // Media persisted exactly once (by WiFi path), not duplicated by relay
+          expect(mediaRepo.saved.length, 1,
+              reason: 'Media should be persisted once by WiFi path, '
+                  'relay path skips because wifiSent is true');
+          expect(mediaRepo.saved.first.id, 'blob-happy-001');
+          expect(mediaRepo.saved.first.messageId, fixedId);
+        },
+      );
+    });
+
+    group('v2 encryption (ML-KEM)', () {
+      test(
+        'encrypts and sends v2 envelope when bridge and ML-KEM key provided',
+        () async {
+          final bridge = FakeBridge(initialResponses: {
+            'message.encrypt': {
+              'ok': true,
+              'kem': 'fake-kem-base64',
+              'ciphertext': 'fake-ciphertext-base64',
+              'nonce': 'fake-nonce-base64',
+            },
+          });
+
+          final (result, message) = await sendChatMessage(
+            p2pService: p2pService,
+            messageRepo: messageRepo,
+            targetPeerId: 'target-peer',
+            text: 'Encrypted hello!',
+            senderPeerId: 'my-peer',
+            senderUsername: 'Me',
+            bridge: bridge,
+            recipientMlKemPublicKey: 'recipient-mlkem-pub-key',
+          );
+
+          expect(result, SendChatMessageResult.success);
+          expect(message, isNotNull);
+          expect(message!.text, 'Encrypted hello!');
+
+          // Verify wire JSON is v2 encrypted envelope
+          final wireJson =
+              jsonDecode(p2pService.lastSentMessage!) as Map<String, dynamic>;
+          expect(wireJson['type'], 'chat_message');
+          expect(wireJson['version'], '2');
+          expect(wireJson['senderPeerId'], 'my-peer');
+          expect(wireJson['encrypted'], isNotNull);
+          final encrypted =
+              wireJson['encrypted'] as Map<String, dynamic>;
+          expect(encrypted['kem'], 'fake-kem-base64');
+          expect(encrypted['ciphertext'], 'fake-ciphertext-base64');
+          expect(encrypted['nonce'], 'fake-nonce-base64');
+          // v2 envelope must NOT have a payload key
+          expect(wireJson.containsKey('payload'), isFalse);
+        },
+      );
+
+      test(
+        'returns sendFailed with null message when encrypt returns ok=false',
+        () async {
+          final bridge = FakeBridge(initialResponses: {
+            'message.encrypt': {
+              'ok': false,
+              'errorCode': 'ENCRYPT_FAILED',
+              'errorMessage': 'bad key',
+            },
+          });
+
+          final (result, message) = await sendChatMessage(
+            p2pService: p2pService,
+            messageRepo: messageRepo,
+            targetPeerId: 'target-peer',
+            text: 'Will fail encrypt',
+            senderPeerId: 'my-peer',
+            senderUsername: 'Me',
+            bridge: bridge,
+            recipientMlKemPublicKey: 'bad-key',
+          );
+
+          expect(result, SendChatMessageResult.sendFailed);
+          expect(message, isNull);
+          expect(messageRepo.saved, isEmpty);
+          expect(p2pService.sendCallCount, 0);
+        },
+      );
+
+      test(
+        'returns sendFailed with null message when encrypt throws exception',
+        () async {
+          final bridge = FakeBridge();
+          bridge.throwOnSend = true;
+          bridge.throwOnSendMessage = 'Encrypt kaboom';
+
+          final (result, message) = await sendChatMessage(
+            p2pService: p2pService,
+            messageRepo: messageRepo,
+            targetPeerId: 'target-peer',
+            text: 'Will throw on encrypt',
+            senderPeerId: 'my-peer',
+            senderUsername: 'Me',
+            bridge: bridge,
+            recipientMlKemPublicKey: 'some-key',
+          );
+
+          expect(result, SendChatMessageResult.sendFailed);
+          expect(message, isNull);
+          expect(messageRepo.saved, isEmpty);
+        },
+      );
+
+      test(
+        'sends v1 plaintext envelope when bridge is null',
+        () async {
+          final (result, message) = await sendChatMessage(
+            p2pService: p2pService,
+            messageRepo: messageRepo,
+            targetPeerId: 'target-peer',
+            text: 'No bridge v1',
+            senderPeerId: 'my-peer',
+            senderUsername: 'Me',
+            bridge: null,
+            recipientMlKemPublicKey: 'some-mlkem-key',
+          );
+
+          expect(result, SendChatMessageResult.success);
+          expect(message, isNotNull);
+
+          // Verify wire JSON is v1 plaintext
+          final wireJson =
+              jsonDecode(p2pService.lastSentMessage!) as Map<String, dynamic>;
+          expect(wireJson['version'], '1');
+          expect(wireJson['payload'], isNotNull);
+          expect(wireJson.containsKey('encrypted'), isFalse);
+        },
+      );
+
+      test(
+        'sends v1 plaintext envelope when recipientMlKemPublicKey is null',
+        () async {
+          final bridge = FakeBridge();
+
+          final (result, message) = await sendChatMessage(
+            p2pService: p2pService,
+            messageRepo: messageRepo,
+            targetPeerId: 'target-peer',
+            text: 'No mlkem key v1',
+            senderPeerId: 'my-peer',
+            senderUsername: 'Me',
+            bridge: bridge,
+            recipientMlKemPublicKey: null,
+          );
+
+          expect(result, SendChatMessageResult.success);
+          expect(message, isNotNull);
+
+          // Verify wire JSON is v1 plaintext
+          final wireJson =
+              jsonDecode(p2pService.lastSentMessage!) as Map<String, dynamic>;
+          expect(wireJson['version'], '1');
+          expect(wireJson['payload'], isNotNull);
+          expect(wireJson.containsKey('encrypted'), isFalse);
+          // Bridge should not have been called for encrypt
+          expect(bridge.sendCallCount, 0);
+        },
+      );
+
+      test(
+        'emits CHAT_MSG_SEND_ENCRYPT_FAILED flow event on ok=false',
+        () async {
+          final bridge = FakeBridge(initialResponses: {
+            'message.encrypt': {
+              'ok': false,
+              'errorCode': 'BAD_KEY',
+              'errorMessage': 'invalid public key',
+            },
+          });
+
+          final lines = await capturePrintedLines(() async {
+            await sendChatMessage(
+              p2pService: p2pService,
+              messageRepo: messageRepo,
+              targetPeerId: 'target-peer',
+              text: 'Encrypt fail flow',
+              senderPeerId: 'my-peer',
+              senderUsername: 'Me',
+              bridge: bridge,
+              recipientMlKemPublicKey: 'bad-key',
+            );
+          });
+
+          expect(
+            lines.any((line) => line.contains('CHAT_MSG_SEND_ENCRYPT_FAILED')),
+            isTrue,
+          );
+        },
+      );
+
+      test(
+        'emits CHAT_MSG_SEND_ENCRYPT_ERROR flow event on exception',
+        () async {
+          final bridge = FakeBridge();
+          bridge.throwOnSend = true;
+          bridge.throwOnSendMessage = 'bridge crash';
+
+          final lines = await capturePrintedLines(() async {
+            await sendChatMessage(
+              p2pService: p2pService,
+              messageRepo: messageRepo,
+              targetPeerId: 'target-peer',
+              text: 'Encrypt error flow',
+              senderPeerId: 'my-peer',
+              senderUsername: 'Me',
+              bridge: bridge,
+              recipientMlKemPublicKey: 'some-key',
+            );
+          });
+
+          expect(
+            lines.any((line) => line.contains('CHAT_MSG_SEND_ENCRYPT_ERROR')),
+            isTrue,
+          );
+        },
+      );
+    });
   });
 }
 
@@ -1903,4 +2327,22 @@ class _FlakyDiscoverP2PService implements P2PService {
 
   @override
   void dispose() {}
+}
+
+/// Message repository where the first [throwCount] saveMessage calls throw,
+/// then subsequent calls succeed normally.
+class _ThrowOnSaveMessageRepository extends FakeMessageRepository {
+  final int throwCount;
+  int saveAttemptCount = 0;
+
+  _ThrowOnSaveMessageRepository({this.throwCount = 1});
+
+  @override
+  Future<void> saveMessage(ConversationMessage message) async {
+    saveAttemptCount++;
+    if (saveAttemptCount <= throwCount) {
+      throw Exception('DB write failed');
+    }
+    await super.saveMessage(message);
+  }
 }

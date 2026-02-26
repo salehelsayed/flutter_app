@@ -30,6 +30,9 @@ class P2PServiceImpl implements P2PService {
   String? _lastFcmPlatform;
   bool _isStarting = false;
   DateTime? _startNodeTime;
+  bool _hasEverBeenOnline = false;
+  bool _isHealthChecking = false;
+  bool _stopped = true; // starts stopped; cleared when node starts
 
   /// How often the health check polls node:status.
   static const healthCheckInterval = Duration(seconds: 30);
@@ -89,9 +92,13 @@ class P2PServiceImpl implements P2PService {
 
   @override
   Future<bool> startNodeCore(String privateKeyBase64, String peerId) async {
-    if (_isStarting) return false;
+    if (_isStarting) {
+      debugPrint('[START] startNodeCore() skipped — already starting');
+      return false;
+    }
     _isStarting = true;
     _startNodeTime = DateTime.now();
+    debugPrint('[START] startNodeCore() beginning for peerId=$peerId');
 
     emitFlowEvent(
       layer: 'FL',
@@ -111,8 +118,12 @@ class P2PServiceImpl implements P2PService {
       );
 
       if (response['ok'] == true) {
-        _currentState = NodeState.fromJson(response);
-        _stateController.add(_currentState);
+        _stopped = false;
+        _emitState(NodeState.fromJson(response));
+
+        if (_currentState.circuitAddresses.isNotEmpty) {
+          _hasEverBeenOnline = true;
+        }
 
         emitFlowEvent(
           layer: 'FL',
@@ -135,8 +146,12 @@ class P2PServiceImpl implements P2PService {
 
         final statusResponse = await callP2PNodeStatus(_bridge);
         if (statusResponse['ok'] == true) {
-          _currentState = NodeState.fromJson(statusResponse);
-          _stateController.add(_currentState);
+          _stopped = false;
+          _emitState(NodeState.fromJson(statusResponse));
+
+          if (_currentState.circuitAddresses.isNotEmpty) {
+            _hasEverBeenOnline = true;
+          }
 
           emitFlowEvent(
             layer: 'FL',
@@ -173,6 +188,9 @@ class P2PServiceImpl implements P2PService {
   Future<void> warmBackground() async {
     if (!_currentState.isStarted) return;
 
+    debugPrint('[WARM] warmBackground() starting — '
+        'circuitAddresses=${_currentState.circuitAddresses.length}');
+
     emitFlowEvent(
       layer: 'FL',
       event: 'P2P_SERVICE_WARM_BACKGROUND_BEGIN',
@@ -185,13 +203,18 @@ class P2PServiceImpl implements P2PService {
     // circuit addresses within 2s, poll node:status directly. This is a
     // fallback for cases where the EventChannel delivery is delayed.
     Future.delayed(const Duration(seconds: 2), () {
+      if (_stopped) return;
       if (_currentState.isStarted && _currentState.circuitAddresses.isEmpty) {
+        debugPrint('[WARM] Fast circuit check — still no circuit after 2s, polling...');
         emitFlowEvent(
           layer: 'FL',
           event: 'P2P_FAST_CIRCUIT_CHECK',
           details: {'reason': 'no push event after 2s'},
         );
         _performHealthCheck();
+      } else {
+        debugPrint('[WARM] Fast circuit check — already have '
+            '${_currentState.circuitAddresses.length} circuit addresses, skipping');
       }
     });
 
@@ -279,6 +302,7 @@ class P2PServiceImpl implements P2PService {
       details: {},
     );
 
+    _stopped = true;
     try {
       // Stop local WiFi discovery before stopping the relay node
       try {
@@ -291,8 +315,8 @@ class P2PServiceImpl implements P2PService {
       final response = await callP2PNodeStop(_bridge);
 
       if (response['ok'] == true) {
-        _currentState = NodeState.stopped;
-        _stateController.add(_currentState);
+        _hasEverBeenOnline = false;
+        _emitState(NodeState.stopped);
 
         emitFlowEvent(
           layer: 'FL',
@@ -302,6 +326,7 @@ class P2PServiceImpl implements P2PService {
 
         return true;
       } else {
+        _stopped = false;
         emitFlowEvent(
           layer: 'FL',
           event: 'P2P_SERVICE_STOP_NODE_ERROR',
@@ -310,6 +335,7 @@ class P2PServiceImpl implements P2PService {
         return false;
       }
     } catch (e) {
+      _stopped = false;
       emitFlowEvent(
         layer: 'FL',
         event: 'P2P_SERVICE_STOP_NODE_EXCEPTION',
@@ -495,7 +521,10 @@ class P2PServiceImpl implements P2PService {
   /// Start the periodic health check timer.
   void _startHealthCheck() {
     _healthCheckTimer?.cancel();
+    debugPrint('[HEALTH] Starting periodic health check timer '
+        '(every ${healthCheckInterval.inSeconds}s)');
     _healthCheckTimer = Timer.periodic(healthCheckInterval, (_) {
+      debugPrint('[HEALTH] Periodic health check firing...');
       _performHealthCheck();
     });
   }
@@ -506,46 +535,84 @@ class P2PServiceImpl implements P2PService {
     _healthCheckTimer = null;
   }
 
+  /// Safely update [_currentState] and emit to [_stateController].
+  /// No-op if the controller is closed.
+  void _emitState(NodeState newState) {
+    _currentState = newState;
+    if (!_stateController.isClosed) {
+      _stateController.add(_currentState);
+    }
+  }
+
   /// Poll node:status, attempt recovery if degraded, and emit state changes.
   Future<void> _performHealthCheck() async {
+    if (_isHealthChecking || _stopped) {
+      debugPrint('[HEALTH] _performHealthCheck() skipped — already in progress or stopped');
+      return;
+    }
+    _isHealthChecking = true;
+    final hcStart = DateTime.now();
+    debugPrint('[HEALTH] _performHealthCheck() starting...');
     try {
+      final statusStart = DateTime.now();
       final response = await callP2PNodeStatus(_bridge);
+      if (_stopped) return;
+      final statusMs = DateTime.now().difference(statusStart).inMilliseconds;
       final freshState = NodeState.fromJson(response);
+      debugPrint('[HEALTH] node:status took ${statusMs}ms → '
+          'isStarted=${freshState.isStarted}, '
+          'circuitAddresses=${freshState.circuitAddresses.length}, '
+          'connections=${freshState.connections.length}, '
+          'peerId=${freshState.peerId}');
 
-      // Recovery: node is started but has no relay circuit — re-dial the relay.
-      // Registration alone won't help because registerOnce() requires circuit
-      // addresses to already exist. We need to re-establish the relay connection
-      // first, which triggers libp2p's circuit relay reservation.
-      if (freshState.isStarted && freshState.circuitAddresses.isEmpty) {
-        // Extract relay peer ID from the default address
-        final relayPeerId = defaultRendezvousAddress.split('/p2p/').last;
+      // Recovery: node is started but has no relay circuit — reconnect relays.
+      // relay:reconnect restarts the Go node to get fresh AutoRelay reservations.
+      // Only trigger this for RECOVERY (was online before, lost circuits), not
+      // during initial startup where the relay connection is still in progress.
+      if (freshState.isStarted &&
+          freshState.circuitAddresses.isEmpty &&
+          _hasEverBeenOnline) {
+        debugPrint('[HEALTH] DEGRADED — no circuit addresses (was online before). '
+            'Calling relay:reconnect to restart node...');
 
         emitFlowEvent(
           layer: 'FL',
           event: 'P2P_HEALTH_CHECK_RECOVERY_ATTEMPT',
-          details: {'relayPeerId': relayPeerId},
+          details: {'method': 'relay:reconnect'},
         );
 
         try {
-          await callP2PPeerDial(
-            _bridge,
-            peerId: relayPeerId,
-            addresses: [defaultRendezvousAddress],
-          );
-        } catch (_) {
+          final reconnectStart = DateTime.now();
+          await callP2PRelayReconnect(_bridge);
+          final reconnectMs = DateTime.now().difference(reconnectStart).inMilliseconds;
+          debugPrint('[HEALTH] relay:reconnect SUCCESS (took ${reconnectMs}ms)');
+        } catch (e) {
+          debugPrint('[HEALTH] relay:reconnect FAILED: $e');
           // Relay still unreachable — will retry on next health check
         }
+        if (_stopped) return;
 
         // Re-poll status after dialing the relay
+        final retryStatusStart = DateTime.now();
         final retryResponse = await callP2PNodeStatus(_bridge);
+        if (_stopped) return;
+        final retryStatusMs = DateTime.now().difference(retryStatusStart).inMilliseconds;
         final retryState = NodeState.fromJson(retryResponse);
+        debugPrint('[HEALTH] Post-dial status (took ${retryStatusMs}ms) → '
+            'circuitAddresses=${retryState.circuitAddresses.length}, '
+            'connections=${retryState.connections.length}');
+
+        if (retryState.circuitAddresses.isEmpty) {
+          debugPrint('[HEALTH] Still no circuit addresses after re-dial! '
+              'Circuit reservation may still be in progress. '
+              'Next health check in ${healthCheckInterval.inSeconds}s');
+        }
 
         if (retryState.isStarted != _currentState.isStarted ||
             retryState.circuitAddresses.length !=
                 _currentState.circuitAddresses.length ||
             retryState.connections.length != _currentState.connections.length) {
-          _currentState = retryState;
-          _stateController.add(_currentState);
+          _emitState(retryState);
 
           emitFlowEvent(
             layer: 'FL',
@@ -564,20 +631,33 @@ class P2PServiceImpl implements P2PService {
             registerPushToken(_lastFcmToken!, _lastFcmPlatform!);
           }
         }
+
+        final totalMs = DateTime.now().difference(hcStart).inMilliseconds;
+        debugPrint('[HEALTH] Recovery health check done (total ${totalMs}ms)');
         return;
+      } else if (freshState.isStarted &&
+          freshState.circuitAddresses.isEmpty &&
+          !_hasEverBeenOnline) {
+        debugPrint('[HEALTH] DEGRADED — no circuit addresses yet (first startup, '
+            'relay connection still in progress). Waiting...');
       }
 
       // Drain offline inbox on each health check so we pick up
       // messages stored while we were unreachable via direct dial.
       await _drainOfflineInbox();
+      if (_stopped) return;
 
       // Normal path: only emit if something meaningful changed
       if (freshState.isStarted != _currentState.isStarted ||
           freshState.circuitAddresses.length !=
               _currentState.circuitAddresses.length ||
           freshState.connections.length != _currentState.connections.length) {
-        _currentState = freshState;
-        _stateController.add(_currentState);
+        _emitState(freshState);
+
+        debugPrint('[HEALTH] State changed → '
+            'isStarted=${freshState.isStarted}, '
+            'circuitAddresses=${freshState.circuitAddresses.length}, '
+            'connections=${freshState.connections.length}');
 
         emitFlowEvent(
           layer: 'FL',
@@ -588,13 +668,15 @@ class P2PServiceImpl implements P2PService {
             'connections': freshState.connections.length,
           },
         );
+      } else {
+        debugPrint('[HEALTH] No state change (online, all good)');
       }
     } catch (e) {
+      debugPrint('[HEALTH] _performHealthCheck EXCEPTION: $e');
 
       // If the check itself fails, assume the node is down
       if (_currentState.isStarted) {
-        _currentState = NodeState.stopped;
-        _stateController.add(_currentState);
+        _emitState(NodeState.stopped);
 
         emitFlowEvent(
           layer: 'FL',
@@ -602,6 +684,8 @@ class P2PServiceImpl implements P2PService {
           details: {'error': e.toString()},
         );
       }
+    } finally {
+      _isHealthChecking = false;
     }
   }
 
@@ -623,31 +707,35 @@ class P2PServiceImpl implements P2PService {
       isIncoming: message.isIncoming,
       envelopeType: envelopeType,
     );
-    _messageController.add(message);
+    if (!_messageController.isClosed) {
+      _messageController.add(message);
+    }
   }
 
   /// Handle peer connected event from bridge.
   void _handlePeerConnected(ConnectionState conn) {
+    if (_stopped) return;
+    debugPrint('[CONN] peer:connected → ${conn.peerId} (${conn.status})');
 
     // Update current state with new connection
     final updatedConnections = List<ConnectionState>.from(
       _currentState.connections,
     )..add(conn);
 
-    _currentState = _currentState.copyWith(connections: updatedConnections);
-    _stateController.add(_currentState);
+    _emitState(_currentState.copyWith(connections: updatedConnections));
   }
 
   /// Handle peer disconnected event from bridge.
   void _handlePeerDisconnected(ConnectionState conn) {
+    if (_stopped) return;
+    debugPrint('[CONN] peer:disconnected → ${conn.peerId}');
 
     // Update current state by removing the connection
     final updatedConnections = _currentState.connections
         .where((c) => c.peerId != conn.peerId)
         .toList();
 
-    _currentState = _currentState.copyWith(connections: updatedConnections);
-    _stateController.add(_currentState);
+    _emitState(_currentState.copyWith(connections: updatedConnections));
   }
 
   /// Handle addresses:updated push event from Go.
@@ -655,12 +743,21 @@ class P2PServiceImpl implements P2PService {
     List<String> listenAddresses,
     List<String> circuitAddresses,
   ) {
+    if (_stopped) return;
     final flutterElapsedMs = _startNodeTime != null
         ? DateTime.now().difference(_startNodeTime!).inMilliseconds
         : -1;
 
     final wasConnecting = _currentState.circuitAddresses.isEmpty;
     final nowOnline = circuitAddresses.isNotEmpty;
+
+    debugPrint('[ADDR] addresses:updated push event → '
+        'listen=${listenAddresses.length}, circuit=${circuitAddresses.length}, '
+        'elapsed=${flutterElapsedMs}ms'
+        '${wasConnecting && nowOnline ? " TRANSITION connecting->online" : ""}');
+    if (circuitAddresses.isNotEmpty) {
+      debugPrint('[ADDR] circuit addresses: ${circuitAddresses.join(", ")}');
+    }
 
     emitFlowEvent(
       layer: 'FL',
@@ -669,15 +766,18 @@ class P2PServiceImpl implements P2PService {
         'listenCount': listenAddresses.length,
         'circuitCount': circuitAddresses.length,
         'flutterElapsedMs': flutterElapsedMs,
-        if (wasConnecting && nowOnline) 'transition': 'connecting→online',
+        if (wasConnecting && nowOnline) 'transition': 'connecting->online',
       },
     );
 
-    _currentState = _currentState.copyWith(
+    _emitState(_currentState.copyWith(
       listenAddresses: listenAddresses,
       circuitAddresses: circuitAddresses,
-    );
-    _stateController.add(_currentState);
+    ));
+
+    if (circuitAddresses.isNotEmpty) {
+      _hasEverBeenOnline = true;
+    }
 
     // Re-register push token when circuit addresses become available
     if (circuitAddresses.isNotEmpty &&
@@ -800,6 +900,7 @@ class P2PServiceImpl implements P2PService {
 
   @override
   Future<void> performImmediateHealthCheck() async {
+    debugPrint('[HEALTH] performImmediateHealthCheck() called');
     emitFlowEvent(
       layer: 'FL',
       event: 'P2P_SERVICE_IMMEDIATE_HEALTH_CHECK_BEGIN',
@@ -813,6 +914,8 @@ class P2PServiceImpl implements P2PService {
     } catch (e) {
       debugPrint('[P2PService] Local P2P restart advertising failed: $e');
     }
+
+    debugPrint('[HEALTH] performImmediateHealthCheck() done');
   }
 
   @override
@@ -844,11 +947,13 @@ class P2PServiceImpl implements P2PService {
 
   @override
   void dispose() {
+    _stopped = true;
+    _currentState = NodeState.stopped;
     _stopHealthCheck();
     _localMessageSub?.cancel();
     _localP2P?.dispose();
-    _stateController.close();
-    _messageController.close();
+    if (!_stateController.isClosed) _stateController.close();
+    if (!_messageController.isClosed) _messageController.close();
 
     // Clear event handlers
     _bridge.onMessageReceived = null;

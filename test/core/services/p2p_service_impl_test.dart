@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
@@ -139,6 +140,31 @@ class _SlowBridge extends FakeBridge {
     if (!_gate.isCompleted) _gate.complete();
   }
 }
+
+// ---------------------------------------------------------------------------
+// Counting bridge for warm-start fast circuit fallback tests
+// ---------------------------------------------------------------------------
+
+class _CountingBridge extends FakeBridge {
+  int nodeStatusCallCount = 0;
+
+  @override
+  Future<String> send(String message) async {
+    final parsed = jsonDecode(message) as Map<String, dynamic>;
+    if (parsed['cmd'] == 'node:status') nodeStatusCallCount++;
+    return super.send(message);
+  }
+}
+
+/// node:start response with NO circuit addresses (simulates cold relay).
+Map<String, dynamic> _nodeStartNoCircuit() => {
+      'ok': true,
+      'peerId': _testPeerId,
+      'isStarted': true,
+      'listenAddresses': ['/ip4/127.0.0.1/tcp/1234'],
+      'circuitAddresses': <String>[],
+      'connections': <Map<String, dynamic>>[],
+    };
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -976,6 +1002,123 @@ void main() {
       );
       await Future.delayed(Duration.zero);
       expect(messageStreamDone, isTrue);
+    });
+  });
+
+  // =========================================================================
+  // warm-start fast circuit fallback
+  // =========================================================================
+
+  group('warm-start fast circuit fallback', () {
+    test('no circuit after 2s triggers immediate health poll', () {
+      fakeAsync((async) {
+        final countBridge = _CountingBridge();
+        countBridge.responses['node:start'] = _nodeStartNoCircuit();
+        countBridge.responses['node:status'] = _nodeStatusOk();
+        countBridge.responses['inbox:retrieve'] = {
+          'ok': true,
+          'messages': [],
+        };
+
+        final svc = P2PServiceImpl(bridge: countBridge);
+
+        // startNode calls startNodeCore then warmBackground
+        svc.startNode(_testBase64Key, _testPeerId);
+        async.flushMicrotasks();
+
+        // Record baseline before the 2s delayed future fires
+        final baselineCount = countBridge.nodeStatusCallCount;
+
+        // Elapse 2 seconds — the Future.delayed(2s) inside warmBackground fires
+        async.elapse(const Duration(seconds: 2));
+
+        // The fast circuit fallback should have triggered _performHealthCheck,
+        // which sends node:status
+        expect(
+          countBridge.nodeStatusCallCount,
+          greaterThan(baselineCount),
+          reason: 'Fast circuit fallback should poll node:status after 2s '
+              'when no circuit addresses are present',
+        );
+
+        svc.dispose();
+      });
+    });
+
+    test('already online does not trigger extra poll', () {
+      fakeAsync((async) {
+        final countBridge = _CountingBridge();
+        // node:start returns WITH circuit addresses (already online)
+        countBridge.responses['node:start'] = _nodeStartOk();
+        countBridge.responses['node:status'] = _nodeStatusOk();
+        countBridge.responses['inbox:retrieve'] = {
+          'ok': true,
+          'messages': [],
+        };
+
+        final svc = P2PServiceImpl(bridge: countBridge);
+
+        svc.startNode(_testBase64Key, _testPeerId);
+        async.flushMicrotasks();
+
+        // Record count after startup settles
+        final baselineCount = countBridge.nodeStatusCallCount;
+
+        // Elapse 2 seconds — the fast circuit check fires but should skip
+        // because circuitAddresses is already non-empty
+        async.elapse(const Duration(seconds: 2));
+
+        expect(
+          countBridge.nodeStatusCallCount,
+          baselineCount,
+          reason: 'Fast circuit fallback should NOT poll node:status when '
+              'circuit addresses are already present',
+        );
+
+        svc.dispose();
+      });
+    });
+
+    test('addresses:updated push before 2s prevents extra poll', () {
+      fakeAsync((async) {
+        final countBridge = _CountingBridge();
+        // Start with no circuits
+        countBridge.responses['node:start'] = _nodeStartNoCircuit();
+        countBridge.responses['node:status'] = _nodeStatusOk();
+        countBridge.responses['inbox:retrieve'] = {
+          'ok': true,
+          'messages': [],
+        };
+
+        final svc = P2PServiceImpl(bridge: countBridge);
+
+        svc.startNode(_testBase64Key, _testPeerId);
+        async.flushMicrotasks();
+
+        // At 1 second, simulate a push event delivering circuit addresses
+        async.elapse(const Duration(seconds: 1));
+        countBridge.onAddressesUpdated!(
+          ['/ip4/127.0.0.1/tcp/1234'],
+          ['/p2p-circuit/relay'],
+        );
+        async.flushMicrotasks();
+
+        // Record count after the push event
+        final baselineCount = countBridge.nodeStatusCallCount;
+
+        // At 2 seconds the delayed future fires — but now circuitAddresses
+        // is non-empty, so no extra poll should happen
+        async.elapse(const Duration(seconds: 1));
+
+        expect(
+          countBridge.nodeStatusCallCount,
+          baselineCount,
+          reason: 'Fast circuit fallback should NOT poll node:status when '
+              'addresses:updated push delivered circuits before the 2s timeout',
+        );
+
+        svc.dispose();
+      });
     });
   });
 }

@@ -175,7 +175,6 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       final localSent = await p2pService.sendLocalMessage(
         targetPeerId, jsonString, senderPeerId);
       if (localSent) {
-        wifiSent = true;
         final wifiMessage = payload.toConversationMessage(
           contactPeerId: targetPeerId,
           isIncoming: false,
@@ -185,6 +184,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
         await messageRepo.saveMessage(wifiMessage);
         await _persistMediaAttachments(
             mediaAttachmentRepo, mediaAttachments, resolvedMessageId);
+        wifiSent = true; // only true after persistence succeeds
         emitFlowEvent(
           layer: 'FL',
           event: 'CHAT_MSG_SEND_LOCAL_SUCCESS',
@@ -450,9 +450,18 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     isIncoming: false,
     status: 'failed',
   );
-  await messageRepo.saveMessage(failedMessage);
-  await _persistMediaAttachments(
-      mediaAttachmentRepo, mediaAttachments, resolvedMessageId);
+  try {
+    await messageRepo.saveMessage(failedMessage);
+    await _persistMediaAttachments(
+        mediaAttachmentRepo, mediaAttachments, resolvedMessageId);
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_SEND_PERSIST_FAILED_ERROR',
+      details: {'error': e.toString()},
+    );
+    return (lastFailureReason ?? SendChatMessageResult.sendFailed, null);
+  }
 
   emitFlowEvent(
     layer: 'FL',

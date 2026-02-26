@@ -1,4 +1,4 @@
-/// Integration test: Full DB migration chain (v1 -> v11).
+/// Integration test: Full DB migration chain (v1 -> v12).
 ///
 /// Verifies:
 /// 1a. Fresh install creates all tables with correct schema
@@ -19,6 +19,7 @@ import 'package:flutter_app/core/database/migrations/008_block_columns.dart';
 import 'package:flutter_app/core/database/migrations/009_quoted_message_id.dart';
 import 'package:flutter_app/core/database/migrations/010_media_attachments.dart';
 import 'package:flutter_app/core/database/migrations/011_avatar_version.dart';
+import 'package:flutter_app/core/database/migrations/012_transport_column.dart';
 import 'package:flutter_app/core/secure_storage/migrate_secrets_to_secure_storage.dart';
 
 import '../../../core/secure_storage/fake_secure_key_store.dart';
@@ -69,6 +70,7 @@ void main() {
       await runQuotedMessageIdMigration(db);
       await runMediaAttachmentsMigration(db);
       await runAvatarVersionMigration(db);
+      await runTransportColumnMigration(db);
 
       // Verify: 5 tables exist
       final tables = await getTableNames(db);
@@ -94,9 +96,9 @@ void main() {
         throwsA(anything),
       );
 
-      // Verify: messages has read_at, quoted_message_id columns
+      // Verify: messages has read_at, quoted_message_id, transport columns
       final msgCols = await getColumnNames(db, 'messages');
-      expect(msgCols, containsAll(['read_at', 'quoted_message_id']));
+      expect(msgCols, containsAll(['read_at', 'quoted_message_id', 'transport']));
 
       // Verify: contacts has ml_kem_public_key, is_archived, is_blocked, avatar_version
       final contactCols = await getColumnNames(db, 'contacts');
@@ -264,6 +266,32 @@ void main() {
       final contactCols11 = await getColumnNames(db, 'contacts');
       expect(contactCols11, contains('avatar_version'));
 
+      // Step 12: Migration 012 -> transport column
+      await runTransportColumnMigration(db);
+      final msgCols12 = await getColumnNames(db, 'messages');
+      expect(msgCols12, contains('transport'));
+
+      // Verify existing message (msg-1 from Step 6) has null transport
+      final existingMsg12 = await db.query('messages',
+          where: 'id = ?', whereArgs: ['msg-1']);
+      expect(existingMsg12.first['transport'], isNull);
+
+      // Insert a message with transport='wifi' and verify
+      await db.insert('messages', {
+        'id': 'msg-wifi-12',
+        'contact_peer_id': 'contact-1',
+        'sender_peer_id': 'contact-1',
+        'text': 'wifi transport message',
+        'timestamp': '2026-02-01T00:00:00Z',
+        'status': 'delivered',
+        'is_incoming': 1,
+        'created_at': '2026-02-01T00:00:00Z',
+        'transport': 'wifi',
+      });
+      final wifiMsg = await db.query('messages',
+          where: 'id = ?', whereArgs: ['msg-wifi-12']);
+      expect(wifiMsg.first['transport'], 'wifi');
+
       // Final: verify seeded data is preserved
       final identity = await db.query('identity', where: 'id = ?', whereArgs: [1]);
       expect(identity.first['peer_id'], 'peer-abc');
@@ -302,6 +330,7 @@ void main() {
       await runQuotedMessageIdMigration(db);
       await runMediaAttachmentsMigration(db);
       await runAvatarVersionMigration(db);
+      await runTransportColumnMigration(db);
 
       // Seed data
       await db.insert('identity', {
@@ -313,7 +342,7 @@ void main() {
         'updated_at': '2026-01-01',
       });
 
-      // Re-run idempotent migrations (006-011)
+      // Re-run idempotent migrations (006-012)
       await runSecretNullChecksMigration(db);
       await runReadAtColumnMigration(db);
       await runArchiveColumnsMigration(db);
@@ -321,6 +350,7 @@ void main() {
       await runQuotedMessageIdMigration(db);
       await runMediaAttachmentsMigration(db);
       await runAvatarVersionMigration(db);
+      await runTransportColumnMigration(db);
 
       // Re-run secrets migration (should be no-op)
       await migrateSecretsToSecureStorage(db: db, secureKeyStore: keyStore);
