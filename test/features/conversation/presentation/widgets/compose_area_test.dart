@@ -54,7 +54,9 @@ void main() {
       expect(zeroOpacity, isNotEmpty);
     });
 
-    testWidgets('send button becomes visible when text is entered', (tester) async {
+    testWidgets('send button becomes visible when text is entered', (
+      tester,
+    ) async {
       await tester.pumpWidget(buildTestWidget());
 
       await tester.enterText(find.byType(TextField), 'Hello');
@@ -68,9 +70,9 @@ void main() {
 
     testWidgets('onSend is called with trimmed text', (tester) async {
       String? sentText;
-      await tester.pumpWidget(buildTestWidget(
-        onSend: (text) => sentText = text,
-      ));
+      await tester.pumpWidget(
+        buildTestWidget(onSend: (text) => sentText = text),
+      );
 
       await tester.enterText(find.byType(TextField), '  Hello!  ');
       await tester.pumpAndSettle();
@@ -98,16 +100,17 @@ void main() {
 
     testWidgets('attachment button fires onAttach callback', (tester) async {
       var attachPressed = false;
-      await tester.pumpWidget(buildTestWidget(
-        onAttach: () => attachPressed = true,
-      ));
+      await tester.pumpWidget(
+        buildTestWidget(onAttach: () => attachPressed = true),
+      );
 
       await tester.tap(find.byIcon(Icons.add_circle_outline));
       expect(attachPressed, true);
     });
 
-    testWidgets('send button visible when hasAttachments is true and no text',
-        (tester) async {
+    testWidgets('send button visible when hasAttachments is true and no text', (
+      tester,
+    ) async {
       await tester.pumpWidget(buildTestWidget(hasAttachments: true));
       await tester.pumpAndSettle();
 
@@ -117,13 +120,16 @@ void main() {
       expect(fullOpacity, isNotEmpty);
     });
 
-    testWidgets('media-only send fires onSend with empty string',
-        (tester) async {
+    testWidgets('media-only send fires onSend with empty string', (
+      tester,
+    ) async {
       String? sentText;
-      await tester.pumpWidget(buildTestWidget(
-        onSend: (text) => sentText = text,
-        hasAttachments: true,
-      ));
+      await tester.pumpWidget(
+        buildTestWidget(
+          onSend: (text) => sentText = text,
+          hasAttachments: true,
+        ),
+      );
       await tester.pumpAndSettle();
 
       // Tap send without entering any text
@@ -133,8 +139,9 @@ void main() {
       expect(sentText, '');
     });
 
-    testWidgets('send button hidden when no text and no attachments',
-        (tester) async {
+    testWidgets('send button hidden when no text and no attachments', (
+      tester,
+    ) async {
       await tester.pumpWidget(buildTestWidget(hasAttachments: false));
       await tester.pump();
 
@@ -143,8 +150,9 @@ void main() {
       expect(zeroOpacity, isNotEmpty);
     });
 
-    testWidgets('send button reacts to hasAttachments changing to true',
-        (tester) async {
+    testWidgets('send button reacts to hasAttachments changing to true', (
+      tester,
+    ) async {
       // Start without attachments
       await tester.pumpWidget(buildTestWidget(hasAttachments: false));
       await tester.pump();
@@ -162,13 +170,16 @@ void main() {
       expect(opacityWidgets.where((o) => o.opacity == 1.0), isNotEmpty);
     });
 
-    testWidgets('does not fire onSend when no text and no attachments',
-        (tester) async {
+    testWidgets('does not fire onSend when no text and no attachments', (
+      tester,
+    ) async {
       String? sentText;
-      await tester.pumpWidget(buildTestWidget(
-        onSend: (text) => sentText = text,
-        hasAttachments: false,
-      ));
+      await tester.pumpWidget(
+        buildTestWidget(
+          onSend: (text) => sentText = text,
+          hasAttachments: false,
+        ),
+      );
       await tester.pumpAndSettle();
 
       // Even though send button is in the tree, tapping it should not fire
@@ -178,14 +189,17 @@ void main() {
       expect(sentText, isNull);
     });
 
-    testWidgets('disables send button when isProcessing is true',
-        (tester) async {
+    testWidgets('disables send button when isProcessing is true', (
+      tester,
+    ) async {
       String? sentText;
-      await tester.pumpWidget(buildTestWidget(
-        onSend: (text) => sentText = text,
-        hasAttachments: true,
-        isProcessing: true,
-      ));
+      await tester.pumpWidget(
+        buildTestWidget(
+          onSend: (text) => sentText = text,
+          hasAttachments: true,
+          isProcessing: true,
+        ),
+      );
       await tester.pumpAndSettle();
 
       await tester.tap(find.text('Send'));
@@ -194,26 +208,28 @@ void main() {
       expect(sentText, isNull);
     });
 
-    testWidgets('disables attach button when isProcessing is true',
-        (tester) async {
+    testWidgets('disables attach button when isProcessing is true', (
+      tester,
+    ) async {
       var attachPressed = false;
-      await tester.pumpWidget(buildTestWidget(
-        onAttach: () => attachPressed = true,
-        isProcessing: true,
-      ));
+      await tester.pumpWidget(
+        buildTestWidget(
+          onAttach: () => attachPressed = true,
+          isProcessing: true,
+        ),
+      );
 
       await tester.tap(find.byIcon(Icons.add_circle_outline));
       expect(attachPressed, false);
     });
 
-    testWidgets('attach button dimmed when isProcessing is true',
-        (tester) async {
+    testWidgets('attach button dimmed when isProcessing is true', (
+      tester,
+    ) async {
       await tester.pumpWidget(buildTestWidget(isProcessing: true));
       await tester.pump();
 
-      final icon = tester.widget<Icon>(
-        find.byIcon(Icons.add_circle_outline),
-      );
+      final icon = tester.widget<Icon>(find.byIcon(Icons.add_circle_outline));
       // When processing, the icon color should have lower opacity (0.15)
       expect(icon.color, const Color.fromRGBO(255, 255, 255, 0.15));
     });
@@ -253,24 +269,28 @@ void main() {
       );
     }
 
-    testWidgets('mic button visible when text is empty and no attachments',
-        (tester) async {
-      await tester.pumpWidget(buildVoiceWidget(
-        onRecordStart: () {},
-        onRecordStop: () {},
-        onRecordCancel: () {},
-      ));
+    testWidgets('mic button visible when text is empty and no attachments', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        buildVoiceWidget(
+          onRecordStart: () {},
+          onRecordStop: () {},
+          onRecordCancel: () {},
+        ),
+      );
 
       expect(find.byIcon(Icons.mic_rounded), findsOneWidget);
     });
 
-    testWidgets('send button visible when text is non-empty',
-        (tester) async {
-      await tester.pumpWidget(buildVoiceWidget(
-        onRecordStart: () {},
-        onRecordStop: () {},
-        onRecordCancel: () {},
-      ));
+    testWidgets('send button visible when text is non-empty', (tester) async {
+      await tester.pumpWidget(
+        buildVoiceWidget(
+          onRecordStart: () {},
+          onRecordStop: () {},
+          onRecordCancel: () {},
+        ),
+      );
 
       await tester.enterText(find.byType(TextField), 'Hello');
       await tester.pumpAndSettle();
@@ -280,60 +300,74 @@ void main() {
       expect(find.byIcon(Icons.mic_rounded), findsNothing);
     });
 
-    testWidgets('send button visible when hasAttachments is true',
-        (tester) async {
-      await tester.pumpWidget(buildVoiceWidget(
-        hasAttachments: true,
-        onRecordStart: () {},
-        onRecordStop: () {},
-        onRecordCancel: () {},
-      ));
+    testWidgets('send button visible when hasAttachments is true', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        buildVoiceWidget(
+          hasAttachments: true,
+          onRecordStart: () {},
+          onRecordStop: () {},
+          onRecordCancel: () {},
+        ),
+      );
       await tester.pumpAndSettle();
 
       // Mic button should not be shown
       expect(find.byIcon(Icons.mic_rounded), findsNothing);
     });
 
-    testWidgets('recording overlay appears when isRecording is true',
-        (tester) async {
-      await tester.pumpWidget(buildVoiceWidget(
-        isRecording: true,
-        recordingDuration: const Duration(seconds: 3),
-        onRecordStart: () {},
-        onRecordStop: () {},
-        onRecordCancel: () {},
-      ));
+    testWidgets('recording overlay appears when isRecording is true', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        buildVoiceWidget(
+          isRecording: true,
+          recordingDuration: const Duration(seconds: 3),
+          onRecordStart: () {},
+          onRecordStop: () {},
+          onRecordCancel: () {},
+        ),
+      );
 
       expect(find.text('0:03'), findsOneWidget);
       expect(find.text('Slide to cancel'), findsOneWidget);
+      expect(find.byIcon(Icons.stop_rounded), findsOneWidget);
+      expect(find.text('Send'), findsNothing);
     });
 
-    testWidgets('recording overlay disappears when isRecording is false',
-        (tester) async {
-      await tester.pumpWidget(buildVoiceWidget(
-        isRecording: false,
-        onRecordStart: () {},
-        onRecordStop: () {},
-        onRecordCancel: () {},
-      ));
+    testWidgets('recording overlay disappears when isRecording is false', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        buildVoiceWidget(
+          isRecording: false,
+          onRecordStart: () {},
+          onRecordStop: () {},
+          onRecordCancel: () {},
+        ),
+      );
 
       expect(find.text('Slide to cancel'), findsNothing);
     });
 
     testWidgets('text field hidden during recording', (tester) async {
-      await tester.pumpWidget(buildVoiceWidget(
-        isRecording: true,
-        onRecordStart: () {},
-        onRecordStop: () {},
-        onRecordCancel: () {},
-      ));
+      await tester.pumpWidget(
+        buildVoiceWidget(
+          isRecording: true,
+          onRecordStart: () {},
+          onRecordStop: () {},
+          onRecordCancel: () {},
+        ),
+      );
 
       // TextField should not be visible (recording overlay replaces it)
       expect(find.byType(TextField), findsNothing);
     });
 
-    testWidgets('mic button not shown without onRecordStart callback',
-        (tester) async {
+    testWidgets('mic button not shown without onRecordStart callback', (
+      tester,
+    ) async {
       await tester.pumpWidget(buildVoiceWidget());
       // Without onRecordStart, no mic button
       expect(find.byIcon(Icons.mic_rounded), findsNothing);

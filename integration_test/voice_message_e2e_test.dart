@@ -4,7 +4,7 @@
 /// The full send/receive/playback flow requires two real peers
 /// and is best tested manually.
 ///
-/// Run with: flutter test integration_test/voice_message_e2e_test.dart -d <device>
+/// Run with: flutter test integration_test/voice_message_e2e_test.dart -d deviceId
 @Tags(['device'])
 library;
 

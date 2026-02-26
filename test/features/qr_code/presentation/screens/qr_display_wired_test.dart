@@ -52,9 +52,9 @@ void main() {
       repo.seed(testIdentity);
 
       await tester.pumpWidget(pumpQRDisplay(tester));
-      // After a single pump (no settle), the widget should still be loading.
-      expect(find.byType(CircularProgressIndicator), findsOneWidget);
-      expect(find.text('Generating QR code...'), findsOneWidget);
+      // After a single pump (no settle), the widget should show QRDisplayScreen
+      // with null qrData (QRCodeSection renders a loading shimmer).
+      expect(find.byType(QRDisplayScreen), findsOneWidget);
     });
 
     testWidgets('shows QR code on successful payload build', (tester) async {
@@ -65,7 +65,9 @@ void main() {
       };
 
       await tester.pumpWidget(pumpQRDisplay(tester));
-      await tester.pumpAndSettle();
+      // Use pump with duration instead of pumpAndSettle because the
+      // success state has infinitely-repeating animations.
+      await tester.pump(const Duration(seconds: 1));
 
       expect(find.byType(QRDisplayScreen), findsOneWidget);
     });
@@ -109,7 +111,8 @@ void main() {
       };
 
       await tester.tap(find.text('Try Again'));
-      await tester.pumpAndSettle();
+      // Use pump with duration because success state has infinite animations.
+      await tester.pump(const Duration(seconds: 1));
 
       // Should now show success screen.
       expect(find.byType(QRDisplayScreen), findsOneWidget);
@@ -141,7 +144,7 @@ void main() {
       expect(find.byIcon(Icons.error_outline), findsOneWidget);
     });
 
-    testWidgets('displays peerId from identity on success', (tester) async {
+    testWidgets('shows QR screen with FTE layout on success', (tester) async {
       repo.seed(testIdentity);
       bridge.responses['payload.sign'] = {
         'ok': true,
@@ -149,11 +152,13 @@ void main() {
       };
 
       await tester.pumpWidget(pumpQRDisplay(tester));
-      await tester.pumpAndSettle();
+      // Use pump with duration because success state has infinite animations.
+      await tester.pump(const Duration(seconds: 1));
 
-      // peerId 'test-peer-id-12345' (18 chars) is truncated to
-      // '${first8}...${last4}' = 'test-pee...2345'
-      expect(find.text('test-pee...2345'), findsOneWidget);
+      // QRDisplayScreen uses FTE-style layout with QR code section
+      expect(find.byType(QRDisplayScreen), findsOneWidget);
+      expect(find.text('Show this to someone you want in your circle...'),
+          findsOneWidget);
     });
 
     testWidgets('no retry button on noIdentity state', (tester) async {

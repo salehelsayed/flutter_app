@@ -141,7 +141,8 @@ class _ConversationWiredState extends State<ConversationWired> {
     super.initState();
     _contact = widget.contact;
     widget.conversationTracker?.setActive(widget.contact.peerId);
-    if (widget.initialAttachments != null && widget.initialAttachments!.isNotEmpty) {
+    if (widget.initialAttachments != null &&
+        widget.initialAttachments!.isNotEmpty) {
       _pendingAttachments = widget.initialAttachments!
           .map((f) => _PendingMedia(file: f))
           .toList();
@@ -274,10 +275,18 @@ class _ConversationWiredState extends State<ConversationWired> {
         .listen(
           _onIncomingMessage,
           onError: (error) {
-            emitFlowEvent(layer: 'FL', event: 'CONV_CHAT_STREAM_ERROR', details: {'error': error.toString()});
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'CONV_CHAT_STREAM_ERROR',
+              details: {'error': error.toString()},
+            );
           },
           onDone: () {
-            emitFlowEvent(layer: 'FL', event: 'CONV_CHAT_STREAM_DONE', details: {});
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'CONV_CHAT_STREAM_DONE',
+              details: {},
+            );
           },
         );
   }
@@ -300,10 +309,18 @@ class _ConversationWiredState extends State<ConversationWired> {
             setState(() => _contact = updatedContact);
           },
           onError: (error) {
-            emitFlowEvent(layer: 'FL', event: 'CONV_CONTACT_UPDATE_STREAM_ERROR', details: {'error': error.toString()});
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'CONV_CONTACT_UPDATE_STREAM_ERROR',
+              details: {'error': error.toString()},
+            );
           },
           onDone: () {
-            emitFlowEvent(layer: 'FL', event: 'CONV_CONTACT_UPDATE_STREAM_DONE', details: {});
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'CONV_CONTACT_UPDATE_STREAM_DONE',
+              details: {},
+            );
           },
         );
   }
@@ -318,7 +335,10 @@ class _ConversationWiredState extends State<ConversationWired> {
     emitFlowEvent(
       layer: 'FL',
       event: 'CONV_FL_SEND_PRESSED',
-      details: {'textLength': text.length, 'attachments': _pendingAttachments.length},
+      details: {
+        'textLength': text.length,
+        'attachments': _pendingAttachments.length,
+      },
     );
 
     // Capture and clear pending attachments
@@ -423,6 +443,15 @@ class _ConversationWiredState extends State<ConversationWired> {
       }
     }
 
+    // Re-read contact from DB to pick up ML-KEM key updates that may
+    // have arrived via reciprocal contact request since this screen opened.
+    if (widget.contactRepo != null) {
+      final fresh = await widget.contactRepo!.getContact(_contact.peerId);
+      if (fresh != null && mounted) {
+        setState(() => _contact = fresh);
+      }
+    }
+
     final (result, message) = await widget.sendChatMessageFn(
       p2pService: widget.p2pService,
       messageRepo: widget.messageRepo,
@@ -447,8 +476,9 @@ class _ConversationWiredState extends State<ConversationWired> {
         displayMedia = [];
         for (final a in uploadedAttachments) {
           if (a.localPath != null) {
-            final absPath =
-                await widget.mediaFileManager!.resolveStoredPath(a.localPath!);
+            final absPath = await widget.mediaFileManager!.resolveStoredPath(
+              a.localPath!,
+            );
             displayMedia.add(a.copyWith(localPath: absPath));
           } else {
             displayMedia.add(a);
@@ -608,9 +638,7 @@ class _ConversationWiredState extends State<ConversationWired> {
   Future<void> _pickFromCamera() async {
     try {
       final picker = ImagePicker();
-      final picked = await picker.pickImage(
-        source: ImageSource.camera,
-      );
+      final picked = await picker.pickImage(source: ImageSource.camera);
       if (picked == null || !mounted) return;
       if (_pendingAttachments.length >= _maxAttachments) return;
 
@@ -632,9 +660,7 @@ class _ConversationWiredState extends State<ConversationWired> {
   Future<void> _pickVideoFromCamera() async {
     try {
       final picker = ImagePicker();
-      final picked = await picker.pickVideo(
-        source: ImageSource.camera,
-      );
+      final picked = await picker.pickVideo(source: ImageSource.camera);
       if (picked == null || !mounted) return;
       if (_pendingAttachments.length >= _maxAttachments) return;
 
@@ -698,14 +724,16 @@ class _ConversationWiredState extends State<ConversationWired> {
 
   Future<void> _onRecordStart() async {
     final recorder = widget.audioRecorderService;
-    if (recorder == null) return;
+    if (recorder == null || _isRecording) return;
 
     final hasPermission = await recorder.requestPermission();
     if (!hasPermission) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: const Text('Microphone permission is required to record voice messages.'),
+            content: const Text(
+              'Microphone permission is required to record voice messages.',
+            ),
             backgroundColor: Colors.red[700],
             behavior: SnackBarBehavior.floating,
           ),
@@ -754,7 +782,11 @@ class _ConversationWiredState extends State<ConversationWired> {
     }
 
     if (recording == null) {
-      emitFlowEvent(layer: 'FL', event: 'CONV_FL_RECORD_TOO_SHORT', details: {});
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONV_FL_RECORD_TOO_SHORT',
+        details: {},
+      );
       return;
     }
 
@@ -811,6 +843,35 @@ class _ConversationWiredState extends State<ConversationWired> {
       );
     }
 
+    // Re-read contact from DB to pick up ML-KEM key updates.
+    if (widget.contactRepo != null) {
+      final fresh = await widget.contactRepo!.getContact(_contact.peerId);
+      if (fresh != null && mounted) {
+        setState(() => _contact = fresh);
+      }
+    }
+
+    final bridge = widget.bridge;
+    if (bridge == null) {
+      _updateLocalMessageStatus(optimisticMessage.id, 'failed');
+      await _persistMessageStatus(optimisticMessage.id, 'failed');
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONV_FL_VOICE_SEND_NO_BRIDGE',
+        details: {},
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Failed to send voice message.'),
+            backgroundColor: Colors.red[700],
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+      return;
+    }
+
     // Upload + send
     final result = await sendVoiceMessage(
       p2pService: widget.p2pService,
@@ -819,7 +880,7 @@ class _ConversationWiredState extends State<ConversationWired> {
       senderPeerId: identity.peerId,
       senderUsername: identity.username,
       recording: recording,
-      bridge: widget.bridge!,
+      bridge: bridge,
       recipientMlKemPublicKey: _contact.mlKemPublicKey,
       mediaAttachmentRepo: widget.mediaAttachmentRepo,
       mediaFileManager: widget.mediaFileManager,
@@ -937,9 +998,7 @@ class _ConversationWiredState extends State<ConversationWired> {
       color: const Color.fromRGBO(18, 20, 28, 0.98),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
-        side: const BorderSide(
-          color: Color.fromRGBO(255, 255, 255, 0.14),
-        ),
+        side: const BorderSide(color: Color.fromRGBO(255, 255, 255, 0.14)),
       ),
       items: [
         PopupMenuItem<String>(
@@ -973,11 +1032,7 @@ class _ConversationWiredState extends State<ConversationWired> {
           value: 'delete',
           child: const Row(
             children: [
-              Icon(
-                Icons.delete_outline,
-                size: 18,
-                color: Color(0xFFEF4444),
-              ),
+              Icon(Icons.delete_outline, size: 18, color: Color(0xFFEF4444)),
               SizedBox(width: 10),
               Text(
                 'Delete chat',
@@ -1018,10 +1073,7 @@ class _ConversationWiredState extends State<ConversationWired> {
     if (!confirmed || !mounted) return;
 
     try {
-      await blockContact(
-        contactRepo: contactRepo,
-        peerId: _contact.peerId,
-      );
+      await blockContact(contactRepo: contactRepo, peerId: _contact.peerId);
       if (!mounted) return;
       final updated = await contactRepo.getContact(_contact.peerId);
       if (updated != null && mounted) {
@@ -1041,10 +1093,7 @@ class _ConversationWiredState extends State<ConversationWired> {
     if (contactRepo == null) return;
 
     try {
-      await unblockContact(
-        contactRepo: contactRepo,
-        peerId: _contact.peerId,
-      );
+      await unblockContact(contactRepo: contactRepo, peerId: _contact.peerId);
       if (!mounted) return;
       final updated = await contactRepo.getContact(_contact.peerId);
       if (updated != null && mounted) {
@@ -1163,9 +1212,15 @@ class _ConversationWiredState extends State<ConversationWired> {
         onRemoveAttachment: _removeAttachment,
         isProcessing: _isProcessingVideo,
         processingProgress: _processingProgress,
-        onRecordStart: widget.audioRecorderService != null ? _onRecordStart : null,
-        onRecordStop: widget.audioRecorderService != null ? _onRecordStop : null,
-        onRecordCancel: widget.audioRecorderService != null ? _onRecordCancel : null,
+        onRecordStart: widget.audioRecorderService != null
+            ? _onRecordStart
+            : null,
+        onRecordStop: widget.audioRecorderService != null
+            ? _onRecordStop
+            : null,
+        onRecordCancel: widget.audioRecorderService != null
+            ? _onRecordCancel
+            : null,
         isRecording: _isRecording,
         recordingDuration: _recordingDuration,
       ),

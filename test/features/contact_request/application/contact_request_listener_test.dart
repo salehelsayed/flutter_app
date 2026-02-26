@@ -68,15 +68,25 @@ class _FakeContactRequestRepository implements ContactRequestRepository {
 }
 
 class _FakeContactRepository implements ContactRepository {
-  final Set<String> existingContacts = {};
+  final Map<String, ContactModel> _contacts = {};
+
+  /// Seed a contact for testing.
+  void addTestContact(ContactModel contact) {
+    _contacts[contact.peerId] = contact;
+  }
 
   @override
   Future<bool> contactExists(String peerId) async =>
-      existingContacts.contains(peerId);
+      _contacts.containsKey(peerId);
 
-  // Not needed
   @override
-  Future<void> addContact(ContactModel contact) async {}
+  Future<void> addContact(ContactModel contact) async {
+    _contacts[contact.peerId] = contact;
+  }
+
+  @override
+  Future<ContactModel?> getContact(String peerId) async => _contacts[peerId];
+
   @override
   Future<void> archiveContact(String peerId) async {}
   @override
@@ -89,8 +99,6 @@ class _FakeContactRepository implements ContactRepository {
   Future<List<ContactModel>> getAllContacts() async => [];
   @override
   Future<List<ContactModel>> getArchivedContacts() async => [];
-  @override
-  Future<ContactModel?> getContact(String peerId) async => null;
   @override
   Future<int> getContactCount() async => 0;
   @override
@@ -110,8 +118,10 @@ ChatMessage _makeContactRequestMessage({
   String peerId = _testPeerId,
   String publicKey = _testPublicKey,
   String? from,
+  String? mlkem,
 }) {
   final payload = SplayTreeMap<String, dynamic>.from({
+    if (mlkem != null) 'mlkem': mlkem,
     'ns': peerId,
     'pk': publicKey,
     'rv': '/dns4/rendezvous.example.com/tcp/4001/p2p/$peerId',
@@ -291,7 +301,15 @@ void main() {
     });
 
     test('does not emit for already-existing contacts', () async {
-      contactRepo.existingContacts.add(_testPeerId);
+      contactRepo.addTestContact(ContactModel(
+        peerId: _testPeerId,
+        publicKey: _testPublicKey,
+        rendezvous: '/addr',
+        username: 'TestUser',
+        signature: 'sig',
+        scannedAt: '2024-01-01T00:00:00Z',
+        mlKemPublicKey: 'existingKey',
+      ));
       listener.start();
 
       final requests = <ContactRequestModel>[];
@@ -354,6 +372,138 @@ void main() {
       await Future.delayed(const Duration(milliseconds: 100));
 
       expect(requests, isEmpty);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // contactKeyUpdatedStream
+  // ---------------------------------------------------------------------------
+  group('contactKeyUpdatedStream', () {
+    test('emits updated contact when existing contact has null ML-KEM key',
+        () async {
+      // Seed a contact WITHOUT ML-KEM key
+      contactRepo.addTestContact(ContactModel(
+        peerId: _testPeerId,
+        publicKey: _testPublicKey,
+        rendezvous: '/addr',
+        username: 'TestUser',
+        signature: 'sig',
+        scannedAt: '2024-01-01T00:00:00Z',
+        mlKemPublicKey: null,
+      ));
+      listener.start();
+
+      final updates = <ContactModel>[];
+      listener.contactKeyUpdatedStream.listen(updates.add);
+
+      final requests = <ContactRequestModel>[];
+      listener.requestStream.listen(requests.add);
+
+      // Send a contact_request with mlkem key from the existing contact
+      streamController.add(
+        _makeContactRequestMessage(mlkem: 'newMlKemPublicKey'),
+      );
+      await Future.delayed(const Duration(milliseconds: 100));
+
+      // contactKeyUpdatedStream should emit
+      expect(updates.length, equals(1));
+      expect(updates.first.peerId, equals(_testPeerId));
+      expect(updates.first.mlKemPublicKey, equals('newMlKemPublicKey'));
+
+      // requestStream should NOT emit (this is not a new request)
+      expect(requests, isEmpty);
+    });
+
+    test('does not emit when existing contact already has ML-KEM key',
+        () async {
+      // Seed a contact WITH an existing ML-KEM key
+      contactRepo.addTestContact(ContactModel(
+        peerId: _testPeerId,
+        publicKey: _testPublicKey,
+        rendezvous: '/addr',
+        username: 'TestUser',
+        signature: 'sig',
+        scannedAt: '2024-01-01T00:00:00Z',
+        mlKemPublicKey: 'existingKey',
+      ));
+      listener.start();
+
+      final updates = <ContactModel>[];
+      listener.contactKeyUpdatedStream.listen(updates.add);
+
+      streamController.add(
+        _makeContactRequestMessage(mlkem: 'differentKey'),
+      );
+      await Future.delayed(const Duration(milliseconds: 100));
+
+      // Should NOT emit — existing key is never overwritten
+      expect(updates, isEmpty);
+    });
+
+    test('does not emit when payload has no mlkem field', () async {
+      // Seed a contact WITHOUT ML-KEM key
+      contactRepo.addTestContact(ContactModel(
+        peerId: _testPeerId,
+        publicKey: _testPublicKey,
+        rendezvous: '/addr',
+        username: 'TestUser',
+        signature: 'sig',
+        scannedAt: '2024-01-01T00:00:00Z',
+        mlKemPublicKey: null,
+      ));
+      listener.start();
+
+      final updates = <ContactModel>[];
+      listener.contactKeyUpdatedStream.listen(updates.add);
+
+      // No mlkem in payload
+      streamController.add(_makeContactRequestMessage());
+      await Future.delayed(const Duration(milliseconds: 100));
+
+      expect(updates, isEmpty);
+    });
+
+    test('emitted contact preserves all fields', () async {
+      contactRepo.addTestContact(ContactModel(
+        peerId: _testPeerId,
+        publicKey: _testPublicKey,
+        rendezvous: '/addr',
+        username: 'TestUser',
+        signature: 'sig',
+        scannedAt: '2024-01-01T00:00:00Z',
+        mlKemPublicKey: null,
+      ));
+      listener.start();
+
+      final updates = <ContactModel>[];
+      listener.contactKeyUpdatedStream.listen(updates.add);
+
+      streamController.add(
+        _makeContactRequestMessage(mlkem: 'newKey'),
+      );
+      await Future.delayed(const Duration(milliseconds: 100));
+
+      expect(updates.length, equals(1));
+      final contact = updates.first;
+      // ML-KEM key updated
+      expect(contact.mlKemPublicKey, equals('newKey'));
+      // Other fields preserved
+      expect(contact.peerId, equals(_testPeerId));
+      expect(contact.publicKey, equals(_testPublicKey));
+      expect(contact.username, equals('TestUser'));
+    });
+
+    test('dispose closes contactKeyUpdatedStream', () async {
+      listener.start();
+      listener.dispose();
+
+      bool streamDone = false;
+      listener.contactKeyUpdatedStream.listen(
+        (_) {},
+        onDone: () => streamDone = true,
+      );
+      await Future.delayed(const Duration(milliseconds: 50));
+      expect(streamDone, isTrue);
     });
   });
 }

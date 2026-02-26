@@ -331,6 +331,12 @@ void main() async {
     chatMessageListener.emitContactUpdate(contact);
   });
 
+  // Forward ML-KEM key updates from reciprocal contact requests so
+  // ConversationWired/FeedWired pick up the new encryption key.
+  contactRequestListener.contactKeyUpdatedStream.listen((contact) {
+    chatMessageListener.emitContactUpdate(contact);
+  });
+
   runApp(MyApp(
     repository: repository,
     contactRepository: contactRepository,

@@ -31,11 +31,15 @@ class QRDisplayWired extends StatefulWidget {
   /// Called when user closes the screen.
   final VoidCallback onClose;
 
+  /// Called when user taps "Scan a friend's code" card.
+  final VoidCallback? onScanPressed;
+
   const QRDisplayWired({
     super.key,
     required this.repo,
     required this.bridgeClient,
     required this.onClose,
+    this.onScanPressed,
   });
 
   @override
@@ -45,7 +49,6 @@ class QRDisplayWired extends StatefulWidget {
 class _QRDisplayWiredState extends State<QRDisplayWired> {
   _QRDisplayState _state = _QRDisplayState.loading;
   String? _qrData;
-  String? _peerId;
   String? _errorMessage;
 
   @override
@@ -110,7 +113,6 @@ class _QRDisplayWiredState extends State<QRDisplayWired> {
           setState(() {
             _state = _QRDisplayState.success;
             _qrData = qrString;
-            _peerId = identity.peerId;
           });
           emitFlowEvent(
             layer: 'FL',
@@ -160,14 +162,17 @@ class _QRDisplayWiredState extends State<QRDisplayWired> {
   Widget build(BuildContext context) {
     switch (_state) {
       case _QRDisplayState.loading:
-        return _buildLoadingScreen();
+        return QRDisplayScreen(
+          qrData: null,
+          onClose: widget.onClose,
+          onScanPressed: widget.onScanPressed,
+        );
 
       case _QRDisplayState.success:
         return QRDisplayScreen(
-          qrData: _qrData!,
-          peerId: _peerId!,
+          qrData: _qrData,
           onClose: widget.onClose,
-          onShare: _handleShare,
+          onScanPressed: widget.onScanPressed,
         );
 
       case _QRDisplayState.noIdentity:
@@ -186,29 +191,6 @@ class _QRDisplayWiredState extends State<QRDisplayWired> {
           showRetry: true,
         );
     }
-  }
-
-  Widget _buildLoadingScreen() {
-    return Scaffold(
-      appBar: AppBar(
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: widget.onClose,
-        ),
-        title: const Text('My QR Code'),
-        centerTitle: true,
-      ),
-      body: const Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            CircularProgressIndicator(),
-            SizedBox(height: 24),
-            Text('Generating QR code...'),
-          ],
-        ),
-      ),
-    );
   }
 
   Widget _buildErrorScreen({
@@ -265,12 +247,6 @@ class _QRDisplayWiredState extends State<QRDisplayWired> {
           ),
         ),
       ),
-    );
-  }
-
-  void _handleShare() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Share functionality coming soon!')),
     );
   }
 }

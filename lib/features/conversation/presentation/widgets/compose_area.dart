@@ -118,10 +118,10 @@ class _ComposeAreaState extends State<ComposeArea>
 
   bool get _shouldShowSendButton => _hasText || widget.hasAttachments;
 
-  bool get _shouldShowMicButton =>
-      !_shouldShowSendButton &&
-      !widget.isRecording &&
-      widget.onRecordStart != null;
+  bool get _canRecordVoice =>
+      widget.onRecordStart != null && widget.onRecordStop != null;
+
+  bool get _shouldShowMicButton => !_shouldShowSendButton && _canRecordVoice;
 
   @override
   Widget build(BuildContext context) {
@@ -136,10 +136,7 @@ class _ComposeAreaState extends State<ComposeArea>
             gradient: LinearGradient(
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter,
-              colors: [
-                Colors.transparent,
-                Color.fromRGBO(10, 10, 15, 0.95),
-              ],
+              colors: [Colors.transparent, Color.fromRGBO(10, 10, 15, 0.95)],
               stops: [0.0, 0.2],
             ),
           ),
@@ -233,7 +230,9 @@ class _ComposeAreaState extends State<ComposeArea>
                           Icons.add_circle_outline,
                           size: 22,
                           color: Color.fromRGBO(
-                            255, 255, 255,
+                            255,
+                            255,
+                            255,
                             widget.isProcessing ? 0.15 : 0.4,
                           ),
                         ),
@@ -253,8 +252,9 @@ class _ComposeAreaState extends State<ComposeArea>
                   if (_shouldShowMicButton)
                     VoiceRecordButton(
                       onTapDown: widget.onRecordStart!,
-                      onTapUp: widget.onRecordStop ?? () {},
+                      onTapUp: widget.onRecordStop!,
                       onTapCancel: widget.onRecordCancel ?? () {},
+                      isRecording: widget.isRecording,
                     )
                   else
                     // Send button
@@ -270,7 +270,9 @@ class _ComposeAreaState extends State<ComposeArea>
                         );
                       },
                       child: GestureDetector(
-                        onTap: !widget.isProcessing && (_hasText || widget.hasAttachments)
+                        onTap:
+                            !widget.isProcessing &&
+                                (_hasText || widget.hasAttachments)
                             ? _onSendPressed
                             : null,
                         child: Container(
