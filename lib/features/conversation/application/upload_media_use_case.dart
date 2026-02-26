@@ -26,6 +26,7 @@ Future<MediaAttachment?> uploadMedia({
   int? width,
   int? height,
   int? durationMs,
+  List<double>? waveform,
 }) async {
   final blobId = _uuid.v4();
 
@@ -104,6 +105,7 @@ Future<MediaAttachment?> uploadMedia({
       localPath: storedPath,
       downloadStatus: 'done',
       createdAt: now,
+      waveform: waveform,
     );
   } catch (e) {
     emitFlowEvent(

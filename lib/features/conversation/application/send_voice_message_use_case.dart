@@ -34,6 +34,7 @@ Future<SendVoiceMessageResult> sendVoiceMessage({
   MediaAttachmentRepository? mediaAttachmentRepo,
   MediaFileManager? mediaFileManager,
   String? text,
+  List<double>? waveform,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -74,6 +75,7 @@ Future<SendVoiceMessageResult> sendVoiceMessage({
     recipientPeerId: targetPeerId,
     mediaFileManager: mediaFileManager,
     durationMs: recording.durationMs,
+    waveform: waveform,
   );
 
   if (uploaded == null) {

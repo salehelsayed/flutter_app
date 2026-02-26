@@ -4,7 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:uuid/uuid.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/media/amplitude_buffer.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
+import 'package:flutter_app/core/media/downsample_waveform.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
@@ -135,6 +137,10 @@ class _ConversationWiredState extends State<ConversationWired> {
   bool _isRecording = false;
   Duration _recordingDuration = Duration.zero;
   StreamSubscription<Duration>? _durationSub;
+  StreamSubscription<double>? _amplitudeSub;
+  final _amplitudeBuffer = AmplitudeBuffer(size: 25);
+  List<double> _amplitudeValues = const [];
+  List<double> _waveformSamples = [];
 
   @override
   void initState() {
@@ -758,10 +764,21 @@ class _ConversationWiredState extends State<ConversationWired> {
       if (mounted) setState(() => _recordingDuration = d);
     });
 
+    _amplitudeBuffer.reset();
+    _waveformSamples = [];
+    _amplitudeSub = recorder.amplitudeStream.listen((value) {
+      if (mounted) {
+        _amplitudeBuffer.push(value);
+        _waveformSamples.add(value);
+        setState(() => _amplitudeValues = _amplitudeBuffer.values);
+      }
+    });
+
     if (mounted) {
       setState(() {
         _isRecording = true;
         _recordingDuration = Duration.zero;
+        _amplitudeValues = _amplitudeBuffer.values;
       });
     }
 
@@ -774,11 +791,20 @@ class _ConversationWiredState extends State<ConversationWired> {
 
     await _durationSub?.cancel();
     _durationSub = null;
+    await _amplitudeSub?.cancel();
+    _amplitudeSub = null;
+    _amplitudeBuffer.reset();
+
+    final waveform = downsampleWaveform(_waveformSamples, 50);
+    _waveformSamples = [];
 
     final recording = await recorder.stop();
 
     if (mounted) {
-      setState(() => _isRecording = false);
+      setState(() {
+        _isRecording = false;
+        _amplitudeValues = const [];
+      });
     }
 
     if (recording == null) {
@@ -821,6 +847,7 @@ class _ConversationWiredState extends State<ConversationWired> {
           localPath: recording.filePath,
           downloadStatus: 'done',
           createdAt: now,
+          waveform: waveform,
         ),
       ],
     );
@@ -884,6 +911,7 @@ class _ConversationWiredState extends State<ConversationWired> {
       recipientMlKemPublicKey: _contact.mlKemPublicKey,
       mediaAttachmentRepo: widget.mediaAttachmentRepo,
       mediaFileManager: widget.mediaFileManager,
+      waveform: waveform,
     );
 
     if (mounted) {
@@ -920,6 +948,10 @@ class _ConversationWiredState extends State<ConversationWired> {
 
     await _durationSub?.cancel();
     _durationSub = null;
+    await _amplitudeSub?.cancel();
+    _amplitudeSub = null;
+    _amplitudeBuffer.reset();
+    _waveformSamples = [];
 
     await recorder.cancel();
 
@@ -927,6 +959,7 @@ class _ConversationWiredState extends State<ConversationWired> {
       setState(() {
         _isRecording = false;
         _recordingDuration = Duration.zero;
+        _amplitudeValues = const [];
       });
     }
 
@@ -1180,6 +1213,7 @@ class _ConversationWiredState extends State<ConversationWired> {
     _incomingSubscription?.cancel();
     _contactUpdateSubscription?.cancel();
     _durationSub?.cancel();
+    _amplitudeSub?.cancel();
     // Cancel active recording on dispose
     if (_isRecording) {
       widget.audioRecorderService?.cancel();
@@ -1223,6 +1257,7 @@ class _ConversationWiredState extends State<ConversationWired> {
             : null,
         isRecording: _isRecording,
         recordingDuration: _recordingDuration,
+        amplitudeValues: _amplitudeValues,
       ),
     );
   }

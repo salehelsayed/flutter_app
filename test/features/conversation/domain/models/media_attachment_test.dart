@@ -277,5 +277,116 @@ void main() {
       expect(str, contains('image/jpeg'));
       expect(str, contains('245000'));
     });
+
+    // --- Waveform field tests ---
+
+    group('waveform', () {
+      const waveformData = [0.1, 0.5, 0.8, 0.3, 0.6];
+
+      const withWaveform = MediaAttachment(
+        id: 'blob-wf-001',
+        messageId: 'msg-wf-001',
+        mime: 'audio/mp4',
+        size: 12000,
+        mediaType: 'audio',
+        durationMs: 3000,
+        downloadStatus: 'done',
+        createdAt: '2026-02-26T10:00:00.000Z',
+        waveform: waveformData,
+      );
+
+      test('waveform defaults to null', () {
+        expect(testAttachment.waveform, isNull);
+      });
+
+      test('waveform field stores data', () {
+        expect(withWaveform.waveform, waveformData);
+      });
+
+      group('toJson / fromJson', () {
+        test('toJson includes waveform when non-null', () {
+          final json = withWaveform.toJson();
+          expect(json['waveform'], waveformData);
+        });
+
+        test('toJson omits waveform when null', () {
+          final json = testAttachment.toJson();
+          expect(json.containsKey('waveform'), isFalse);
+        });
+
+        test('fromJson parses waveform list', () {
+          final json = {
+            'id': 'blob-wf-parse',
+            'mime': 'audio/mp4',
+            'size': 5000,
+            'waveform': [0.2, 0.4, 0.6],
+          };
+          final restored = MediaAttachment.fromJson(json);
+          expect(restored.waveform, [0.2, 0.4, 0.6]);
+        });
+
+        test('fromJson defaults waveform to null when absent', () {
+          final json = {
+            'id': 'blob-no-wf',
+            'mime': 'audio/mp4',
+            'size': 1000,
+          };
+          final restored = MediaAttachment.fromJson(json);
+          expect(restored.waveform, isNull);
+        });
+
+        test('round-trip: toJson then fromJson preserves waveform', () {
+          final json = withWaveform.toJson();
+          final restored = MediaAttachment.fromJson(json);
+          expect(restored.waveform, waveformData);
+        });
+      });
+
+      group('toMap / fromMap', () {
+        test('toMap serializes waveform as JSON string', () {
+          final map = withWaveform.toMap();
+          expect(map['waveform'], '[0.1,0.5,0.8,0.3,0.6]');
+        });
+
+        test('toMap stores null waveform as null', () {
+          final map = testAttachment.toMap();
+          expect(map['waveform'], isNull);
+        });
+
+        test('fromMap deserializes waveform from JSON string', () {
+          final map = withWaveform.toMap();
+          final restored = MediaAttachment.fromMap(map);
+          expect(restored.waveform, hasLength(5));
+          expect(restored.waveform![0], closeTo(0.1, 0.001));
+          expect(restored.waveform![2], closeTo(0.8, 0.001));
+        });
+
+        test('fromMap returns null waveform when column is null', () {
+          final map = testAttachment.toMap();
+          final restored = MediaAttachment.fromMap(map);
+          expect(restored.waveform, isNull);
+        });
+      });
+
+      group('copyWith', () {
+        test('can set waveform on attachment that had none', () {
+          final updated = testAttachment.copyWith(
+            waveform: [0.1, 0.2, 0.3],
+          );
+          expect(updated.waveform, [0.1, 0.2, 0.3]);
+        });
+
+        test('can clear waveform to null', () {
+          final cleared = withWaveform.copyWith(clearWaveform: true);
+          expect(cleared.waveform, isNull);
+        });
+
+        test('preserves waveform when not specified in copyWith', () {
+          final copy = withWaveform.copyWith(downloadStatus: 'pending');
+          expect(copy.waveform, waveformData);
+          expect(copy.downloadStatus, 'pending');
+        });
+      });
+    });
   });
 }

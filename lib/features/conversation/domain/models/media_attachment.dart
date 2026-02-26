@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 /// Model representing a media attachment on a conversation message.
 ///
 /// Maps to the `media_attachments` database table. Each attachment belongs
@@ -36,6 +38,9 @@ class MediaAttachment {
   /// ISO-8601 timestamp when the attachment was created.
   final String createdAt;
 
+  /// Normalized waveform samples [0.0, 1.0] for audio visualization.
+  final List<double>? waveform;
+
   const MediaAttachment({
     required this.id,
     required this.messageId,
@@ -48,6 +53,7 @@ class MediaAttachment {
     this.localPath,
     required this.downloadStatus,
     required this.createdAt,
+    this.waveform,
   });
 
   /// Infers the logical media type from a MIME string.
@@ -60,6 +66,13 @@ class MediaAttachment {
 
   /// Creates a MediaAttachment from a database row map (snake_case keys).
   factory MediaAttachment.fromMap(Map<String, dynamic> map) {
+    List<double>? waveform;
+    final waveformStr = map['waveform'] as String?;
+    if (waveformStr != null) {
+      final decoded = jsonDecode(waveformStr) as List<dynamic>;
+      waveform = decoded.map((e) => (e as num).toDouble()).toList();
+    }
+
     return MediaAttachment(
       id: map['id'] as String,
       messageId: map['message_id'] as String,
@@ -72,6 +85,7 @@ class MediaAttachment {
       localPath: map['local_path'] as String?,
       downloadStatus: map['download_status'] as String? ?? 'pending',
       createdAt: map['created_at'] as String,
+      waveform: waveform,
     );
   }
 
@@ -89,12 +103,20 @@ class MediaAttachment {
       'local_path': localPath,
       'download_status': downloadStatus,
       'created_at': createdAt,
+      'waveform': waveform != null ? jsonEncode(waveform) : null,
     };
   }
 
   /// Creates a MediaAttachment from a wire-format JSON map (camelCase keys).
   factory MediaAttachment.fromJson(Map<String, dynamic> json) {
     final mime = json['mime'] as String? ?? 'application/octet-stream';
+
+    List<double>? waveform;
+    final wfRaw = json['waveform'];
+    if (wfRaw is List) {
+      waveform = wfRaw.map((e) => (e as num).toDouble()).toList();
+    }
+
     return MediaAttachment(
       id: json['id'] as String,
       messageId: json['messageId'] as String? ?? '',
@@ -108,6 +130,7 @@ class MediaAttachment {
       downloadStatus: 'pending',
       createdAt: json['createdAt'] as String? ??
           DateTime.now().toUtc().toIso8601String(),
+      waveform: waveform,
     );
   }
 
@@ -121,10 +144,13 @@ class MediaAttachment {
       if (width != null) 'width': width,
       if (height != null) 'height': height,
       if (durationMs != null) 'durationMs': durationMs,
+      if (waveform != null) 'waveform': waveform,
     };
   }
 
   /// Creates a copy with updated fields.
+  ///
+  /// Use [clearWaveform] = true to explicitly set waveform to null.
   MediaAttachment copyWith({
     String? id,
     String? messageId,
@@ -137,6 +163,8 @@ class MediaAttachment {
     String? localPath,
     String? downloadStatus,
     String? createdAt,
+    List<double>? waveform,
+    bool clearWaveform = false,
   }) {
     return MediaAttachment(
       id: id ?? this.id,
@@ -150,6 +178,7 @@ class MediaAttachment {
       localPath: localPath ?? this.localPath,
       downloadStatus: downloadStatus ?? this.downloadStatus,
       createdAt: createdAt ?? this.createdAt,
+      waveform: clearWaveform ? null : (waveform ?? this.waveform),
     );
   }
 
