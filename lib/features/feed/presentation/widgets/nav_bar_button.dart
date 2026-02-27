@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'nav_bar_theme.dart';
 
 /// A single button in the bottom feed navigation bar.
 class NavBarButton extends StatelessWidget {
@@ -20,12 +21,10 @@ class NavBarButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final iconColor = isActive
-        ? Colors.white
-        : const Color.fromRGBO(255, 255, 255, 0.55);
-    final textColor = isActive
-        ? Colors.white
-        : const Color.fromRGBO(255, 255, 255, 0.5);
+    final iconColor =
+        isActive ? NavBarTheme.activeIconColor : NavBarTheme.inactiveIconColor;
+    final textColor =
+        isActive ? NavBarTheme.activeTextColor : NavBarTheme.inactiveTextColor;
 
     return Stack(
       clipBehavior: Clip.none,
@@ -34,40 +33,21 @@ class NavBarButton extends StatelessWidget {
           color: Colors.transparent,
           child: InkWell(
             onTap: onTap,
-            borderRadius: BorderRadius.circular(19),
+            borderRadius: BorderRadius.circular(NavBarTheme.buttonBorderRadius),
             child: AnimatedContainer(
-              duration: const Duration(milliseconds: 220),
-              curve: Curves.easeOut,
-              width: 78,
-              padding: const EdgeInsets.symmetric(vertical: 7),
+              duration: NavBarTheme.animationDuration,
+              curve: NavBarTheme.animationCurve,
+              width: NavBarTheme.buttonWidth,
+              padding: NavBarTheme.buttonPadding,
               decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(19),
+                borderRadius:
+                    BorderRadius.circular(NavBarTheme.buttonBorderRadius),
                 gradient: isActive
                     ? const LinearGradient(
                         begin: Alignment.topCenter,
                         end: Alignment.bottomCenter,
-                        colors: [
-                          Color.fromRGBO(255, 255, 255, 0.28),
-                          Color.fromRGBO(255, 255, 255, 0.11),
-                        ],
+                        colors: NavBarTheme.activePillGradient,
                       )
-                    : null,
-                border: isActive
-                    ? Border.all(
-                        color: const Color.fromRGBO(255, 255, 255, 0.24))
-                    : null,
-                boxShadow: isActive
-                    ? const [
-                        BoxShadow(
-                          color: Color.fromRGBO(255, 255, 255, 0.1),
-                          blurRadius: 10,
-                        ),
-                        BoxShadow(
-                          color: Color.fromRGBO(0, 0, 0, 0.3),
-                          blurRadius: 8,
-                          offset: Offset(0, 3),
-                        ),
-                      ]
                     : null,
               ),
               child: Column(
@@ -75,20 +55,21 @@ class NavBarButton extends StatelessWidget {
                 children: [
                   SvgPicture.asset(
                     svgAsset,
-                    width: 20,
-                    height: 20,
+                    width: NavBarTheme.iconSize,
+                    height: NavBarTheme.iconSize,
                     colorFilter:
                         ColorFilter.mode(iconColor, BlendMode.srcIn),
                   ),
-                  const SizedBox(height: 3),
+                  const SizedBox(height: NavBarTheme.iconTextGap),
                   Text(
                     label,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      fontSize: 12,
-                      fontWeight:
-                          isActive ? FontWeight.w600 : FontWeight.w500,
+                      fontSize: NavBarTheme.textSize,
+                      fontWeight: isActive
+                          ? NavBarTheme.activeWeight
+                          : NavBarTheme.inactiveWeight,
                       color: textColor,
                       letterSpacing: 0.1,
                     ),
@@ -123,11 +104,11 @@ class _NavBadge extends StatelessWidget {
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(10),
         gradient: const LinearGradient(
-          colors: [Color(0xFF1DB954), Color(0xFF18A349)],
+          colors: NavBarTheme.badgeGradientColors,
         ),
         boxShadow: const [
           BoxShadow(
-            color: Color(0x661DB954),
+            color: NavBarTheme.badgeShadowColor,
             blurRadius: 6,
             offset: Offset(0, 1),
           ),
