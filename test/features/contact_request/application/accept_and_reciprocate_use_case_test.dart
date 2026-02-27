@@ -32,7 +32,16 @@ class _FakeIdentityRepo implements IdentityRepository {
 
 class _FakeBridge extends Bridge {
   Map<String, dynamic> signResponse = {'ok': true, 'signature': 'fakeSig'};
+  Map<String, dynamic> encryptResponse = {
+    'ok': true,
+    'ephemeralPublicKey': 'ephPub',
+    'ciphertext': 'ct',
+    'nonce': 'nonce',
+  };
   int signCallCount = 0;
+  int encryptCallCount = 0;
+  Map<String, dynamic>? lastEncryptPayload;
+  final List<String> commandLog = [];
 
   @override
   bool get isInitialized => true;
@@ -48,15 +57,25 @@ class _FakeBridge extends Bridge {
   @override
   Future<String> send(String message) async {
     final req = jsonDecode(message) as Map<String, dynamic>;
-    if (req['cmd'] == 'payload.sign') {
+    final cmd = req['cmd'] as String?;
+    if (cmd != null) commandLog.add(cmd);
+    if (cmd == 'payload.sign') {
       signCallCount++;
       return jsonEncode(signResponse);
+    }
+    if (cmd == 'contactrequest.encrypt') {
+      encryptCallCount++;
+      lastEncryptPayload = req['payload'] as Map<String, dynamic>?;
+      return jsonEncode(encryptResponse);
     }
     return jsonEncode({'ok': true});
   }
 }
 
 class _FakeP2PService implements P2PService {
+  String? lastSentMessage;
+  String? lastSentPeerId;
+
   @override
   NodeState get currentState =>
       const NodeState(isStarted: true, peerId: 'ownPeer');
@@ -75,8 +94,11 @@ class _FakeP2PService implements P2PService {
   @override
   Future<bool> sendMessage(String peerId, String message) async => true;
   @override
-  Future<SendMessageResult> sendMessageWithReply(String pid, String msg, {int? timeoutMs}) async =>
-      const SendMessageResult(sent: true);
+  Future<SendMessageResult> sendMessageWithReply(String pid, String msg, {int? timeoutMs}) async {
+    lastSentPeerId = pid;
+    lastSentMessage = msg;
+    return const SendMessageResult(sent: true);
+  }
   @override
   Future<DiscoveredPeer?> discoverPeer(String peerId) async =>
       DiscoveredPeer(id: peerId, addresses: ['/ip4/127.0.0.1/tcp/4001']);
@@ -194,10 +216,15 @@ void main() {
     );
 
     // Allow fire-and-forget future to complete
-    await Future.delayed(Duration.zero);
+    await Future.delayed(const Duration(milliseconds: 200));
 
-    // Evidence of reciprocal send: bridge.send was called with payload.sign
+    // Evidence of reciprocal send: bridge.send was called with both sign and encrypt
     expect(bridge.signCallCount, greaterThanOrEqualTo(1));
+    expect(bridge.encryptCallCount, greaterThanOrEqualTo(1));
+
+    // Verify recipient public key was threaded to encrypt
+    expect(bridge.lastEncryptPayload, isNotNull);
+    expect(bridge.lastEncryptPayload!['recipientPublicKey'], equals('pk-bob'));
   });
 
   test('notFound: does not fire reciprocal when accept fails', () async {
@@ -268,5 +295,27 @@ void main() {
     // Contact was still added
     final contact = await contactRepo.getContact(_bobPeerId);
     expect(contact, isNotNull);
+  });
+
+  test('success: reciprocal send produces v2 encrypted envelope', () async {
+    _seedPendingRequest(requestRepo);
+
+    await acceptAndReciprocateContactRequest(
+      requestRepo: requestRepo,
+      contactRepo: contactRepo,
+      peerId: _bobPeerId,
+      p2pService: p2pService,
+      identityRepo: identityRepo,
+      bridge: bridge,
+    );
+
+    await Future.delayed(const Duration(milliseconds: 200));
+
+    expect(p2pService.lastSentMessage, isNotNull);
+    final sent = jsonDecode(p2pService.lastSentMessage!) as Map<String, dynamic>;
+    expect(sent['type'], equals('contact_request'));
+    expect(sent['version'], equals('2'));
+    expect(sent['encrypted'], isA<Map>());
+    expect(sent.containsKey('payload'), isFalse);
   });
 }
