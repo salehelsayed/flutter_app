@@ -211,7 +211,7 @@ void main() {
   });
 
   group('MessageBubble reactions', () {
-    testWidgets('renders ReactionDisplay when reactions provided',
+    testWidgets('renders inline reaction chips when reactions provided',
         (tester) async {
       final reactions = [
         MessageReaction(
@@ -232,7 +232,8 @@ void main() {
         ownPeerId: 'my-peer',
       )));
 
-      expect(find.byType(ReactionDisplay), findsOneWidget);
+      // No standalone ReactionDisplay; emoji rendered inline
+      expect(find.byType(ReactionDisplay), findsNothing);
       expect(find.text('👍'), findsOneWidget);
     });
 
@@ -262,6 +263,31 @@ void main() {
       expect(longPressed, isTrue);
     });
 
+    testWidgets('no ReactionDisplay widget when reactions provided',
+        (tester) async {
+      final reactions = [
+        MessageReaction(
+          id: 'r1',
+          messageId: 'm1',
+          emoji: '👍',
+          senderPeerId: 'peer-a',
+          timestamp: '2026-02-27T10:00:00Z',
+          createdAt: '2026-02-27T10:00:00Z',
+        ),
+      ];
+
+      await tester.pumpWidget(wrap(MessageBubble(
+        text: 'Hello',
+        time: '3:00 PM',
+        isIncoming: true,
+        reactions: reactions,
+        ownPeerId: 'my-peer',
+      )));
+
+      // ReactionDisplay widget should NOT be used (inline chips instead)
+      expect(find.byType(ReactionDisplay), findsNothing);
+    });
+
     testWidgets('onReactionTap fires with emoji when chip tapped',
         (tester) async {
       String? tappedEmoji;
@@ -287,6 +313,190 @@ void main() {
 
       await tester.tap(find.text('❤️'));
       expect(tappedEmoji, '❤️');
+    });
+  });
+
+  group('MessageBubble inline reactions', () {
+    testWidgets('inline reactions and timestamp share a Row',
+        (tester) async {
+      final reactions = [
+        MessageReaction(
+          id: 'r1',
+          messageId: 'm1',
+          emoji: '👍',
+          senderPeerId: 'peer-a',
+          timestamp: '2026-02-27T10:00:00Z',
+          createdAt: '2026-02-27T10:00:00Z',
+        ),
+      ];
+
+      await tester.pumpWidget(wrap(MessageBubble(
+        text: 'Hello',
+        time: '3:00 PM',
+        isIncoming: true,
+        reactions: reactions,
+        ownPeerId: 'my-peer',
+      )));
+
+      // Emoji chips in Wrap on left, timestamp pinned right — both in same Row
+      final emojiElement = find.text('👍').evaluate().first;
+      final timeElement = find.text('3:00 PM').evaluate().first;
+
+      Row? emojiRow;
+      emojiElement.visitAncestorElements((element) {
+        if (element.widget is Row) {
+          emojiRow = element.widget as Row;
+          return false;
+        }
+        return true;
+      });
+
+      Row? timeRow;
+      timeElement.visitAncestorElements((element) {
+        if (element.widget is Row) {
+          timeRow = element.widget as Row;
+          return false;
+        }
+        return true;
+      });
+
+      expect(emojiRow, isNotNull, reason: 'Emoji should have a Row ancestor');
+      expect(timeRow, isNotNull, reason: 'Time should have a Row ancestor');
+      expect(emojiRow, same(timeRow),
+          reason: 'Emoji and time should share the same Row');
+    });
+
+    testWidgets('no reactions still right-aligns timestamp in Row',
+        (tester) async {
+      await tester.pumpWidget(wrap(const MessageBubble(
+        text: 'Hello',
+        time: '3:00 PM',
+        isIncoming: true,
+        reactions: [],
+        ownPeerId: 'my-peer',
+      )));
+
+      // Timestamp should be inside a Row with an Expanded SizedBox.shrink
+      final timeElement = find.text('3:00 PM').evaluate().first;
+      Row? timeRow;
+      timeElement.visitAncestorElements((element) {
+        if (element.widget is Row) {
+          timeRow = element.widget as Row;
+          return false;
+        }
+        return true;
+      });
+      expect(timeRow, isNotNull, reason: 'Timestamp should be inside a Row');
+    });
+
+    testWidgets('multiple reaction emojis render inline with counts',
+        (tester) async {
+      final reactions = [
+        MessageReaction(
+          id: 'r1',
+          messageId: 'm1',
+          emoji: '👍',
+          senderPeerId: 'peer-a',
+          timestamp: '2026-02-27T10:00:00Z',
+          createdAt: '2026-02-27T10:00:00Z',
+        ),
+        MessageReaction(
+          id: 'r2',
+          messageId: 'm1',
+          emoji: '👍',
+          senderPeerId: 'peer-b',
+          timestamp: '2026-02-27T10:00:01Z',
+          createdAt: '2026-02-27T10:00:01Z',
+        ),
+        MessageReaction(
+          id: 'r3',
+          messageId: 'm1',
+          emoji: '❤️',
+          senderPeerId: 'peer-c',
+          timestamp: '2026-02-27T10:00:02Z',
+          createdAt: '2026-02-27T10:00:02Z',
+        ),
+      ];
+
+      await tester.pumpWidget(wrap(MessageBubble(
+        text: 'Great',
+        time: '3:00 PM',
+        isIncoming: true,
+        reactions: reactions,
+        ownPeerId: 'my-peer',
+      )));
+
+      expect(find.text('👍 2'), findsOneWidget);
+      expect(find.text('❤️'), findsOneWidget);
+      expect(find.text('3:00 PM'), findsOneWidget);
+      // No standalone ReactionDisplay widget
+      expect(find.byType(ReactionDisplay), findsNothing);
+    });
+
+    testWidgets('own reaction chip has teal border inline', (tester) async {
+      final reactions = [
+        MessageReaction(
+          id: 'r1',
+          messageId: 'm1',
+          emoji: '🎉',
+          senderPeerId: 'my-peer',
+          timestamp: '2026-02-27T10:00:00Z',
+          createdAt: '2026-02-27T10:00:00Z',
+        ),
+      ];
+
+      await tester.pumpWidget(wrap(MessageBubble(
+        text: 'Hooray',
+        time: '3:00 PM',
+        isIncoming: true,
+        reactions: reactions,
+        ownPeerId: 'my-peer',
+      )));
+
+      // Find the chip Container with teal border
+      final containers = tester.widgetList<Container>(find.byType(Container));
+      final tealBorderChip = containers.where((c) {
+        final decoration = c.decoration;
+        if (decoration is BoxDecoration && decoration.border is Border) {
+          final border = decoration.border as Border;
+          return border.top.color ==
+              const Color.fromRGBO(78, 205, 196, 0.30);
+        }
+        return false;
+      });
+      expect(tealBorderChip.isNotEmpty, isTrue,
+          reason: 'Own reaction chip should have teal border');
+      // No standalone ReactionDisplay
+      expect(find.byType(ReactionDisplay), findsNothing);
+    });
+
+    testWidgets(
+        'sent message with reactions and delivery status renders correctly',
+        (tester) async {
+      final reactions = [
+        MessageReaction(
+          id: 'r1',
+          messageId: 'm1',
+          emoji: '👍',
+          senderPeerId: 'peer-a',
+          timestamp: '2026-02-27T10:00:00Z',
+          createdAt: '2026-02-27T10:00:00Z',
+        ),
+      ];
+
+      await tester.pumpWidget(wrap(MessageBubble(
+        text: 'Sent msg',
+        time: '4:00 PM',
+        isIncoming: false,
+        status: 'delivered',
+        reactions: reactions,
+        ownPeerId: 'my-peer',
+      )));
+
+      expect(find.text('👍'), findsOneWidget);
+      expect(find.text('4:00 PM'), findsOneWidget);
+      // Delivery status icon should render
+      expect(find.byIcon(Icons.done_all_rounded), findsOneWidget);
     });
   });
 }

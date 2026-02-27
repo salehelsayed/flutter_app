@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/feed_colors.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
-import 'package:flutter_app/features/conversation/presentation/widgets/reaction_display.dart';
 import 'package:flutter_app/shared/widgets/linkable_text.dart';
 import 'package:flutter_app/shared/widgets/media/audio_player_widget.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid.dart';
@@ -193,13 +192,6 @@ class MessageBubble extends StatelessWidget {
                         ),
                       ),
                     ),
-                  // Emoji reactions
-                  if (reactions.isNotEmpty && ownPeerId != null)
-                    ReactionDisplay(
-                      reactions: reactions,
-                      ownPeerId: ownPeerId!,
-                      onReactionTap: onReactionTap,
-                    ),
                 ],
               ),
             ],
@@ -261,12 +253,61 @@ class MessageBubble extends StatelessWidget {
         else if (name.isNotEmpty)
           Text(name, style: nameStyle),
         const SizedBox(height: 2),
-        Align(
-          alignment: Alignment.centerRight,
-          child: Text(time, style: timeStyle),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Expanded(
+              child: (reactions.isNotEmpty && ownPeerId != null)
+                  ? Wrap(
+                      spacing: 6,
+                      runSpacing: 4,
+                      children: _buildReactionChipWidgets(),
+                    )
+                  : const SizedBox.shrink(),
+            ),
+            if (reactions.isNotEmpty && ownPeerId != null)
+              const SizedBox(width: 8),
+            Text(time, style: timeStyle),
+          ],
         ),
       ],
     );
+  }
+
+  List<Widget> _buildReactionChipWidgets() {
+    final groups = <String, List<MessageReaction>>{};
+    for (final r in reactions) {
+      groups.putIfAbsent(r.emoji, () => []).add(r);
+    }
+
+    return groups.entries.map((entry) {
+      final emoji = entry.key;
+      final list = entry.value;
+      final isOwn =
+          ownPeerId != null && list.any((r) => r.senderPeerId == ownPeerId);
+
+      return GestureDetector(
+        onTap:
+            onReactionTap != null ? () => onReactionTap!(emoji) : null,
+        child: Container(
+          padding:
+              const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: const Color.fromRGBO(255, 255, 255, 0.08),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: isOwn
+                  ? const Color.fromRGBO(78, 205, 196, 0.30)
+                  : Colors.transparent,
+            ),
+          ),
+          child: Text(
+            list.length > 1 ? '$emoji ${list.length}' : emoji,
+            style: const TextStyle(fontSize: 14),
+          ),
+        ),
+      );
+    }).toList();
   }
 
   Color get _backgroundColor {

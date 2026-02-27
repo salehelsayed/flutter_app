@@ -651,8 +651,8 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
       await tester.pump(const Duration(milliseconds: 100));
 
-      // ReactionDisplay should render the reaction
-      expect(find.byType(ReactionDisplay), findsOneWidget);
+      // Inline reaction chips render (no standalone ReactionDisplay)
+      expect(find.byType(ReactionDisplay), findsNothing);
       expect(find.text('👍'), findsOneWidget);
     });
 
@@ -695,8 +695,8 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
       await tester.pump(const Duration(milliseconds: 100));
 
-      // No reactions yet
-      expect(find.byType(ReactionDisplay), findsNothing);
+      // No reactions yet (no inline chips)
+      expect(find.text('❤️'), findsNothing);
 
       // Emit an incoming reaction
       fakeReactionListener.emitReaction(MessageReaction(
@@ -711,8 +711,8 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
       await tester.pump(const Duration(milliseconds: 100));
 
-      // ReactionDisplay should now show the reaction
-      expect(find.byType(ReactionDisplay), findsOneWidget);
+      // Inline reaction chips should now show the reaction
+      expect(find.byType(ReactionDisplay), findsNothing);
       expect(find.text('❤️'), findsOneWidget);
     });
 
