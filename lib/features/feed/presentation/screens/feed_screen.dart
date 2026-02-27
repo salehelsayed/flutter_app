@@ -82,90 +82,101 @@ class FeedScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.viewPaddingOf(context).bottom;
+
     return GestureDetector(
       onTap: () => FocusScope.of(context).unfocus(),
       behavior: HitTestBehavior.translucent,
       child: AmbientBackground(
-        child: SafeArea(
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final horizontalPadding = constraints.maxWidth < 390
-                  ? 14.0
-                  : 18.0;
+        child: Stack(
+          children: [
+            // Main content with top-only SafeArea
+            SafeArea(
+              bottom: false,
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final horizontalPadding = constraints.maxWidth < 390
+                      ? 14.0
+                      : 18.0;
 
-              return Column(
-                children: [
-                  Padding(
-                    padding: EdgeInsets.fromLTRB(
-                      horizontalPadding,
-                      8,
-                      horizontalPadding,
-                      0,
-                    ),
-                    child: FeedHeader(
-                      username: username,
-                      avatarBytes: userAvatarBytes,
-                      peerId: userPeerId,
-                      onUsernameChanged: onUsernameChanged,
-                      p2pService: p2pService,
-                      onAvatarTap: onAvatarTap,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Expanded(
-                    child: LayoutBuilder(
-                      builder: (context, contentConstraints) {
-                        final maxFeedWidth = contentConstraints.maxWidth >= 900
-                            ? 640.0
-                            : contentConstraints.maxWidth >= 600
-                            ? 560.0
-                            : 460.0;
+                  return Column(
+                    children: [
+                      Padding(
+                        padding: EdgeInsets.fromLTRB(
+                          horizontalPadding,
+                          8,
+                          horizontalPadding,
+                          0,
+                        ),
+                        child: FeedHeader(
+                          username: username,
+                          avatarBytes: userAvatarBytes,
+                          peerId: userPeerId,
+                          onUsernameChanged: onUsernameChanged,
+                          p2pService: p2pService,
+                          onAvatarTap: onAvatarTap,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Expanded(
+                        child: LayoutBuilder(
+                          builder: (context, contentConstraints) {
+                            final maxFeedWidth =
+                                contentConstraints.maxWidth >= 900
+                                    ? 640.0
+                                    : contentConstraints.maxWidth >= 600
+                                    ? 560.0
+                                    : 460.0;
 
-                        return SingleChildScrollView(
-                          physics: const BouncingScrollPhysics(),
-                          padding: EdgeInsets.symmetric(
-                            horizontal: horizontalPadding,
-                          ),
-                          child: ConstrainedBox(
-                            constraints: BoxConstraints(
-                              minHeight: contentConstraints.maxHeight,
-                            ),
-                            child: Align(
-                              alignment: Alignment.topCenter,
+                            return SingleChildScrollView(
+                              physics: const BouncingScrollPhysics(),
+                              padding: EdgeInsets.only(
+                                left: horizontalPadding,
+                                right: horizontalPadding,
+                                bottom: 60 + bottomInset,
+                              ),
                               child: ConstrainedBox(
                                 constraints: BoxConstraints(
-                                  maxWidth: maxFeedWidth,
+                                  minHeight: contentConstraints.maxHeight,
                                 ),
-                                child: Column(
-                                  crossAxisAlignment:
-                                      CrossAxisAlignment.stretch,
-                                  children: _buildFeedCards(context),
+                                child: Align(
+                                  alignment: Alignment.topCenter,
+                                  child: ConstrainedBox(
+                                    constraints: BoxConstraints(
+                                      maxWidth: maxFeedWidth,
+                                    ),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.stretch,
+                                      children: _buildFeedCards(context),
+                                    ),
+                                  ),
                                 ),
                               ),
-                            ),
-                          ),
-                        );
-                      },
-                    ),
+                            );
+                          },
+                        ),
+                      ),
+                    ],
+                  );
+                },
+              ),
+            ),
+            // Floating nav bar pinned to bottom
+            if (activeFocusPeerId == null)
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: bottomInset + 8,
+                child: Center(
+                  child: FeedNavigationBar(
+                    activeTab: activeTab,
+                    onSwitchView: onSwitchView,
+                    feedBadgeCount: totalUnreadCount,
                   ),
-                  if (activeFocusPeerId == null)
-                    Padding(
-                      padding: EdgeInsets.fromLTRB(
-                        horizontalPadding,
-                        8,
-                        horizontalPadding,
-                        10,
-                      ),
-                      child: FeedNavigationBar(
-                        activeTab: activeTab,
-                        onSwitchView: onSwitchView,
-                        feedBadgeCount: totalUnreadCount,
-                      ),
-                    ),
-                ],
-              );
-            },
-          ),
+                ),
+              ),
+          ],
         ),
       ),
     );

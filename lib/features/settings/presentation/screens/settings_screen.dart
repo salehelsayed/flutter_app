@@ -63,134 +63,145 @@ class SettingsScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final words = mnemonic?.split(' ') ?? [];
+    final bottomInset = MediaQuery.viewPaddingOf(context).bottom;
 
     return AmbientBackground(
-      child: SafeArea(
-        child: Column(
-          children: [
-            // Sticky header
-            ClipRect(
-              child: BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 20,
-                    vertical: 16,
-                  ),
-                  decoration: const BoxDecoration(
-                    color: Color.fromRGBO(10, 10, 15, 0.8),
-                    border: Border(
-                      bottom: BorderSide(
-                        color: Color.fromRGBO(255, 255, 255, 0.12),
+      child: Stack(
+        children: [
+          // Main content with top-only SafeArea
+          SafeArea(
+            bottom: false,
+            child: Column(
+              children: [
+                // Sticky header
+                ClipRect(
+                  child: BackdropFilter(
+                    filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 20,
+                        vertical: 16,
                       ),
-                    ),
-                  ),
-                  child: Row(
-                    children: [
-                      // Back button
-                      GestureDetector(
-                        onTap: onBack,
-                        child: Container(
-                          width: 40,
-                          height: 40,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: const Color.fromRGBO(255, 255, 255, 0.08),
-                            border: Border.all(
-                              color:
-                                  const Color.fromRGBO(255, 255, 255, 0.12),
+                      decoration: const BoxDecoration(
+                        color: Color.fromRGBO(10, 10, 15, 0.8),
+                        border: Border(
+                          bottom: BorderSide(
+                            color: Color.fromRGBO(255, 255, 255, 0.12),
+                          ),
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          // Back button
+                          GestureDetector(
+                            onTap: onBack,
+                            child: Container(
+                              width: 40,
+                              height: 40,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color:
+                                    const Color.fromRGBO(255, 255, 255, 0.08),
+                                border: Border.all(
+                                  color: const Color.fromRGBO(
+                                      255, 255, 255, 0.12),
+                                ),
+                              ),
+                              child: const Icon(
+                                Icons.chevron_left,
+                                size: 20,
+                                color: Color.fromRGBO(255, 255, 255, 0.95),
+                              ),
                             ),
                           ),
-                          child: const Icon(
-                            Icons.chevron_left,
-                            size: 20,
-                            color: Color.fromRGBO(255, 255, 255, 0.95),
+                          // Title
+                          const Expanded(
+                            child: Text(
+                              'Settings',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w600,
+                                color: Color.fromRGBO(255, 255, 255, 0.95),
+                                letterSpacing: -0.01,
+                              ),
+                            ),
                           ),
-                        ),
+                          // Right spacer
+                          const SizedBox(width: 40),
+                        ],
                       ),
-                      // Title
-                      const Expanded(
-                        child: Text(
-                          'Settings',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w600,
-                            color: Color.fromRGBO(255, 255, 255, 0.95),
-                            letterSpacing: -0.01,
-                          ),
-                        ),
-                      ),
-                      // Right spacer
-                      const SizedBox(width: 40),
-                    ],
+                    ),
                   ),
                 ),
-              ),
-            ),
-            // Scrollable content
-            Expanded(
-              child: SingleChildScrollView(
-                physics: const BouncingScrollPhysics(),
-                child: Column(
-                  children: [
-                    SettingsProfileSection(
-                      peerId: peerId,
-                      avatarBytes: avatarBytes,
-                      username: username,
-                      onPickAvatar: onPickAvatar,
-                      onUsernameChanged: onUsernameChanged,
+                // Scrollable content
+                Expanded(
+                  child: SingleChildScrollView(
+                    physics: const BouncingScrollPhysics(),
+                    padding: EdgeInsets.only(bottom: 60 + bottomInset),
+                    child: Column(
+                      children: [
+                        SettingsProfileSection(
+                          peerId: peerId,
+                          avatarBytes: avatarBytes,
+                          username: username,
+                          onPickAvatar: onPickAvatar,
+                          onUsernameChanged: onUsernameChanged,
+                        ),
+                        if (peerId != null) ...[
+                          SettingsPeerIdCard(
+                            peerId: peerId!,
+                            isCopied: isPeerIdCopied,
+                            onCopy: onCopyPeerId,
+                          ),
+                          const SizedBox(height: 24),
+                        ],
+                        if (onQualityChanged != null) ...[
+                          ImageQualityToggle(
+                            value: currentQuality,
+                            onChanged: onQualityChanged!,
+                          ),
+                          const SizedBox(height: 24),
+                        ],
+                        if (onVideoQualityChanged != null) ...[
+                          ImageQualityToggle(
+                            value: currentVideoQuality,
+                            onChanged: onVideoQualityChanged!,
+                            label: 'Video Quality',
+                            icon: Icons.videocam,
+                          ),
+                          const SizedBox(height: 24),
+                        ],
+                        if (mnemonic != null && words.length == 12) ...[
+                          SettingsRecoveryPhraseCard(
+                            words: words,
+                            isRevealed: isMnemonicRevealed,
+                            isCopied: isMnemonicCopied,
+                            onToggleReveal: onToggleMnemonic,
+                            onCopy: onCopyMnemonic,
+                            onHide: onHideMnemonic,
+                          ),
+                        ],
+                      ],
                     ),
-                    if (peerId != null) ...[
-                      SettingsPeerIdCard(
-                        peerId: peerId!,
-                        isCopied: isPeerIdCopied,
-                        onCopy: onCopyPeerId,
-                      ),
-                      const SizedBox(height: 24),
-                    ],
-                    if (onQualityChanged != null) ...[
-                      ImageQualityToggle(
-                        value: currentQuality,
-                        onChanged: onQualityChanged!,
-                      ),
-                      const SizedBox(height: 24),
-                    ],
-                    if (onVideoQualityChanged != null) ...[
-                      ImageQualityToggle(
-                        value: currentVideoQuality,
-                        onChanged: onVideoQualityChanged!,
-                        label: 'Video Quality',
-                        icon: Icons.videocam,
-                      ),
-                      const SizedBox(height: 24),
-                    ],
-                    if (mnemonic != null && words.length == 12) ...[
-                      SettingsRecoveryPhraseCard(
-                        words: words,
-                        isRevealed: isMnemonicRevealed,
-                        isCopied: isMnemonicCopied,
-                        onToggleReveal: onToggleMnemonic,
-                        onCopy: onCopyMnemonic,
-                        onHide: onHideMnemonic,
-                      ),
-                    ],
-                    // Bottom spacer for nav bar clearance
-                    const SizedBox(height: 120),
-                  ],
+                  ),
                 ),
-              ),
+              ],
             ),
-            // Navigation bar
-            Padding(
-              padding: const EdgeInsets.fromLTRB(18, 8, 18, 10),
+          ),
+          // Floating nav bar pinned to bottom
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: bottomInset + 8,
+            child: Center(
               child: FeedNavigationBar(
                 activeTab: activeTab,
                 onSwitchView: onSwitchView,
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
