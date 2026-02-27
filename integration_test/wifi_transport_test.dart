@@ -14,10 +14,12 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 
 import 'package:flutter_app/core/local_discovery/local_ws_server.dart';
+import 'package:flutter_app/core/local_discovery/local_media_server.dart';
 import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
 
 void main() {
@@ -97,10 +99,12 @@ void main() {
       print('[TEST] Silent server on port $silentPort');
 
       silentServer.listen((request) {
-        WebSocketTransformer.upgrade(request).then((ws) {
-          // Accept messages but never reply — no ack.
-          ws.listen((_) {});
-        }).catchError((_) {});
+        WebSocketTransformer.upgrade(request)
+            .then((ws) {
+              // Accept messages but never reply — no ack.
+              ws.listen((_) {});
+            })
+            .catchError((_) {});
       });
 
       // A sends to the silent server — should timeout after 5 seconds.
@@ -115,12 +119,20 @@ void main() {
       stopwatch.stop();
 
       expect(sent, isFalse, reason: 'Send should fail due to ack timeout');
-      expect(stopwatch.elapsedMilliseconds, greaterThan(4000),
-          reason: 'Should wait ~5s for ack timeout');
-      expect(stopwatch.elapsedMilliseconds, lessThan(10000),
-          reason: 'Should not wait much longer than 5s');
+      expect(
+        stopwatch.elapsedMilliseconds,
+        greaterThan(4000),
+        reason: 'Should wait ~5s for ack timeout',
+      );
+      expect(
+        stopwatch.elapsedMilliseconds,
+        lessThan(10000),
+        reason: 'Should not wait much longer than 5s',
+      );
 
-      print('[TEST] F2 PASS: ack timeout after ${stopwatch.elapsedMilliseconds}ms');
+      print(
+        '[TEST] F2 PASS: ack timeout after ${stopwatch.elapsedMilliseconds}ms',
+      );
 
       await silentServer.close();
     } finally {
@@ -132,7 +144,9 @@ void main() {
   // F3: WiFi connection pool reuse
   // =========================================================================
 
-  testWidgets('F3: WiFi connection pool reuse across sequential sends', (tester) async {
+  testWidgets('F3: WiFi connection pool reuse across sequential sends', (
+    tester,
+  ) async {
     print('\n========================================');
     print('F3: WiFi connection pool reuse');
     print('========================================\n');
@@ -171,8 +185,10 @@ void main() {
       expect(receivedByB[1].content, 'Message 2');
       expect(receivedByB[2].content, 'Message 3');
 
-      print('[TEST] F3 PASS: all 3 sends succeeded via pool reuse, '
-          '${receivedByB.length} messages received');
+      print(
+        '[TEST] F3 PASS: all 3 sends succeeded via pool reuse, '
+        '${receivedByB.length} messages received',
+      );
 
       await sub.cancel();
     } finally {
@@ -233,8 +249,10 @@ void main() {
       await Future.delayed(const Duration(milliseconds: 500));
       expect(receivedByB.length, 2);
 
-      print('[TEST] F4 PASS: idle disconnect worked, '
-          'reconnected and sent second message');
+      print(
+        '[TEST] F4 PASS: idle disconnect worked, '
+        'reconnected and sent second message',
+      );
 
       await sub.cancel();
     } finally {
@@ -322,11 +340,13 @@ void main() {
       final ws = await WebSocket.connect('ws://localhost:$port');
       ws.add('not valid json');
       ws.add('{"partial": true}'); // Missing from/to/content.
-      ws.add(jsonEncode({
-        'from': peerA,
-        'to': peerB,
-        'content': 'Valid message after garbage',
-      }));
+      ws.add(
+        jsonEncode({
+          'from': peerA,
+          'to': peerB,
+          'content': 'Valid message after garbage',
+        }),
+      );
 
       await Future.delayed(const Duration(milliseconds: 500));
 
@@ -334,8 +354,10 @@ void main() {
       expect(received.length, 1);
       expect(received.first.content, 'Valid message after garbage');
 
-      print('[TEST] F6 PASS: malformed messages ignored, '
-          'valid message received');
+      print(
+        '[TEST] F6 PASS: malformed messages ignored, '
+        'valid message received',
+      );
 
       await ws.close();
       await sub.cancel();
@@ -369,24 +391,49 @@ void main() {
       // the server echoes it back, and each waiter matches only its own nonce.
       // Both sends resolve on their own acks, proving correct correlation.
       final results = await Future.wait([
-        serverA.sendMessage('localhost', portB, 'Concurrent msg 1', peerA, peerB),
-        serverA.sendMessage('localhost', portB, 'Concurrent msg 2', peerA, peerB),
+        serverA.sendMessage(
+          'localhost',
+          portB,
+          'Concurrent msg 1',
+          peerA,
+          peerB,
+        ),
+        serverA.sendMessage(
+          'localhost',
+          portB,
+          'Concurrent msg 2',
+          peerA,
+          peerB,
+        ),
       ]);
 
-      expect(results[0], isTrue, reason: 'First concurrent send should succeed');
-      expect(results[1], isTrue, reason: 'Second concurrent send should succeed');
+      expect(
+        results[0],
+        isTrue,
+        reason: 'First concurrent send should succeed',
+      );
+      expect(
+        results[1],
+        isTrue,
+        reason: 'Second concurrent send should succeed',
+      );
 
       // Wait for messages to arrive.
       await Future.delayed(const Duration(milliseconds: 500));
 
-      expect(receivedByB.length, 2,
-          reason: 'Server B should receive both concurrent messages');
+      expect(
+        receivedByB.length,
+        2,
+        reason: 'Server B should receive both concurrent messages',
+      );
       final contents = receivedByB.map((m) => m.content).toSet();
       expect(contents, contains('Concurrent msg 1'));
       expect(contents, contains('Concurrent msg 2'));
 
-      print('[TEST] F7 PASS: both concurrent sends succeeded, '
-          '${receivedByB.length} messages received');
+      print(
+        '[TEST] F7 PASS: both concurrent sends succeeded, '
+        '${receivedByB.length} messages received',
+      );
 
       await sub.cancel();
     } finally {
@@ -435,8 +482,11 @@ void main() {
         print('[TEST] F8: 11th connection error: $e');
       }
 
-      expect(rejected, isTrue,
-          reason: '11th connection should be rejected (max 10)');
+      expect(
+        rejected,
+        isTrue,
+        reason: '11th connection should be rejected (max 10)',
+      );
       print('[TEST] F8: 11th connection correctly rejected');
 
       // Close one connection to free a slot.
@@ -455,11 +505,13 @@ void main() {
       final received = <LocalChatMessage>[];
       final sub = server.messageStream.listen(received.add);
 
-      recovered.add(jsonEncode({
-        'from': peerA,
-        'to': peerB,
-        'content': 'F8: Recovery message',
-      }));
+      recovered.add(
+        jsonEncode({
+          'from': peerA,
+          'to': peerB,
+          'content': 'F8: Recovery message',
+        }),
+      );
 
       await Future.delayed(const Duration(milliseconds: 500));
 
@@ -527,8 +579,7 @@ void main() {
         peerA,
         peerB,
       );
-      expect(sent2, isFalse,
-          reason: 'Send to stopped server should fail');
+      expect(sent2, isFalse, reason: 'Send to stopped server should fail');
       print('[TEST] F9: Send to stopped server correctly failed');
 
       // Step 5: Restart B as a new server on a new port.
@@ -549,8 +600,7 @@ void main() {
         peerA,
         peerB,
       );
-      expect(sent3, isTrue,
-          reason: 'Send to restarted server should succeed');
+      expect(sent3, isTrue, reason: 'Send to restarted server should succeed');
 
       await Future.delayed(const Duration(milliseconds: 500));
 
@@ -564,6 +614,73 @@ void main() {
     } finally {
       serverA.dispose();
       serverB.dispose();
+    }
+  });
+
+  // =========================================================================
+  // F10: WiFi media transfer
+  // =========================================================================
+
+  testWidgets('F10: WiFi media transfer via HTTP PUT + WS signaling', (
+    tester,
+  ) async {
+    print('\n========================================');
+    print('F10: WiFi media transfer');
+    print('========================================\n');
+
+    final tempA = await Directory.systemTemp.createTemp('wifi_media_a_');
+    final tempB = await Directory.systemTemp.createTemp('wifi_media_b_');
+    final serverA = LocalWsServer();
+    final serverB = LocalWsServer();
+    final mediaServerB = LocalMediaServer(
+      tempDir: '${tempB.path}/temp',
+      mediaDir: '${tempB.path}/media',
+    );
+    serverB.configureMediaServer(mediaServerB);
+
+    try {
+      final portA = await serverA.start();
+      final portB = await serverB.start();
+      print('[TEST] Server A on port $portA, Server B on port $portB');
+
+      final bytes = List<int>.generate(4096, (i) => i % 256);
+      final file = File('${tempA.path}/photo.jpg');
+      await file.writeAsBytes(bytes);
+      final expectedHash = sha256.convert(bytes).toString();
+
+      final readyEvents = <LocalMediaReady>[];
+      final sub = serverB.mediaReadyStream!.listen(readyEvents.add);
+
+      final sent = await serverA.sendMedia(
+        host: 'localhost',
+        port: portB,
+        toPeerId: peerB,
+        filePath: file.path,
+        mediaId: 'wifi-media-001',
+        mime: 'image/jpeg',
+        fromPeerId: peerA,
+      );
+      expect(sent, isTrue, reason: 'Media send should succeed');
+
+      await Future.delayed(const Duration(milliseconds: 200));
+      expect(readyEvents, hasLength(1));
+      expect(readyEvents.first.id, 'wifi-media-001');
+      expect(readyEvents.first.from, peerA);
+      expect(readyEvents.first.to, peerB);
+      expect(readyEvents.first.sha256, expectedHash);
+
+      final receivedFile = File(readyEvents.first.localPath);
+      expect(await receivedFile.exists(), isTrue);
+      final receivedHash = sha256.convert(await receivedFile.readAsBytes());
+      expect(receivedHash.toString(), expectedHash);
+      print('[TEST] F10 PASS: media transferred and hash verified');
+
+      await sub.cancel();
+    } finally {
+      serverA.dispose();
+      serverB.dispose();
+      await tempA.delete(recursive: true);
+      await tempB.delete(recursive: true);
     }
   });
 }

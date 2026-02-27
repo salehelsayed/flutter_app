@@ -408,41 +408,76 @@ class _ConversationWiredState extends State<ConversationWired> {
 
     // Upload attachments if any
     List<MediaAttachment>? uploadedAttachments;
+    bool allMediaLocal = false;
     if (mediaToUpload.isNotEmpty && widget.bridge != null) {
       uploadedAttachments = [];
+      allMediaLocal = true;
       for (final media in mediaToUpload) {
         final mime = _mimeFromPath(media.file.path);
-        final result = await uploadMedia(
-          bridge: widget.bridge!,
-          localFilePath: media.file.path,
-          mime: mime,
-          recipientPeerId: _contact.peerId,
-          mediaFileManager: widget.mediaFileManager,
-          width: media.width,
-          height: media.height,
-          durationMs: media.durationMs,
-        );
+        final mediaId = _uuid.v4();
 
-        if (result == null) {
-          // Upload failed — restore attachments, mark message failed
-          if (mounted) {
-            setState(() {
-              _isUploading = false;
-              _pendingAttachments = mediaToUpload;
-            });
-            _updateLocalMessageStatus(optimisticMessage.id, 'failed');
-            await _persistMessageStatus(optimisticMessage.id, 'failed');
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: const Text('Failed to upload media. Try again.'),
-                backgroundColor: Colors.red[700],
-                behavior: SnackBarBehavior.floating,
-              ),
-            );
-          }
-          return;
+        // Try local WiFi first.
+        bool localSuccess = false;
+        if (widget.p2pService.isLocalPeer(_contact.peerId)) {
+          localSuccess = await widget.p2pService.sendLocalMedia(
+            peerId: _contact.peerId,
+            filePath: media.file.path,
+            mime: mime,
+            mediaId: mediaId,
+            fromPeerId: identity.peerId,
+            durationMs: media.durationMs,
+          );
         }
-        uploadedAttachments.add(result);
+
+        if (localSuccess) {
+          uploadedAttachments.add(MediaAttachment(
+            id: mediaId,
+            messageId: '',
+            mime: mime,
+            size: await File(media.file.path).length(),
+            mediaType: MediaAttachment.mediaTypeFromMime(mime),
+            localPath: media.file.path,
+            downloadStatus: 'done',
+            createdAt: DateTime.now().toUtc().toIso8601String(),
+            width: media.width,
+            height: media.height,
+            durationMs: media.durationMs,
+          ));
+        } else {
+          allMediaLocal = false;
+          // Fall back to relay upload.
+          final result = await uploadMedia(
+            bridge: widget.bridge!,
+            localFilePath: media.file.path,
+            mime: mime,
+            recipientPeerId: _contact.peerId,
+            mediaFileManager: widget.mediaFileManager,
+            width: media.width,
+            height: media.height,
+            durationMs: media.durationMs,
+          );
+
+          if (result == null) {
+            // Upload failed — restore attachments, mark message failed
+            if (mounted) {
+              setState(() {
+                _isUploading = false;
+                _pendingAttachments = mediaToUpload;
+              });
+              _updateLocalMessageStatus(optimisticMessage.id, 'failed');
+              await _persistMessageStatus(optimisticMessage.id, 'failed');
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: const Text('Failed to upload media. Try again.'),
+                  backgroundColor: Colors.red[700],
+                  behavior: SnackBarBehavior.floating,
+                ),
+              );
+            }
+            return;
+          }
+          uploadedAttachments.add(result);
+        }
       }
       if (mounted) {
         setState(() => _isUploading = false);
@@ -878,6 +913,68 @@ class _ConversationWiredState extends State<ConversationWired> {
       }
     }
 
+    // Try local WiFi first for voice messages.
+    if (widget.p2pService.isLocalPeer(_contact.peerId)) {
+      final mediaId = _uuid.v4();
+      final localSuccess = await widget.p2pService.sendLocalMedia(
+        peerId: _contact.peerId,
+        filePath: recording.filePath,
+        mime: recording.mime,
+        mediaId: mediaId,
+        fromPeerId: identity.peerId,
+        durationMs: recording.durationMs,
+        waveform: waveform,
+      );
+
+      if (localSuccess) {
+        // Voice transferred locally — send text-only message via local WS.
+        final voiceAttachment = MediaAttachment(
+          id: mediaId,
+          messageId: optimisticMessage.id,
+          mime: recording.mime,
+          size: recording.sizeBytes,
+          mediaType: 'audio',
+          durationMs: recording.durationMs,
+          localPath: recording.filePath,
+          downloadStatus: 'done',
+          createdAt: optimisticMessage.timestamp,
+          waveform: waveform,
+        );
+
+        final (result, voiceMessage) = await widget.sendChatMessageFn(
+          p2pService: widget.p2pService,
+          messageRepo: widget.messageRepo,
+          targetPeerId: _contact.peerId,
+          text: '',
+          senderPeerId: identity.peerId,
+          senderUsername: identity.username,
+          messageId: optimisticMessage.id,
+          timestamp: optimisticMessage.timestamp,
+          bridge: widget.bridge,
+          recipientMlKemPublicKey: _contact.mlKemPublicKey,
+          mediaAttachments: [voiceAttachment],
+          mediaAttachmentRepo: widget.mediaAttachmentRepo,
+        );
+
+        if (mounted) {
+          setState(() => _isUploading = false);
+        }
+
+        if (result == SendChatMessageResult.success && voiceMessage != null) {
+          final messageWithMedia = voiceMessage.copyWith(
+            media: optimisticMessage.media,
+          );
+          if (mounted) {
+            setState(() => _upsertMessageById(messageWithMedia));
+          }
+        } else {
+          _updateLocalMessageStatus(optimisticMessage.id, 'failed');
+          await _persistMessageStatus(optimisticMessage.id, 'failed');
+        }
+        return;
+      }
+    }
+
     final bridge = widget.bridge;
     if (bridge == null) {
       _updateLocalMessageStatus(optimisticMessage.id, 'failed');
@@ -899,7 +996,7 @@ class _ConversationWiredState extends State<ConversationWired> {
       return;
     }
 
-    // Upload + send
+    // Upload + send (relay fallback)
     final (result, voiceMessage) = await sendVoiceMessage(
       p2pService: widget.p2pService,
       messageRepo: widget.messageRepo,

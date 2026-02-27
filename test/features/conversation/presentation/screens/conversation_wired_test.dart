@@ -20,6 +20,7 @@ import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
+import '../../../../shared/fakes/fake_audio_recorder_service.dart';
 
 class FakeIdentityRepository implements IdentityRepository {
   IdentityModel? identity;
@@ -158,6 +159,12 @@ class FakeMessageRepository implements MessageRepository {
 }
 
 class FakeP2PService implements P2PService {
+  final bool localPeer;
+  final bool localMediaResult;
+  int sendLocalMediaCallCount = 0;
+
+  FakeP2PService({this.localPeer = false, this.localMediaResult = false});
+
   @override
   NodeState get currentState => const NodeState(isStarted: true, peerId: 'me');
 
@@ -215,7 +222,7 @@ class FakeP2PService implements P2PService {
   bool isConnectedToPeer(String peerId) => false;
 
   @override
-  bool isLocalPeer(String peerId) => false;
+  bool isLocalPeer(String peerId) => localPeer;
 
   @override
   Future<bool> sendLocalMessage(
@@ -223,6 +230,21 @@ class FakeP2PService implements P2PService {
     String message,
     String fromPeerId,
   ) async => false;
+
+  @override
+  Future<bool> sendLocalMedia({
+    required String peerId,
+    required String filePath,
+    required String mime,
+    required String mediaId,
+    required String fromPeerId,
+    int? durationMs,
+    List<double>? waveform,
+    String? filename,
+  }) async {
+    sendLocalMediaCallCount++;
+    return localMediaResult;
+  }
 
   @override
   Future<bool> startNodeCore(String privateKeyBase64, String peerId) async =>
@@ -263,6 +285,8 @@ void main() {
     required FakeMessageRepository messageRepo,
     required ChatMessageListener chatListener,
     required SendChatMessageFn sendFn,
+    P2PService? p2pService,
+    FakeAudioRecorderService? audioRecorderService,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -271,8 +295,9 @@ void main() {
           identityRepo: identityRepo,
           messageRepo: messageRepo,
           chatMessageListener: chatListener,
-          p2pService: FakeP2PService(),
+          p2pService: p2pService ?? FakeP2PService(),
           sendChatMessageFn: sendFn,
+          audioRecorderService: audioRecorderService,
         ),
       ),
     );

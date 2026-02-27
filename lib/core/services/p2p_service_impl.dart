@@ -978,6 +978,30 @@ class P2PServiceImpl implements P2PService {
   }
 
   @override
+  Future<bool> sendLocalMedia({
+    required String peerId,
+    required String filePath,
+    required String mime,
+    required String mediaId,
+    required String fromPeerId,
+    int? durationMs,
+    List<double>? waveform,
+    String? filename,
+  }) async {
+    if (_localP2P == null) return false;
+    return _localP2P.sendMedia(
+      peerId: peerId,
+      filePath: filePath,
+      mime: mime,
+      mediaId: mediaId,
+      fromPeerId: fromPeerId,
+      durationMs: durationMs,
+      waveform: waveform,
+      filename: filename,
+    );
+  }
+
+  @override
   void dispose() {
     _stopped = true;
     _currentState = NodeState.stopped;

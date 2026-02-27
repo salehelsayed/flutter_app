@@ -157,6 +157,18 @@ class FakeP2PService implements P2PService {
   }
 
   @override
+  Future<bool> sendLocalMedia({
+    required String peerId,
+    required String filePath,
+    required String mime,
+    required String mediaId,
+    required String fromPeerId,
+    int? durationMs,
+    List<double>? waveform,
+    String? filename,
+  }) async => false;
+
+  @override
   Future<bool> startNodeCore(String privateKeyBase64, String peerId) async => false;
 
   @override
@@ -2242,6 +2254,18 @@ class _WiFiThenFastFailThenRelayP2PService implements P2PService {
   }
 
   @override
+  Future<bool> sendLocalMedia({
+    required String peerId,
+    required String filePath,
+    required String mime,
+    required String mediaId,
+    required String fromPeerId,
+    int? durationMs,
+    List<double>? waveform,
+    String? filename,
+  }) async => false;
+
+  @override
   Future<SendMessageResult> sendMessageWithReply(
       String peerId, String message, {int? timeoutMs}) async {
     sendCallCount++;
@@ -2346,6 +2370,17 @@ class _FastPathFailThenSucceedP2PService implements P2PService {
           String peerId, String message, String fromPeerId) async =>
       false;
   @override
+  Future<bool> sendLocalMedia({
+    required String peerId,
+    required String filePath,
+    required String mime,
+    required String mediaId,
+    required String fromPeerId,
+    int? durationMs,
+    List<double>? waveform,
+    String? filename,
+  }) async => false;
+  @override
   void dispose() {}
 }
 
@@ -2417,6 +2452,17 @@ class _FastPathThrowThenSucceedP2PService implements P2PService {
           String peerId, String message, String fromPeerId) async =>
       false;
   @override
+  Future<bool> sendLocalMedia({
+    required String peerId,
+    required String filePath,
+    required String mime,
+    required String mediaId,
+    required String fromPeerId,
+    int? durationMs,
+    List<double>? waveform,
+    String? filename,
+  }) async => false;
+  @override
   void dispose() {}
 }
 
@@ -2479,6 +2525,17 @@ class _AllFailButInboxP2PService implements P2PService {
   Future<bool> sendLocalMessage(
           String peerId, String message, String fromPeerId) async =>
       false;
+  @override
+  Future<bool> sendLocalMedia({
+    required String peerId,
+    required String filePath,
+    required String mime,
+    required String mediaId,
+    required String fromPeerId,
+    int? durationMs,
+    List<double>? waveform,
+    String? filename,
+  }) async => false;
   @override
   void dispose() {}
 }
@@ -2548,6 +2605,18 @@ class _ThrowOnSendP2PService implements P2PService {
 
   @override
   Future<bool> sendLocalMessage(String peerId, String message, String fromPeerId) async => false;
+
+  @override
+  Future<bool> sendLocalMedia({
+    required String peerId,
+    required String filePath,
+    required String mime,
+    required String mediaId,
+    required String fromPeerId,
+    int? durationMs,
+    List<double>? waveform,
+    String? filename,
+  }) async => false;
 
   @override
   Future<bool> startNodeCore(String privateKeyBase64, String peerId) async => false;
@@ -2635,6 +2704,18 @@ class _FlakyDiscoverP2PService implements P2PService {
 
   @override
   Future<bool> sendLocalMessage(String peerId, String message, String fromPeerId) async => false;
+
+  @override
+  Future<bool> sendLocalMedia({
+    required String peerId,
+    required String filePath,
+    required String mime,
+    required String mediaId,
+    required String fromPeerId,
+    int? durationMs,
+    List<double>? waveform,
+    String? filename,
+  }) async => false;
 
   @override
   Future<bool> startNodeCore(String privateKeyBase64, String peerId) async => false;

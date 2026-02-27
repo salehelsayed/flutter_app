@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
+import 'package:flutter_app/core/local_discovery/local_media_sender.dart';
+import 'package:flutter_app/core/local_discovery/local_media_server.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
 /// Local WebSocket server for direct peer-to-peer messaging on the same WiFi.
@@ -12,6 +14,10 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 ///
 /// Outgoing path: [sendMessage] connects to a remote peer's WS server,
 /// sends a JSON message, and waits for an ack.
+///
+/// Media path: HTTP PUT /media/<id> for local WiFi file transfers,
+/// coordinated via WS signaling (media_offer / media_offer_accepted /
+/// media_uploaded).
 ///
 /// Connection management: outbound connections are pooled by peerId and
 /// reused. Idle connections are closed after [idleTimeout].
@@ -30,6 +36,16 @@ class LocalWsServer {
   /// Outbound connection pool: peerId → (WebSocket, idle timer).
   final _outboundPool = <String, _PooledConnection>{};
 
+  /// Media server for handling PUT uploads (null until configured).
+  LocalMediaServer? _mediaServer;
+
+  /// Maps media ID → sender's inbound WebSocket for sending back
+  /// media_uploaded / media_failed notifications.
+  final _mediaWsSenders = <String, WebSocket>{};
+
+  /// Media sender for outbound file transfers.
+  final _mediaSender = LocalMediaSender();
+
   LocalWsServer({this.idleTimeout = const Duration(seconds: 60)});
 
   /// The port the server is bound to, or null if not started.
@@ -37,6 +53,15 @@ class LocalWsServer {
 
   /// Stream of messages received from local peers.
   Stream<LocalChatMessage> get messageStream => _messageController.stream;
+
+  /// Stream of media files received via local WiFi transfer.
+  Stream<LocalMediaReady>? get mediaReadyStream =>
+      _mediaServer?.mediaReadyStream;
+
+  /// Configure the media server for receiving local file uploads.
+  void configureMediaServer(LocalMediaServer mediaServer) {
+    _mediaServer = mediaServer;
+  }
 
   /// Start the WebSocket server on a random available port.
   ///
@@ -56,6 +81,22 @@ class LocalWsServer {
   }
 
   void _handleHttpRequest(HttpRequest request) {
+    final path = request.uri.path;
+
+    // Media upload route: PUT /media/<id>
+    if (path.startsWith('/media/')) {
+      final mediaId = path.substring('/media/'.length);
+      if (mediaId.isEmpty) {
+        request.response
+          ..statusCode = HttpStatus.badRequest
+          ..close();
+        return;
+      }
+      _handleMediaUpload(request, mediaId);
+      return;
+    }
+
+    // WebSocket upgrade (existing behavior).
     if (_inboundConnections.length >= _maxInboundConnections) {
       emitFlowEvent(
         layer: 'FL',
@@ -80,11 +121,59 @@ class LocalWsServer {
     });
   }
 
+  void _handleMediaUpload(HttpRequest request, String mediaId) {
+    if (request.method != 'PUT') {
+      request.response
+        ..statusCode = HttpStatus.methodNotAllowed
+        ..close();
+      return;
+    }
+
+    final mediaServer = _mediaServer;
+    if (mediaServer == null) {
+      request.response
+        ..statusCode = HttpStatus.notFound
+        ..close();
+      return;
+    }
+
+    mediaServer.handleUpload(request, mediaId).then((result) {
+      final senderWs = _mediaWsSenders[mediaId];
+      if (senderWs != null &&
+          senderWs.readyState == WebSocket.open) {
+        if (result.success) {
+          senderWs.add(jsonEncode({
+            'type': 'media_uploaded',
+            'id': mediaId,
+            'nonce': result.nonce,
+            'sha256Verified': true,
+          }));
+        } else {
+          senderWs.add(jsonEncode({
+            'type': 'media_failed',
+            'id': mediaId,
+            'nonce': result.nonce,
+            'reason': result.reason,
+          }));
+        }
+      }
+      _mediaWsSenders.remove(mediaId);
+    });
+  }
+
   void _handleInboundMessage(WebSocket ws, dynamic data) {
     if (data is! String) return;
 
     try {
       final json = jsonDecode(data) as Map<String, dynamic>;
+
+      // Check for media_offer type first.
+      final type = json['type'] as String?;
+      if (type == 'media_offer') {
+        _handleMediaOffer(ws, json);
+        return;
+      }
+
       final from = json['from'] as String?;
       final to = json['to'] as String?;
       final content = json['content'] as String?;
@@ -117,6 +206,41 @@ class LocalWsServer {
       _messageController.add(message);
     } catch (_) {
       // Malformed JSON — silently ignore.
+    }
+  }
+
+  void _handleMediaOffer(WebSocket ws, Map<String, dynamic> json) {
+    final mediaServer = _mediaServer;
+    if (mediaServer == null) {
+      final nonce = json['nonce'] as String?;
+      ws.add(jsonEncode({
+        'type': 'media_offer_rejected',
+        'id': json['id'],
+        'nonce': nonce,
+        'reason': 'media_not_supported',
+      }));
+      return;
+    }
+
+    final offer = MediaOffer.fromJson(json);
+
+    if (mediaServer.acceptOffer(offer)) {
+      // Store the sender's WS for sending media_uploaded back later.
+      _mediaWsSenders[offer.id] = ws;
+
+      ws.add(jsonEncode({
+        'type': 'media_offer_accepted',
+        'id': offer.id,
+        'token': offer.token,
+        'nonce': offer.nonce,
+      }));
+    } else {
+      ws.add(jsonEncode({
+        'type': 'media_offer_rejected',
+        'id': offer.id,
+        'nonce': offer.nonce,
+        'reason': 'validation_failed',
+      }));
     }
   }
 
@@ -183,6 +307,60 @@ class LocalWsServer {
       emitFlowEvent(
         layer: 'FL',
         event: 'LOCAL_WS_SEND_FAILED',
+        details: {'to': toPeerId, 'error': e.toString()},
+      );
+
+      return false;
+    }
+  }
+
+  /// Send a media file to a peer's local HTTP server.
+  ///
+  /// Uses the existing pooled WS connection for signaling and HTTP PUT
+  /// for file transfer. Returns true if uploaded and SHA-256 verified.
+  Future<bool> sendMedia({
+    required String host,
+    required int port,
+    required String toPeerId,
+    required String filePath,
+    required String mediaId,
+    required String mime,
+    required String fromPeerId,
+    int? durationMs,
+    List<double>? waveform,
+    String? filename,
+  }) async {
+    try {
+      final ws = await _getOrCreateConnection(toPeerId, host, port);
+      final pooled = _outboundPool[toPeerId];
+      final ackStream = pooled?.ackStream ?? ws;
+
+      final result = await _mediaSender.sendMedia(
+        host: host,
+        port: port,
+        ws: ws,
+        ackStream: ackStream,
+        filePath: filePath,
+        mediaId: mediaId,
+        mime: mime,
+        fromPeerId: fromPeerId,
+        toPeerId: toPeerId,
+        durationMs: durationMs,
+        waveform: waveform,
+        filename: filename,
+      );
+
+      if (result) {
+        _resetIdleTimer(toPeerId);
+      }
+
+      return result;
+    } catch (e) {
+      _removeFromPool(toPeerId);
+
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'LOCAL_WS_SEND_MEDIA_FAILED',
         details: {'to': toPeerId, 'error': e.toString()},
       );
 
@@ -259,6 +437,7 @@ class LocalWsServer {
       await ws.close().catchError((_) {});
     }
     _inboundConnections.clear();
+    _mediaWsSenders.clear();
 
     for (final peerId in _outboundPool.keys.toList()) {
       _removeFromPool(peerId);
@@ -278,6 +457,7 @@ class LocalWsServer {
   void dispose() {
     stop();
     _messageController.close();
+    _mediaServer?.dispose();
   }
 }
 

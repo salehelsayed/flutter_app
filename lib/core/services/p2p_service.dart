@@ -134,6 +134,19 @@ abstract class P2PService {
   /// Returns true if the peer acknowledged receipt.
   Future<bool> sendLocalMessage(String peerId, String message, String fromPeerId);
 
+  /// Send a media file to a local peer via WiFi HTTP PUT.
+  /// Returns true if uploaded and SHA-256 verified by receiver.
+  Future<bool> sendLocalMedia({
+    required String peerId,
+    required String filePath,
+    required String mime,
+    required String mediaId,
+    required String fromPeerId,
+    int? durationMs,
+    List<double>? waveform,
+    String? filename,
+  });
+
   /// Dispose of the service and clean up resources.
   void dispose();
 }
