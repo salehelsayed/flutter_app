@@ -133,7 +133,7 @@ class ContactRequestListener {
       // Resolve own private key for v2 decryption
       final ownPrivateKey = await getOwnPrivateKey?.call();
 
-      final (result, request) = await handleIncomingMessage(
+      final (result, request, keyUpdatePeerId) = await handleIncomingMessage(
         message: message,
         bridge: bridge,
         requestRepo: requestRepo,
@@ -175,26 +175,11 @@ class ContactRequestListener {
         );
 
         _requestController.add(request);
-      } else if (result == HandleMessageResult.contactKeyUpdated) {
-        // Extract peerId from payload or decrypted message.
-        // For v2: payload is not at top level, use message.from as fallback.
-        String? peerId;
-        try {
-          final json = jsonDecode(message.content) as Map<String, dynamic>;
-          if (json['version'] == '2') {
-            // For v2, the peerId was inside the encrypted payload.
-            // Use message.from as the peerId source.
-            peerId = message.from;
-          } else {
-            final payload = json['payload'] as Map<String, dynamic>?;
-            peerId = payload?['ns'] as String?;
-          }
-        } catch (_) {}
-        peerId ??= message.from;
-
-        final peerPrefix = peerId.length > 10
-            ? peerId.substring(0, 10)
-            : peerId;
+      } else if (result == HandleMessageResult.contactKeyUpdated &&
+          keyUpdatePeerId != null) {
+        final peerPrefix = keyUpdatePeerId.length > 10
+            ? keyUpdatePeerId.substring(0, 10)
+            : keyUpdatePeerId;
 
         emitFlowEvent(
           layer: 'FL',
@@ -204,7 +189,7 @@ class ContactRequestListener {
 
         // Broadcast the updated contact so UI screens refresh their
         // cached copy (e.g. ConversationWired picks up the new ML-KEM key).
-        final updatedContact = await contactRepo.getContact(peerId);
+        final updatedContact = await contactRepo.getContact(keyUpdatePeerId);
         if (updatedContact != null) {
           _contactKeyUpdatedController.add(updatedContact);
         }

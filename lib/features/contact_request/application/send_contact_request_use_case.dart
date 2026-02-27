@@ -161,15 +161,34 @@ Future<SendContactRequestResult> sendContactRequest({
       return SendContactRequestResult.encryptionError;
     }
 
+    // Validate required fields from encrypt response
+    final ephemeralPublicKey = encryptResponse['ephemeralPublicKey'];
+    final ciphertext = encryptResponse['ciphertext'];
+    final nonce = encryptResponse['nonce'];
+
+    if (ephemeralPublicKey is! String ||
+        ciphertext is! String ||
+        nonce is! String ||
+        ephemeralPublicKey.isEmpty ||
+        ciphertext.isEmpty ||
+        nonce.isEmpty) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONTACT_REQUEST_SEND_ENCRYPTION_ERROR',
+        details: {'reason': 'malformed encrypt response'},
+      );
+      return SendContactRequestResult.encryptionError;
+    }
+
     final v2Message = {
       'type': 'contact_request',
       'version': '2',
       'msgId': msgId,
       'ts': ts,
       'encrypted': {
-        'ephemeralPublicKey': encryptResponse['ephemeralPublicKey'],
-        'ciphertext': encryptResponse['ciphertext'],
-        'nonce': encryptResponse['nonce'],
+        'ephemeralPublicKey': ephemeralPublicKey,
+        'ciphertext': ciphertext,
+        'nonce': nonce,
       },
     };
     messageJson = jsonEncode(v2Message);

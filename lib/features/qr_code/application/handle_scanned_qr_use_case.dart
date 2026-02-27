@@ -83,6 +83,7 @@ Future<HandleScannedQRResult> handleScannedQR({
     identityRepo: identityRepo,
     bridge: bridge,
     targetPeerId: contact.peerId,
+    recipientPublicKey: contact.publicKey,
   ).then((sendResult) {
     emitFlowEvent(
       layer: 'FL',

@@ -351,6 +351,189 @@ func TestVerifyPayload_MissingFields(t *testing.T) {
 	assertNotOk(t, m, "INVALID_INPUT")
 }
 
+// --- EncryptContactRequest ---
+
+func TestEncryptContactRequest_InvalidJSON(t *testing.T) {
+	result := EncryptContactRequest("not valid json")
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "INVALID_INPUT")
+}
+
+func TestEncryptContactRequest_MissingFields(t *testing.T) {
+	result := EncryptContactRequest(`{"recipientPublicKey": "abc"}`)
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "INVALID_INPUT")
+}
+
+func TestEncryptContactRequest_InvalidRecipientKey(t *testing.T) {
+	input, _ := json.Marshal(map[string]string{
+		"recipientPublicKey": "not-valid-base64!!!",
+		"plaintext":          "hello",
+		"msgId":              "test-id",
+		"ts":                 "2024-01-01T00:00:00Z",
+	})
+	result := EncryptContactRequest(string(input))
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "INTERNAL_ERROR")
+}
+
+func TestEncryptContactRequest_Success(t *testing.T) {
+	// Generate identity to get a valid Ed25519 public key
+	genResult := GenerateIdentity()
+	genMap := parseJSON(t, genResult)
+	assertOk(t, genMap)
+	identity := genMap["identity"].(map[string]interface{})
+	publicKey := identity["publicKey"].(string)
+
+	input, _ := json.Marshal(map[string]string{
+		"recipientPublicKey": publicKey,
+		"plaintext":          "test payload",
+		"msgId":              "msg-123",
+		"ts":                 "2024-01-01T00:00:00Z",
+	})
+	result := EncryptContactRequest(string(input))
+	m := parseJSON(t, result)
+	assertOk(t, m)
+
+	// Verify all required output fields
+	eph, ok := m["ephemeralPublicKey"].(string)
+	if !ok || eph == "" {
+		t.Error("response missing or empty 'ephemeralPublicKey'")
+	}
+	ct, ok := m["ciphertext"].(string)
+	if !ok || ct == "" {
+		t.Error("response missing or empty 'ciphertext'")
+	}
+	nonce, ok := m["nonce"].(string)
+	if !ok || nonce == "" {
+		t.Error("response missing or empty 'nonce'")
+	}
+}
+
+// --- DecryptContactRequest ---
+
+func TestDecryptContactRequest_InvalidJSON(t *testing.T) {
+	result := DecryptContactRequest("not valid json")
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "INVALID_INPUT")
+}
+
+func TestDecryptContactRequest_MissingFields(t *testing.T) {
+	result := DecryptContactRequest(`{"privateKey": "abc"}`)
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "INVALID_INPUT")
+}
+
+func TestDecryptContactRequest_RoundTrip(t *testing.T) {
+	// Generate an identity
+	genResult := GenerateIdentity()
+	genMap := parseJSON(t, genResult)
+	assertOk(t, genMap)
+	identity := genMap["identity"].(map[string]interface{})
+	publicKey := identity["publicKey"].(string)
+	privateKey := identity["privateKey"].(string)
+
+	// Encrypt
+	plaintext := `{"ns":"peer123","pk":"pubkey","rv":"/rv","ts":"2024-01-01T00:00:00Z","sig":"abc"}`
+	msgId := "msg-456"
+	ts := "2024-01-01T00:00:00Z"
+
+	encInput, _ := json.Marshal(map[string]string{
+		"recipientPublicKey": publicKey,
+		"plaintext":          plaintext,
+		"msgId":              msgId,
+		"ts":                 ts,
+	})
+	encResult := EncryptContactRequest(string(encInput))
+	encMap := parseJSON(t, encResult)
+	assertOk(t, encMap)
+
+	// Decrypt
+	decInput, _ := json.Marshal(map[string]string{
+		"privateKey":         privateKey,
+		"ephemeralPublicKey": encMap["ephemeralPublicKey"].(string),
+		"ciphertext":         encMap["ciphertext"].(string),
+		"nonce":              encMap["nonce"].(string),
+		"msgId":              msgId,
+		"ts":                 ts,
+	})
+	decResult := DecryptContactRequest(string(decInput))
+	decMap := parseJSON(t, decResult)
+	assertOk(t, decMap)
+
+	got, ok := decMap["plaintext"].(string)
+	if !ok {
+		t.Fatal("decrypt response missing 'plaintext'")
+	}
+	if got != plaintext {
+		t.Errorf("plaintext mismatch: got %q, want %q", got, plaintext)
+	}
+}
+
+func TestDecryptContactRequest_WrongKey(t *testing.T) {
+	// Generate two identities
+	gen1 := parseJSON(t, GenerateIdentity())
+	assertOk(t, gen1)
+	gen2 := parseJSON(t, GenerateIdentity())
+	assertOk(t, gen2)
+
+	id1 := gen1["identity"].(map[string]interface{})
+	id2 := gen2["identity"].(map[string]interface{})
+
+	// Encrypt to identity 1
+	encInput, _ := json.Marshal(map[string]string{
+		"recipientPublicKey": id1["publicKey"].(string),
+		"plaintext":          "secret data",
+		"msgId":              "msg-789",
+		"ts":                 "2024-01-01T00:00:00Z",
+	})
+	encMap := parseJSON(t, EncryptContactRequest(string(encInput)))
+	assertOk(t, encMap)
+
+	// Decrypt with identity 2's private key → should fail
+	decInput, _ := json.Marshal(map[string]string{
+		"privateKey":         id2["privateKey"].(string),
+		"ephemeralPublicKey": encMap["ephemeralPublicKey"].(string),
+		"ciphertext":         encMap["ciphertext"].(string),
+		"nonce":              encMap["nonce"].(string),
+		"msgId":              "msg-789",
+		"ts":                 "2024-01-01T00:00:00Z",
+	})
+	decResult := DecryptContactRequest(string(decInput))
+	decMap := parseJSON(t, decResult)
+	assertNotOk(t, decMap, "INTERNAL_ERROR")
+}
+
+func TestDecryptContactRequest_TamperedAAD(t *testing.T) {
+	// Generate identity
+	genMap := parseJSON(t, GenerateIdentity())
+	assertOk(t, genMap)
+	identity := genMap["identity"].(map[string]interface{})
+
+	// Encrypt with specific msgId/ts
+	encInput, _ := json.Marshal(map[string]string{
+		"recipientPublicKey": identity["publicKey"].(string),
+		"plaintext":          "aad test",
+		"msgId":              "original-id",
+		"ts":                 "2024-01-01T00:00:00Z",
+	})
+	encMap := parseJSON(t, EncryptContactRequest(string(encInput)))
+	assertOk(t, encMap)
+
+	// Decrypt with tampered msgId → should fail (AAD mismatch)
+	decInput, _ := json.Marshal(map[string]string{
+		"privateKey":         identity["privateKey"].(string),
+		"ephemeralPublicKey": encMap["ephemeralPublicKey"].(string),
+		"ciphertext":         encMap["ciphertext"].(string),
+		"nonce":              encMap["nonce"].(string),
+		"msgId":              "tampered-id",
+		"ts":                 "2024-01-01T00:00:00Z",
+	})
+	decResult := DecryptContactRequest(string(decInput))
+	decMap := parseJSON(t, decResult)
+	assertNotOk(t, decMap, "INTERNAL_ERROR")
+}
+
 // --- Inbox: NOT_INITIALIZED (no singleton node) ---
 
 func TestInboxStore_NodeNotInitialized(t *testing.T) {

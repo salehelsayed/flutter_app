@@ -115,7 +115,7 @@ void main() {
         username: 'Bob',
       );
 
-      final (result, request) = await handleIncomingMessage(
+      final (result, request, _) = await handleIncomingMessage(
         message: message,
         bridge: bridge,
         requestRepo: requestRepo,
@@ -192,7 +192,7 @@ void main() {
       final message = buildContactRequestMessage(fromPeerId: bobPeerId);
 
       // First request
-      final (r1, _) = await handleIncomingMessage(
+      final (r1, _, _) = await handleIncomingMessage(
         message: message,
         bridge: bridge,
         requestRepo: requestRepo,
@@ -202,7 +202,7 @@ void main() {
       expect(r1, HandleMessageResult.contactRequest);
 
       // Second request from same peer
-      final (r2, _) = await handleIncomingMessage(
+      final (r2, _, _) = await handleIncomingMessage(
         message: message,
         bridge: bridge,
         requestRepo: requestRepo,
@@ -229,7 +229,7 @@ void main() {
       );
 
       final message = buildContactRequestMessage(fromPeerId: bobPeerId);
-      final (result, _) = await handleIncomingMessage(
+      final (result, _, _) = await handleIncomingMessage(
         message: message,
         bridge: bridge,
         requestRepo: requestRepo,
@@ -245,7 +245,7 @@ void main() {
       bridge.responses['payload.verify'] = {'ok': true, 'valid': false};
 
       final message = buildContactRequestMessage(fromPeerId: bobPeerId);
-      final (result, _) = await handleIncomingMessage(
+      final (result, _, _) = await handleIncomingMessage(
         message: message,
         bridge: bridge,
         requestRepo: requestRepo,
@@ -258,7 +258,7 @@ void main() {
 
     test('2f. Self-request rejection', () async {
       final message = buildContactRequestMessage(fromPeerId: ownPeerId);
-      final (result, _) = await handleIncomingMessage(
+      final (result, _, _) = await handleIncomingMessage(
         message: message,
         bridge: bridge,
         requestRepo: requestRepo,
@@ -333,7 +333,7 @@ void main() {
         mlKem: 'bobMlKemPublicKey',
       );
 
-      final (result, request) = await handleIncomingMessage(
+      final (result, request, _) = await handleIncomingMessage(
         message: message,
         bridge: bridge,
         requestRepo: requestRepo,

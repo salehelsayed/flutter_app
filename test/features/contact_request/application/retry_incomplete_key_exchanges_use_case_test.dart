@@ -66,6 +66,12 @@ void main() {
     // sendContactRequest calls callSignPayload → bridge.send with cmd 'payload.sign'
     // Must return a signature for the sign response to succeed
     bridge.responses['payload.sign'] = {'ok': true, 'signature': 'test-sig'};
+    bridge.responses['contactrequest.encrypt'] = {
+      'ok': true,
+      'ephemeralPublicKey': 'ephPub',
+      'ciphertext': 'ct',
+      'nonce': 'nonce',
+    };
 
     // Seed a default identity with ML-KEM key
     identityRepo.seed(_makeIdentity());
@@ -225,6 +231,12 @@ void main() {
       failingBridge.responses['payload.sign'] = {
         'ok': true,
         'signature': 'test-sig',
+      };
+      failingBridge.responses['contactrequest.encrypt'] = {
+        'ok': true,
+        'ephemeralPublicKey': 'ephPub',
+        'ciphertext': 'ct',
+        'nonce': 'nonce',
       };
 
       final result = await retryIncompleteKeyExchanges(
