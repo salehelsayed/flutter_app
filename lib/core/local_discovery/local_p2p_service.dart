@@ -79,6 +79,9 @@ class LocalP2PService {
   /// Returns true if the given peerId is visible on the local network.
   bool isLocalPeer(String peerId) => _discovery.isLocalPeer(peerId);
 
+  /// Stream of media files received via local WiFi transfer.
+  Stream<LocalMediaReady>? get mediaReadyStream => _wsServer.mediaReadyStream;
+
   /// Send a message to a local peer. Returns true if the peer acknowledged.
   ///
   /// Returns false if the peer is not on the local network or the send fails.
@@ -96,6 +99,36 @@ class LocalP2PService {
       content,
       fromPeerId,
       peerId,
+    );
+  }
+
+  /// Send a media file to a local peer. Returns true if uploaded + verified.
+  ///
+  /// Returns false if the peer is not on the local network or the transfer fails.
+  Future<bool> sendMedia({
+    required String peerId,
+    required String filePath,
+    required String mime,
+    required String mediaId,
+    required String fromPeerId,
+    int? durationMs,
+    List<double>? waveform,
+    String? filename,
+  }) async {
+    final peer = _discovery.getLocalPeer(peerId);
+    if (peer == null) return false;
+
+    return _wsServer.sendMedia(
+      host: peer.host,
+      port: peer.port,
+      toPeerId: peerId,
+      filePath: filePath,
+      mediaId: mediaId,
+      mime: mime,
+      fromPeerId: fromPeerId,
+      durationMs: durationMs,
+      waveform: waveform,
+      filename: filename,
     );
   }
 

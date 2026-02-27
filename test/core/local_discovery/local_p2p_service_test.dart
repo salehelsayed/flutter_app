@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
+import 'package:flutter_app/core/local_discovery/local_media_server.dart';
 import 'package:flutter_app/core/local_discovery/local_ws_server.dart';
 import 'package:flutter_app/core/local_discovery/local_p2p_service.dart';
 
@@ -17,10 +18,7 @@ void main() {
     setUp(() {
       fakeDiscovery = FakeLocalDiscoveryService();
       wsServer = LocalWsServer(idleTimeout: const Duration(seconds: 2));
-      service = LocalP2PService(
-        discovery: fakeDiscovery,
-        wsServer: wsServer,
-      );
+      service = LocalP2PService(discovery: fakeDiscovery, wsServer: wsServer);
     });
 
     tearDown(() {
@@ -49,12 +47,14 @@ void main() {
 
       expect(service.isLocalPeer('otherPeer'), isFalse);
 
-      fakeDiscovery.addPeer(LocalPeer(
-        peerId: 'otherPeer',
-        host: '192.168.1.50',
-        port: 8888,
-        discoveredAt: DateTime.now().toUtc(),
-      ));
+      fakeDiscovery.addPeer(
+        LocalPeer(
+          peerId: 'otherPeer',
+          host: '192.168.1.50',
+          port: 8888,
+          discoveredAt: DateTime.now().toUtc(),
+        ),
+      );
 
       expect(service.isLocalPeer('otherPeer'), isTrue);
     });
@@ -62,7 +62,11 @@ void main() {
     test('sendMessage returns false when peer not discovered', () async {
       await service.start('myPeerId');
 
-      final sent = await service.sendMessage('unknownPeer', 'content', 'myPeerId');
+      final sent = await service.sendMessage(
+        'unknownPeer',
+        'content',
+        'myPeerId',
+      );
       expect(sent, isFalse);
     });
 
@@ -73,18 +77,92 @@ void main() {
       final remoteServer = LocalWsServer();
       final remotePort = await remoteServer.start();
 
-      fakeDiscovery.addPeer(LocalPeer(
-        peerId: 'remotePeer',
-        host: 'localhost',
-        port: remotePort,
-        discoveredAt: DateTime.now().toUtc(),
-      ));
+      fakeDiscovery.addPeer(
+        LocalPeer(
+          peerId: 'remotePeer',
+          host: 'localhost',
+          port: remotePort,
+          discoveredAt: DateTime.now().toUtc(),
+        ),
+      );
 
-      final sent = await service.sendMessage('remotePeer', '{"text":"hi"}', 'myPeerId');
+      final sent = await service.sendMessage(
+        'remotePeer',
+        '{"text":"hi"}',
+        'myPeerId',
+      );
       expect(sent, isTrue);
 
       remoteServer.dispose();
     });
+
+    test('sendMedia returns false when peer not discovered', () async {
+      await service.start('myPeerId');
+
+      final tempDir = await Directory.systemTemp.createTemp(
+        'local_p2p_send_media_',
+      );
+      final file = File('${tempDir.path}/image.jpg');
+      await file.writeAsBytes([1, 2, 3, 4]);
+
+      final sent = await service.sendMedia(
+        peerId: 'unknownPeer',
+        filePath: file.path,
+        mime: 'image/jpeg',
+        mediaId: 'media-unknown',
+        fromPeerId: 'myPeerId',
+      );
+      expect(sent, isFalse);
+
+      await tempDir.delete(recursive: true);
+    });
+
+    test(
+      'sendMedia delegates to WS media transfer for discovered peer',
+      () async {
+        await service.start('myPeerId');
+
+        final remoteServer = LocalWsServer();
+        final remoteTemp = await Directory.systemTemp.createTemp(
+          'local_p2p_remote_media_',
+        );
+        final remoteMediaServer = LocalMediaServer(
+          tempDir: '${remoteTemp.path}/temp',
+          mediaDir: '${remoteTemp.path}/media',
+        );
+        remoteServer.configureMediaServer(remoteMediaServer);
+        final remotePort = await remoteServer.start();
+
+        fakeDiscovery.addPeer(
+          LocalPeer(
+            peerId: 'remotePeer',
+            host: 'localhost',
+            port: remotePort,
+            discoveredAt: DateTime.now().toUtc(),
+          ),
+        );
+
+        final localTemp = await Directory.systemTemp.createTemp(
+          'local_p2p_local_media_',
+        );
+        final file = File('${localTemp.path}/image.jpg');
+        await file.writeAsBytes(List<int>.generate(1024, (i) => i % 256));
+
+        final sent = await service.sendMedia(
+          peerId: 'remotePeer',
+          filePath: file.path,
+          mime: 'image/jpeg',
+          mediaId: 'media-delegate',
+          fromPeerId: 'myPeerId',
+        );
+
+        expect(sent, isTrue);
+
+        remoteServer.dispose();
+        await localTemp.delete(recursive: true);
+        await remoteTemp.delete(recursive: true);
+      },
+    );
 
     test('discoveredPeersStream emits on peer change', () async {
       await service.start('myPeerId');
@@ -92,12 +170,14 @@ void main() {
       final snapshots = <Map<String, LocalPeer>>[];
       final sub = service.discoveredPeersStream.listen(snapshots.add);
 
-      fakeDiscovery.addPeer(LocalPeer(
-        peerId: 'peer1',
-        host: '192.168.1.10',
-        port: 5000,
-        discoveredAt: DateTime.now().toUtc(),
-      ));
+      fakeDiscovery.addPeer(
+        LocalPeer(
+          peerId: 'peer1',
+          host: '192.168.1.10',
+          port: 5000,
+          discoveredAt: DateTime.now().toUtc(),
+        ),
+      );
 
       await Future.delayed(const Duration(milliseconds: 50));
 
@@ -123,7 +203,9 @@ void main() {
       // Connect to the WS server as a remote peer and send a message.
       final port = wsServer.port!;
       final ws = await WebSocket.connect('ws://localhost:$port');
-      ws.add('{"from":"remotePeer","to":"myPeerId","content":"{\\"text\\":\\"hello\\"}"}');
+      ws.add(
+        '{"from":"remotePeer","to":"myPeerId","content":"{\\"text\\":\\"hello\\"}"}',
+      );
 
       // Wait for the ack to ensure the server processed it.
       await ws.first;

@@ -34,6 +34,93 @@ class LocalChatMessage {
   });
 }
 
+/// Event emitted when a media file has been received via local WiFi transfer.
+class LocalMediaReady {
+  final String id;
+  final String from;
+  final String to;
+  final String mime;
+  final int size;
+  final String localPath;
+  final String sha256;
+  final int? durationMs;
+  final List<double>? waveform;
+  final String? filename;
+
+  const LocalMediaReady({
+    required this.id,
+    required this.from,
+    required this.to,
+    required this.mime,
+    required this.size,
+    required this.localPath,
+    required this.sha256,
+    this.durationMs,
+    this.waveform,
+    this.filename,
+  });
+}
+
+/// Offer from a sender to transfer a media file locally.
+class MediaOffer {
+  final String id;
+  final String from;
+  final String to;
+  final String mime;
+  final int size;
+  final String sha256;
+  final String token;
+  final String nonce;
+  final int? durationMs;
+  final List<double>? waveform;
+  final String? filename;
+
+  const MediaOffer({
+    required this.id,
+    required this.from,
+    required this.to,
+    required this.mime,
+    required this.size,
+    required this.sha256,
+    required this.token,
+    required this.nonce,
+    this.durationMs,
+    this.waveform,
+    this.filename,
+  });
+
+  factory MediaOffer.fromJson(Map<String, dynamic> json) => MediaOffer(
+        id: json['id'] as String,
+        from: json['from'] as String,
+        to: json['to'] as String,
+        mime: json['mime'] as String,
+        size: json['size'] as int,
+        sha256: json['sha256'] as String,
+        token: json['token'] as String,
+        nonce: json['nonce'] as String,
+        durationMs: json['durationMs'] as int?,
+        waveform: (json['waveform'] as List<dynamic>?)
+            ?.map((e) => (e as num).toDouble())
+            .toList(),
+        filename: json['filename'] as String?,
+      );
+
+  Map<String, dynamic> toJson() => {
+        'type': 'media_offer',
+        'id': id,
+        'from': from,
+        'to': to,
+        'mime': mime,
+        'size': size,
+        'sha256': sha256,
+        'token': token,
+        'nonce': nonce,
+        if (durationMs != null) 'durationMs': durationMs,
+        if (waveform != null) 'waveform': waveform,
+        if (filename != null) 'filename': filename,
+      };
+}
+
 /// Abstract interface for local network peer discovery.
 ///
 /// Implementations use mDNS (Bonjour/NSD) to advertise this device's

@@ -186,6 +186,27 @@ class FakeP2PService implements P2PService {
     return false;
   }
 
+  // Configurable result for sendLocalMedia
+  bool sendLocalMediaResult = false;
+  int sendLocalMediaCallCount = 0;
+  String? lastSendLocalMediaPeerId;
+
+  @override
+  Future<bool> sendLocalMedia({
+    required String peerId,
+    required String filePath,
+    required String mime,
+    required String mediaId,
+    required String fromPeerId,
+    int? durationMs,
+    List<double>? waveform,
+    String? filename,
+  }) async {
+    sendLocalMediaCallCount++;
+    lastSendLocalMediaPeerId = peerId;
+    return sendLocalMediaResult;
+  }
+
   @override
   void dispose() {
     _stateController.close();

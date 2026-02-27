@@ -84,8 +84,21 @@ void main() {
       expect(req['payload']['privateKeyHex'], equals('deadbeef'));
       expect(req['payload']['relayAddresses'],
           contains(defaultRendezvousAddress));
+      // QUIC relay re-enabled after relay server dependency upgrade.
       expect(req['payload']['relayAddresses'],
           contains(defaultQUICRelayAddress));
+    });
+
+    test('default relay addresses include both WSS and QUIC', () async {
+      bridge.nextResponse = {'ok': true, 'peerId': '12D3KooWTest'};
+
+      await callP2PNodeStart(bridge, privateKeyHex: 'deadbeef');
+
+      final payload = bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
+      final relayAddresses = payload['relayAddresses'] as List;
+      expect(relayAddresses, hasLength(2));
+      expect(relayAddresses[0], equals(defaultRendezvousAddress));
+      expect(relayAddresses[1], equals(defaultQUICRelayAddress));
     });
 
     test('sends node:start with custom relay addresses when provided',

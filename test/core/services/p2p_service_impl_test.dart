@@ -30,12 +30,15 @@ class _LocalChatMessage extends LocalChatMessage {
 
 class _FakeLocalP2PService extends LocalP2PService {
   final StreamController<LocalChatMessage> _controller;
+  bool sendMediaResult = false;
+  int sendMediaCallCount = 0;
+  Map<String, dynamic>? lastSendMediaArgs;
 
   _FakeLocalP2PService(this._controller)
-      : super(
-          discovery: _FakeLocalDiscoveryService(),
-          wsServer: _FakeLocalWsServer(),
-        );
+    : super(
+        discovery: _FakeLocalDiscoveryService(),
+        wsServer: _FakeLocalWsServer(),
+      );
 
   @override
   Stream<LocalChatMessage> get localMessageStream => _controller.stream;
@@ -53,7 +56,36 @@ class _FakeLocalP2PService extends LocalP2PService {
   bool isLocalPeer(String peerId) => false;
 
   @override
-  Future<bool> sendMessage(String peerId, String content, String fromPeerId) async => false;
+  Future<bool> sendMessage(
+    String peerId,
+    String content,
+    String fromPeerId,
+  ) async => false;
+
+  @override
+  Future<bool> sendMedia({
+    required String peerId,
+    required String filePath,
+    required String mime,
+    required String mediaId,
+    required String fromPeerId,
+    int? durationMs,
+    List<double>? waveform,
+    String? filename,
+  }) async {
+    sendMediaCallCount++;
+    lastSendMediaArgs = {
+      'peerId': peerId,
+      'filePath': filePath,
+      'mime': mime,
+      'mediaId': mediaId,
+      'fromPeerId': fromPeerId,
+      'durationMs': durationMs,
+      'waveform': waveform,
+      'filename': filename,
+    };
+    return sendMediaResult;
+  }
 
   @override
   void dispose() {}
@@ -93,23 +125,23 @@ const _testPeerId = '12D3KooWTestPeerId';
 
 /// Standard node:start success response.
 Map<String, dynamic> _nodeStartOk() => {
-      'ok': true,
-      'peerId': _testPeerId,
-      'isStarted': true,
-      'listenAddresses': ['/ip4/127.0.0.1/tcp/1234'],
-      'circuitAddresses': ['/p2p-circuit/test'],
-      'connections': <Map<String, dynamic>>[],
-    };
+  'ok': true,
+  'peerId': _testPeerId,
+  'isStarted': true,
+  'listenAddresses': ['/ip4/127.0.0.1/tcp/1234'],
+  'circuitAddresses': ['/p2p-circuit/test'],
+  'connections': <Map<String, dynamic>>[],
+};
 
 /// Standard node:status success response.
 Map<String, dynamic> _nodeStatusOk() => {
-      'ok': true,
-      'peerId': _testPeerId,
-      'isStarted': true,
-      'listenAddresses': ['/ip4/127.0.0.1/tcp/1234'],
-      'circuitAddresses': ['/p2p-circuit/test'],
-      'connections': <Map<String, dynamic>>[],
-    };
+  'ok': true,
+  'peerId': _testPeerId,
+  'isStarted': true,
+  'listenAddresses': ['/ip4/127.0.0.1/tcp/1234'],
+  'circuitAddresses': ['/p2p-circuit/test'],
+  'connections': <Map<String, dynamic>>[],
+};
 
 // ---------------------------------------------------------------------------
 // Slow bridge for concurrency tests
@@ -158,13 +190,13 @@ class _CountingBridge extends FakeBridge {
 
 /// node:start response with NO circuit addresses (simulates cold relay).
 Map<String, dynamic> _nodeStartNoCircuit() => {
-      'ok': true,
-      'peerId': _testPeerId,
-      'isStarted': true,
-      'listenAddresses': ['/ip4/127.0.0.1/tcp/1234'],
-      'circuitAddresses': <String>[],
-      'connections': <Map<String, dynamic>>[],
-    };
+  'ok': true,
+  'peerId': _testPeerId,
+  'isStarted': true,
+  'listenAddresses': ['/ip4/127.0.0.1/tcp/1234'],
+  'circuitAddresses': <String>[],
+  'connections': <Map<String, dynamic>>[],
+};
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -269,7 +301,10 @@ void main() {
       await Future.delayed(Duration.zero);
 
       // Second call should return false immediately (concurrent guard)
-      final second = await slowService.startNodeCore(_testBase64Key, _testPeerId);
+      final second = await slowService.startNodeCore(
+        _testBase64Key,
+        _testPeerId,
+      );
       expect(second, isFalse);
 
       // Release the first call and verify it succeeds
@@ -295,21 +330,24 @@ void main() {
       expect(bridge.lastCommand, 'node:status');
     });
 
-    test('resyncs via node:status returns false when status also fails', () async {
-      bridge.responses['node:start'] = {
-        'ok': false,
-        'errorCode': 'NODE_ALREADY_STARTED',
-        'errorMessage': 'node already started',
-      };
-      bridge.responses['node:status'] = {
-        'ok': false,
-        'errorMessage': 'status failed',
-      };
+    test(
+      'resyncs via node:status returns false when status also fails',
+      () async {
+        bridge.responses['node:start'] = {
+          'ok': false,
+          'errorCode': 'NODE_ALREADY_STARTED',
+          'errorMessage': 'node already started',
+        };
+        bridge.responses['node:status'] = {
+          'ok': false,
+          'errorMessage': 'status failed',
+        };
 
-      final result = await service.startNodeCore(_testBase64Key, _testPeerId);
+        final result = await service.startNodeCore(_testBase64Key, _testPeerId);
 
-      expect(result, isFalse);
-    });
+        expect(result, isFalse);
+      },
+    );
 
     test('resets _isStarting in finally block after exception', () async {
       bridge.throwOnSend = true;
@@ -345,10 +383,7 @@ void main() {
     });
 
     test('returns false when startNodeCore fails', () async {
-      bridge.responses['node:start'] = {
-        'ok': false,
-        'errorMessage': 'fail',
-      };
+      bridge.responses['node:start'] = {'ok': false, 'errorMessage': 'fail'};
 
       final result = await service.startNode(_testBase64Key, _testPeerId);
 
@@ -431,17 +466,20 @@ void main() {
       expect(result, isFalse);
     });
 
-    test('returns true for legacy bridge responses with non-empty reply', () async {
-      bridge.responses['message:send'] = {
-        'ok': true,
-        'sent': true,
-        'reply': 'ack',
-      };
+    test(
+      'returns true for legacy bridge responses with non-empty reply',
+      () async {
+        bridge.responses['message:send'] = {
+          'ok': true,
+          'sent': true,
+          'reply': 'ack',
+        };
 
-      final result = await service.sendMessage('peer123', 'hello');
+        final result = await service.sendMessage('peer123', 'hello');
 
-      expect(result, isTrue);
-    });
+        expect(result, isTrue);
+      },
+    );
 
     test('returns false when bridge returns ok=false', () async {
       bridge.responses['message:send'] = {
@@ -610,10 +648,7 @@ void main() {
     test('passes addresses when provided', () async {
       bridge.responses['peer:dial'] = {'ok': true, 'connected': true};
 
-      await service.dialPeer(
-        'peer123',
-        addresses: ['/ip4/10.0.0.1/tcp/4001'],
-      );
+      await service.dialPeer('peer123', addresses: ['/ip4/10.0.0.1/tcp/4001']);
 
       final sent = jsonDecode(bridge.lastSentMessage!) as Map<String, dynamic>;
       final payload = sent['payload'] as Map<String, dynamic>;
@@ -768,9 +803,7 @@ void main() {
       final messageFuture = service.messageStream.first;
       bridge.onMessageReceived!(message);
 
-      final received = await messageFuture.timeout(
-        const Duration(seconds: 1),
-      );
+      final received = await messageFuture.timeout(const Duration(seconds: 1));
       expect(received.from, 'sender');
       expect(received.to, 'receiver');
       expect(received.content, 'hello');
@@ -803,38 +836,41 @@ void main() {
       expect(service.currentState.connections, hasLength(1));
     });
 
-    test('onPeerDisconnected removes connection from state and emits', () async {
-      // Start the node and add a connection first
-      bridge.responses['node:start'] = _nodeStartOk();
-      await service.startNodeCore(_testBase64Key, _testPeerId);
+    test(
+      'onPeerDisconnected removes connection from state and emits',
+      () async {
+        // Start the node and add a connection first
+        bridge.responses['node:start'] = _nodeStartOk();
+        await service.startNodeCore(_testBase64Key, _testPeerId);
 
-      final conn = ConnectionState(
-        peerId: 'connected-peer',
-        multiaddrs: ['/ip4/10.0.0.1/tcp/4001'],
-        direction: 'inbound',
-        status: 'connected',
-      );
-      bridge.onPeerConnected!(conn);
-      await Future.delayed(Duration.zero);
-      expect(service.currentState.connections, hasLength(1));
+        final conn = ConnectionState(
+          peerId: 'connected-peer',
+          multiaddrs: ['/ip4/10.0.0.1/tcp/4001'],
+          direction: 'inbound',
+          status: 'connected',
+        );
+        bridge.onPeerConnected!(conn);
+        await Future.delayed(Duration.zero);
+        expect(service.currentState.connections, hasLength(1));
 
-      // Now disconnect
-      final disconnConn = ConnectionState(
-        peerId: 'connected-peer',
-        multiaddrs: [],
-        direction: 'inbound',
-        status: 'disconnected',
-      );
+        // Now disconnect
+        final disconnConn = ConnectionState(
+          peerId: 'connected-peer',
+          multiaddrs: [],
+          direction: 'inbound',
+          status: 'disconnected',
+        );
 
-      final stateFuture = service.stateStream.first;
-      bridge.onPeerDisconnected!(disconnConn);
+        final stateFuture = service.stateStream.first;
+        bridge.onPeerDisconnected!(disconnConn);
 
-      final updatedState = await stateFuture.timeout(
-        const Duration(seconds: 1),
-      );
-      expect(updatedState.connections, isEmpty);
-      expect(service.currentState.connections, isEmpty);
-    });
+        final updatedState = await stateFuture.timeout(
+          const Duration(seconds: 1),
+        );
+        expect(updatedState.connections, isEmpty);
+        expect(service.currentState.connections, isEmpty);
+      },
+    );
 
     test('onAddressesUpdated updates state addresses and emits', () async {
       // Start the node so we have a valid state
@@ -863,56 +899,62 @@ void main() {
       expect(service.currentState.circuitAddresses, ['/p2p-circuit/relay']);
     });
 
-    test('onAddressesUpdated re-registers push token if circuit non-empty and token stored', () async {
-      // Start node and register a push token first
-      bridge.responses['node:start'] = _nodeStartOk();
-      bridge.responses['inbox:register_token'] = {
-        'ok': true,
-        'registered': true,
-      };
-      await service.startNodeCore(_testBase64Key, _testPeerId);
-      await service.registerPushToken('my-fcm-token', 'ios');
+    test(
+      'onAddressesUpdated re-registers push token if circuit non-empty and token stored',
+      () async {
+        // Start node and register a push token first
+        bridge.responses['node:start'] = _nodeStartOk();
+        bridge.responses['inbox:register_token'] = {
+          'ok': true,
+          'registered': true,
+        };
+        await service.startNodeCore(_testBase64Key, _testPeerId);
+        await service.registerPushToken('my-fcm-token', 'ios');
 
-      // Reset the call count to track re-registration
-      final callCountBefore = bridge.sendCallCount;
+        // Reset the call count to track re-registration
+        final callCountBefore = bridge.sendCallCount;
 
-      // Trigger addresses update with non-empty circuit
-      bridge.onAddressesUpdated!(
-        ['/ip4/127.0.0.1/tcp/1234'],
-        ['/p2p-circuit/new-relay'],
-      );
+        // Trigger addresses update with non-empty circuit
+        bridge.onAddressesUpdated!(
+          ['/ip4/127.0.0.1/tcp/1234'],
+          ['/p2p-circuit/new-relay'],
+        );
 
-      // Allow async re-registration to complete
-      await Future.delayed(const Duration(milliseconds: 50));
+        // Allow async re-registration to complete
+        await Future.delayed(const Duration(milliseconds: 50));
 
-      // Should have sent inbox:register_token again
-      expect(bridge.sendCallCount, greaterThan(callCountBefore));
-      expect(bridge.lastCommand, 'inbox:register_token');
-    });
+        // Should have sent inbox:register_token again
+        expect(bridge.sendCallCount, greaterThan(callCountBefore));
+        expect(bridge.lastCommand, 'inbox:register_token');
+      },
+    );
 
-    test('onAddressesUpdated does NOT re-register push token if circuit empty', () async {
-      bridge.responses['node:start'] = _nodeStartOk();
-      bridge.responses['inbox:register_token'] = {
-        'ok': true,
-        'registered': true,
-      };
-      await service.startNodeCore(_testBase64Key, _testPeerId);
-      await service.registerPushToken('my-fcm-token', 'ios');
+    test(
+      'onAddressesUpdated does NOT re-register push token if circuit empty',
+      () async {
+        bridge.responses['node:start'] = _nodeStartOk();
+        bridge.responses['inbox:register_token'] = {
+          'ok': true,
+          'registered': true,
+        };
+        await service.startNodeCore(_testBase64Key, _testPeerId);
+        await service.registerPushToken('my-fcm-token', 'ios');
 
-      final callCountBefore = bridge.sendCallCount;
+        final callCountBefore = bridge.sendCallCount;
 
-      // Trigger addresses update with EMPTY circuit
-      bridge.onAddressesUpdated!(
-        ['/ip4/127.0.0.1/tcp/1234'],
-        [], // empty circuit
-      );
+        // Trigger addresses update with EMPTY circuit
+        bridge.onAddressesUpdated!(
+          ['/ip4/127.0.0.1/tcp/1234'],
+          [], // empty circuit
+        );
 
-      await Future.delayed(const Duration(milliseconds: 50));
+        await Future.delayed(const Duration(milliseconds: 50));
 
-      // No additional bridge calls should have been made — empty circuit
-      // means no re-registration.
-      expect(bridge.sendCallCount, callCountBefore);
-    });
+        // No additional bridge calls should have been made — empty circuit
+        // means no re-registration.
+        expect(bridge.sendCallCount, callCountBefore);
+      },
+    );
   });
 
   // =========================================================================
@@ -932,8 +974,7 @@ void main() {
       final messageFuture = service.messageStream.first;
       bridge.onMessageReceived!(message);
 
-      final received =
-          await messageFuture.timeout(const Duration(seconds: 1));
+      final received = await messageFuture.timeout(const Duration(seconds: 1));
       expect(received.transport, 'relay');
     });
 
@@ -951,16 +992,17 @@ void main() {
       });
 
       final messageFuture = localService.messageStream.first;
-      localMessageController.add(_LocalChatMessage(
-        from: 'local-sender',
-        to: 'local-receiver',
-        content: 'hello wifi',
-        timestamp: DateTime.now(),
-        isIncoming: true,
-      ));
+      localMessageController.add(
+        _LocalChatMessage(
+          from: 'local-sender',
+          to: 'local-receiver',
+          content: 'hello wifi',
+          timestamp: DateTime.now(),
+          isIncoming: true,
+        ),
+      );
 
-      final received =
-          await messageFuture.timeout(const Duration(seconds: 1));
+      final received = await messageFuture.timeout(const Duration(seconds: 1));
       expect(received.transport, 'wifi');
       expect(received.from, 'local-sender');
     });
@@ -972,7 +1014,8 @@ void main() {
         'messages': [
           {
             'from': 'inbox-sender',
-            'message': '{"type":"chat_message","version":"1","payload":{"id":"inbox-001","text":"hello"}}',
+            'message':
+                '{"type":"chat_message","version":"1","payload":{"id":"inbox-001","text":"hello"}}',
             'timestamp': 1700000000000,
           },
         ],
@@ -984,8 +1027,7 @@ void main() {
       final messageFuture = service.messageStream.first;
       await service.drainOfflineInbox();
 
-      final received =
-          await messageFuture.timeout(const Duration(seconds: 1));
+      final received = await messageFuture.timeout(const Duration(seconds: 1));
       expect(received.transport, 'inbox');
       expect(received.from, 'inbox-sender');
     });
@@ -1016,10 +1058,7 @@ void main() {
       // After dispose, adding to the stream should not work.
       // Listening to a closed stream yields done immediately.
       var stateStreamDone = false;
-      service.stateStream.listen(
-        (_) {},
-        onDone: () => stateStreamDone = true,
-      );
+      service.stateStream.listen((_) {}, onDone: () => stateStreamDone = true);
       await Future.delayed(Duration.zero);
       expect(stateStreamDone, isTrue);
 
@@ -1043,10 +1082,7 @@ void main() {
         final countBridge = _CountingBridge();
         countBridge.responses['node:start'] = _nodeStartNoCircuit();
         countBridge.responses['node:status'] = _nodeStatusOk();
-        countBridge.responses['inbox:retrieve'] = {
-          'ok': true,
-          'messages': [],
-        };
+        countBridge.responses['inbox:retrieve'] = {'ok': true, 'messages': []};
 
         final svc = P2PServiceImpl(bridge: countBridge);
 
@@ -1065,7 +1101,8 @@ void main() {
         expect(
           countBridge.nodeStatusCallCount,
           greaterThan(baselineCount),
-          reason: 'Fast circuit fallback should poll node:status after 2s '
+          reason:
+              'Fast circuit fallback should poll node:status after 2s '
               'when no circuit addresses are present',
         );
 
@@ -1079,10 +1116,7 @@ void main() {
         // node:start returns WITH circuit addresses (already online)
         countBridge.responses['node:start'] = _nodeStartOk();
         countBridge.responses['node:status'] = _nodeStatusOk();
-        countBridge.responses['inbox:retrieve'] = {
-          'ok': true,
-          'messages': [],
-        };
+        countBridge.responses['inbox:retrieve'] = {'ok': true, 'messages': []};
 
         final svc = P2PServiceImpl(bridge: countBridge);
 
@@ -1099,7 +1133,8 @@ void main() {
         expect(
           countBridge.nodeStatusCallCount,
           baselineCount,
-          reason: 'Fast circuit fallback should NOT poll node:status when '
+          reason:
+              'Fast circuit fallback should NOT poll node:status when '
               'circuit addresses are already present',
         );
 
@@ -1113,10 +1148,7 @@ void main() {
         // Start with no circuits
         countBridge.responses['node:start'] = _nodeStartNoCircuit();
         countBridge.responses['node:status'] = _nodeStatusOk();
-        countBridge.responses['inbox:retrieve'] = {
-          'ok': true,
-          'messages': [],
-        };
+        countBridge.responses['inbox:retrieve'] = {'ok': true, 'messages': []};
 
         final svc = P2PServiceImpl(bridge: countBridge);
 
@@ -1141,12 +1173,64 @@ void main() {
         expect(
           countBridge.nodeStatusCallCount,
           baselineCount,
-          reason: 'Fast circuit fallback should NOT poll node:status when '
+          reason:
+              'Fast circuit fallback should NOT poll node:status when '
               'addresses:updated push delivered circuits before the 2s timeout',
         );
 
         svc.dispose();
       });
     });
+  });
+
+  group('sendLocalMedia delegation', () {
+    test('returns false when local P2P service is not configured', () async {
+      final result = await service.sendLocalMedia(
+        peerId: 'peer-x',
+        filePath: '/tmp/test.jpg',
+        mime: 'image/jpeg',
+        mediaId: 'm-no-local',
+        fromPeerId: 'me',
+      );
+
+      expect(result, isFalse);
+    });
+
+    test(
+      'delegates sendLocalMedia to LocalP2PService with same args',
+      () async {
+        final controller = StreamController<LocalChatMessage>.broadcast();
+        final local = _FakeLocalP2PService(controller)..sendMediaResult = true;
+        final svc = P2PServiceImpl(bridge: bridge, localP2PService: local);
+        addTearDown(() async {
+          await controller.close();
+          svc.dispose();
+        });
+
+        final result = await svc.sendLocalMedia(
+          peerId: 'peer-123',
+          filePath: '/tmp/media.jpg',
+          mime: 'image/jpeg',
+          mediaId: 'media-123',
+          fromPeerId: 'sender-abc',
+          durationMs: 1234,
+          waveform: const [0.1, 0.2],
+          filename: 'media.jpg',
+        );
+
+        expect(result, isTrue);
+        expect(local.sendMediaCallCount, 1);
+        expect(local.lastSendMediaArgs, {
+          'peerId': 'peer-123',
+          'filePath': '/tmp/media.jpg',
+          'mime': 'image/jpeg',
+          'mediaId': 'media-123',
+          'fromPeerId': 'sender-abc',
+          'durationMs': 1234,
+          'waveform': const [0.1, 0.2],
+          'filename': 'media.jpg',
+        });
+      },
+    );
   });
 }

@@ -117,6 +117,18 @@ class _AckDropP2PService implements P2PService {
       _inner.sendLocalMessage(peerId, msg, from);
 
   @override
+  Future<bool> sendLocalMedia({
+    required String peerId,
+    required String filePath,
+    required String mime,
+    required String mediaId,
+    required String fromPeerId,
+    int? durationMs,
+    List<double>? waveform,
+    String? filename,
+  }) async => false;
+
+  @override
   Future<bool> startNodeCore(String pk, String pid) =>
       _inner.startNodeCore(pk, pid);
 

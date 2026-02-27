@@ -602,6 +602,52 @@ void main() {
       listener.dispose();
     });
 
+    test(
+      'skips relay download for locally-ready persisted attachment metadata',
+      () async {
+        final senderPeerId = 'sender-peer-local-ready';
+        contactRepo.seedContact(_makeContact(senderPeerId));
+
+        mediaRepo.seedAttachments('msg-local-ready', [
+          const MediaAttachment(
+            id: 'blob-local-ready',
+            messageId: 'msg-local-ready',
+            mime: 'audio/aac',
+            size: 2048,
+            mediaType: 'audio',
+            localPath: 'media/sender-peer-local-ready/blob-local-ready.m4a',
+            downloadStatus: 'done',
+            durationMs: 1200,
+            waveform: [0.2, 0.5, 0.8],
+            createdAt: '2026-02-20T10:00:00.000Z',
+          ),
+        ]);
+
+        final listener = createListener();
+        listener.start();
+
+        final emitted = <ConversationMessage>[];
+        listener.incomingMessageStream.listen(emitted.add);
+
+        chatStreamController.add(
+          _makeChatMessage(from: senderPeerId, id: 'msg-local-ready'),
+        );
+
+        await Future.delayed(const Duration(milliseconds: 200));
+
+        expect(emitted.length, 2);
+        final hydrated = emitted[1].media.single;
+        expect(hydrated.downloadStatus, 'done');
+        expect(
+          hydrated.localPath,
+          'media/sender-peer-local-ready/blob-local-ready.m4a',
+        );
+        expect(bridge.downloadCallCount, 0);
+
+        listener.dispose();
+      },
+    );
+
     test('marks attachment as failed when download fails', () async {
       final senderPeerId = 'sender-peer-003';
       contactRepo.seedContact(_makeContact(senderPeerId));

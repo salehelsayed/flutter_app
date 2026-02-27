@@ -38,7 +38,7 @@ Future<Map<String, dynamic>> callP2PNodeStart(
     'cmd': 'node:start',
     'payload': {
       'privateKeyHex': privateKeyHex,
-      'relayAddresses': relayAddresses ?? [defaultRendezvousAddress],
+      'relayAddresses': relayAddresses ?? [defaultRendezvousAddress, defaultQUICRelayAddress],
       'autoRegister': autoRegister,
       if (namespace != null) 'namespace': namespace,
     },

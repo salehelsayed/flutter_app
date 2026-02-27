@@ -77,6 +77,18 @@ class FakeP2PService implements P2PService {
   ) async => false;
 
   @override
+  Future<bool> sendLocalMedia({
+    required String peerId,
+    required String filePath,
+    required String mime,
+    required String mediaId,
+    required String fromPeerId,
+    int? durationMs,
+    List<double>? waveform,
+    String? filename,
+  }) async => false;
+
+  @override
   Future<bool> startNodeCore(String privateKeyBase64, String peerId) async =>
       false;
 

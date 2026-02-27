@@ -6,7 +6,8 @@ import 'package:flutter_app/features/conversation/domain/models/audio_recording.
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 
-import 'send_chat_message_use_case_test.dart' show FakeP2PService, FakeMessageRepository, FakeMediaAttachmentRepository;
+import 'send_chat_message_use_case_test.dart'
+    show FakeP2PService, FakeMessageRepository, FakeMediaAttachmentRepository;
 import '../../../core/bridge/fake_bridge.dart';
 
 void main() {
@@ -22,17 +23,17 @@ void main() {
     p2pService = FakeP2PService();
     messageRepo = FakeMessageRepository();
     mediaAttachmentRepo = FakeMediaAttachmentRepository();
-    bridge = FakeBridge(initialResponses: {
-      'message.encrypt': {
-        'ok': true,
-        'kem': 'fake-kem',
-        'ciphertext': 'fake-ct',
-        'nonce': 'fake-nonce',
+    bridge = FakeBridge(
+      initialResponses: {
+        'message.encrypt': {
+          'ok': true,
+          'kem': 'fake-kem',
+          'ciphertext': 'fake-ct',
+          'nonce': 'fake-nonce',
+        },
+        'media:upload': {'ok': true},
       },
-      'media:upload': {
-        'ok': true,
-      },
-    });
+    );
   });
 
   tearDownAll(() {
@@ -45,7 +46,9 @@ void main() {
     int sizeBytes = 48000,
   }) {
     // Create a real temp file for validation tests
-    final path = filePath ?? '${tempDir.path}/voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
+    final path =
+        filePath ??
+        '${tempDir.path}/voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
     if (!File(path).existsSync()) {
       File(path).writeAsBytesSync(List.filled(sizeBytes, 0));
     }
@@ -106,7 +109,9 @@ void main() {
       test('returns invalidMessage if file exceeds 100 MB', () async {
         // We don't actually create a 100MB file — just pass sizeBytes > 100MB
         final path = '${tempDir.path}/big.m4a';
-        File(path).writeAsBytesSync([1, 2, 3]); // tiny file but model says 101MB
+        File(
+          path,
+        ).writeAsBytesSync([1, 2, 3]); // tiny file but model says 101MB
 
         final recording = AudioRecording(
           filePath: path,
@@ -203,7 +208,10 @@ void main() {
       });
 
       test('returns uploadFailed when bridge upload fails', () async {
-        bridge.responses['media:upload'] = {'ok': false, 'errorMessage': 'fail'};
+        bridge.responses['media:upload'] = {
+          'ok': false,
+          'errorMessage': 'fail',
+        };
         final recording = createRecording();
 
         final (result, _) = await sendVoiceMessage(
@@ -220,28 +228,53 @@ void main() {
         expect(result, SendVoiceMessageResult.uploadFailed);
       });
 
-      test('creates MediaAttachment with audio mediaType and correct durationMs', () async {
-        final recording = createRecording(durationMs: 5500);
+      test(
+        'returns sendFailed when upload succeeds but message send fails',
+        () async {
+          p2pService.sendMessageResult = false;
+          final recording = createRecording();
 
-        await sendVoiceMessage(
-          p2pService: p2pService,
-          messageRepo: messageRepo,
-          targetPeerId: 'target-peer',
-          senderPeerId: 'my-peer',
-          senderUsername: 'Me',
-          recording: recording,
-          bridge: bridge,
-          recipientMlKemPublicKey: mlKemKey,
-          mediaAttachmentRepo: mediaAttachmentRepo,
-        );
+          final (result, message) = await sendVoiceMessage(
+            p2pService: p2pService,
+            messageRepo: messageRepo,
+            targetPeerId: 'target-peer',
+            senderPeerId: 'my-peer',
+            senderUsername: 'Me',
+            recording: recording,
+            bridge: bridge,
+            recipientMlKemPublicKey: mlKemKey,
+          );
 
-        // The media attachment should have been saved
-        expect(mediaAttachmentRepo.saved, isNotEmpty);
-        final attachment = mediaAttachmentRepo.saved.first;
-        expect(attachment.mediaType, 'audio');
-        expect(attachment.mime, 'audio/mp4');
-        expect(attachment.durationMs, 5500);
-      });
+          expect(result, SendVoiceMessageResult.sendFailed);
+          expect(message, isNull);
+        },
+      );
+
+      test(
+        'creates MediaAttachment with audio mediaType and correct durationMs',
+        () async {
+          final recording = createRecording(durationMs: 5500);
+
+          await sendVoiceMessage(
+            p2pService: p2pService,
+            messageRepo: messageRepo,
+            targetPeerId: 'target-peer',
+            senderPeerId: 'my-peer',
+            senderUsername: 'Me',
+            recording: recording,
+            bridge: bridge,
+            recipientMlKemPublicKey: mlKemKey,
+            mediaAttachmentRepo: mediaAttachmentRepo,
+          );
+
+          // The media attachment should have been saved
+          expect(mediaAttachmentRepo.saved, isNotEmpty);
+          final attachment = mediaAttachmentRepo.saved.first;
+          expect(attachment.mediaType, 'audio');
+          expect(attachment.mime, 'audio/mp4');
+          expect(attachment.durationMs, 5500);
+        },
+      );
     });
   });
 }
