@@ -90,6 +90,12 @@ void main() {
     bridge = FakeBridge(initialResponses: {
       'payload.verify': {'ok': true, 'valid': true},
       'payload.sign': {'ok': true, 'signature': 'fakeSig'},
+      'contactrequest.encrypt': {
+        'ok': true,
+        'ephemeralPublicKey': 'ephPub',
+        'ciphertext': 'ct',
+        'nonce': 'nonce',
+      },
     });
     requestRepo = InMemoryContactRequestRepository();
     contactRepo = InMemoryContactRepository();
@@ -145,6 +151,12 @@ void main() {
       );
 
       expect(acceptResult, AcceptContactRequestResult.success);
+
+      // Wait for fire-and-forget reciprocal send to complete
+      await Future.delayed(const Duration(milliseconds: 200));
+
+      // Verify reciprocal send used v2 encryption path
+      expect(bridge.commandLog, contains('contactrequest.encrypt'));
 
       // Verify contact created
       final contact = await contactRepo.getContact(bobPeerId);
