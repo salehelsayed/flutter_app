@@ -410,6 +410,40 @@ void main() {
     expect(result, equals(SendContactRequestResult.encryptionError));
   });
 
+  test('v2: returns encryptionError when encrypt response is malformed', () async {
+    // Bridge says ok:true but missing required fields
+    bridge.encryptResponse = {'ok': true};
+
+    final result = await sendContactRequest(
+      p2pService: p2pService,
+      identityRepo: identityRepo,
+      bridge: bridge,
+      targetPeerId: 'targetPeer123456789',
+      recipientPublicKey: 'recipientEdPubBase64',
+    );
+
+    expect(result, equals(SendContactRequestResult.encryptionError));
+  });
+
+  test('v2: returns encryptionError when encrypt response has empty fields', () async {
+    bridge.encryptResponse = {
+      'ok': true,
+      'ephemeralPublicKey': '',
+      'ciphertext': 'ctBase64',
+      'nonce': 'nonceBase64',
+    };
+
+    final result = await sendContactRequest(
+      p2pService: p2pService,
+      identityRepo: identityRepo,
+      bridge: bridge,
+      targetPeerId: 'targetPeer123456789',
+      recipientPublicKey: 'recipientEdPubBase64',
+    );
+
+    expect(result, equals(SendContactRequestResult.encryptionError));
+  });
+
   test('v1: sends v1 when recipientPublicKey is null', () async {
     final result = await sendContactRequest(
       p2pService: p2pService,

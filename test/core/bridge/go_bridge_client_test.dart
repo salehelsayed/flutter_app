@@ -44,6 +44,7 @@ void main() {
       'mlkem.keygen': 'mlKemKeygen',
       'node:stop': 'stopNode',
       'node:status': 'nodeStatus',
+      'relay:reconnect': 'relayReconnect',
       'inbox:retrieve': 'inboxRetrieve',
     };
 
@@ -75,14 +76,23 @@ void main() {
       'message.decrypt': 'decryptMessage',
       'payload.sign': 'signPayload',
       'payload.verify': 'verifyPayload',
+      'contactrequest.encrypt': 'encryptContactRequest',
+      'contactrequest.decrypt': 'decryptContactRequest',
       'node:start': 'startNode',
       'rendezvous:register': 'rendezvousRegister',
       'rendezvous:discover': 'rendezvousDiscover',
+      'relay:probe': 'relayProbe',
       'peer:dial': 'dialPeer',
       'peer:disconnect': 'disconnectPeer',
       'message:send': 'sendMessage',
       'inbox:store': 'inboxStore',
       'inbox:register_token': 'inboxRegisterToken',
+      'media:upload': 'mediaUpload',
+      'media:download': 'mediaDownload',
+      'media:delete': 'mediaDelete',
+      'media:list': 'mediaList',
+      'profile:upload': 'profileUpload',
+      'profile:download': 'profileDownload',
     };
 
     for (final entry in payloadCmds.entries) {
@@ -225,30 +235,50 @@ void main() {
   // ---------------------------------------------------------------------------
   // Total command coverage sanity check
   // ---------------------------------------------------------------------------
-  test('all 18 commands are covered', () async {
+  test('all 28 commands are covered', () async {
     // Exhaustive list of every command in _cmdMap.
     final allCmds = [
+      // Identity
       'identity.generate',
       'identity.restore',
+      // Crypto
       'mlkem.keygen',
       'message.encrypt',
       'message.decrypt',
       'payload.sign',
       'payload.verify',
+      'contactrequest.encrypt',
+      'contactrequest.decrypt',
+      // Node
       'node:start',
       'node:stop',
       'node:status',
+      // Rendezvous
       'rendezvous:register',
       'rendezvous:discover',
+      // Relay
+      'relay:reconnect',
+      'relay:probe',
+      // Peer
       'peer:dial',
       'peer:disconnect',
+      // Messaging
       'message:send',
+      // Inbox
       'inbox:store',
       'inbox:retrieve',
       'inbox:register_token',
+      // Media
+      'media:upload',
+      'media:download',
+      'media:delete',
+      'media:list',
+      // Profile
+      'profile:upload',
+      'profile:download',
     ];
 
-    expect(allCmds, hasLength(18));
+    expect(allCmds, hasLength(28));
 
     for (final cmd in allCmds) {
       final request = jsonEncode({

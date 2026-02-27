@@ -180,7 +180,7 @@ void main() {
     final payload = _validPayload();
     final message = _makeChatMessage(_contactRequestMessage(payload));
 
-    final (result, request) = await handleIncomingMessage(
+    final (result, request, _) = await handleIncomingMessage(
       message: message,
       bridge: bridge,
       requestRepo: requestRepo,
@@ -197,7 +197,7 @@ void main() {
   test('regularMessage: non-JSON content', () async {
     final message = _makeChatMessage('Hello, plain text!');
 
-    final (result, request) = await handleIncomingMessage(
+    final (result, request, _) = await handleIncomingMessage(
       message: message,
       bridge: bridge,
       requestRepo: requestRepo,
@@ -215,7 +215,7 @@ void main() {
       'payload': {'text': 'hi'},
     }));
 
-    final (result, _) = await handleIncomingMessage(
+    final (result, _, _) = await handleIncomingMessage(
       message: message,
       bridge: bridge,
       requestRepo: requestRepo,
@@ -232,7 +232,7 @@ void main() {
       // missing ns, rv, ts, sig
     }));
 
-    final (result, _) = await handleIncomingMessage(
+    final (result, _, _) = await handleIncomingMessage(
       message: message,
       bridge: bridge,
       requestRepo: requestRepo,
@@ -248,7 +248,7 @@ void main() {
     final payload = _validPayload();
     final message = _makeChatMessage(_contactRequestMessage(payload));
 
-    final (result, _) = await handleIncomingMessage(
+    final (result, _, _) = await handleIncomingMessage(
       message: message,
       bridge: bridge,
       requestRepo: requestRepo,
@@ -266,7 +266,7 @@ void main() {
       from: 'differentPeerId12345',
     );
 
-    final (result, _) = await handleIncomingMessage(
+    final (result, _, _) = await handleIncomingMessage(
       message: message,
       bridge: bridge,
       requestRepo: requestRepo,
@@ -286,7 +286,7 @@ void main() {
       from: _ownPeerId,
     );
 
-    final (result, _) = await handleIncomingMessage(
+    final (result, _, _) = await handleIncomingMessage(
       message: message,
       bridge: bridge,
       requestRepo: requestRepo,
@@ -310,7 +310,7 @@ void main() {
     final payload = _validPayload();
     final message = _makeChatMessage(_contactRequestMessage(payload));
 
-    final (result, _) = await handleIncomingMessage(
+    final (result, _, _) = await handleIncomingMessage(
       message: message,
       bridge: bridge,
       requestRepo: requestRepo,
@@ -336,7 +336,7 @@ void main() {
     final payload = _validPayload();
     final message = _makeChatMessage(_contactRequestMessage(payload));
 
-    final (result, _) = await handleIncomingMessage(
+    final (result, _, _) = await handleIncomingMessage(
       message: message,
       bridge: bridge,
       requestRepo: requestRepo,
@@ -352,7 +352,7 @@ void main() {
     payload['mlkem'] = 'senderMlKemPublicKey';
     final message = _makeChatMessage(_contactRequestMessage(payload));
 
-    final (result, request) = await handleIncomingMessage(
+    final (result, request, _) = await handleIncomingMessage(
       message: message,
       bridge: bridge,
       requestRepo: requestRepo,
@@ -379,7 +379,7 @@ void main() {
     payload['mlkem'] = 'senderMlKemPub';
     final message = _makeChatMessage(_contactRequestMessage(payload));
 
-    final (result, request) = await handleIncomingMessage(
+    final (result, request, _) = await handleIncomingMessage(
       message: message,
       bridge: bridge,
       requestRepo: requestRepo,
@@ -410,7 +410,7 @@ void main() {
     payload['mlkem'] = 'newKey';
     final message = _makeChatMessage(_contactRequestMessage(payload));
 
-    final (result, _) = await handleIncomingMessage(
+    final (result, _, _) = await handleIncomingMessage(
       message: message,
       bridge: bridge,
       requestRepo: requestRepo,
@@ -440,7 +440,7 @@ void main() {
     // No 'mlkem' key in payload
     final message = _makeChatMessage(_contactRequestMessage(payload));
 
-    final (result, _) = await handleIncomingMessage(
+    final (result, _, _) = await handleIncomingMessage(
       message: message,
       bridge: bridge,
       requestRepo: requestRepo,
@@ -470,7 +470,7 @@ void main() {
     payload['mlkem'] = 'senderMlKemPub';
     final message = _makeChatMessage(_contactRequestMessage(payload));
 
-    final (result, request) = await handleIncomingMessage(
+    final (result, request, _) = await handleIncomingMessage(
       message: message,
       bridge: bridge,
       requestRepo: requestRepo,
@@ -480,6 +480,33 @@ void main() {
 
     expect(result, equals(HandleMessageResult.contactKeyUpdated));
     expect(request, isNull);
+  });
+
+  test('contactKeyUpdated: returns peerId from decrypted payload', () async {
+    contactRepo._contacts[_senderPeerId] = ContactModel(
+      peerId: _senderPeerId,
+      publicKey: 'senderPublicKey',
+      rendezvous: '/dns4/mknoun.xyz/tcp/4001/wss/p2p/relay',
+      username: 'Alice',
+      signature: 'sig',
+      scannedAt: DateTime.now().toIso8601String(),
+      mlKemPublicKey: null,
+    );
+
+    final payload = _validPayload();
+    payload['mlkem'] = 'senderMlKemPub';
+    final message = _makeChatMessage(_contactRequestMessage(payload));
+
+    final (result, _, keyUpdatePeerId) = await handleIncomingMessage(
+      message: message,
+      bridge: bridge,
+      requestRepo: requestRepo,
+      contactRepo: contactRepo,
+      ownPeerId: _ownPeerId,
+    );
+
+    expect(result, equals(HandleMessageResult.contactKeyUpdated));
+    expect(keyUpdatePeerId, equals(_senderPeerId));
   });
 
   // --- v2 encrypted contact request tests ---
@@ -511,7 +538,7 @@ void main() {
       bridge.decryptResponse = {'ok': true, 'plaintext': jsonEncode(payload)};
 
       final message = _makeChatMessage(_v2Message(payload));
-      final (result, request) = await handleIncomingMessage(
+      final (result, request, _) = await handleIncomingMessage(
         message: message,
         bridge: bridge,
         requestRepo: requestRepo,
@@ -551,7 +578,7 @@ void main() {
       };
 
       final message = _makeChatMessage(_v2Message(_validPayload()));
-      final (result, _) = await handleIncomingMessage(
+      final (result, _, _) = await handleIncomingMessage(
         message: message,
         bridge: bridge,
         requestRepo: requestRepo,
@@ -569,7 +596,7 @@ void main() {
       bridge.verifyResult = false;
 
       final message = _makeChatMessage(_v2Message(payload));
-      final (result, _) = await handleIncomingMessage(
+      final (result, _, _) = await handleIncomingMessage(
         message: message,
         bridge: bridge,
         requestRepo: requestRepo,
@@ -585,7 +612,7 @@ void main() {
       bridge.decryptResponse = {'ok': true, 'plaintext': jsonEncode(_validPayload())};
 
       final message = _makeChatMessage(_v2Message(_validPayload()));
-      final (result, _) = await handleIncomingMessage(
+      final (result, _, _) = await handleIncomingMessage(
         message: message,
         bridge: bridge,
         requestRepo: requestRepo,
@@ -605,7 +632,7 @@ void main() {
         'ts': DateTime.now().toUtc().toIso8601String(),
         // no 'encrypted' key
       }));
-      final (result, _) = await handleIncomingMessage(
+      final (result, _, _) = await handleIncomingMessage(
         message: message,
         bridge: bridge,
         requestRepo: requestRepo,
@@ -628,7 +655,7 @@ void main() {
           // missing ciphertext and nonce
         },
       }));
-      final (result, _) = await handleIncomingMessage(
+      final (result, _, _) = await handleIncomingMessage(
         message: message,
         bridge: bridge,
         requestRepo: requestRepo,
@@ -648,7 +675,7 @@ void main() {
       final seenIds = <String>{dupeId};
 
       final message = _makeChatMessage(_v2Message(payload, msgId: dupeId));
-      final (result, _) = await handleIncomingMessage(
+      final (result, _, _) = await handleIncomingMessage(
         message: message,
         bridge: bridge,
         requestRepo: requestRepo,
@@ -667,7 +694,7 @@ void main() {
 
       final oldTs = DateTime.now().toUtc().subtract(const Duration(hours: 25)).toIso8601String();
       final message = _makeChatMessage(_v2Message(payload, ts: oldTs));
-      final (result, _) = await handleIncomingMessage(
+      final (result, _, _) = await handleIncomingMessage(
         message: message,
         bridge: bridge,
         requestRepo: requestRepo,
@@ -685,7 +712,7 @@ void main() {
 
       final futureTs = DateTime.now().toUtc().add(const Duration(minutes: 10)).toIso8601String();
       final message = _makeChatMessage(_v2Message(payload, ts: futureTs));
-      final (result, _) = await handleIncomingMessage(
+      final (result, _, _) = await handleIncomingMessage(
         message: message,
         bridge: bridge,
         requestRepo: requestRepo,
@@ -701,7 +728,7 @@ void main() {
       final payload = _validPayload();
       final message = _makeChatMessage(_contactRequestMessage(payload));
 
-      final (result, request) = await handleIncomingMessage(
+      final (result, request, _) = await handleIncomingMessage(
         message: message,
         bridge: bridge,
         requestRepo: requestRepo,
@@ -718,7 +745,7 @@ void main() {
       final payload = _validPayload();
       final message = _makeChatMessage(_contactRequestMessage(payload));
 
-      final (result, _) = await handleIncomingMessage(
+      final (result, _, _) = await handleIncomingMessage(
         message: message,
         bridge: bridge,
         requestRepo: requestRepo,

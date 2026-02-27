@@ -53,6 +53,12 @@ void main() {
     identityRepo = FakeIdentityRepository();
     bridge = FakeBridge();
     bridge.responses['payload.sign'] = {'ok': true, 'signature': 'test-sig'};
+    bridge.responses['contactrequest.encrypt'] = {
+      'ok': true,
+      'ephemeralPublicKey': 'ephPub',
+      'ciphertext': 'ct',
+      'nonce': 'nonce',
+    };
     identityRepo.seed(_makeIdentity());
   });
 

@@ -40,9 +40,10 @@ enum HandleMessageResult {
 /// 6. Checks no duplicate pending request
 /// 7. Stores in contact_requests table
 ///
-/// Returns a tuple of (result, request) where request is non-null
-/// when result == contactRequest.
-Future<(HandleMessageResult, ContactRequestModel?)> handleIncomingMessage({
+/// Returns a tuple of (result, request, peerId) where request is non-null
+/// when result == contactRequest, and peerId is non-null when result ==
+/// contactKeyUpdated (extracted from the decrypted payload).
+Future<(HandleMessageResult, ContactRequestModel?, String?)> handleIncomingMessage({
   required ChatMessage message,
   required Bridge bridge,
   required ContactRequestRepository requestRepo,
@@ -71,7 +72,7 @@ Future<(HandleMessageResult, ContactRequestModel?)> handleIncomingMessage({
       event: 'INCOMING_MESSAGE_NOT_JSON',
       details: {},
     );
-    return (HandleMessageResult.regularMessage, null);
+    return (HandleMessageResult.regularMessage, null, null);
   }
 
   // 2. Check if type == "contact_request"
@@ -82,7 +83,7 @@ Future<(HandleMessageResult, ContactRequestModel?)> handleIncomingMessage({
       event: 'INCOMING_MESSAGE_NOT_CONTACT_REQUEST',
       details: {'type': type},
     );
-    return (HandleMessageResult.regularMessage, null);
+    return (HandleMessageResult.regularMessage, null, null);
   }
 
   emitFlowEvent(
@@ -108,7 +109,7 @@ Future<(HandleMessageResult, ContactRequestModel?)> handleIncomingMessage({
         event: 'CONTACT_REQUEST_V2_MISSING_FIELDS',
         details: {},
       );
-      return (HandleMessageResult.invalidMessage, null);
+      return (HandleMessageResult.invalidMessage, null, null);
     }
 
     final ephemeralPublicKey = encrypted['ephemeralPublicKey'] as String?;
@@ -121,7 +122,7 @@ Future<(HandleMessageResult, ContactRequestModel?)> handleIncomingMessage({
         event: 'CONTACT_REQUEST_V2_INCOMPLETE_ENCRYPTED',
         details: {},
       );
-      return (HandleMessageResult.invalidMessage, null);
+      return (HandleMessageResult.invalidMessage, null, null);
     }
 
     // Pre-decrypt replay check: msgId dedup
@@ -131,7 +132,7 @@ Future<(HandleMessageResult, ContactRequestModel?)> handleIncomingMessage({
         event: 'CONTACT_REQUEST_V2_REPLAY_DETECTED',
         details: {'msgId': msgId},
       );
-      return (HandleMessageResult.invalidMessage, null);
+      return (HandleMessageResult.invalidMessage, null, null);
     }
 
     // Pre-decrypt timestamp check
@@ -142,7 +143,7 @@ Future<(HandleMessageResult, ContactRequestModel?)> handleIncomingMessage({
         event: 'CONTACT_REQUEST_V2_INVALID_TS',
         details: {'ts': ts},
       );
-      return (HandleMessageResult.invalidMessage, null);
+      return (HandleMessageResult.invalidMessage, null, null);
     }
 
     final now = DateTime.now().toUtc();
@@ -153,7 +154,7 @@ Future<(HandleMessageResult, ContactRequestModel?)> handleIncomingMessage({
         event: 'CONTACT_REQUEST_V2_EXPIRED',
         details: {'ageMinutes': age.inMinutes},
       );
-      return (HandleMessageResult.invalidMessage, null);
+      return (HandleMessageResult.invalidMessage, null, null);
     }
     if (age < const Duration(minutes: -5)) {
       emitFlowEvent(
@@ -161,7 +162,7 @@ Future<(HandleMessageResult, ContactRequestModel?)> handleIncomingMessage({
         event: 'CONTACT_REQUEST_V2_FUTURE_TS',
         details: {'ageMinutes': age.inMinutes},
       );
-      return (HandleMessageResult.invalidMessage, null);
+      return (HandleMessageResult.invalidMessage, null, null);
     }
 
     // Need own private key for decryption
@@ -171,7 +172,7 @@ Future<(HandleMessageResult, ContactRequestModel?)> handleIncomingMessage({
         event: 'CONTACT_REQUEST_V2_NO_PRIVATE_KEY',
         details: {},
       );
-      return (HandleMessageResult.invalidMessage, null);
+      return (HandleMessageResult.invalidMessage, null, null);
     }
 
     // Decrypt
@@ -194,7 +195,7 @@ Future<(HandleMessageResult, ContactRequestModel?)> handleIncomingMessage({
           'errorMessage': decryptResponse['errorMessage'],
         },
       );
-      return (HandleMessageResult.invalidMessage, null);
+      return (HandleMessageResult.invalidMessage, null, null);
     }
 
     // Parse decrypted payload
@@ -207,7 +208,7 @@ Future<(HandleMessageResult, ContactRequestModel?)> handleIncomingMessage({
         event: 'CONTACT_REQUEST_V2_INVALID_PAYLOAD',
         details: {},
       );
-      return (HandleMessageResult.invalidMessage, null);
+      return (HandleMessageResult.invalidMessage, null, null);
     }
   } else {
     // --- v1: Plaintext contact request ---
@@ -220,7 +221,7 @@ Future<(HandleMessageResult, ContactRequestModel?)> handleIncomingMessage({
       event: 'CONTACT_REQUEST_MISSING_PAYLOAD',
       details: {},
     );
-    return (HandleMessageResult.invalidMessage, null);
+    return (HandleMessageResult.invalidMessage, null, null);
   }
 
   // 4. Validate required fields
@@ -232,7 +233,7 @@ Future<(HandleMessageResult, ContactRequestModel?)> handleIncomingMessage({
         event: 'CONTACT_REQUEST_MISSING_FIELD',
         details: {'field': field},
       );
-      return (HandleMessageResult.invalidMessage, null);
+      return (HandleMessageResult.invalidMessage, null, null);
     }
   }
 
@@ -251,7 +252,7 @@ Future<(HandleMessageResult, ContactRequestModel?)> handleIncomingMessage({
       event: 'CONTACT_REQUEST_SENDER_MISMATCH',
       details: {'claimed': peerIdPrefix, 'actual': safePrefix(message.from)},
     );
-    return (HandleMessageResult.invalidMessage, null);
+    return (HandleMessageResult.invalidMessage, null, null);
   }
 
   // 6. Check not from self
@@ -261,7 +262,7 @@ Future<(HandleMessageResult, ContactRequestModel?)> handleIncomingMessage({
       event: 'CONTACT_REQUEST_FROM_SELF',
       details: {},
     );
-    return (HandleMessageResult.invalidMessage, null);
+    return (HandleMessageResult.invalidMessage, null, null);
   }
 
   // 7. Verify signature
@@ -288,7 +289,7 @@ Future<(HandleMessageResult, ContactRequestModel?)> handleIncomingMessage({
       event: 'CONTACT_REQUEST_INVALID_SIGNATURE',
       details: {'peerId': peerIdPrefix},
     );
-    return (HandleMessageResult.invalidMessage, null);
+    return (HandleMessageResult.invalidMessage, null, null);
   }
 
   // 8. Check if already a contact (and update ML-KEM key if missing)
@@ -308,7 +309,7 @@ Future<(HandleMessageResult, ContactRequestModel?)> handleIncomingMessage({
         event: 'CONTACT_REQUEST_KEY_UPDATED',
         details: {'peerId': peerIdPrefix},
       );
-      return (HandleMessageResult.contactKeyUpdated, null);
+      return (HandleMessageResult.contactKeyUpdated, null, peerId);
     }
 
     emitFlowEvent(
@@ -316,7 +317,7 @@ Future<(HandleMessageResult, ContactRequestModel?)> handleIncomingMessage({
       event: 'CONTACT_REQUEST_ALREADY_CONTACT',
       details: {'peerId': peerIdPrefix},
     );
-    return (HandleMessageResult.alreadyContact, null);
+    return (HandleMessageResult.alreadyContact, null, null);
   }
 
   // 9. Check if request already pending
@@ -328,7 +329,7 @@ Future<(HandleMessageResult, ContactRequestModel?)> handleIncomingMessage({
       event: 'CONTACT_REQUEST_DUPLICATE',
       details: {'peerId': peerIdPrefix},
     );
-    return (HandleMessageResult.duplicateRequest, null);
+    return (HandleMessageResult.duplicateRequest, null, null);
   }
 
   // 10. Create and store the request
@@ -343,13 +344,13 @@ Future<(HandleMessageResult, ContactRequestModel?)> handleIncomingMessage({
       details: {'peerId': peerIdPrefix, 'username': request.username},
     );
 
-    return (HandleMessageResult.contactRequest, request);
+    return (HandleMessageResult.contactRequest, request, null);
   } catch (e) {
     emitFlowEvent(
       layer: 'FL',
       event: 'CONTACT_REQUEST_STORE_ERROR',
       details: {'error': e.toString()},
     );
-    return (HandleMessageResult.invalidMessage, null);
+    return (HandleMessageResult.invalidMessage, null, null);
   }
 }

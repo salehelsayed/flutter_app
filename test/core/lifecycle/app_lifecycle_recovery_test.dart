@@ -97,6 +97,12 @@ void main() {
         'ok': true,
         'signature': 'test-sig',
       };
+      bridge.responses['contactrequest.encrypt'] = {
+        'ok': true,
+        'ephemeralPublicKey': 'ephPub',
+        'ciphertext': 'ct',
+        'nonce': 'nonce',
+      };
 
       await handleAppResumed(
         bridge: bridge,
