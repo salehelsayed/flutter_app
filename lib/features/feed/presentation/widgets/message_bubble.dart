@@ -2,6 +2,8 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/feed_colors.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/reaction_display.dart';
 import 'package:flutter_app/shared/widgets/linkable_text.dart';
 import 'package:flutter_app/shared/widgets/media/audio_player_widget.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid.dart';
@@ -25,6 +27,10 @@ class MessageBubble extends StatelessWidget {
   final bool isQuoteUnavailable;
   final List<MediaAttachment> media;
   final void Function(int index)? onMediaTap;
+  final List<MessageReaction> reactions;
+  final String? ownPeerId;
+  final VoidCallback? onLongPress;
+  final void Function(String emoji)? onReactionTap;
 
   const MessageBubble({
     super.key,
@@ -39,6 +45,10 @@ class MessageBubble extends StatelessWidget {
     this.isQuoteUnavailable = false,
     this.media = const [],
     this.onMediaTap,
+    this.reactions = const [],
+    this.ownPeerId,
+    this.onLongPress,
+    this.onReactionTap,
   });
 
   List<MediaAttachment> get _imageVideoMedia => media
@@ -49,11 +59,13 @@ class MessageBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(14),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-        child: Container(
+    return GestureDetector(
+      onLongPress: onLongPress,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(14),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+          child: Container(
           width: double.infinity,
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(14),
@@ -181,11 +193,19 @@ class MessageBubble extends StatelessWidget {
                         ),
                       ),
                     ),
+                  // Emoji reactions
+                  if (reactions.isNotEmpty && ownPeerId != null)
+                    ReactionDisplay(
+                      reactions: reactions,
+                      ownPeerId: ownPeerId!,
+                      onReactionTap: onReactionTap,
+                    ),
                 ],
               ),
             ],
           ),
         ),
+      ),
       ),
     );
   }

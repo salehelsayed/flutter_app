@@ -15,12 +15,14 @@ import 'package:flutter_app/core/database/migrations/012_transport_column.dart';
 import 'package:flutter_app/core/database/migrations/013_waveform_column.dart';
 import 'package:flutter_app/core/database/migrations/014_wire_envelope_column.dart';
 import 'package:flutter_app/core/database/migrations/015_message_status_cleanup.dart';
+import 'package:flutter_app/core/database/migrations/016_message_reactions.dart';
 import 'package:flutter_app/core/database/encrypted_db_opener.dart';
 import 'package:flutter_app/core/database/helpers/identity_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/contact_requests_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/reactions_db_helpers.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/secure_storage/flutter_secure_key_store.dart';
 import 'package:flutter_app/core/secure_storage/migrate_secrets_to_secure_storage.dart';
@@ -30,7 +32,9 @@ import 'package:flutter_app/features/contact_request/domain/repositories/contact
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository_impl.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository_impl.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository_impl.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
+import 'package:flutter_app/features/conversation/application/reaction_listener.dart';
 import 'package:flutter_app/features/settings/application/profile_update_listener.dart';
 import 'package:flutter_app/core/services/incoming_message_router.dart';
 import 'package:flutter_app/core/services/pending_message_retrier.dart';
@@ -103,7 +107,7 @@ void main() async {
   final db = await openEncryptedDatabase(
     secureKeyStore: secureKeyStore,
     dbName: 'identity.db',
-    version: 15,
+    version: 16,
     onCreate: (db, version) async {
       await runIdentityTableMigration(db);
       await runMessagesTableMigration(db);
@@ -120,6 +124,7 @@ void main() async {
       await runWaveformColumnMigration(db);
       await runWireEnvelopeMigration(db);
       await runMessageStatusCleanupMigration(db);
+      await runMessageReactionsMigration(db);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) {
@@ -161,6 +166,9 @@ void main() async {
       }
       if (oldVersion < 15) {
         await runMessageStatusCleanupMigration(db);
+      }
+      if (oldVersion < 16) {
+        await runMessageReactionsMigration(db);
       }
     },
   );
@@ -257,6 +265,21 @@ void main() async {
     dbLoadPendingMediaDownloads: () => dbLoadPendingMediaDownloads(db),
   );
 
+  // Create reaction repository
+  final reactionRepository = ReactionRepositoryImpl(
+    dbInsertReaction: (row) => dbInsertReaction(db, row),
+    dbLoadReactionsForMessage: (messageId) =>
+        dbLoadReactionsForMessage(db, messageId),
+    dbLoadReactionsForMessages: (messageIds) =>
+        dbLoadReactionsForMessages(db, messageIds),
+    dbDeleteReaction: (messageId, senderPeerId) =>
+        dbDeleteReaction(db, messageId, senderPeerId),
+    dbDeleteReactionsForMessage: (messageId) =>
+        dbDeleteReactionsForMessage(db, messageId),
+    dbDeleteReactionsForContact: (contactPeerId) =>
+        dbDeleteReactionsForContact(db, contactPeerId),
+  );
+
   // Create media file manager
   final mediaFileManager = MediaFileManager();
 
@@ -323,6 +346,18 @@ void main() async {
         WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.resumed,
   );
 
+  // Create reaction listener
+  final reactionListener = ReactionListener(
+    reactionStream: messageRouter.reactionStream,
+    reactionRepo: reactionRepository,
+    contactRepo: contactRepository,
+    bridge: bridge,
+    getOwnMlKemSecretKey: () async {
+      final identity = await repository.loadIdentity();
+      return identity?.mlKemSecretKey;
+    },
+  );
+
   // Create profile update listener
   final profileUpdateListener = ProfileUpdateListener(
     profileUpdateStream: messageRouter.profileUpdateStream,
@@ -351,6 +386,7 @@ void main() async {
   messageRouter.start();
   contactRequestListener.start();
   chatMessageListener.start();
+  reactionListener.start();
   profileUpdateListener.start();
   pendingMessageRetrier.start();
   keyExchangeRetrier.start();
@@ -376,6 +412,7 @@ void main() async {
       messageRepository: messageRepository,
       mediaAttachmentRepository: mediaAttachmentRepository,
       chatMessageListener: chatMessageListener,
+      reactionListener: reactionListener,
       profileUpdateListener: profileUpdateListener,
       messageRouter: messageRouter,
       pendingMessageRetrier: pendingMessageRetrier,
@@ -386,6 +423,7 @@ void main() async {
       secureKeyStore: secureKeyStore,
       imageProcessor: imageProcessor,
       audioRecorderService: audioRecorderService,
+      reactionRepository: reactionRepository,
       isDesktop: isDesktop,
       notificationService: notificationService,
       conversationTracker: conversationTracker,
@@ -402,6 +440,7 @@ class MyApp extends StatefulWidget {
   final MessageRepositoryImpl messageRepository;
   final MediaAttachmentRepositoryImpl mediaAttachmentRepository;
   final ChatMessageListener chatMessageListener;
+  final ReactionListener reactionListener;
   final ProfileUpdateListener profileUpdateListener;
   final IncomingMessageRouter messageRouter;
   final PendingMessageRetrier pendingMessageRetrier;
@@ -413,6 +452,7 @@ class MyApp extends StatefulWidget {
   final ImageProcessor imageProcessor;
   final AudioRecorderService audioRecorderService;
   final bool isDesktop;
+  final ReactionRepositoryImpl reactionRepository;
   final NotificationService notificationService;
   final ActiveConversationTracker conversationTracker;
 
@@ -427,6 +467,7 @@ class MyApp extends StatefulWidget {
     required this.messageRepository,
     required this.mediaAttachmentRepository,
     required this.chatMessageListener,
+    required this.reactionListener,
     required this.profileUpdateListener,
     required this.messageRouter,
     required this.pendingMessageRetrier,
@@ -437,6 +478,7 @@ class MyApp extends StatefulWidget {
     required this.secureKeyStore,
     required this.imageProcessor,
     required this.audioRecorderService,
+    required this.reactionRepository,
     required this.isDesktop,
     required this.notificationService,
     required this.conversationTracker,
@@ -483,6 +525,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
             mediaFileManager: widget.mediaFileManager,
             conversationTracker: widget.conversationTracker,
             audioRecorderService: widget.audioRecorderService,
+            reactionRepo: widget.reactionRepository,
+            reactionListener: widget.reactionListener,
           ),
         ),
       );
@@ -503,6 +547,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     widget.keyExchangeRetrier.dispose();
     widget.pendingMessageRetrier.dispose();
     widget.profileUpdateListener.dispose();
+    widget.reactionListener.dispose();
     widget.chatMessageListener.dispose();
     widget.contactRequestListener.dispose();
     widget.messageRouter.dispose();
@@ -601,6 +646,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         imageProcessor: widget.imageProcessor,
         audioRecorderService: widget.audioRecorderService,
         conversationTracker: widget.conversationTracker,
+        reactionRepository: widget.reactionRepository,
+        reactionListener: widget.reactionListener,
       ),
       debugShowCheckedModeBanner: false,
     );

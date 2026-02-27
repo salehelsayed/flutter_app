@@ -4,6 +4,8 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 
+import 'dart:convert';
+
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../core/services/fake_p2p_service.dart';
 import '../../../features/contacts/domain/repositories/fake_contact_repository.dart';
@@ -149,6 +151,57 @@ void main() {
       expect(bridge.sendCallCount, 6);
       // Each contact stores in inbox (discoverPeer returns null)
       expect(p2pService.storeInInboxCallCount, 3);
+    });
+
+    test('command sequence: payload.sign → contactrequest.encrypt per contact',
+        () async {
+      contactRepo.seed([
+        _makeContact('bob-peer-id-1234567890'),
+        _makeContact('carol-peer-id-1234567890'),
+      ]);
+
+      await retryIncompleteKeyExchanges(
+        contactRepo: contactRepo,
+        identityRepo: identityRepo,
+        p2pService: p2pService,
+        bridge: bridge,
+      );
+
+      // 2 contacts × 2 commands each = 4 commands
+      expect(bridge.commandLog.length, equals(4));
+      // First contact: sign then encrypt
+      expect(bridge.commandLog[0], equals('payload.sign'));
+      expect(bridge.commandLog[1], equals('contactrequest.encrypt'));
+      // Second contact: sign then encrypt
+      expect(bridge.commandLog[2], equals('payload.sign'));
+      expect(bridge.commandLog[3], equals('contactrequest.encrypt'));
+    });
+
+    test('stored inbox message is v2 encrypted envelope', () async {
+      contactRepo.seed([
+        _makeContact('bob-peer-id-1234567890'),
+      ]);
+
+      await retryIncompleteKeyExchanges(
+        contactRepo: contactRepo,
+        identityRepo: identityRepo,
+        p2pService: p2pService,
+        bridge: bridge,
+      );
+
+      expect(p2pService.lastStoreInInboxMessage, isNotNull);
+      final envelope =
+          jsonDecode(p2pService.lastStoreInInboxMessage!) as Map<String, dynamic>;
+      expect(envelope['type'], equals('contact_request'));
+      expect(envelope['version'], equals('2'));
+      expect(envelope['msgId'], isA<String>());
+      expect(envelope['ts'], isA<String>());
+      expect(envelope['encrypted'], isA<Map>());
+      expect(envelope['encrypted']['ephemeralPublicKey'], isA<String>());
+      expect(envelope['encrypted']['ciphertext'], isA<String>());
+      expect(envelope['encrypted']['nonce'], isA<String>());
+      // No plaintext payload at top level
+      expect(envelope.containsKey('payload'), isFalse);
     });
   });
 }

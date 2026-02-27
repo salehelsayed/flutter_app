@@ -19,6 +19,9 @@ class FakeBridge implements Bridge {
   int checkHealthCallCount = 0;
   int reinitializeCallCount = 0;
 
+  /// Ordered log of all command names sent to the bridge.
+  final List<String> commandLog = [];
+
   // Last arguments
   String? lastSentMessage;
   String? lastCommand;
@@ -58,6 +61,7 @@ class FakeBridge implements Bridge {
     final parsed = jsonDecode(message) as Map<String, dynamic>;
     final cmd = parsed['cmd'] as String?;
     lastCommand = cmd;
+    if (cmd != null) commandLog.add(cmd);
 
     // Return pre-canned response or default success
     if (cmd != null && responses.containsKey(cmd)) {

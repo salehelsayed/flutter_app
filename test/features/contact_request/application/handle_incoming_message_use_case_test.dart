@@ -757,5 +757,54 @@ void main() {
       expect(result, equals(HandleMessageResult.contactRequest));
       expect(bridge.decryptCalled, isFalse);
     });
+
+    test('v2 malformed decrypt: missing plaintext in ok:true → invalidMessage', () async {
+      bridge.decryptResponse = {'ok': true};
+      // No 'plaintext' key at all
+
+      final message = _makeChatMessage(_v2Message(_validPayload()));
+      final (result, _, _) = await handleIncomingMessage(
+        message: message,
+        bridge: bridge,
+        requestRepo: requestRepo,
+        contactRepo: contactRepo,
+        ownPeerId: _ownPeerId,
+        ownPrivateKey: 'ownPrivKeyBase64',
+      );
+
+      expect(result, equals(HandleMessageResult.invalidMessage));
+    });
+
+    test('v2 malformed decrypt: non-string plaintext → invalidMessage', () async {
+      bridge.decryptResponse = {'ok': true, 'plaintext': 12345};
+
+      final message = _makeChatMessage(_v2Message(_validPayload()));
+      final (result, _, _) = await handleIncomingMessage(
+        message: message,
+        bridge: bridge,
+        requestRepo: requestRepo,
+        contactRepo: contactRepo,
+        ownPeerId: _ownPeerId,
+        ownPrivateKey: 'ownPrivKeyBase64',
+      );
+
+      expect(result, equals(HandleMessageResult.invalidMessage));
+    });
+
+    test('v2 malformed decrypt: empty plaintext → invalidMessage', () async {
+      bridge.decryptResponse = {'ok': true, 'plaintext': ''};
+
+      final message = _makeChatMessage(_v2Message(_validPayload()));
+      final (result, _, _) = await handleIncomingMessage(
+        message: message,
+        bridge: bridge,
+        requestRepo: requestRepo,
+        contactRepo: contactRepo,
+        ownPeerId: _ownPeerId,
+        ownPrivateKey: 'ownPrivKeyBase64',
+      );
+
+      expect(result, equals(HandleMessageResult.invalidMessage));
+    });
   });
 }

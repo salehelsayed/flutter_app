@@ -11,16 +11,16 @@ flutter_app/
 │       └── nav_remember.svg                         # Remember tab icon
 │
 ├── lib/
-│   ├── main.dart                               # App entry point (StatefulWidget + WidgetsBindingObserver), SecureKeyStore + encrypted DB setup, secrets migration, Firebase init, background message handler, DI (dbCountMessagesForContact, dbMarkConversationAsRead, dbCountUnreadForContact, dbCountTotalUnread wired to MessageRepositoryImpl), app lifecycle (resume → bridge health check → P2P health check → inbox drain), foreground push listeners (Firebase onMessage/onMessageOpenedApp → inbox drain), orderly dispose chain (chatMessageListener → contactRequestListener → messageRouter → p2pService → bridge), params: messageRouter, isDesktop
+│   ├── main.dart                               # App entry point (StatefulWidget + WidgetsBindingObserver), SecureKeyStore + encrypted DB setup, secrets migration, Firebase init, background message handler, DI (dbCountMessagesForContact, dbMarkConversationAsRead, dbCountUnreadForContact, dbCountTotalUnread wired to MessageRepositoryImpl), v15 DB, KeyExchangeRetrier, AudioRecorderService, NotificationService, PendingMessageRetrier, handleAppResumed, app lifecycle (resume → bridge health check → P2P health check → inbox drain → retry key exchanges), foreground push listeners (Firebase onMessage/onMessageOpenedApp → inbox drain), orderly dispose chain (chatMessageListener → contactRequestListener → messageRouter → p2pService → bridge), params: messageRouter, isDesktop
 │   ├── smoke_test_main.dart                    # Smoke test entry point
 │   ├── smoke_test_restore.dart                 # Smoke test for identity restore
 │   ├── smoke_test_messages.dart                # Smoke test for messages DB layer (null-safety fix for nullable map access)
 │   │
 │   ├── core/
 │   │   ├── bridge/
-│   │   │   ├── bridge.dart                     # Bridge abstract interface (send, initialize, checkHealth, reinitialize, dispose, callback fields) + identity/crypto helper functions (callIdentityGenerate, callIdentityRestore, callSignPayload, callVerifyPayload, callMlKemKeygen, callEncryptMessage, callDecryptMessage)
+│   │   │   ├── bridge.dart                     # Bridge abstract interface (send, initialize, checkHealth, reinitialize, dispose, callback fields) + identity/crypto helper functions (callIdentityGenerate, callIdentityRestore, callSignPayload, callVerifyPayload, callMlKemKeygen, callEncryptMessage, callDecryptMessage, callEncryptContactRequest, callDecryptContactRequest)
 │   │   │   ├── go_bridge_client.dart           # GoBridgeClient: MethodChannel/EventChannel → Go native, command mapping, event routing
-│   │   │   └── p2p_bridge_client.dart          # P2P-specific bridge calls (callP2PNodeStart, callP2PNodeStop, callP2PNodeStatus, callP2PRendezvousRegister, callP2PRendezvousDiscover, callP2PPeerDial, callP2PPeerDisconnect, callP2PMessageSend) + inbox store/retrieve + callP2PInboxRegisterToken
+│   │   │   └── p2p_bridge_client.dart          # P2P-specific bridge calls (callP2PNodeStart, callP2PNodeStop, callP2PNodeStatus, callP2PRendezvousRegister, callP2PRendezvousDiscover, callP2PPeerDial, callP2PPeerDisconnect, callP2PMessageSend, callP2PRelayReconnect, callP2PRelayProbe) + inbox store/retrieve + callP2PInboxRegisterToken
 │   │   │
 │   │   ├── config/
 │   │   │   └── startup_config.dart             # StartupConfig feature flags (deferredStartupMode)
@@ -41,30 +41,49 @@ flutter_app/
 │   │   │   │   ├── 008_block_columns.dart           # Schema v8 (is_blocked, blocked_at columns on contacts)
 │   │   │   │   ├── 009_quoted_message_id.dart         # Schema v9 (quoted_message_id column on messages table)
 │   │   │   │   ├── 010_media_attachments.dart         # Schema v10 (media_attachments table for image/video/audio)
-│   │   │   │   └── 011_avatar_version.dart            # Schema v11 (avatar_version column on identity table)
+│   │   │   │   ├── 011_avatar_version.dart            # Schema v11 (avatar_version column on identity table)
+│   │   │   │   ├── 012_transport_column.dart            # Schema v12 (transport TEXT column on messages table)
+│   │   │   │   ├── 013_waveform_column.dart             # Schema v13 (waveform TEXT column on media_attachments table)
+│   │   │   │   ├── 014_wire_envelope_column.dart        # Schema v14 (wire_envelope TEXT column on messages table)
+│   │   │   │   └── 015_message_status_cleanup.dart      # Schema v15 (cleanup queued→delivered status)
 │   │   │   └── helpers/
 │   │   │       ├── identity_db_helpers.dart     # Identity table CRUD
 │   │   │       ├── contacts_db_helpers.dart     # Contacts table CRUD
 │   │   │       ├── contact_requests_db_helpers.dart  # Contact requests table CRUD
-│   │   │       ├── messages_db_helpers.dart     # Messages table CRUD (insert, load, update status, count for contact, mark conversation read, count unread per contact, count total unread)
+│   │   │       ├── messages_db_helpers.dart     # Messages table CRUD (insert, load, update status, count for contact, mark conversation read, count unread per contact, count total unread, dbLoadMessagesPage, dbLoadUnackedOutgoingMessages, dbLoadMessage)
 │   │   │       └── media_attachments_db_helpers.dart   # Media attachments table CRUD (insert, load for message/messages, update local path, update download status)
+│   │   │
+│   │   ├── lifecycle/
+│   │   │   └── handle_app_resumed.dart           # App resume recovery: bridge health check, P2P health check, inbox drain, retry key exchanges
+│   │   │
+│   │   ├── notifications/
+│   │   │   ├── notification_service.dart          # NotificationService abstract interface (initialize, showMessageNotification, dispose)
+│   │   │   ├── flutter_notification_service.dart  # FCM implementation (flutter_local_notifications)
+│   │   │   └── active_conversation_tracker.dart   # Tracks which conversation is in foreground
 │   │   │
 │   │   ├── media/
 │   │   │   ├── image_processor.dart              # ImageProcessor: strips EXIF, quality compression (85 compressed/100 original), avatar resizing (512x512), injectable CompressFileFn
 │   │   │   ├── media_file_manager.dart           # MediaFileManager: manages local media file paths (media/<contactPeerId>/<blobId>.<ext>), relative DB paths, absolute file I/O
-│   │   │   └── video_process_result.dart         # VideoProcessResult model (path, width, height, durationMs)
+│   │   │   ├── video_process_result.dart         # VideoProcessResult model (path, width, height, durationMs)
+│   │   │   ├── audio_recorder_service.dart        # AudioRecorderService abstract interface
+│   │   │   ├── record_audio_recorder_service.dart # Record package implementation
+│   │   │   ├── amplitude_buffer.dart              # Audio waveform amplitude buffer
+│   │   │   ├── normalize_amplitude.dart           # Waveform normalization utility
+│   │   │   └── downsample_waveform.dart           # Waveform downsampling utility
 │   │   │
 │   │   ├── local_discovery/
 │   │   │   ├── local_discovery_service.dart     # LocalPeer model + LocalChatMessage model + LocalDiscoveryService abstract interface (mDNS)
 │   │   │   ├── bonsoir_discovery_service.dart   # BonsoirDiscoveryService: mDNS impl using bonsoir package (_mknoon._tcp)
 │   │   │   ├── local_p2p_service.dart           # LocalP2PService: composed facade pairing mDNS discovery + WebSocket messaging
-│   │   │   └── local_ws_server.dart             # LocalWsServer: local WiFi WebSocket server for direct peer messaging
+│   │   │   ├── local_ws_server.dart             # LocalWsServer: local WiFi WebSocket server for direct peer messaging
+│   │   │   ├── local_media_server.dart            # HTTP endpoint for local media upload/download
+│   │   │   └── local_media_sender.dart            # HTTP PUT media to local WiFi peers
 │   │   │
 │   │   ├── services/
 │   │   │   ├── chat_message.dart               # ChatMessage canonical model (from, to, content, timestamp, isIncoming)
 │   │   │   ├── chat_message_listener.dart      # ChatMessageListener: listens to routed chat messages, broadcasts to UI
 │   │   │   ├── contact_request_listener.dart   # ContactRequestListener: listens to routed contact request messages, broadcasts to UI
-│   │   │   ├── p2p_service.dart                # P2PService abstract interface (incl. inbox, registerInboxToken, performImmediateHealthCheck, drainOfflineInbox)
+│   │   │   ├── p2p_service.dart                # P2PService abstract interface (incl. inbox, registerInboxToken, performImmediateHealthCheck, drainOfflineInbox, warmBackground, probeRelay, sendLocalMedia)
 │   │   │   ├── p2p_service_impl.dart           # P2PServiceImpl with reactive streams + offline inbox + registerInboxToken + performImmediateHealthCheck + drainOfflineInbox
 │   │   │   ├── incoming_message_router.dart    # Routes P2P messages by type to typed streams + onError/onDone stream handlers
 │   │   │   └── pending_message_retrier.dart    # PendingMessageRetrier: auto-retries failed messages on P2P reconnect (5s debounce)
@@ -86,7 +105,9 @@ flutter_app/
 │   │       ├── ring_avatar_spec.dart           # Ring avatar constants + data models
 │   │       ├── ring_avatar_generator.dart      # Deterministic avatar from peerId (DJB2 hash)
 │   │       ├── chat_console_logger.dart        # Chat message debug logging with shortened IDs
-│   │       └── startup_timing.dart             # StartupTiming: lightweight startup milestone timing utility (debug only)
+│   │       ├── startup_timing.dart             # StartupTiming: lightweight startup milestone timing utility (debug only)
+│   │       ├── text_sanitizer.dart                # Text sanitization utility
+│   │       └── url_parser.dart                    # URL parsing utility
 │   │
 │   └── features/
 │       ├── home/
@@ -147,9 +168,10 @@ flutter_app/
 │       ├── conversation/
 │       │   ├── domain/
 │       │   │   ├── models/
-│       │   │   │   ├── conversation_message.dart            # ConversationMessage (id, text, status, isIncoming, readAt, quotedMessageId, media list)
-│       │   │   │   ├── media_attachment.dart                # MediaAttachment (id, messageId, mime, size, mediaType, width, height, durationMs, localPath, downloadStatus, createdAt)
-│       │   │   │   └── message_payload.dart                 # Wire-format envelope model (chat_message type, supports quoted messages and media attachments)
+│       │   │   │   ├── conversation_message.dart            # ConversationMessage (id, text, status, isIncoming, readAt, quotedMessageId, media list, transport, wireEnvelope)
+│       │   │   │   ├── media_attachment.dart                # MediaAttachment (id, messageId, mime, size, mediaType, width, height, durationMs, localPath, downloadStatus, createdAt, waveform)
+│       │   │   │   ├── message_payload.dart                 # Wire-format envelope model (chat_message type, supports quoted messages and media attachments)
+│       │   │   │   └── audio_recording.dart               # AudioRecording model (filePath, durationMs, mime, sizeBytes)
 │       │   │   └── repositories/
 │       │   │       ├── message_repository.dart              # Abstract interface (save, load, update status, count for contact, markConversationAsRead, getUnreadCountForContact, getTotalUnreadCount)
 │       │   │       ├── message_repository_impl.dart         # DB-backed implementation (incl. getMessageCountForContact, markConversationAsRead, getUnreadCountForContact, getTotalUnreadCount)
@@ -163,6 +185,8 @@ flutter_app/
 │       │   │   ├── retry_failed_messages_use_case.dart      # Retry all failed outgoing messages (loads identity, queries failed, re-sends via sendChatMessage)
 │       │   │   ├── upload_media_use_case.dart          # Upload media to relay, store locally, create MediaAttachment records
 │       │   │   ├── download_media_use_case.dart        # Download media from relay to local device
+│       │   │   ├── send_voice_message_use_case.dart       # Send voice message use case
+│       │   │   ├── retry_unacked_messages_use_case.dart   # Retry unacked outgoing messages via inbox
 │       │   │   └── chat_message_listener.dart               # Background listener for chat_message stream + onError/onDone stream handlers
 │       │   └── presentation/
 │       │       ├── screens/
@@ -176,7 +200,10 @@ flutter_app/
 │       │       │   ├── conversation_header.dart             # Frosted-glass header with back + contact info
 │       │       │   ├── compact_origin_marker.dart           # Compact connection origin at conversation top
 │       │       │   ├── date_separator.dart                  # Date divider between letter cards
-│       │       │   └── blocked_banner.dart                  # Banner with block icon + "Unblock" button (replaces compose area when contact blocked)
+│       │       │   ├── blocked_banner.dart                  # Banner with block icon + "Unblock" button (replaces compose area when contact blocked)
+│       │       │   ├── amplitude_bars.dart            # Waveform visualization for audio
+│       │       │   ├── recording_overlay.dart         # Voice recording UI overlay
+│       │       │   └── voice_record_button.dart       # Microphone button for voice recording
 │       │       └── navigation/
 │       │           └── conversation_route_transition.dart    # Slide-up route transition (420ms)
 │       │
@@ -214,7 +241,8 @@ flutter_app/
 │       │   └── application/
 │       │       ├── background_message_handler.dart          # Firebase background message handler (@pragma('vm:entry-point')) + inbox drain deferral note
 │       │       ├── request_push_permission_use_case.dart    # Push permission request utility
-│       │       └── register_push_token_use_case.dart        # Register FCM token with relay server via P2P inbox protocol
+│       │       ├── register_push_token_use_case.dart        # Register FCM token with relay server via P2P inbox protocol
+│       │       └── show_notification_use_case.dart         # Show local notification use case
 │       │
 │       ├── settings/
 │       │   ├── domain/
@@ -268,7 +296,8 @@ flutter_app/
 │       │   │       └── qr_payload_model.dart               # QR payload Dart model
 │       │   ├── application/
 │       │   │   ├── build_qr_payload_use_case.dart          # Build signed QR payload
-│       │   │   └── parse_qr_payload_use_case.dart          # Validate scanned QR (sig, expiry, self)
+│       │   │   ├── parse_qr_payload_use_case.dart          # Validate scanned QR (sig, expiry, self)
+│       │   │   └── handle_scanned_qr_use_case.dart        # Handle scanned QR: validate, add contact, send request
 │       │   └── presentation/
 │       │       ├── screens/
 │       │       │   ├── qr_display_screen.dart              # Full-screen QR display + long-press copy (debug)
@@ -305,6 +334,9 @@ flutter_app/
 │       │   │   ├── accept_contact_request_use_case.dart    # Convert request → contact
 │       │   │   ├── decline_contact_request_use_case.dart   # Update status to declined
 │       │   │   ├── handle_incoming_message_use_case.dart   # Parse, validate sig, store request
+│       │   │   ├── accept_and_reciprocate_use_case.dart  # Accept contact request and auto-send reciprocal request
+│       │   │   ├── key_exchange_retrier.dart              # KeyExchangeRetrier: detects online transitions, triggers key exchange retry
+│       │   │   ├── retry_incomplete_key_exchanges_use_case.dart  # Retry incomplete ML-KEM key exchanges with contacts
 │       │   │   └── contact_request_listener.dart           # Background P2P message listener service + onError/onDone stream handlers
 │       │   └── presentation/
 │       │       └── widgets/
@@ -330,6 +362,7 @@ flutter_app/
 │
 │   └── shared/
 │       └── widgets/
+│           ├── linkable_text.dart                # LinkableText: renders text with tappable URL links
 │           └── media/
 │               ├── media_grid.dart                    # Grid layout for image/video attachments (1-4+ item layouts)
 │               ├── media_grid_cell.dart               # Single grid cell for media with tap handling
@@ -337,7 +370,8 @@ flutter_app/
 │               ├── media_preview_text.dart             # Text preview for media attachments
 │               ├── full_screen_image_viewer.dart       # Full-screen image viewer with pinch-to-zoom
 │               ├── video_thumbnail_overlay.dart        # Play icon overlay for video thumbnails
-│               └── audio_player_widget.dart            # Audio player widget for audio attachments
+│               ├── audio_player_widget.dart            # Audio player widget for audio attachments
+│               └── waveform_seek_bar.dart        # WaveformSeekBar: 50-bar waveform with tap-to-seek
 │
 ├── go-mknoon/                                             # Go native library (gomobile → .xcframework / .aar)
 │   ├── go.mod                                             # Go module definition + dependencies
@@ -359,7 +393,9 @@ flutter_app/
 │   │   ├── sign_test.go                                   # Sign/verify unit tests
 │   │   ├── signature_test.go                              # Signature round-trip tests
 │   │   ├── mlkem_test.go                                  # ML-KEM keygen/encrypt/decrypt tests
-│   │   └── interop_test.go                                # Cross-platform interop tests (uses testdata/interop_vectors.json)
+│   │   ├── interop_test.go                                # Cross-platform interop tests (uses testdata/interop_vectors.json)
+│   │   ├── x25519.go                                    # X25519 ECDH + HKDF + AES-256-GCM for contact request encryption
+│   │   └── x25519_test.go                               # X25519 contact request encryption tests
 │   ├── internal/
 │   │   └── envelope.go                                    # V1Envelope (plaintext) + V2Envelope (encrypted) wire format structs + ParseEnvelopeVersion
 │   ├── node/
@@ -369,6 +405,14 @@ flutter_app/
 │   │   ├── media.go                                     # Media upload/download protocol: upload, download, delete, list + profile_upload, profile_download
 │   │   ├── rendezvous.go                                  # Rendezvous register/discover via relay server protocol
 │   │   └── node_test.go                                   # Node unit tests
+│   ├── cmd/
+│   │   └── testpeer/
+│   │       ├── main.go                                  # Headless CLI test peer for E2E transport testing (stdin/stdout JSON protocol)
+│   │       ├── envelope.go                              # V1/V2 envelope builder (matches Flutter wire format)
+│   │       ├── commands.go                              # CLI command handlers (generate_identity, send_message, etc.)
+│   │       ├── listener.go                              # Event listener for incoming messages
+│   │       ├── commands_test.go                         # CLI command tests
+│   │       └── envelope_test.go                         # Envelope building tests
 │   ├── integration/
 │   │   ├── relay_test.go                                  # Integration test: relay connectivity (build tag: integration)
 │   │   └── profile_test.go                              # Profile upload/download integration tests
@@ -382,18 +426,33 @@ flutter_app/
 ├── integration_test/
 │   ├── smoke_test.dart                                    # Integration smoke test
 │   ├── conversation_bridge_test.dart                      # Full DI stack conversation test
-│   └── feed_performance_test.dart                         # Feed performance benchmarks
+│   ├── feed_performance_test.dart                         # Feed performance benchmarks
+│   ├── transport_e2e_test.dart                      # Full message stack E2E test (relay + inbox paths)
+│   ├── background_reconnect_test.dart               # Background reconnect behavior test
+│   ├── voice_message_e2e_test.dart                  # Voice message E2E test
+│   ├── wifi_transport_test.dart                     # WiFi/local peer transport test
+│   ├── wifi_relay_fallback_smoke_test.dart           # WiFi→relay fallback test
+│   ├── soak_e2e_test.dart                           # Extended soak test (stress testing)
+│   └── scripts/
+│       ├── run_transport_e2e.dart                   # Transport E2E orchestrator
+│       ├── run_soak_e2e.dart                        # Soak test orchestrator
+│       └── run_wifi_relay_fallback_smoke.dart        # WiFi fallback test orchestrator
 │
 ├── test/
 │   ├── core/
 │   │   ├── bridge/
 │   │   │   ├── go_bridge_client_test.dart                 # GoBridgeClient unit tests
 │   │   │   └── bridge_helpers_test.dart                   # Bridge helper function tests
+│   │   ├── lifecycle/
+│   │   │   └── app_lifecycle_recovery_test.dart          # handleAppResumed bridge health, key exchange retry tests
 │   │   ├── database/
+│   │   │   ├── encrypted_db_opener_test.dart             # Database creation, encryption tests
 │   │   │   ├── helpers/
 │   │   │   │   └── media_attachments_db_helpers_test.dart  # Media attachment DB tests
 │   │   │   └── migrations/
-│   │   │       └── 010_media_attachments_test.dart         # Media attachments migration test
+│   │   │       ├── 001_identity_table_test.dart          # Identity table migration tests
+│   │   │       ├── 010_media_attachments_test.dart         # Media attachments migration test
+│   │   │       └── 011_avatar_version_test.dart          # Avatar version migration tests
 │   │   ├── local_discovery/
 │   │   │   ├── fake_local_discovery_service.dart           # In-memory test fake for LocalDiscoveryService
 │   │   │   ├── fake_local_p2p_service.dart                # In-memory test fake for LocalP2PService
@@ -406,7 +465,8 @@ flutter_app/
 │   │   ├── services/
 │   │   │   ├── incoming_message_router_test.dart           # IncomingMessageRouter unit tests
 │   │   │   ├── incoming_message_router_profile_test.dart   # Profile message routing tests
-│   │   │   └── p2p_service_addresses_updated_test.dart     # P2P address update tests
+│   │   │   ├── p2p_service_addresses_updated_test.dart     # P2P address update tests
+│   │   │   └── pending_message_retrier_test.dart         # Pending message retry tests
 │   │   ├── theme/
 │   │   │   └── feed_colors_test.dart                       # Feed color palette tests
 │   │   └── secure_storage/
@@ -420,7 +480,8 @@ flutter_app/
 │       ├── qr_code/
 │       │   └── application/
 │       │       ├── build_qr_payload_use_case_test.dart     # QR payload build tests
-│       │       └── parse_qr_payload_use_case_test.dart     # QR payload parse tests
+│       │       ├── parse_qr_payload_use_case_test.dart     # QR payload parse tests
+│       │       └── handle_scanned_qr_use_case_test.dart       # Handle scanned QR tests
 │       ├── contacts/
 │       │   ├── domain/
 │       │   │   ├── models/
@@ -434,9 +495,14 @@ flutter_app/
 │       │       ├── unblock_contact_use_case_test.dart      # Unblock contact tests
 │       │       └── delete_contact_use_case_test.dart       # Delete contact tests
 │       ├── contact_request/
-│       │   └── application/
-│       │       ├── send_contact_request_use_case_test.dart # Send contact request tests
-│       │       └── handle_incoming_message_use_case_test.dart # Handle incoming message tests
+│       │   ├── application/
+│       │   │   ├── send_contact_request_use_case_test.dart # Send contact request tests
+│       │   │   ├── handle_incoming_message_use_case_test.dart # Handle incoming message tests
+│       │   │   ├── key_exchange_retrier_test.dart              # Key exchange retrier tests
+│       │   │   ├── retry_incomplete_key_exchanges_use_case_test.dart  # Key exchange use case tests
+│       │   │   └── key_exchange_retry_smoke_test.dart         # Key exchange smoke tests
+│       │   └── integration/
+│       │       └── key_exchange_retry_flow_test.dart          # Full key exchange retry flow tests
 │       ├── feed/
 │       │   ├── application/
 │       │   │   └── load_feed_use_case_test.dart            # Feed loading tests
@@ -510,7 +576,8 @@ flutter_app/
 │           ├── application/
 │           │   ├── image_quality_preference_use_cases_test.dart # Image quality use case tests
 │           │   ├── video_quality_preference_use_cases_test.dart # Video quality use case tests
-│           │   └── profile_update_listener_test.dart           # Profile update listener tests
+│           │   ├── profile_update_listener_test.dart           # Profile update listener tests
+│           │   └── download_profile_picture_use_case_test.dart # Download profile picture tests
 │           └── presentation/
 │               ├── widgets/
 │               │   ├── settings_peer_id_card_test.dart         # Peer ID card tests
@@ -563,7 +630,7 @@ flutter_app/
 | Secrets migration | `migrate_secrets_to_secure_storage.dart` | One-time DB→secure storage migration with sentinel |
 | DB migration | `001_identity_table.dart` | Creates identity, contacts, contact_requests tables |
 | DB helpers | `identity_db_helpers.dart` | Identity table CRUD |
-| Bridge | `bridge.dart`, `go_bridge_client.dart` | Flutter ↔ Go native communication (identity, signing, ML-KEM encryption/decryption) via MethodChannel/EventChannel + checkHealth(), reinitialize() + helper functions (callIdentityGenerate, callIdentityRestore, callSignPayload, callVerifyPayload, callMlKemKeygen, callEncryptMessage, callDecryptMessage) |
+| Bridge | `bridge.dart`, `go_bridge_client.dart` | Flutter ↔ Go native communication (identity, signing, ML-KEM encryption/decryption) via MethodChannel/EventChannel + checkHealth(), reinitialize() + helper functions (callIdentityGenerate, callIdentityRestore, callSignPayload, callVerifyPayload, callMlKemKeygen, callEncryptMessage, callDecryptMessage, callEncryptContactRequest, callDecryptContactRequest) |
 | Loading overlay | `identity_loading_card.dart` | Branded loading card for identity generation/restore with stage-based text transitions |
 
 ### QR Code (M2)
@@ -573,6 +640,7 @@ flutter_app/
 | QR payload model | `qr_payload_model.dart` | Dart model for QR JSON |
 | Build QR | `build_qr_payload_use_case.dart` | Create signed QR payload |
 | Parse QR | `parse_qr_payload_use_case.dart` | Validate scanned QR (sig, expiry, self-scan) |
+| Handle scanned QR | `handle_scanned_qr_use_case.dart` | Handle scanned QR: validate, add contact, send request |
 | QR display | `qr_display_screen.dart`, `qr_display_wired.dart` | Show QR code UI + long-press copy (debug) |
 | QR scanner | `qr_scanner_screen.dart`, `qr_scanner_wired.dart` | Camera scan + process |
 | Scan overlay | `scan_overlay.dart` | Canvas overlay with corner markers |
@@ -582,8 +650,8 @@ flutter_app/
 
 | Component | File(s) | Description |
 |-----------|---------|-------------|
-| P2P service | `p2p_service.dart`, `p2p_service_impl.dart` | Reactive P2P interface + implementation with offline inbox + registerInboxToken + performImmediateHealthCheck + drainOfflineInbox |
-| P2P bridge | `p2p_bridge_client.dart` | Low-level Go bridge calls for P2P + inbox store/retrieve + callP2PInboxRegisterToken |
+| P2P service | `p2p_service.dart`, `p2p_service_impl.dart` | Reactive P2P interface + implementation with offline inbox + registerInboxToken + performImmediateHealthCheck + drainOfflineInbox + warmBackground + probeRelay + sendLocalMedia |
+| P2P bridge | `p2p_bridge_client.dart` | Low-level Go bridge calls for P2P + inbox store/retrieve + callP2PInboxRegisterToken + callP2PRelayReconnect + callP2PRelayProbe |
 | Message router | `incoming_message_router.dart` | Routes P2P messages by envelope type to typed streams + onError/onDone stream handlers |
 | Chat message (core) | `core/services/chat_message.dart` | ChatMessage canonical model (from, to, content, timestamp, isIncoming) with factory constructors |
 | Chat message listener | `core/services/chat_message_listener.dart` | Listens to routed chat messages, broadcasts to UI layer |
@@ -633,6 +701,9 @@ flutter_app/
 | Accept request | `accept_contact_request_use_case.dart` | Convert request → contact |
 | Decline request | `decline_contact_request_use_case.dart` | Update status to declined |
 | Handle incoming | `handle_incoming_message_use_case.dart` | Parse P2P message, validate, store |
+| Accept and reciprocate | `accept_and_reciprocate_use_case.dart` | Accept contact request and auto-send reciprocal request |
+| Key exchange retrier | `key_exchange_retrier.dart` | KeyExchangeRetrier: detects online transitions, triggers key exchange retry |
+| Retry key exchanges | `retry_incomplete_key_exchanges_use_case.dart` | Retry incomplete ML-KEM key exchanges with contacts |
 | Listener service | `contact_request_listener.dart` | Background P2P message monitor + onError/onDone stream handlers |
 | Request dialog | `contact_request_dialog.dart` | Accept/Decline modal UI |
 | Requests badge | `pending_requests_badge.dart` | Count badge widget |
@@ -642,8 +713,8 @@ flutter_app/
 
 | Component | File(s) | Description |
 |-----------|---------|-------------|
-| Message model | `conversation_message.dart` | ConversationMessage (id, text, status, isIncoming, readAt, quotedMessageId, media list) |
-| Media attachment model | `media_attachment.dart` | MediaAttachment (id, messageId, mime, size, mediaType, width, height, durationMs, localPath, downloadStatus, createdAt) |
+| Message model | `conversation_message.dart` | ConversationMessage (id, text, status, isIncoming, readAt, quotedMessageId, media list, transport, wireEnvelope) |
+| Media attachment model | `media_attachment.dart` | MediaAttachment (id, messageId, mime, size, mediaType, width, height, durationMs, localPath, downloadStatus, createdAt, waveform) |
 | Wire payload | `message_payload.dart` | MessagePayload envelope: v1 plaintext or v2 encrypted (ML-KEM-768 + AES-256-GCM), supports quoted messages and media attachments |
 | Message repository | `message_repository.dart`, `message_repository_impl.dart` | Save, load, update status, count for contact, markConversationAsRead, getUnreadCountForContact, getTotalUnreadCount |
 | Media attachment repository | `media_attachment_repository.dart`, `media_attachment_repository_impl.dart` | Save, load for message/messages, update local path, update download status, delete for message/contact, get pending downloads |
@@ -654,6 +725,9 @@ flutter_app/
 | Retry failed | `retry_failed_messages_use_case.dart` | Retry all failed outgoing messages (loads identity, queries failed, re-sends with original messageId) |
 | Upload media | `upload_media_use_case.dart` | Upload media to relay, store locally, create MediaAttachment records |
 | Download media | `download_media_use_case.dart` | Download media from relay to local device |
+| Send voice message | `send_voice_message_use_case.dart` | Send voice message use case |
+| Retry unacked messages | `retry_unacked_messages_use_case.dart` | Retry unacked outgoing messages via inbox |
+| Audio recording model | `audio_recording.dart` | AudioRecording model (filePath, durationMs, mime, sizeBytes) |
 | Chat listener | `chat_message_listener.dart` | Background listener on chatMessageStream, resolves ML-KEM secret key for decryption, broadcasts to UI + onError/onDone stream handlers |
 | Conversation screen | `conversation_screen.dart` | Pure UI: header, letter cards, empty state, compose area |
 | Conversation logic | `conversation_wired.dart` | Business logic: load messages, optimistic send, listen for incoming, marks conversation as read on load and on incoming messages + onError/onDone stream handlers |
@@ -665,6 +739,9 @@ flutter_app/
 | Origin marker | `compact_origin_marker.dart` | Compact connection origin at conversation top |
 | Date separator | `date_separator.dart` | Date divider between letter cards on different days |
 | Blocked banner | `blocked_banner.dart` | Banner with block icon + "Unblock" button (replaces compose area when contact blocked) |
+| Amplitude bars | `amplitude_bars.dart` | Waveform visualization for audio |
+| Recording overlay | `recording_overlay.dart` | Voice recording UI overlay |
+| Voice record button | `voice_record_button.dart` | Microphone button for voice recording |
 | Route transition | `conversation_route_transition.dart` | Slide-up transition (420ms easeOutCubic) |
 | DB migration | `002_messages_table.dart` | Creates messages table with contact + timestamp indexes |
 | DB migration | `003_mlkem_keys.dart` | Adds ml_kem_public_key, ml_kem_secret_key columns to identity; ml_kem_public_key to contacts and contact_requests |
@@ -676,7 +753,11 @@ flutter_app/
 | DB migration | `009_quoted_message_id.dart` | Schema v9: adds quoted_message_id TEXT to messages table |
 | DB migration | `010_media_attachments.dart` | Schema v10: creates media_attachments table |
 | DB migration | `011_avatar_version.dart` | Schema v11: adds avatar_version INTEGER to identity table |
-| DB helpers | `messages_db_helpers.dart` | Messages table CRUD (insert, load, update status, count for contact, mark conversation read, count unread per contact, count total unread) |
+| DB migration | `012_transport_column.dart` | Schema v12: adds transport TEXT to messages table |
+| DB migration | `013_waveform_column.dart` | Schema v13: adds waveform TEXT to media_attachments table |
+| DB migration | `014_wire_envelope_column.dart` | Schema v14: adds wire_envelope TEXT to messages table |
+| DB migration | `015_message_status_cleanup.dart` | Schema v15: cleanup queued→delivered status |
+| DB helpers | `messages_db_helpers.dart` | Messages table CRUD (insert, load, update status, count for contact, mark conversation read, count unread per contact, count total unread, dbLoadMessagesPage, dbLoadUnackedOutgoingMessages, dbLoadMessage) |
 | DB helpers | `media_attachments_db_helpers.dart` | Media attachments table CRUD (insert, load for message/messages, update local path, update download status) |
 
 ### Orbit (UI-5)
@@ -759,6 +840,7 @@ flutter_app/
 | Background handler | `background_message_handler.dart` | Firebase background message handler (`@pragma('vm:entry-point')`) + inbox drain deferral note |
 | Push permission | `request_push_permission_use_case.dart` | Request notification permission from user |
 | Token registration | `register_push_token_use_case.dart` | Register FCM token with relay server via P2P inbox protocol |
+| Show notification | `show_notification_use_case.dart` | Show local notification use case |
 
 ### Settings
 
@@ -793,6 +875,17 @@ flutter_app/
 | Image processor | `image_processor.dart` | ImageProcessor: strips EXIF, quality compression, avatar resizing, injectable CompressFileFn |
 | Media file manager | `media_file_manager.dart` | MediaFileManager: manages local media file paths, relative DB paths, absolute file I/O |
 | Video process result | `video_process_result.dart` | VideoProcessResult model (path, width, height, durationMs) |
+| App resume handler | `handle_app_resumed.dart` | App resume recovery: bridge health check, P2P health check, inbox drain, retry key exchanges |
+| Notification service | `notification_service.dart`, `flutter_notification_service.dart` | NotificationService abstract interface + FCM implementation (flutter_local_notifications) |
+| Conversation tracker | `active_conversation_tracker.dart` | Tracks which conversation is in foreground |
+| Audio recorder service | `audio_recorder_service.dart`, `record_audio_recorder_service.dart` | AudioRecorderService abstract interface + Record package implementation |
+| Amplitude buffer | `amplitude_buffer.dart` | Audio waveform amplitude buffer |
+| Normalize amplitude | `normalize_amplitude.dart` | Waveform normalization utility |
+| Downsample waveform | `downsample_waveform.dart` | Waveform downsampling utility |
+| Local media server | `local_media_server.dart` | HTTP endpoint for local media upload/download |
+| Local media sender | `local_media_sender.dart` | HTTP PUT media to local WiFi peers |
+| Text sanitizer | `text_sanitizer.dart` | Text sanitization utility |
+| URL parser | `url_parser.dart` | URL parsing utility |
 
 ### Shared Widgets
 
@@ -805,6 +898,8 @@ flutter_app/
 | Full screen image viewer | `full_screen_image_viewer.dart` | Full-screen image viewer with pinch-to-zoom |
 | Video thumbnail overlay | `video_thumbnail_overlay.dart` | Play icon overlay for video thumbnails |
 | Audio player widget | `audio_player_widget.dart` | Audio player widget for audio attachments |
+| Waveform seek bar | `waveform_seek_bar.dart` | WaveformSeekBar: 50-bar waveform with tap-to-seek |
+| Linkable text | `linkable_text.dart` | LinkableText: renders text with tappable URL links |
 
 ### Relay Server (Infrastructure)
 
@@ -821,10 +916,10 @@ flutter_app/
 | `identity` | `id` (always 1) | v1 (`001`), v3 (`003`: ml_kem_public_key, ml_kem_secret_key), v4 (`004`: nullable secret columns), v5 (`005`: CHECK constraints + avatar_blob), v11 (`011`: avatar_version) | Single-row identity storage, secrets in secure storage (DB columns always NULL via CHECK), avatar as BLOB, avatar_version for profile picture versioning |
 | `contacts` | `peer_id` | v1 (`001`), v3 (`003`: ml_kem_public_key), v7 (`007`: is_archived, archived_at), v8 (`008`: is_blocked, blocked_at) | Contacts added via QR scanning, with archive and block support, avatarPath and avatarVersion for profile pictures |
 | `contact_requests` | `peer_id` | v1 (`001`), v3 (`003`: ml_kem_public_key) | Incoming P2P contact requests |
-| `messages` | `id` (UUID) | v2 (`002`), v6 (`006`: read_at TEXT), v9 (`009`: quoted_message_id TEXT) | Conversation messages (indexes on contact_peer_id, timestamp), read_at column for unread tracking, quoted_message_id for quote/reply |
-| `media_attachments` | `id` (UUID) | v10 (`010`) | Media attachments for messages (mime, size, mediaType, width, height, durationMs, localPath, downloadStatus) |
+| `messages` | `id` (UUID) | v2 (`002`), v6 (`006`: read_at TEXT), v9 (`009`: quoted_message_id TEXT), v12 (`012`: transport TEXT), v14 (`014`: wire_envelope TEXT) | Conversation messages (indexes on contact_peer_id, timestamp), read_at column for unread tracking, quoted_message_id for quote/reply, transport TEXT for transport type, wire_envelope TEXT for raw wire envelope |
+| `media_attachments` | `id` (UUID) | v10 (`010`), v13 (`013`: waveform TEXT) | Media attachments for messages (mime, size, mediaType, width, height, durationMs, localPath, downloadStatus, waveform TEXT for audio waveform data) |
 
-Database version: **11** (set in `main.dart` `openDatabase` call). Migrations: v4 (`004_nullify_secret_columns.dart`: makes secret columns nullable), v5 (`005_secret_null_checks.dart`: CHECK constraints ensuring secret columns stay NULL + avatar_blob BLOB column), v6 (`006_read_at_column.dart`: adds read_at TEXT column to messages table), v7 (`007_archive_columns.dart`: adds is_archived INTEGER + archived_at TEXT to contacts), v8 (`008_block_columns.dart`: adds is_blocked INTEGER + blocked_at TEXT to contacts), v9 (`009_quoted_message_id.dart`: adds quoted_message_id TEXT to messages), v10 (`010_media_attachments.dart`: creates media_attachments table), v11 (`011_avatar_version.dart`: adds avatar_version INTEGER to identity).
+Database version: **15** (set in `main.dart` `openDatabase` call). Migrations: v4 (`004_nullify_secret_columns.dart`: makes secret columns nullable), v5 (`005_secret_null_checks.dart`: CHECK constraints ensuring secret columns stay NULL + avatar_blob BLOB column), v6 (`006_read_at_column.dart`: adds read_at TEXT column to messages table), v7 (`007_archive_columns.dart`: adds is_archived INTEGER + archived_at TEXT to contacts), v8 (`008_block_columns.dart`: adds is_blocked INTEGER + blocked_at TEXT to contacts), v9 (`009_quoted_message_id.dart`: adds quoted_message_id TEXT to messages), v10 (`010_media_attachments.dart`: creates media_attachments table), v11 (`011_avatar_version.dart`: adds avatar_version INTEGER to identity), v12 (`012_transport_column.dart`: adds transport TEXT to messages), v13 (`013_waveform_column.dart`: adds waveform TEXT to media_attachments), v14 (`014_wire_envelope_column.dart`: adds wire_envelope TEXT to messages), v15 (`015_message_status_cleanup.dart`: cleanup queued→delivered status).
 
 ---
 

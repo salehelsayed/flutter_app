@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/feed_colors.dart';
+import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
 import 'package:flutter_app/features/feed/domain/models/session_reply.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/inline_reply_input.dart';
@@ -27,6 +28,10 @@ class CollapsedModeCardBody extends StatelessWidget {
   final ValueChanged<String>? onDraftChanged;
   final ValueChanged<bool>? onInputFocusChanged;
   final VoidCallback? onAttach;
+  final Map<String, List<MessageReaction>> reactions;
+  final String? ownPeerId;
+  final void Function(String messageId)? onMessageLongPress;
+  final void Function(String messageId, String emoji)? onReactionTap;
 
   const CollapsedModeCardBody({
     super.key,
@@ -44,6 +49,10 @@ class CollapsedModeCardBody extends StatelessWidget {
     this.onDraftChanged,
     this.onInputFocusChanged,
     this.onAttach,
+    this.reactions = const {},
+    this.ownPeerId,
+    this.onMessageLongPress,
+    this.onReactionTap,
   });
 
   bool get _isReplied =>
@@ -227,6 +236,10 @@ class CollapsedModeCardBody extends StatelessWidget {
       onViewEarlier: onViewFullConversation,
       onCollapse: onCollapse,
       onQuoteReply: onQuoteReply,
+      reactions: reactions,
+      ownPeerId: ownPeerId,
+      onMessageLongPress: onMessageLongPress,
+      onReactionTap: onReactionTap,
     );
   }
 

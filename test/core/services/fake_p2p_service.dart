@@ -46,6 +46,8 @@ class FakeP2PService implements P2PService {
   String? lastSendMessageContent;
   String? lastDiscoverPeerId;
   String? lastDialPeerId;
+  String? lastStoreInInboxPeerId;
+  String? lastStoreInInboxMessage;
 
   FakeP2PService({
     NodeState? initialState,
@@ -140,6 +142,8 @@ class FakeP2PService implements P2PService {
   @override
   Future<bool> storeInInbox(String toPeerId, String message) async {
     storeInInboxCallCount++;
+    lastStoreInInboxPeerId = toPeerId;
+    lastStoreInInboxMessage = message;
     return storeInInboxResult;
   }
 

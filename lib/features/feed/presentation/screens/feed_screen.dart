@@ -2,6 +2,9 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
+import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/full_emoji_picker.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/reaction_bar.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
 import 'package:flutter_app/features/feed/domain/models/session_reply.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/connection_card.dart';
@@ -42,6 +45,8 @@ class FeedScreen extends StatelessWidget {
   final void Function(String contactPeerId)? onAttach;
   final VoidCallback? onAvatarTap;
   final SessionReplyTracker? sessionReplies;
+  final Map<String, List<MessageReaction>> reactions;
+  final void Function(String messageId, String emoji)? onReactionSelected;
 
   const FeedScreen({
     super.key,
@@ -71,6 +76,8 @@ class FeedScreen extends StatelessWidget {
     this.onAttach,
     this.onAvatarTap,
     this.sessionReplies,
+    this.reactions = const {},
+    this.onReactionSelected,
   });
 
   @override
@@ -132,7 +139,7 @@ class FeedScreen extends StatelessWidget {
                                 child: Column(
                                   crossAxisAlignment:
                                       CrossAxisAlignment.stretch,
-                                  children: _buildFeedCards(),
+                                  children: _buildFeedCards(context),
                                 ),
                               ),
                             ),
@@ -164,7 +171,7 @@ class FeedScreen extends StatelessWidget {
     );
   }
 
-  List<Widget> _buildFeedCards() {
+  List<Widget> _buildFeedCards(BuildContext context) {
     if (feedItems.isEmpty) {
       if (!feedLoaded) return [];
       return [
@@ -199,7 +206,7 @@ class FeedScreen extends StatelessWidget {
     aboveItems.sort((a, b) => b.timestamp.compareTo(a.timestamp));
 
     for (var i = 0; i < aboveItems.length; i++) {
-      _addCardWidget(widgets, aboveItems[i]);
+      _addCardWidget(context, widgets, aboveItems[i]);
       if (i != aboveItems.length - 1 || belowDivider.isNotEmpty) {
         widgets.add(const SizedBox(height: 16));
       }
@@ -213,7 +220,7 @@ class FeedScreen extends StatelessWidget {
     // Build below-divider cards (connections + read/replied threads)
     belowDivider.sort((a, b) => b.timestamp.compareTo(a.timestamp));
     for (var i = 0; i < belowDivider.length; i++) {
-      _addCardWidget(widgets, belowDivider[i]);
+      _addCardWidget(context, widgets, belowDivider[i]);
       if (i != belowDivider.length - 1) {
         widgets.add(const SizedBox(height: 16));
       }
@@ -223,7 +230,40 @@ class FeedScreen extends StatelessWidget {
     return widgets;
   }
 
-  void _addCardWidget(List<Widget> widgets, FeedItem item) {
+  void _showReactionBar(BuildContext context, String messageId) {
+    final allReactions = reactions[messageId] ?? [];
+    final ownReaction = userPeerId != null
+        ? allReactions
+            .where((r) => r.senderPeerId == userPeerId)
+            .firstOrNull
+        : null;
+
+    showDialog(
+      context: context,
+      barrierColor: Colors.transparent,
+      builder: (dialogContext) => ReactionBar(
+        currentEmoji: ownReaction?.emoji,
+        onReactionSelected: (emoji) {
+          Navigator.of(dialogContext).pop();
+          onReactionSelected?.call(messageId, emoji);
+        },
+        onPlusTap: () {
+          Navigator.of(dialogContext).pop();
+          _showFullPicker(context, messageId);
+        },
+        onDismiss: () => Navigator.of(dialogContext).pop(),
+      ),
+    );
+  }
+
+  void _showFullPicker(BuildContext context, String messageId) async {
+    final emoji = await showFullEmojiPicker(context);
+    if (emoji != null) {
+      onReactionSelected?.call(messageId, emoji);
+    }
+  }
+
+  void _addCardWidget(BuildContext context, List<Widget> widgets, FeedItem item) {
     if (item is ConnectionFeedItem) {
       widgets.add(
         ConnectionCard(
@@ -265,6 +305,14 @@ class FeedScreen extends StatelessWidget {
               : null,
           onAttach: onAttach != null
               ? () => onAttach!(item.contactPeerId)
+              : null,
+          reactions: reactions,
+          ownPeerId: userPeerId,
+          onMessageLongPress: onReactionSelected != null
+              ? (msgId) => _showReactionBar(context, msgId)
+              : null,
+          onReactionTap: onReactionSelected != null
+              ? (msgId, emoji) => onReactionSelected!(msgId, emoji)
               : null,
         ),
       );

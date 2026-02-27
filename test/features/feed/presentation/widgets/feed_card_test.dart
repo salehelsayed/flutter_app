@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/reaction_display.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
 import 'package:flutter_app/features/feed/domain/models/session_reply.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/collapsed_mode_card_body.dart';
@@ -268,6 +270,152 @@ void main() {
       )));
       expect(find.text('Blocked'), findsOneWidget);
       expect(find.byIcon(Icons.block), findsOneWidget);
+    });
+  });
+
+  group('FeedCard reactions', () {
+    testWidgets('open-mode card renders ReactionDisplay when reactions exist',
+        (tester) async {
+      final thread = ThreadFeedItem(
+        id: 'thread_1',
+        timestamp: DateTime(2026, 2, 9),
+        contactPeerId: 'peer1',
+        contactUsername: 'Alice',
+        messages: [
+          _msg('m1', isUnread: true),
+        ],
+        unreadCount: 1,
+        conversationState: ConversationState.unread,
+      );
+
+      final reactions = {
+        'm1': [
+          MessageReaction(
+            id: 'r1',
+            messageId: 'm1',
+            emoji: '👍',
+            senderPeerId: 'peer1',
+            timestamp: '2026-02-27T10:00:00Z',
+            createdAt: '2026-02-27T10:00:00Z',
+          ),
+        ],
+      };
+
+      await tester.pumpWidget(wrap(FeedCard(
+        thread: thread,
+        reactions: reactions,
+        ownPeerId: 'my-peer',
+      )));
+
+      expect(find.byType(ReactionDisplay), findsOneWidget);
+      expect(find.text('👍'), findsOneWidget);
+    });
+
+    testWidgets('long-press on message in open-mode fires onMessageLongPress',
+        (tester) async {
+      String? longPressedMsgId;
+      final thread = ThreadFeedItem(
+        id: 'thread_1',
+        timestamp: DateTime(2026, 2, 9),
+        contactPeerId: 'peer1',
+        contactUsername: 'Alice',
+        messages: [
+          _msg('m1', isUnread: true),
+        ],
+        unreadCount: 1,
+        conversationState: ConversationState.unread,
+      );
+
+      await tester.pumpWidget(wrap(FeedCard(
+        thread: thread,
+        ownPeerId: 'my-peer',
+        onMessageLongPress: (msgId) => longPressedMsgId = msgId,
+      )));
+
+      await tester.longPress(find.textContaining('Message m1'));
+      expect(longPressedMsgId, 'm1');
+    });
+
+    testWidgets('onReactionTap fires with message ID and emoji',
+        (tester) async {
+      String? tappedMsgId;
+      String? tappedEmoji;
+      final thread = ThreadFeedItem(
+        id: 'thread_1',
+        timestamp: DateTime(2026, 2, 9),
+        contactPeerId: 'peer1',
+        contactUsername: 'Alice',
+        messages: [
+          _msg('m1', isUnread: true),
+        ],
+        unreadCount: 1,
+        conversationState: ConversationState.unread,
+      );
+
+      final reactions = {
+        'm1': [
+          MessageReaction(
+            id: 'r1',
+            messageId: 'm1',
+            emoji: '❤️',
+            senderPeerId: 'peer1',
+            timestamp: '2026-02-27T10:00:00Z',
+            createdAt: '2026-02-27T10:00:00Z',
+          ),
+        ],
+      };
+
+      await tester.pumpWidget(wrap(FeedCard(
+        thread: thread,
+        reactions: reactions,
+        ownPeerId: 'my-peer',
+        onReactionTap: (msgId, emoji) {
+          tappedMsgId = msgId;
+          tappedEmoji = emoji;
+        },
+      )));
+
+      await tester.tap(find.text('❤️'));
+      expect(tappedMsgId, 'm1');
+      expect(tappedEmoji, '❤️');
+    });
+
+    testWidgets('expanded collapsed card renders ReactionDisplay when reactions exist',
+        (tester) async {
+      final thread = ThreadFeedItem(
+        id: 'thread_1',
+        timestamp: DateTime(2026, 2, 9),
+        contactPeerId: 'peer1',
+        contactUsername: 'Alice',
+        messages: [
+          _msg('m1'),
+          _msg('m2'),
+        ],
+        conversationState: ConversationState.read,
+      );
+
+      final reactions = {
+        'm1': [
+          MessageReaction(
+            id: 'r1',
+            messageId: 'm1',
+            emoji: '😂',
+            senderPeerId: 'peer1',
+            timestamp: '2026-02-27T10:00:00Z',
+            createdAt: '2026-02-27T10:00:00Z',
+          ),
+        ],
+      };
+
+      await tester.pumpWidget(wrap(FeedCard(
+        thread: thread,
+        isExpanded: true,
+        reactions: reactions,
+        ownPeerId: 'my-peer',
+      )));
+
+      expect(find.byType(ReactionDisplay), findsOneWidget);
+      expect(find.text('😂'), findsOneWidget);
     });
   });
 }

@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_app/core/lifecycle/handle_app_resumed.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
@@ -204,6 +206,54 @@ void main() {
           await handleAppResumed(bridge: bridge, p2pService: p2pService);
 
       expect(result, isFalse);
+    });
+
+    test('retry key exchange: command sequence is sign → encrypt', () async {
+      final runningP2P = FakeP2PService(
+        initialState: const NodeState(
+          isStarted: true,
+          peerId: 'my-peer-id-1234567890',
+        ),
+      );
+      runningP2P.storeInInboxResult = true;
+      final contactRepo = FakeContactRepository()
+        ..seed([_makeContact('target-peer-1234567890')]);
+      final identityRepo = FakeIdentityRepository()..seed(_makeIdentity());
+
+      bridge.responses['payload.sign'] = {
+        'ok': true,
+        'signature': 'test-sig',
+      };
+      bridge.responses['contactrequest.encrypt'] = {
+        'ok': true,
+        'ephemeralPublicKey': 'ephPub',
+        'ciphertext': 'ct',
+        'nonce': 'nonce',
+      };
+
+      await handleAppResumed(
+        bridge: bridge,
+        p2pService: runningP2P,
+        contactRepo: contactRepo,
+        identityRepo: identityRepo,
+      );
+
+      // Verify command order: payload.sign then contactrequest.encrypt
+      expect(bridge.commandLog, contains('payload.sign'));
+      expect(bridge.commandLog, contains('contactrequest.encrypt'));
+      final signIdx = bridge.commandLog.indexOf('payload.sign');
+      final encryptIdx = bridge.commandLog.indexOf('contactrequest.encrypt');
+      expect(encryptIdx, greaterThan(signIdx));
+
+      // Verify stored message is v2 envelope
+      final storedMsg = runningP2P.lastStoreInInboxMessage;
+      if (storedMsg != null) {
+        final envelope = jsonDecode(storedMsg) as Map<String, dynamic>;
+        expect(envelope['version'], equals('2'));
+        expect(envelope['encrypted'], isA<Map>());
+      }
+
+      runningP2P.dispose();
     });
   });
 }

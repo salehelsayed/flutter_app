@@ -199,7 +199,15 @@ Future<(HandleMessageResult, ContactRequestModel?, String?)> handleIncomingMessa
     }
 
     // Parse decrypted payload
-    final plaintext = decryptResponse['plaintext'] as String;
+    final plaintext = decryptResponse['plaintext'];
+    if (plaintext is! String || plaintext.isEmpty) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONTACT_REQUEST_V2_MALFORMED_DECRYPT',
+        details: {},
+      );
+      return (HandleMessageResult.invalidMessage, null, null);
+    }
     try {
       payload = jsonDecode(plaintext) as Map<String, dynamic>;
     } catch (e) {

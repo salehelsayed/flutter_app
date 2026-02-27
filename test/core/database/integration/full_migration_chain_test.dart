@@ -1,4 +1,4 @@
-/// Integration test: Full DB migration chain (v1 -> v12).
+/// Integration test: Full DB migration chain (v1 -> v16).
 ///
 /// Verifies:
 /// 1a. Fresh install creates all tables with correct schema
@@ -20,6 +20,10 @@ import 'package:flutter_app/core/database/migrations/009_quoted_message_id.dart'
 import 'package:flutter_app/core/database/migrations/010_media_attachments.dart';
 import 'package:flutter_app/core/database/migrations/011_avatar_version.dart';
 import 'package:flutter_app/core/database/migrations/012_transport_column.dart';
+import 'package:flutter_app/core/database/migrations/013_waveform_column.dart';
+import 'package:flutter_app/core/database/migrations/014_wire_envelope_column.dart';
+import 'package:flutter_app/core/database/migrations/015_message_status_cleanup.dart';
+import 'package:flutter_app/core/database/migrations/016_message_reactions.dart';
 import 'package:flutter_app/core/secure_storage/migrate_secrets_to_secure_storage.dart';
 
 import '../../../core/secure_storage/fake_secure_key_store.dart';
@@ -71,8 +75,12 @@ void main() {
       await runMediaAttachmentsMigration(db);
       await runAvatarVersionMigration(db);
       await runTransportColumnMigration(db);
+      await runWaveformColumnMigration(db);
+      await runWireEnvelopeMigration(db);
+      await runMessageStatusCleanupMigration(db);
+      await runMessageReactionsMigration(db);
 
-      // Verify: 5 tables exist
+      // Verify: 6 tables exist
       final tables = await getTableNames(db);
       expect(tables, containsAll([
         'identity',
@@ -80,6 +88,7 @@ void main() {
         'contact_requests',
         'messages',
         'media_attachments',
+        'message_reactions',
       ]));
 
       // Verify: identity has CHECK constraints (insert non-null private_key throws)
@@ -132,6 +141,26 @@ void main() {
       expect(
         indexes.map((r) => r['name'] as String),
         contains('idx_media_attachments_message'),
+      );
+
+      // Verify: message_reactions has all expected columns
+      final reactionCols = await getColumnNames(db, 'message_reactions');
+      expect(reactionCols, containsAll([
+        'id',
+        'message_id',
+        'emoji',
+        'sender_peer_id',
+        'timestamp',
+        'created_at',
+      ]));
+
+      // Verify: index exists on message_reactions
+      final reactionIndexes = await db.rawQuery(
+        "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='message_reactions'",
+      );
+      expect(
+        reactionIndexes.map((r) => r['name'] as String),
+        contains('idx_message_reactions_message'),
       );
     });
 
@@ -292,6 +321,52 @@ void main() {
           where: 'id = ?', whereArgs: ['msg-wifi-12']);
       expect(wifiMsg.first['transport'], 'wifi');
 
+      // Step 13: Migration 013 -> waveform column
+      await runWaveformColumnMigration(db);
+      final mediaCols13 = await getColumnNames(db, 'media_attachments');
+      expect(mediaCols13, contains('waveform'));
+
+      // Step 14: Migration 014 -> wire_envelope column
+      await runWireEnvelopeMigration(db);
+      final msgCols14 = await getColumnNames(db, 'messages');
+      expect(msgCols14, contains('wire_envelope'));
+
+      // Step 15: Migration 015 -> message status cleanup
+      await runMessageStatusCleanupMigration(db);
+
+      // Step 16: Migration 016 -> message_reactions table
+      await runMessageReactionsMigration(db);
+      final tables16 = await getTableNames(db);
+      expect(tables16, contains('message_reactions'));
+
+      // Verify reaction table schema
+      final reactionCols = await getColumnNames(db, 'message_reactions');
+      expect(reactionCols, containsAll([
+        'id', 'message_id', 'emoji', 'sender_peer_id', 'timestamp', 'created_at',
+      ]));
+
+      // Verify UNIQUE constraint on (message_id, sender_peer_id)
+      await db.insert('message_reactions', {
+        'id': 'r1',
+        'message_id': 'msg-1',
+        'emoji': '👍',
+        'sender_peer_id': 'sender-1',
+        'timestamp': '2026-02-27T10:00:00.000Z',
+        'created_at': '2026-02-27T10:00:01.000Z',
+      });
+      // Second insert with same message+sender should fail
+      expect(
+        () async => await db.insert('message_reactions', {
+          'id': 'r2',
+          'message_id': 'msg-1',
+          'emoji': '❤️',
+          'sender_peer_id': 'sender-1',
+          'timestamp': '2026-02-27T10:01:00.000Z',
+          'created_at': '2026-02-27T10:01:01.000Z',
+        }),
+        throwsA(anything),
+      );
+
       // Final: verify seeded data is preserved
       final identity = await db.query('identity', where: 'id = ?', whereArgs: [1]);
       expect(identity.first['peer_id'], 'peer-abc');
@@ -331,6 +406,10 @@ void main() {
       await runMediaAttachmentsMigration(db);
       await runAvatarVersionMigration(db);
       await runTransportColumnMigration(db);
+      await runWaveformColumnMigration(db);
+      await runWireEnvelopeMigration(db);
+      await runMessageStatusCleanupMigration(db);
+      await runMessageReactionsMigration(db);
 
       // Seed data
       await db.insert('identity', {
@@ -342,7 +421,7 @@ void main() {
         'updated_at': '2026-01-01',
       });
 
-      // Re-run idempotent migrations (006-012)
+      // Re-run idempotent migrations (006-016)
       await runSecretNullChecksMigration(db);
       await runReadAtColumnMigration(db);
       await runArchiveColumnsMigration(db);
@@ -351,6 +430,10 @@ void main() {
       await runMediaAttachmentsMigration(db);
       await runAvatarVersionMigration(db);
       await runTransportColumnMigration(db);
+      await runWaveformColumnMigration(db);
+      await runWireEnvelopeMigration(db);
+      await runMessageStatusCleanupMigration(db);
+      await runMessageReactionsMigration(db);
 
       // Re-run secrets migration (should be no-op)
       await migrateSecretsToSecureStorage(db: db, secureKeyStore: keyStore);
