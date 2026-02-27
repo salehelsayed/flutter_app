@@ -163,7 +163,7 @@ func (n *Node) Start(cfg NodeConfig) (*NodeState, error) {
 		hostOpts = append(hostOpts,
 			libp2p.EnableAutoRelayWithStaticRelays(relayInfos,
 				autorelay.WithBootDelay(0),               // Static relays known; skip candidate wait
-				autorelay.WithBackoff(30*time.Second),    // Retry in 30s, not 1 hour
+				autorelay.WithBackoff(5*time.Second),     // Retry in 5s, not 1 hour
 				autorelay.WithMinInterval(5*time.Second), // Re-query peer source every 5s, not 30s
 			),
 		)
