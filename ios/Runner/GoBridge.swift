@@ -59,6 +59,10 @@ class GoBridge: NSObject {
             runOnBackground({ BridgeSignPayload(args ?? "") }, result: result)
         case "verifyPayload":
             runOnBackground({ BridgeVerifyPayload(args ?? "") }, result: result)
+        case "encryptContactRequest":
+            runOnBackground({ BridgeEncryptContactRequest(args ?? "") }, result: result)
+        case "decryptContactRequest":
+            runOnBackground({ BridgeDecryptContactRequest(args ?? "") }, result: result)
 
         // Node lifecycle
         case "startNode":

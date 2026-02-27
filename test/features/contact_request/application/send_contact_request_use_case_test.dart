@@ -27,6 +27,14 @@ class _FakeIdentityRepo implements IdentityRepository {
 
 class _FakeBridge extends Bridge {
   Map<String, dynamic> signResponse = {'ok': true, 'signature': 'fakeSig'};
+  Map<String, dynamic> encryptResponse = {
+    'ok': true,
+    'ephemeralPublicKey': 'ephPubBase64',
+    'ciphertext': 'ctBase64',
+    'nonce': 'nonceBase64',
+  };
+  Map<String, dynamic>? lastEncryptPayload;
+  bool encryptCalled = false;
 
   @override
   bool get isInitialized => true;
@@ -44,6 +52,11 @@ class _FakeBridge extends Bridge {
     final req = jsonDecode(message) as Map<String, dynamic>;
     if (req['cmd'] == 'payload.sign') {
       return jsonEncode(signResponse);
+    }
+    if (req['cmd'] == 'contactrequest.encrypt') {
+      encryptCalled = true;
+      lastEncryptPayload = req['payload'] as Map<String, dynamic>?;
+      return jsonEncode(encryptResponse);
     }
     return jsonEncode({'ok': true});
   }
@@ -298,5 +311,137 @@ void main() {
     );
 
     expect(result, equals(SendContactRequestResult.success));
+  });
+
+  // --- v2 encrypted contact request tests ---
+
+  test('v2: encrypts signed payload and sends v2 envelope', () async {
+    final result = await sendContactRequest(
+      p2pService: p2pService,
+      identityRepo: identityRepo,
+      bridge: bridge,
+      targetPeerId: 'targetPeer123456789',
+      recipientPublicKey: 'recipientEdPubBase64',
+    );
+
+    expect(result, equals(SendContactRequestResult.success));
+    expect(bridge.encryptCalled, isTrue);
+
+    // Verify sent message is v2 envelope
+    final sent = jsonDecode(p2pService.lastSentMessage!) as Map<String, dynamic>;
+    expect(sent['type'], equals('contact_request'));
+    expect(sent['version'], equals('2'));
+    expect(sent['msgId'], isA<String>());
+    expect(sent['ts'], isA<String>());
+    expect(sent['encrypted'], isA<Map>());
+    expect(sent['encrypted']['ephemeralPublicKey'], equals('ephPubBase64'));
+    expect(sent['encrypted']['ciphertext'], equals('ctBase64'));
+    expect(sent['encrypted']['nonce'], equals('nonceBase64'));
+    // No top-level payload/sig/pk in v2
+    expect(sent.containsKey('payload'), isFalse);
+  });
+
+  test('v2: envelope contains valid UUID msgId', () async {
+    await sendContactRequest(
+      p2pService: p2pService,
+      identityRepo: identityRepo,
+      bridge: bridge,
+      targetPeerId: 'targetPeer123456789',
+      recipientPublicKey: 'recipientEdPubBase64',
+    );
+
+    final sent = jsonDecode(p2pService.lastSentMessage!) as Map<String, dynamic>;
+    final msgId = sent['msgId'] as String;
+    // UUID v4 format
+    expect(
+      RegExp(r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$')
+          .hasMatch(msgId),
+      isTrue,
+      reason: 'msgId should be a valid UUID v4',
+    );
+  });
+
+  test('v2: envelope ts is valid ISO-8601', () async {
+    await sendContactRequest(
+      p2pService: p2pService,
+      identityRepo: identityRepo,
+      bridge: bridge,
+      targetPeerId: 'targetPeer123456789',
+      recipientPublicKey: 'recipientEdPubBase64',
+    );
+
+    final sent = jsonDecode(p2pService.lastSentMessage!) as Map<String, dynamic>;
+    final ts = sent['ts'] as String;
+    expect(DateTime.tryParse(ts), isNotNull);
+    expect(ts, endsWith('Z'));
+  });
+
+  test('v2: signed payload is inside ciphertext, not visible at top level', () async {
+    await sendContactRequest(
+      p2pService: p2pService,
+      identityRepo: identityRepo,
+      bridge: bridge,
+      targetPeerId: 'targetPeer123456789',
+      recipientPublicKey: 'recipientEdPubBase64',
+    );
+
+    final sent = jsonDecode(p2pService.lastSentMessage!) as Map<String, dynamic>;
+    expect(sent.containsKey('payload'), isFalse);
+    expect(sent.containsKey('sig'), isFalse);
+    expect(sent.containsKey('pk'), isFalse);
+  });
+
+  test('v2: returns encryptionError when encryption fails', () async {
+    bridge.encryptResponse = {
+      'ok': false,
+      'errorCode': 'INTERNAL_ERROR',
+      'errorMessage': 'bad key',
+    };
+
+    final result = await sendContactRequest(
+      p2pService: p2pService,
+      identityRepo: identityRepo,
+      bridge: bridge,
+      targetPeerId: 'targetPeer123456789',
+      recipientPublicKey: 'badRecipientKey',
+    );
+
+    // Does NOT fall back to v1
+    expect(result, equals(SendContactRequestResult.encryptionError));
+  });
+
+  test('v1: sends v1 when recipientPublicKey is null', () async {
+    final result = await sendContactRequest(
+      p2pService: p2pService,
+      identityRepo: identityRepo,
+      bridge: bridge,
+      targetPeerId: 'targetPeer123456789',
+      recipientPublicKey: null,
+    );
+
+    expect(result, equals(SendContactRequestResult.success));
+    expect(bridge.encryptCalled, isFalse);
+
+    final sent = jsonDecode(p2pService.lastSentMessage!) as Map<String, dynamic>;
+    expect(sent['version'], equals('1'));
+    expect(sent['payload'], isA<Map>());
+  });
+
+  test('v2: msgId and ts are passed as AAD to encrypt', () async {
+    await sendContactRequest(
+      p2pService: p2pService,
+      identityRepo: identityRepo,
+      bridge: bridge,
+      targetPeerId: 'targetPeer123456789',
+      recipientPublicKey: 'recipientEdPubBase64',
+    );
+
+    expect(bridge.lastEncryptPayload, isNotNull);
+    expect(bridge.lastEncryptPayload!['msgId'], isA<String>());
+    expect(bridge.lastEncryptPayload!['ts'], isA<String>());
+    // Verify the msgId/ts in the encrypt payload match the envelope
+    final sent = jsonDecode(p2pService.lastSentMessage!) as Map<String, dynamic>;
+    expect(bridge.lastEncryptPayload!['msgId'], equals(sent['msgId']));
+    expect(bridge.lastEncryptPayload!['ts'], equals(sent['ts']));
   });
 }

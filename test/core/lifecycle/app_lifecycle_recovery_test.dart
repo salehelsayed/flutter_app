@@ -108,7 +108,8 @@ void main() {
       // sendContactRequest now uses sendMessageWithReply (not sendMessage)
       expect(runningP2P.sendMessageWithReplyCallCount, equals(1));
       expect(runningP2P.storeInInboxCallCount, equals(0));
-      expect(bridge.sendCallCount, equals(1));
+      // 2 bridge calls: payload.sign + contactrequest.encrypt (v2 envelope)
+      expect(bridge.sendCallCount, equals(2));
       runningP2P.dispose();
     });
 

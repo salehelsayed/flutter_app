@@ -6,6 +6,7 @@ import 'package:flutter_app/core/constants/network_constants.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
+import 'package:uuid/uuid.dart';
 
 /// Result of sending a contact request.
 enum SendContactRequestResult {
@@ -17,6 +18,9 @@ enum SendContactRequestResult {
 
   /// Signing operation failed.
   signingError,
+
+  /// Encryption failed (v2). Does NOT fall back to v1.
+  encryptionError,
 
   /// P2P node is not running.
   nodeNotRunning,
@@ -34,8 +38,9 @@ enum SendContactRequestResult {
 /// 1. Verifies P2P node is running
 /// 2. Loads own identity
 /// 3. Builds and signs a contact request payload
-/// 4. Wraps it in a contact_request message
-/// 5. Sends via P2P to the target peer
+/// 4. If [recipientPublicKey] is provided, encrypts as v2 envelope
+/// 5. Otherwise sends as v1 plaintext
+/// 6. Sends via P2P to the target peer
 ///
 /// Returns the result of the operation.
 Future<SendContactRequestResult> sendContactRequest({
@@ -43,6 +48,7 @@ Future<SendContactRequestResult> sendContactRequest({
   required IdentityRepository identityRepo,
   required Bridge bridge,
   required String targetPeerId,
+  String? recipientPublicKey,
 }) async {
   final targetPrefix = targetPeerId.length > 10
       ? targetPeerId.substring(0, 10)
@@ -118,14 +124,64 @@ Future<SendContactRequestResult> sendContactRequest({
     ...unsignedPayload,
     'sig': signature,
   });
+  final signedPayloadJson = jsonEncode(signedPayload);
 
-  // 6. Wrap in contact_request message
-  final message = {
-    'type': 'contact_request',
-    'version': '1',
-    'payload': signedPayload,
-  };
-  final messageJson = jsonEncode(message);
+  // 6. Build message envelope (v1 or v2)
+  String messageJson;
+
+  if (recipientPublicKey != null) {
+    // v2: Encrypt the signed payload
+    final msgId = const Uuid().v4();
+    final ts = DateTime.now().toUtc().toIso8601String();
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CONTACT_REQUEST_SEND_ENCRYPTING',
+      details: {'targetPeerId': targetPrefix},
+    );
+
+    final encryptResponse = await callEncryptContactRequest(
+      bridge: bridge,
+      recipientPublicKey: recipientPublicKey,
+      signedPayloadJson: signedPayloadJson,
+      msgId: msgId,
+      ts: ts,
+    );
+
+    if (encryptResponse['ok'] != true) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONTACT_REQUEST_SEND_ENCRYPTION_ERROR',
+        details: {
+          'errorCode': encryptResponse['errorCode'],
+          'errorMessage': encryptResponse['errorMessage'],
+        },
+      );
+      // No silent downgrade: if encryption was requested but failed, return error.
+      return SendContactRequestResult.encryptionError;
+    }
+
+    final v2Message = {
+      'type': 'contact_request',
+      'version': '2',
+      'msgId': msgId,
+      'ts': ts,
+      'encrypted': {
+        'ephemeralPublicKey': encryptResponse['ephemeralPublicKey'],
+        'ciphertext': encryptResponse['ciphertext'],
+        'nonce': encryptResponse['nonce'],
+      },
+    };
+    messageJson = jsonEncode(v2Message);
+  } else {
+    // v1: Plaintext envelope (backward compat)
+    final v1Message = {
+      'type': 'contact_request',
+      'version': '1',
+      'payload': signedPayload,
+    };
+    messageJson = jsonEncode(v1Message);
+  }
 
   // 7. Try to send (with retries)
   emitFlowEvent(

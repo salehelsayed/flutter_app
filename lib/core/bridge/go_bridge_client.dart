@@ -44,6 +44,8 @@ class GoBridgeClient extends Bridge {
     'message.decrypt': _CmdSpec('decryptMessage', true),
     'payload.sign': _CmdSpec('signPayload', true),
     'payload.verify': _CmdSpec('verifyPayload', true),
+    'contactrequest.encrypt': _CmdSpec('encryptContactRequest', true),
+    'contactrequest.decrypt': _CmdSpec('decryptContactRequest', true),
     // Node
     'node:start': _CmdSpec('startNode', true),
     'node:stop': _CmdSpec('stopNode', false),

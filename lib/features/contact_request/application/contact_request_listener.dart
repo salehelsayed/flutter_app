@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
@@ -10,6 +11,47 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 
+/// Bounded replay cache that stores message IDs with timestamps.
+///
+/// Evicts entries older than [ttl] or beyond [maxSize] (LRU order).
+/// Prevents unbounded memory growth from a flood of v2 messages.
+class ReplayCache {
+  final int maxSize;
+  final Duration ttl;
+  final LinkedHashMap<String, DateTime> _entries = LinkedHashMap();
+
+  ReplayCache({this.maxSize = 1000, this.ttl = const Duration(hours: 25)});
+
+  /// Returns the set of currently cached message IDs.
+  Set<String> get ids => _entries.keys.toSet();
+
+  /// Returns the current number of entries.
+  int get length => _entries.length;
+
+  /// Adds a message ID to the cache, evicting stale/overflow entries.
+  void add(String msgId) {
+    _evictStale();
+    // If already present, move to end (most recent)
+    _entries.remove(msgId);
+    _entries[msgId] = DateTime.now().toUtc();
+    // Evict oldest if over max size
+    while (_entries.length > maxSize) {
+      _entries.remove(_entries.keys.first);
+    }
+  }
+
+  /// Checks if a message ID is in the cache.
+  bool contains(String msgId) {
+    _evictStale();
+    return _entries.containsKey(msgId);
+  }
+
+  void _evictStale() {
+    final cutoff = DateTime.now().toUtc().subtract(ttl);
+    _entries.removeWhere((_, ts) => ts.isBefore(cutoff));
+  }
+}
+
 /// Listener service that monitors P2P messages for contact requests.
 ///
 /// Subscribes to a typed contact request stream (from IncomingMessageRouter)
@@ -20,10 +62,12 @@ class ContactRequestListener {
   final ContactRepository contactRepo;
   final Bridge bridge;
   final String Function() getOwnPeerId;
+  final Future<String?> Function()? getOwnPrivateKey;
 
   StreamSubscription<ChatMessage>? _subscription;
   final _requestController = StreamController<ContactRequestModel>.broadcast();
   final _contactKeyUpdatedController = StreamController<ContactModel>.broadcast();
+  final ReplayCache _replayCache;
 
   ContactRequestListener({
     required this.contactRequestStream,
@@ -31,7 +75,9 @@ class ContactRequestListener {
     required this.contactRepo,
     required this.bridge,
     required this.getOwnPeerId,
-  });
+    this.getOwnPrivateKey,
+    ReplayCache? replayCache,
+  }) : _replayCache = replayCache ?? ReplayCache();
 
   /// Stream of new contact requests for the UI to listen to.
   Stream<ContactRequestModel> get requestStream => _requestController.stream;
@@ -84,13 +130,35 @@ class ContactRequestListener {
 
   Future<void> _onMessage(ChatMessage message) async {
     try {
+      // Resolve own private key for v2 decryption
+      final ownPrivateKey = await getOwnPrivateKey?.call();
+
       final (result, request) = await handleIncomingMessage(
         message: message,
         bridge: bridge,
         requestRepo: requestRepo,
         contactRepo: contactRepo,
         ownPeerId: getOwnPeerId(),
+        ownPrivateKey: ownPrivateKey,
+        seenMessageIds: _replayCache.ids,
       );
+
+      // For successful v2 handling, add msgId to replay cache
+      if (result == HandleMessageResult.contactRequest ||
+          result == HandleMessageResult.contactKeyUpdated ||
+          result == HandleMessageResult.duplicateRequest ||
+          result == HandleMessageResult.alreadyContact) {
+        // Extract msgId from v2 messages
+        try {
+          final json = jsonDecode(message.content) as Map<String, dynamic>;
+          if (json['version'] == '2') {
+            final msgId = json['msgId'] as String?;
+            if (msgId != null) {
+              _replayCache.add(msgId);
+            }
+          }
+        } catch (_) {}
+      }
 
       if (result == HandleMessageResult.contactRequest && request != null) {
         final peerIdPrefix = request.peerId.length > 10
@@ -108,12 +176,19 @@ class ContactRequestListener {
 
         _requestController.add(request);
       } else if (result == HandleMessageResult.contactKeyUpdated) {
-        // Extract peerId from payload (message.from may be 'unknown').
+        // Extract peerId from payload or decrypted message.
+        // For v2: payload is not at top level, use message.from as fallback.
         String? peerId;
         try {
           final json = jsonDecode(message.content) as Map<String, dynamic>;
-          final payload = json['payload'] as Map<String, dynamic>?;
-          peerId = payload?['ns'] as String?;
+          if (json['version'] == '2') {
+            // For v2, the peerId was inside the encrypted payload.
+            // Use message.from as the peerId source.
+            peerId = message.from;
+          } else {
+            final payload = json['payload'] as Map<String, dynamic>?;
+            peerId = payload?['ns'] as String?;
+          }
         } catch (_) {}
         peerId ??= message.from;
 

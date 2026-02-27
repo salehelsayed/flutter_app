@@ -344,6 +344,145 @@ Future<Map<String, dynamic>> callMlKemKeygen(
   }
 }
 
+/// Calls the bridge to encrypt a contact request using X25519 ECDH + AES-256-GCM.
+///
+/// Returns a map with:
+/// - On success: `{ "ok": true, "ephemeralPublicKey": "base64...", "ciphertext": "base64...", "nonce": "base64..." }`
+/// - On error: `{ "ok": false, "errorCode": "...", "errorMessage": "..." }`
+Future<Map<String, dynamic>> callEncryptContactRequest({
+  required Bridge bridge,
+  required String recipientPublicKey,
+  required String signedPayloadJson,
+  required String msgId,
+  required String ts,
+  Duration timeout = const Duration(seconds: 10),
+}) async {
+  final correlationId = DateTime.now().microsecondsSinceEpoch.toString();
+
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'CR_FL_BRIDGE_ENCRYPT_REQUEST',
+    details: {
+      'plaintextLength': signedPayloadJson.length,
+      'correlationId': correlationId,
+    },
+  );
+
+  final request = {
+    'cmd': 'contactrequest.encrypt',
+    'payload': {
+      'recipientPublicKey': recipientPublicKey,
+      'plaintext': signedPayloadJson,
+      'msgId': msgId,
+      'ts': ts,
+    },
+  };
+
+  try {
+    final responseJson = await bridge
+        .send(jsonEncode(request))
+        .timeout(timeout);
+    final response = jsonDecode(responseJson) as Map<String, dynamic>;
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CR_FL_BRIDGE_ENCRYPT_RESPONSE',
+      details: {
+        'ok': response['ok'] ?? false,
+        'correlationId': correlationId,
+      },
+    );
+
+    return response;
+  } on TimeoutException {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CR_FL_BRIDGE_ENCRYPT_RESPONSE',
+      details: {
+        'ok': false,
+        'errorCode': 'BRIDGE_TIMEOUT',
+        'correlationId': correlationId,
+      },
+    );
+
+    return {
+      'ok': false,
+      'errorCode': 'BRIDGE_TIMEOUT',
+      'errorMessage': 'Bridge call timed out after ${timeout.inSeconds}s',
+    };
+  }
+}
+
+/// Calls the bridge to decrypt a v2 contact request using own Ed25519 private key.
+///
+/// Returns a map with:
+/// - On success: `{ "ok": true, "plaintext": "..." }`
+/// - On error: `{ "ok": false, "errorCode": "...", "errorMessage": "..." }`
+Future<Map<String, dynamic>> callDecryptContactRequest({
+  required Bridge bridge,
+  required String ownPrivateKey,
+  required String ephemeralPublicKey,
+  required String ciphertext,
+  required String nonce,
+  required String msgId,
+  required String ts,
+  Duration timeout = const Duration(seconds: 10),
+}) async {
+  final correlationId = DateTime.now().microsecondsSinceEpoch.toString();
+
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'CR_FL_BRIDGE_DECRYPT_REQUEST',
+    details: {'correlationId': correlationId},
+  );
+
+  final request = {
+    'cmd': 'contactrequest.decrypt',
+    'payload': {
+      'privateKey': ownPrivateKey,
+      'ephemeralPublicKey': ephemeralPublicKey,
+      'ciphertext': ciphertext,
+      'nonce': nonce,
+      'msgId': msgId,
+      'ts': ts,
+    },
+  };
+
+  try {
+    final responseJson = await bridge
+        .send(jsonEncode(request))
+        .timeout(timeout);
+    final response = jsonDecode(responseJson) as Map<String, dynamic>;
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CR_FL_BRIDGE_DECRYPT_RESPONSE',
+      details: {
+        'ok': response['ok'] ?? false,
+        'correlationId': correlationId,
+      },
+    );
+
+    return response;
+  } on TimeoutException {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CR_FL_BRIDGE_DECRYPT_RESPONSE',
+      details: {
+        'ok': false,
+        'errorCode': 'BRIDGE_TIMEOUT',
+        'correlationId': correlationId,
+      },
+    );
+
+    return {
+      'ok': false,
+      'errorCode': 'BRIDGE_TIMEOUT',
+      'errorMessage': 'Bridge call timed out after ${timeout.inSeconds}s',
+    };
+  }
+}
+
 /// Calls the bridge to encrypt a message using ML-KEM-768 + AES-256-GCM.
 ///
 /// Returns a map with:

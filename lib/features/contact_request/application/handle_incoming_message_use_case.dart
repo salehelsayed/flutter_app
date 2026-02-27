@@ -34,10 +34,11 @@ enum HandleMessageResult {
 /// This function:
 /// 1. Parses message content as JSON
 /// 2. Checks if type == "contact_request"
-/// 3. Verifies the signature
-/// 4. Checks not already a contact
-/// 5. Checks no duplicate pending request
-/// 6. Stores in contact_requests table
+/// 3. For v2: decrypts, then signature-verifies
+/// 4. For v1: signature-verifies directly
+/// 5. Checks not already a contact
+/// 6. Checks no duplicate pending request
+/// 7. Stores in contact_requests table
 ///
 /// Returns a tuple of (result, request) where request is non-null
 /// when result == contactRequest.
@@ -47,6 +48,8 @@ Future<(HandleMessageResult, ContactRequestModel?)> handleIncomingMessage({
   required ContactRequestRepository requestRepo,
   required ContactRepository contactRepo,
   required String ownPeerId,
+  String? ownPrivateKey,
+  Set<String>? seenMessageIds,
 }) async {
   // Safe prefix for logging (handles short strings like "unknown")
   String safePrefix(String s) => s.length > 10 ? s.substring(0, 10) : s;
@@ -88,8 +91,129 @@ Future<(HandleMessageResult, ContactRequestModel?)> handleIncomingMessage({
     details: {},
   );
 
-  // 3. Extract payload
-  final payload = json['payload'] as Map<String, dynamic>?;
+  // 3. Determine version and extract payload
+  final version = json['version'] as String? ?? '1';
+  Map<String, dynamic>? payload;
+
+  if (version == '2') {
+    // --- v2: Encrypted contact request ---
+    final msgId = json['msgId'] as String?;
+    final ts = json['ts'] as String?;
+    final encrypted = json['encrypted'] as Map<String, dynamic>?;
+
+    // Validate v2 structure
+    if (msgId == null || ts == null || encrypted == null) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONTACT_REQUEST_V2_MISSING_FIELDS',
+        details: {},
+      );
+      return (HandleMessageResult.invalidMessage, null);
+    }
+
+    final ephemeralPublicKey = encrypted['ephemeralPublicKey'] as String?;
+    final ciphertext = encrypted['ciphertext'] as String?;
+    final nonce = encrypted['nonce'] as String?;
+
+    if (ephemeralPublicKey == null || ciphertext == null || nonce == null) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONTACT_REQUEST_V2_INCOMPLETE_ENCRYPTED',
+        details: {},
+      );
+      return (HandleMessageResult.invalidMessage, null);
+    }
+
+    // Pre-decrypt replay check: msgId dedup
+    if (seenMessageIds != null && seenMessageIds.contains(msgId)) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONTACT_REQUEST_V2_REPLAY_DETECTED',
+        details: {'msgId': msgId},
+      );
+      return (HandleMessageResult.invalidMessage, null);
+    }
+
+    // Pre-decrypt timestamp check
+    final parsedTs = DateTime.tryParse(ts);
+    if (parsedTs == null) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONTACT_REQUEST_V2_INVALID_TS',
+        details: {'ts': ts},
+      );
+      return (HandleMessageResult.invalidMessage, null);
+    }
+
+    final now = DateTime.now().toUtc();
+    final age = now.difference(parsedTs);
+    if (age > const Duration(hours: 24)) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONTACT_REQUEST_V2_EXPIRED',
+        details: {'ageMinutes': age.inMinutes},
+      );
+      return (HandleMessageResult.invalidMessage, null);
+    }
+    if (age < const Duration(minutes: -5)) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONTACT_REQUEST_V2_FUTURE_TS',
+        details: {'ageMinutes': age.inMinutes},
+      );
+      return (HandleMessageResult.invalidMessage, null);
+    }
+
+    // Need own private key for decryption
+    if (ownPrivateKey == null) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONTACT_REQUEST_V2_NO_PRIVATE_KEY',
+        details: {},
+      );
+      return (HandleMessageResult.invalidMessage, null);
+    }
+
+    // Decrypt
+    final decryptResponse = await callDecryptContactRequest(
+      bridge: bridge,
+      ownPrivateKey: ownPrivateKey,
+      ephemeralPublicKey: ephemeralPublicKey,
+      ciphertext: ciphertext,
+      nonce: nonce,
+      msgId: msgId,
+      ts: ts,
+    );
+
+    if (decryptResponse['ok'] != true) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONTACT_REQUEST_V2_DECRYPTION_FAILED',
+        details: {
+          'errorCode': decryptResponse['errorCode'],
+          'errorMessage': decryptResponse['errorMessage'],
+        },
+      );
+      return (HandleMessageResult.invalidMessage, null);
+    }
+
+    // Parse decrypted payload
+    final plaintext = decryptResponse['plaintext'] as String;
+    try {
+      payload = jsonDecode(plaintext) as Map<String, dynamic>;
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONTACT_REQUEST_V2_INVALID_PAYLOAD',
+        details: {},
+      );
+      return (HandleMessageResult.invalidMessage, null);
+    }
+  } else {
+    // --- v1: Plaintext contact request ---
+    payload = json['payload'] as Map<String, dynamic>?;
+  }
+
   if (payload == null) {
     emitFlowEvent(
       layer: 'FL',
