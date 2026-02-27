@@ -13,6 +13,8 @@ import 'package:flutter_app/core/database/migrations/010_media_attachments.dart'
 import 'package:flutter_app/core/database/migrations/011_avatar_version.dart';
 import 'package:flutter_app/core/database/migrations/012_transport_column.dart';
 import 'package:flutter_app/core/database/migrations/013_waveform_column.dart';
+import 'package:flutter_app/core/database/migrations/014_wire_envelope_column.dart';
+import 'package:flutter_app/core/database/migrations/015_message_status_cleanup.dart';
 import 'package:flutter_app/core/database/encrypted_db_opener.dart';
 import 'package:flutter_app/core/database/helpers/identity_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
@@ -66,16 +68,18 @@ void main() async {
   StartupTiming.instance.mark('app_start');
 
   // Initialize Firebase (mobile only — not available on desktop)
-  final bool isDesktop = !kIsWeb && (Platform.isLinux || Platform.isWindows || Platform.isMacOS);
+  final bool isDesktop =
+      !kIsWeb && (Platform.isLinux || Platform.isWindows || Platform.isMacOS);
   if (!isDesktop) {
     try {
       await Firebase.initializeApp();
       FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
-      await FirebaseMessaging.instance.setForegroundNotificationPresentationOptions(
-        alert: false,
-        badge: false,
-        sound: false,
-      );
+      await FirebaseMessaging.instance
+          .setForegroundNotificationPresentationOptions(
+            alert: false,
+            badge: false,
+            sound: false,
+          );
     } catch (e) {
       debugPrint('Firebase init skipped: $e');
     }
@@ -99,7 +103,7 @@ void main() async {
   final db = await openEncryptedDatabase(
     secureKeyStore: secureKeyStore,
     dbName: 'identity.db',
-    version: 13,
+    version: 15,
     onCreate: (db, version) async {
       await runIdentityTableMigration(db);
       await runMessagesTableMigration(db);
@@ -114,6 +118,8 @@ void main() async {
       await runAvatarVersionMigration(db);
       await runTransportColumnMigration(db);
       await runWaveformColumnMigration(db);
+      await runWireEnvelopeMigration(db);
+      await runMessageStatusCleanupMigration(db);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) {
@@ -150,16 +156,19 @@ void main() async {
       if (oldVersion < 13) {
         await runWaveformColumnMigration(db);
       }
+      if (oldVersion < 14) {
+        await runWireEnvelopeMigration(db);
+      }
+      if (oldVersion < 15) {
+        await runMessageStatusCleanupMigration(db);
+      }
     },
   );
 
   // 3. Run one-time secrets migration (DB → secure storage)
   //    Must run BEFORE migration 005 so CHECK constraints don't reject
   //    existing non-null secret values during the table rebuild.
-  await migrateSecretsToSecureStorage(
-    db: db,
-    secureKeyStore: secureKeyStore,
-  );
+  await migrateSecretsToSecureStorage(db: db, secureKeyStore: secureKeyStore);
 
   // 4. Apply CHECK constraints now that secret columns are guaranteed NULL
   await runSecretNullChecksMigration(db);
@@ -220,16 +229,21 @@ void main() async {
     dbDeleteMessagesForContact: (contactPeerId) =>
         dbDeleteMessagesForContact(db, contactPeerId),
     dbLoadMessagesPage: (contactPeerId, {limit = 50, beforeTimestamp}) =>
-        dbLoadMessagesPage(db, contactPeerId,
-            limit: limit, beforeTimestamp: beforeTimestamp),
+        dbLoadMessagesPage(
+          db,
+          contactPeerId,
+          limit: limit,
+          beforeTimestamp: beforeTimestamp,
+        ),
     dbLoadFailedOutgoingMessages: () => dbLoadFailedOutgoingMessages(db),
+    dbLoadUnackedOutgoingMessages: ({required olderThan, limit = 50}) =>
+        dbLoadUnackedOutgoingMessages(db, olderThan: olderThan, limit: limit),
   );
 
   // Create media attachment repository
   final mediaAttachmentRepository = MediaAttachmentRepositoryImpl(
     dbInsertMediaAttachment: (row) => dbInsertMediaAttachment(db, row),
-    dbLoadMediaForMessage: (messageId) =>
-        dbLoadMediaForMessage(db, messageId),
+    dbLoadMediaForMessage: (messageId) => dbLoadMediaForMessage(db, messageId),
     dbLoadMediaForMessages: (messageIds) =>
         dbLoadMediaForMessages(db, messageIds),
     dbUpdateMediaLocalPath: (id, localPath, downloadStatus) =>
@@ -352,28 +366,30 @@ void main() async {
     chatMessageListener.emitContactUpdate(contact);
   });
 
-  runApp(MyApp(
-    repository: repository,
-    contactRepository: contactRepository,
-    contactRequestRepository: contactRequestRepository,
-    contactRequestListener: contactRequestListener,
-    messageRepository: messageRepository,
-    mediaAttachmentRepository: mediaAttachmentRepository,
-    chatMessageListener: chatMessageListener,
-    profileUpdateListener: profileUpdateListener,
-    messageRouter: messageRouter,
-    pendingMessageRetrier: pendingMessageRetrier,
-    keyExchangeRetrier: keyExchangeRetrier,
-    bridge: bridge,
-    p2pService: p2pService,
-    mediaFileManager: mediaFileManager,
-    secureKeyStore: secureKeyStore,
-    imageProcessor: imageProcessor,
-    audioRecorderService: audioRecorderService,
-    isDesktop: isDesktop,
-    notificationService: notificationService,
-    conversationTracker: conversationTracker,
-  ));
+  runApp(
+    MyApp(
+      repository: repository,
+      contactRepository: contactRepository,
+      contactRequestRepository: contactRequestRepository,
+      contactRequestListener: contactRequestListener,
+      messageRepository: messageRepository,
+      mediaAttachmentRepository: mediaAttachmentRepository,
+      chatMessageListener: chatMessageListener,
+      profileUpdateListener: profileUpdateListener,
+      messageRouter: messageRouter,
+      pendingMessageRetrier: pendingMessageRetrier,
+      keyExchangeRetrier: keyExchangeRetrier,
+      bridge: bridge,
+      p2pService: p2pService,
+      mediaFileManager: mediaFileManager,
+      secureKeyStore: secureKeyStore,
+      imageProcessor: imageProcessor,
+      audioRecorderService: audioRecorderService,
+      isDesktop: isDesktop,
+      notificationService: notificationService,
+      conversationTracker: conversationTracker,
+    ),
+  );
   StartupTiming.instance.mark('run_app_called');
 }
 
@@ -446,8 +462,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
   Future<void> _onNotificationTap(String contactPeerId) async {
     try {
-      final contact =
-          await widget.contactRepository.getContact(contactPeerId);
+      final contact = await widget.contactRepository.getContact(contactPeerId);
       if (contact == null) return;
 
       final navigator = MyApp.navigatorKey.currentState;

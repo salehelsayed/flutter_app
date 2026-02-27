@@ -361,12 +361,27 @@ class P2PServiceImpl implements P2PService {
       );
 
       if (response['ok'] == true) {
+        final sent = response['sent'] as bool?;
+        final acked = response['acked'] as bool?;
+        final reply = response['reply'] as String?;
+        final acknowledged =
+            acked ?? (reply != null && reply.isNotEmpty);
+
+        if ((sent ?? true) && acknowledged) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'P2P_SERVICE_SEND_MESSAGE_SUCCESS',
+            details: {'peerId': peerId, 'acked': acked, 'hasReply': reply != null},
+          );
+          return true;
+        }
+
         emitFlowEvent(
           layer: 'FL',
-          event: 'P2P_SERVICE_SEND_MESSAGE_SUCCESS',
-          details: {'peerId': peerId},
+          event: 'P2P_SERVICE_SEND_MESSAGE_UNACKED',
+          details: {'peerId': peerId, 'acked': acked, 'hasReply': reply != null},
         );
-        return true;
+        return false;
       } else {
         emitFlowEvent(
           layer: 'FL',
@@ -388,8 +403,9 @@ class P2PServiceImpl implements P2PService {
   @override
   Future<SendMessageResult> sendMessageWithReply(
     String peerId,
-    String message,
-  ) async {
+    String message, {
+    int? timeoutMs,
+  }) async {
     emitFlowEvent(
       layer: 'FL',
       event: 'P2P_SERVICE_SEND_MESSAGE_WITH_REPLY_BEGIN',
@@ -401,16 +417,18 @@ class P2PServiceImpl implements P2PService {
         _bridge,
         peerId: peerId,
         message: message,
+        timeoutMs: timeoutMs,
       );
 
       if (response['ok'] == true) {
         final reply = response['reply'] as String?;
+        final acked = response['acked'] as bool?;
         emitFlowEvent(
           layer: 'FL',
           event: 'P2P_SERVICE_SEND_MESSAGE_WITH_REPLY_SUCCESS',
-          details: {'peerId': peerId, 'hasReply': reply != null},
+          details: {'peerId': peerId, 'hasReply': reply != null, 'acked': acked},
         );
-        return SendMessageResult(sent: true, reply: reply);
+        return SendMessageResult(sent: true, acked: acked, reply: reply);
       } else {
         emitFlowEvent(
           layer: 'FL',
@@ -928,6 +946,20 @@ class P2PServiceImpl implements P2PService {
       details: {},
     );
     await _drainOfflineInbox();
+  }
+
+  @override
+  Future<RelayProbeResult> probeRelay(String peerId) async {
+    try {
+      final result = await callP2PRelayProbe(_bridge, peerId: peerId);
+      if (result['ok'] == true) return RelayProbeResult.connected;
+      if (result['errorCode'] == 'NO_RESERVATION') {
+        return RelayProbeResult.noReservation;
+      }
+      return RelayProbeResult.error;
+    } catch (e) {
+      return RelayProbeResult.error;
+    }
   }
 
   @override

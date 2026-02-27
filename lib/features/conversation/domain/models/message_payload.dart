@@ -202,11 +202,13 @@ class MessagePayload {
   ///
   /// [contactPeerId] is the peer ID of the contact the conversation is with.
   /// [isIncoming] indicates whether the message was received or sent.
+  /// [wireEnvelope] is the serialized wire JSON for retry (outgoing only).
   ConversationMessage toConversationMessage({
     required String contactPeerId,
     required bool isIncoming,
     String status = 'sent',
     String? transport,
+    String? wireEnvelope,
   }) {
     return ConversationMessage(
       id: id,
@@ -219,6 +221,7 @@ class MessagePayload {
       createdAt: DateTime.now().toUtc().toIso8601String(),
       quotedMessageId: quotedMessageId,
       transport: transport,
+      wireEnvelope: wireEnvelope,
     );
   }
 }

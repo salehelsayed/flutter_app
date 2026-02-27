@@ -39,8 +39,9 @@ class _HalfOpenP2PService implements P2PService {
   @override
   Future<SendMessageResult> sendMessageWithReply(
     String targetPeerId,
-    String message,
-  ) async {
+    String message, {
+    int? timeoutMs,
+  }) async {
     if (_failsRemaining > 0) {
       _failsRemaining--;
       return const SendMessageResult(sent: false);
@@ -95,6 +96,10 @@ class _HalfOpenP2PService implements P2PService {
 
   @override
   Future<void> drainOfflineInbox() => _inner.drainOfflineInbox();
+
+  @override
+  Future<RelayProbeResult> probeRelay(String peerId) =>
+      _inner.probeRelay(peerId);
 
   @override
   bool isLocalPeer(String peerId) => _inner.isLocalPeer(peerId);

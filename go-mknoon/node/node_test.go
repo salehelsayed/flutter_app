@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/crypto"
+	"github.com/libp2p/go-libp2p/core/peer"
+	ma "github.com/multiformats/go-multiaddr"
 )
 
 // generateTestKey creates a random Ed25519 key and returns its hex-encoded private key.
@@ -355,4 +357,55 @@ func TestRelayReadyChannelNotClosedOnFailure(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		// Expected: channel is still open after 2s.
 	}
+}
+
+func TestWarmRelayConnectionConnectOnly(t *testing.T) {
+	hexKey := generateTestKey(t)
+
+	// Use an unreachable relay address (RFC 5737 TEST-NET) so the node
+	// doesn't connect to the real relay in the background.
+	n := NewNode()
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex: hexKey,
+		RelayAddresses: []string{
+			"/ip4/192.0.2.99/tcp/4001/p2p/12D3KooWDnwLFvCp4cNBKYJqsBCBFmxnR4VWbBqbfxdCbRhJgkp9",
+		},
+		AutoRegister: false,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer n.Stop()
+
+	// Generate a random peer ID that's NOT connected, so host.Connect()
+	// will actually try to dial the unreachable address and fail.
+	randomKey := generateTestKey(t)
+	keyBytes, _ := hex.DecodeString(randomKey)
+	priv, _ := crypto.UnmarshalEd25519PrivateKey(keyBytes)
+	randomPeerID, _ := peer.IDFromPrivateKey(priv)
+
+	// warmRelayConnection with a valid AddrInfo but unreachable address
+	// should return an error (dial failure) without panicking.
+	unreachableAddr, _ := ma.NewMultiaddr("/ip4/192.0.2.1/tcp/4001")
+	info := peer.AddrInfo{
+		ID:    randomPeerID,
+		Addrs: []ma.Multiaddr{unreachableAddr},
+	}
+
+	err = n.warmRelayConnection(info)
+	if err == nil {
+		t.Error("expected error for unreachable relay, got nil")
+	}
+	t.Logf("warmRelayConnection error (expected): %v", err)
+
+	// warmRelayConnection with no addresses should fail.
+	emptyInfo := peer.AddrInfo{
+		ID:    randomPeerID,
+		Addrs: nil,
+	}
+	err = n.warmRelayConnection(emptyInfo)
+	if err == nil {
+		t.Error("expected error for empty AddrInfo, got nil")
+	}
+	t.Logf("warmRelayConnection empty error (expected): %v", err)
 }

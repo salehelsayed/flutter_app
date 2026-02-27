@@ -41,8 +41,9 @@ class MessageBubble extends StatelessWidget {
     this.onMediaTap,
   });
 
-  List<MediaAttachment> get _imageVideoMedia =>
-      media.where((a) => a.mediaType == 'image' || a.mediaType == 'video').toList();
+  List<MediaAttachment> get _imageVideoMedia => media
+      .where((a) => a.mediaType == 'image' || a.mediaType == 'video')
+      .toList();
   List<MediaAttachment> get _audioMedia =>
       media.where((a) => a.mediaType == 'audio').toList();
 
@@ -148,7 +149,10 @@ class MessageBubble extends StatelessWidget {
                   if (_imageVideoMedia.isNotEmpty)
                     Padding(
                       padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
-                      child: MediaGrid(media: _imageVideoMedia, onTap: onMediaTap),
+                      child: MediaGrid(
+                        media: _imageVideoMedia,
+                        onTap: onMediaTap,
+                      ),
                     ),
                   // Audio players
                   for (final audio in _audioMedia)
@@ -187,7 +191,8 @@ class MessageBubble extends StatelessWidget {
   }
 
   EdgeInsets get _contentPadding {
-    final hasMediaAbove = (quotedText != null || isQuoteUnavailable) ||
+    final hasMediaAbove =
+        (quotedText != null || isQuoteUnavailable) ||
         _imageVideoMedia.isNotEmpty ||
         _audioMedia.isNotEmpty;
     return EdgeInsets.fromLTRB(
@@ -255,8 +260,9 @@ class MessageBubble extends StatelessWidget {
   }
 
   Widget _buildQuoteBar() {
-    final displayText =
-        isQuoteUnavailable ? 'Message unavailable' : quotedText!;
+    final displayText = isQuoteUnavailable
+        ? 'Message unavailable'
+        : quotedText!;
     return Row(
       children: [
         Container(
@@ -276,8 +282,9 @@ class MessageBubble extends StatelessWidget {
             style: TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w400,
-              fontStyle:
-                  isQuoteUnavailable ? FontStyle.italic : FontStyle.normal,
+              fontStyle: isQuoteUnavailable
+                  ? FontStyle.italic
+                  : FontStyle.normal,
               color: Color.fromRGBO(
                 255,
                 255,
@@ -292,17 +299,15 @@ class MessageBubble extends StatelessWidget {
   }
 
   static IconData _statusIcon(String status) {
-    if (status == 'delivered') return Icons.done_all_rounded;
-    if (status == 'queued') return Icons.done_all_rounded;
+    // Legacy compatibility: old rows may still have queued status.
+    if (status == 'delivered' || status == 'queued')
+      return Icons.done_all_rounded;
     if (status == 'failed') return Icons.error_outline_rounded;
-    return Icons.done_rounded;
+    return Icons.done_rounded; // 'sent', 'sending'
   }
 
   static Color _statusColor(String status) {
     if (status == 'delivered') {
-      return const Color.fromRGBO(255, 255, 255, 0.45);
-    }
-    if (status == 'queued') {
       return const Color.fromRGBO(255, 255, 255, 0.45);
     }
     if (status == 'failed') return const Color.fromRGBO(255, 100, 100, 0.60);
@@ -310,8 +315,9 @@ class MessageBubble extends StatelessWidget {
   }
 
   static String _statusSemantic(String status) {
-    if (status == 'delivered') return 'delivered';
-    if (status == 'queued') return 'delivered';
+    if (status == 'delivered' || status == 'queued') {
+      return 'delivered';
+    }
     if (status == 'failed') return 'failed';
     if (status == 'sending') return 'sending';
     if (status == 'sent') return 'sent';

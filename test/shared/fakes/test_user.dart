@@ -149,15 +149,16 @@ class TestUser {
   }
 
   /// Loads the conversation with a contact.
-  Future<List<ConversationMessage>> loadConversationWith(
-      String contactPeerId) {
+  Future<List<ConversationMessage>> loadConversationWith(String contactPeerId) {
     return loadConversation(
       messageRepo: messageRepo,
       contactPeerId: contactPeerId,
     );
   }
 
-  void start() => chatListener.start();
+  void start() {
+    chatListener.start();
+  }
 
   void setOnline(bool online) => p2pService.setOnline(online);
 

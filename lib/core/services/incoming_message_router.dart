@@ -38,19 +38,23 @@ class IncomingMessageRouter {
   void start() {
     if (_subscription != null) return;
 
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'MESSAGE_ROUTER_START',
-      details: {},
-    );
+    emitFlowEvent(layer: 'FL', event: 'MESSAGE_ROUTER_START', details: {});
 
     _subscription = p2pService.messageStream.listen(
       _route,
       onError: (error) {
-        emitFlowEvent(layer: 'FL', event: 'MESSAGE_ROUTER_STREAM_ERROR', details: {'error': error.toString()});
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'MESSAGE_ROUTER_STREAM_ERROR',
+          details: {'error': error.toString()},
+        );
       },
       onDone: () {
-        emitFlowEvent(layer: 'FL', event: 'MESSAGE_ROUTER_STREAM_DONE', details: {});
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'MESSAGE_ROUTER_STREAM_DONE',
+          details: {},
+        );
       },
     );
   }
@@ -69,6 +73,10 @@ class IncomingMessageRouter {
           _chatMessageController.add(message);
         case 'profile_update':
           _profileUpdateController.add(message);
+        case 'delivery_receipt':
+          // Legacy envelope type kept for backward compatibility.
+          // Delivery status is now sender-side inbox/direct semantics only.
+          return;
         default:
           emitFlowEvent(
             layer: 'FL',
@@ -89,11 +97,7 @@ class IncomingMessageRouter {
 
   /// Stop routing and clean up resources.
   void stop() {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'MESSAGE_ROUTER_STOP',
-      details: {},
-    );
+    emitFlowEvent(layer: 'FL', event: 'MESSAGE_ROUTER_STOP', details: {});
 
     _subscription?.cancel();
     _subscription = null;

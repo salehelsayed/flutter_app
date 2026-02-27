@@ -105,7 +105,8 @@ void main() {
         identityRepo: identityRepo,
       );
 
-      expect(runningP2P.sendMessageCallCount, equals(1));
+      // sendContactRequest now uses sendMessageWithReply (not sendMessage)
+      expect(runningP2P.sendMessageWithReplyCallCount, equals(1));
       expect(runningP2P.storeInInboxCallCount, equals(0));
       expect(bridge.sendCallCount, equals(1));
       runningP2P.dispose();

@@ -6,6 +6,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/audio_recording.dart';
+import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 
@@ -22,7 +23,9 @@ const _maxFileSizeBytes = 100 * 1024 * 1024; // 100 MB
 /// 1. Validate recording
 /// 2. Upload via bridge
 /// 3. Send via sendChatMessage with audio MediaAttachment
-Future<SendVoiceMessageResult> sendVoiceMessage({
+///
+/// Returns (result, message) — message is non-null on success.
+Future<(SendVoiceMessageResult, ConversationMessage?)> sendVoiceMessage({
   required P2PService p2pService,
   required MessageRepository messageRepo,
   required String targetPeerId,
@@ -35,6 +38,8 @@ Future<SendVoiceMessageResult> sendVoiceMessage({
   MediaFileManager? mediaFileManager,
   String? text,
   List<double>? waveform,
+  String? messageId,
+  String? timestamp,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -52,7 +57,7 @@ Future<SendVoiceMessageResult> sendVoiceMessage({
       event: 'VOICE_SEND_INVALID',
       details: {'sizeBytes': recording.sizeBytes},
     );
-    return SendVoiceMessageResult.invalidRecording;
+    return (SendVoiceMessageResult.invalidRecording, null);
   }
 
   final file = File(recording.filePath);
@@ -62,7 +67,7 @@ Future<SendVoiceMessageResult> sendVoiceMessage({
       event: 'VOICE_SEND_FILE_NOT_FOUND',
       details: {'filePath': recording.filePath},
     );
-    return SendVoiceMessageResult.invalidRecording;
+    return (SendVoiceMessageResult.invalidRecording, null);
   }
 
   // 2. Upload
@@ -80,13 +85,13 @@ Future<SendVoiceMessageResult> sendVoiceMessage({
 
   if (uploaded == null) {
     emitFlowEvent(layer: 'FL', event: 'VOICE_UPLOAD_FAILED', details: {});
-    return SendVoiceMessageResult.uploadFailed;
+    return (SendVoiceMessageResult.uploadFailed, null);
   }
 
   emitFlowEvent(layer: 'FL', event: 'VOICE_UPLOAD_DONE', details: {});
 
   // 3. Send via existing sendChatMessage with the uploaded attachment
-  final (result, _) = await sendChatMessage(
+  final (result, message) = await sendChatMessage(
     p2pService: p2pService,
     messageRepo: messageRepo,
     targetPeerId: targetPeerId,
@@ -97,11 +102,13 @@ Future<SendVoiceMessageResult> sendVoiceMessage({
     recipientMlKemPublicKey: recipientMlKemPublicKey,
     mediaAttachments: [uploaded],
     mediaAttachmentRepo: mediaAttachmentRepo,
+    messageId: messageId,
+    timestamp: timestamp,
   );
 
   if (result == SendChatMessageResult.success) {
     emitFlowEvent(layer: 'FL', event: 'VOICE_SEND_SUCCESS', details: {});
-    return SendVoiceMessageResult.success;
+    return (SendVoiceMessageResult.success, message);
   }
 
   emitFlowEvent(
@@ -109,5 +116,5 @@ Future<SendVoiceMessageResult> sendVoiceMessage({
     event: 'VOICE_SEND_FAILED',
     details: {'result': result.name},
   );
-  return SendVoiceMessageResult.sendFailed;
+  return (SendVoiceMessageResult.sendFailed, null);
 }

@@ -51,8 +51,9 @@ class _AckDropP2PService implements P2PService {
   @override
   Future<SendMessageResult> sendMessageWithReply(
     String targetPeerId,
-    String message,
-  ) async {
+    String message, {
+    int? timeoutMs,
+  }) async {
     if (totalFailure) {
       // Simulate complete send failure (message never reaches peer).
       return const SendMessageResult(sent: false);
@@ -100,6 +101,10 @@ class _AckDropP2PService implements P2PService {
 
   @override
   Future<void> drainOfflineInbox() => _inner.drainOfflineInbox();
+
+  @override
+  Future<RelayProbeResult> probeRelay(String peerId) =>
+      _inner.probeRelay(peerId);
 
   @override
   bool isConnectedToPeer(String peerId) => _inner.isConnectedToPeer(peerId);
@@ -186,7 +191,7 @@ void main() {
       aliceP2P.dispose();
     });
 
-    test('message persisted with status "sent" when ACK is lost', () async {
+    test('message persisted with status "delivered" when inbox store succeeds', () async {
       aliceP2P.dropAcks = true;
 
       final (result, msg) = await sendChatMessage(
@@ -202,7 +207,7 @@ void main() {
 
       expect(result, SendChatMessageResult.success);
       expect(msg, isNotNull);
-      expect(msg!.status, 'sent'); // not 'delivered' because ACK lost
+      expect(msg!.status, 'delivered'); // ACK lost → inbox safety net → delivered
 
       // Exactly 1 message — no duplicates
       expect(aliceRepo.count, 1);
@@ -251,7 +256,7 @@ void main() {
         bridge: encryptBridge,
         recipientMlKemPublicKey: bobMlKemKey,
       );
-      expect(msg1!.status, 'sent');
+      expect(msg1!.status, 'delivered'); // ACK lost → inbox safety net
 
       // Simulate retrier marking it failed, then attempting re-send
       await aliceRepo.updateMessageStatus('fixed-uuid-1', 'failed');
@@ -283,7 +288,7 @@ void main() {
       expect(messages.first.status, 'delivered');
     });
 
-    test('ACK drop on fast path results in status "sent"', () async {
+    test('ACK drop on fast path results in status "delivered" when inbox succeeds', () async {
       // Use the connected variant so fast path fires
       final innerAlice =
           FakeP2PService(peerId: alicePeerId, network: network);
@@ -304,7 +309,7 @@ void main() {
       );
 
       expect(result, SendChatMessageResult.success);
-      expect(msg!.status, 'sent'); // ACK lost on fast path
+      expect(msg!.status, 'delivered'); // ACK lost on fast path → inbox safety net
 
       connectedP2P.dispose();
     });
@@ -323,7 +328,7 @@ void main() {
         recipientMlKemPublicKey: bobMlKemKey,
       );
 
-      // All 3 retries fail → inbox fallback → delivered via inbox
+      // All 3 retries fail → inbox fallback → delivered (product rule)
       expect(result, SendChatMessageResult.success);
       expect(msg, isNotNull);
       expect(msg!.status, 'delivered');

@@ -900,7 +900,7 @@ class _ConversationWiredState extends State<ConversationWired> {
     }
 
     // Upload + send
-    final result = await sendVoiceMessage(
+    final (result, voiceMessage) = await sendVoiceMessage(
       p2pService: widget.p2pService,
       messageRepo: widget.messageRepo,
       targetPeerId: _contact.peerId,
@@ -912,15 +912,28 @@ class _ConversationWiredState extends State<ConversationWired> {
       mediaAttachmentRepo: widget.mediaAttachmentRepo,
       mediaFileManager: widget.mediaFileManager,
       waveform: waveform,
+      messageId: optimisticMessage.id,
+      timestamp: optimisticMessage.timestamp,
     );
 
     if (mounted) {
       setState(() => _isUploading = false);
     }
 
-    if (result == SendVoiceMessageResult.success) {
-      _updateLocalMessageStatus(optimisticMessage.id, 'delivered');
-      await _persistMessageStatus(optimisticMessage.id, 'delivered');
+    if (result == SendVoiceMessageResult.success && voiceMessage != null) {
+      // Replace optimistic with real message, preserving local media for playback.
+      // DB already has correct data from sendChatMessage's saveMessage call.
+      final messageWithMedia = voiceMessage.copyWith(
+        media: optimisticMessage.media,
+      );
+      if (mounted) {
+        setState(() {
+          _upsertMessageById(messageWithMedia);
+        });
+      }
+    } else if (result == SendVoiceMessageResult.success) {
+      _updateLocalMessageStatus(optimisticMessage.id, 'sent');
+      await _persistMessageStatus(optimisticMessage.id, 'sent');
     } else {
       _updateLocalMessageStatus(optimisticMessage.id, 'failed');
       await _persistMessageStatus(optimisticMessage.id, 'failed');

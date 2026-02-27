@@ -322,7 +322,7 @@ void main() {
     });
 
     test(
-      'Messages to offline peer are marked delivered after inbox store',
+      'Messages to offline peer are marked delivered on inbox store',
       () async {
         final offlineUser = TestUser.create(
           peerId: '12D3KooWOfflineUser0000000004',
@@ -347,7 +347,7 @@ void main() {
         expect(msg, isNotNull);
         expect(msg!.status, 'delivered');
 
-        // Sender persists delivered status (inbox accepted by relay).
+        // Sender persists delivered status when inbox accepts the message.
         final convo = await alice.messageRepo.getMessagesForContact(
           offlineUser.peerId,
         );
@@ -367,6 +367,13 @@ void main() {
         expect(delivered.text, 'Are you there?');
         expect(delivered.isIncoming, true);
         expect(delivered.senderPeerId, alice.peerId);
+
+        await Future.delayed(const Duration(milliseconds: 100));
+        final updatedConvo = await alice.messageRepo.getMessagesForContact(
+          offlineUser.peerId,
+        );
+        expect(updatedConvo.length, 1);
+        expect(updatedConvo.first.status, 'delivered');
 
         offlineUser.dispose();
       },

@@ -3,6 +3,13 @@ import '../../features/p2p/domain/models/chat_message.dart';
 import '../../features/p2p/domain/models/discovered_peer.dart';
 import '../../features/p2p/domain/models/send_message_result.dart';
 
+/// Result of a relay probe attempt.
+enum RelayProbeResult {
+  connected,      // Relay circuit established — peer is online
+  noReservation,  // Peer has no reservation — definitely offline
+  error,          // Network/bridge error — unknown state, fall through to dial
+}
+
 /// Abstract interface for P2P networking service.
 ///
 /// This service manages the P2P node lifecycle, peer connections,
@@ -56,9 +63,10 @@ abstract class P2PService {
   /// Parameters:
   ///   - [peerId]: The target peer ID
   ///   - [message]: The message content
+  ///   - [timeoutMs]: Optional timeout in milliseconds for stream write + ACK read
   ///
   /// Returns a [SendMessageResult] with sent status and optional reply/ack.
-  Future<SendMessageResult> sendMessageWithReply(String peerId, String message);
+  Future<SendMessageResult> sendMessageWithReply(String peerId, String message, {int? timeoutMs});
 
   /// Discover a peer by their ID via rendezvous.
   ///
@@ -111,6 +119,13 @@ abstract class P2PService {
   /// Checks the current [NodeState.connections] for a matching peer with
   /// status 'connected'. Used by the send fast path to skip discover/dial.
   bool isConnectedToPeer(String peerId);
+
+  /// Probe whether a peer is reachable via the relay circuit.
+  ///
+  /// Returns [RelayProbeResult.connected] if the relay circuit was established,
+  /// [RelayProbeResult.noReservation] if the peer has no relay reservation
+  /// (definitely offline), or [RelayProbeResult.error] on network/bridge errors.
+  Future<RelayProbeResult> probeRelay(String peerId);
 
   /// Returns true if the peer is visible on the local WiFi network.
   bool isLocalPeer(String peerId);

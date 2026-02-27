@@ -97,8 +97,11 @@ Future<bool> uploadProfilePicture({
 
     for (final contact in contacts) {
       try {
-        final sent = await p2pService.sendMessage(contact.peerId, envelope);
-        if (!sent) {
+        final sendResult = await p2pService.sendMessageWithReply(
+          contact.peerId,
+          envelope,
+        );
+        if (!sendResult.sent || !sendResult.acknowledged) {
           await p2pService.storeInInbox(contact.peerId, envelope);
         }
       } catch (_) {

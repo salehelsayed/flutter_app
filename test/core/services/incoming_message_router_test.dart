@@ -33,8 +33,10 @@ class FakeP2PService implements P2PService {
 
   @override
   Future<SendMessageResult> sendMessageWithReply(
-          String peerId, String message) async =>
-      const SendMessageResult(sent: true);
+    String peerId,
+    String message, {
+    int? timeoutMs,
+  }) async => const SendMessageResult(sent: true);
 
   @override
   Future<DiscoveredPeer?> discoverPeer(String peerId) async => null;
@@ -58,16 +60,25 @@ class FakeP2PService implements P2PService {
   Future<void> drainOfflineInbox() async {}
 
   @override
+  Future<RelayProbeResult> probeRelay(String peerId) async =>
+      RelayProbeResult.error;
+
+  @override
   bool isConnectedToPeer(String peerId) => false;
 
   @override
   bool isLocalPeer(String peerId) => false;
 
   @override
-  Future<bool> sendLocalMessage(String peerId, String message, String fromPeerId) async => false;
+  Future<bool> sendLocalMessage(
+    String peerId,
+    String message,
+    String fromPeerId,
+  ) async => false;
 
   @override
-  Future<bool> startNodeCore(String privateKeyBase64, String peerId) async => false;
+  Future<bool> startNodeCore(String privateKeyBase64, String peerId) async =>
+      false;
 
   @override
   Future<void> warmBackground() async {}
@@ -126,6 +137,23 @@ void main() {
       expect(msg.content, contains('"type":"chat_message"'));
     });
 
+    test('ignores legacy delivery_receipt messages', () async {
+      final contactRequests = <ChatMessage>[];
+      final chatMessages = <ChatMessage>[];
+      final unknowns = <ChatMessage>[];
+
+      router.contactRequestStream.listen(contactRequests.add);
+      router.chatMessageStream.listen(chatMessages.add);
+      router.unknownMessageStream.listen(unknowns.add);
+
+      p2pService.inject(_makeMessage('delivery_receipt'));
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      expect(contactRequests, isEmpty);
+      expect(chatMessages, isEmpty);
+      expect(unknowns, isEmpty);
+    });
+
     test('routes unknown types to unknownMessageStream', () async {
       final received = router.unknownMessageStream.first;
 
@@ -138,13 +166,15 @@ void main() {
     test('routes unparseable content to unknownMessageStream', () async {
       final received = router.unknownMessageStream.first;
 
-      p2pService.inject(ChatMessage(
-        from: 'peer-a',
-        to: 'peer-b',
-        content: 'not valid json',
-        timestamp: DateTime.now().toUtc().toIso8601String(),
-        isIncoming: true,
-      ));
+      p2pService.inject(
+        ChatMessage(
+          from: 'peer-a',
+          to: 'peer-b',
+          content: 'not valid json',
+          timestamp: DateTime.now().toUtc().toIso8601String(),
+          isIncoming: true,
+        ),
+      );
 
       final msg = await received.timeout(const Duration(seconds: 1));
       expect(msg.content, 'not valid json');

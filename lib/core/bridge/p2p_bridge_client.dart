@@ -89,6 +89,49 @@ Future<Map<String, dynamic>> callP2PRelayReconnect(Bridge bridge) async {
   return response;
 }
 
+/// Calls the bridge to probe a peer via relay circuit.
+///
+/// This is a fast check (~100ms for offline, ~500ms for online) that
+/// determines if a peer is reachable through the relay without a full
+/// discover/dial cycle.
+///
+/// Parameters:
+///   - [bridge]: The Bridge instance
+///   - [peerId]: The peer ID to probe
+///
+/// Returns:
+///   - `{ "ok": true }` if the peer is online (relay circuit established)
+///   - `{ "ok": false, "errorCode": "NO_RESERVATION" }` if peer is offline
+///   - `{ "ok": false, "errorCode": "RELAY_PROBE_ERROR" }` on other errors
+Future<Map<String, dynamic>> callP2PRelayProbe(
+  Bridge bridge, {
+  required String peerId,
+}) async {
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'P2P_RELAY_PROBE_REQUEST',
+    details: {'peerId': peerId},
+  );
+
+  final request = {
+    'cmd': 'relay:probe',
+    'payload': {
+      'peerId': peerId,
+    },
+  };
+
+  final responseJson = await bridge.send(jsonEncode(request));
+  final response = jsonDecode(responseJson) as Map<String, dynamic>;
+
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'P2P_RELAY_PROBE_RESPONSE',
+    details: {'ok': response['ok'], 'errorCode': response['errorCode']},
+  );
+
+  return response;
+}
+
 /// Calls the bridge to stop the P2P node.
 ///
 /// Returns: `{ "ok": true, "stopped": true }` on success.

@@ -74,7 +74,10 @@ class _PerMessageThrowingP2PService extends FakeP2PService {
 
   @override
   Future<p2p.SendMessageResult> sendMessageWithReply(
-      String peerId, String message) async {
+    String peerId,
+    String message, {
+    int? timeoutMs,
+  }) async {
     sendMessageWithReplyCallCount++;
     lastSendMessagePeerId = peerId;
     lastSendMessageContent = message;
@@ -97,14 +100,16 @@ void main() {
       identityRepo = FakeIdentityRepository();
       messageRepo = FakeMessageRepository();
       contactRepo = FakeContactRepository();
-      bridge = FakeBridge(initialResponses: {
-        'message.encrypt': {
-          'ok': true,
-          'kem': 'fake-kem',
-          'ciphertext': 'fake-ct',
-          'nonce': 'fake-nonce',
+      bridge = FakeBridge(
+        initialResponses: {
+          'message.encrypt': {
+            'ok': true,
+            'kem': 'fake-kem',
+            'ciphertext': 'fake-ct',
+            'nonce': 'fake-nonce',
+          },
         },
-      });
+      );
     });
 
     test('returns 0 when no identity exists', () async {
@@ -142,95 +147,106 @@ void main() {
       expect(count, 0);
     });
 
-    test('retries each failed message and calls sendMessageWithReply',
-        () async {
-      identityRepo.seed(makeIdentity());
-      messageRepo.seed([makeFailedMessage()]);
-      contactRepo.seed([makeContact(peerId: 'peer-target')]);
+    test(
+      'retries each failed message and calls sendMessageWithReply',
+      () async {
+        identityRepo.seed(makeIdentity());
+        messageRepo.seed([makeFailedMessage()]);
+        contactRepo.seed([makeContact(peerId: 'peer-target')]);
 
-      final p2pService = FakeP2PService(
-        initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
-        discoverPeerResult: const DiscoveredPeer(
-          id: 'peer-target',
-          addresses: ['/ip4/127.0.0.1/tcp/4001'],
-        ),
-        dialPeerResult: true,
-        sendMessageWithReplyResult:
-            const p2p.SendMessageResult(sent: true, reply: 'ack'),
-        storeInInboxResult: true,
-      );
+        final p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+          discoverPeerResult: const DiscoveredPeer(
+            id: 'peer-target',
+            addresses: ['/ip4/127.0.0.1/tcp/4001'],
+          ),
+          dialPeerResult: true,
+          sendMessageWithReplyResult: const p2p.SendMessageResult(
+            sent: true,
+            reply: 'ack',
+          ),
+          storeInInboxResult: true,
+        );
 
-      await retryFailedMessages(
-        messageRepo: messageRepo,
-        identityRepo: identityRepo,
-        contactRepo: contactRepo,
-        p2pService: p2pService,
-        bridge: bridge,
-      );
+        await retryFailedMessages(
+          messageRepo: messageRepo,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          p2pService: p2pService,
+          bridge: bridge,
+        );
 
-      // sendChatMessage should have called sendMessageWithReply at least once
-      expect(p2pService.sendMessageWithReplyCallCount, greaterThanOrEqualTo(1));
-    });
+        // sendChatMessage should have called sendMessageWithReply at least once
+        expect(
+          p2pService.sendMessageWithReplyCallCount,
+          greaterThanOrEqualTo(1),
+        );
+      },
+    );
 
-    test('returns success count of 1 when one message retried successfully',
-        () async {
-      identityRepo.seed(makeIdentity());
-      messageRepo.seed([makeFailedMessage()]);
-      contactRepo.seed([makeContact(peerId: 'peer-target')]);
+    test(
+      'returns success count of 1 when one message retried successfully',
+      () async {
+        identityRepo.seed(makeIdentity());
+        messageRepo.seed([makeFailedMessage()]);
+        contactRepo.seed([makeContact(peerId: 'peer-target')]);
 
-      final p2pService = FakeP2PService(
-        initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
-        discoverPeerResult: const DiscoveredPeer(
-          id: 'peer-target',
-          addresses: ['/ip4/127.0.0.1/tcp/4001'],
-        ),
-        dialPeerResult: true,
-        sendMessageWithReplyResult:
-            const p2p.SendMessageResult(sent: true, reply: 'ack'),
-        storeInInboxResult: true,
-      );
+        final p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+          discoverPeerResult: const DiscoveredPeer(
+            id: 'peer-target',
+            addresses: ['/ip4/127.0.0.1/tcp/4001'],
+          ),
+          dialPeerResult: true,
+          sendMessageWithReplyResult: const p2p.SendMessageResult(
+            sent: true,
+            reply: 'ack',
+          ),
+          storeInInboxResult: true,
+        );
 
-      final count = await retryFailedMessages(
-        messageRepo: messageRepo,
-        identityRepo: identityRepo,
-        contactRepo: contactRepo,
-        p2pService: p2pService,
-        bridge: bridge,
-      );
+        final count = await retryFailedMessages(
+          messageRepo: messageRepo,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          p2pService: p2pService,
+          bridge: bridge,
+        );
 
-      expect(count, 1);
-    });
+        expect(count, 1);
+      },
+    );
 
-    test('returns 0 when all retries fail (sendMessageWithReply not sent)',
-        () async {
-      identityRepo.seed(makeIdentity());
-      messageRepo.seed([makeFailedMessage()]);
-      contactRepo.seed([makeContact(peerId: 'peer-target')]);
+    test(
+      'returns 0 when all retries fail (sendMessageWithReply not sent)',
+      () async {
+        identityRepo.seed(makeIdentity());
+        messageRepo.seed([makeFailedMessage()]);
+        contactRepo.seed([makeContact(peerId: 'peer-target')]);
 
-      // discoverPeer returns null so sendChatMessage gets peerNotFound
-      // and after 3 retries falls back to storeInInbox which also fails
-      final p2pService = FakeP2PService(
-        initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
-        discoverPeerResult: null, // peer not found
-        dialPeerResult: false,
-        sendMessageWithReplyResult:
-            const p2p.SendMessageResult(sent: false),
-        storeInInboxResult: false, // inbox fallback also fails
-      );
+        // discoverPeer returns null so sendChatMessage gets peerNotFound
+        // and after 3 retries falls back to storeInInbox which also fails
+        final p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+          discoverPeerResult: null, // peer not found
+          dialPeerResult: false,
+          sendMessageWithReplyResult: const p2p.SendMessageResult(sent: false),
+          storeInInboxResult: false, // inbox fallback also fails
+        );
 
-      final count = await retryFailedMessages(
-        messageRepo: messageRepo,
-        identityRepo: identityRepo,
-        contactRepo: contactRepo,
-        p2pService: p2pService,
-        bridge: bridge,
-      );
+        final count = await retryFailedMessages(
+          messageRepo: messageRepo,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          p2pService: p2pService,
+          bridge: bridge,
+        );
 
-      expect(count, 0);
-    });
+        expect(count, 0);
+      },
+    );
 
-    test('continues on per-message error and still tries next message',
-        () async {
+    test('continues on per-message error and still tries next message', () async {
       identityRepo.seed(makeIdentity());
       messageRepo.seed([
         makeFailedMessage(id: 'msg-fail-001', contactPeerId: 'peer-a'),
@@ -242,20 +258,22 @@ void main() {
       ]);
 
       // First call to sendMessageWithReply throws, second succeeds.
-      // sendChatMessage retries 3 times per message, so indices 0-2 are
-      // the first message's 3 attempts, and indices 3-5 are the second
-      // message's attempts. We throw on 0, 1, 2 (all attempts for msg 1)
-      // and let 3 succeed (first attempt for msg 2).
+      // sendChatMessage uses maxAttempts=1 per message, so index 0 is
+      // the first message's single attempt, and index 1 is the second
+      // message's single attempt. We throw on index 0 (msg 1 fails)
+      // and let index 1 succeed (msg 2).
       final p2pService = _PerMessageThrowingP2PService(
         initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
-        throwOnCallIndices: {0, 1, 2},
+        throwOnCallIndices: {0},
         discoverPeerResult: const DiscoveredPeer(
           id: 'peer-b',
           addresses: ['/ip4/127.0.0.1/tcp/4001'],
         ),
         dialPeerResult: true,
-        sendMessageWithReplyResult:
-            const p2p.SendMessageResult(sent: true, reply: 'ack'),
+        sendMessageWithReplyResult: const p2p.SendMessageResult(
+          sent: true,
+          reply: 'ack',
+        ),
         storeInInboxResult: false, // inbox fallback fails for msg 1
       );
 
@@ -267,7 +285,7 @@ void main() {
         bridge: bridge,
       );
 
-      // msg-fail-001 failed (all 3 attempts threw + inbox failed), msg-fail-002 succeeded
+      // msg-fail-001 failed (single attempt threw + inbox failed), msg-fail-002 succeeded
       expect(count, 1);
     });
 
@@ -291,8 +309,10 @@ void main() {
           addresses: ['/ip4/127.0.0.1/tcp/4001'],
         ),
         dialPeerResult: true,
-        sendMessageWithReplyResult:
-            const p2p.SendMessageResult(sent: true, reply: 'ack'),
+        sendMessageWithReplyResult: const p2p.SendMessageResult(
+          sent: true,
+          reply: 'ack',
+        ),
         storeInInboxResult: true,
       );
 
@@ -323,9 +343,7 @@ void main() {
         ),
         makeFailedMessage(id: 'msg-fail-001', contactPeerId: 'peer-b'),
       ]);
-      contactRepo.seed([
-        makeContact(peerId: 'peer-b'),
-      ]);
+      contactRepo.seed([makeContact(peerId: 'peer-b')]);
 
       final p2pService = FakeP2PService(
         initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
@@ -334,8 +352,10 @@ void main() {
           addresses: ['/ip4/127.0.0.1/tcp/4001'],
         ),
         dialPeerResult: true,
-        sendMessageWithReplyResult:
-            const p2p.SendMessageResult(sent: true, reply: 'ack'),
+        sendMessageWithReplyResult: const p2p.SendMessageResult(
+          sent: true,
+          reply: 'ack',
+        ),
         storeInInboxResult: true,
       );
 
@@ -351,43 +371,118 @@ void main() {
       expect(count, 1);
     });
 
-    test('returns 0 when node is not running (sendChatMessage fails)',
-        () async {
+    test(
+      'returns 0 when node is not running (sendChatMessage fails)',
+      () async {
+        identityRepo.seed(makeIdentity());
+        messageRepo.seed([makeFailedMessage()]);
+
+        // Node NOT started -- sendChatMessage returns nodeNotRunning
+        final p2pService = FakeP2PService(initialState: NodeState.stopped);
+
+        final count = await retryFailedMessages(
+          messageRepo: messageRepo,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          p2pService: p2pService,
+          bridge: bridge,
+        );
+
+        expect(count, 0);
+      },
+    );
+
+    test(
+      'skips message when contact has no ML-KEM key (encryptionRequired)',
+      () async {
+        identityRepo.seed(makeIdentity());
+        messageRepo.seed([makeFailedMessage()]);
+        // Contact exists but has no ML-KEM public key
+        contactRepo.seed([
+          makeContact(peerId: 'peer-target', mlKemPublicKey: null),
+        ]);
+
+        final p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+          discoverPeerResult: const DiscoveredPeer(
+            id: 'peer-target',
+            addresses: ['/ip4/127.0.0.1/tcp/4001'],
+          ),
+          dialPeerResult: true,
+          sendMessageWithReplyResult: const p2p.SendMessageResult(
+            sent: true,
+            reply: 'ack',
+          ),
+          storeInInboxResult: true,
+        );
+
+        final count = await retryFailedMessages(
+          messageRepo: messageRepo,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          p2pService: p2pService,
+          bridge: bridge,
+        );
+
+        // encryptionRequired → message not retried successfully
+        expect(count, 0);
+        // sendMessageWithReply should never have been called
+        expect(p2pService.sendMessageWithReplyCallCount, 0);
+      },
+    );
+
+    test(
+      'skips message when contact does not exist (encryptionRequired)',
+      () async {
+        identityRepo.seed(makeIdentity());
+        messageRepo.seed([makeFailedMessage()]);
+        // No contact seeded — contactRepo returns null → mlKemPublicKey is null
+
+        final p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+          discoverPeerResult: const DiscoveredPeer(
+            id: 'peer-target',
+            addresses: ['/ip4/127.0.0.1/tcp/4001'],
+          ),
+          dialPeerResult: true,
+          sendMessageWithReplyResult: const p2p.SendMessageResult(
+            sent: true,
+            reply: 'ack',
+          ),
+          storeInInboxResult: true,
+        );
+
+        final count = await retryFailedMessages(
+          messageRepo: messageRepo,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          p2pService: p2pService,
+          bridge: bridge,
+        );
+
+        expect(count, 0);
+        expect(p2pService.sendMessageWithReplyCallCount, 0);
+      },
+    );
+
+    test('wire_envelope inbox path sets transport to inbox', () async {
       identityRepo.seed(makeIdentity());
-      messageRepo.seed([makeFailedMessage()]);
-
-      // Node NOT started -- sendChatMessage returns nodeNotRunning
-      final p2pService = FakeP2PService(
-        initialState: NodeState.stopped,
+      // Failed message with wire_envelope — should use inbox fast path
+      final msgWithEnvelope = ConversationMessage(
+        id: 'msg-env-001',
+        contactPeerId: 'peer-target',
+        senderPeerId: 'my-peer-id',
+        text: 'Hello',
+        timestamp: '2026-01-01T00:00:00.000Z',
+        status: 'failed',
+        isIncoming: false,
+        createdAt: '2026-01-01T00:00:00.000Z',
+        wireEnvelope: '{"type":"chat_message","version":"2","encrypted":{}}',
       );
-
-      final count = await retryFailedMessages(
-        messageRepo: messageRepo,
-        identityRepo: identityRepo,
-        contactRepo: contactRepo,
-        p2pService: p2pService,
-        bridge: bridge,
-      );
-
-      expect(count, 0);
-    });
-
-    test('skips message when contact has no ML-KEM key (encryptionRequired)',
-        () async {
-      identityRepo.seed(makeIdentity());
-      messageRepo.seed([makeFailedMessage()]);
-      // Contact exists but has no ML-KEM public key
-      contactRepo.seed([makeContact(peerId: 'peer-target', mlKemPublicKey: null)]);
+      messageRepo.seed([msgWithEnvelope]);
 
       final p2pService = FakeP2PService(
         initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
-        discoverPeerResult: const DiscoveredPeer(
-          id: 'peer-target',
-          addresses: ['/ip4/127.0.0.1/tcp/4001'],
-        ),
-        dialPeerResult: true,
-        sendMessageWithReplyResult:
-            const p2p.SendMessageResult(sent: true, reply: 'ack'),
         storeInInboxResult: true,
       );
 
@@ -399,40 +494,15 @@ void main() {
         bridge: bridge,
       );
 
-      // encryptionRequired → message not retried successfully
-      expect(count, 0);
-      // sendMessageWithReply should never have been called
-      expect(p2pService.sendMessageWithReplyCallCount, 0);
-    });
+      expect(count, 1);
+      expect(p2pService.storeInInboxCallCount, 1);
 
-    test('skips message when contact does not exist (encryptionRequired)',
-        () async {
-      identityRepo.seed(makeIdentity());
-      messageRepo.seed([makeFailedMessage()]);
-      // No contact seeded — contactRepo returns null → mlKemPublicKey is null
-
-      final p2pService = FakeP2PService(
-        initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
-        discoverPeerResult: const DiscoveredPeer(
-          id: 'peer-target',
-          addresses: ['/ip4/127.0.0.1/tcp/4001'],
-        ),
-        dialPeerResult: true,
-        sendMessageWithReplyResult:
-            const p2p.SendMessageResult(sent: true, reply: 'ack'),
-        storeInInboxResult: true,
-      );
-
-      final count = await retryFailedMessages(
-        messageRepo: messageRepo,
-        identityRepo: identityRepo,
-        contactRepo: contactRepo,
-        p2pService: p2pService,
-        bridge: bridge,
-      );
-
-      expect(count, 0);
-      expect(p2pService.sendMessageWithReplyCallCount, 0);
+      // Verify the saved message has transport='inbox' and status='delivered'
+      final saved = messageRepo.lastSavedMessage;
+      expect(saved, isNotNull);
+      expect(saved!.status, 'delivered');
+      expect(saved.transport, 'inbox');
+      expect(saved.wireEnvelope, isNull);
     });
 
     test('calls getFailedOutgoingMessages on messageRepo', () async {

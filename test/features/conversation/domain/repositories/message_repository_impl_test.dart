@@ -104,6 +104,20 @@ void main() {
           ..sort((a, b) => (a['timestamp'] as String)
               .compareTo(b['timestamp'] as String));
       },
+      dbLoadUnackedOutgoingMessages: ({required olderThan, limit = 50}) async {
+        return store.values
+            .where((row) =>
+                row['status'] == 'sent' &&
+                row['is_incoming'] == 0 &&
+                row['wire_envelope'] != null &&
+                (row['timestamp'] as String)
+                        .compareTo(olderThan.toUtc().toIso8601String()) <
+                    0)
+            .take(limit)
+            .toList()
+          ..sort((a, b) => (a['timestamp'] as String)
+              .compareTo(b['timestamp'] as String));
+      },
     );
   });
 

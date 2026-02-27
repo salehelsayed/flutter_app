@@ -68,30 +68,30 @@ class ChatMessageListener {
   void start() {
     if (_subscription != null) return;
 
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'CHAT_LISTENER_START',
-      details: {},
-    );
+    emitFlowEvent(layer: 'FL', event: 'CHAT_LISTENER_START', details: {});
 
     _subscription = chatMessageStream.listen(
       _onMessage,
       onError: (error) {
-        emitFlowEvent(layer: 'FL', event: 'CHAT_LISTENER_STREAM_ERROR', details: {'error': error.toString()});
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'CHAT_LISTENER_STREAM_ERROR',
+          details: {'error': error.toString()},
+        );
       },
       onDone: () {
-        emitFlowEvent(layer: 'FL', event: 'CHAT_LISTENER_STREAM_DONE', details: {});
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'CHAT_LISTENER_STREAM_DONE',
+          details: {},
+        );
       },
     );
   }
 
   /// Stops listening and cleans up resources.
   void stop() {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'CHAT_LISTENER_STOP',
-      details: {},
-    );
+    emitFlowEvent(layer: 'FL', event: 'CHAT_LISTENER_STOP', details: {});
 
     _subscription?.cancel();
     _subscription = null;
@@ -106,8 +106,9 @@ class ChatMessageListener {
 
   Future<void> _autoDownloadMedia(ConversationMessage message) async {
     try {
-      final attachments =
-          await mediaAttachmentRepo!.getAttachmentsForMessage(message.id);
+      final attachments = await mediaAttachmentRepo!.getAttachmentsForMessage(
+        message.id,
+      );
       if (attachments.isEmpty) return;
 
       final downloadedMedia = <MediaAttachment>[];
@@ -125,12 +126,10 @@ class ChatMessageListener {
             contactPeerId: message.contactPeerId,
           );
           downloadedMedia.add(
-            result ??
-                attachment.copyWith(downloadStatus: 'failed'),
+            result ?? attachment.copyWith(downloadStatus: 'failed'),
           );
         } catch (e) {
-          downloadedMedia
-              .add(attachment.copyWith(downloadStatus: 'failed'));
+          downloadedMedia.add(attachment.copyWith(downloadStatus: 'failed'));
           emitFlowEvent(
             layer: 'FL',
             event: 'CHAT_LISTENER_DOWNLOAD_ERROR',
@@ -151,7 +150,12 @@ class ChatMessageListener {
       emitFlowEvent(
         layer: 'FL',
         event: 'CHAT_LISTENER_AUTO_DOWNLOAD_ERROR',
-        details: {'messageId': message.id.length > 8 ? message.id.substring(0, 8) : message.id, 'error': e.toString()},
+        details: {
+          'messageId': message.id.length > 8
+              ? message.id.substring(0, 8)
+              : message.id,
+          'error': e.toString(),
+        },
       );
     }
   }
@@ -178,8 +182,11 @@ class ChatMessageListener {
           ? await getOwnMlKemSecretKey!()
           : null;
 
-      final (result, conversationMessage, updatedContact) =
-          await handleIncomingChatMessage(
+      final (
+        result,
+        conversationMessage,
+        updatedContact,
+      ) = await handleIncomingChatMessage(
         message: message,
         messageRepo: messageRepo,
         contactRepo: contactRepo,
@@ -234,7 +241,8 @@ class ChatMessageListener {
         if (notificationService != null &&
             conversationTracker != null &&
             getAppLifecycleState != null) {
-          final username = senderContact?.username ??
+          final username =
+              senderContact?.username ??
               (updatedContact?.username) ??
               'Unknown';
           maybeShowNotification(

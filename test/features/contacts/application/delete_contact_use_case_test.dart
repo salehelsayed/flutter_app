@@ -81,6 +81,11 @@ class FakeMessageRepository implements MessageRepository {
 
   @override
   Future<List<ConversationMessage>> getFailedOutgoingMessages() async => [];
+
+  @override
+  Future<List<ConversationMessage>> getUnackedOutgoingMessages({
+    required Duration olderThan,
+  }) async => [];
 }
 
 void main() {

@@ -1,7 +1,7 @@
 /// Integration test: Offline inbox round-trip.
 ///
 /// Comprehensive coverage of the offline inbox fallback mechanism:
-/// messages queued when peer is offline, delivered when they come online.
+/// messages stored in inbox when peer is offline, delivered when they come online.
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
@@ -55,7 +55,7 @@ void main() {
   });
 
   group('Offline inbox round-trip', () {
-    test('3a. Multiple messages queued offline, all delivered in order',
+    test('3a. Multiple messages stored offline inbox, all delivered in order',
         () async {
       charlie.setOnline(false);
 
@@ -252,6 +252,32 @@ void main() {
       // Verify via messageRepo: no chat message stored (it's a contact_request)
       await Future.delayed(const Duration(milliseconds: 100));
       expect(bob.messageRepo.count, 0);
+    });
+
+    test(
+        '3g. Sender status is delivered immediately on inbox store and stays delivered after receipt',
+        () async {
+      bob.setOnline(false);
+
+      final (result, sent) = await alice.sendMessage(bob.peerId, 'offline ping');
+      expect(result, SendChatMessageResult.success);
+      expect(sent, isNotNull);
+      expect(sent!.status, 'delivered');
+
+      var aliceConvo = await alice.messageRepo.getMessagesForContact(bob.peerId);
+      expect(aliceConvo, hasLength(1));
+      expect(aliceConvo.first.status, 'delivered');
+
+      bob.setOnline(true);
+      final drained = await bob.drainOfflineInbox();
+      expect(drained, 1);
+
+      await Future.delayed(const Duration(milliseconds: 150));
+
+      aliceConvo = await alice.messageRepo.getMessagesForContact(bob.peerId);
+      expect(aliceConvo, hasLength(1));
+      expect(aliceConvo.first.id, sent.id);
+      expect(aliceConvo.first.status, 'delivered');
     });
   });
 }

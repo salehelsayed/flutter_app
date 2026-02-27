@@ -90,7 +90,8 @@ class _FakeContactRepository implements ContactRepository {
 }
 
 class _FakeP2PService implements P2PService {
-  bool sendResult = true;
+  SendMessageResult sendWithReplyResult =
+      const SendMessageResult(sent: true, acked: true, reply: 'ack');
   bool throwOnSend = false;
   bool storeResult = true;
   bool throwOnStore = false;
@@ -101,7 +102,7 @@ class _FakeP2PService implements P2PService {
   Future<bool> sendMessage(String peerId, String message) async {
     if (throwOnSend) throw Exception('send error');
     sentToPeers.add(peerId);
-    return sendResult;
+    return sendWithReplyResult.sent && sendWithReplyResult.acknowledged;
   }
 
   @override
@@ -127,8 +128,12 @@ class _FakeP2PService implements P2PService {
   @override
   Future<bool> stopNode() async => true;
   @override
-  Future<SendMessageResult> sendMessageWithReply(String peerId, String message) async =>
-      throw UnimplementedError();
+  Future<SendMessageResult> sendMessageWithReply(
+      String peerId, String message, {int? timeoutMs}) async {
+    if (throwOnSend) throw Exception('send error');
+    sentToPeers.add(peerId);
+    return sendWithReplyResult;
+  }
   @override
   Future<DiscoveredPeer?> discoverPeer(String peerId) async => null;
   @override
@@ -141,6 +146,9 @@ class _FakeP2PService implements P2PService {
   Future<void> performImmediateHealthCheck() async {}
   @override
   Future<void> drainOfflineInbox() async {}
+  @override
+  Future<RelayProbeResult> probeRelay(String peerId) async =>
+      RelayProbeResult.error;
   @override
   bool isConnectedToPeer(String peerId) => false;
   @override
@@ -359,11 +367,14 @@ void main() {
           containsAll(['12D3KooWContact_A_1234', '12D3KooWContact_B_1234']));
     });
 
-    test('fallback: stores in inbox when sendMessage returns false', () async {
+    test('fallback: stores in inbox when direct send is unacked', () async {
       bridge.nextResponse = {'ok': true};
       identityRepo.identityResult = _makeIdentity();
       contactRepo.activeContacts = [_makeContact('12D3KooWOfflinePeer1234')];
-      p2pService.sendResult = false;
+      p2pService.sendWithReplyResult = const SendMessageResult(
+        sent: true,
+        acked: false,
+      );
 
       await uploadProfilePicture(
         bridge: bridge,
@@ -377,7 +388,7 @@ void main() {
       expect(p2pService.storedToPeers, contains('12D3KooWOfflinePeer1234'));
     });
 
-    test('fallback: stores in inbox when sendMessage throws', () async {
+    test('fallback: stores in inbox when direct send throws', () async {
       bridge.nextResponse = {'ok': true};
       identityRepo.identityResult = _makeIdentity();
       contactRepo.activeContacts = [_makeContact('12D3KooWThrowPeer12345')];

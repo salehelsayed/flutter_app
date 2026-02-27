@@ -400,13 +400,14 @@ func cmdSendV1(params map[string]interface{}) map[string]interface{} {
 		return errResult(fmt.Sprintf("build v1: %v", err))
 	}
 
-	reply, err := state.node.SendMessage(peerId, envelope)
+	reply, acked, err := state.node.SendMessage(peerId, envelope, 0)
 	if err != nil {
 		return errResult(fmt.Sprintf("send: %v", err))
 	}
 
 	return okResult(map[string]interface{}{
 		"messageId": msgID,
+		"acked":     acked,
 		"reply":     reply,
 	})
 }
@@ -448,13 +449,14 @@ func cmdSendV2(params map[string]interface{}) map[string]interface{} {
 		return errResult(fmt.Sprintf("build v2: %v", err))
 	}
 
-	reply, err := state.node.SendMessage(peerId, envelope)
+	reply, acked, err := state.node.SendMessage(peerId, envelope, 0)
 	if err != nil {
 		return errResult(fmt.Sprintf("send: %v", err))
 	}
 
 	return okResult(map[string]interface{}{
 		"messageId": msgID,
+		"acked":     acked,
 		"reply":     reply,
 	})
 }
@@ -470,12 +472,13 @@ func cmdSendRaw(params map[string]interface{}) map[string]interface{} {
 		return errResult("missing peerId or raw")
 	}
 
-	reply, err := state.node.SendMessage(peerId, raw)
+	reply, acked, err := state.node.SendMessage(peerId, raw, 0)
 	if err != nil {
 		return errResult(fmt.Sprintf("send raw: %v", err))
 	}
 
 	return okResult(map[string]interface{}{
+		"acked": acked,
 		"reply": reply,
 	})
 }

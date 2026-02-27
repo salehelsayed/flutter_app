@@ -81,6 +81,12 @@ class ThrowAfterNMessageRepo implements MessageRepository {
       _inner.getFailedOutgoingMessages();
 
   @override
+  Future<List<ConversationMessage>> getUnackedOutgoingMessages({
+    required Duration olderThan,
+  }) =>
+      _inner.getUnackedOutgoingMessages(olderThan: olderThan);
+
+  @override
   Future<List<ConversationMessage>> getMessagesPage(
     String cid, {
     int limit = 50,
@@ -153,6 +159,12 @@ class ThrowOnNthMessageRepo implements MessageRepository {
   @override
   Future<List<ConversationMessage>> getFailedOutgoingMessages() =>
       _inner.getFailedOutgoingMessages();
+
+  @override
+  Future<List<ConversationMessage>> getUnackedOutgoingMessages({
+    required Duration olderThan,
+  }) =>
+      _inner.getUnackedOutgoingMessages(olderThan: olderThan);
 
   @override
   Future<List<ConversationMessage>> getMessagesPage(

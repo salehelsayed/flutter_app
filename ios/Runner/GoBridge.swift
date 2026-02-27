@@ -77,6 +77,8 @@ class GoBridge: NSObject {
         // Relay
         case "relayReconnect":
             runOnBackground({ BridgeRelayReconnect() }, result: result)
+        case "relayProbe":
+            runOnBackground({ BridgeRelayProbe(args ?? "") }, result: result)
 
         // Peer operations
         case "dialPeer":

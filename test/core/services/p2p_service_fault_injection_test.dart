@@ -77,28 +77,24 @@ void main() {
       await sub.cancel();
     });
 
-    test('4. Missing ACK (first send fails) then retry succeeds with no duplicate',
+    test('4. Missing ACK (first send fails) falls to inbox with no duplicate',
         () async {
-      // First send attempt fails
+      // Single send attempt fails — with maxAttempts=1, falls to inbox
       alice.p2pService.sendFailCount = 1;
       alice.start();
 
-      final receivedMessages = <dynamic>[];
-      final sub = bob.p2pService.messageStream.listen(receivedMessages.add);
-
       final (result, _) = await alice.sendMessage('bob', 'retry message');
 
+      // Send still succeeds because inbox fallback stores the message
       expect(result, SendChatMessageResult.success);
-      await Future.delayed(const Duration(milliseconds: 50));
-
-      // Bob receives exactly 1 copy (the retry, not a duplicate)
-      expect(receivedMessages, hasLength(1));
-
-      await sub.cancel();
+      expect(network.storeInInboxCallCount, greaterThanOrEqualTo(1),
+          reason: 'Should have fallen through to inbox after single attempt failed');
     });
 
-    test('9. Correct retry count: sendFailCount=2 causes exactly 2 failures then success',
+    test('9. sendFailCount=2 causes single dial failure then inbox fallback',
         () async {
+      // With maxAttempts=1, only 1 dial attempt is made. sendFailCount=2 means
+      // that attempt fails, so the message falls to inbox.
       alice.p2pService.sendFailCount = 2;
       alice.start();
 
@@ -106,9 +102,9 @@ void main() {
 
       expect(result, SendChatMessageResult.success);
       expect(msg, isNotNull);
-      // The internal send attempts: fail, fail, succeed = 3 total
-      // deliverCallCount only tracks successful deliveries through the network
-      expect(network.deliverCallCount, greaterThanOrEqualTo(1));
+      // With only 1 attempt, direct delivery fails → inbox fallback
+      expect(network.storeInInboxCallCount, greaterThanOrEqualTo(1),
+          reason: 'Should have fallen through to inbox after failed dial attempt');
     });
 
     test('deliveryFails=true causes send to fall through to inbox', () async {

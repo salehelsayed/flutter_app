@@ -159,29 +159,16 @@ Future<SendContactRequestResult> sendContactRequest({
     // Fall through to relay path
   }
 
-  // Attempt to send with exponential backoff (3 attempts)
-  const maxAttempts = 3;
-  const baseDelay = Duration(milliseconds: 500);
-
-  for (var attempt = 1; attempt <= maxAttempts; attempt++) {
-    try {
-      // Try to discover the peer first
-      final peer = await p2pService.discoverPeer(targetPeerId);
-      if (peer == null) {
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'CONTACT_REQUEST_SEND_PEER_NOT_FOUND',
-          details: {'attempt': attempt, 'targetPeerId': targetPrefix},
-        );
-
-        if (attempt < maxAttempts) {
-          await Future.delayed(baseDelay * attempt);
-          continue;
-        }
-        break;
-      }
-
-      // Dial and send
+  // Single discover → dial → send attempt before inbox fallback.
+  try {
+    final peer = await p2pService.discoverPeer(targetPeerId);
+    if (peer == null) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONTACT_REQUEST_SEND_PEER_NOT_FOUND',
+        details: {'targetPeerId': targetPrefix},
+      );
+    } else {
       final dialed = await p2pService.dialPeer(
         targetPeerId,
         addresses: peer.addresses,
@@ -191,51 +178,39 @@ Future<SendContactRequestResult> sendContactRequest({
         emitFlowEvent(
           layer: 'FL',
           event: 'CONTACT_REQUEST_SEND_DIAL_FAILED',
-          details: {'attempt': attempt, 'targetPeerId': targetPrefix},
+          details: {'targetPeerId': targetPrefix},
         );
-
-        if (attempt < maxAttempts) {
-          await Future.delayed(baseDelay * attempt);
-          continue;
-        }
-        break;
-      }
-
-      final sent = await p2pService.sendMessage(targetPeerId, messageJson);
-      if (!sent) {
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'CONTACT_REQUEST_SEND_MESSAGE_FAILED',
-          details: {'attempt': attempt, 'targetPeerId': targetPrefix},
+      } else {
+        final sendResult = await p2pService.sendMessageWithReply(
+          targetPeerId,
+          messageJson,
         );
-
-        if (attempt < maxAttempts) {
-          await Future.delayed(baseDelay * attempt);
-          continue;
+        if (!sendResult.sent || !sendResult.acknowledged) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'CONTACT_REQUEST_SEND_MESSAGE_FAILED',
+            details: {
+              'targetPeerId': targetPrefix,
+              'sent': sendResult.sent,
+              'acked': sendResult.acknowledged,
+            },
+          );
+        } else {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'CONTACT_REQUEST_SEND_SUCCESS',
+            details: {'targetPeerId': targetPrefix},
+          );
+          return SendContactRequestResult.success;
         }
-        break;
       }
-
-      // Success!
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'CONTACT_REQUEST_SEND_SUCCESS',
-        details: {'targetPeerId': targetPrefix, 'attempts': attempt},
-      );
-      return SendContactRequestResult.success;
-    } catch (e) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'CONTACT_REQUEST_SEND_ERROR',
-        details: {'attempt': attempt, 'error': e.toString()},
-      );
-
-      if (attempt < maxAttempts) {
-        await Future.delayed(baseDelay * attempt);
-        continue;
-      }
-      break;
     }
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CONTACT_REQUEST_SEND_ERROR',
+      details: {'error': e.toString()},
+    );
   }
 
   // All retries exhausted — try offline inbox fallback.

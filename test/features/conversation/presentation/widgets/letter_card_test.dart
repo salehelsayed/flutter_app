@@ -94,7 +94,7 @@ void main() {
         expect(find.byIcon(Icons.done_all_rounded), findsOneWidget);
       });
 
-      testWidgets('shows two ticks when status is queued (legacy)', (
+      testWidgets('shows two ticks when status is queued', (
         tester,
       ) async {
         await tester.pumpWidget(
