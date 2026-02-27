@@ -307,7 +307,8 @@ void main() {
         ownPeerId: 'my-peer',
       )));
 
-      expect(find.byType(ReactionDisplay), findsOneWidget);
+      // Inline reaction chips, no standalone ReactionDisplay
+      expect(find.byType(ReactionDisplay), findsNothing);
       expect(find.text('👍'), findsOneWidget);
     });
 
@@ -414,7 +415,8 @@ void main() {
         ownPeerId: 'my-peer',
       )));
 
-      expect(find.byType(ReactionDisplay), findsOneWidget);
+      // Inline reaction chips, no standalone ReactionDisplay
+      expect(find.byType(ReactionDisplay), findsNothing);
       expect(find.text('😂'), findsOneWidget);
     });
   });
