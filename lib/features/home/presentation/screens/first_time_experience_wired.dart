@@ -20,8 +20,10 @@ import 'package:flutter_app/features/contact_request/domain/repositories/contact
 import 'package:flutter_app/features/contact_request/presentation/widgets/contact_request_dialog.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
+import 'package:flutter_app/features/conversation/application/reaction_listener.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/qr_code/application/build_qr_payload_use_case.dart';
@@ -47,6 +49,8 @@ class FirstTimeExperienceWired extends StatefulWidget {
   final SecureKeyStore secureKeyStore;
   final ActiveConversationTracker? conversationTracker;
   final AudioRecorderService? audioRecorderService;
+  final ReactionRepository? reactionRepository;
+  final ReactionListener? reactionListener;
 
   const FirstTimeExperienceWired({
     super.key,
@@ -64,6 +68,8 @@ class FirstTimeExperienceWired extends StatefulWidget {
     required this.secureKeyStore,
     this.conversationTracker,
     this.audioRecorderService,
+    this.reactionRepository,
+    this.reactionListener,
   });
 
   @override
@@ -160,6 +166,8 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
             imageProcessor: widget.imageProcessor,
             conversationTracker: widget.conversationTracker,
             audioRecorderService: widget.audioRecorderService,
+            reactionRepository: widget.reactionRepository,
+            reactionListener: widget.reactionListener,
           ),
         ),
       );
@@ -412,6 +420,8 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
           ownPeerId: _identity!.peerId,
           conversationTracker: widget.conversationTracker,
           audioRecorderService: widget.audioRecorderService,
+          reactionRepository: widget.reactionRepository,
+          reactionListener: widget.reactionListener,
         ),
       ),
     );

@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/theme/feed_colors.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/reaction_display.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/message_bubble.dart';
 import 'package:flutter_app/shared/widgets/linkable_text.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid.dart';
@@ -205,6 +207,86 @@ void main() {
 
       expect(find.byType(LinkableText), findsOneWidget);
       expect(find.textContaining('Just a plain message'), findsOneWidget);
+    });
+  });
+
+  group('MessageBubble reactions', () {
+    testWidgets('renders ReactionDisplay when reactions provided',
+        (tester) async {
+      final reactions = [
+        MessageReaction(
+          id: 'r1',
+          messageId: 'm1',
+          emoji: '👍',
+          senderPeerId: 'peer-a',
+          timestamp: '2026-02-27T10:00:00Z',
+          createdAt: '2026-02-27T10:00:00Z',
+        ),
+      ];
+
+      await tester.pumpWidget(wrap(MessageBubble(
+        text: 'Hello',
+        time: '3:00 PM',
+        isIncoming: true,
+        reactions: reactions,
+        ownPeerId: 'my-peer',
+      )));
+
+      expect(find.byType(ReactionDisplay), findsOneWidget);
+      expect(find.text('👍'), findsOneWidget);
+    });
+
+    testWidgets('no ReactionDisplay when reactions empty', (tester) async {
+      await tester.pumpWidget(wrap(const MessageBubble(
+        text: 'Hello',
+        time: '3:00 PM',
+        isIncoming: true,
+        reactions: [],
+        ownPeerId: 'my-peer',
+      )));
+
+      expect(find.byType(ReactionDisplay), findsNothing);
+    });
+
+    testWidgets('long-press fires onLongPress callback', (tester) async {
+      var longPressed = false;
+
+      await tester.pumpWidget(wrap(MessageBubble(
+        text: 'Press me',
+        time: '3:00 PM',
+        isIncoming: true,
+        onLongPress: () => longPressed = true,
+      )));
+
+      await tester.longPress(find.textContaining('Press me'));
+      expect(longPressed, isTrue);
+    });
+
+    testWidgets('onReactionTap fires with emoji when chip tapped',
+        (tester) async {
+      String? tappedEmoji;
+      final reactions = [
+        MessageReaction(
+          id: 'r1',
+          messageId: 'm1',
+          emoji: '❤️',
+          senderPeerId: 'peer-a',
+          timestamp: '2026-02-27T10:00:00Z',
+          createdAt: '2026-02-27T10:00:00Z',
+        ),
+      ];
+
+      await tester.pumpWidget(wrap(MessageBubble(
+        text: 'Hello',
+        time: '3:00 PM',
+        isIncoming: true,
+        reactions: reactions,
+        ownPeerId: 'my-peer',
+        onReactionTap: (emoji) => tappedEmoji = emoji,
+      )));
+
+      await tester.tap(find.text('❤️'));
+      expect(tappedEmoji, '❤️');
     });
   });
 }

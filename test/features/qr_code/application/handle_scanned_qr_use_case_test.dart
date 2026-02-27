@@ -6,6 +6,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/qr_code/application/handle_scanned_qr_use_case.dart';
 
+import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
+
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../core/services/fake_p2p_service.dart';
 import '../../contacts/domain/repositories/fake_contact_repository.dart';
@@ -58,6 +60,14 @@ void main() {
 
     // Make payload.verify return true by default
     bridge.responses['payload.verify'] = {'ok': true, 'valid': true};
+    // Seed payload.sign + contactrequest.encrypt for v2 send
+    bridge.responses['payload.sign'] = {'ok': true, 'signature': 'fakeSig'};
+    bridge.responses['contactrequest.encrypt'] = {
+      'ok': true,
+      'ephemeralPublicKey': 'ephPubBase64',
+      'ciphertext': 'ctBase64',
+      'nonce': 'nonceBase64',
+    };
   });
 
   group('handleScannedQR', () {
@@ -173,6 +183,53 @@ void main() {
 
       // Allow the fire-and-forget future to complete
       await Future.delayed(Duration.zero);
+    });
+
+    test('v2: sends encrypted envelope with contactrequest.encrypt', () async {
+      // Use a running P2P service so sendContactRequest actually executes
+      final runningP2P = FakeP2PService(
+        initialState: const NodeState(
+          isStarted: true,
+          peerId: ownPeerId,
+        ),
+      );
+      runningP2P.storeInInboxResult = true;
+
+      final qrData = buildValidQRData();
+
+      final result = await handleScannedQR(
+        qrData: qrData,
+        bridge: bridge,
+        contactRepo: contactRepo,
+        identityRepo: identityRepo,
+        p2pService: runningP2P,
+        ownPeerId: ownPeerId,
+      );
+
+      expect(result, HandleScannedQRResult.success);
+
+      // Allow the fire-and-forget future to complete
+      await Future.delayed(const Duration(milliseconds: 200));
+
+      // Verify contactrequest.encrypt was called (v2 path)
+      expect(bridge.commandLog, contains('contactrequest.encrypt'));
+
+      // Verify the command sequence: payload.sign then contactrequest.encrypt
+      final signIdx = bridge.commandLog.indexOf('payload.sign');
+      final encryptIdx = bridge.commandLog.indexOf('contactrequest.encrypt');
+      expect(signIdx, greaterThanOrEqualTo(0));
+      expect(encryptIdx, greaterThan(signIdx));
+
+      // Verify the stored message is v2 envelope
+      final storedMsg = runningP2P.lastStoreInInboxMessage;
+      expect(storedMsg, isNotNull);
+      final envelope = jsonDecode(storedMsg!) as Map<String, dynamic>;
+      expect(envelope['type'], equals('contact_request'));
+      expect(envelope['version'], equals('2'));
+      expect(envelope['encrypted'], isA<Map>());
+      expect(envelope.containsKey('payload'), isFalse);
+
+      runningP2P.dispose();
     });
   });
 }

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/inline_reply_input.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/scrollable_message_preview.dart';
@@ -21,6 +22,10 @@ class OpenModeCardBody extends StatelessWidget {
   final ValueChanged<String>? onDraftChanged;
   final ValueChanged<bool>? onInputFocusChanged;
   final VoidCallback? onAttach;
+  final Map<String, List<MessageReaction>> reactions;
+  final String? ownPeerId;
+  final void Function(String messageId)? onMessageLongPress;
+  final void Function(String messageId, String emoji)? onReactionTap;
 
   const OpenModeCardBody({
     super.key,
@@ -35,6 +40,10 @@ class OpenModeCardBody extends StatelessWidget {
     this.onDraftChanged,
     this.onInputFocusChanged,
     this.onAttach,
+    this.reactions = const {},
+    this.ownPeerId,
+    this.onMessageLongPress,
+    this.onReactionTap,
   });
 
   @override
@@ -55,6 +64,10 @@ class OpenModeCardBody extends StatelessWidget {
             onViewEarlier: onViewEarlier,
             onCollapse: onCollapse,
             onQuoteReply: onQuoteReply,
+            reactions: reactions,
+            ownPeerId: ownPeerId,
+            onMessageLongPress: onMessageLongPress,
+            onReactionTap: onReactionTap,
           ),
         ),
         // Footer with reply input

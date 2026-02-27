@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/letter_card.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/reaction_display.dart';
 import 'package:flutter_app/shared/widgets/linkable_text.dart';
 
 void main() {
@@ -202,6 +204,100 @@ void main() {
         );
         expect(find.byType(LinkableText), findsOneWidget);
         expect(find.textContaining('Just a plain message'), findsOneWidget);
+      });
+    });
+
+    group('reactions', () {
+      testWidgets('renders ReactionDisplay when reactions provided',
+          (tester) async {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: SingleChildScrollView(
+                child: LetterCard(
+                  senderPeerId: '12D3KooWTestPeerId1234567890',
+                  senderName: 'Alice',
+                  text: 'Hello',
+                  time: '3:30 PM',
+                  isIncoming: true,
+                  ownPeerId: 'my-peer',
+                  reactions: const [
+                    MessageReaction(
+                      id: 'r1',
+                      messageId: 'msg-1',
+                      emoji: '👍',
+                      senderPeerId: 'sender-1',
+                      timestamp: '2026-02-27T10:00:00.000Z',
+                      createdAt: '2026-02-27T10:00:01.000Z',
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+        expect(find.byType(ReactionDisplay), findsOneWidget);
+        expect(find.text('👍'), findsOneWidget);
+      });
+
+      testWidgets('hidden when reactions empty', (tester) async {
+        await tester.pumpWidget(buildTestWidget());
+        expect(find.byType(ReactionDisplay), findsNothing);
+      });
+
+      testWidgets('fires onLongPress on long-press', (tester) async {
+        var pressed = false;
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: SingleChildScrollView(
+                child: LetterCard(
+                  senderPeerId: '12D3KooWTestPeerId1234567890',
+                  senderName: 'Alice',
+                  text: 'Hello',
+                  time: '3:30 PM',
+                  isIncoming: true,
+                  onLongPress: () => pressed = true,
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.longPress(find.text('Hello'));
+        expect(pressed, isTrue);
+      });
+
+      testWidgets('fires onReactionTap when chip tapped', (tester) async {
+        String? tappedEmoji;
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: SingleChildScrollView(
+                child: LetterCard(
+                  senderPeerId: '12D3KooWTestPeerId1234567890',
+                  senderName: 'Alice',
+                  text: 'Hello',
+                  time: '3:30 PM',
+                  isIncoming: true,
+                  ownPeerId: 'my-peer',
+                  reactions: const [
+                    MessageReaction(
+                      id: 'r1',
+                      messageId: 'msg-1',
+                      emoji: '👍',
+                      senderPeerId: 'sender-1',
+                      timestamp: '2026-02-27T10:00:00.000Z',
+                      createdAt: '2026-02-27T10:00:01.000Z',
+                    ),
+                  ],
+                  onReactionTap: (emoji) => tappedEmoji = emoji,
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.tap(find.text('👍'));
+        expect(tappedEmoji, '👍');
       });
     });
   });

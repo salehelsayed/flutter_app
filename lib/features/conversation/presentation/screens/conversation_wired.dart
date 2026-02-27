@@ -28,7 +28,13 @@ import 'package:flutter_app/features/conversation/application/send_voice_message
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
+import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
+import 'package:flutter_app/features/conversation/application/load_reactions_use_case.dart';
+import 'package:flutter_app/features/conversation/application/reaction_listener.dart';
+import 'package:flutter_app/features/conversation/application/send_reaction_use_case.dart';
+import 'package:flutter_app/features/conversation/application/remove_reaction_use_case.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'conversation_screen.dart';
@@ -86,6 +92,8 @@ class ConversationWired extends StatefulWidget {
   final ImageQualityPreference videoQualityPreference;
   final ActiveConversationTracker? conversationTracker;
   final AudioRecorderService? audioRecorderService;
+  final ReactionRepository? reactionRepo;
+  final ReactionListener? reactionListener;
 
   const ConversationWired({
     super.key,
@@ -106,6 +114,8 @@ class ConversationWired extends StatefulWidget {
     this.videoQualityPreference = ImageQualityPreference.compressed,
     this.conversationTracker,
     this.audioRecorderService,
+    this.reactionRepo,
+    this.reactionListener,
   });
 
   @override
@@ -142,6 +152,10 @@ class _ConversationWiredState extends State<ConversationWired> {
   List<double> _amplitudeValues = const [];
   List<double> _waveformSamples = [];
 
+  // Reaction state
+  Map<String, List<MessageReaction>> _reactions = {};
+  StreamSubscription<MessageReaction>? _reactionSubscription;
+
   @override
   void initState() {
     super.initState();
@@ -169,6 +183,7 @@ class _ConversationWiredState extends State<ConversationWired> {
     }
     _startListeningForMessages();
     _startListeningForContactUpdates();
+    _startListeningForReactions();
   }
 
   Future<void> _loadIdentity() async {
@@ -206,6 +221,7 @@ class _ConversationWiredState extends State<ConversationWired> {
           details: {'count': messages.length},
         );
         _scrollToBottom();
+        await _loadReactions(messages);
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) setState(() => _initialLoadDone = true);
         });
@@ -1076,6 +1092,156 @@ class _ConversationWiredState extends State<ConversationWired> {
     emitFlowEvent(layer: 'FL', event: 'CONV_FL_RECORD_CANCELLED', details: {});
   }
 
+  void _startListeningForReactions() {
+    final listener = widget.reactionListener;
+    if (listener == null) return;
+
+    _reactionSubscription = listener.incomingReactionStream
+        .where((r) {
+          // Only process reactions for messages in this conversation
+          return _messages.any((m) => m.id == r.messageId);
+        })
+        .listen(
+          _onIncomingReaction,
+          onError: (error) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'CONV_REACTION_STREAM_ERROR',
+              details: {'error': error.toString()},
+            );
+          },
+        );
+  }
+
+  void _onIncomingReaction(MessageReaction reaction) {
+    if (!mounted) return;
+    setState(() {
+      final messageReactions = List<MessageReaction>.from(
+        _reactions[reaction.messageId] ?? [],
+      );
+      // Upsert: replace existing for same sender
+      final idx = messageReactions.indexWhere(
+        (r) => r.senderPeerId == reaction.senderPeerId,
+      );
+      if (idx >= 0) {
+        messageReactions[idx] = reaction;
+      } else {
+        messageReactions.add(reaction);
+      }
+      _reactions = {..._reactions, reaction.messageId: messageReactions};
+    });
+  }
+
+  Future<void> _loadReactions(List<ConversationMessage> messages) async {
+    final reactionRepo = widget.reactionRepo;
+    if (reactionRepo == null || messages.isEmpty) return;
+
+    try {
+      final messageIds = messages.map((m) => m.id).toList();
+      final reactions = await loadReactionsForConversation(
+        reactionRepo: reactionRepo,
+        messageIds: messageIds,
+      );
+      if (mounted) {
+        setState(() => _reactions = reactions);
+      }
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONV_FL_LOAD_REACTIONS_ERROR',
+        details: {'error': e.toString()},
+      );
+    }
+  }
+
+  Future<void> _onReactionSelected(String messageId, String emoji) async {
+    final identity = _identity;
+    if (identity == null) return;
+
+    final reactionRepo = widget.reactionRepo;
+    final bridge = widget.bridge;
+    if (reactionRepo == null || bridge == null) return;
+
+    // Check if toggling (same emoji from same user)
+    final existingReactions = _reactions[messageId] ?? [];
+    final ownReaction = existingReactions
+        .where((r) => r.senderPeerId == identity.peerId)
+        .firstOrNull;
+
+    if (ownReaction != null && ownReaction.emoji == emoji) {
+      // Toggle off: remove reaction
+      setState(() {
+        final updated = existingReactions
+            .where((r) => r.senderPeerId != identity.peerId)
+            .toList();
+        _reactions = {..._reactions, messageId: updated};
+      });
+
+      await removeReaction(
+        p2pService: widget.p2pService,
+        bridge: bridge,
+        reactionRepo: reactionRepo,
+        targetPeerId: _contact.peerId,
+        messageId: messageId,
+        emoji: emoji,
+        senderPeerId: identity.peerId,
+        recipientMlKemPublicKey: _contact.mlKemPublicKey ?? '',
+      );
+      return;
+    }
+
+    // Add/replace reaction optimistically
+    final now = DateTime.now().toUtc().toIso8601String();
+    final optimisticReaction = MessageReaction(
+      id: '',
+      messageId: messageId,
+      emoji: emoji,
+      senderPeerId: identity.peerId,
+      timestamp: now,
+      createdAt: now,
+    );
+
+    setState(() {
+      final updated = List<MessageReaction>.from(existingReactions);
+      final idx = updated.indexWhere(
+        (r) => r.senderPeerId == identity.peerId,
+      );
+      if (idx >= 0) {
+        updated[idx] = optimisticReaction;
+      } else {
+        updated.add(optimisticReaction);
+      }
+      _reactions = {..._reactions, messageId: updated};
+    });
+
+    final (result, reaction) = await sendReaction(
+      p2pService: widget.p2pService,
+      bridge: bridge,
+      reactionRepo: reactionRepo,
+      targetPeerId: _contact.peerId,
+      messageId: messageId,
+      emoji: emoji,
+      senderPeerId: identity.peerId,
+      recipientMlKemPublicKey: _contact.mlKemPublicKey ?? '',
+    );
+
+    // Update with real reaction on success
+    if (result == SendReactionResult.success && reaction != null && mounted) {
+      setState(() {
+        final updated = List<MessageReaction>.from(
+          _reactions[messageId] ?? [],
+        );
+        final idx = updated.indexWhere(
+          (r) => r.senderPeerId == identity.peerId,
+        );
+        if (idx >= 0) {
+          updated[idx] = reaction;
+        }
+        _reactions = {..._reactions, messageId: updated};
+      });
+    }
+  }
+
   void _removeAttachment(int index) {
     if (index < 0 || index >= _pendingAttachments.length) return;
     setState(() {
@@ -1322,6 +1488,7 @@ class _ConversationWiredState extends State<ConversationWired> {
     _scrollController.removeListener(_onScroll);
     _incomingSubscription?.cancel();
     _contactUpdateSubscription?.cancel();
+    _reactionSubscription?.cancel();
     _durationSub?.cancel();
     _amplitudeSub?.cancel();
     // Cancel active recording on dispose
@@ -1368,6 +1535,10 @@ class _ConversationWiredState extends State<ConversationWired> {
         isRecording: _isRecording,
         recordingDuration: _recordingDuration,
         amplitudeValues: _amplitudeValues,
+        reactions: _reactions,
+        onReactionSelected: widget.reactionRepo != null
+            ? _onReactionSelected
+            : null,
       ),
     );
   }

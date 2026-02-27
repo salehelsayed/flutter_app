@@ -12,8 +12,12 @@ import 'package:flutter_app/features/contact_request/domain/repositories/contact
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
+import 'package:flutter_app/features/conversation/application/reaction_listener.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/reaction_display.dart';
 import 'package:flutter_app/features/feed/presentation/screens/feed_wired.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/collapsed_mode_card_body.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/open_mode_card_body.dart';
@@ -31,6 +35,7 @@ import '../../../../shared/fakes/in_memory_media_attachment_repository.dart';
 import '../../../../shared/fakes/in_memory_message_repository.dart';
 import '../../../contacts/domain/repositories/fake_contact_repository.dart';
 import '../../../contact_request/domain/repositories/fake_contact_request_repository.dart';
+import '../../../conversation/domain/repositories/fake_reaction_repository.dart';
 import '../../../identity/domain/repositories/fake_identity_repository.dart';
 
 void main() {
@@ -122,6 +127,8 @@ void main() {
   Widget buildFeedWired({
     ContactRequestListener? contactRequestListener,
     ChatMessageListener? chatMessageListener,
+    FakeReactionRepository? reactionRepository,
+    ReactionListener? reactionListener,
   }) {
     final crListener = contactRequestListener ??
         ContactRequestListener(
@@ -153,6 +160,8 @@ void main() {
         mediaFileManager: mediaFileManager,
         secureKeyStore: secureKeyStore,
         imageProcessor: imageProcessor,
+        reactionRepository: reactionRepository,
+        reactionListener: reactionListener,
       ),
     );
   }
@@ -599,6 +608,114 @@ void main() {
       expect(find.byType(ScrollableMessagePreview), findsOneWidget);
     });
 
+    testWidgets('loads reactions for feed messages on init', (tester) async {
+      // Suppress RenderFlex overflow errors from card layouts in test surface
+      final originalOnError = FlutterError.onError;
+      FlutterError.onError = (details) {
+        if (details.toString().contains('overflowed')) return;
+        originalOnError?.call(details);
+      };
+      addTearDown(() => FlutterError.onError = originalOnError);
+
+      identityRepo.seed(testIdentity);
+      contactRepo.seed([testContact]);
+
+      final reactionRepo = FakeReactionRepository();
+
+      // Seed a message
+      await messageRepo.saveMessage(ConversationMessage(
+        id: 'msg-r1',
+        contactPeerId: 'contact-peer-id',
+        text: 'Hello from Bob',
+        senderPeerId: 'contact-peer-id',
+        timestamp: DateTime.now().toUtc().toIso8601String(),
+        isIncoming: true,
+        status: 'delivered',
+        createdAt: DateTime.now().toUtc().toIso8601String(),
+      ));
+
+      // Seed a reaction
+      await reactionRepo.saveReaction(MessageReaction(
+        id: 'r1',
+        messageId: 'msg-r1',
+        emoji: '👍',
+        senderPeerId: 'contact-peer-id',
+        timestamp: DateTime.now().toUtc().toIso8601String(),
+        createdAt: DateTime.now().toUtc().toIso8601String(),
+      ));
+
+      await tester.pumpWidget(buildFeedWired(
+        reactionRepository: reactionRepo,
+      ));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // ReactionDisplay should render the reaction
+      expect(find.byType(ReactionDisplay), findsOneWidget);
+      expect(find.text('👍'), findsOneWidget);
+    });
+
+    testWidgets('incoming reaction from listener updates state',
+        (tester) async {
+      // Suppress RenderFlex overflow errors from card layouts in test surface
+      final originalOnError = FlutterError.onError;
+      FlutterError.onError = (details) {
+        if (details.toString().contains('overflowed')) return;
+        originalOnError?.call(details);
+      };
+      addTearDown(() => FlutterError.onError = originalOnError);
+
+      identityRepo.seed(testIdentity);
+      contactRepo.seed([testContact]);
+
+      final reactionRepo = FakeReactionRepository();
+      final fakeReactionListener = _FakeReactionListener(
+        reactionRepo: reactionRepo,
+        contactRepo: contactRepo,
+        bridge: bridge,
+      );
+
+      // Seed a message
+      await messageRepo.saveMessage(ConversationMessage(
+        id: 'msg-r2',
+        contactPeerId: 'contact-peer-id',
+        text: 'Hello from Bob',
+        senderPeerId: 'contact-peer-id',
+        timestamp: DateTime.now().toUtc().toIso8601String(),
+        isIncoming: true,
+        status: 'delivered',
+        createdAt: DateTime.now().toUtc().toIso8601String(),
+      ));
+
+      await tester.pumpWidget(buildFeedWired(
+        reactionRepository: reactionRepo,
+        reactionListener: fakeReactionListener,
+      ));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // No reactions yet
+      expect(find.byType(ReactionDisplay), findsNothing);
+
+      // Emit an incoming reaction
+      fakeReactionListener.emitReaction(MessageReaction(
+        id: 'r2',
+        messageId: 'msg-r2',
+        emoji: '❤️',
+        senderPeerId: 'contact-peer-id',
+        timestamp: DateTime.now().toUtc().toIso8601String(),
+        createdAt: DateTime.now().toUtc().toIso8601String(),
+      ));
+
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // ReactionDisplay should now show the reaction
+      expect(find.byType(ReactionDisplay), findsOneWidget);
+      expect(find.text('❤️'), findsOneWidget);
+    });
+
     testWidgets('disposes stream subscriptions without errors',
         (tester) async {
       identityRepo.seed(testIdentity);
@@ -690,4 +807,28 @@ class _FakeContactRequestListener extends ContactRequestListener {
   Stream<ContactRequestModel> get requestStream => _controller.stream;
 
   void emitRequest(ContactRequestModel request) => _controller.add(request);
+}
+
+/// Fake [ReactionListener] with a controllable stream for testing.
+class _FakeReactionListener extends ReactionListener {
+  final _reactionEmitter = StreamController<MessageReaction>.broadcast();
+
+  _FakeReactionListener({
+    required ReactionRepository reactionRepo,
+    required ContactRepository contactRepo,
+    required Bridge bridge,
+  }) : super(
+          reactionStream: const Stream.empty(),
+          reactionRepo: reactionRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          getOwnMlKemSecretKey: () async => null,
+        );
+
+  @override
+  Stream<MessageReaction> get incomingReactionStream =>
+      _reactionEmitter.stream;
+
+  void emitReaction(MessageReaction reaction) =>
+      _reactionEmitter.add(reaction);
 }

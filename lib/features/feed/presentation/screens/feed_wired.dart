@@ -26,11 +26,17 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/application/load_conversation_use_case.dart';
+import 'package:flutter_app/features/conversation/application/load_reactions_use_case.dart';
+import 'package:flutter_app/features/conversation/application/reaction_listener.dart';
+import 'package:flutter_app/features/conversation/application/remove_reaction_use_case.dart';
+import 'package:flutter_app/features/conversation/application/send_reaction_use_case.dart';
 import 'package:flutter_app/features/conversation/application/mark_conversation_read_use_case.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/conversation/presentation/navigation/conversation_route_transition.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
 import 'package:flutter_app/features/feed/application/load_feed_use_case.dart';
@@ -66,6 +72,8 @@ class FeedWired extends StatefulWidget {
   final ImageProcessor imageProcessor;
   final ActiveConversationTracker? conversationTracker;
   final AudioRecorderService? audioRecorderService;
+  final ReactionRepository? reactionRepository;
+  final ReactionListener? reactionListener;
 
   const FeedWired({
     super.key,
@@ -83,6 +91,8 @@ class FeedWired extends StatefulWidget {
     required this.imageProcessor,
     this.conversationTracker,
     this.audioRecorderService,
+    this.reactionRepository,
+    this.reactionListener,
   });
 
   @override
@@ -106,6 +116,8 @@ class _FeedWiredState extends State<FeedWired> {
   StreamSubscription<ContactRequestModel>? _requestSubscription;
   StreamSubscription<ConversationMessage>? _chatSubscription;
   StreamSubscription<ContactModel>? _contactUpdateSubscription;
+  StreamSubscription<MessageReaction>? _reactionSubscription;
+  Map<String, List<MessageReaction>> _reactions = {};
   ImageQualityPreference _qualityPreference = ImageQualityPreference.compressed;
   ImageQualityPreference _videoQualityPreference = ImageQualityPreference.compressed;
 
@@ -121,6 +133,7 @@ class _FeedWiredState extends State<FeedWired> {
     _startListeningForContactRequests();
     _startListeningForChatMessages();
     _startListeningForContactUpdates();
+    _startListeningForReactions();
   }
 
   void _loadIdentity() async {
@@ -192,6 +205,7 @@ class _FeedWiredState extends State<FeedWired> {
         _feedItems.addAll(items);
         _feedLoaded = true;
       });
+      _loadReactionsForFeed();
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -371,6 +385,8 @@ class _FeedWiredState extends State<FeedWired> {
           videoQualityPreference: _videoQualityPreference,
           conversationTracker: widget.conversationTracker,
           audioRecorderService: widget.audioRecorderService,
+          reactionRepo: widget.reactionRepository,
+          reactionListener: widget.reactionListener,
         ),
       ),
     ).then((_) => _refreshFeed());
@@ -409,6 +425,8 @@ class _FeedWiredState extends State<FeedWired> {
           videoQualityPreference: _videoQualityPreference,
           conversationTracker: widget.conversationTracker,
           audioRecorderService: widget.audioRecorderService,
+          reactionRepo: widget.reactionRepository,
+          reactionListener: widget.reactionListener,
         ),
       ),
     ).then((_) => _refreshFeed());
@@ -617,6 +635,8 @@ class _FeedWiredState extends State<FeedWired> {
             videoQualityPreference: _videoQualityPreference,
             conversationTracker: widget.conversationTracker,
             audioRecorderService: widget.audioRecorderService,
+            reactionRepo: widget.reactionRepository,
+            reactionListener: widget.reactionListener,
           ),
         ),
       ).then((_) => _refreshFeed());
@@ -653,6 +673,149 @@ class _FeedWiredState extends State<FeedWired> {
       inputPath: path,
       quality: _qualityPreference,
     );
+  }
+
+  Future<void> _loadReactionsForFeed() async {
+    if (widget.reactionRepository == null) return;
+    final messageIds = _feedItems
+        .whereType<ThreadFeedItem>()
+        .expand((t) => t.messages)
+        .map((m) => m.id)
+        .toList();
+    if (messageIds.isEmpty) return;
+    try {
+      final reactions = await loadReactionsForConversation(
+        reactionRepo: widget.reactionRepository!,
+        messageIds: messageIds,
+      );
+      if (mounted) setState(() => _reactions = reactions);
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'FEED_FL_LOAD_REACTIONS_ERROR',
+        details: {'error': e.toString()},
+      );
+    }
+  }
+
+  void _startListeningForReactions() {
+    if (widget.reactionListener == null) return;
+    _reactionSubscription =
+        widget.reactionListener!.incomingReactionStream.listen(
+      _onIncomingReaction,
+      onError: (error) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'FEED_REACTION_STREAM_ERROR',
+          details: {'error': error.toString()},
+        );
+      },
+    );
+  }
+
+  void _onIncomingReaction(MessageReaction reaction) {
+    if (!mounted) return;
+    setState(() {
+      final list =
+          List<MessageReaction>.from(_reactions[reaction.messageId] ?? []);
+      list.removeWhere((r) => r.senderPeerId == reaction.senderPeerId);
+      list.add(reaction);
+      _reactions = {..._reactions, reaction.messageId: list};
+    });
+  }
+
+  Future<void> _onReactionSelected(String messageId, String emoji) async {
+    final identity = _identity;
+    if (identity == null) return;
+
+    final reactionRepo = widget.reactionRepository;
+    if (reactionRepo == null) return;
+
+    // Find which contact this message belongs to
+    final thread = _feedItems.whereType<ThreadFeedItem>().where(
+      (t) => t.messages.any((m) => m.id == messageId),
+    ).firstOrNull;
+    if (thread == null) return;
+
+    final contact =
+        await widget.contactRepository.getContact(thread.contactPeerId);
+    if (contact == null || !mounted) return;
+
+    // Check if toggling (same emoji from same user)
+    final existingReactions = _reactions[messageId] ?? [];
+    final ownReaction = existingReactions
+        .where((r) => r.senderPeerId == identity.peerId)
+        .firstOrNull;
+
+    if (ownReaction != null && ownReaction.emoji == emoji) {
+      // Toggle off: remove reaction optimistically
+      setState(() {
+        final updated = existingReactions
+            .where((r) => r.senderPeerId != identity.peerId)
+            .toList();
+        _reactions = {..._reactions, messageId: updated};
+      });
+
+      await removeReaction(
+        p2pService: widget.p2pService,
+        bridge: widget.bridge,
+        reactionRepo: reactionRepo,
+        targetPeerId: thread.contactPeerId,
+        messageId: messageId,
+        emoji: emoji,
+        senderPeerId: identity.peerId,
+        recipientMlKemPublicKey: contact.mlKemPublicKey ?? '',
+      );
+      return;
+    }
+
+    // Add/replace reaction optimistically
+    final now = DateTime.now().toUtc().toIso8601String();
+    final optimisticReaction = MessageReaction(
+      id: '',
+      messageId: messageId,
+      emoji: emoji,
+      senderPeerId: identity.peerId,
+      timestamp: now,
+      createdAt: now,
+    );
+
+    setState(() {
+      final updated = List<MessageReaction>.from(existingReactions);
+      final idx =
+          updated.indexWhere((r) => r.senderPeerId == identity.peerId);
+      if (idx >= 0) {
+        updated[idx] = optimisticReaction;
+      } else {
+        updated.add(optimisticReaction);
+      }
+      _reactions = {..._reactions, messageId: updated};
+    });
+
+    final (result, reaction) = await sendReaction(
+      p2pService: widget.p2pService,
+      bridge: widget.bridge,
+      reactionRepo: reactionRepo,
+      targetPeerId: thread.contactPeerId,
+      messageId: messageId,
+      emoji: emoji,
+      senderPeerId: identity.peerId,
+      recipientMlKemPublicKey: contact.mlKemPublicKey ?? '',
+    );
+
+    // Update with real reaction on success
+    if (result == SendReactionResult.success && reaction != null && mounted) {
+      setState(() {
+        final updated =
+            List<MessageReaction>.from(_reactions[messageId] ?? []);
+        final idx =
+            updated.indexWhere((r) => r.senderPeerId == identity.peerId);
+        if (idx >= 0) {
+          updated[idx] = reaction;
+        }
+        _reactions = {..._reactions, messageId: updated};
+      });
+    }
   }
 
   void _onAvatarTap() {
@@ -693,6 +856,8 @@ class _FeedWiredState extends State<FeedWired> {
             imageProcessor: widget.imageProcessor,
             conversationTracker: widget.conversationTracker,
             audioRecorderService: widget.audioRecorderService,
+            reactionRepository: widget.reactionRepository,
+            reactionListener: widget.reactionListener,
           ),
         ),
       ).then((_) => _refreshFeed());
@@ -825,6 +990,7 @@ class _FeedWiredState extends State<FeedWired> {
     _requestSubscription?.cancel();
     _chatSubscription?.cancel();
     _contactUpdateSubscription?.cancel();
+    _reactionSubscription?.cancel();
     super.dispose();
   }
 
@@ -858,6 +1024,8 @@ class _FeedWiredState extends State<FeedWired> {
         onAttach: _onAttach,
         onAvatarTap: _onAvatarTap,
         sessionReplies: _sessionReplies,
+        reactions: _reactions,
+        onReactionSelected: _onReactionSelected,
       ),
     );
   }

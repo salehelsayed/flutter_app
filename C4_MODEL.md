@@ -135,7 +135,7 @@
 |-----------|------------|-------------|
 | Flutter Application | Dart/Flutter | Main application with UI, business logic, P2P service, local WiFi discovery (mDNS), and data access |
 | Go Native Library | gomobile bind → .xcframework (iOS) + .aar (Android) | Executes crypto operations (BIP39, Ed25519, ML-KEM-768) and P2P networking (libp2p node, rendezvous, relay, inbox); communicates with Flutter via MethodChannel/EventChannel through platform wrappers (GoBridge.swift / GoBridge.kt) |
-| SQLCipher Database | sqflite_sqlcipher | 256-bit AES encrypted SQLite database (v11); persists identity, contacts, contact requests, messages, media attachments, and avatar BLOBs locally |
+| SQLCipher Database | sqflite_sqlcipher | 256-bit AES encrypted SQLite database (v15); persists identity, contacts, contact requests, messages, media attachments, and avatar BLOBs locally |
 | Secure Storage | flutter_secure_storage | OS-backed secret storage: iOS Keychain (device-bound, kSecAttrAccessibleWhenUnlockedThisDeviceOnly), Android EncryptedSharedPreferences; holds identity secrets and DB encryption key |
 | Rendezvous / Relay Server | libp2p | External server for peer discovery, NAT traversal relay, and offline message inbox |
 | Firebase Cloud Messaging | Firebase SDK | External push notification service; relay server sends FCM push when storing offline inbox messages |
@@ -260,10 +260,14 @@
 │  │  │  │  │EmptyConversatio│  │CompactOrigin   │  │DateSeparat.│  │   │  │ │
 │  │  │  │  │nState (glow)   │  │Marker          │  │(day divide)│  │   │  │ │
 │  │  │  │  └────────────────┘  └────────────────┘  └────────────┘  │   │  │ │
-│  │  │  │  ┌────────────────┐                                      │   │  │ │
-│  │  │  │  │AttachmentPrevie│                                      │   │  │ │
-│  │  │  │  │wStrip          │                                      │   │  │ │
-│  │  │  │  └────────────────┘                                      │   │  │ │
+│  │  │  │  ┌────────────────┐  ┌────────────────┐                  │   │  │ │
+│  │  │  │  │AttachmentPrevie│  │BlockedBanner   │                  │   │  │ │
+│  │  │  │  │wStrip          │  │(unblock action)│                  │   │  │ │
+│  │  │  │  └────────────────┘  └────────────────┘                  │   │  │ │
+│  │  │  │  ┌────────────────┐  ┌────────────────┐  ┌────────────┐ │   │  │ │
+│  │  │  │  │VoiceRecordBtn  │  │RecordingOverlay│  │AmplitudeBars│ │   │  │ │
+│  │  │  │  │                │  │                │  │(waveform)   │ │   │  │ │
+│  │  │  │  └────────────────┘  └────────────────┘  └────────────┘ │   │  │ │
 │  │  │  └──────────────────────────────────────────────────────────┘   │  │ │
 │  │  └─────────────────────────────────────────────────────────────────┘  │ │
 │  │                                                                        │ │
@@ -323,6 +327,9 @@
 │  │  │  ┌──────────────────┐                                           │  │ │
 │  │  │  │AudioPlayerWidget │                                           │  │ │
 │  │  │  └──────────────────┘                                           │  │ │
+│  │  │  ┌──────────────────┐  ┌──────────────────┐                    │  │ │
+│  │  │  │LinkableText      │  │WaveformSeekBar   │                    │  │ │
+│  │  │  └──────────────────┘  └──────────────────┘                    │  │ │
 │  │  └─────────────────────────────────────────────────────────────────┘  │ │
 │  └────────────────────────────────────────────────────────────────────────┘ │
 │                                                                              │
@@ -337,10 +344,10 @@
 │  │  └──────────────────┘  └──────────────────┘  └──────────────────────┘ │ │
 │  │                                                                        │ │
 │  │  ── QR Code ───────────────────────────────────────────────────────── │ │
-│  │  ┌──────────────────┐  ┌──────────────────┐                          │ │
-│  │  │ buildQRPayload() │  │ parseQRPayload() │                          │ │
-│  │  │ [Use Case]       │  │ [Use Case]       │                          │ │
-│  │  └──────────────────┘  └──────────────────┘                          │ │
+│  │  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────────┐ │ │
+│  │  │ buildQRPayload() │  │ parseQRPayload() │  │ handleScannedQR()    │ │ │
+│  │  │ [Use Case]       │  │ [Use Case]       │  │ [Use Case]           │ │ │
+│  │  └──────────────────┘  └──────────────────┘  └──────────────────────┘ │ │
 │  │                                                                        │ │
 │  │  ── P2P ──────────────────────────────────────────────────────────── │ │
 │  │  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────────┐ │ │
@@ -373,6 +380,11 @@
 │  │  │ Message()        │  │ [Service: monitors P2P message stream]   │   │ │
 │  │  │ [Use Case]       │  │                                          │   │ │
 │  │  └──────────────────┘  └──────────────────────────────────────────┘   │ │
+│  │  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────────┐ │ │
+│  │  │ acceptAndRecip   │  │ KeyExchange      │  │ retryIncomplete      │ │ │
+│  │  │ rocate()         │  │ Retrier          │  │ KeyExchanges()       │ │ │
+│  │  │ [Use Case]       │  │ [Service]        │  │ [Use Case]           │ │ │
+│  │  └──────────────────┘  └──────────────────┘  └──────────────────────┘ │ │
 │  │                                                                        │ │
 │  │  ── Conversation ─────────────────────────────────────────────────── │ │
 │  │  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────────┐ │ │
@@ -396,6 +408,11 @@
 │  │  │ retryFailedMessages()                    │                         │ │
 │  │  │ [Use Case]                               │                         │ │
 │  │  └──────────────────────────────────────────┘                         │ │
+│  │  ┌──────────────────┐  ┌──────────────────┐                          │ │
+│  │  │ sendVoice        │  │ retryUnacked     │                          │ │
+│  │  │ Message()        │  │ Messages()       │                          │ │
+│  │  │ [Use Case]       │  │ [Use Case]       │                          │ │
+│  │  └──────────────────┘  └──────────────────┘                          │ │
 │  │                                                                        │ │
 │  │  ── Feed ─────────────────────────────────────────────────────────── │ │
 │  │  ┌──────────────────┐                                                 │ │
@@ -416,6 +433,10 @@
 │  │  └──────────────────────────────────────────┘                         │ │
 │  │  ┌──────────────────────────────────────────┐                         │ │
 │  │  │ registerPushToken()                      │                         │ │
+│  │  │ [Use Case]                               │                         │ │
+│  │  └──────────────────────────────────────────┘                         │ │
+│  │  ┌──────────────────────────────────────────┐                         │ │
+│  │  │ showNotification()                       │                         │ │
 │  │  │ [Use Case]                               │                         │ │
 │  │  └──────────────────────────────────────────┘                         │ │
 │  │                                                                        │ │
@@ -501,8 +522,12 @@
 │  │  │  Bridge Helper Functions │  In bridge.dart: callIdentityGenerate,  │ │
 │  │  │  [in bridge.dart +       │  callSignPayload, callVerifyPayload,    │ │
 │  │  │   p2p_bridge_client.dart]│  callMlKemKeygen, callEncryptMessage,   │ │
-│  │  │                          │  callDecryptMessage                     │ │
-│  │  │                          │  In p2p_bridge_client.dart: callP2P*    │ │
+│  │  │                          │  callDecryptMessage,                    │ │
+│  │  │                          │  callEncryptContactRequest,             │ │
+│  │  │                          │  callDecryptContactRequest              │ │
+│  │  │                          │  In p2p_bridge_client.dart: callP2P*,  │ │
+│  │  │                          │  callP2PRelayReconnect,                 │ │
+│  │  │                          │  callP2PRelayProbe                      │ │
 │  │  └──────────────────────────┘                                         │ │
 │  │                                                                        │ │
 │  │  ── Services ──────────────────────────────────────────────────────── │ │
@@ -570,12 +595,24 @@
 │  │  │  Creates media_attach-   │  │  Adds avatar_version INTEGER    │   │ │
 │  │  │  ments table + indexes   │  │  to identity and contacts       │   │ │
 │  │  └──────────────────────────┘  └──────────────────────────────────┘   │ │
+│  │  ┌──────────────────────────┐  ┌──────────────────────────────────┐   │ │
+│  │  │  012_transport_column    │  │  013_waveform_column             │   │ │
+│  │  │  migration (v12)         │  │  migration (v13)                 │   │ │
+│  │  │  Adds transport TEXT     │  │  Adds waveform TEXT              │   │ │
+│  │  │  to messages             │  │  to media_attachments            │   │ │
+│  │  └──────────────────────────┘  └──────────────────────────────────┘   │ │
+│  │  ┌──────────────────────────┐  ┌──────────────────────────────────┐   │ │
+│  │  │  014_wire_envelope       │  │  015_message_status_cleanup      │   │ │
+│  │  │  migration (v14)         │  │  migration (v15)                 │   │ │
+│  │  │  Adds wire_envelope TEXT │  │  Normalizes queued→delivered     │   │ │
+│  │  │  to messages             │  │  status for outgoing messages    │   │ │
+│  │  └──────────────────────────┘  └──────────────────────────────────┘   │ │
 │  │  ┌──────────────────────────┐                                         │ │
 │  │  │  media_attachments_db_   │  Media attachments CRUD helpers        │ │
 │  │  │  helpers                 │  (save, load, update, delete)          │ │
 │  │  └──────────────────────────┘                                         │ │
 │  │  ┌──────────────────────────┐                                         │ │
-│  │  │  encrypted_db_opener     │  Opens SQLCipher DB (v11) with key    │ │
+│  │  │  encrypted_db_opener     │  Opens SQLCipher DB (v15) with key    │ │
 │  │  │                          │  from secure storage; handles plain→  │ │
 │  │  │                          │  encrypted migration                   │ │
 │  │  └──────────────────────────┘                                         │ │
@@ -606,6 +643,22 @@
 │  │  ┌──────────────────────────┐  ┌──────────────────────────────────┐   │ │
 │  │  │  ImageProcessor           │  │  MediaFileManager               │   │ │
 │  │  │  (EXIF strip, quality)    │  │  (local file paths)             │   │ │
+│  │  └──────────────────────────┘  └──────────────────────────────────┘   │ │
+│  │  ┌──────────────────────────┐  ┌──────────────────────────────────┐   │ │
+│  │  │  AudioRecorderService    │  │  AmplitudeBuffer / Normalize     │   │ │
+│  │  │  (record package impl)   │  │  / Downsample (waveform utils)   │   │ │
+│  │  └──────────────────────────┘  └──────────────────────────────────┘   │ │
+│  │                                                                        │ │
+│  │  ── Lifecycle ──────────────────────────────────────────────────────── │ │
+│  │  ┌──────────────────────────┐                                         │ │
+│  │  │  handleAppResumed()      │  Bridge health check + P2P health      │ │
+│  │  │  [Recovery Function]     │  + inbox drain + key exchange retry    │ │
+│  │  └──────────────────────────┘                                         │ │
+│  │                                                                        │ │
+│  │  ── Notifications ──────────────────────────────────────────────────── │ │
+│  │  ┌──────────────────────────┐  ┌──────────────────────────────────┐   │ │
+│  │  │  NotificationService     │  │  ActiveConversationTracker       │   │ │
+│  │  │  [Interface + Impl]      │  │  [Tracker]                       │   │ │
 │  │  └──────────────────────────┘  └──────────────────────────────────┘   │ │
 │  │                                                                        │ │
 │  │  ── Theme ─────────────────────────────────────────────────────────── │ │
@@ -647,6 +700,10 @@
 │  │  media.list                │  │  │  └────────────────────────────────┘  │
 │  │  profile.upload            │  │  │                                      │
 │  │  profile.download          │  │  │                                      │
+│  │  encrypt_contact_request   │  │  │                                      │
+│  │  decrypt_contact_request   │  │  │                                      │
+│  │  relay:reconnect           │  │  │                                      │
+│  │  relay:probe               │  │  │                                      │
 │  └──────────┴─────────────────┘  │  │                                      │
 │                                  │  │                                      │
 │  ┌────────────────────────────┐  │  │                                      │
@@ -679,11 +736,18 @@
 │  │  EncryptMessage()          │  │  │  │  rendezvous TEXT NOT NULL      │  │
 │  │  DecryptMessage()          │  │  │  │  username TEXT NOT NULL        │  │
 │  │                            │  │  │  │  signature TEXT NOT NULL       │  │
-│  │  Uses:                     │  │  │  │  received_at TEXT NOT NULL     │  │
-│  │  • circl/kem/mlkem768      │  │  │  │  status TEXT NOT NULL          │  │
-│  │  • crypto/aes (AES-GCM)   │  │  │  │  DEFAULT 'pending'            │  │
-│  └────────────────────────────┘  │  │  │  ml_kem_public_key TEXT (v3)  │  │
-│                                  │  │  └────────────────────────────────┘  │
+│  │  X25519 ECDH + HKDF +     │  │  │  │  received_at TEXT NOT NULL     │  │
+│  │  AES-256-GCM for contact   │  │  │  │  status TEXT NOT NULL          │  │
+│  │  request encryption        │  │  │  │  DEFAULT 'pending'            │  │
+│  │  EncryptContactRequest()   │  │  │  │  ml_kem_public_key TEXT (v3)  │  │
+│  │  DecryptContactRequest()   │  │  │  │                                │  │
+│  │                            │  │  │  └────────────────────────────────┘  │
+│  │  Uses:                     │  │  │                                      │
+│  │  • circl/kem/mlkem768      │  │  │                                      │
+│  │  • crypto/aes (AES-GCM)   │  │  │                                      │
+│  │  • x/crypto/curve25519     │  │  │                                      │
+│  │  • x/crypto/hkdf           │  │  │                                      │
+│  └────────────────────────────┘  │  │                                      │
 │  ┌────────────────────────────┐  │  │                                      │
 │  │    Node Module             │  │  │  ┌────────────────────────────────┐  │
 │  │    (node/)                 │  │  │  │        messages table          │  │
@@ -700,8 +764,10 @@
 │  │  • Circuit relay v2        │  │  │  │  created_at TEXT NOT NULL      │  │
 │  │  • Hole punching           │  │  │  │  read_at TEXT (v6)            │  │
 │  │  • NAT port mapping        │  │  │  │  quoted_message_id TEXT (v9)  │  │
-│  │  • Media upload/download   │  │  │  │  INDEX idx_messages_contact    │  │
-│  └────────────────────────────┘  │  │  │  INDEX idx_messages_ts         │  │
+│  │  • Media upload/download   │  │  │  │  transport TEXT (v12)          │  │
+│  └────────────────────────────┘  │  │  │  wire_envelope TEXT (v14)      │  │
+│                                  │  │  │  INDEX idx_messages_contact    │  │
+│                                  │  │  │  INDEX idx_messages_ts         │  │
 │                                  │  │  └────────────────────────────────┘  │
 │  ┌────────────────────────────┐  │  │                                      │
 │  │    Media Module            │  │  │  ┌────────────────────────────────┐  │
@@ -720,9 +786,18 @@
 │  │                            │  │  │  │  download_status TEXT          │  │
 │  │  GoBridge.swift (iOS)      │  │  │  │  DEFAULT 'pending'            │  │
 │  │  GoBridge.kt   (Android)  │  │  │  │  created_at TEXT NOT NULL      │  │
-│  │  MethodChannel + EventChan │  │  │  └────────────────────────────────┘  │
-│  └────────────────────────────┘  │  │                                      │
-│                                  │  └──────────────────────────────────────┘
+│  │  MethodChannel + EventChan │  │  │  │  waveform TEXT (v13)           │  │
+│  └────────────────────────────┘  │  │  └────────────────────────────────┘  │
+│                                  │  │                                      │
+│  ┌────────────────────────────┐  │  └──────────────────────────────────────┘
+│  │    Testpeer CLI            │  │
+│  │    (cmd/testpeer/)         │  │
+│  │                            │  │
+│  │  Headless test peer for    │  │
+│  │  E2E transport testing     │  │
+│  │  stdin/stdout JSON         │  │
+│  └────────────────────────────┘  │
+│                                  │
 └──────────────────────────────────┘
 ```
 
@@ -788,6 +863,9 @@
 | DateSeparator | Widget | Date divider between letter cards spanning different days with gradient lines |
 | BlockedBanner | Widget | Banner displayed when conversation contact is blocked, with "Unblock" button |
 | AttachmentPreviewStrip | Widget | Horizontal strip showing attachment previews before sending |
+| VoiceRecordButton | Widget | Microphone button for voice recording |
+| RecordingOverlay | Widget | Voice recording UI overlay with waveform visualization |
+| AmplitudeBars | Widget | Waveform amplitude visualization bars |
 | ConversationRouteTransition | Route | Slide-up page transition (420ms easeOutCubic) |
 | **Orbit Feature** | | |
 | OrbitScreen | Widget | Pure UI: AmbientBackground, Scaffold, 4-layer Stack (scrollable content, close button, floating search trigger, search dock) |
@@ -811,6 +889,7 @@
 | **Push Notifications Feature** | | |
 | requestPushPermission() | Use Case | Requests notification permission from user |
 | registerPushToken() | Use Case | Registers FCM token with relay server via P2P inbox protocol |
+| showNotification() | Use Case | Shows local notification for incoming message |
 | firebaseMessagingBackgroundHandler | Service | Firebase background message handler (@pragma entry-point) |
 | **Settings Feature** | | |
 | SettingsScreen | Widget | Pure UI for settings display |
@@ -840,6 +919,8 @@
 | FullScreenImageViewer | Widget | Full-screen image viewer with zoom and pan |
 | VideoThumbnailOverlay | Widget | Video thumbnail with play button overlay |
 | AudioPlayerWidget | Widget | Audio player with playback controls and progress bar |
+| LinkableText | Widget | Renders text with tappable, styled URL links |
+| WaveformSeekBar | Widget | 50-bar waveform visualization with tap-to-seek |
 | **Identity Use Cases** | | |
 | decideStartupRoute() | Use Case | Checks identity + contact count → 3-way routing decision |
 | generateNewIdentity() | Use Case | Orchestrates identity generation via Go bridge |
@@ -847,6 +928,7 @@
 | **QR Use Cases** | | |
 | buildQRPayload() | Use Case | Creates signed QR payload |
 | parseQRPayload() | Use Case | Validates scanned QR: JSON parse, field check, expiry, signature verify, self-scan |
+| handleScannedQR() | Use Case | Validates scanned QR, adds contact, sends contact request |
 | **P2P Use Cases** | | |
 | startP2PNode() | Use Case | Loads identity, converts key, starts node |
 | stopP2PNode() | Use Case | Stops running P2P node |
@@ -865,6 +947,9 @@
 | acceptContactRequest() | Use Case | Converts request to contact, updates status |
 | declineContactRequest() | Use Case | Updates request status to declined |
 | handleIncomingMessage() | Use Case | Parses P2P message, validates signature, stores request |
+| acceptAndReciprocate() | Use Case | Accepts contact request and auto-sends reciprocal request |
+| KeyExchangeRetrier | Service | Detects online transitions (5s debounce), triggers retryIncompleteKeyExchanges() |
+| retryIncompleteKeyExchanges() | Use Case | Sends v2 encrypted key exchange to contacts missing ML-KEM keys |
 | ContactRequestListener | Service | Monitors contactRequestStream, broadcasts new requests to UI |
 | **Conversation Use Cases** | | |
 | sendChatMessage() | Use Case | Builds MessagePayload, encrypts with ML-KEM-768 + AES-256-GCM if recipient has ML-KEM key (v2 envelope) or falls back to v1 plaintext, discovers peer, dials, sends with 3x retry, offline inbox fallback, persists optimistically |
@@ -873,12 +958,18 @@
 | ChatMessageListener | Service | Monitors chatMessageStream, resolves own ML-KEM secret key for decryption, rejects messages from blocked contacts, suppresses UI notification for archived contacts, broadcasts persisted ConversationMessages and contact updates to UI |
 | markConversationRead() | Use Case | Marks all unread messages for a contact as read (sets read_at timestamp) |
 | retryFailedMessages() | Use Case | Retries sending all failed outgoing messages; returns count of successfully retried |
+| sendVoiceMessage() | Use Case | Records audio, processes waveform, sends as media attachment |
+| retryUnackedMessages() | Use Case | Retries unacked outgoing messages by storing wire_envelope in relay inbox |
 | PendingMessageRetrier | Service | Subscribes to P2PService.stateStream, detects online transitions (5s debounce), auto-retries failed messages |
 | **Feed Use Cases** | | |
 | loadFeed() | Use Case | Loads initial feed from DB: contacts + latest messages per contact + unread counts |
 | **Orbit Use Cases** | | |
 | loadOrbitData() | Use Case | Loads all contacts with message counts + unread counts from MessageRepository, sorted by messageCount descending; returns List<OrbitFriend> |
 | **Core Services** | | |
+| handleAppResumed() | Recovery Function | Bridge health check, P2P health check, inbox drain, key exchange retry |
+| NotificationService | Interface + Impl | Abstract notification service with showMessageNotification(); FlutterNotificationService impl |
+| ActiveConversationTracker | Tracker | Tracks which conversation is in foreground to suppress notifications |
+| AudioRecorderService | Interface + Impl | Audio recording via record package; provides amplitude stream and waveform extraction |
 | IncomingMessageRouter | Service | Routes P2P messages by envelope type to contactRequestStream, chatMessageStream, profileUpdateStream, unknownStream; stream subscription has onError/onDone handlers |
 | **Stream Error Handling** | Convention | All `.listen()` calls across IncomingMessageRouter (1), ContactRequestListener (1), ChatMessageListener (1), FeedWired (3), ConversationWired (2), FirstTimeExperienceWired (1), OrbitWired (3) include `onError` and `onDone` callbacks for resilience |
 | **Domain** | | |
@@ -888,30 +979,30 @@
 | NodeState | P2P Model | P2P node state (peerId, isStarted, listenAddresses, connections) |
 | DiscoveredPeer | P2P Model | Discovered peer (id, addresses) |
 | ConnectionState | P2P Model | Active connection (peerId, multiaddrs, direction, status) |
-| ChatMessage | P2P Model | P2P message (from, to, content, timestamp, isIncoming) |
-| SendMessageResult | P2P Model | P2P send result class (sent: bool, reply: String?, acknowledged: bool getter) |
+| ChatMessage | P2P Model | P2P message (from, to, content, timestamp, isIncoming, transport) |
+| SendMessageResult | P2P Model | P2P send result class (sent: bool, acked: bool, reply: String?, acknowledged: bool getter) |
 | FeedItem | Abstract Entity | Base class for feed items (id, timestamp, type) |
 | ConnectionFeedItem | Entity | Feed item for new connections (extends FeedItem) |
 | ThreadFeedItem | Entity | Feed item representing a thread of messages grouped by contact and read session (extends FeedItem); contains List\<ThreadMessage\>, unreadCount, isUnreadCard |
 | ThreadMessage | Data Class | Single message within a thread group (id, text, time, timestamp, isUnread) |
 | MessageFeedItem | Entity | Feed item for incoming messages (extends FeedItem, contactPeerId, messageText, messageTime, unreadCount) |
 | FeedItemType | Enum | Feed item types: connection, message, thread |
-| ConversationMessage | Entity | Message in a conversation (id, contactPeerId, senderPeerId, text, status, isIncoming, readAt?, quotedMessageId?, media: List\<MediaAttachment\>) |
+| ConversationMessage | Entity | Message in a conversation (id, contactPeerId, senderPeerId, text, status, isIncoming, readAt?, quotedMessageId?, media: List\<MediaAttachment\>, transport, wireEnvelope) |
 | MessagePayload | Wire Model | Chat message envelope: v1 plaintext `{ "type": "chat_message", "version": "1", "payload": {...} }` or v2 encrypted `{ "type": "chat_message", "version": "2", "senderPeerId": "...", "encrypted": { "kem", "ciphertext", "nonce" } }`; supports quoted message and media attachment references |
-| MediaAttachment | Entity | Media attachment (id, messageId, mime, size, mediaType, width?, height?, durationMs?, localPath?, downloadStatus, createdAt) |
+| MediaAttachment | Entity | Media attachment (id, messageId, mime, size, mediaType, width?, height?, durationMs?, localPath?, downloadStatus, createdAt, waveform (normalized amplitude samples)) |
 | SessionReply + SessionReplyTracker | Data Class + Tracker | Session reply model for inline feed replies + tracker for managing reply state across feed cards |
 | ImageQualityPreference | Enum | Image quality preference: compressed (85%), original (100%) |
 | OrbitFriend | Composite Model | ContactModel + messageCount (int) + lastActivity (String) + lastMessageTimestamp (DateTime?) + unreadCount (int, default 0); used by Orbit feature for ranking friends by conversation activity |
 | IdentityRepository | Interface + Impl | Abstracts identity persistence; IdentityRepositoryImpl takes SecureKeyStore, reads secrets from secure storage (falls back to DB for pre-migration), writes secrets only to secure storage |
 | ContactRepository | Interface + Impl | Abstracts contact persistence (add, get, getAll, delete, exists, count, archiveContact, unarchiveContact, getActiveContacts, getArchivedContacts, blockContact, unblockContact) |
 | ContactRequestRepository | Interface + Impl | Abstracts request persistence (add, get, getPending, updateStatus, delete, exists) |
-| MessageRepository | Interface + Impl | Abstracts message persistence (save, getForContact, getLatest, updateStatus, exists, getMessageCountForContact, markConversationAsRead, getUnreadCountForContact, getTotalUnreadCount, getTotalUnreadCountExcludingArchived, deleteMessagesForContact, getFailedOutgoingMessages, getMessagesPage) |
+| MessageRepository | Interface + Impl | Abstracts message persistence (save, getForContact, getLatest, updateStatus, exists, getMessageCountForContact, markConversationAsRead, getUnreadCountForContact, getTotalUnreadCount, getTotalUnreadCountExcludingArchived, deleteMessagesForContact, getFailedOutgoingMessages, getMessagesPage, getUnackedOutgoingMessages) |
 | MediaAttachmentRepository | Interface + Impl | Abstracts media attachment persistence (saveAttachment, getAttachmentsForMessage, getAttachmentsForMessages, updateLocalPath, updateDownloadStatus, deleteForMessage, deleteForContact, getPendingDownloads) |
 | **Core** | | |
 | GoBridgeClient | Bridge Client | Sends requests to Go native library via MethodChannel, receives push events via EventChannel; checkHealth() probes bridge liveness (node:status, 5s timeout); reinitialize() re-initializes Go bridge preserving callbacks; send() catches PlatformException and returns `{errorCode: 'PLATFORM_ERROR'}`; platform wrappers: GoBridge.swift (iOS) + GoBridge.kt (Android) |
 | P2PBridgeClient | Bridge Client | P2P-specific bridge calls (start, stop, status, register, discover, dial, disconnect, send, inbox store/retrieve, inbox register token) |
-| Bridge Helper Functions (in bridge.dart) | Bridge Helpers | Identity + signing + verification + ML-KEM encryption/decryption helper functions: callIdentityGenerate, callIdentityRestore, callSignPayload, callVerifyPayload, callMlKemKeygen, callEncryptMessage, callDecryptMessage |
-| P2P Bridge Helper Functions (in p2p_bridge_client.dart) | Bridge Helpers | P2P-specific helper functions: callP2PNodeStart/Stop/Status, callP2PRendezvousRegister/Discover, callP2PPeerDial/Disconnect, callP2PMessageSend, callP2PInboxStore/Retrieve/RegisterToken; also exports defaultRendezvousAddress constant |
+| Bridge Helper Functions (in bridge.dart) | Bridge Helpers | Identity + signing + verification + ML-KEM encryption/decryption helper functions: callIdentityGenerate, callIdentityRestore, callSignPayload, callVerifyPayload, callMlKemKeygen, callEncryptMessage, callDecryptMessage, callEncryptContactRequest, callDecryptContactRequest |
+| P2P Bridge Helper Functions (in p2p_bridge_client.dart) | Bridge Helpers | P2P-specific helper functions: callP2PNodeStart/Stop/Status, callP2PRendezvousRegister/Discover, callP2PPeerDial/Disconnect, callP2PMessageSend, callP2PInboxStore/Retrieve/RegisterToken, callP2PRelayReconnect, callP2PRelayProbe; also exports defaultRendezvousAddress constant |
 | P2PService / P2PServiceImpl | Service | Reactive P2P service with state and message streams, sendMessageWithReply() for ACK-based chat, offline inbox fallback + registerPushToken for FCM push notifications; public performImmediateHealthCheck() and drainOfflineInbox() wrappers for app-resume lifecycle; startNodeCore() / warmBackground() split for deferred startup; isLocalPeer() / sendLocalMessage() for WiFi-first delivery; local WiFi discovery via Bonsoir mDNS |
 | IncomingMessageRouter | Service | Routes P2P messages by JSON envelope type to typed broadcast streams |
 | LocalDiscoveryService | Interface | Abstract mDNS service discovery for local WiFi peers |
@@ -941,15 +1032,17 @@
 
 | Component | Responsibility |
 |-----------|----------------|
-| Bridge Entry (bridge/bridge.go) | Routes incoming requests to handlers via command dispatch; JSON request/response encoding; supports identity, crypto, P2P, inbox, media, and profile commands |
+| Bridge Entry (bridge/bridge.go) | Routes incoming requests to handlers via command dispatch; JSON request/response encoding; supports identity, crypto, P2P, inbox, media, profile, encrypt_contact_request, decrypt_contact_request, relay_reconnect, relay_probe commands |
 | Identity Module (identity/) | `identity.generate` → BIP39 mnemonic + Ed25519 keypair + ML-KEM-768 keypair; `identity.restore` → derive from mnemonic + fresh ML-KEM-768 |
 | Signing Module (bridge/bridge.go) | `payload.sign` → Ed25519 signing; `payload.verify` → Ed25519 signature verification |
-| Crypto Module (crypto/) | `mlkem.keygen` → ML-KEM-768 keypair; `message.encrypt` → KEM encapsulate + AES-256-GCM; `message.decrypt` → KEM decapsulate + AES-256-GCM |
+| Crypto Module (crypto/) | `mlkem.keygen` → ML-KEM-768 keypair; `message.encrypt` → KEM encapsulate + AES-256-GCM; `message.decrypt` → KEM decapsulate + AES-256-GCM; `EncryptContactRequest()`, `DecryptContactRequest()` — X25519 ECDH + HKDF + AES-256-GCM |
 | Node Module (node/) | libp2p node lifecycle (start/stop/status), circuit relay v2, NAT port mapping, hole punching |
 | Rendezvous Module (node/rendezvous.go) | Peer registration and discovery with signed peer records via protobuf protocol |
 | Chat Protocol (node/node.go) | `/mknoon/chat/1.0.0` — bidirectional message exchange with ACK replies, 4-byte big-endian length-prefixed frames |
 | Inbox Module (node/inbox.go) | `/mknoon/inbox/1.0.0` — offline message store/retrieve/register FCM token via relay server |
 | Media Module (node/media.go) | Media upload/download/delete/list and profile upload/download via relay `/mknoon/media/1.0.0` protocol |
+| X25519 Crypto (crypto/x25519.go) | X25519 ECDH + HKDF-SHA256 + AES-256-GCM for contact request encryption; Ed25519->X25519 key conversion; AAD = "msgId\|ts" |
+| Testpeer CLI (cmd/testpeer/) | Headless Go CLI peer for E2E transport testing; stdin/stdout JSON protocol; V1/V2 envelope builder |
 | Event System (node/node.go) | Push events to Flutter: `message:received`, `peer:connected`, `peer:disconnected`, `addresses:updated` via callback interface |
 | Platform Wrappers | GoBridge.swift (iOS) + GoBridge.kt (Android) — bridge MethodChannel/EventChannel to Go library |
 
@@ -1218,6 +1311,7 @@
   │ + content: String                   │
   │ + timestamp: String                 │
   │ + isIncoming: bool                  │
+  │ + transport: String?                │
   ├─────────────────────────────────────┤
   │ + fromJson(Map): ChatMessage        │
   │ + toJson(): Map                     │
@@ -1503,6 +1597,8 @@
   │ + readAt: String?                   │
   │ + quotedMessageId: String?          │
   │ + media: List<MediaAttachment>      │
+  │ + transport: String?                │
+  │ + wireEnvelope: String?             │
   ├─────────────────────────────────────┤
   │ + fromMap(Map): ConversationMessage │
   │ + toMap(): Map                      │
@@ -1556,6 +1652,8 @@
   │ + getMessagesPage(contactPeerId,   │
   │ │   {limit, beforeTimestamp}):      │
   │ │   Future<List<ConversationMsg>>  │
+  │ + getUnackedOutgoingMessages():    │
+  │ │   Future<List<ConversationMsg>>  │
   └──────────────────┬──────────────────┘
                      │ implements
                      ▼
@@ -1595,6 +1693,7 @@
   │ + localPath: String?                │
   │ + downloadStatus: DownloadStatus    │
   │ + createdAt: String                 │
+  │ + waveform: String?                 │
   ├─────────────────────────────────────┤
   │ + fromMap(Map): MediaAttachment     │
   │ + toMap(): Map                      │
@@ -1744,9 +1843,10 @@
   │       [P2P Model / Class]           │        │  DiscoverPeerResult     │
   ├─────────────────────────────────────┤        ├─────────────────────────┤
   │ + sent: bool                        │        │ + success               │
-  │ + reply: String?                    │        │ + nodeNotRunning        │
-  │ + acknowledged: bool (getter)       │        │ + notFound              │
-  │   (sent && reply != null/empty)     │        │ + error                 │
+  │ + acked: bool                       │        │ + nodeNotRunning        │
+  │ + reply: String?                    │        │ + notFound              │
+  │ + acknowledged: bool (getter)       │        │ + error                 │
+  │   (sent && reply != null/empty)     │        │                         │
   └─────────────────────────────────────┘        └─────────────────────────┘
 
   ┌─────────────────────────────────────┐        ┌─────────────────────────┐
@@ -1875,6 +1975,12 @@
   │  media:list        → mediaList      │
   │  profile:upload    → profileUpload  │
   │  profile:download  → profileDownload│
+  │  encrypt_contact_request            │
+  │    → encryptContactRequest          │
+  │  decrypt_contact_request            │
+  │    → decryptContactRequest          │
+  │  relay:reconnect   → relayReconnect │
+  │  relay:probe       → relayProbe     │
   └─────────────────────────────────────┘
 
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -1916,6 +2022,15 @@
     ownPeerId: String,
     {maxAge: Duration = 24h}
   ): Future<(ParseQRResult, ContactModel?)>
+
+  handleScannedQR(
+    qrString: String,
+    bridge: Bridge,
+    ownPeerId: String,
+    contactRepo: ContactRepository,
+    identityRepo: IdentityRepository,
+    p2pService: P2PService
+  ): Future<void>
 
 
   FLUTTER USE CASES - P2P:
@@ -1992,6 +2107,22 @@
     bridge: Bridge
   ): Future<int>   // Returns count of successfully retried messages
 
+  sendVoiceMessage(
+    audioRecorderService: AudioRecorderService,
+    p2pService: P2PService,
+    messageRepo: MessageRepository,
+    mediaAttachmentRepo: MediaAttachmentRepository,
+    bridge: Bridge,
+    targetPeerId: String,
+    senderPeerId: String,
+    senderUsername: String
+  ): Future<(SendChatMessageResult, ConversationMessage?)>
+
+  retryUnackedMessages(
+    messageRepo: MessageRepository,
+    p2pService: P2PService
+  ): Future<int>   // Returns count of messages re-queued to inbox
+
 
   FLUTTER USE CASES - FEED:
   ─────────────────────────
@@ -2018,6 +2149,14 @@
 
   registerPushToken(
     p2pService: P2PService
+  ): Future<void>
+
+  showNotification(
+    notificationService: NotificationService,
+    activeConversationTracker: ActiveConversationTracker,
+    contactPeerId: String,
+    senderUsername: String,
+    messageText: String
   ): Future<void>
 
 
@@ -2123,6 +2262,22 @@
     ownPeerId: String
   ): Future<(HandleMessageResult, ContactRequestModel?)>
 
+  acceptAndReciprocate(
+    requestRepo: ContactRequestRepository,
+    contactRepo: ContactRepository,
+    identityRepo: IdentityRepository,
+    p2pService: P2PService,
+    bridge: Bridge,
+    peerId: String
+  ): Future<AcceptContactRequestResult>
+
+  retryIncompleteKeyExchanges(
+    contactRepo: ContactRepository,
+    identityRepo: IdentityRepository,
+    p2pService: P2PService,
+    bridge: Bridge
+  ): Future<int>   // Returns count of contacts updated
+
 
   FLUTTER BRIDGE HELPERS - IDENTITY/CRYPTO:
   ─────────────────────────────────────────
@@ -2133,6 +2288,8 @@
   callMlKemKeygen(bridge: Bridge): Future<Map<String, dynamic>>
   callEncryptMessage({bridge, recipientMlKemPublicKey, plaintext, timeout?}): Future<Map<String, dynamic>>
   callDecryptMessage({bridge, ownMlKemSecretKey, kem, ciphertext, nonce, timeout?}): Future<Map<String, dynamic>>
+  callEncryptContactRequest({bridge, recipientPublicKey, senderPrivateKey, plaintext, msgId, ts}): Future<Map<String, dynamic>>
+  callDecryptContactRequest({bridge, senderPublicKey, recipientPrivateKey, ephemeralPublicKey, ciphertext, nonce, msgId, ts}): Future<Map<String, dynamic>>
 
 
   FLUTTER BRIDGE HELPERS - P2P:
@@ -2148,6 +2305,8 @@
   callP2PInboxStore(bridge, {toPeerId, message}): Future<Map>
   callP2PInboxRetrieve(bridge): Future<Map>
   callP2PInboxRegisterToken(bridge, {token, platform}): Future<Map>
+  callP2PRelayReconnect(bridge): Future<Map>
+  callP2PRelayProbe(bridge): Future<Map>
 
 
   FLUTTER DB HELPERS - IDENTITY:
@@ -2199,6 +2358,7 @@
   dbDeleteMessagesForContact(db: Database, contactPeerId: String): Future<void>
   dbLoadFailedOutgoingMessages(db: Database): Future<List<Map>>
   dbLoadMessagesPage(db: Database, contactPeerId: String, {limit: int, beforeTimestamp: String?}): Future<List<Map>>
+  dbLoadUnackedOutgoingMessages(db: Database): Future<List<Map>>
   runMessagesTableMigration(db: Database): Future<void>   ← creates messages table + indexes
   runReadAtColumnMigration(db: Database): Future<void>    ← adds read_at TEXT to messages (v6)
   runArchiveColumnsMigration(db: Database): Future<void>  ← adds is_archived, archived_at to contacts (v7)
@@ -2252,6 +2412,13 @@
   runSecretNullChecksMigration(db: Database): Future<void>       ← v5: CHECK constraints + avatar_blob BLOB
 
 
+  FLUTTER DB HELPERS - TRANSPORT/WAVEFORM/WIRE ENVELOPE:
+  ──────────────────────────────────────────────────────
+  runTransportColumnMigration(db: Database): Future<void>        ← v12: adds transport TEXT to messages
+  runWaveformColumnMigration(db: Database): Future<void>         ← v13: adds waveform TEXT to media_attachments
+  runWireEnvelopeColumnMigration(db: Database): Future<void>     ← v14: adds wire_envelope TEXT to messages
+
+
   FLUTTER SECURE STORAGE:
   ───────────────────────
   SecureKeyStore.read(key: String): Future<String?>
@@ -2289,6 +2456,10 @@
   handleMediaList(payload) → {ok, files}                 // List media on relay
   handleProfileUpload(payload) → {ok}                    // Profile picture upload
   handleProfileDownload(payload) → {ok, data}            // Profile picture download
+  handleEncryptContactRequest(payload) → {ok, ephemeralPublicKey, ciphertext, nonce}  // X25519 ECDH + HKDF + AES-256-GCM
+  handleDecryptContactRequest(payload) → {ok, plaintext}                               // X25519 ECDH + HKDF + AES-256-GCM
+  handleRelayReconnect(payload) → {ok}                   // Reconnect to relay
+  handleRelayProbe(payload) → {ok}                       // Probe relay connectivity
 
   GO NODE FUNCTIONS (go-mknoon/node/):
   ─────────────────────────────────────
@@ -2565,7 +2736,7 @@
 
 ```
 lib/
-├── main.dart                                    # App entry point, Firebase init, SecureKeyStore + encrypted DB setup (v11), secret migration, DI; MyApp = StatefulWidget + WidgetsBindingObserver (lifecycle, push listeners, orderly dispose)
+├── main.dart                                    # App entry point, Firebase init, SecureKeyStore + encrypted DB setup (v15), secret migration, DI; MyApp = StatefulWidget + WidgetsBindingObserver (lifecycle, push listeners, orderly dispose)
 ├── smoke_test_main.dart                         # Smoke test entry point
 ├── smoke_test_restore.dart                      # Smoke test for identity restore
 ├── smoke_test_messages.dart                     # Smoke test for messages DB layer
@@ -2590,7 +2761,10 @@ lib/
 │   │   │   ├── 008_block_columns.dart          # Schema v8 (is_blocked, blocked_at on contacts)
 │   │   │   ├── 009_quoted_message_id.dart     # Schema v9 (quoted_message_id TEXT on messages)
 │   │   │   ├── 010_media_attachments.dart     # Schema v10 (media_attachments table + indexes)
-│   │   │   └── 011_avatar_version.dart        # Schema v11 (avatar_version INTEGER on identity and contacts)
+│   │   │   ├── 011_avatar_version.dart        # Schema v11 (avatar_version INTEGER on identity and contacts)
+│   │   │   ├── 012_transport_column.dart     # Schema v12 (transport TEXT on messages)
+│   │   │   ├── 013_waveform_column.dart      # Schema v13 (waveform TEXT on media_attachments)
+│   │   │   └── 014_wire_envelope_column.dart # Schema v14 (wire_envelope TEXT on messages)
 │   │   └── helpers/
 │   │       ├── identity_db_helpers.dart        # Identity DB CRUD
 │   │       ├── contacts_db_helpers.dart        # Contacts DB CRUD
@@ -2889,7 +3063,10 @@ go-mknoon/
 ├── crypto/
 │   ├── mlkem.go                                # ML-KEM-768 keygen (circl/kem/mlkem768)
 │   ├── encrypt.go                              # ML-KEM encapsulate + AES-256-GCM encrypt
-│   └── decrypt.go                              # ML-KEM decapsulate + AES-256-GCM decrypt
+│   ├── decrypt.go                              # ML-KEM decapsulate + AES-256-GCM decrypt
+│   └── x25519.go                               # X25519 ECDH + HKDF-SHA256 + AES-256-GCM for contact request encryption; Ed25519->X25519 key conversion
+├── cmd/
+│   └── testpeer/                               # Headless Go CLI peer for E2E transport testing; stdin/stdout JSON protocol
 ├── node/
 │   ├── node.go                                 # libp2p host lifecycle, chat protocol (/mknoon/chat/1.0.0), event broadcasting
 │   ├── rendezvous.go                           # Rendezvous register/discover with protobuf signed peer records
@@ -3465,7 +3642,7 @@ The application initialization sequence is defined in `lib/main.dart`. Understan
     ├─► SecureKeyStore instantiation (FlutterSecureKeyStore)
     │       iOS Keychain (device-bound) / Android EncryptedSharedPreferences
     │
-    ├─► openEncryptedDatabase('identity.db', version: 11, secureKeyStore)
+    ├─► openEncryptedDatabase('identity.db', version: 15, secureKeyStore)
     │       │
     │       ├─► Read/generate db_encryption_key from SecureKeyStore
     │       │       Random 256-bit key, stored as base64 in secure storage
@@ -3504,10 +3681,21 @@ The application initialization sequence is defined in `lib/main.dart`. Understan
     │       │       ├─► runMediaAttachmentsMigration(db)
     │       │       │       Creates media_attachments table + indexes (v10)
     │       │       │
-    │       │       └─► runAvatarVersionMigration(db)
-    │       │               Adds avatar_version INTEGER to identity and contacts (v11)
+    │       │       ├─► runAvatarVersionMigration(db)
+    │       │       │       Adds avatar_version INTEGER to identity and contacts (v11)
+    │       │       │
+    │       │       ├─► runTransportColumnMigration(db)
+    │       │       │       Adds transport TEXT to messages (v12)
+    │       │       │
+    │       │       ├─► runWaveformColumnMigration(db)
+    │       │       │       Adds waveform TEXT to media_attachments (v13)
+    │       │       │
+    │       │       ├─► runWireEnvelopeColumnMigration(db)
+    │       │       │       Adds wire_envelope TEXT to messages (v14)
+    │       │       │
+    │       │       └─► (v15 reserved)
     │       │
-    │       └─► onUpgrade callback (v1→v2→v3→v4→v5→v6→v7→v8→v9→v10→v11)
+    │       └─► onUpgrade callback (v1→v2→v3→v4→v5→v6→v7→v8→v9→v10→v11→v12→v13→v14→v15)
     │               │
     │               ├─► runMessagesTableMigration(db)                (v1 → v2)
     │               │       Creates messages table for existing installs
@@ -3537,8 +3725,19 @@ The application initialization sequence is defined in `lib/main.dart`. Understan
     │               ├─► runMediaAttachmentsMigration(db)         (v9 → v10)
     │               │       Creates media_attachments table + indexes
     │               │
-    │               └─► runAvatarVersionMigration(db)            (v10 → v11)
-    │                       Adds avatar_version INTEGER to identity and contacts
+    │               ├─► runAvatarVersionMigration(db)            (v10 → v11)
+    │               │       Adds avatar_version INTEGER to identity and contacts
+    │               │
+    │               ├─► runTransportColumnMigration(db)        (v11 → v12)
+    │               │       Adds transport TEXT to messages
+    │               │
+    │               ├─► runWaveformColumnMigration(db)         (v12 → v13)
+    │               │       Adds waveform TEXT to media_attachments
+    │               │
+    │               ├─► runWireEnvelopeColumnMigration(db)     (v13 → v14)
+    │               │       Adds wire_envelope TEXT to messages
+    │               │
+    │               └─► (v14 → v15)
     │
     ├─► migrateSecretsToSecureStorage(db, secureKeyStore)
     │       One-time migration: reads secrets from DB, writes to SecureKeyStore
@@ -3598,19 +3797,34 @@ The application initialization sequence is defined in `lib/main.dart`. Understan
     │           Detects online transitions, 5s debounce
     │           Calls retryFailedMessages() on reconnect
     │
+    ├─► KeyExchangeRetrier instantiation + start()
+    │       │
+    │       └─► Subscribes to P2PService.stateStream
+    │           Detects online transitions, 5s debounce
+    │           Calls retryIncompleteKeyExchanges() on reconnect
+    │
+    ├─► AudioRecorderService instantiation
+    │       Audio recording via record package; amplitude stream + waveform extraction
+    │
+    ├─► NotificationService instantiation (FlutterNotificationService)
+    │       Local notifications for incoming messages
+    │
+    ├─► ActiveConversationTracker instantiation
+    │       Tracks foreground conversation to suppress notifications
+    │
     └─► runApp(MyApp) — StatefulWidget + WidgetsBindingObserver
             │
-            ├─► Constructor params: messageRouter, pendingMessageRetrier, isDesktop, + all existing deps
+            ├─► Constructor params: messageRouter, pendingMessageRetrier, keyExchangeRetrier, audioRecorderService, notificationService, activeConversationTracker, isDesktop, + all existing deps
             │
-            ├─► _onResumed() lifecycle handler (app foreground):
+            ├─► handleAppResumed() lifecycle handler (app foreground):
             │       │
             │       ├─► bridge.checkHealth()
             │       │
-            │       ├─► [dead] bridge.reinitialize()
-            │       │
             │       ├─► p2pService.performImmediateHealthCheck()
             │       │
-            │       └─► p2pService.drainOfflineInbox()
+            │       ├─► p2pService.drainOfflineInbox()
+            │       │
+            │       └─► keyExchangeRetrier.retryIncompleteKeyExchanges()
             │
             ├─► _setupForegroundPushListener():
             │       │
@@ -3648,10 +3862,10 @@ The application initialization sequence is defined in `lib/main.dart`. Understan
 
 | File | Responsibility |
 |------|----------------|
-| `lib/main.dart` | Entry point, Firebase init, SecureKeyStore + encrypted DB setup (v11), secret migration, repository + service + listener + PendingMessageRetrier DI; MyApp is StatefulWidget + WidgetsBindingObserver with app-resume lifecycle (bridge health check → reinitialize if dead → P2P health check → drain inbox), foreground push listeners (Firebase onMessage/onMessageOpenedApp → inbox drain), and orderly dispose chain (pendingMessageRetrier → chatMessageListener → contactRequestListener → messageRouter → p2pService → bridge) |
+| `lib/main.dart` | Entry point, Firebase init, SecureKeyStore + encrypted DB setup (v15), secret migration, repository + service + listener + PendingMessageRetrier + KeyExchangeRetrier + AudioRecorderService + NotificationService DI; MyApp is StatefulWidget + WidgetsBindingObserver with handleAppResumed() lifecycle (bridge health check → P2P health check → drain inbox → key exchange retry), foreground push listeners (Firebase onMessage/onMessageOpenedApp → inbox drain), and orderly dispose chain (pendingMessageRetrier → chatMessageListener → contactRequestListener → messageRouter → p2pService → bridge) |
 | `lib/core/secure_storage/secure_key_store.dart` | SecureKeyStore abstract interface |
 | `lib/core/secure_storage/flutter_secure_key_store.dart` | FlutterSecureKeyStore production impl (iOS Keychain / Android EncryptedSharedPreferences) |
-| `lib/core/database/encrypted_db_opener.dart` | Opens SQLCipher DB (v11) with key from secure storage; handles plaintext-to-encrypted migration |
+| `lib/core/database/encrypted_db_opener.dart` | Opens SQLCipher DB (v15) with key from secure storage; handles plaintext-to-encrypted migration |
 | `lib/core/database/migrate_secrets_to_secure_storage.dart` | One-time DB-to-secure-storage secret migration with sentinel |
 | `lib/core/database/migrations/001_identity_table.dart` | Schema v1 migration (3 tables) |
 | `lib/core/database/migrations/002_messages_table.dart` | Schema v2 migration (messages table) |
@@ -3664,6 +3878,9 @@ The application initialization sequence is defined in `lib/main.dart`. Understan
 | `lib/core/database/migrations/009_quoted_message_id.dart` | Schema v9 migration (quoted_message_id TEXT on messages table) |
 | `lib/core/database/migrations/010_media_attachments.dart` | Schema v10 migration (media_attachments table + indexes) |
 | `lib/core/database/migrations/011_avatar_version.dart` | Schema v11 migration (avatar_version INTEGER on identity and contacts) |
+| `lib/core/database/migrations/012_transport_column.dart` | Schema v12 migration (transport TEXT on messages) |
+| `lib/core/database/migrations/013_waveform_column.dart` | Schema v13 migration (waveform TEXT on media_attachments) |
+| `lib/core/database/migrations/014_wire_envelope_column.dart` | Schema v14 migration (wire_envelope TEXT on messages) |
 | `lib/core/services/incoming_message_router.dart` | P2P message routing by type |
 | `lib/core/services/pending_message_retrier.dart` | Retries failed outgoing messages on P2P reconnect (5s debounce) |
 | `lib/core/bridge/go_bridge_client.dart` | Go native bridge initialization + event handlers (MethodChannel/EventChannel) |
@@ -3682,7 +3899,7 @@ To add a new initialization step:
 1. Add async initialization code in `main()` before `runApp()`
 2. Inject dependencies into `MyApp` constructor
 3. Pass dependencies through `StartupRouter` to child widgets
-4. For new migrations, create `012_*.dart` and update `openEncryptedDatabase` version (currently v11)
+4. For new migrations, create `015_*.dart` and update `openEncryptedDatabase` version (currently v15)
 5. For new P2P event handlers, register on `GoBridgeClient` in `P2PServiceImpl`
 6. For new secrets, add read/write methods to `SecureKeyStore` and update `FlutterSecureKeyStore`
 
@@ -3790,8 +4007,9 @@ The QR code contains all information needed for P2P connection:
 
 ### P2P Contact Request Protocol
 
-Contact requests are sent as structured P2P messages:
+Contact requests support two wire formats:
 
+**v1 (plaintext):**
 ```json
 {
   "type": "contact_request",
@@ -3804,6 +4022,22 @@ Contact requests are sent as structured P2P messages:
     "un": "<username>",
     "mlkem": "<base64-ml-kem-768-public-key>",
     "sig": "<base64-signature>"
+  }
+}
+```
+
+**v2 (E2E encrypted with X25519 ECDH + HKDF-SHA256 + AES-256-GCM):**
+```json
+{
+  "type": "contact_request",
+  "version": "2",
+  "senderPeerId": "12D3...",
+  "msgId": "uuid",
+  "ts": 1234567890,
+  "encrypted": {
+    "ephemeralPublicKey": "base64...",
+    "ciphertext": "base64...",
+    "nonce": "base64..."
   }
 }
 ```
@@ -3886,3 +4120,7 @@ The Dart `GoBridgeClient._cmdMap` maps command strings (used by Dart callers) to
 | `media:list` | `mediaList` | Media module | List media on relay via /mknoon/media/1.0.0 |
 | `profile:upload` | `profileUpload` | Media module | Upload profile picture to relay |
 | `profile:download` | `profileDownload` | Media module | Download profile picture from relay |
+| `encrypt_contact_request` | `encryptContactRequest` | Crypto module | Encrypt contact request: X25519 ECDH + HKDF-SHA256 + AES-256-GCM |
+| `decrypt_contact_request` | `decryptContactRequest` | Crypto module | Decrypt contact request: X25519 ECDH + HKDF-SHA256 + AES-256-GCM |
+| `relay:reconnect` | `relayReconnect` | Node module | Reconnect to relay server |
+| `relay:probe` | `relayProbe` | Node module | Probe relay server connectivity |

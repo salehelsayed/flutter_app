@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/feed_colors.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
 import 'package:flutter_app/features/feed/domain/utils/has_significant_time_gap.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/message_bubble.dart';
@@ -25,6 +26,10 @@ class ScrollableMessagePreview extends StatefulWidget {
   final VoidCallback? onCollapse;
   final ValueChanged<String>? onQuoteReply;
   final int maxVisible;
+  final Map<String, List<MessageReaction>> reactions;
+  final String? ownPeerId;
+  final void Function(String messageId)? onMessageLongPress;
+  final void Function(String messageId, String emoji)? onReactionTap;
 
   const ScrollableMessagePreview({
     super.key,
@@ -36,6 +41,10 @@ class ScrollableMessagePreview extends StatefulWidget {
     this.onCollapse,
     this.onQuoteReply,
     this.maxVisible = 3,
+    this.reactions = const {},
+    this.ownPeerId,
+    this.onMessageLongPress,
+    this.onReactionTap,
   });
 
   @override
@@ -246,6 +255,14 @@ class _ScrollableMessagePreviewState extends State<ScrollableMessagePreview> {
             : null,
         quotedText: quotedText,
         isQuoteUnavailable: isQuoteUnavailable,
+        reactions: widget.reactions[msg.id] ?? const [],
+        ownPeerId: widget.ownPeerId,
+        onLongPress: widget.onMessageLongPress != null
+            ? () => widget.onMessageLongPress!(msg.id)
+            : null,
+        onReactionTap: widget.onReactionTap != null
+            ? (emoji) => widget.onReactionTap!(msg.id, emoji)
+            : null,
       );
 
       if (msg.isIncoming && widget.onQuoteReply != null) {

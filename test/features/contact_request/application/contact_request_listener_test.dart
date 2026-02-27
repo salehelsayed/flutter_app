@@ -641,6 +641,107 @@ void main() {
 
       expect(requests.length, equals(1));
     });
+
+    test('v2 contactKeyUpdated: peerId from decrypted payload, not message.from',
+        () async {
+      // Seed a contact WITHOUT ML-KEM key
+      contactRepo.addTestContact(ContactModel(
+        peerId: _testPeerId,
+        publicKey: _testPublicKey,
+        rendezvous: '/addr',
+        username: 'TestUser',
+        signature: 'sig',
+        scannedAt: '2024-01-01T00:00:00Z',
+        mlKemPublicKey: null,
+      ));
+
+      final v2Listener = ContactRequestListener(
+        contactRequestStream: streamController.stream,
+        requestRepo: requestRepo,
+        contactRepo: contactRepo,
+        bridge: bridge,
+        getOwnPeerId: () => _testOwnPeerId,
+        getOwnPrivateKey: () async => 'ownPrivKeyBase64',
+      );
+      v2Listener.start();
+
+      final updates = <ContactModel>[];
+      v2Listener.contactKeyUpdatedStream.listen(updates.add);
+
+      // message.from is 'unknown' — peerId must come from decrypted payload
+      streamController.add(_makeV2Message(
+        from: 'unknown',
+        mlkem: 'newMlKemKey',
+      ));
+      await Future.delayed(const Duration(milliseconds: 200));
+
+      expect(updates.length, equals(1));
+      expect(updates.first.peerId, equals(_testPeerId));
+      expect(updates.first.mlKemPublicKey, equals('newMlKemKey'));
+
+      v2Listener.dispose();
+    });
+
+    test('v2 contactKeyUpdated: works with matching message.from', () async {
+      // Seed a contact WITHOUT ML-KEM key
+      contactRepo.addTestContact(ContactModel(
+        peerId: _testPeerId,
+        publicKey: _testPublicKey,
+        rendezvous: '/addr',
+        username: 'TestUser',
+        signature: 'sig',
+        scannedAt: '2024-01-01T00:00:00Z',
+        mlKemPublicKey: null,
+      ));
+
+      final v2Listener = ContactRequestListener(
+        contactRequestStream: streamController.stream,
+        requestRepo: requestRepo,
+        contactRepo: contactRepo,
+        bridge: bridge,
+        getOwnPeerId: () => _testOwnPeerId,
+        getOwnPrivateKey: () async => 'ownPrivKeyBase64',
+      );
+      v2Listener.start();
+
+      final updates = <ContactModel>[];
+      v2Listener.contactKeyUpdatedStream.listen(updates.add);
+
+      // message.from matches peerId — normal v2 case
+      streamController.add(_makeV2Message(mlkem: 'newMlKemKey'));
+      await Future.delayed(const Duration(milliseconds: 200));
+
+      expect(updates.length, equals(1));
+      expect(updates.first.peerId, equals(_testPeerId));
+      expect(updates.first.mlKemPublicKey, equals('newMlKemKey'));
+
+      v2Listener.dispose();
+    });
+
+    test('v2 new contact request: peerId from decrypted payload with from=unknown',
+        () async {
+      final v2Listener = ContactRequestListener(
+        contactRequestStream: streamController.stream,
+        requestRepo: requestRepo,
+        contactRepo: contactRepo,
+        bridge: bridge,
+        getOwnPeerId: () => _testOwnPeerId,
+        getOwnPrivateKey: () async => 'ownPrivKeyBase64',
+      );
+      v2Listener.start();
+
+      final requests = <ContactRequestModel>[];
+      v2Listener.requestStream.listen(requests.add);
+
+      // message.from is 'unknown' — peerId extracted from decrypted payload
+      streamController.add(_makeV2Message(from: 'unknown'));
+      await Future.delayed(const Duration(milliseconds: 200));
+
+      expect(requests.length, equals(1));
+      expect(requests.first.peerId, equals(_testPeerId));
+
+      v2Listener.dispose();
+    });
   });
 
   // ---------------------------------------------------------------------------

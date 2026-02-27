@@ -4,6 +4,8 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
+import 'package:flutter_app/features/conversation/application/reaction_listener.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
@@ -80,6 +82,12 @@ class StartupRouter extends StatefulWidget {
   /// The audio recorder service for voice messages.
   final AudioRecorderService? audioRecorderService;
 
+  /// The reaction repository for emoji reactions.
+  final ReactionRepository? reactionRepository;
+
+  /// The reaction listener for incoming reactions.
+  final ReactionListener? reactionListener;
+
   const StartupRouter({
     super.key,
     required this.repository,
@@ -96,6 +104,8 @@ class StartupRouter extends StatefulWidget {
     required this.imageProcessor,
     this.conversationTracker,
     this.audioRecorderService,
+    this.reactionRepository,
+    this.reactionListener,
   });
 
   @override
@@ -162,6 +172,8 @@ class _StartupRouterState extends State<StartupRouter> {
                 imageProcessor: widget.imageProcessor,
                 conversationTracker: widget.conversationTracker,
                 audioRecorderService: widget.audioRecorderService,
+                reactionRepository: widget.reactionRepository,
+                reactionListener: widget.reactionListener,
               ),
             ),
           );
@@ -193,6 +205,8 @@ class _StartupRouterState extends State<StartupRouter> {
             imageProcessor: widget.imageProcessor,
             conversationTracker: widget.conversationTracker,
             audioRecorderService: widget.audioRecorderService,
+            reactionRepository: widget.reactionRepository,
+            reactionListener: widget.reactionListener,
           );
           StartupTiming.instance.mark('route_pushed');
 
@@ -233,6 +247,8 @@ class _StartupRouterState extends State<StartupRouter> {
                         imageProcessor: widget.imageProcessor,
                         conversationTracker: widget.conversationTracker,
                         audioRecorderService: widget.audioRecorderService,
+                        reactionRepository: widget.reactionRepository,
+                        reactionListener: widget.reactionListener,
                       ),
                     ),
                   );
@@ -403,6 +419,8 @@ class _StartupRouterState extends State<StartupRouter> {
     required ImageProcessor imageProcessor,
     ActiveConversationTracker? conversationTracker,
     AudioRecorderService? audioRecorderService,
+    ReactionRepository? reactionRepository,
+    ReactionListener? reactionListener,
   }) {
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(
@@ -421,6 +439,8 @@ class _StartupRouterState extends State<StartupRouter> {
           imageProcessor: imageProcessor,
           conversationTracker: conversationTracker,
           audioRecorderService: audioRecorderService,
+          reactionRepository: reactionRepository,
+          reactionListener: reactionListener,
         ),
       ),
     );

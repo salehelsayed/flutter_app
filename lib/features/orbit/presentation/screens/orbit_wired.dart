@@ -25,9 +25,11 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/application/mark_conversation_read_use_case.dart';
+import 'package:flutter_app/features/conversation/application/reaction_listener.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/conversation/presentation/navigation/conversation_route_transition.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
@@ -62,6 +64,8 @@ class OrbitWired extends StatefulWidget {
   final ImageProcessor imageProcessor;
   final ActiveConversationTracker? conversationTracker;
   final AudioRecorderService? audioRecorderService;
+  final ReactionRepository? reactionRepository;
+  final ReactionListener? reactionListener;
 
   const OrbitWired({
     super.key,
@@ -79,6 +83,8 @@ class OrbitWired extends StatefulWidget {
     required this.imageProcessor,
     this.conversationTracker,
     this.audioRecorderService,
+    this.reactionRepository,
+    this.reactionListener,
   });
 
   @override
@@ -503,6 +509,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           videoQualityPreference: _videoQualityPreference,
           conversationTracker: widget.conversationTracker,
           audioRecorderService: widget.audioRecorderService,
+          reactionRepo: widget.reactionRepository,
+          reactionListener: widget.reactionListener,
         ),
       ),
     ).then((_) => _loadOrbitData());
@@ -540,6 +548,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           ownPeerId: _identity?.peerId ?? '',
           conversationTracker: widget.conversationTracker,
           audioRecorderService: widget.audioRecorderService,
+          reactionRepository: widget.reactionRepository,
+          reactionListener: widget.reactionListener,
         ),
       ),
     );

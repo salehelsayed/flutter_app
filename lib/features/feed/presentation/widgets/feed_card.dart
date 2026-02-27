@@ -1,6 +1,7 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/feed_colors.dart';
+import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
 import 'package:flutter_app/features/feed/domain/models/session_reply.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/collapsed_mode_card_body.dart';
@@ -23,6 +24,10 @@ class FeedCard extends StatefulWidget {
   final ValueChanged<bool>? onInputFocusChanged;
   final ValueChanged<String>? onQuoteReply;
   final VoidCallback? onAttach;
+  final Map<String, List<MessageReaction>> reactions;
+  final String? ownPeerId;
+  final void Function(String messageId)? onMessageLongPress;
+  final void Function(String messageId, String emoji)? onReactionTap;
 
   const FeedCard({
     super.key,
@@ -38,6 +43,10 @@ class FeedCard extends StatefulWidget {
     this.onInputFocusChanged,
     this.onQuoteReply,
     this.onAttach,
+    this.reactions = const {},
+    this.ownPeerId,
+    this.onMessageLongPress,
+    this.onReactionTap,
   });
 
   @override
@@ -166,6 +175,10 @@ class _FeedCardState extends State<FeedCard>
       onDraftChanged: widget.onDraftChanged,
       onInputFocusChanged: widget.onInputFocusChanged,
       onAttach: widget.onAttach,
+      reactions: widget.reactions,
+      ownPeerId: widget.ownPeerId,
+      onMessageLongPress: widget.onMessageLongPress,
+      onReactionTap: widget.onReactionTap,
     );
   }
 
@@ -187,6 +200,10 @@ class _FeedCardState extends State<FeedCard>
       onDraftChanged: widget.onDraftChanged,
       onInputFocusChanged: widget.onInputFocusChanged,
       onAttach: widget.onAttach,
+      reactions: widget.reactions,
+      ownPeerId: widget.ownPeerId,
+      onMessageLongPress: widget.onMessageLongPress,
+      onReactionTap: widget.onReactionTap,
     );
   }
 

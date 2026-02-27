@@ -235,5 +235,34 @@ void main() {
       expect(chatMessages.length, 2);
       expect(unknowns.length, 1);
     });
+
+    test('routes message_reaction to reactionStream', () async {
+      final received = router.reactionStream.first;
+
+      p2pService.inject(_makeMessage('message_reaction'));
+
+      final msg = await received.timeout(const Duration(seconds: 1));
+      expect(msg.from, 'peer-a');
+      expect(msg.content, contains('"type":"message_reaction"'));
+    });
+
+    test('message_reaction not routed to chatMessageStream or unknownMessageStream',
+        () async {
+      final chatMessages = <ChatMessage>[];
+      final unknowns = <ChatMessage>[];
+      final reactions = <ChatMessage>[];
+
+      router.chatMessageStream.listen(chatMessages.add);
+      router.unknownMessageStream.listen(unknowns.add);
+      router.reactionStream.listen(reactions.add);
+
+      p2pService.inject(_makeMessage('message_reaction'));
+
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      expect(reactions.length, 1);
+      expect(chatMessages, isEmpty);
+      expect(unknowns, isEmpty);
+    });
   });
 }

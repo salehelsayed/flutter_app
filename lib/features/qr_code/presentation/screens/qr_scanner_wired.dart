@@ -15,8 +15,10 @@ import 'package:flutter_app/features/contacts/application/add_contact_use_case.d
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
+import 'package:flutter_app/features/conversation/application/reaction_listener.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/feed/presentation/navigation/feed_route_transition.dart';
 import 'package:flutter_app/features/feed/presentation/screens/feed_wired.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
@@ -49,6 +51,8 @@ class QRScannerWired extends StatelessWidget {
   final String ownPeerId;
   final ActiveConversationTracker? conversationTracker;
   final AudioRecorderService? audioRecorderService;
+  final ReactionRepository? reactionRepository;
+  final ReactionListener? reactionListener;
 
   const QRScannerWired({
     super.key,
@@ -67,6 +71,8 @@ class QRScannerWired extends StatelessWidget {
     required this.ownPeerId,
     this.conversationTracker,
     this.audioRecorderService,
+    this.reactionRepository,
+    this.reactionListener,
   });
 
   @override
@@ -271,6 +277,8 @@ class QRScannerWired extends StatelessWidget {
                         imageProcessor: imageProcessor,
                         conversationTracker: conversationTracker,
                         audioRecorderService: audioRecorderService,
+                        reactionRepository: reactionRepository,
+                        reactionListener: reactionListener,
                       ),
                     ),
                     (route) => false,

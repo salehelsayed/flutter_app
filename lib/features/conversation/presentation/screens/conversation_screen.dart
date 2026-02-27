@@ -8,7 +8,10 @@ import 'package:flutter_app/features/conversation/presentation/widgets/compact_o
 import 'package:flutter_app/features/conversation/presentation/widgets/conversation_header.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/date_separator.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/empty_conversation_state.dart';
+import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/letter_card.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/reaction_bar.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/full_emoji_picker.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
 import 'package:flutter_app/shared/widgets/media/full_screen_image_viewer.dart';
 import 'package:flutter_app/shared/widgets/media/media_preview_text.dart';
@@ -44,6 +47,9 @@ class ConversationScreen extends StatefulWidget {
   final bool isRecording;
   final Duration recordingDuration;
   final List<double> amplitudeValues;
+  final Map<String, List<MessageReaction>> reactions;
+  final void Function(String messageId, String emoji)? onReactionSelected;
+  final void Function(String messageId)? onReactionPlusTap;
 
   const ConversationScreen({
     super.key,
@@ -73,6 +79,9 @@ class ConversationScreen extends StatefulWidget {
     this.isRecording = false,
     this.recordingDuration = Duration.zero,
     this.amplitudeValues = const [],
+    this.reactions = const {},
+    this.onReactionSelected,
+    this.onReactionPlusTap,
   });
 
   @override
@@ -203,6 +212,9 @@ class _ConversationScreenState extends State<ConversationScreen> {
               }
             }
 
+            final messageReactions =
+                widget.reactions[message.id] ?? const [];
+
             final letterCard = LetterCard(
               senderPeerId: message.senderPeerId,
               senderName: message.isIncoming ? widget.contactUsername : 'You',
@@ -214,6 +226,12 @@ class _ConversationScreenState extends State<ConversationScreen> {
               quotedText: quotedText,
               isQuoteUnavailable: isQuoteUnavailable,
               media: message.media,
+              reactions: messageReactions,
+              ownPeerId: widget.ownPeerId,
+              onLongPress: () => _showReactionBar(message.id),
+              onReactionTap: widget.onReactionSelected != null
+                  ? (emoji) => widget.onReactionSelected!(message.id, emoji)
+                  : null,
               onMediaTap: (index) {
                 final visual = message.media
                     .where(
@@ -300,6 +318,40 @@ class _ConversationScreenState extends State<ConversationScreen> {
     }
 
     return items.reversed.toList();
+  }
+
+  void _showReactionBar(String messageId) {
+    // Find current reaction for this message by own user
+    final reactions = widget.reactions[messageId] ?? [];
+    final ownReaction = widget.ownPeerId != null
+        ? reactions
+            .where((r) => r.senderPeerId == widget.ownPeerId)
+            .firstOrNull
+        : null;
+
+    showDialog(
+      context: context,
+      barrierColor: Colors.transparent,
+      builder: (dialogContext) => ReactionBar(
+        currentEmoji: ownReaction?.emoji,
+        onReactionSelected: (emoji) {
+          Navigator.of(dialogContext).pop();
+          widget.onReactionSelected?.call(messageId, emoji);
+        },
+        onPlusTap: () {
+          Navigator.of(dialogContext).pop();
+          _showFullPicker(messageId);
+        },
+        onDismiss: () => Navigator.of(dialogContext).pop(),
+      ),
+    );
+  }
+
+  void _showFullPicker(String messageId) async {
+    final emoji = await showFullEmojiPicker(context);
+    if (emoji != null) {
+      widget.onReactionSelected?.call(messageId, emoji);
+    }
   }
 
   static const _months = [
