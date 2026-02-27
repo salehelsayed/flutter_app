@@ -116,7 +116,7 @@ class FakeP2PService implements P2PService {
 
   @override
   Future<SendMessageResult> sendMessageWithReply(
-      String peerId, String message) async {
+      String peerId, String message, {int? timeoutMs}) async {
     sendMessageWithReplyCallCount++;
     lastSendMessagePeerId = peerId;
     lastSendMessageContent = message;
@@ -169,6 +169,10 @@ class FakeP2PService implements P2PService {
       throw Exception('FakeP2PService: drain inbox error');
     }
   }
+
+  @override
+  Future<RelayProbeResult> probeRelay(String peerId) async =>
+      RelayProbeResult.error;
 
   @override
   bool isConnectedToPeer(String peerId) => false;

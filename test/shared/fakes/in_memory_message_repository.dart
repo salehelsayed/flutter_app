@@ -116,5 +116,19 @@ class InMemoryMessageRepository implements MessageRepository {
       ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
   }
 
+  @override
+  Future<List<ConversationMessage>> getUnackedOutgoingMessages({
+    required Duration olderThan,
+  }) async {
+    return _messages.values
+        .where((m) =>
+            m.status == 'sent' &&
+            !m.isIncoming &&
+            m.wireEnvelope != null &&
+            m.wireEnvelope!.isNotEmpty)
+        .toList()
+      ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+  }
+
   int get count => _messages.length;
 }

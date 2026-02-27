@@ -21,11 +21,7 @@ Future<int> retryFailedMessages({
   required P2PService p2pService,
   required Bridge bridge,
 }) async {
-  emitFlowEvent(
-    layer: 'FL',
-    event: 'RETRY_FAILED_MESSAGES_START',
-    details: {},
-  );
+  emitFlowEvent(layer: 'FL', event: 'RETRY_FAILED_MESSAGES_START', details: {});
 
   final identity = await identityRepo.loadIdentity();
   if (identity == null) {
@@ -57,6 +53,38 @@ Future<int> retryFailedMessages({
 
   for (final msg in failedMessages) {
     try {
+      // Prefer wire_envelope → inbox-only (preserves media, no re-encrypt)
+      if (msg.wireEnvelope != null && msg.wireEnvelope!.isNotEmpty) {
+        try {
+          final stored = await p2pService.storeInInbox(
+            msg.contactPeerId,
+            msg.wireEnvelope!,
+          );
+          if (stored) {
+            await messageRepo.saveMessage(
+              msg.copyWith(
+                status: 'delivered',
+                transport: 'inbox',
+                wireEnvelope: null,
+              ),
+            );
+            successCount++;
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'RETRY_FAILED_MESSAGE_SUCCESS',
+              details: {
+                'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id,
+                'via': 'wire_envelope',
+              },
+            );
+            continue;
+          }
+        } catch (_) {
+          // Wire envelope inbox failed — fall through to full send
+        }
+      }
+
+      // Fallback: re-encrypt + full send (existing behavior, text-only)
       // Look up contact for ML-KEM public key
       final contact = await contactRepo.getContact(msg.contactPeerId);
       final mlKemPk = contact?.mlKemPublicKey;
@@ -79,9 +107,7 @@ Future<int> retryFailedMessages({
         emitFlowEvent(
           layer: 'FL',
           event: 'RETRY_FAILED_MESSAGE_SUCCESS',
-          details: {
-            'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id,
-          },
+          details: {'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id},
         );
       } else {
         emitFlowEvent(
@@ -108,10 +134,7 @@ Future<int> retryFailedMessages({
   emitFlowEvent(
     layer: 'FL',
     event: 'RETRY_FAILED_MESSAGES_COMPLETE',
-    details: {
-      'total': failedMessages.length,
-      'succeeded': successCount,
-    },
+    details: {'total': failedMessages.length, 'succeeded': successCount},
   );
 
   return successCount;

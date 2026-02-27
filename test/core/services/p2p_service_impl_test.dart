@@ -406,13 +406,41 @@ void main() {
   // =========================================================================
 
   group('sendMessage', () {
-    test('returns true when bridge returns ok', () async {
-      bridge.responses['message:send'] = {'ok': true, 'sent': true};
+    test('returns true when bridge returns acked=true', () async {
+      bridge.responses['message:send'] = {
+        'ok': true,
+        'sent': true,
+        'acked': true,
+      };
 
       final result = await service.sendMessage('peer123', 'hello');
 
       expect(result, isTrue);
       expect(bridge.lastCommand, 'message:send');
+    });
+
+    test('returns false when ok=true but acked=false', () async {
+      bridge.responses['message:send'] = {
+        'ok': true,
+        'sent': true,
+        'acked': false,
+      };
+
+      final result = await service.sendMessage('peer123', 'hello');
+
+      expect(result, isFalse);
+    });
+
+    test('returns true for legacy bridge responses with non-empty reply', () async {
+      bridge.responses['message:send'] = {
+        'ok': true,
+        'sent': true,
+        'reply': 'ack',
+      };
+
+      final result = await service.sendMessage('peer123', 'hello');
+
+      expect(result, isTrue);
     });
 
     test('returns false when bridge returns ok=false', () async {

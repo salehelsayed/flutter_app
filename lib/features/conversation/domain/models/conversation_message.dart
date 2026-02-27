@@ -21,6 +21,7 @@ class ConversationMessage {
   final String timestamp;
 
   /// Delivery status: 'sending', 'sent', 'delivered', 'failed'.
+  /// Legacy rows may still contain 'queued' until status-cleanup migration runs.
   final String status;
 
   /// Whether this message was received from the contact.
@@ -38,6 +39,9 @@ class ConversationMessage {
   /// Transport type: 'wifi', 'relay', 'inbox', or null (unknown/pre-migration).
   final String? transport;
 
+  /// Serialized wire envelope (JSON) for retry. NULL once delivered.
+  final String? wireEnvelope;
+
   /// Transient media attachments — populated via copyWith() after batch-loading
   /// from media_attachments table. NOT serialized to DB.
   final List<MediaAttachment> media;
@@ -54,6 +58,7 @@ class ConversationMessage {
     this.readAt,
     this.quotedMessageId,
     this.transport,
+    this.wireEnvelope,
     this.media = const [],
   });
 
@@ -71,6 +76,7 @@ class ConversationMessage {
       readAt: map['read_at'] as String?,
       quotedMessageId: map['quoted_message_id'] as String?,
       transport: map['transport'] as String?,
+      wireEnvelope: map['wire_envelope'] as String?,
     );
   }
 
@@ -88,10 +94,14 @@ class ConversationMessage {
       'read_at': readAt,
       'quoted_message_id': quotedMessageId,
       'transport': transport,
+      'wire_envelope': wireEnvelope,
     };
   }
 
   /// Creates a copy with updated fields.
+  ///
+  /// To explicitly set a nullable field to null, use the sentinel pattern:
+  /// `copyWith(wireEnvelope: '')` won't work — use [copyWithNulled] instead.
   ConversationMessage copyWith({
     String? id,
     String? contactPeerId,
@@ -104,6 +114,7 @@ class ConversationMessage {
     String? readAt,
     String? quotedMessageId,
     String? transport,
+    Object? wireEnvelope = _sentinel,
     List<MediaAttachment>? media,
   }) {
     return ConversationMessage(
@@ -118,6 +129,9 @@ class ConversationMessage {
       readAt: readAt ?? this.readAt,
       quotedMessageId: quotedMessageId ?? this.quotedMessageId,
       transport: transport ?? this.transport,
+      wireEnvelope: wireEnvelope == _sentinel
+          ? this.wireEnvelope
+          : wireEnvelope as String?,
       media: media ?? this.media,
     );
   }
@@ -136,3 +150,5 @@ class ConversationMessage {
     return 'ConversationMessage(id: $id, contactPeerId: ${contactPeerId.length > 10 ? contactPeerId.substring(0, 10) : contactPeerId}..., isIncoming: $isIncoming)';
   }
 }
+
+const _sentinel = Object();

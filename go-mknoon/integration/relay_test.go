@@ -420,7 +420,7 @@ func TestRelayTwoNodesMessage(t *testing.T) {
 
 	// Send a message from A to B.
 	testMsg := fmt.Sprintf(`{"type":"test","content":"hello from integration test","ts":%d}`, time.Now().UnixMilli())
-	reply, err := nodeA.SendMessage(peerIdB, testMsg)
+	reply, _, err := nodeA.SendMessage(peerIdB, testMsg, 0)
 	if err != nil {
 		t.Fatalf("SendMessage: %v", err)
 	}
@@ -692,13 +692,10 @@ func TestConcurrentRelayConnectTiming(t *testing.T) {
 	start := time.Now()
 
 	cfg := node.NodeConfig{
-		PrivateKeyHex: privHex,
-		RelayAddresses: []string{
-			node.DefaultRelayAddress,
-			node.DefaultQUICRelay,
-		},
-		AutoRegister: false,
-		ListenPort:   0,
+		PrivateKeyHex:  privHex,
+		RelayAddresses: []string{relayAddr()},
+		AutoRegister:   false,
+		ListenPort:     0,
 	}
 
 	_, err := n.Start(cfg)
@@ -867,6 +864,51 @@ func TestRelayCircuitRecoveryPreservesPeerId(t *testing.T) {
 	state := n.State()
 	if state.PeerId != originalPeerId {
 		t.Errorf("State().PeerId changed: got %s, want %s", state.PeerId, originalPeerId)
+	}
+}
+
+func TestFastCircuitAddressAcquisition(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in -short mode")
+	}
+	requireRelay(t)
+
+	privHex, _ := generatePrivateKeyHex(t)
+	n := node.NewNode()
+
+	cfg := node.NodeConfig{
+		PrivateKeyHex:  privHex,
+		RelayAddresses: []string{relayAddr()},
+		AutoRegister:   false,
+	}
+
+	start := time.Now()
+	_, err := n.Start(cfg)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { n.Stop() })
+
+	// Wait for relay connection first.
+	if err := n.WaitForRelayConnection(15 * time.Second); err != nil {
+		t.Fatalf("relay connection not established: %v", err)
+	}
+
+	// Wait for circuit addresses to appear.
+	addrs, ok := waitForCircuitAddresses(n, 15*time.Second)
+	elapsed := time.Since(start)
+
+	if !ok {
+		status := n.Status()
+		t.Logf("final status: %+v", status)
+		t.Fatal("circuit addresses did not appear within 15s")
+	}
+
+	t.Logf("circuit addresses acquired in %v: %v", elapsed, addrs)
+
+	// The key assertion: circuit addresses should appear in < 15s, not ~60s.
+	if elapsed > 15*time.Second {
+		t.Errorf("circuit address acquisition took %v, expected < 15s", elapsed)
 	}
 }
 

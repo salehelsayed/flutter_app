@@ -25,6 +25,10 @@ class MessageRepositoryImpl implements MessageRepository {
   }) dbLoadMessagesPage;
   final Future<List<Map<String, Object?>>> Function()
       dbLoadFailedOutgoingMessages;
+  final Future<List<Map<String, Object?>>> Function({
+    required DateTime olderThan,
+    int limit,
+  }) dbLoadUnackedOutgoingMessages;
 
   MessageRepositoryImpl({
     required this.dbInsertMessage,
@@ -40,6 +44,7 @@ class MessageRepositoryImpl implements MessageRepository {
     required this.dbDeleteMessagesForContact,
     required this.dbLoadMessagesPage,
     required this.dbLoadFailedOutgoingMessages,
+    required this.dbLoadUnackedOutgoingMessages,
   });
 
   @override
@@ -179,6 +184,15 @@ class MessageRepositoryImpl implements MessageRepository {
   @override
   Future<List<ConversationMessage>> getFailedOutgoingMessages() async {
     final rows = await dbLoadFailedOutgoingMessages();
+    return rows.map((row) => ConversationMessage.fromMap(row)).toList();
+  }
+
+  @override
+  Future<List<ConversationMessage>> getUnackedOutgoingMessages({
+    required Duration olderThan,
+  }) async {
+    final cutoff = DateTime.now().toUtc().subtract(olderThan);
+    final rows = await dbLoadUnackedOutgoingMessages(olderThan: cutoff);
     return rows.map((row) => ConversationMessage.fromMap(row)).toList();
   }
 }

@@ -20,6 +20,8 @@ class FakeMessageRepository implements MessageRepository {
   // Configurable
   int markAsReadReturnValue = 0;
   List<ConversationMessage>? failedOutgoingOverride;
+  List<ConversationMessage>? unackedOutgoingOverride;
+  bool throwOnUpdateStatus = false;
 
   /// Seed messages for testing.
   void seed(List<ConversationMessage> messages) {
@@ -61,6 +63,9 @@ class FakeMessageRepository implements MessageRepository {
 
   @override
   Future<void> updateMessageStatus(String id, String status) async {
+    if (throwOnUpdateStatus) {
+      throw Exception('FakeMessageRepository: updateMessageStatus error');
+    }
     final idx = _messages.indexWhere((m) => m.id == id);
     if (idx >= 0) {
       _messages[idx] = _messages[idx].copyWith(status: status);
@@ -135,5 +140,19 @@ class FakeMessageRepository implements MessageRepository {
     msgs.sort((a, b) => b.timestamp.compareTo(a.timestamp));
     if (msgs.length > limit) msgs = msgs.sublist(0, limit);
     return msgs.reversed.toList();
+  }
+
+  @override
+  Future<List<ConversationMessage>> getUnackedOutgoingMessages({
+    required Duration olderThan,
+  }) async {
+    if (unackedOutgoingOverride != null) return unackedOutgoingOverride!;
+    return _messages
+        .where((m) =>
+            m.status == 'sent' &&
+            !m.isIncoming &&
+            m.wireEnvelope != null &&
+            m.wireEnvelope!.isNotEmpty)
+        .toList();
   }
 }

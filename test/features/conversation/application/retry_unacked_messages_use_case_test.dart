@@ -1,0 +1,193 @@
+import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/features/conversation/application/retry_unacked_messages_use_case.dart';
+import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
+
+import '../../../core/services/fake_p2p_service.dart';
+import '../domain/repositories/fake_message_repository.dart';
+
+ConversationMessage _makeSentMessage({
+  String id = 'msg-sent-001',
+  String contactPeerId = 'peer-target',
+  String wireEnvelope = '{"type":"chat_message","version":"2","encrypted":{}}',
+}) {
+  return ConversationMessage(
+    id: id,
+    contactPeerId: contactPeerId,
+    senderPeerId: 'my-peer-id',
+    text: 'Hello',
+    timestamp: '2026-01-01T00:00:00.000Z',
+    status: 'sent',
+    isIncoming: false,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    wireEnvelope: wireEnvelope,
+  );
+}
+
+void main() {
+  group('retryUnackedMessages', () {
+    late FakeMessageRepository messageRepo;
+
+    setUp(() {
+      messageRepo = FakeMessageRepository();
+    });
+
+    test('returns 0 when no unacked messages exist', () async {
+      final p2pService = FakeP2PService(
+        initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+      );
+
+      final count = await retryUnackedMessages(
+        messageRepo: messageRepo,
+        p2pService: p2pService,
+      );
+
+      expect(count, 0);
+    });
+
+    test('marks delivered via inbox and sets transport to inbox', () async {
+      final msg = _makeSentMessage();
+      messageRepo.seed([msg]);
+      messageRepo.unackedOutgoingOverride = [msg];
+
+      final p2pService = FakeP2PService(
+        initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+        storeInInboxResult: true,
+      );
+
+      final count = await retryUnackedMessages(
+        messageRepo: messageRepo,
+        p2pService: p2pService,
+      );
+
+      expect(count, 1);
+      expect(p2pService.storeInInboxCallCount, 1);
+
+      // Verify saved message has transport='inbox' and status='delivered'
+      final saved = messageRepo.lastSavedMessage;
+      expect(saved, isNotNull);
+      expect(saved!.status, 'delivered');
+      expect(saved.transport, 'inbox');
+    });
+
+    test('clears wireEnvelope after successful inbox store', () async {
+      final msg = _makeSentMessage();
+      messageRepo.seed([msg]);
+      messageRepo.unackedOutgoingOverride = [msg];
+
+      final p2pService = FakeP2PService(
+        initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+        storeInInboxResult: true,
+      );
+
+      await retryUnackedMessages(
+        messageRepo: messageRepo,
+        p2pService: p2pService,
+      );
+
+      expect(messageRepo.lastSavedMessage!.wireEnvelope, isNull);
+    });
+
+    test('leaves status as sent when storeInInbox fails', () async {
+      final msg = _makeSentMessage();
+      messageRepo.seed([msg]);
+      messageRepo.unackedOutgoingOverride = [msg];
+
+      final p2pService = FakeP2PService(
+        initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+        storeInInboxResult: false,
+      );
+
+      final count = await retryUnackedMessages(
+        messageRepo: messageRepo,
+        p2pService: p2pService,
+      );
+
+      expect(count, 0);
+      // Message should NOT have been re-saved (storeInInbox returned false)
+      expect(messageRepo.saveMessageCallCount, 0);
+    });
+
+    test('leaves transport unchanged when storeInInbox fails', () async {
+      final msg = _makeSentMessage();
+      messageRepo.seed([msg]);
+      messageRepo.unackedOutgoingOverride = [msg];
+
+      final p2pService = FakeP2PService(
+        initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+        storeInInboxResult: false,
+      );
+
+      await retryUnackedMessages(
+        messageRepo: messageRepo,
+        p2pService: p2pService,
+      );
+
+      // Original message should still have null transport (no save occurred)
+      final messages = await messageRepo.getMessagesForContact('peer-target');
+      expect(messages.first.transport, isNull);
+      expect(messages.first.status, 'sent');
+    });
+
+    test('returns count of successfully updated messages', () async {
+      final msg1 = _makeSentMessage(id: 'msg-1', contactPeerId: 'peer-a');
+      final msg2 = _makeSentMessage(id: 'msg-2', contactPeerId: 'peer-b');
+      messageRepo.seed([msg1, msg2]);
+      messageRepo.unackedOutgoingOverride = [msg1, msg2];
+
+      final p2pService = FakeP2PService(
+        initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+        storeInInboxResult: true,
+      );
+
+      final count = await retryUnackedMessages(
+        messageRepo: messageRepo,
+        p2pService: p2pService,
+      );
+
+      expect(count, 2);
+    });
+
+    test('continues on storeInInbox error and tries next message', () async {
+      final msg1 = _makeSentMessage(id: 'msg-1', contactPeerId: 'peer-a');
+      final msg2 = _makeSentMessage(id: 'msg-2', contactPeerId: 'peer-b');
+      messageRepo.seed([msg1, msg2]);
+      messageRepo.unackedOutgoingOverride = [msg1, msg2];
+
+      // First call throws, second succeeds
+      var callCount = 0;
+      final p2pService = _ThrowingInboxP2PService(
+        initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+        throwOnIndices: {0},
+      );
+
+      final count = await retryUnackedMessages(
+        messageRepo: messageRepo,
+        p2pService: p2pService,
+      );
+
+      // First failed, second succeeded
+      expect(count, 1);
+    });
+  });
+}
+
+class _ThrowingInboxP2PService extends FakeP2PService {
+  final Set<int> throwOnIndices;
+  int _storeCallIndex = 0;
+
+  _ThrowingInboxP2PService({
+    required super.initialState,
+    required this.throwOnIndices,
+  });
+
+  @override
+  Future<bool> storeInInbox(String toPeerId, String message) async {
+    storeInInboxCallCount++;
+    final idx = _storeCallIndex++;
+    if (throwOnIndices.contains(idx)) {
+      throw Exception('storeInInbox error at index $idx');
+    }
+    return true;
+  }
+}

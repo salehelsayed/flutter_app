@@ -1,14 +1,7 @@
-import 'dart:async';
-
-import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
-import 'package:flutter_app/features/conversation/domain/models/message_payload.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../shared/fakes/chaos_p2p_network.dart';
-import '../../shared/fakes/fake_p2p_service_integration.dart';
-import '../../shared/fakes/in_memory_contact_repository.dart';
-import '../../shared/fakes/in_memory_message_repository.dart';
 import '../../shared/fakes/test_user.dart';
 
 // ---------------------------------------------------------------------------
@@ -17,17 +10,6 @@ import '../../shared/fakes/test_user.dart';
 
 const _alicePeerId = 'alice-peer-id';
 const _bobPeerId = 'bob-peer-id';
-
-ContactModel _makeContact(String peerId, String username) {
-  return ContactModel(
-    peerId: peerId,
-    publicKey: 'pk-$peerId',
-    rendezvous: '/dns4/relay/tcp/443/p2p/relay',
-    username: username,
-    signature: 'sig-$peerId',
-    scannedAt: DateTime.now().toUtc().toIso8601String(),
-  );
-}
 
 /// Creates a TestUser wired to a ChaosP2PNetwork.
 _TestPair _setup(ChaosConfig config) {
@@ -73,10 +55,7 @@ class _TestPair {
 void main() {
   group('Network chaos resilience', () {
     test('100% duplicates rejected by dedup layer', () async {
-      final pair = _setup(const ChaosConfig(
-        duplicateRate: 1.0,
-        seed: 42,
-      ));
+      final pair = _setup(const ChaosConfig(duplicateRate: 1.0, seed: 42));
 
       const n = 10;
       for (var i = 0; i < n; i++) {
@@ -96,42 +75,40 @@ void main() {
       pair.dispose();
     });
 
-    test('reordered messages arrive shuffled but DB sorts by timestamp',
-        () async {
-      final pair = _setup(const ChaosConfig(
-        reorderBufferSize: 5,
-        seed: 99,
-      ));
+    test(
+      'reordered messages arrive shuffled but DB sorts by timestamp',
+      () async {
+        final pair = _setup(const ChaosConfig(reorderBufferSize: 5, seed: 99));
 
-      const n = 10;
-      for (var i = 0; i < n; i++) {
-        await pair.alice.sendMessage(_bobPeerId, 'msg $i');
-      }
+        const n = 10;
+        for (var i = 0; i < n; i++) {
+          await pair.alice.sendMessage(_bobPeerId, 'msg $i');
+        }
 
-      // Flush any partial buffer
-      await pair.network.flushReorderBuffer();
-      await Future.delayed(const Duration(milliseconds: 300));
+        // Flush any partial buffer
+        await pair.network.flushReorderBuffer();
+        await Future.delayed(const Duration(milliseconds: 300));
 
-      final bobMessages = await pair.bob.loadConversationWith(_alicePeerId);
-      expect(bobMessages, hasLength(n));
+        final bobMessages = await pair.bob.loadConversationWith(_alicePeerId);
+        expect(bobMessages, hasLength(n));
 
-      // Messages are in timestamp order (loadConversationWith sorts by timestamp)
-      for (var i = 1; i < bobMessages.length; i++) {
-        expect(
-          bobMessages[i].timestamp.compareTo(bobMessages[i - 1].timestamp),
-          greaterThanOrEqualTo(0),
-          reason: 'Messages should be in timestamp order',
-        );
-      }
+        // Messages are in timestamp order (loadConversationWith sorts by timestamp)
+        for (var i = 1; i < bobMessages.length; i++) {
+          expect(
+            bobMessages[i].timestamp.compareTo(bobMessages[i - 1].timestamp),
+            greaterThanOrEqualTo(0),
+            reason: 'Messages should be in timestamp order',
+          );
+        }
 
-      pair.dispose();
-    });
+        pair.dispose();
+      },
+    );
 
     test('delayed messages all arrive within bounded time', () async {
-      final pair = _setup(const ChaosConfig(
-        maxDelay: Duration(milliseconds: 100),
-        seed: 7,
-      ));
+      final pair = _setup(
+        const ChaosConfig(maxDelay: Duration(milliseconds: 100), seed: 7),
+      );
 
       const n = 10;
       for (var i = 0; i < n; i++) {
@@ -148,10 +125,12 @@ void main() {
     });
 
     test('dropped messages trigger inbox fallback on sender', () async {
-      final pair = _setup(const ChaosConfig(
-        dropRate: 1.0, // drop every message
-        seed: 1,
-      ));
+      final pair = _setup(
+        const ChaosConfig(
+          dropRate: 1.0, // drop every message
+          seed: 1,
+        ),
+      );
 
       // When deliver returns false, sendMessageWithReply returns sent:false.
       // After 3 retries, sendChatMessage falls through to inbox fallback.
@@ -169,13 +148,15 @@ void main() {
     });
 
     test('combined chaos: 20 messages with all behaviors active', () async {
-      final pair = _setup(const ChaosConfig(
-        duplicateRate: 0.3,
-        reorderBufferSize: 4,
-        maxDelay: Duration(milliseconds: 50),
-        dropRate: 0.2,
-        seed: 42,
-      ));
+      final pair = _setup(
+        const ChaosConfig(
+          duplicateRate: 0.3,
+          reorderBufferSize: 4,
+          maxDelay: Duration(milliseconds: 50),
+          dropRate: 0.2,
+          seed: 42,
+        ),
+      );
 
       const n = 20;
       for (var i = 0; i < n; i++) {
@@ -192,15 +173,17 @@ void main() {
 
       // Bob receives (N - dropped) messages, no duplicates
       final bobMessages = await pair.bob.loadConversationWith(_alicePeerId);
-      final droppedCount = pair.network.droppedMessages.length;
 
       // Messages that were dropped by the network would have been sent to
       // inbox by the sender's fallback. Bob hasn't drained inbox yet, so
       // received = N - dropped (only direct deliveries counted here).
       // The key assertion: NO duplicates
       final bobIds = bobMessages.map((m) => m.id).toSet();
-      expect(bobIds.length, bobMessages.length,
-          reason: 'No duplicate IDs in Bob repo');
+      expect(
+        bobIds.length,
+        bobMessages.length,
+        reason: 'No duplicate IDs in Bob repo',
+      );
 
       // All messages in timestamp order
       for (var i = 1; i < bobMessages.length; i++) {
@@ -214,12 +197,14 @@ void main() {
     });
 
     test('chaos does not corrupt message content', () async {
-      final pair = _setup(const ChaosConfig(
-        duplicateRate: 0.5,
-        reorderBufferSize: 3,
-        maxDelay: Duration(milliseconds: 30),
-        seed: 123,
-      ));
+      final pair = _setup(
+        const ChaosConfig(
+          duplicateRate: 0.5,
+          reorderBufferSize: 3,
+          maxDelay: Duration(milliseconds: 30),
+          seed: 123,
+        ),
+      );
 
       const n = 15;
       for (var i = 0; i < n; i++) {

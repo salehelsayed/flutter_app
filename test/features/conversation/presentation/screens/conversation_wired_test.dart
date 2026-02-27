@@ -111,9 +111,7 @@ class FakeMessageRepository implements MessageRepository {
 
   @override
   Future<int> getMessageCountForContact(String contactPeerId) async {
-    return store.values
-        .where((m) => m.contactPeerId == contactPeerId)
-        .length;
+    return store.values.where((m) => m.contactPeerId == contactPeerId).length;
   }
 
   @override
@@ -141,7 +139,9 @@ class FakeMessageRepository implements MessageRepository {
         .where((m) => m.contactPeerId == contactPeerId)
         .toList();
     if (beforeTimestamp != null) {
-      messages = messages.where((m) => m.timestamp.compareTo(beforeTimestamp) < 0).toList();
+      messages = messages
+          .where((m) => m.timestamp.compareTo(beforeTimestamp) < 0)
+          .toList();
     }
     messages.sort((a, b) => b.timestamp.compareTo(a.timestamp));
     final page = messages.take(limit).toList();
@@ -150,6 +150,11 @@ class FakeMessageRepository implements MessageRepository {
 
   @override
   Future<List<ConversationMessage>> getFailedOutgoingMessages() async => [];
+
+  @override
+  Future<List<ConversationMessage>> getUnackedOutgoingMessages({
+    required Duration olderThan,
+  }) async => [];
 }
 
 class FakeP2PService implements P2PService {
@@ -177,8 +182,9 @@ class FakeP2PService implements P2PService {
   @override
   Future<SendMessageResult> sendMessageWithReply(
     String peerId,
-    String message,
-  ) async => const SendMessageResult(sent: true, reply: 'received: ok');
+    String message, {
+    int? timeoutMs,
+  }) async => const SendMessageResult(sent: true, reply: 'received: ok');
 
   @override
   Future<bool> startNode(String privateKeyBase64, String peerId) async => true;
@@ -202,16 +208,25 @@ class FakeP2PService implements P2PService {
   Future<void> drainOfflineInbox() async {}
 
   @override
+  Future<RelayProbeResult> probeRelay(String peerId) async =>
+      RelayProbeResult.error;
+
+  @override
   bool isConnectedToPeer(String peerId) => false;
 
   @override
   bool isLocalPeer(String peerId) => false;
 
   @override
-  Future<bool> sendLocalMessage(String peerId, String message, String fromPeerId) async => false;
+  Future<bool> sendLocalMessage(
+    String peerId,
+    String message,
+    String fromPeerId,
+  ) async => false;
 
   @override
-  Future<bool> startNodeCore(String privateKeyBase64, String peerId) async => false;
+  Future<bool> startNodeCore(String privateKeyBase64, String peerId) async =>
+      false;
 
   @override
   Future<void> warmBackground() async {}
@@ -460,11 +475,81 @@ void main() {
       expect(find.byIcon(Icons.done_all_rounded), findsOneWidget);
       expect(messageRepo.store[sentMessageId!]!.status, 'delivered');
     });
+
+    testWidgets('shows two ticks when inbox delivered message is returned', (
+      tester,
+    ) async {
+      final identityRepo = FakeIdentityRepository(makeIdentity());
+      final messageRepo = FakeMessageRepository();
+      final chatListener = ChatMessageListener(
+        chatMessageStream: const Stream.empty(),
+        messageRepo: messageRepo,
+        contactRepo: FakeContactRepository(),
+      );
+
+      final gate = Completer<void>();
+      String? sentMessageId;
+
+      Future<(SendChatMessageResult, ConversationMessage?)> sendFn({
+        required P2PService p2pService,
+        required MessageRepository messageRepo,
+        required String targetPeerId,
+        required String text,
+        required String senderPeerId,
+        required String senderUsername,
+        String? messageId,
+        String? timestamp,
+        Bridge? bridge,
+        String? recipientMlKemPublicKey,
+        List<MediaAttachment>? mediaAttachments,
+        MediaAttachmentRepository? mediaAttachmentRepo,
+      }) async {
+        sentMessageId = messageId;
+        await gate.future;
+        final delivered = ConversationMessage(
+          id: messageId!,
+          contactPeerId: targetPeerId,
+          senderPeerId: senderPeerId,
+          text: text,
+          timestamp: timestamp!,
+          status: 'delivered',
+          transport: 'inbox',
+          isIncoming: false,
+          createdAt: timestamp,
+        );
+        await messageRepo.saveMessage(delivered);
+        return (SendChatMessageResult.success, delivered);
+      }
+
+      await pumpScreen(
+        tester,
+        identityRepo: identityRepo,
+        messageRepo: messageRepo,
+        chatListener: chatListener,
+        sendFn: sendFn,
+      );
+
+      await tester.enterText(find.byType(TextField), 'Inbox delivered');
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.tap(find.text('Send'));
+      await tester.pump();
+
+      expect(find.text('Inbox delivered'), findsOneWidget);
+      expect(find.byIcon(Icons.done_rounded), findsOneWidget);
+
+      gate.complete();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.byIcon(Icons.done_all_rounded), findsOneWidget);
+      expect(messageRepo.store[sentMessageId!]!.status, 'delivered');
+      expect(messageRepo.store[sentMessageId!]!.transport, 'inbox');
+    });
   });
 
   group('ConversationWired media props', () {
-    testWidgets('passes onAttach to screen — shows bottom sheet on tap',
-        (tester) async {
+    testWidgets('passes onAttach to screen — shows bottom sheet on tap', (
+      tester,
+    ) async {
       final identityRepo = FakeIdentityRepository(makeIdentity());
       final messageRepo = FakeMessageRepository();
       final chatListener = ChatMessageListener(
@@ -493,8 +578,9 @@ void main() {
       expect(find.text('Record Video'), findsOneWidget);
     });
 
-    testWidgets('does not show AttachmentPreviewStrip initially',
-        (tester) async {
+    testWidgets('does not show AttachmentPreviewStrip initially', (
+      tester,
+    ) async {
       final identityRepo = FakeIdentityRepository(makeIdentity());
       final messageRepo = FakeMessageRepository();
       final chatListener = ChatMessageListener(
@@ -514,8 +600,9 @@ void main() {
       expect(find.byType(AttachmentPreviewStrip), findsNothing);
     });
 
-    testWidgets('text-only send works without bridge or media repos',
-        (tester) async {
+    testWidgets('text-only send works without bridge or media repos', (
+      tester,
+    ) async {
       final identityRepo = FakeIdentityRepository(makeIdentity());
       final messageRepo = FakeMessageRepository();
       final chatListener = ChatMessageListener(
@@ -580,8 +667,9 @@ void main() {
       await tester.pump(const Duration(milliseconds: 500));
     });
 
-    testWidgets('does not send when text is empty and no attachments',
-        (tester) async {
+    testWidgets('does not send when text is empty and no attachments', (
+      tester,
+    ) async {
       final identityRepo = FakeIdentityRepository(makeIdentity());
       final messageRepo = FakeMessageRepository();
       final chatListener = ChatMessageListener(

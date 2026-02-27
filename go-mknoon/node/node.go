@@ -18,8 +18,8 @@ import (
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/p2p/host/autorelay"
 	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
-	"github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/client"
 	ma "github.com/multiformats/go-multiaddr"
 )
 
@@ -161,7 +161,11 @@ func (n *Node) Start(cfg NodeConfig) (*NodeState, error) {
 	}
 	if len(relayInfos) > 0 {
 		hostOpts = append(hostOpts,
-			libp2p.EnableAutoRelayWithStaticRelays(relayInfos),
+			libp2p.EnableAutoRelayWithStaticRelays(relayInfos,
+				autorelay.WithBootDelay(0),               // Static relays known; skip candidate wait
+				autorelay.WithBackoff(30*time.Second),    // Retry in 30s, not 1 hour
+				autorelay.WithMinInterval(5*time.Second), // Re-query peer source every 5s, not 30s
+			),
 		)
 	}
 	h, err := libp2p.New(hostOpts...)
@@ -195,19 +199,21 @@ func (n *Node) Start(cfg NodeConfig) (*NodeState, error) {
 	n.startedAt = time.Now()
 	n.relayReady = make(chan struct{})
 
-	// Connect to relays concurrently in background
+	// Warm relay connections concurrently in background.
+	// Each relayInfo may contain multiple addresses (e.g. WSS + QUIC) for
+	// the same peer — host.Connect() tries all addresses internally.
 	go func() {
 		var wg sync.WaitGroup
-		for _, addr := range relayAddresses {
+		for _, info := range relayInfos {
 			wg.Add(1)
-			go func(a string) {
+			go func(ri peer.AddrInfo) {
 				defer wg.Done()
-				if err := n.connectToRelay(a); err != nil {
-					log.Printf("[NODE] relay dial FAILED (%s): %v", a[:min(40, len(a))], err)
+				if err := n.warmRelayConnection(ri); err != nil {
+					log.Printf("[NODE] relay dial FAILED (%s): %v", ri.ID.String()[:min(20, len(ri.ID.String()))], err)
 				} else {
 					n.relayReadyOnce.Do(func() { close(n.relayReady) })
 				}
-			}(addr)
+			}(info)
 		}
 		wg.Wait()
 
@@ -326,52 +332,28 @@ func (n *Node) WaitForRelayConnection(timeout time.Duration) error {
 	}
 }
 
-// connectToRelay dials the relay server to establish a connection.
-// AutoRelay handles circuit reservation and address management automatically.
-func (n *Node) connectToRelay(relayAddr string) error {
-	maddr, err := ma.NewMultiaddr(relayAddr)
-	if err != nil {
-		return fmt.Errorf("parse relay address: %w", err)
-	}
-
-	addrInfo, err := peer.AddrInfoFromP2pAddr(maddr)
-	if err != nil {
-		return fmt.Errorf("parse relay addr info: %w", err)
-	}
-
+// warmRelayConnection dials the relay server to warm the TCP/QUIC connection.
+// AutoRelay handles circuit reservation and address management automatically;
+// warming the connection lets AutoRelay's identify complete instantly when it
+// runs tryNode(), avoiding a 20s identify timeout + 30s retry wait.
+func (n *Node) warmRelayConnection(info peer.AddrInfo) error {
 	ctx, cancel := context.WithTimeout(n.ctx, DialTimeout)
 	defer cancel()
 
-	if err := n.host.Connect(ctx, *addrInfo); err != nil {
+	if err := n.host.Connect(ctx, info); err != nil {
 		return fmt.Errorf("dial relay: %w", err)
 	}
 
-	// Request a relay reservation to obtain a circuit address.
-	// This is the critical call that makes the relay assign a /p2p-circuit
-	// address for this peer. AutoRelay may also manage reservations long-term,
-	// but the explicit Reserve() ensures the first address appears immediately.
-	_, err = client.Reserve(ctx, n.host, *addrInfo)
-	if err != nil {
-		log.Printf("[NODE] Relay reservation failed: %v", err)
-		// Not fatal — AutoRelay may obtain a reservation later
-	}
-
-	log.Printf("[NODE] Connected to relay: %s", addrInfo.ID.String()[:20])
+	log.Printf("[NODE] Warmed relay connection: %s", info.ID.String()[:min(20, len(info.ID.String()))])
 	return nil
 }
 
 // ReconnectRelays performs a full node restart to recover circuit addresses.
 //
 // go-libp2p's AutoRelay (v0.38.2) does NOT reliably re-reserve circuit
-// addresses after a relay disconnection — it reconnects but never
-// re-reserves.  Neither force-disconnecting + reconnecting, clearing
-// the peerstore, nor calling client.Reserve() manually fixes this,
-// because AutoRelay manages h.Addrs() independently and doesn't pick
-// up externally-created reservations.
-//
-// A full Stop() + Start() with the saved NodeConfig creates a fresh
-// libp2p host + AutoRelay, which reliably obtains circuit addresses
-// on startup (~700ms).
+// addresses after a relay disconnection. A full Stop() + Start() with
+// the saved NodeConfig creates a fresh libp2p host + AutoRelay, which
+// reliably obtains circuit addresses on startup.
 func (n *Node) ReconnectRelays() error {
 	n.mu.RLock()
 	cfg := n.lastConfig
@@ -450,7 +432,63 @@ func (n *Node) DialPeer(peerIdStr string, addresses []string) error {
 
 	ai := peer.AddrInfo{ID: pid, Addrs: addrs}
 
-	ctx, cancel := context.WithTimeout(n.ctx, DialTimeout)
+	ctx, cancel := context.WithTimeout(n.ctx, PeerDialTimeout)
+	defer cancel()
+
+	return h.Connect(ctx, ai)
+}
+
+// DialPeerViaRelay connects to a peer through the relay circuit address only.
+// This is a fast probe (~100ms for NO_RESERVATION, ~500ms for connection) to
+// determine if a peer is online without a full discover/dial cycle.
+func (n *Node) DialPeerViaRelay(peerIdStr string) error {
+	n.mu.RLock()
+	h := n.host
+	relayAddrs := n.relayAddresses
+	n.mu.RUnlock()
+
+	if h == nil {
+		return fmt.Errorf("node not started")
+	}
+
+	pid, err := peer.Decode(peerIdStr)
+	if err != nil {
+		return fmt.Errorf("invalid peer ID: %w", err)
+	}
+
+	if len(relayAddrs) == 0 {
+		return fmt.Errorf("no relay addresses configured")
+	}
+
+	// Parse the first relay address to get the relay peer info
+	relayMaddr, err := ma.NewMultiaddr(relayAddrs[0])
+	if err != nil {
+		return fmt.Errorf("parse relay address: %w", err)
+	}
+	relayInfo, err := peer.AddrInfoFromP2pAddr(relayMaddr)
+	if err != nil {
+		return fmt.Errorf("parse relay addr info: %w", err)
+	}
+
+	// Construct circuit multiaddr: relayAddr + /p2p-circuit/p2p/<peerId>
+	// Strip the /p2p/<relayPeerId> component from the relay address first
+	relayTransport, _ := ma.SplitFunc(relayMaddr, func(c ma.Component) bool {
+		return c.Protocol().Code == ma.P_P2P
+	})
+	circuitSuffix, err := ma.NewMultiaddr(
+		fmt.Sprintf("/p2p/%s/p2p-circuit/p2p/%s", relayInfo.ID.String(), peerIdStr),
+	)
+	if err != nil {
+		return fmt.Errorf("build circuit suffix: %w", err)
+	}
+	circuitAddr := relayTransport.Encapsulate(circuitSuffix)
+
+	ai := peer.AddrInfo{
+		ID:    pid,
+		Addrs: []ma.Multiaddr{circuitAddr},
+	}
+
+	ctx, cancel := context.WithTimeout(n.ctx, RelayProbeTimeout)
 	defer cancel()
 
 	return h.Connect(ctx, ai)
@@ -475,42 +513,54 @@ func (n *Node) DisconnectPeer(peerIdStr string) error {
 }
 
 // SendMessage sends a message directly to a peer via the chat protocol.
-func (n *Node) SendMessage(peerIdStr string, message string) (string, error) {
+// Returns (reply, acked, error):
+//   - acked=true: peer ACK'd the message
+//   - acked=false, err=nil: message written to stream but no ACK received
+//   - acked=false, err!=nil: stream/write error
+func (n *Node) SendMessage(peerIdStr string, message string, timeoutMs int) (string, bool, error) {
 	n.mu.RLock()
 	h := n.host
 	n.mu.RUnlock()
 
 	if h == nil {
-		return "", fmt.Errorf("node not started")
+		return "", false, fmt.Errorf("node not started")
 	}
 
 	pid, err := peer.Decode(peerIdStr)
 	if err != nil {
-		return "", fmt.Errorf("invalid peer ID: %w", err)
+		return "", false, fmt.Errorf("invalid peer ID: %w", err)
 	}
 
-	ctx, cancel := context.WithTimeout(n.ctx, SendTimeout)
+	timeout := SendTimeout
+	if timeoutMs > 0 {
+		timeout = time.Duration(timeoutMs) * time.Millisecond
+	}
+
+	ctx, cancel := context.WithTimeout(n.ctx, timeout)
 	defer cancel()
 
 	s, err := h.NewStream(ctx, pid, ChatProtocol)
 	if err != nil {
-		return "", fmt.Errorf("open stream: %w", err)
+		return "", false, fmt.Errorf("open stream: %w", err)
 	}
 	defer s.Close()
 
+	// Apply deadline to stream read/write so stale connections fail fast.
+	s.SetDeadline(time.Now().Add(timeout))
+
 	// Write message using 4-byte BE framing (same as inbox protocol)
 	if err := writeFrame(s, []byte(message)); err != nil {
-		return "", fmt.Errorf("write message: %w", err)
+		return "", false, fmt.Errorf("write message: %w", err)
 	}
 
 	// Read reply
 	replyBytes, err := readFrame(s)
 	if err != nil {
-		// No reply is OK — peer might not send one
-		return "", nil
+		// Message was written but ACK read failed
+		return "", false, nil
 	}
 
-	return string(replyBytes), nil
+	return string(replyBytes), true, nil
 }
 
 // handleIncomingMessage handles incoming chat protocol streams.

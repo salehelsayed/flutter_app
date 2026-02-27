@@ -65,7 +65,7 @@ void main() {
           sizeBytes: 48000,
         );
 
-        final result = await sendVoiceMessage(
+        final (result, _) = await sendVoiceMessage(
           p2pService: p2pService,
           messageRepo: messageRepo,
           targetPeerId: 'target-peer',
@@ -89,7 +89,7 @@ void main() {
           sizeBytes: 0,
         );
 
-        final result = await sendVoiceMessage(
+        final (result, _) = await sendVoiceMessage(
           p2pService: p2pService,
           messageRepo: messageRepo,
           targetPeerId: 'target-peer',
@@ -114,7 +114,7 @@ void main() {
           sizeBytes: 101 * 1024 * 1024,
         );
 
-        final result = await sendVoiceMessage(
+        final (result, _) = await sendVoiceMessage(
           p2pService: p2pService,
           messageRepo: messageRepo,
           targetPeerId: 'target-peer',
@@ -133,7 +133,7 @@ void main() {
       test('calls sendChatMessage with audio MediaAttachment', () async {
         final recording = createRecording();
 
-        final result = await sendVoiceMessage(
+        final (result, _) = await sendVoiceMessage(
           p2pService: p2pService,
           messageRepo: messageRepo,
           targetPeerId: 'target-peer',
@@ -170,7 +170,7 @@ void main() {
       test('allows empty text (voice-only message)', () async {
         final recording = createRecording();
 
-        final result = await sendVoiceMessage(
+        final (result, _) = await sendVoiceMessage(
           p2pService: p2pService,
           messageRepo: messageRepo,
           targetPeerId: 'target-peer',
@@ -187,7 +187,7 @@ void main() {
       test('allows text caption alongside voice', () async {
         final recording = createRecording();
 
-        final result = await sendVoiceMessage(
+        final (result, _) = await sendVoiceMessage(
           p2pService: p2pService,
           messageRepo: messageRepo,
           targetPeerId: 'target-peer',
@@ -206,7 +206,7 @@ void main() {
         bridge.responses['media:upload'] = {'ok': false, 'errorMessage': 'fail'};
         final recording = createRecording();
 
-        final result = await sendVoiceMessage(
+        final (result, _) = await sendVoiceMessage(
           p2pService: p2pService,
           messageRepo: messageRepo,
           targetPeerId: 'target-peer',

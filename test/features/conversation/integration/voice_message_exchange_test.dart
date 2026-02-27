@@ -6,8 +6,6 @@
 ///
 /// Uses the same TestUser / FakeP2PNetwork infrastructure as text message tests.
 
-import 'dart:convert';
-
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
@@ -73,79 +71,80 @@ void main() {
   });
 
   group('Voice message send/receive', () {
-    test('Alice sends voice message — Bob receives with correct audio metadata',
-        () async {
-      final attachment = makeAudioAttachment(
-        id: 'voice-blob-001',
-        durationMs: 5200,
-        size: 83200,
-      );
+    test(
+      'Alice sends voice message — Bob receives with correct audio metadata',
+      () async {
+        final attachment = makeAudioAttachment(
+          id: 'voice-blob-001',
+          durationMs: 5200,
+          size: 83200,
+        );
 
-      final bobReceived = <ConversationMessage>[];
-      final sub = bob.chatListener.incomingMessageStream.listen(
-        (msg) => bobReceived.add(msg),
-      );
+        final bobReceived = <ConversationMessage>[];
+        final sub = bob.chatListener.incomingMessageStream.listen(
+          (msg) => bobReceived.add(msg),
+        );
 
-      final (result, sentMsg) = await alice.sendMessageWithMedia(
-        bob.peerId,
-        '', // voice-only, no text
-        [attachment],
-      );
+        final (result, sentMsg) = await alice.sendMessageWithMedia(
+          bob.peerId,
+          '', // voice-only, no text
+          [attachment],
+        );
 
-      expect(result, SendChatMessageResult.success);
-      expect(sentMsg, isNotNull);
+        expect(result, SendChatMessageResult.success);
+        expect(sentMsg, isNotNull);
 
-      // Alice's media repo has the attachment
-      expect(aliceMediaRepo.count, 1);
+        // Alice's media repo has the attachment
+        expect(aliceMediaRepo.count, 1);
 
-      await Future.delayed(const Duration(milliseconds: 100));
+        await Future.delayed(const Duration(milliseconds: 100));
 
-      // Bob received the message
-      expect(bobReceived.length, 1);
+        // Bob received the message
+        expect(bobReceived.length, 1);
 
-      // Bob's media repo has the audio attachment with correct metadata
-      expect(bobMediaRepo.count, 1);
-      final bobAttachments = await bobMediaRepo.getPendingDownloads();
-      expect(bobAttachments.length, 1);
-      expect(bobAttachments.first.mime, 'audio/mp4');
-      expect(bobAttachments.first.mediaType, 'audio');
-      expect(bobAttachments.first.durationMs, 5200);
-      expect(bobAttachments.first.size, 83200);
+        // Bob's media repo has the audio attachment with correct metadata
+        expect(bobMediaRepo.count, 1);
+        final bobAttachments = await bobMediaRepo.getPendingDownloads();
+        expect(bobAttachments.length, 1);
+        expect(bobAttachments.first.mime, 'audio/mp4');
+        expect(bobAttachments.first.mediaType, 'audio');
+        expect(bobAttachments.first.durationMs, 5200);
+        expect(bobAttachments.first.size, 83200);
 
-      await sub.cancel();
-    });
+        await sub.cancel();
+      },
+    );
 
-    test('Voice message appears in Alice message list with mediaType audio',
-        () async {
-      final attachment = makeAudioAttachment(id: 'voice-blob-002');
+    test(
+      'Voice message appears in Alice message list with mediaType audio',
+      () async {
+        final attachment = makeAudioAttachment(id: 'voice-blob-002');
 
-      final (result, sentMsg) = await alice.sendMessageWithMedia(
-        bob.peerId,
-        '',
-        [attachment],
-      );
+        final (result, sentMsg) = await alice.sendMessageWithMedia(
+          bob.peerId,
+          '',
+          [attachment],
+        );
 
-      expect(result, SendChatMessageResult.success);
+        expect(result, SendChatMessageResult.success);
 
-      // Load Alice's conversation
-      final convo = await alice.loadConversationWith(bob.peerId);
-      expect(convo.length, 1);
-      expect(convo.first.isIncoming, false);
+        // Load Alice's conversation
+        final convo = await alice.loadConversationWith(bob.peerId);
+        expect(convo.length, 1);
+        expect(convo.first.isIncoming, false);
 
-      // Verify media attachment on the stored message
-      final attachments = await aliceMediaRepo.getAttachmentsForMessage(
-        convo.first.id,
-      );
-      expect(attachments.length, 1);
-      expect(attachments.first.mediaType, 'audio');
-      expect(attachments.first.mime, 'audio/mp4');
-    });
+        // Verify media attachment on the stored message
+        final attachments = await aliceMediaRepo.getAttachmentsForMessage(
+          convo.first.id,
+        );
+        expect(attachments.length, 1);
+        expect(attachments.first.mediaType, 'audio');
+        expect(attachments.first.mime, 'audio/mp4');
+      },
+    );
 
     test('Voice message appears in Bob pending downloads', () async {
-      final attachment = makeAudioAttachment(
-        id: 'voice-blob-003',
-        size: 64000,
-      );
+      final attachment = makeAudioAttachment(id: 'voice-blob-003', size: 64000);
 
       await alice.sendMessageWithMedia(bob.peerId, '', [attachment]);
       await Future.delayed(const Duration(milliseconds: 100));
@@ -156,28 +155,30 @@ void main() {
       expect(pending.first.mediaType, 'audio');
     });
 
-    test('Bob media attachment has correct metadata (mime, size, durationMs)',
-        () async {
-      final attachment = makeAudioAttachment(
-        id: 'voice-blob-004',
-        durationMs: 12500,
-        size: 200000,
-        mime: 'audio/mp4',
-      );
+    test(
+      'Bob media attachment has correct metadata (mime, size, durationMs)',
+      () async {
+        final attachment = makeAudioAttachment(
+          id: 'voice-blob-004',
+          durationMs: 12500,
+          size: 200000,
+          mime: 'audio/mp4',
+        );
 
-      await alice.sendMessageWithMedia(bob.peerId, '', [attachment]);
-      await Future.delayed(const Duration(milliseconds: 100));
+        await alice.sendMessageWithMedia(bob.peerId, '', [attachment]);
+        await Future.delayed(const Duration(milliseconds: 100));
 
-      final bobAttachments = await bobMediaRepo.getPendingDownloads();
-      expect(bobAttachments.length, 1);
+        final bobAttachments = await bobMediaRepo.getPendingDownloads();
+        expect(bobAttachments.length, 1);
 
-      final a = bobAttachments.first;
-      expect(a.mime, 'audio/mp4');
-      expect(a.size, 200000);
-      expect(a.durationMs, 12500);
-      expect(a.mediaType, 'audio');
-      expect(a.localPath, isNull); // not yet downloaded
-    });
+        final a = bobAttachments.first;
+        expect(a.mime, 'audio/mp4');
+        expect(a.size, 200000);
+        expect(a.durationMs, 12500);
+        expect(a.mediaType, 'audio');
+        expect(a.localPath, isNull); // not yet downloaded
+      },
+    );
   });
 
   group('Voice message with caption', () {
@@ -213,11 +214,9 @@ void main() {
     test('Caption text preserved alongside audio attachment', () async {
       final attachment = makeAudioAttachment(id: 'voice-caption-002');
 
-      await alice.sendMessageWithMedia(
-        bob.peerId,
-        'Important voice note',
-        [attachment],
-      );
+      await alice.sendMessageWithMedia(bob.peerId, 'Important voice note', [
+        attachment,
+      ]);
       await Future.delayed(const Duration(milliseconds: 100));
 
       // Verify Alice's conversation has text
@@ -265,7 +264,7 @@ void main() {
         [attachment],
       );
 
-      // Falls back to inbox storage
+      // Falls back to inbox storage — delivered by product rule
       expect(result, SendChatMessageResult.success);
       expect(msg, isNotNull);
       expect(msg!.status, 'delivered');
@@ -286,36 +285,38 @@ void main() {
       offlineUser.dispose();
     });
 
-    test('Voice-only message (no text, audio attachment only) round-trips',
-        () async {
-      final attachment = makeAudioAttachment(id: 'voice-only-001');
+    test(
+      'Voice-only message (no text, audio attachment only) round-trips',
+      () async {
+        final attachment = makeAudioAttachment(id: 'voice-only-001');
 
-      final bobReceived = <ConversationMessage>[];
-      final sub = bob.chatListener.incomingMessageStream.listen(
-        (msg) => bobReceived.add(msg),
-      );
+        final bobReceived = <ConversationMessage>[];
+        final sub = bob.chatListener.incomingMessageStream.listen(
+          (msg) => bobReceived.add(msg),
+        );
 
-      final (result, msg) = await alice.sendMessageWithMedia(
-        bob.peerId,
-        '', // no text
-        [attachment],
-      );
+        final (result, msg) = await alice.sendMessageWithMedia(
+          bob.peerId,
+          '', // no text
+          [attachment],
+        );
 
-      expect(result, SendChatMessageResult.success);
-      expect(msg, isNotNull);
-      expect(msg!.text, isEmpty);
+        expect(result, SendChatMessageResult.success);
+        expect(msg, isNotNull);
+        expect(msg!.text, isEmpty);
 
-      await Future.delayed(const Duration(milliseconds: 100));
+        await Future.delayed(const Duration(milliseconds: 100));
 
-      expect(bobReceived.length, 1);
-      expect(bobReceived.first.text, isEmpty);
+        expect(bobReceived.length, 1);
+        expect(bobReceived.first.text, isEmpty);
 
-      // Audio attachment propagated
-      expect(bobMediaRepo.count, 1);
-      final bobAtt = await bobMediaRepo.getPendingDownloads();
-      expect(bobAtt.first.mediaType, 'audio');
+        // Audio attachment propagated
+        expect(bobMediaRepo.count, 1);
+        final bobAtt = await bobMediaRepo.getPendingDownloads();
+        expect(bobAtt.first.mediaType, 'audio');
 
-      await sub.cancel();
-    });
+        await sub.cancel();
+      },
+    );
   });
 }

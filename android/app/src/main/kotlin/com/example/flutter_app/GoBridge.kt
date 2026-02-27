@@ -73,6 +73,7 @@ class GoBridge(flutterEngine: FlutterEngine) : MethodChannel.MethodCallHandler,
 
             // Relay
             "relayReconnect" -> runOnBackground({ GoMknoon.relayReconnect() }, result)
+            "relayProbe" -> runOnBackground({ GoMknoon.relayProbe(args ?: "") }, result)
 
             // Peer operations
             "dialPeer" -> runOnBackground({ GoMknoon.dialPeer(args ?: "") }, result)

@@ -125,6 +125,11 @@ class _FakeMessageRepository implements MessageRepository {
 
   @override
   Future<List<ConversationMessage>> getFailedOutgoingMessages() async => [];
+
+  @override
+  Future<List<ConversationMessage>> getUnackedOutgoingMessages({
+    required Duration olderThan,
+  }) async => [];
 }
 
 class _FakeMediaAttachmentRepo implements MediaAttachmentRepository {
@@ -841,99 +846,99 @@ void main() {
       );
     }
 
-    test('shows notification for incoming message when app is backgrounded',
-        () async {
-      final senderPeerId = 'sender-notif-001';
-      contactRepo.seedContact(
-        _makeContact(senderPeerId, username: 'Bob'),
-      );
+    test(
+      'shows notification for incoming message when app is backgrounded',
+      () async {
+        final senderPeerId = 'sender-notif-001';
+        contactRepo.seedContact(_makeContact(senderPeerId, username: 'Bob'));
 
-      final listener = createListenerWithNotifications(
-        lifecycleState: AppLifecycleState.paused,
-      );
-      listener.start();
+        final listener = createListenerWithNotifications(
+          lifecycleState: AppLifecycleState.paused,
+        );
+        listener.start();
 
-      chatStreamController.add(
-        _makeChatMessage(
-          from: senderPeerId,
-          id: 'msg-notif-001',
-          text: 'Hey there!',
-          senderUsername: 'Bob',
-        ),
-      );
+        chatStreamController.add(
+          _makeChatMessage(
+            from: senderPeerId,
+            id: 'msg-notif-001',
+            text: 'Hey there!',
+            senderUsername: 'Bob',
+          ),
+        );
 
-      await Future.delayed(const Duration(milliseconds: 200));
+        await Future.delayed(const Duration(milliseconds: 200));
 
-      expect(notificationService.shown, hasLength(1));
-      expect(notificationService.shown.first.senderUsername, 'Bob');
-      expect(notificationService.shown.first.messageText, 'Hey there!');
-      expect(notificationService.shown.first.contactPeerId, senderPeerId);
+        expect(notificationService.shown, hasLength(1));
+        expect(notificationService.shown.first.senderUsername, 'Bob');
+        expect(notificationService.shown.first.messageText, 'Hey there!');
+        expect(notificationService.shown.first.contactPeerId, senderPeerId);
 
-      listener.dispose();
-    });
+        listener.dispose();
+      },
+    );
 
     test(
-        'shows notification when app is resumed but not viewing that conversation',
-        () async {
-      final senderPeerId = 'sender-notif-002';
-      contactRepo.seedContact(
-        _makeContact(senderPeerId, username: 'Alice'),
-      );
+      'shows notification when app is resumed but not viewing that conversation',
+      () async {
+        final senderPeerId = 'sender-notif-002';
+        contactRepo.seedContact(_makeContact(senderPeerId, username: 'Alice'));
 
-      final listener = createListenerWithNotifications(
-        lifecycleState: AppLifecycleState.resumed,
-      );
-      listener.start();
+        final listener = createListenerWithNotifications(
+          lifecycleState: AppLifecycleState.resumed,
+        );
+        listener.start();
 
-      // User is on feed screen (tracker has no active conversation)
-      chatStreamController.add(
-        _makeChatMessage(
-          from: senderPeerId,
-          id: 'msg-notif-002',
-          text: 'Are you there?',
-          senderUsername: 'Alice',
-        ),
-      );
+        // User is on feed screen (tracker has no active conversation)
+        chatStreamController.add(
+          _makeChatMessage(
+            from: senderPeerId,
+            id: 'msg-notif-002',
+            text: 'Are you there?',
+            senderUsername: 'Alice',
+          ),
+        );
 
-      await Future.delayed(const Duration(milliseconds: 200));
+        await Future.delayed(const Duration(milliseconds: 200));
 
-      expect(notificationService.shown, hasLength(1));
+        expect(notificationService.shown, hasLength(1));
 
-      listener.dispose();
-    });
+        listener.dispose();
+      },
+    );
 
     test(
-        'suppresses notification when app is resumed and viewing sender conversation',
-        () async {
-      final senderPeerId = 'sender-notif-003';
-      contactRepo.seedContact(
-        _makeContact(senderPeerId, username: 'Charlie'),
-      );
+      'suppresses notification when app is resumed and viewing sender conversation',
+      () async {
+        final senderPeerId = 'sender-notif-003';
+        contactRepo.seedContact(
+          _makeContact(senderPeerId, username: 'Charlie'),
+        );
 
-      tracker.setActive(senderPeerId);
+        tracker.setActive(senderPeerId);
 
-      final listener = createListenerWithNotifications(
-        lifecycleState: AppLifecycleState.resumed,
-      );
-      listener.start();
+        final listener = createListenerWithNotifications(
+          lifecycleState: AppLifecycleState.resumed,
+        );
+        listener.start();
 
-      chatStreamController.add(
-        _makeChatMessage(
-          from: senderPeerId,
-          id: 'msg-notif-003',
-          text: 'Hello',
-          senderUsername: 'Charlie',
-        ),
-      );
+        chatStreamController.add(
+          _makeChatMessage(
+            from: senderPeerId,
+            id: 'msg-notif-003',
+            text: 'Hello',
+            senderUsername: 'Charlie',
+          ),
+        );
 
-      await Future.delayed(const Duration(milliseconds: 200));
+        await Future.delayed(const Duration(milliseconds: 200));
 
-      expect(notificationService.shown, isEmpty);
-      // But message should still be persisted and emitted
-      expect(messageRepo.saved, hasLength(1));
+        expect(notificationService.shown, isEmpty);
+        // But message should still be persisted and emitted
+        expect(messageRepo.saved, hasLength(1));
 
-      listener.dispose();
-    });
+        listener.dispose();
+      },
+    );
 
     test('no notification when all notification params are null', () async {
       final senderPeerId = 'sender-notif-004';
@@ -963,9 +968,7 @@ void main() {
 
     test('no notification for blocked sender', () async {
       final senderPeerId = 'sender-notif-005';
-      contactRepo.seedContact(
-        _makeContact(senderPeerId, isBlocked: true),
-      );
+      contactRepo.seedContact(_makeContact(senderPeerId, isBlocked: true));
 
       final listener = createListenerWithNotifications();
       listener.start();
@@ -985,9 +988,7 @@ void main() {
 
     test('no notification for archived sender', () async {
       final senderPeerId = 'sender-notif-006';
-      contactRepo.seedContact(
-        _makeContact(senderPeerId, isArchived: true),
-      );
+      contactRepo.seedContact(_makeContact(senderPeerId, isArchived: true));
 
       final listener = createListenerWithNotifications();
       listener.start();
@@ -1006,43 +1007,40 @@ void main() {
     });
 
     test(
-        'shows notification when viewing a different conversation (not the sender)',
-        () async {
-      final senderPeerId = 'sender-notif-007';
-      contactRepo.seedContact(
-        _makeContact(senderPeerId, username: 'Dave'),
-      );
+      'shows notification when viewing a different conversation (not the sender)',
+      () async {
+        final senderPeerId = 'sender-notif-007';
+        contactRepo.seedContact(_makeContact(senderPeerId, username: 'Dave'));
 
-      // User is viewing someone else's conversation
-      tracker.setActive('some-other-peer');
+        // User is viewing someone else's conversation
+        tracker.setActive('some-other-peer');
 
-      final listener = createListenerWithNotifications(
-        lifecycleState: AppLifecycleState.resumed,
-      );
-      listener.start();
+        final listener = createListenerWithNotifications(
+          lifecycleState: AppLifecycleState.resumed,
+        );
+        listener.start();
 
-      chatStreamController.add(
-        _makeChatMessage(
-          from: senderPeerId,
-          id: 'msg-notif-007',
-          text: 'Hey!',
-          senderUsername: 'Dave',
-        ),
-      );
+        chatStreamController.add(
+          _makeChatMessage(
+            from: senderPeerId,
+            id: 'msg-notif-007',
+            text: 'Hey!',
+            senderUsername: 'Dave',
+          ),
+        );
 
-      await Future.delayed(const Duration(milliseconds: 200));
+        await Future.delayed(const Duration(milliseconds: 200));
 
-      expect(notificationService.shown, hasLength(1));
-      expect(notificationService.shown.first.senderUsername, 'Dave');
+        expect(notificationService.shown, hasLength(1));
+        expect(notificationService.shown.first.senderUsername, 'Dave');
 
-      listener.dispose();
-    });
+        listener.dispose();
+      },
+    );
 
     test('notification uses sender username from contact repo', () async {
       final senderPeerId = 'sender-notif-008';
-      contactRepo.seedContact(
-        _makeContact(senderPeerId, username: 'Eve'),
-      );
+      contactRepo.seedContact(_makeContact(senderPeerId, username: 'Eve'));
 
       final listener = createListenerWithNotifications();
       listener.start();

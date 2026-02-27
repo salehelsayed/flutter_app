@@ -484,6 +484,49 @@ Future<List<Map<String, Object?>>> dbLoadFailedOutgoingMessages(
   }
 }
 
+/// Loads outgoing messages with status='sent' and a non-null wire_envelope
+/// that are older than [olderThan]. These are messages that were written to
+/// the stream but not ACK'd, and need inbox retry.
+///
+/// Returns at most [limit] rows ordered by timestamp ASC.
+Future<List<Map<String, Object?>>> dbLoadUnackedOutgoingMessages(
+  Database db, {
+  required DateTime olderThan,
+  int limit = 50,
+}) async {
+  emitFlowEvent(
+    layer: 'DB',
+    event: 'MESSAGES_DB_LOAD_UNACKED_OUTGOING_START',
+    details: {'limit': limit},
+  );
+
+  try {
+    final results = await db.query(
+      'messages',
+      where:
+          "status = ? AND is_incoming = 0 AND wire_envelope IS NOT NULL AND timestamp < ?",
+      whereArgs: ['sent', olderThan.toUtc().toIso8601String()],
+      orderBy: 'timestamp ASC',
+      limit: limit,
+    );
+
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'MESSAGES_DB_LOAD_UNACKED_OUTGOING_SUCCESS',
+      details: {'count': results.length},
+    );
+
+    return results;
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'MESSAGES_DB_LOAD_UNACKED_OUTGOING_ERROR',
+      details: {'error': e.toString()},
+    );
+    rethrow;
+  }
+}
+
 /// Loads a single message by ID.
 Future<Map<String, Object?>?> dbLoadMessage(Database db, String id) async {
   try {

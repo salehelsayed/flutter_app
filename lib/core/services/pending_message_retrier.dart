@@ -5,6 +5,7 @@ import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/retry_failed_messages_use_case.dart';
+import 'package:flutter_app/features/conversation/application/retry_unacked_messages_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 
@@ -23,6 +24,7 @@ class PendingMessageRetrier {
 
   StreamSubscription? _stateSubscription;
   Timer? _debounceTimer;
+  Timer? _periodicTimer;
   bool _wasOnline = false;
   bool _isRetrying = false;
 
@@ -51,6 +53,16 @@ class PendingMessageRetrier {
         // Transition to online — schedule retry with debounce
         _debounceTimer?.cancel();
         _debounceTimer = Timer(const Duration(seconds: 5), _retryIfNeeded);
+        // Periodic retry every 5 minutes while online
+        _periodicTimer?.cancel();
+        _periodicTimer = Timer.periodic(
+          const Duration(minutes: 5),
+          (_) => _retryIfNeeded(),
+        );
+      } else if (!nowOnline && _wasOnline) {
+        // Went offline — cancel periodic
+        _periodicTimer?.cancel();
+        _periodicTimer = null;
       }
 
       _wasOnline = nowOnline;
@@ -81,6 +93,19 @@ class PendingMessageRetrier {
           details: {'count': count},
         );
       }
+
+      final unackedCount = await retryUnackedMessages(
+        messageRepo: messageRepo,
+        p2pService: p2pService,
+      );
+
+      if (unackedCount > 0) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'PENDING_RETRIER_UNACKED_RETRIED',
+          details: {'count': unackedCount},
+        );
+      }
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -101,6 +126,7 @@ class PendingMessageRetrier {
     );
 
     _debounceTimer?.cancel();
+    _periodicTimer?.cancel();
     _stateSubscription?.cancel();
     _stateSubscription = null;
   }

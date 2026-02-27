@@ -13,6 +13,7 @@ package bridge
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 
 	mcrypto "github.com/mknoon/go-mknoon/crypto"
@@ -484,6 +485,55 @@ func RelayReconnect() (result string) {
 	})
 }
 
+// --- Relay Probe ---
+
+// RelayProbe dials a peer through the relay circuit address to check
+// if they are online. Returns fast (~100ms for NO_RESERVATION, ~500ms
+// for connection).
+// Input JSON: { "peerId": "..." }
+// Returns JSON: { "ok": true } on success, or { "ok": false, "errorCode": "NO_RESERVATION"|"RELAY_PROBE_ERROR", "errorMessage": "..." }
+func RelayProbe(paramsJSON string) (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+		}
+	}()
+
+	nodeMu.Lock()
+	n := singletonNode
+	nodeMu.Unlock()
+
+	if n == nil {
+		return errJSON("NOT_INITIALIZED", "call Initialize first")
+	}
+
+	var params struct {
+		PeerId string `json:"peerId"`
+	}
+	if paramsJSON != "" {
+		if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
+			return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
+		}
+	}
+	if params.PeerId == "" {
+		return errJSON("INVALID_INPUT", "missing peerId")
+	}
+
+	if err := n.DialPeerViaRelay(params.PeerId); err != nil {
+		errMsg := err.Error()
+		if strings.Contains(errMsg, "NO_RESERVATION") ||
+			strings.Contains(errMsg, "no reservation") ||
+			strings.Contains(errMsg, "no-reservation") {
+			return errJSON("NO_RESERVATION", errMsg)
+		}
+		return errJSON("RELAY_PROBE_ERROR", errMsg)
+	}
+
+	return okJSON(map[string]interface{}{
+		"ok": true,
+	})
+}
+
 // --- Peer Operations ---
 
 // DialPeer connects to a peer.
@@ -580,8 +630,9 @@ func SendMessage(paramsJSON string) (result string) {
 	}
 
 	var params struct {
-		PeerId  string `json:"peerId"`
-		Message string `json:"message"`
+		PeerId    string `json:"peerId"`
+		Message   string `json:"message"`
+		TimeoutMs int    `json:"timeoutMs"`
 	}
 	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
 		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
@@ -590,13 +641,15 @@ func SendMessage(paramsJSON string) (result string) {
 		return errJSON("INVALID_INPUT", "missing peerId or message")
 	}
 
-	reply, err := n.SendMessage(params.PeerId, params.Message)
+	reply, acked, err := n.SendMessage(params.PeerId, params.Message, params.TimeoutMs)
 	if err != nil {
 		return errJSON("SEND_ERROR", err.Error())
 	}
 
 	return okJSON(map[string]interface{}{
 		"ok":    true,
+		"sent":  true,
+		"acked": acked,
 		"reply": reply,
 	})
 }

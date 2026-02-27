@@ -53,6 +53,7 @@ class GoBridgeClient extends Bridge {
     'rendezvous:discover': _CmdSpec('rendezvousDiscover', true),
     // Relay
     'relay:reconnect': _CmdSpec('relayReconnect', false),
+    'relay:probe': _CmdSpec('relayProbe', true),
     // Peer
     'peer:dial': _CmdSpec('dialPeer', true),
     'peer:disconnect': _CmdSpec('disconnectPeer', true),

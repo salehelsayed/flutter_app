@@ -5,7 +5,6 @@ import 'package:flutter_app/features/contact_request/application/send_contact_re
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
-import 'package:flutter_app/features/p2p/domain/models/connection_state.dart';
 import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
@@ -52,7 +51,8 @@ class _FakeBridge extends Bridge {
 
 class _FakeP2PService implements P2PService {
   NodeState _state = const NodeState(isStarted: true, peerId: 'ownPeer');
-  bool sendResult = true;
+  SendMessageResult sendWithReplyResult =
+      const SendMessageResult(sent: true, acked: true, reply: 'ack');
   bool dialResult = true;
   DiscoveredPeer? discoveredPeer;
   bool localPeerResult = false;
@@ -84,12 +84,15 @@ class _FakeP2PService implements P2PService {
   Future<bool> sendMessage(String peerId, String message) async {
     lastSentPeerId = peerId;
     lastSentMessage = message;
-    return sendResult;
+    return sendWithReplyResult.sent && sendWithReplyResult.acknowledged;
   }
 
   @override
-  Future<SendMessageResult> sendMessageWithReply(String pid, String msg) async =>
-      const SendMessageResult(sent: true);
+  Future<SendMessageResult> sendMessageWithReply(String pid, String msg, {int? timeoutMs}) async {
+    lastSentPeerId = pid;
+    lastSentMessage = msg;
+    return sendWithReplyResult;
+  }
 
   @override
   Future<DiscoveredPeer?> discoverPeer(String peerId) async => discoveredPeer;
@@ -113,6 +116,10 @@ class _FakeP2PService implements P2PService {
 
   @override
   Future<void> drainOfflineInbox() async {}
+
+  @override
+  Future<RelayProbeResult> probeRelay(String peerId) async =>
+      RelayProbeResult.error;
 
   @override
   bool isConnectedToPeer(String peerId) => false;
@@ -252,6 +259,24 @@ void main() {
   test('success via local WiFi: sends via local P2P when peer is local', () async {
     p2pService.localPeerResult = true;
     p2pService.localSendResult = true;
+
+    final result = await sendContactRequest(
+      p2pService: p2pService,
+      identityRepo: identityRepo,
+      bridge: bridge,
+      targetPeerId: 'targetPeer123456789',
+    );
+
+    expect(result, equals(SendContactRequestResult.success));
+  });
+
+  test('success via inbox fallback: unacked direct send falls back to inbox',
+      () async {
+    p2pService.sendWithReplyResult = const SendMessageResult(
+      sent: true,
+      acked: false,
+    );
+    p2pService.storeInInboxResult = true;
 
     final result = await sendContactRequest(
       p2pService: p2pService,

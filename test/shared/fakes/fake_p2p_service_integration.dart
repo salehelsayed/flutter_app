@@ -108,8 +108,9 @@ class FakeP2PService implements P2PService {
   @override
   Future<SendMessageResult> sendMessageWithReply(
     String targetPeerId,
-    String message,
-  ) async {
+    String message, {
+    int? timeoutMs,
+  }) async {
     _sendAttempts++;
     if (_sendAttempts <= sendFailCount) {
       return const SendMessageResult(sent: false);
@@ -157,6 +158,10 @@ class FakeP2PService implements P2PService {
 
   @override
   Future<void> performImmediateHealthCheck() async {}
+
+  @override
+  Future<RelayProbeResult> probeRelay(String peerId) async =>
+      RelayProbeResult.error;
 
   @override
   bool isConnectedToPeer(String peerId) => connectedPeers.contains(peerId);

@@ -50,6 +50,15 @@ abstract class MessageRepository {
   /// Used by the retry service to find messages that need re-sending.
   Future<List<ConversationMessage>> getFailedOutgoingMessages();
 
+  /// Retrieves outgoing messages with status='sent' and a non-null wire_envelope
+  /// that are older than [olderThan].
+  ///
+  /// These are messages written to the stream but not ACK'd by the peer.
+  /// Used by the unacked retry service to store them in the relay inbox.
+  Future<List<ConversationMessage>> getUnackedOutgoingMessages({
+    required Duration olderThan,
+  });
+
   /// Retrieves a page of messages for a contact, ordered by timestamp ASC.
   ///
   /// Returns at most [limit] messages. When [beforeTimestamp] is null,

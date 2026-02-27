@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
@@ -91,8 +92,9 @@ class FakeP2PService implements P2PService {
   @override
   Future<SendMessageResult> sendMessageWithReply(
     String peerId,
-    String message,
-  ) async {
+    String message, {
+    int? timeoutMs,
+  }) async {
     if (shouldThrow) throw Exception('Send failed');
     lastSentPeerId = peerId;
     lastSentMessage = message;
@@ -134,6 +136,10 @@ class FakeP2PService implements P2PService {
 
   @override
   Future<void> drainOfflineInbox() async {}
+
+  @override
+  Future<RelayProbeResult> probeRelay(String peerId) async =>
+      RelayProbeResult.error;
 
   @override
   bool isConnectedToPeer(String peerId) =>
@@ -212,6 +218,11 @@ class FakeMessageRepository implements MessageRepository {
 
   @override
   Future<List<ConversationMessage>> getFailedOutgoingMessages() async => [];
+
+  @override
+  Future<List<ConversationMessage>> getUnackedOutgoingMessages({
+    required Duration olderThan,
+  }) async => [];
 }
 
 // -- Fake Media Attachment Repository --
@@ -259,14 +270,24 @@ class FakeMediaAttachmentRepository implements MediaAttachmentRepository {
 
 Future<List<String>> capturePrintedLines(Future<void> Function() action) async {
   final printed = <String>[];
-  await runZoned(
-    action,
-    zoneSpecification: ZoneSpecification(
-      print: (_, __, ___, line) {
-        printed.add(line);
-      },
-    ),
-  );
+  // Override debugPrint to bypass throttling which can cause lines to be
+  // delivered asynchronously after the zone completes.
+  final origDebugPrint = debugPrint;
+  debugPrint = (String? message, {int? wrapWidth}) {
+    if (message != null) printed.add(message);
+  };
+  try {
+    await runZoned(
+      action,
+      zoneSpecification: ZoneSpecification(
+        print: (_, __, ___, line) {
+          printed.add(line);
+        },
+      ),
+    );
+  } finally {
+    debugPrint = origDebugPrint;
+  }
   return printed;
 }
 
@@ -542,7 +563,7 @@ void main() {
           p2pService: p2pService,
           messageRepo: messageRepo,
           targetPeerId: 'target-peer',
-          text: 'Hello queued!',
+          text: 'Hello inbox!',
           senderPeerId: 'my-peer',
           senderUsername: 'Me',
           bridge: defaultEncryptBridge,
@@ -584,7 +605,7 @@ void main() {
     });
 
     test(
-      'returns peerNotFound when discover returns null after 3 retries',
+      'returns peerNotFound when discover returns null after 1 attempt',
       () async {
         p2pService = FakeP2PService(useNullDiscover: true);
 
@@ -602,14 +623,14 @@ void main() {
         expect(result, SendChatMessageResult.peerNotFound);
         expect(message, isNotNull);
         expect(message!.status, 'failed');
-        expect(p2pService.discoverCallCount, 3);
+        expect(p2pService.discoverCallCount, 1);
         expect(messageRepo.saved.length, 1);
         expect(messageRepo.saved.first.status, 'failed');
       },
     );
 
     test(
-      'returns dialFailed when dial returns false after 3 retries',
+      'returns dialFailed when dial returns false after 1 attempt',
       () async {
         p2pService = FakeP2PService(dialPeerResult: false);
 
@@ -627,14 +648,14 @@ void main() {
         expect(result, SendChatMessageResult.dialFailed);
         expect(message, isNotNull);
         expect(message!.status, 'failed');
-        expect(p2pService.dialCallCount, 3);
+        expect(p2pService.dialCallCount, 1);
         expect(messageRepo.saved.length, 1);
       },
     );
 
-    test('succeeds on 2nd attempt after flaky discover', () async {
-      // Custom service where discover fails first time, succeeds second
-      final flakyP2P = _FlakyDiscoverP2PService();
+    test('flaky discover falls through to inbox with 1 attempt', () async {
+      // With maxAttempts=1, discover fails on attempt 1 → inbox fallback
+      final flakyP2P = _FlakyDiscoverP2PService(storeInInboxResult: true);
 
       final (result, message) = await sendChatMessage(
         p2pService: flakyP2P,
@@ -649,7 +670,9 @@ void main() {
 
       expect(result, SendChatMessageResult.success);
       expect(message, isNotNull);
-      expect(flakyP2P.discoverCallCount, 2);
+      expect(message!.status, 'delivered');
+      expect(message.transport, 'inbox');
+      expect(flakyP2P.discoverCallCount, 1);
     });
 
     test('success with ack sets status to delivered', () async {
@@ -1257,7 +1280,7 @@ void main() {
       });
 
       test(
-          'fast path fails + all retries fail → inbox fallback, 4 total sends',
+          'fast path fails + all retries fail → inbox fallback, 2 total sends',
           () async {
         final custom = _AllFailButInboxP2PService();
 
@@ -1274,8 +1297,8 @@ void main() {
 
         expect(result, SendChatMessageResult.success);
         expect(message!.status, 'delivered');
-        // 1 fast path + 3 retries = 4 sends
-        expect(custom.sendCallCount, 4);
+        // 1 fast path + 1 retry = 2 sends
+        expect(custom.sendCallCount, 2);
       });
 
       test('not connected → skips fast path, normal discover-dial-send',
@@ -1445,6 +1468,7 @@ void main() {
         expect(mediaRepo.saved[0].id, 'blob-fast-001');
         expect(mediaRepo.saved[0].messageId, fixedId);
       });
+
     });
 
     group('dual-path WiFi + relay', () {
@@ -1490,7 +1514,7 @@ void main() {
         expect(message.transport, 'wifi');
       });
 
-      test('WiFi success + relay fail 3x + inbox → delivered via wifi',
+      test('WiFi success + relay fail 3x + inbox → delivered via inbox',
           () async {
         p2pService = FakeP2PService(
           sendMessageResult: false,
@@ -1512,7 +1536,7 @@ void main() {
 
         expect(result, SendChatMessageResult.success);
         expect(message!.status, 'delivered');
-        expect(message.transport, 'wifi');
+        expect(message.transport, 'inbox');
       });
 
       test('WiFi success + all fallbacks fail → sent via wifi', () async {
@@ -2201,6 +2225,10 @@ class _WiFiThenFastFailThenRelayP2PService implements P2PService {
   Future<bool> stopNode() async => true;
 
   @override
+  Future<RelayProbeResult> probeRelay(String peerId) async =>
+      RelayProbeResult.error;
+
+  @override
   bool isConnectedToPeer(String peerId) => true;
 
   @override
@@ -2215,7 +2243,7 @@ class _WiFiThenFastFailThenRelayP2PService implements P2PService {
 
   @override
   Future<SendMessageResult> sendMessageWithReply(
-      String peerId, String message) async {
+      String peerId, String message, {int? timeoutMs}) async {
     sendCallCount++;
     if (sendCallCount == 1) return const SendMessageResult(sent: false);
     return const SendMessageResult(sent: true, reply: 'ack');
@@ -2272,11 +2300,15 @@ class _FastPathFailThenSucceedP2PService implements P2PService {
   Future<bool> stopNode() async => true;
 
   @override
+  Future<RelayProbeResult> probeRelay(String peerId) async =>
+      RelayProbeResult.error;
+
+  @override
   bool isConnectedToPeer(String peerId) => true;
 
   @override
   Future<SendMessageResult> sendMessageWithReply(
-      String peerId, String message) async {
+      String peerId, String message, {int? timeoutMs}) async {
     sendCallCount++;
     if (sendCallCount == 1) return const SendMessageResult(sent: false);
     return const SendMessageResult(sent: true, reply: 'ack');
@@ -2339,11 +2371,15 @@ class _FastPathThrowThenSucceedP2PService implements P2PService {
   Future<bool> stopNode() async => true;
 
   @override
+  Future<RelayProbeResult> probeRelay(String peerId) async =>
+      RelayProbeResult.error;
+
+  @override
   bool isConnectedToPeer(String peerId) => true;
 
   @override
   Future<SendMessageResult> sendMessageWithReply(
-      String peerId, String message) async {
+      String peerId, String message, {int? timeoutMs}) async {
     sendCallCount++;
     if (sendCallCount == 1) throw Exception('stream reset');
     return const SendMessageResult(sent: true, reply: 'ack');
@@ -2404,11 +2440,15 @@ class _AllFailButInboxP2PService implements P2PService {
   Future<bool> stopNode() async => true;
 
   @override
+  Future<RelayProbeResult> probeRelay(String peerId) async =>
+      RelayProbeResult.error;
+
+  @override
   bool isConnectedToPeer(String peerId) => true;
 
   @override
   Future<SendMessageResult> sendMessageWithReply(
-      String peerId, String message) async {
+      String peerId, String message, {int? timeoutMs}) async {
     sendCallCount++;
     return const SendMessageResult(sent: false);
   }
@@ -2467,8 +2507,9 @@ class _ThrowOnSendP2PService implements P2PService {
   @override
   Future<SendMessageResult> sendMessageWithReply(
     String peerId,
-    String message,
-  ) async => throw Exception('Send exploded');
+    String message, {
+    int? timeoutMs,
+  }) async => throw Exception('Send exploded');
 
   @override
   Future<DiscoveredPeer?> discoverPeer(String peerId) async =>
@@ -2496,6 +2537,10 @@ class _ThrowOnSendP2PService implements P2PService {
   Future<void> drainOfflineInbox() async {}
 
   @override
+  Future<RelayProbeResult> probeRelay(String peerId) async =>
+      RelayProbeResult.error;
+
+  @override
   bool isConnectedToPeer(String peerId) => false;
 
   @override
@@ -2517,6 +2562,10 @@ class _ThrowOnSendP2PService implements P2PService {
 /// P2P service where discover fails on first attempt, succeeds on subsequent.
 class _FlakyDiscoverP2PService implements P2PService {
   int discoverCallCount = 0;
+  int storeInInboxCallCount = 0;
+  bool storeInInboxResult;
+
+  _FlakyDiscoverP2PService({this.storeInInboxResult = false});
 
   @override
   NodeState get currentState => const NodeState(isStarted: true);
@@ -2539,8 +2588,9 @@ class _FlakyDiscoverP2PService implements P2PService {
   @override
   Future<SendMessageResult> sendMessageWithReply(
     String peerId,
-    String message,
-  ) async => const SendMessageResult(sent: true, reply: 'received: ok');
+    String message, {
+    int? timeoutMs,
+  }) async => const SendMessageResult(sent: true, reply: 'received: ok');
 
   @override
   Future<DiscoveredPeer?> discoverPeer(String peerId) async {
@@ -2556,7 +2606,10 @@ class _FlakyDiscoverP2PService implements P2PService {
   Future<bool> dialPeer(String peerId, {List<String>? addresses}) async => true;
 
   @override
-  Future<bool> storeInInbox(String toPeerId, String message) async => false;
+  Future<bool> storeInInbox(String toPeerId, String message) async {
+    storeInInboxCallCount++;
+    return storeInInboxResult;
+  }
 
   @override
   Future<List<Map<String, dynamic>>> retrieveInbox() async => [];
@@ -2569,6 +2622,10 @@ class _FlakyDiscoverP2PService implements P2PService {
 
   @override
   Future<void> drainOfflineInbox() async {}
+
+  @override
+  Future<RelayProbeResult> probeRelay(String peerId) async =>
+      RelayProbeResult.error;
 
   @override
   bool isConnectedToPeer(String peerId) => false;

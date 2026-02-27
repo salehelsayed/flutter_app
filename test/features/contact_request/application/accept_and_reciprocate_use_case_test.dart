@@ -75,7 +75,7 @@ class _FakeP2PService implements P2PService {
   @override
   Future<bool> sendMessage(String peerId, String message) async => true;
   @override
-  Future<SendMessageResult> sendMessageWithReply(String pid, String msg) async =>
+  Future<SendMessageResult> sendMessageWithReply(String pid, String msg, {int? timeoutMs}) async =>
       const SendMessageResult(sent: true);
   @override
   Future<DiscoveredPeer?> discoverPeer(String peerId) async =>
@@ -92,6 +92,9 @@ class _FakeP2PService implements P2PService {
   Future<void> performImmediateHealthCheck() async {}
   @override
   Future<void> drainOfflineInbox() async {}
+  @override
+  Future<RelayProbeResult> probeRelay(String peerId) async =>
+      RelayProbeResult.error;
   @override
   bool isConnectedToPeer(String peerId) => false;
   @override
