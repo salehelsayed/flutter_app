@@ -1,6 +1,7 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'nav_bar_button.dart';
+import 'nav_bar_theme.dart';
 
 /// Bottom glass navigation bar for the feed area.
 class FeedNavigationBar extends StatelessWidget {
@@ -18,31 +19,29 @@ class FeedNavigationBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 285),
+      constraints: const BoxConstraints(maxWidth: NavBarTheme.barMaxWidth),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(30),
+        borderRadius: BorderRadius.circular(NavBarTheme.barBorderRadius),
         child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+          filter: ImageFilter.blur(
+            sigmaX: NavBarTheme.blurSigma,
+            sigmaY: NavBarTheme.blurSigma,
+          ),
           child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 8),
+            padding: NavBarTheme.barPadding,
             decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(30),
+              borderRadius: BorderRadius.circular(NavBarTheme.barBorderRadius),
               gradient: const LinearGradient(
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
-                colors: [
-                  Color.fromRGBO(43, 47, 57, 0.78),
-                  Color.fromRGBO(22, 25, 32, 0.86),
-                ],
+                colors: NavBarTheme.barGradientColors,
               ),
-              border: Border.all(
-                color: const Color.fromRGBO(255, 255, 255, 0.1),
-              ),
+              border: Border.all(color: NavBarTheme.barBorderColor),
               boxShadow: const [
                 BoxShadow(
-                  color: Color.fromRGBO(0, 0, 0, 0.38),
-                  blurRadius: 16,
-                  offset: Offset(0, 8),
+                  color: NavBarTheme.barShadowColor,
+                  blurRadius: NavBarTheme.barShadowBlur,
+                  offset: NavBarTheme.barShadowOffset,
                 ),
               ],
             ),
@@ -56,14 +55,14 @@ class FeedNavigationBar extends StatelessWidget {
                   onTap: () => onSwitchView('feed'),
                   badgeCount: feedBadgeCount,
                 ),
-                const SizedBox(width: 7),
+                const SizedBox(width: NavBarTheme.buttonSpacing),
                 NavBarButton(
                   label: 'Remember',
                   svgAsset: 'assets/icons/nav_remember.svg',
                   isActive: activeTab == 'remember',
                   onTap: () => onSwitchView('remember'),
                 ),
-                const SizedBox(width: 7),
+                const SizedBox(width: NavBarTheme.buttonSpacing),
                 NavBarButton(
                   label: 'Orbit',
                   svgAsset: 'assets/icons/nav_orbit.svg',
