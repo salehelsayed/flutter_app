@@ -30,11 +30,16 @@ Future<AcceptContactRequestResult> acceptAndReciprocateContactRequest({
 
   // 2. On success, fire-and-forget reciprocal request
   if (result == AcceptContactRequestResult.success) {
+    // Load the now-accepted contact to get their public key for v2 encryption
+    final contact = await contactRepo.getContact(peerId);
+    final recipientPublicKey = contact?.publicKey;
+
     sendContactRequest(
       p2pService: p2pService,
       identityRepo: identityRepo,
       bridge: bridge,
       targetPeerId: peerId,
+      recipientPublicKey: recipientPublicKey,
     ).then((sendResult) {
       emitFlowEvent(
         layer: 'FL',

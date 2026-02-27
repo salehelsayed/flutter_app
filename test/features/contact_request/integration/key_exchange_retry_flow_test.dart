@@ -82,8 +82,8 @@ void main() {
       );
 
       expect(sent, 1);
-      // sendContactRequest signs the payload + stores in inbox
-      expect(bridge.sendCallCount, 1); // payload.sign
+      // sendContactRequest signs the payload + encrypts → stores in inbox
+      expect(bridge.sendCallCount, 2); // payload.sign + contactrequest.encrypt
       expect(p2pService.storeInInboxCallCount, 1);
     });
 
@@ -120,7 +120,8 @@ void main() {
 
       // Only Carol should get the retry
       expect(sent, 1);
-      expect(bridge.sendCallCount, 1);
+      // payload.sign + contactrequest.encrypt
+      expect(bridge.sendCallCount, 2);
     });
 
     test('multiple contacts all get retry sequentially', () async {
@@ -138,8 +139,8 @@ void main() {
       );
 
       expect(sent, 3);
-      // Each contact gets one payload.sign call
-      expect(bridge.sendCallCount, 3);
+      // Each contact gets two bridge calls (payload.sign + contactrequest.encrypt)
+      expect(bridge.sendCallCount, 6);
       // Each contact stores in inbox (discoverPeer returns null)
       expect(p2pService.storeInInboxCallCount, 3);
     });

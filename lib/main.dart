@@ -297,6 +297,7 @@ void main() async {
     contactRepo: contactRepository,
     bridge: bridge,
     getOwnPeerId: () => p2pService.currentState.peerId ?? '',
+    getOwnPrivateKey: () => secureKeyStore.read('identity_private_key'),
   );
 
   // Create notification service and conversation tracker

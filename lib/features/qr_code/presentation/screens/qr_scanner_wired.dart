@@ -154,7 +154,7 @@ class QRScannerWired extends StatelessWidget {
       case AddContactResult.success:
         _showSuccessDialog(context, contact);
         // Send contact request to the scanned peer (fire and forget)
-        _sendContactRequestInBackground(contact.peerId);
+        _sendContactRequestInBackground(contact.peerId, contact.publicKey);
         break;
 
       case AddContactResult.alreadyExists:
@@ -175,12 +175,13 @@ class QRScannerWired extends StatelessWidget {
   ///
   /// This enables bidirectional contact exchange - when Bob scans Alice's QR,
   /// Bob automatically sends his info to Alice so she can add him back.
-  void _sendContactRequestInBackground(String targetPeerId) async {
+  void _sendContactRequestInBackground(String targetPeerId, String recipientPublicKey) async {
     final sendResult = await sendContactRequest(
       p2pService: p2pService,
       identityRepo: identityRepository,
       bridge: bridge,
       targetPeerId: targetPeerId,
+      recipientPublicKey: recipientPublicKey,
     );
 
     emitFlowEvent(

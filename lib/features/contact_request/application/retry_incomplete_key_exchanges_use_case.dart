@@ -67,6 +67,7 @@ Future<int> retryIncompleteKeyExchanges({
         identityRepo: identityRepo,
         bridge: bridge,
         targetPeerId: contact.peerId,
+        recipientPublicKey: contact.publicKey,
       );
 
       if (result == SendContactRequestResult.success) sent++;

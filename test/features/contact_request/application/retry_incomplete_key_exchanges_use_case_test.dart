@@ -188,9 +188,9 @@ void main() {
         bridge: bridge,
       );
 
-      // Each sendContactRequest calls bridge.send once (payload.sign)
+      // Each sendContactRequest calls bridge.send twice (payload.sign + contactrequest.encrypt)
       // All 3 contacts should be attempted
-      expect(bridge.sendCallCount, 3);
+      expect(bridge.sendCallCount, 6);
       expect(result, 3);
     });
 
@@ -209,7 +209,8 @@ void main() {
       );
 
       // Only 2 contacts should be attempted (the ones without keys)
-      expect(bridge.sendCallCount, 2);
+      // Each calls bridge.send twice (payload.sign + contactrequest.encrypt)
+      expect(bridge.sendCallCount, 4);
       expect(result, 2);
     });
 

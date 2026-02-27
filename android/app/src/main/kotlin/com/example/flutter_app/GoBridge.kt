@@ -61,6 +61,8 @@ class GoBridge(flutterEngine: FlutterEngine) : MethodChannel.MethodCallHandler,
             "decryptMessage" -> runOnBackground({ GoMknoon.decryptMessage(args ?: "") }, result)
             "signPayload" -> runOnBackground({ GoMknoon.signPayload(args ?: "") }, result)
             "verifyPayload" -> runOnBackground({ GoMknoon.verifyPayload(args ?: "") }, result)
+            "encryptContactRequest" -> runOnBackground({ GoMknoon.encryptContactRequest(args ?: "") }, result)
+            "decryptContactRequest" -> runOnBackground({ GoMknoon.decryptContactRequest(args ?: "") }, result)
 
             // Node lifecycle
             "startNode" -> runOnBackground({ GoMknoon.startNode(args ?: "") }, result)

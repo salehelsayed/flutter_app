@@ -16,6 +16,12 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 
 class _FakeBridge extends Bridge {
   bool verifyResult = true;
+  Map<String, dynamic> decryptResponse = {
+    'ok': true,
+    'plaintext': '', // will be set per test
+  };
+  bool decryptCalled = false;
+  bool verifyCalled = false;
 
   @override
   bool get isInitialized => true;
@@ -32,7 +38,12 @@ class _FakeBridge extends Bridge {
   Future<String> send(String message) async {
     final req = jsonDecode(message) as Map<String, dynamic>;
     if (req['cmd'] == 'payload.verify') {
+      verifyCalled = true;
       return jsonEncode({'ok': true, 'valid': verifyResult});
+    }
+    if (req['cmd'] == 'contactrequest.decrypt') {
+      decryptCalled = true;
+      return jsonEncode(decryptResponse);
     }
     return jsonEncode({'ok': true});
   }
@@ -469,5 +480,255 @@ void main() {
 
     expect(result, equals(HandleMessageResult.contactKeyUpdated));
     expect(request, isNull);
+  });
+
+  // --- v2 encrypted contact request tests ---
+
+  group('v2 encrypted', () {
+    /// Builds a v2 encrypted envelope with the payload as "ciphertext".
+    /// The fake bridge will return the payload JSON as plaintext on decrypt.
+    String _v2Message(Map<String, dynamic> payload, {
+      String? msgId,
+      String? ts,
+    }) {
+      final id = msgId ?? 'test-msg-${DateTime.now().microsecondsSinceEpoch}';
+      final timestamp = ts ?? DateTime.now().toUtc().toIso8601String();
+      return jsonEncode({
+        'type': 'contact_request',
+        'version': '2',
+        'msgId': id,
+        'ts': timestamp,
+        'encrypted': {
+          'ephemeralPublicKey': 'ephPubBase64',
+          'ciphertext': 'ctBase64',
+          'nonce': 'nonceBase64',
+        },
+      });
+    }
+
+    test('v2 message is decrypted and stored', () async {
+      final payload = _validPayload();
+      bridge.decryptResponse = {'ok': true, 'plaintext': jsonEncode(payload)};
+
+      final message = _makeChatMessage(_v2Message(payload));
+      final (result, request) = await handleIncomingMessage(
+        message: message,
+        bridge: bridge,
+        requestRepo: requestRepo,
+        contactRepo: contactRepo,
+        ownPeerId: _ownPeerId,
+        ownPrivateKey: 'ownPrivKeyBase64',
+      );
+
+      expect(result, equals(HandleMessageResult.contactRequest));
+      expect(request, isNotNull);
+      expect(request!.peerId, equals(_senderPeerId));
+    });
+
+    test('v2 decrypted payload is signature-verified', () async {
+      final payload = _validPayload();
+      bridge.decryptResponse = {'ok': true, 'plaintext': jsonEncode(payload)};
+
+      final message = _makeChatMessage(_v2Message(payload));
+      await handleIncomingMessage(
+        message: message,
+        bridge: bridge,
+        requestRepo: requestRepo,
+        contactRepo: contactRepo,
+        ownPeerId: _ownPeerId,
+        ownPrivateKey: 'ownPrivKeyBase64',
+      );
+
+      expect(bridge.decryptCalled, isTrue);
+      expect(bridge.verifyCalled, isTrue);
+    });
+
+    test('v2 decryption failure → invalidMessage', () async {
+      bridge.decryptResponse = {
+        'ok': false,
+        'errorCode': 'INTERNAL_ERROR',
+        'errorMessage': 'decryption failed',
+      };
+
+      final message = _makeChatMessage(_v2Message(_validPayload()));
+      final (result, _) = await handleIncomingMessage(
+        message: message,
+        bridge: bridge,
+        requestRepo: requestRepo,
+        contactRepo: contactRepo,
+        ownPeerId: _ownPeerId,
+        ownPrivateKey: 'ownPrivKeyBase64',
+      );
+
+      expect(result, equals(HandleMessageResult.invalidMessage));
+    });
+
+    test('v2 invalid signature after decrypt → invalidMessage', () async {
+      final payload = _validPayload();
+      bridge.decryptResponse = {'ok': true, 'plaintext': jsonEncode(payload)};
+      bridge.verifyResult = false;
+
+      final message = _makeChatMessage(_v2Message(payload));
+      final (result, _) = await handleIncomingMessage(
+        message: message,
+        bridge: bridge,
+        requestRepo: requestRepo,
+        contactRepo: contactRepo,
+        ownPeerId: _ownPeerId,
+        ownPrivateKey: 'ownPrivKeyBase64',
+      );
+
+      expect(result, equals(HandleMessageResult.invalidMessage));
+    });
+
+    test('v2 missing ownPrivateKey → invalidMessage', () async {
+      bridge.decryptResponse = {'ok': true, 'plaintext': jsonEncode(_validPayload())};
+
+      final message = _makeChatMessage(_v2Message(_validPayload()));
+      final (result, _) = await handleIncomingMessage(
+        message: message,
+        bridge: bridge,
+        requestRepo: requestRepo,
+        contactRepo: contactRepo,
+        ownPeerId: _ownPeerId,
+        ownPrivateKey: null,
+      );
+
+      expect(result, equals(HandleMessageResult.invalidMessage));
+    });
+
+    test('v2 missing encrypted block → invalidMessage', () async {
+      final message = _makeChatMessage(jsonEncode({
+        'type': 'contact_request',
+        'version': '2',
+        'msgId': 'test-msg-1',
+        'ts': DateTime.now().toUtc().toIso8601String(),
+        // no 'encrypted' key
+      }));
+      final (result, _) = await handleIncomingMessage(
+        message: message,
+        bridge: bridge,
+        requestRepo: requestRepo,
+        contactRepo: contactRepo,
+        ownPeerId: _ownPeerId,
+        ownPrivateKey: 'ownPrivKeyBase64',
+      );
+
+      expect(result, equals(HandleMessageResult.invalidMessage));
+    });
+
+    test('v2 incomplete encrypted block → invalidMessage', () async {
+      final message = _makeChatMessage(jsonEncode({
+        'type': 'contact_request',
+        'version': '2',
+        'msgId': 'test-msg-1',
+        'ts': DateTime.now().toUtc().toIso8601String(),
+        'encrypted': {
+          'ephemeralPublicKey': 'ephPub',
+          // missing ciphertext and nonce
+        },
+      }));
+      final (result, _) = await handleIncomingMessage(
+        message: message,
+        bridge: bridge,
+        requestRepo: requestRepo,
+        contactRepo: contactRepo,
+        ownPeerId: _ownPeerId,
+        ownPrivateKey: 'ownPrivKeyBase64',
+      );
+
+      expect(result, equals(HandleMessageResult.invalidMessage));
+    });
+
+    test('v2 duplicate msgId → invalidMessage', () async {
+      final payload = _validPayload();
+      bridge.decryptResponse = {'ok': true, 'plaintext': jsonEncode(payload)};
+
+      const dupeId = 'duplicate-msg-id';
+      final seenIds = <String>{dupeId};
+
+      final message = _makeChatMessage(_v2Message(payload, msgId: dupeId));
+      final (result, _) = await handleIncomingMessage(
+        message: message,
+        bridge: bridge,
+        requestRepo: requestRepo,
+        contactRepo: contactRepo,
+        ownPeerId: _ownPeerId,
+        ownPrivateKey: 'ownPrivKeyBase64',
+        seenMessageIds: seenIds,
+      );
+
+      expect(result, equals(HandleMessageResult.invalidMessage));
+    });
+
+    test('v2 ts older than 24h → invalidMessage', () async {
+      final payload = _validPayload();
+      bridge.decryptResponse = {'ok': true, 'plaintext': jsonEncode(payload)};
+
+      final oldTs = DateTime.now().toUtc().subtract(const Duration(hours: 25)).toIso8601String();
+      final message = _makeChatMessage(_v2Message(payload, ts: oldTs));
+      final (result, _) = await handleIncomingMessage(
+        message: message,
+        bridge: bridge,
+        requestRepo: requestRepo,
+        contactRepo: contactRepo,
+        ownPeerId: _ownPeerId,
+        ownPrivateKey: 'ownPrivKeyBase64',
+      );
+
+      expect(result, equals(HandleMessageResult.invalidMessage));
+    });
+
+    test('v2 ts >5min in future → invalidMessage', () async {
+      final payload = _validPayload();
+      bridge.decryptResponse = {'ok': true, 'plaintext': jsonEncode(payload)};
+
+      final futureTs = DateTime.now().toUtc().add(const Duration(minutes: 10)).toIso8601String();
+      final message = _makeChatMessage(_v2Message(payload, ts: futureTs));
+      final (result, _) = await handleIncomingMessage(
+        message: message,
+        bridge: bridge,
+        requestRepo: requestRepo,
+        contactRepo: contactRepo,
+        ownPeerId: _ownPeerId,
+        ownPrivateKey: 'ownPrivKeyBase64',
+      );
+
+      expect(result, equals(HandleMessageResult.invalidMessage));
+    });
+
+    test('v1 still works without ownPrivateKey', () async {
+      final payload = _validPayload();
+      final message = _makeChatMessage(_contactRequestMessage(payload));
+
+      final (result, request) = await handleIncomingMessage(
+        message: message,
+        bridge: bridge,
+        requestRepo: requestRepo,
+        contactRepo: contactRepo,
+        ownPeerId: _ownPeerId,
+        // no ownPrivateKey
+      );
+
+      expect(result, equals(HandleMessageResult.contactRequest));
+      expect(request, isNotNull);
+    });
+
+    test('v1 with ownPrivateKey uses plaintext path (decrypt NOT called)', () async {
+      final payload = _validPayload();
+      final message = _makeChatMessage(_contactRequestMessage(payload));
+
+      final (result, _) = await handleIncomingMessage(
+        message: message,
+        bridge: bridge,
+        requestRepo: requestRepo,
+        contactRepo: contactRepo,
+        ownPeerId: _ownPeerId,
+        ownPrivateKey: 'somePrivKey',
+      );
+
+      expect(result, equals(HandleMessageResult.contactRequest));
+      expect(bridge.decryptCalled, isFalse);
+    });
   });
 }

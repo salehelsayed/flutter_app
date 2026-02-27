@@ -183,6 +183,91 @@ func DecryptMessage(paramsJSON string) (result string) {
 	})
 }
 
+// --- Crypto: Contact Request Encryption ---
+
+// EncryptContactRequest encrypts a signed contact request payload for a recipient
+// using their Ed25519 public key via ephemeral X25519 ECDH + HKDF-SHA256 + AES-256-GCM.
+// Input JSON: { "recipientPublicKey": "<base64 Ed25519>", "plaintext": "...", "msgId": "...", "ts": "..." }
+// Returns JSON: { "ok": true, "ephemeralPublicKey": "...", "ciphertext": "...", "nonce": "..." }
+// AAD = msgId + "|" + ts (bound to AES-GCM, prevents tampering of outer fields)
+func EncryptContactRequest(paramsJSON string) (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+		}
+	}()
+
+	var params struct {
+		RecipientPublicKey string `json:"recipientPublicKey"`
+		Plaintext          string `json:"plaintext"`
+		MsgId              string `json:"msgId"`
+		Ts                 string `json:"ts"`
+	}
+	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
+		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
+	}
+
+	if params.RecipientPublicKey == "" || params.Plaintext == "" || params.MsgId == "" || params.Ts == "" {
+		return errJSON("INVALID_INPUT", "missing recipientPublicKey, plaintext, msgId, or ts")
+	}
+
+	enc, err := mcrypto.EncryptContactRequest(params.RecipientPublicKey, params.Plaintext, params.MsgId, params.Ts)
+	if err != nil {
+		return errJSON("INTERNAL_ERROR", err.Error())
+	}
+
+	return okJSON(map[string]interface{}{
+		"ok":                true,
+		"ephemeralPublicKey": enc.EphemeralPublicKey,
+		"ciphertext":        enc.Ciphertext,
+		"nonce":             enc.Nonce,
+	})
+}
+
+// DecryptContactRequest decrypts a v2 contact request using the recipient's own Ed25519 private key.
+// Input JSON: { "privateKey": "<base64 Ed25519 64-byte>", "ephemeralPublicKey": "...", "ciphertext": "...", "nonce": "...", "msgId": "...", "ts": "..." }
+// Returns JSON: { "ok": true, "plaintext": "..." }
+// Decryption fails if msgId/ts were tampered (AAD mismatch)
+func DecryptContactRequest(paramsJSON string) (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+		}
+	}()
+
+	var params struct {
+		PrivateKey         string `json:"privateKey"`
+		EphemeralPublicKey string `json:"ephemeralPublicKey"`
+		Ciphertext         string `json:"ciphertext"`
+		Nonce              string `json:"nonce"`
+		MsgId              string `json:"msgId"`
+		Ts                 string `json:"ts"`
+	}
+	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
+		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
+	}
+
+	if params.PrivateKey == "" || params.EphemeralPublicKey == "" ||
+		params.Ciphertext == "" || params.Nonce == "" ||
+		params.MsgId == "" || params.Ts == "" {
+		return errJSON("INVALID_INPUT", "missing privateKey, ephemeralPublicKey, ciphertext, nonce, msgId, or ts")
+	}
+
+	plaintext, err := mcrypto.DecryptContactRequest(
+		params.PrivateKey, params.EphemeralPublicKey,
+		params.Ciphertext, params.Nonce,
+		params.MsgId, params.Ts,
+	)
+	if err != nil {
+		return errJSON("INTERNAL_ERROR", err.Error())
+	}
+
+	return okJSON(map[string]interface{}{
+		"ok":        true,
+		"plaintext": plaintext,
+	})
+}
+
 // --- Crypto: Sign/Verify ---
 
 // SignPayload signs data with an Ed25519 private key.

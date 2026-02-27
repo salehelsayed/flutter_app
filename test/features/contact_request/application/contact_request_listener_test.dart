@@ -17,9 +17,11 @@ import 'package:flutter_app/features/p2p/domain/models/connection_state.dart';
 // Fakes
 // ---------------------------------------------------------------------------
 
-/// MockBridge that returns ok + valid for payload.verify by default.
+/// MockBridge that returns ok + valid for payload.verify by default,
+/// and handles contactrequest.decrypt for v2 tests.
 class _MockBridge extends Bridge {
   Map<String, dynamic> nextResponse = {'ok': true, 'valid': true};
+  Map<String, dynamic>? decryptResponse;
   bool shouldThrow = false;
 
   @override
@@ -36,6 +38,10 @@ class _MockBridge extends Bridge {
   @override
   Future<String> send(String message) async {
     if (shouldThrow) throw Exception('bridge error');
+    final req = jsonDecode(message) as Map<String, dynamic>;
+    if (req['cmd'] == 'contactrequest.decrypt' && decryptResponse != null) {
+      return jsonEncode(decryptResponse!);
+    }
     return jsonEncode(nextResponse);
   }
 }
@@ -504,6 +510,176 @@ void main() {
       );
       await Future.delayed(const Duration(milliseconds: 50));
       expect(streamDone, isTrue);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // v2 encrypted contact request
+  // ---------------------------------------------------------------------------
+  group('v2 encrypted', () {
+    ChatMessage _makeV2Message({
+      String peerId = _testPeerId,
+      String publicKey = _testPublicKey,
+      String? from,
+      String? mlkem,
+      String? msgId,
+    }) {
+      final payload = SplayTreeMap<String, dynamic>.from({
+        if (mlkem != null) 'mlkem': mlkem,
+        'ns': peerId,
+        'pk': publicKey,
+        'rv': '/dns4/rendezvous.example.com/tcp/4001/p2p/$peerId',
+        'sig': 'fakeSigBase64ForTesting',
+        'ts': '2024-06-15T12:00:00Z',
+        'un': 'TestUser',
+      });
+
+      final id = msgId ?? 'v2-msg-${DateTime.now().microsecondsSinceEpoch}';
+      final ts = DateTime.now().toUtc().toIso8601String();
+
+      final envelope = jsonEncode({
+        'type': 'contact_request',
+        'version': '2',
+        'msgId': id,
+        'ts': ts,
+        'encrypted': {
+          'ephemeralPublicKey': 'ephPubBase64',
+          'ciphertext': 'ctBase64',
+          'nonce': 'nonceBase64',
+        },
+      });
+
+      // Set up bridge decrypt to return the payload
+      bridge.decryptResponse = {'ok': true, 'plaintext': jsonEncode(payload)};
+
+      return ChatMessage(
+        from: from ?? peerId,
+        to: _testOwnPeerId,
+        content: envelope,
+        timestamp: DateTime.now().toUtc().toIso8601String(),
+        isIncoming: true,
+      );
+    }
+
+    test('emits ContactRequestModel for valid v2', () async {
+      final v2Listener = ContactRequestListener(
+        contactRequestStream: streamController.stream,
+        requestRepo: requestRepo,
+        contactRepo: contactRepo,
+        bridge: bridge,
+        getOwnPeerId: () => _testOwnPeerId,
+        getOwnPrivateKey: () async => 'ownPrivKeyBase64',
+      );
+      v2Listener.start();
+
+      final requests = <ContactRequestModel>[];
+      v2Listener.requestStream.listen(requests.add);
+
+      streamController.add(_makeV2Message());
+      await Future.delayed(const Duration(milliseconds: 100));
+
+      expect(requests.length, equals(1));
+      expect(requests.first.peerId, equals(_testPeerId));
+
+      v2Listener.dispose();
+    });
+
+    test('does not emit for v2 decryption failure', () async {
+      bridge.decryptResponse = {
+        'ok': false,
+        'errorCode': 'INTERNAL_ERROR',
+        'errorMessage': 'decryption failed',
+      };
+
+      final v2Listener = ContactRequestListener(
+        contactRequestStream: streamController.stream,
+        requestRepo: requestRepo,
+        contactRepo: contactRepo,
+        bridge: bridge,
+        getOwnPeerId: () => _testOwnPeerId,
+        getOwnPrivateKey: () async => 'ownPrivKeyBase64',
+      );
+      v2Listener.start();
+
+      final requests = <ContactRequestModel>[];
+      v2Listener.requestStream.listen(requests.add);
+
+      // Need to build the message manually since _makeV2Message sets decryptResponse
+      final envelope = jsonEncode({
+        'type': 'contact_request',
+        'version': '2',
+        'msgId': 'fail-msg-1',
+        'ts': DateTime.now().toUtc().toIso8601String(),
+        'encrypted': {
+          'ephemeralPublicKey': 'ephPub',
+          'ciphertext': 'ct',
+          'nonce': 'nonce',
+        },
+      });
+      streamController.add(ChatMessage(
+        from: _testPeerId,
+        to: _testOwnPeerId,
+        content: envelope,
+        timestamp: DateTime.now().toUtc().toIso8601String(),
+        isIncoming: true,
+      ));
+      await Future.delayed(const Duration(milliseconds: 100));
+
+      expect(requests, isEmpty);
+      v2Listener.dispose();
+    });
+
+    test('v1 still works without getOwnPrivateKey', () async {
+      // Default listener (no getOwnPrivateKey) should handle v1 fine
+      listener.start();
+
+      final requests = <ContactRequestModel>[];
+      listener.requestStream.listen(requests.add);
+
+      streamController.add(_makeContactRequestMessage());
+      await Future.delayed(const Duration(milliseconds: 100));
+
+      expect(requests.length, equals(1));
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // ReplayCache
+  // ---------------------------------------------------------------------------
+  group('ReplayCache', () {
+    test('bounded at maxSize entries', () {
+      final cache = ReplayCache(maxSize: 5, ttl: const Duration(hours: 25));
+
+      for (int i = 0; i < 10; i++) {
+        cache.add('msg-$i');
+      }
+
+      expect(cache.length, equals(5));
+      // Oldest entries should be evicted
+      expect(cache.contains('msg-0'), isFalse);
+      expect(cache.contains('msg-4'), isFalse);
+      // Most recent should be kept
+      expect(cache.contains('msg-9'), isTrue);
+      expect(cache.contains('msg-5'), isTrue);
+    });
+
+    test('evicts entries older than TTL', () {
+      final cache = ReplayCache(maxSize: 1000, ttl: Duration.zero);
+
+      cache.add('old-msg');
+      // TTL is 0, so the entry is immediately stale
+      expect(cache.contains('old-msg'), isFalse);
+    });
+
+    test('ids returns all cached entries', () {
+      final cache = ReplayCache(maxSize: 1000, ttl: const Duration(hours: 25));
+      cache.add('a');
+      cache.add('b');
+      cache.add('c');
+
+      final ids = cache.ids;
+      expect(ids, containsAll(['a', 'b', 'c']));
+      expect(ids.length, equals(3));
     });
   });
 }
