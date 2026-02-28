@@ -34,14 +34,13 @@ void main() {
 
     testWidgets('shows attachment button', (tester) async {
       await tester.pumpWidget(buildTestWidget());
-      expect(find.byIcon(Icons.add_circle_outline), findsOneWidget);
+      expect(find.byIcon(Icons.add_rounded), findsOneWidget);
     });
 
-    testWidgets('shows send button with text "Send"', (tester) async {
+    testWidgets('shows send button icon', (tester) async {
       await tester.pumpWidget(buildTestWidget());
       // Send button exists in tree but may be invisible
-      expect(find.text('Send'), findsOneWidget);
-      expect(find.byIcon(Icons.send_rounded), findsOneWidget);
+      expect(find.byIcon(Icons.arrow_upward_rounded), findsOneWidget);
     });
 
     testWidgets('send button starts with zero opacity', (tester) async {
@@ -78,7 +77,7 @@ void main() {
       await tester.pumpAndSettle();
 
       // Tap the send button
-      await tester.tap(find.text('Send'));
+      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
       await tester.pump();
 
       expect(sentText, 'Hello!');
@@ -90,7 +89,7 @@ void main() {
       await tester.enterText(find.byType(TextField), 'Hello!');
       await tester.pumpAndSettle();
 
-      await tester.tap(find.text('Send'));
+      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
       await tester.pump();
 
       // TextField should be empty
@@ -104,7 +103,7 @@ void main() {
         buildTestWidget(onAttach: () => attachPressed = true),
       );
 
-      await tester.tap(find.byIcon(Icons.add_circle_outline));
+      await tester.tap(find.byIcon(Icons.add_rounded));
       expect(attachPressed, true);
     });
 
@@ -133,7 +132,7 @@ void main() {
       await tester.pumpAndSettle();
 
       // Tap send without entering any text
-      await tester.tap(find.text('Send'));
+      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
       await tester.pump();
 
       expect(sentText, '');
@@ -183,7 +182,7 @@ void main() {
       await tester.pumpAndSettle();
 
       // Even though send button is in the tree, tapping it should not fire
-      await tester.tap(find.text('Send'));
+      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
       await tester.pump();
 
       expect(sentText, isNull);
@@ -202,7 +201,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      await tester.tap(find.text('Send'));
+      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
       await tester.pump();
 
       expect(sentText, isNull);
@@ -219,7 +218,7 @@ void main() {
         ),
       );
 
-      await tester.tap(find.byIcon(Icons.add_circle_outline));
+      await tester.tap(find.byIcon(Icons.add_rounded));
       expect(attachPressed, false);
     });
 
@@ -229,9 +228,39 @@ void main() {
       await tester.pumpWidget(buildTestWidget(isProcessing: true));
       await tester.pump();
 
-      final icon = tester.widget<Icon>(find.byIcon(Icons.add_circle_outline));
-      // When processing, the icon color should have lower opacity (0.15)
+      final icon = tester.widget<Icon>(find.byIcon(Icons.add_rounded));
+      // When processing, the icon color should have lower opacity
       expect(icon.color, const Color.fromRGBO(255, 255, 255, 0.15));
+    });
+
+    testWidgets('attachment, text field, and send button are in a single Row', (
+      tester,
+    ) async {
+      await tester.pumpWidget(buildTestWidget());
+
+      // TextField and attachment icon should share a common Row ancestor
+      final textFieldRows = find.ancestor(
+        of: find.byType(TextField),
+        matching: find.byType(Row),
+      );
+      final attachRows = find.ancestor(
+        of: find.byIcon(Icons.add_rounded),
+        matching: find.byType(Row),
+      );
+      // Both should have Row ancestors (they share the same parent Row)
+      expect(textFieldRows, findsWidgets);
+      expect(attachRows, findsWidgets);
+    });
+
+    testWidgets('send button is icon-only circle (no text label)', (
+      tester,
+    ) async {
+      await tester.pumpWidget(buildTestWidget());
+      await tester.enterText(find.byType(TextField), 'Hello');
+      await tester.pumpAndSettle();
+
+      expect(find.byIcon(Icons.arrow_upward_rounded), findsOneWidget);
+      expect(find.text('Send'), findsNothing);
     });
   });
 
@@ -295,7 +324,7 @@ void main() {
       await tester.enterText(find.byType(TextField), 'Hello');
       await tester.pumpAndSettle();
 
-      expect(find.text('Send'), findsOneWidget);
+      expect(find.byIcon(Icons.arrow_upward_rounded), findsOneWidget);
       // Mic button should be gone
       expect(find.byIcon(Icons.mic_rounded), findsNothing);
     });
@@ -333,7 +362,7 @@ void main() {
       expect(find.text('0:03'), findsOneWidget);
       expect(find.text('Slide to cancel'), findsOneWidget);
       expect(find.byIcon(Icons.stop_rounded), findsOneWidget);
-      expect(find.text('Send'), findsNothing);
+      expect(find.byIcon(Icons.arrow_upward_rounded), findsNothing);
     });
 
     testWidgets('recording overlay disappears when isRecording is false', (

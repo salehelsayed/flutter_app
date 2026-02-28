@@ -142,177 +142,172 @@ class _ComposeAreaState extends State<ComposeArea>
               stops: [0.0, 0.2],
             ),
           ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              // Recording overlay replaces text input when recording
-              if (widget.isRecording)
-                RecordingOverlay(
-                  elapsed: widget.recordingDuration,
-                  onCancel: widget.onRecordCancel ?? () {},
-                  amplitudeValues: widget.amplitudeValues,
-                )
-              else
-                // Text input
-                AnimatedContainer(
-                  duration: const Duration(milliseconds: 200),
-                  constraints: const BoxConstraints(
-                    minHeight: 44,
-                    maxHeight: 160,
-                  ),
-                  decoration: BoxDecoration(
-                    color: const Color.fromRGBO(255, 255, 255, 0.06),
-                    borderRadius: BorderRadius.circular(22),
-                    border: Border.all(
-                      color: _hasFocus
-                          ? const Color.fromRGBO(255, 255, 255, 0.20)
-                          : const Color.fromRGBO(255, 255, 255, 0.10),
-                    ),
-                    boxShadow: _hasFocus
-                        ? const [
-                            BoxShadow(
-                              color: Color.fromRGBO(255, 255, 255, 0.08),
-                              blurRadius: 0,
-                              spreadRadius: 1,
-                            ),
-                            BoxShadow(
-                              color: Color.fromRGBO(0, 0, 0, 0.3),
-                              blurRadius: 20,
-                              offset: Offset(0, 4),
-                            ),
-                          ]
-                        : null,
-                  ),
-                  child: TextField(
-                    controller: _controller,
-                    focusNode: _focusNode,
-                    maxLines: null,
-                    maxLength: maxMessageLength,
-                    enabled: !widget.isRecording,
-                    style: const TextStyle(
-                      fontSize: 15,
-                      color: Color.fromRGBO(255, 255, 255, 0.95),
-                      height: 1.5,
-                    ),
-                    decoration: InputDecoration(
-                      hintText: 'Write something...',
-                      hintStyle: TextStyle(
-                        fontSize: 15,
+              // Attachment button
+              Padding(
+                padding: const EdgeInsets.only(bottom: 3),
+                child: GestureDetector(
+                  onTap: widget.isProcessing || widget.isRecording
+                      ? null
+                      : widget.onAttach,
+                  behavior: HitTestBehavior.opaque,
+                  child: Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      color: Color.fromRGBO(
+                        255,
+                        255,
+                        255,
+                        widget.isProcessing ? 0.04 : 0.08,
+                      ),
+                      borderRadius: BorderRadius.circular(100),
+                      border: Border.all(
                         color: Color.fromRGBO(
                           255,
                           255,
                           255,
-                          _hasFocus ? 0.2 : 0.3,
+                          widget.isProcessing ? 0.06 : 0.15,
                         ),
                       ),
-                      border: InputBorder.none,
-                      counterText: '',
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 12,
+                    ),
+                    child: Center(
+                      child: Icon(
+                        Icons.add_rounded,
+                        size: 20,
+                        color: Color.fromRGBO(
+                          255,
+                          255,
+                          255,
+                          widget.isProcessing ? 0.15 : 0.5,
+                        ),
                       ),
                     ),
                   ),
                 ),
-              const SizedBox(height: 8),
-              // Action row
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  // Attachment button
-                  GestureDetector(
-                    onTap: widget.isProcessing || widget.isRecording
-                        ? null
-                        : widget.onAttach,
-                    behavior: HitTestBehavior.opaque,
-                    child: SizedBox(
-                      width: 44,
-                      height: 44,
-                      child: Center(
-                        child: Icon(
-                          Icons.add_circle_outline,
-                          size: 22,
-                          color: Color.fromRGBO(
-                            255,
-                            255,
-                            255,
-                            widget.isProcessing ? 0.15 : 0.4,
-                          ),
+              ),
+              const SizedBox(width: 8),
+              // Text input or recording overlay
+              Expanded(
+                child: widget.isRecording
+                    ? RecordingOverlay(
+                        elapsed: widget.recordingDuration,
+                        onCancel: widget.onRecordCancel ?? () {},
+                        amplitudeValues: widget.amplitudeValues,
+                      )
+                    : AnimatedContainer(
+                        duration: const Duration(milliseconds: 200),
+                        constraints: const BoxConstraints(
+                          minHeight: 44,
+                          maxHeight: 160,
                         ),
-                      ),
-                    ),
-                  ),
-                  // Length hint
-                  if (_controller.text.length > 2000)
-                    const Text(
-                      'Long letters are lovely',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: Color.fromRGBO(255, 255, 255, 0.25),
-                      ),
-                    ),
-                  // Mic button or Send button
-                  if (_shouldShowMicButton)
-                    VoiceRecordButton(
-                      onTapDown: widget.onRecordStart!,
-                      onTapUp: widget.onRecordStop!,
-                      onTapCancel: widget.onRecordCancel ?? () {},
-                      isRecording: widget.isRecording,
-                    )
-                  else
-                    // Send button
-                    AnimatedBuilder(
-                      animation: _sendButtonController,
-                      builder: (context, child) {
-                        return Opacity(
-                          opacity: _sendOpacity.value,
-                          child: Transform.scale(
-                            scale: _sendScale.value,
-                            child: child,
+                        decoration: BoxDecoration(
+                          color: const Color.fromRGBO(255, 255, 255, 0.06),
+                          borderRadius: BorderRadius.circular(22),
+                          border: Border.all(
+                            color: _hasFocus
+                                ? const Color.fromRGBO(255, 255, 255, 0.20)
+                                : const Color.fromRGBO(255, 255, 255, 0.10),
                           ),
-                        );
-                      },
-                      child: GestureDetector(
-                        onTap:
-                            !widget.isProcessing &&
-                                (_hasText || widget.hasAttachments)
-                            ? _onSendPressed
-                            : null,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 20,
-                            vertical: 10,
+                          boxShadow: _hasFocus
+                              ? const [
+                                  BoxShadow(
+                                    color:
+                                        Color.fromRGBO(255, 255, 255, 0.08),
+                                    blurRadius: 0,
+                                    spreadRadius: 1,
+                                  ),
+                                  BoxShadow(
+                                    color: Color.fromRGBO(0, 0, 0, 0.3),
+                                    blurRadius: 20,
+                                    offset: Offset(0, 4),
+                                  ),
+                                ]
+                              : null,
+                        ),
+                        child: TextField(
+                          controller: _controller,
+                          focusNode: _focusNode,
+                          maxLines: null,
+                          maxLength: maxMessageLength,
+                          enabled: !widget.isRecording,
+                          style: const TextStyle(
+                            fontSize: 15,
+                            color: Color.fromRGBO(255, 255, 255, 0.95),
+                            height: 1.5,
                           ),
-                          decoration: BoxDecoration(
-                            color: const Color.fromRGBO(29, 185, 84, 0.15),
-                            borderRadius: BorderRadius.circular(100),
-                            border: Border.all(
-                              color: const Color.fromRGBO(29, 185, 84, 0.3),
+                          decoration: InputDecoration(
+                            hintText: 'Write something...',
+                            hintStyle: TextStyle(
+                              fontSize: 15,
+                              color: Color.fromRGBO(
+                                255,
+                                255,
+                                255,
+                                _hasFocus ? 0.2 : 0.3,
+                              ),
+                            ),
+                            border: InputBorder.none,
+                            counterText: '',
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 12,
                             ),
                           ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: const [
-                              Icon(
-                                Icons.send_rounded,
-                                size: 18,
+                        ),
+                      ),
+              ),
+              const SizedBox(width: 8),
+              // Mic button or Send button
+              Padding(
+                padding: const EdgeInsets.only(bottom: 3),
+                child: _shouldShowMicButton
+                    ? VoiceRecordButton(
+                        onTapDown: widget.onRecordStart!,
+                        onTapUp: widget.onRecordStop!,
+                        onTapCancel: widget.onRecordCancel ?? () {},
+                        isRecording: widget.isRecording,
+                      )
+                    : AnimatedBuilder(
+                        animation: _sendButtonController,
+                        builder: (context, child) {
+                          return Opacity(
+                            opacity: _sendOpacity.value,
+                            child: Transform.scale(
+                              scale: _sendScale.value,
+                              child: child,
+                            ),
+                          );
+                        },
+                        child: GestureDetector(
+                          onTap: !widget.isProcessing &&
+                                  (_hasText || widget.hasAttachments)
+                              ? _onSendPressed
+                              : null,
+                          child: Container(
+                            width: 36,
+                            height: 36,
+                            decoration: BoxDecoration(
+                              color:
+                                  const Color.fromRGBO(29, 185, 84, 0.15),
+                              borderRadius: BorderRadius.circular(100),
+                              border: Border.all(
+                                color:
+                                    const Color.fromRGBO(29, 185, 84, 0.3),
+                              ),
+                            ),
+                            child: const Center(
+                              child: Icon(
+                                Icons.arrow_upward_rounded,
+                                size: 20,
                                 color: Color(0xFF1DB954),
                               ),
-                              SizedBox(width: 6),
-                              Text(
-                                'Send',
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w600,
-                                  color: Color(0xFF1DB954),
-                                ),
-                              ),
-                            ],
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                ],
               ),
             ],
           ),

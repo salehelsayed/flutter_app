@@ -1,5 +1,6 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/feed_colors.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 
 /// A feed card representing a successful new connection.
@@ -86,29 +87,12 @@ class _ConnectionCardState extends State<ConnectionCard>
           child: ClipRRect(
             borderRadius: BorderRadius.circular(34),
             child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+              filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
               child: DecoratedBox(
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(34),
-                  border: Border.all(
-                    color: const Color.fromRGBO(255, 255, 255, 0.14),
-                  ),
-                  gradient: const LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [
-                      Color.fromRGBO(35, 38, 48, 0.82),
-                      Color.fromRGBO(21, 24, 30, 0.90),
-                      Color.fromRGBO(15, 17, 22, 0.94),
-                    ],
-                  ),
-                  boxShadow: const [
-                    BoxShadow(
-                      color: Color.fromRGBO(0, 0, 0, 0.5),
-                      blurRadius: 30,
-                      offset: Offset(0, 18),
-                    ),
-                  ],
+                  color: FeedColors.cardBg,
+                  border: Border.all(color: FeedColors.cardBorder),
                 ),
                 child: Stack(
                   fit: StackFit.expand,
@@ -119,13 +103,13 @@ class _ConnectionCardState extends State<ConnectionCard>
                           decoration: BoxDecoration(
                             gradient: RadialGradient(
                               center: const Alignment(0, -0.15),
-                              radius: 0.9,
+                              radius: 0.96,
                               colors: [
-                                const Color(0x3023A74B),
-                                const Color(0x1223A74B),
+                                const Color(0x331DB954),
+                                const Color(0x141DB954),
                                 Colors.transparent,
                               ],
-                              stops: const [0.0, 0.52, 1.0],
+                              stops: const [0.0, 0.46, 1.0],
                             ),
                           ),
                         ),
@@ -328,12 +312,13 @@ class _ConnectionCardState extends State<ConnectionCard>
       child: ElevatedButton(
         onPressed: widget.isBlocked ? null : widget.onSendMessage,
         style: ElevatedButton.styleFrom(
-          backgroundColor: const Color.fromRGBO(45, 155, 91, 0.26),
-          foregroundColor: const Color(0xFF56C672),
+          backgroundColor: const Color.fromRGBO(29, 185, 84, 0.15),
+          foregroundColor: const Color(0xFF62D984),
           elevation: 0,
           shadowColor: Colors.transparent,
+          surfaceTintColor: Colors.transparent,
           side: BorderSide(
-            color: const Color(0xFF2DB65F).withValues(alpha: 0.55),
+            color: const Color(0xFF2DB65F).withValues(alpha: 0.38),
           ),
           shape: const StadiumBorder(),
           padding: const EdgeInsets.symmetric(horizontal: 18),

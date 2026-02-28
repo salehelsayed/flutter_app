@@ -62,8 +62,8 @@ class _VoiceRecordButtonState extends State<VoiceRecordButton> {
       onLongPressEnd: (_) => _onLongPressEnd(),
       onLongPressCancel: _onLongPressCancel,
       child: Container(
-        width: 44,
-        height: 44,
+        width: 36,
+        height: 36,
         decoration: BoxDecoration(
           color: const Color.fromRGBO(29, 185, 84, 0.15),
           borderRadius: BorderRadius.circular(100),
@@ -72,7 +72,7 @@ class _VoiceRecordButtonState extends State<VoiceRecordButton> {
         child: Center(
           child: Icon(
             widget.isRecording ? Icons.stop_rounded : Icons.mic_rounded,
-            size: 22,
+            size: 20,
             color: const Color(0xFF1DB954),
           ),
         ),
