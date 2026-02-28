@@ -184,25 +184,26 @@ class CollapsedModeCardBody extends StatelessWidget {
     final isSent = sessionReply != null || !previewMsg.isIncoming;
     final label = isSent ? 'You' : thread.contactUsername;
     final labelColor = isSent
-        ? FeedColors.accentTeal.withValues(alpha: 0.70)
-        : const Color.fromRGBO(255, 255, 255, 0.70);
+        ? FeedColors.accentTeal
+        : Colors.white;
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.baseline,
+        textBaseline: TextBaseline.alphabetic,
         children: [
           Text(
             '$label: ',
             style: TextStyle(
-              fontSize: 12,
+              fontSize: 14,
               fontWeight: FontWeight.w600,
               color: labelColor,
             ),
           ),
           if (isMediaOnly)
             Padding(
-              padding: const EdgeInsets.only(right: 4, top: 2),
+              padding: const EdgeInsets.only(right: 4),
               child: Icon(
                 mediaPreviewIcon(previewMsg.media),
                 size: 14,
@@ -217,8 +218,7 @@ class CollapsedModeCardBody extends StatelessWidget {
               style: const TextStyle(
                 fontSize: 14,
                 fontWeight: FontWeight.w400,
-                color: Color.fromRGBO(255, 255, 255, 0.85),
-                height: 1.5,
+                color: Colors.white,
               ),
             ),
           ),
