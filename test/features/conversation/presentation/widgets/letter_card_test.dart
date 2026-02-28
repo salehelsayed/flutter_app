@@ -13,6 +13,10 @@ void main() {
     String text = 'Hello, this is a test message.',
     String time = '3:30 PM',
     String? transport,
+    List<MessageReaction> reactions = const [],
+    String? ownPeerId,
+    VoidCallback? onLongPress,
+    void Function(String emoji)? onReactionTap,
   }) {
     return MaterialApp(
       home: Scaffold(
@@ -25,6 +29,10 @@ void main() {
             isIncoming: isIncoming,
             status: status,
             transport: transport,
+            reactions: reactions,
+            ownPeerId: ownPeerId,
+            onLongPress: onLongPress,
+            onReactionTap: onReactionTap,
           ),
         ),
       ),
@@ -208,59 +216,12 @@ void main() {
     });
 
     group('reactions', () {
-      testWidgets('renders ReactionDisplay when reactions provided',
-          (tester) async {
-        await tester.pumpWidget(
-          MaterialApp(
-            home: Scaffold(
-              body: SingleChildScrollView(
-                child: LetterCard(
-                  senderPeerId: '12D3KooWTestPeerId1234567890',
-                  senderName: 'Alice',
-                  text: 'Hello',
-                  time: '3:30 PM',
-                  isIncoming: true,
-                  ownPeerId: 'my-peer',
-                  reactions: const [
-                    MessageReaction(
-                      id: 'r1',
-                      messageId: 'msg-1',
-                      emoji: '👍',
-                      senderPeerId: 'sender-1',
-                      timestamp: '2026-02-27T10:00:00.000Z',
-                      createdAt: '2026-02-27T10:00:01.000Z',
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        );
-        expect(find.byType(ReactionDisplay), findsOneWidget);
-        expect(find.text('👍'), findsOneWidget);
-      });
-
-      testWidgets('hidden when reactions empty', (tester) async {
-        await tester.pumpWidget(buildTestWidget());
-        expect(find.byType(ReactionDisplay), findsNothing);
-      });
-
       testWidgets('fires onLongPress on long-press', (tester) async {
         var pressed = false;
         await tester.pumpWidget(
-          MaterialApp(
-            home: Scaffold(
-              body: SingleChildScrollView(
-                child: LetterCard(
-                  senderPeerId: '12D3KooWTestPeerId1234567890',
-                  senderName: 'Alice',
-                  text: 'Hello',
-                  time: '3:30 PM',
-                  isIncoming: true,
-                  onLongPress: () => pressed = true,
-                ),
-              ),
-            ),
+          buildTestWidget(
+            text: 'Hello',
+            onLongPress: () => pressed = true,
           ),
         );
         await tester.longPress(find.text('Hello'));
@@ -270,34 +231,270 @@ void main() {
       testWidgets('fires onReactionTap when chip tapped', (tester) async {
         String? tappedEmoji;
         await tester.pumpWidget(
-          MaterialApp(
-            home: Scaffold(
-              body: SingleChildScrollView(
-                child: LetterCard(
-                  senderPeerId: '12D3KooWTestPeerId1234567890',
-                  senderName: 'Alice',
-                  text: 'Hello',
-                  time: '3:30 PM',
-                  isIncoming: true,
-                  ownPeerId: 'my-peer',
-                  reactions: const [
-                    MessageReaction(
-                      id: 'r1',
-                      messageId: 'msg-1',
-                      emoji: '👍',
-                      senderPeerId: 'sender-1',
-                      timestamp: '2026-02-27T10:00:00.000Z',
-                      createdAt: '2026-02-27T10:00:01.000Z',
-                    ),
-                  ],
-                  onReactionTap: (emoji) => tappedEmoji = emoji,
-                ),
+          buildTestWidget(
+            text: 'Hello',
+            ownPeerId: 'my-peer',
+            reactions: const [
+              MessageReaction(
+                id: 'r1',
+                messageId: 'msg-1',
+                emoji: '👍',
+                senderPeerId: 'sender-1',
+                timestamp: '2026-02-27T10:00:00.000Z',
+                createdAt: '2026-02-27T10:00:01.000Z',
               ),
-            ),
+            ],
+            onReactionTap: (emoji) => tappedEmoji = emoji,
           ),
         );
         await tester.tap(find.text('👍'));
         expect(tappedEmoji, '👍');
+      });
+    });
+
+    group('inline reactions', () {
+      const kReactions = [
+        MessageReaction(
+          id: 'r1',
+          messageId: 'msg-1',
+          emoji: '👍',
+          senderPeerId: 'sender-1',
+          timestamp: '2026-02-27T10:00:00.000Z',
+          createdAt: '2026-02-27T10:00:01.000Z',
+        ),
+      ];
+
+      testWidgets('reactions and timestamp share the same Row',
+          (tester) async {
+        await tester.pumpWidget(
+          buildTestWidget(
+            text: 'Hello',
+            ownPeerId: 'my-peer',
+            reactions: kReactions,
+          ),
+        );
+
+        final emojiElement = find.text('👍').evaluate().first;
+        final timeElement = find.text('3:30 PM').evaluate().first;
+
+        Row? emojiRow;
+        emojiElement.visitAncestorElements((element) {
+          if (element.widget is Row) {
+            emojiRow = element.widget as Row;
+            return false;
+          }
+          return true;
+        });
+
+        Row? timeRow;
+        timeElement.visitAncestorElements((element) {
+          if (element.widget is Row) {
+            timeRow = element.widget as Row;
+            return false;
+          }
+          return true;
+        });
+
+        expect(emojiRow, isNotNull, reason: 'Emoji should have a Row ancestor');
+        expect(timeRow, isNotNull, reason: 'Time should have a Row ancestor');
+        expect(emojiRow, same(timeRow),
+            reason: 'Emoji and time should share the same Row');
+      });
+
+      testWidgets('no reactions still right-aligns timestamp in footer Row',
+          (tester) async {
+        await tester.pumpWidget(buildTestWidget(text: 'Hello'));
+
+        final timeElement = find.text('3:30 PM').evaluate().first;
+        Row? timeRow;
+        timeElement.visitAncestorElements((element) {
+          if (element.widget is Row) {
+            timeRow = element.widget as Row;
+            return false;
+          }
+          return true;
+        });
+        expect(timeRow, isNotNull, reason: 'Timestamp should be inside a Row');
+      });
+
+      testWidgets('no standalone ReactionDisplay when reactions provided',
+          (tester) async {
+        await tester.pumpWidget(
+          buildTestWidget(
+            text: 'Hello',
+            ownPeerId: 'my-peer',
+            reactions: kReactions,
+          ),
+        );
+        expect(find.text('👍'), findsOneWidget);
+        expect(find.byType(ReactionDisplay), findsNothing);
+      });
+
+      testWidgets('multiple reaction emojis render inline with counts',
+          (tester) async {
+        const reactions = [
+          MessageReaction(
+            id: 'r1',
+            messageId: 'msg-1',
+            emoji: '👍',
+            senderPeerId: 'sender-1',
+            timestamp: '2026-02-27T10:00:00.000Z',
+            createdAt: '2026-02-27T10:00:01.000Z',
+          ),
+          MessageReaction(
+            id: 'r2',
+            messageId: 'msg-1',
+            emoji: '👍',
+            senderPeerId: 'sender-2',
+            timestamp: '2026-02-27T10:01:00.000Z',
+            createdAt: '2026-02-27T10:01:01.000Z',
+          ),
+          MessageReaction(
+            id: 'r3',
+            messageId: 'msg-1',
+            emoji: '❤️',
+            senderPeerId: 'sender-3',
+            timestamp: '2026-02-27T10:02:00.000Z',
+            createdAt: '2026-02-27T10:02:01.000Z',
+          ),
+        ];
+
+        await tester.pumpWidget(
+          buildTestWidget(
+            text: 'Great',
+            ownPeerId: 'my-peer',
+            reactions: reactions,
+          ),
+        );
+
+        expect(find.text('👍 2'), findsOneWidget);
+        expect(find.text('❤️'), findsOneWidget);
+        expect(find.text('3:30 PM'), findsOneWidget);
+        expect(find.byType(ReactionDisplay), findsNothing);
+      });
+
+      testWidgets('own reaction chip has teal border inline', (tester) async {
+        const reactions = [
+          MessageReaction(
+            id: 'r1',
+            messageId: 'msg-1',
+            emoji: '🎉',
+            senderPeerId: 'my-peer',
+            timestamp: '2026-02-27T10:00:00.000Z',
+            createdAt: '2026-02-27T10:00:01.000Z',
+          ),
+        ];
+
+        await tester.pumpWidget(
+          buildTestWidget(
+            text: 'Hooray',
+            ownPeerId: 'my-peer',
+            reactions: reactions,
+          ),
+        );
+
+        final containers =
+            tester.widgetList<Container>(find.byType(Container));
+        final tealBorderChip = containers.where((c) {
+          final decoration = c.decoration;
+          if (decoration is BoxDecoration && decoration.border is Border) {
+            final border = decoration.border as Border;
+            return border.top.color ==
+                const Color.fromRGBO(78, 205, 196, 0.30);
+          }
+          return false;
+        });
+        expect(tealBorderChip.isNotEmpty, isTrue,
+            reason: 'Own reaction chip should have teal border');
+        expect(find.byType(ReactionDisplay), findsNothing);
+      });
+
+      testWidgets(
+          'sent message with reactions and delivery status renders inline',
+          (tester) async {
+        await tester.pumpWidget(
+          buildTestWidget(
+            text: 'Sent msg',
+            time: '4:00 PM',
+            isIncoming: false,
+            status: 'delivered',
+            ownPeerId: 'my-peer',
+            reactions: kReactions,
+          ),
+        );
+
+        expect(find.text('👍'), findsOneWidget);
+        expect(find.text('4:00 PM'), findsOneWidget);
+        expect(find.byIcon(Icons.done_all_rounded), findsOneWidget);
+
+        // Verify emoji and time share the same Row
+        final emojiElement = find.text('👍').evaluate().first;
+        final timeElement = find.text('4:00 PM').evaluate().first;
+
+        Row? emojiRow;
+        emojiElement.visitAncestorElements((element) {
+          if (element.widget is Row) {
+            emojiRow = element.widget as Row;
+            return false;
+          }
+          return true;
+        });
+
+        Row? timeRow;
+        timeElement.visitAncestorElements((element) {
+          if (element.widget is Row) {
+            timeRow = element.widget as Row;
+            return false;
+          }
+          return true;
+        });
+
+        expect(emojiRow, same(timeRow),
+            reason: 'Emoji, time, and status should share the same Row');
+      });
+
+      testWidgets('timestamp appears in footer row, not in header',
+          (tester) async {
+        await tester.pumpWidget(
+          buildTestWidget(text: 'Hello'),
+        );
+
+        final timeElement = find.text('3:30 PM').evaluate().first;
+
+        // Walk up to find the nearest Row ancestor of the timestamp
+        Row? timeRow;
+        Element? timeRowElement;
+        timeElement.visitAncestorElements((element) {
+          if (element.widget is Row) {
+            timeRow = element.widget as Row;
+            timeRowElement = element;
+            return false;
+          }
+          return true;
+        });
+
+        expect(timeRow, isNotNull);
+
+        // The time's Row should NOT contain a UserAvatar descendant
+        // (that would mean it's in the header row)
+        final avatarInTimeRow = find.descendant(
+          of: find.byWidget(timeRow!),
+          matching: find.byType(SizedBox).first,
+        );
+        // Check there's no 32x32 avatar in the same row
+        bool hasAvatar = false;
+        timeRowElement!.visitChildElements(
+          (child) {
+            child.visitChildElements((grandchild) {
+              if (grandchild.widget is SizedBox) {
+                final sb = grandchild.widget as SizedBox;
+                if (sb.width == 32 && sb.height == 32) hasAvatar = true;
+              }
+            });
+          },
+        );
+        expect(hasAvatar, isFalse,
+            reason: 'Timestamp Row should not contain the avatar (header)');
       });
     });
   });
