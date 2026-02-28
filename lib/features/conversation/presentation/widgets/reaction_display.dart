@@ -9,12 +9,14 @@ class ReactionDisplay extends StatelessWidget {
   final List<MessageReaction> reactions;
   final String ownPeerId;
   final void Function(String emoji)? onReactionTap;
+  final EdgeInsetsGeometry padding;
 
   const ReactionDisplay({
     super.key,
     required this.reactions,
     required this.ownPeerId,
     this.onReactionTap,
+    this.padding = const EdgeInsets.fromLTRB(16, 0, 16, 12),
   });
 
   @override
@@ -28,7 +30,7 @@ class ReactionDisplay extends StatelessWidget {
     }
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      padding: padding,
       child: Wrap(
         spacing: 6,
         runSpacing: 4,
