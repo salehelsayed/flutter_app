@@ -175,7 +175,7 @@ void main() {
       expect(result[0].isUnreadCard, isFalse);
     });
 
-    test('24-hour gap splits into separate thread cards', () {
+    test('24-hour gap keeps single card per contact', () {
       final result = groupMessagesIntoThreads(
         allMessages: [
           _msg(
@@ -199,9 +199,11 @@ void main() {
         contactUsernames: {'peer-A': 'Alice'},
       );
 
-      expect(result.length, 2);
-      expect(result[0].messages[0].text, 'Today'); // newest first
-      expect(result[1].messages[0].text, 'Yesterday');
+      // One card per contact, all messages included
+      expect(result.length, 1);
+      expect(result[0].messages.length, 2);
+      expect(result[0].messages[0].text, 'Yesterday');
+      expect(result[0].messages[1].text, 'Today');
     });
 
     test('unread/active sort before read/replied', () {

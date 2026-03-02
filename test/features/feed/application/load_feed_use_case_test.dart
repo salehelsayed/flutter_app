@@ -224,7 +224,7 @@ void main() {
       expect(threadItems[0].contactUsername, 'Alice');
     });
 
-    test('same contact with 24hr gap produces separate thread stacks', () async {
+    test('same contact with 24hr gap keeps single card', () async {
       final contacts = [
         _makeContact('peer-A', 'Alice', '2026-02-09T10:00:00.000Z'),
       ];
@@ -240,7 +240,7 @@ void main() {
             isIncoming: true,
             readAt: '2026-02-08T08:30:00.000Z',
           ),
-          // 26 hour gap → new thread
+          // 26 hour gap — still one card per contact
           _makeMessage(
             id: 'msg-2',
             contactPeerId: 'peer-A',
@@ -258,14 +258,12 @@ void main() {
       );
 
       final threadItems = result.whereType<ThreadFeedItem>().toList();
-      // Two threads split by 24hr gap: unread + read
-      expect(threadItems.length, 2);
-      final unread = threadItems.where((t) => t.isUnreadCard).toList();
-      final read = threadItems.where((t) => !t.isUnreadCard).toList();
-      expect(unread.length, 1);
-      expect(unread[0].messages[0].text, 'Unread message');
-      expect(read.length, 1);
-      expect(read[0].messages[0].text, 'Read message');
+      // One card per contact, unread takes precedence
+      expect(threadItems.length, 1);
+      expect(threadItems[0].isUnreadCard, isTrue);
+      expect(threadItems[0].messages.length, 2);
+      expect(threadItems[0].messages[0].text, 'Read message');
+      expect(threadItems[0].messages[1].text, 'Unread message');
     });
 
     test('sorts all items newest-first across types', () async {

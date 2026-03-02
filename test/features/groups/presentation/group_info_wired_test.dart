@@ -221,7 +221,7 @@ void main() {
       expect(find.text('Open Info'), findsOneWidget);
     });
 
-    testWidgets('remove member calls bridge and refreshes member list',
+    testWidgets('remove member updates config and refreshes member list',
         (tester) async {
       final groupRepo = InMemoryGroupRepository();
       final group = makeAdminGroup();
@@ -234,13 +234,7 @@ void main() {
       await groupRepo.saveMember(m1);
       await groupRepo.saveMember(m2);
 
-      final bridge = FakeBridge(initialResponses: {
-        'group:rotateKey': {
-          'ok': true,
-          'keyGeneration': 2,
-          'encryptedKey': 'new-key-base64',
-        },
-      });
+      final bridge = FakeBridge();
 
       await tester.pumpWidget(
         MaterialApp(
@@ -260,20 +254,15 @@ void main() {
       expect(find.text('Alice'), findsOneWidget);
 
       // Tap the remove icon button on Alice's row
-      // The GroupMemberRow has a remove_circle_outline icon for admin
       final removeButtons = find.byIcon(Icons.remove_circle_outline);
-      // There should be at least one (only non-admin members get the button,
-      // but all members get it when isAdmin=true and onRemoveMember is set).
       expect(removeButtons, findsWidgets);
 
-      // Tap the first remove button (which corresponds to the first
-      // non-admin member row — depends on render order). We'll tap
-      // the last one which should be Alice's since Admin renders first.
       await tester.tap(removeButtons.last);
       await pumpFrames(tester, count: 20);
 
-      // Verify bridge received group:rotateKey command
-      expect(bridge.commandLog, contains('group:rotateKey'));
+      // Verify bridge received group:updateConfig (not rotateKey)
+      expect(bridge.commandLog, contains('group:updateConfig'));
+      expect(bridge.commandLog, isNot(contains('group:rotateKey')));
 
       // Alice should disappear after the member list refresh
       expect(find.text('Alice'), findsNothing);

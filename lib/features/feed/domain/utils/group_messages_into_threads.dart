@@ -1,13 +1,12 @@
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
 import 'package:flutter_app/features/feed/domain/utils/format_message_time.dart';
-import 'package:flutter_app/features/feed/domain/utils/split_thread_by_time_gap.dart';
 
-/// Groups messages into [ThreadFeedItem]s by contact and 24-hour time gap.
+/// Groups messages into [ThreadFeedItem]s — one per contact.
 ///
 /// Includes both sent and received messages. Each contact's messages are
-/// sorted by timestamp and split into thread chunks using [splitThreadByTimeGap].
-/// For each chunk, derives [ConversationState] from read status and direction.
+/// sorted by timestamp. Derives [ConversationState] from read status and
+/// direction across ALL messages for that contact.
 ///
 /// Sorting: unread/active first (newest-first), then read/replied (newest-first).
 List<ThreadFeedItem> groupMessagesIntoThreads({
@@ -32,77 +31,68 @@ List<ThreadFeedItem> groupMessagesIntoThreads({
       ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
     final username = contactUsernames[peerId] ?? 'Unknown';
 
-    // Split into thread chunks by 24-hour gap
-    final chunks = splitThreadByTimeGap(msgs);
+    // Derive conversation state from ALL messages for this contact
+    final hasUnreadIncoming =
+        msgs.any((m) => m.isIncoming && m.readAt == null);
+    final hasSentMessages = msgs.any((m) => !m.isIncoming);
+    final unreadIncomingCount =
+        msgs.where((m) => m.isIncoming && m.readAt == null).length;
 
-    for (var chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
-      final chunk = chunks[chunkIndex];
-      if (chunk.isEmpty) continue;
+    final ConversationState state;
+    if (hasUnreadIncoming && hasSentMessages) {
+      state = ConversationState.active;
+    } else if (hasUnreadIncoming) {
+      state = ConversationState.unread;
+    } else if (hasSentMessages) {
+      state = ConversationState.replied;
+    } else {
+      state = ConversationState.read;
+    }
 
-      // Derive conversation state
-      final hasUnreadIncoming = chunk.any((m) => m.isIncoming && m.readAt == null);
-      final hasSentMessages = chunk.any((m) => !m.isIncoming);
-      final unreadIncomingCount =
-          chunk.where((m) => m.isIncoming && m.readAt == null).length;
+    // Find last replied timestamp
+    DateTime? lastRepliedAt;
+    if (hasSentMessages) {
+      final sentMessages = msgs.where((m) => !m.isIncoming).toList();
+      sentMessages.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+      lastRepliedAt = DateTime.tryParse(sentMessages.last.timestamp);
+    }
 
-      final ConversationState state;
-      if (hasUnreadIncoming && hasSentMessages) {
-        state = ConversationState.active;
-      } else if (hasUnreadIncoming) {
-        state = ConversationState.unread;
-      } else if (hasSentMessages) {
-        state = ConversationState.replied;
-      } else {
-        state = ConversationState.read;
-      }
+    final latestTs =
+        DateTime.tryParse(msgs.last.timestamp) ?? DateTime.now();
 
-      // Find last replied timestamp
-      DateTime? lastRepliedAt;
-      if (hasSentMessages) {
-        final sentMessages = chunk.where((m) => !m.isIncoming).toList();
-        sentMessages.sort((a, b) => a.timestamp.compareTo(b.timestamp));
-        lastRepliedAt =
-            DateTime.tryParse(sentMessages.last.timestamp);
-      }
+    final threadMessages = msgs
+        .map((m) => ThreadMessage(
+              id: m.id,
+              text: m.text,
+              time: formatMessageTime(m.timestamp),
+              timestamp: DateTime.tryParse(m.timestamp) ?? DateTime.now(),
+              isUnread: m.isIncoming && m.readAt == null,
+              isIncoming: m.isIncoming,
+              status: m.isIncoming ? null : m.status,
+              quotedMessageId: m.quotedMessageId,
+              media: m.media,
+            ))
+        .toList();
 
-      final latestTs =
-          DateTime.tryParse(chunk.last.timestamp) ?? DateTime.now();
+    final item = ThreadFeedItem(
+      id: 'thread_$peerId',
+      timestamp: latestTs,
+      contactPeerId: peerId,
+      contactUsername: username,
+      unreadCount: unreadIncomingCount,
+      isUnreadCard: state == ConversationState.unread ||
+          state == ConversationState.active,
+      conversationState: state,
+      lastRepliedAt: lastRepliedAt,
+      messages: threadMessages,
+      isBlocked: contactBlocked[peerId] ?? false,
+    );
 
-      final threadMessages = chunk
-          .map((m) => ThreadMessage(
-                id: m.id,
-                text: m.text,
-                time: formatMessageTime(m.timestamp),
-                timestamp:
-                    DateTime.tryParse(m.timestamp) ?? DateTime.now(),
-                isUnread: m.isIncoming && m.readAt == null,
-                isIncoming: m.isIncoming,
-                status: m.isIncoming ? null : m.status,
-                quotedMessageId: m.quotedMessageId,
-                media: m.media,
-              ))
-          .toList();
-
-      final item = ThreadFeedItem(
-        id: 'thread_${peerId}_$chunkIndex',
-        timestamp: latestTs,
-        contactPeerId: peerId,
-        contactUsername: username,
-        unreadCount: unreadIncomingCount,
-        isUnreadCard: state == ConversationState.unread ||
-            state == ConversationState.active,
-        conversationState: state,
-        lastRepliedAt: lastRepliedAt,
-        messages: threadMessages,
-        isBlocked: contactBlocked[peerId] ?? false,
-      );
-
-      if (state == ConversationState.unread ||
-          state == ConversationState.active) {
-        aboveDivider.add(item);
-      } else {
-        belowDivider.add(item);
-      }
+    if (state == ConversationState.unread ||
+        state == ConversationState.active) {
+      aboveDivider.add(item);
+    } else {
+      belowDivider.add(item);
     }
   }
 

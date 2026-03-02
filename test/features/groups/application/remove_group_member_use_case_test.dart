@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/features/groups/application/remove_group_member_use_case.dart';
@@ -8,39 +6,6 @@ import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
-
-/// A bridge that returns an error for group:rotateKey and records all commands.
-class _FailRotateKeyBridge extends FakeBridge {
-  @override
-  Future<String> send(String message) async {
-    sendCallCount++;
-    lastSentMessage = message;
-    sentMessages.add(message);
-
-    final parsed = jsonDecode(message) as Map<String, dynamic>;
-    final cmd = parsed['cmd'] as String?;
-    lastCommand = cmd;
-    if (cmd != null) commandLog.add(cmd);
-
-    if (cmd == 'group:rotateKey') {
-      return jsonEncode({
-        'ok': false,
-        'errorCode': 'ROTATE_FAILED',
-        'errorMessage': 'Simulated rotation failure',
-      });
-    }
-
-    return jsonEncode({'ok': true});
-  }
-}
-
-/// A bridge that records the order of all commands it receives.
-class _OrderTrackingBridge extends FakeBridge {
-  // We track calls from the use case by observing the timing of repo
-  // operations vs bridge calls. Since the use case calls removeMember
-  // on the repo (in-memory, synchronous-ish) before calling the bridge,
-  // we verify via commandLog that group:rotateKey was invoked.
-}
 
 void main() {
   late FakeBridge bridge;
@@ -64,7 +29,9 @@ void main() {
     await groupRepo.saveMember(GroupMember(
       groupId: 'group-1',
       peerId: 'peer-admin',
+      username: 'Admin',
       role: MemberRole.admin,
+      publicKey: 'pk-admin',
       joinedAt: DateTime.now().toUtc(),
     ));
     await groupRepo.saveMember(GroupMember(
@@ -72,48 +39,20 @@ void main() {
       peerId: 'peer-to-remove',
       username: 'RemoveMe',
       role: MemberRole.writer,
+      publicKey: 'pk-remove',
       joinedAt: DateTime.now().toUtc(),
     ));
-
-    bridge.responses['group:rotateKey'] = {
-      'ok': true,
-      'keyGeneration': 1,
-      'encryptedKey': 'new-rotated-key',
-    };
-  });
-
-  test('removes member successfully', () async {
-    final keyInfo = await removeGroupMember(
-      bridge: bridge,
-      groupRepo: groupRepo,
+    await groupRepo.saveMember(GroupMember(
       groupId: 'group-1',
-      memberPeerId: 'peer-to-remove',
-    );
-
-    expect(keyInfo, isNotNull);
-
-    final member = await groupRepo.getMember('group-1', 'peer-to-remove');
-    expect(member, isNull);
+      peerId: 'peer-bystander',
+      username: 'Bystander',
+      role: MemberRole.writer,
+      publicKey: 'pk-bystander',
+      joinedAt: DateTime.now().toUtc(),
+    ));
   });
 
-  test('rotates key after removal', () async {
-    final keyInfo = await removeGroupMember(
-      bridge: bridge,
-      groupRepo: groupRepo,
-      groupId: 'group-1',
-      memberPeerId: 'peer-to-remove',
-    );
-
-    expect(keyInfo.keyGeneration, 1);
-    expect(keyInfo.encryptedKey, 'new-rotated-key');
-
-    // Verify key is saved in repo
-    final savedKey = await groupRepo.getLatestKey('group-1');
-    expect(savedKey, isNotNull);
-    expect(savedKey!.keyGeneration, 1);
-  });
-
-  test('calls bridge rotate key command', () async {
+  test('removes member from DB', () async {
     await removeGroupMember(
       bridge: bridge,
       groupRepo: groupRepo,
@@ -121,7 +60,36 @@ void main() {
       memberPeerId: 'peer-to-remove',
     );
 
-    expect(bridge.commandLog, contains('group:rotateKey'));
+    final member = await groupRepo.getMember('group-1', 'peer-to-remove');
+    expect(member, isNull);
+
+    // Other members remain
+    final admin = await groupRepo.getMember('group-1', 'peer-admin');
+    expect(admin, isNotNull);
+    final bystander = await groupRepo.getMember('group-1', 'peer-bystander');
+    expect(bystander, isNotNull);
+  });
+
+  test('calls group:updateConfig to update Go validator', () async {
+    await removeGroupMember(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      groupId: 'group-1',
+      memberPeerId: 'peer-to-remove',
+    );
+
+    expect(bridge.commandLog, contains('group:updateConfig'));
+  });
+
+  test('does NOT call group:rotateKey', () async {
+    await removeGroupMember(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      groupId: 'group-1',
+      memberPeerId: 'peer-to-remove',
+    );
+
+    expect(bridge.commandLog, isNot(contains('group:rotateKey')));
   });
 
   test('throws when caller is not admin', () async {
@@ -159,57 +127,19 @@ void main() {
     );
   });
 
-  test('handles bridge rotateKey failure gracefully', () async {
-    final failBridge = _FailRotateKeyBridge();
-
-    // removeGroupMember should throw because rotateKey returned ok=false.
-    // But the member should already have been removed from the repo
-    // because removal happens before key rotation.
-    Object? caughtError;
-    try {
-      await removeGroupMember(
-        bridge: failBridge,
-        groupRepo: groupRepo,
-        groupId: 'group-1',
-        memberPeerId: 'peer-to-remove',
-      );
-    } catch (e) {
-      caughtError = e;
-    }
-
-    // Verify the error propagated.
-    expect(caughtError, isA<Exception>());
-    expect(caughtError.toString(), contains('Simulated rotation failure'));
-
-    // Member should still be removed from repo (removal happens before
-    // the bridge call).
-    final member = await groupRepo.getMember('group-1', 'peer-to-remove');
-    expect(member, isNull);
-  });
-
-  test('removes member from repo before rotating key', () async {
-    // Use a standard FakeBridge but verify ordering via commandLog.
-    // The use case first removes the member from the repo, then calls
-    // group:rotateKey on the bridge.
-    final trackBridge = _OrderTrackingBridge();
-    trackBridge.responses['group:rotateKey'] = {
-      'ok': true,
-      'keyGeneration': 2,
-      'encryptedKey': 'rotated-key-v2',
-    };
-
+  test('removes member from DB before calling bridge', () async {
     await removeGroupMember(
-      bridge: trackBridge,
+      bridge: bridge,
       groupRepo: groupRepo,
       groupId: 'group-1',
       memberPeerId: 'peer-to-remove',
     );
 
-    // Member is already removed from repo.
+    // Member removed
     final member = await groupRepo.getMember('group-1', 'peer-to-remove');
     expect(member, isNull);
 
-    // Bridge was called for rotateKey after the removal.
-    expect(trackBridge.commandLog, equals(['group:rotateKey']));
+    // Bridge was called for updateConfig
+    expect(bridge.commandLog, equals(['group:updateConfig']));
   });
 }

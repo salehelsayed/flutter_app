@@ -279,4 +279,216 @@ void main() {
       noBridgeListener.dispose();
     });
   });
+
+  group('member_removed system messages', () {
+    test('member_removed removes other member and calls updateConfig',
+        () async {
+      // Verify the member exists first
+      final before = await groupRepo.getMember('group-1', 'peer-sender');
+      expect(before, isNotNull);
+
+      listener.start(sourceController.stream);
+
+      final sysText = jsonEncode({
+        '__sys': 'member_removed',
+        'member': {
+          'peerId': 'peer-sender',
+          'username': 'Sender',
+        },
+        'groupConfig': {
+          'name': 'Test Group',
+          'groupType': 'chat',
+          'members': [
+            {
+              'peerId': 'peer-admin',
+              'role': 'admin',
+              'publicKey': 'pk-admin',
+            },
+          ],
+          'createdBy': 'peer-admin',
+          'createdAt': DateTime.now().toUtc().toIso8601String(),
+        },
+      });
+
+      sourceController.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-admin',
+        'senderUsername': 'Admin',
+        'keyEpoch': 0,
+        'text': sysText,
+        'timestamp': DateTime.now().toUtc().toIso8601String(),
+      });
+
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      // System message should NOT be saved as a regular message
+      expect(msgRepo.count, 0);
+
+      // Member should be removed from the group repo
+      final after = await groupRepo.getMember('group-1', 'peer-sender');
+      expect(after, isNull);
+
+      // Bridge should have received group:updateConfig
+      expect(bridge.commandLog, contains('group:updateConfig'));
+    });
+
+    test('member_removed is not emitted on groupMessageStream', () async {
+      listener.start(sourceController.stream);
+
+      final messages = <GroupMessage>[];
+      final subscription = listener.groupMessageStream.listen(messages.add);
+
+      final sysText = jsonEncode({
+        '__sys': 'member_removed',
+        'member': {
+          'peerId': 'peer-sender',
+          'username': 'Sender',
+        },
+        'groupConfig': {
+          'name': 'Test Group',
+          'groupType': 'chat',
+          'members': [],
+          'createdBy': 'peer-admin',
+          'createdAt': DateTime.now().toUtc().toIso8601String(),
+        },
+      });
+
+      sourceController.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-admin',
+        'senderUsername': 'Admin',
+        'keyEpoch': 0,
+        'text': sysText,
+        'timestamp': DateTime.now().toUtc().toIso8601String(),
+      });
+
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      // No message emitted to the UI stream
+      expect(messages, isEmpty);
+
+      await subscription.cancel();
+    });
+
+    test('self-removal calls leaveGroup and emits on groupRemovedStream',
+        () async {
+      // Create a listener that knows its own peerId
+      final selfListener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+        getSelfPeerId: () async => 'peer-self',
+      );
+
+      // Add self as a member of the group
+      await groupRepo.saveMember(GroupMember(
+        groupId: 'group-1',
+        peerId: 'peer-self',
+        username: 'Me',
+        role: MemberRole.writer,
+        joinedAt: DateTime.now().toUtc(),
+      ));
+
+      selfListener.start(sourceController.stream);
+
+      final removedGroups = <String>[];
+      final sub = selfListener.groupRemovedStream.listen(removedGroups.add);
+
+      final sysText = jsonEncode({
+        '__sys': 'member_removed',
+        'member': {
+          'peerId': 'peer-self',
+          'username': 'Me',
+        },
+        'groupConfig': {
+          'name': 'Test Group',
+          'groupType': 'chat',
+          'members': [
+            {'peerId': 'peer-admin', 'role': 'admin'},
+          ],
+          'createdBy': 'peer-admin',
+          'createdAt': DateTime.now().toUtc().toIso8601String(),
+        },
+      });
+
+      sourceController.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-admin',
+        'senderUsername': 'Admin',
+        'keyEpoch': 0,
+        'text': sysText,
+        'timestamp': DateTime.now().toUtc().toIso8601String(),
+      });
+
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      // Bridge should have received group:leave
+      expect(bridge.commandLog, contains('group:leave'));
+
+      // Group should be deleted from local DB
+      final group = await groupRepo.getGroup('group-1');
+      expect(group, isNull);
+
+      // groupRemovedStream should have emitted the group ID
+      expect(removedGroups, ['group-1']);
+
+      // No regular message saved
+      expect(msgRepo.count, 0);
+
+      await sub.cancel();
+      selfListener.dispose();
+    });
+
+    test('removal of other member does NOT call leaveGroup', () async {
+      // Create a listener that knows its own peerId
+      final selfListener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+        getSelfPeerId: () async => 'peer-self',
+      );
+      selfListener.start(sourceController.stream);
+
+      final sysText = jsonEncode({
+        '__sys': 'member_removed',
+        'member': {
+          'peerId': 'peer-sender',
+          'username': 'Sender',
+        },
+        'groupConfig': {
+          'name': 'Test Group',
+          'groupType': 'chat',
+          'members': [
+            {'peerId': 'peer-admin', 'role': 'admin'},
+            {'peerId': 'peer-self', 'role': 'writer'},
+          ],
+          'createdBy': 'peer-admin',
+          'createdAt': DateTime.now().toUtc().toIso8601String(),
+        },
+      });
+
+      sourceController.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-admin',
+        'senderUsername': 'Admin',
+        'keyEpoch': 0,
+        'text': sysText,
+        'timestamp': DateTime.now().toUtc().toIso8601String(),
+      });
+
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      // Bridge should NOT have received group:leave
+      expect(bridge.commandLog, isNot(contains('group:leave')));
+
+      // Bridge should have received group:updateConfig
+      expect(bridge.commandLog, contains('group:updateConfig'));
+
+      // Group should still exist
+      final group = await groupRepo.getGroup('group-1');
+      expect(group, isNotNull);
+
+      selfListener.dispose();
+    });
+  });
 }
