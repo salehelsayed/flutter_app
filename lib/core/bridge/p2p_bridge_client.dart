@@ -733,7 +733,14 @@ Future<Map<String, dynamic>> callP2PMessageSend(
   emitFlowEvent(
     layer: 'FL',
     event: 'P2P_MESSAGE_SEND_RESPONSE',
-    details: {'ok': response['ok'], 'sent': response['sent']},
+    details: {
+      'ok': response['ok'],
+      'sent': response['sent'],
+      'acked': response['acked'],
+      'hasReply': response['reply'] != null,
+      'errorCode': response['errorCode'],
+      'errorMessage': response['errorMessage'],
+    },
   );
 
   return response;

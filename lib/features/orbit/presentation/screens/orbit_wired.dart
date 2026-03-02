@@ -42,6 +42,10 @@ import 'package:flutter_app/features/contacts/application/unblock_contact_use_ca
 import 'package:flutter_app/features/orbit/presentation/widgets/confirmation_dialog.dart';
 import 'package:flutter_app/features/orbit/application/load_orbit_data_use_case.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_friend.dart';
+import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/qr_code/presentation/screens/qr_display_wired.dart';
 import 'package:flutter_app/features/qr_code/presentation/screens/qr_scanner_wired.dart';
 import 'orbit_screen.dart';
@@ -66,6 +70,10 @@ class OrbitWired extends StatefulWidget {
   final AudioRecorderService? audioRecorderService;
   final ReactionRepository? reactionRepository;
   final ReactionListener? reactionListener;
+  final GroupRepository? groupRepository;
+  final GroupMessageRepository? groupMessageRepository;
+  final GroupMessageListener? groupMessageListener;
+  final GroupInviteListener? groupInviteListener;
 
   const OrbitWired({
     super.key,
@@ -85,6 +93,10 @@ class OrbitWired extends StatefulWidget {
     this.audioRecorderService,
     this.reactionRepository,
     this.reactionListener,
+    this.groupRepository,
+    this.groupMessageRepository,
+    this.groupMessageListener,
+    this.groupInviteListener,
   });
 
   @override
@@ -550,6 +562,10 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           audioRecorderService: widget.audioRecorderService,
           reactionRepository: widget.reactionRepository,
           reactionListener: widget.reactionListener,
+          groupRepository: widget.groupRepository,
+          groupMessageRepository: widget.groupMessageRepository,
+          groupMessageListener: widget.groupMessageListener,
+          groupInviteListener: widget.groupInviteListener,
         ),
       ),
     );

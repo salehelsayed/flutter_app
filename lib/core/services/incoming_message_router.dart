@@ -17,6 +17,7 @@ class IncomingMessageRouter {
   final _chatMessageController = StreamController<ChatMessage>.broadcast();
   final _profileUpdateController = StreamController<ChatMessage>.broadcast();
   final _reactionController = StreamController<ChatMessage>.broadcast();
+  final _groupInviteController = StreamController<ChatMessage>.broadcast();
   final _unknownController = StreamController<ChatMessage>.broadcast();
 
   IncomingMessageRouter({required this.p2pService});
@@ -34,6 +35,9 @@ class IncomingMessageRouter {
 
   /// Stream of incoming message_reaction messages.
   Stream<ChatMessage> get reactionStream => _reactionController.stream;
+
+  /// Stream of incoming group_invite messages.
+  Stream<ChatMessage> get groupInviteStream => _groupInviteController.stream;
 
   /// Stream of messages with unknown or unparseable types.
   Stream<ChatMessage> get unknownMessageStream => _unknownController.stream;
@@ -64,11 +68,36 @@ class IncomingMessageRouter {
   }
 
   void _route(ChatMessage message) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'MESSAGE_ROUTER_RECEIVED',
+      details: {
+        'from': message.from.length > 10
+            ? message.from.substring(0, 10)
+            : message.from,
+        'isIncoming': message.isIncoming,
+        'contentLength': message.content.length,
+      },
+    );
+
     if (!message.isIncoming) return;
 
     try {
       final json = jsonDecode(message.content) as Map<String, dynamic>;
       final type = json['type'] as String?;
+      final version = json['version'] as String?;
+
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'MESSAGE_ROUTER_ROUTING',
+        details: {
+          'type': type,
+          'version': version,
+          'from': message.from.length > 10
+              ? message.from.substring(0, 10)
+              : message.from,
+        },
+      );
 
       switch (type) {
         case 'contact_request':
@@ -79,6 +108,18 @@ class IncomingMessageRouter {
           _profileUpdateController.add(message);
         case 'message_reaction':
           _reactionController.add(message);
+        case 'group_invite':
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'MESSAGE_ROUTER_GROUP_INVITE_DISPATCHED',
+            details: {
+              'from': message.from.length > 10
+                  ? message.from.substring(0, 10)
+                  : message.from,
+              'hasListeners': _groupInviteController.hasListener,
+            },
+          );
+          _groupInviteController.add(message);
         case 'delivery_receipt':
           // Legacy envelope type kept for backward compatibility.
           // Delivery status is now sender-side inbox/direct semantics only.
@@ -91,11 +132,17 @@ class IncomingMessageRouter {
           );
           _unknownController.add(message);
       }
-    } catch (_) {
+    } catch (e) {
       emitFlowEvent(
         layer: 'FL',
         event: 'MESSAGE_ROUTER_PARSE_ERROR',
-        details: {'from': message.from},
+        details: {
+          'from': message.from,
+          'error': e.toString(),
+          'contentPreview': message.content.length > 100
+              ? message.content.substring(0, 100)
+              : message.content,
+        },
       );
       _unknownController.add(message);
     }
@@ -116,6 +163,7 @@ class IncomingMessageRouter {
     _chatMessageController.close();
     _profileUpdateController.close();
     _reactionController.close();
+    _groupInviteController.close();
     _unknownController.close();
   }
 }

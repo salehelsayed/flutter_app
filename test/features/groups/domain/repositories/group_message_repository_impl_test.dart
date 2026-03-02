@@ -1,0 +1,261 @@
+import 'package:flutter_test/flutter_test.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:flutter_app/core/database/migrations/018_group_messages_tables.dart';
+import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart';
+import 'package:flutter_app/features/groups/domain/models/group_message.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_message_repository_impl.dart';
+
+void main() {
+  late Database db;
+  late GroupMessageRepositoryImpl repo;
+
+  setUpAll(() {
+    sqfliteFfiInit();
+    databaseFactory = databaseFactoryFfi;
+  });
+
+  setUp(() async {
+    db = await openDatabase(inMemoryDatabasePath, version: 1);
+    await runGroupMessagesTablesMigration(db);
+
+    repo = GroupMessageRepositoryImpl(
+      dbInsertGroupMessage: (row) => dbInsertGroupMessage(db, row),
+      dbLoadGroupMessagesPage: (groupId, {int limit = 50, int offset = 0}) =>
+          dbLoadGroupMessagesPage(db, groupId, limit: limit, offset: offset),
+      dbLoadGroupMessage: (id) => dbLoadGroupMessage(db, id),
+      dbLoadLatestGroupMessage: (groupId) =>
+          dbLoadLatestGroupMessage(db, groupId),
+      dbUpdateGroupMessageStatus: (id, status) =>
+          dbUpdateGroupMessageStatus(db, id, status),
+      dbCountGroupMessages: (groupId) => dbCountGroupMessages(db, groupId),
+      dbCountUnreadGroupMessages: (groupId) =>
+          dbCountUnreadGroupMessages(db, groupId),
+      dbCountTotalUnreadGroupMessages: () =>
+          dbCountTotalUnreadGroupMessages(db),
+      dbMarkGroupMessagesAsRead: (groupId) =>
+          dbMarkGroupMessagesAsRead(db, groupId),
+      dbDeleteGroupMessage: (id) => dbDeleteGroupMessage(db, id),
+    );
+  });
+
+  tearDown(() async {
+    await db.close();
+  });
+
+  final now = DateTime.utc(2026, 1, 15, 12, 0, 0);
+
+  GroupMessage makeMessage({
+    String id = 'msg-001',
+    String groupId = 'group-1',
+    String senderPeerId = 'peer-sender',
+    String? senderUsername = 'Alice',
+    String text = 'Hello group',
+    DateTime? timestamp,
+    int keyGeneration = 0,
+    String status = 'sent',
+    bool isIncoming = true,
+    DateTime? readAt,
+    DateTime? createdAt,
+  }) {
+    return GroupMessage(
+      id: id,
+      groupId: groupId,
+      senderPeerId: senderPeerId,
+      senderUsername: senderUsername,
+      text: text,
+      timestamp: timestamp ?? now,
+      keyGeneration: keyGeneration,
+      status: status,
+      isIncoming: isIncoming,
+      readAt: readAt,
+      createdAt: createdAt ?? now,
+    );
+  }
+
+  group('saveMessage and getMessage', () {
+    test('round-trip preserves all fields', () async {
+      final msg = makeMessage();
+      await repo.saveMessage(msg);
+
+      final result = await repo.getMessage('msg-001');
+      expect(result, isNotNull);
+      expect(result!.id, 'msg-001');
+      expect(result.groupId, 'group-1');
+      expect(result.text, 'Hello group');
+      expect(result.senderUsername, 'Alice');
+    });
+
+    test('returns null for non-existent', () async {
+      final result = await repo.getMessage('non-existent');
+      expect(result, isNull);
+    });
+  });
+
+  group('getMessagesPage', () {
+    test('returns messages in chronological order', () async {
+      await repo.saveMessage(makeMessage(
+        id: 'msg-1',
+        timestamp: DateTime.utc(2026, 1, 1),
+      ));
+      await repo.saveMessage(makeMessage(
+        id: 'msg-2',
+        timestamp: DateTime.utc(2026, 1, 2),
+      ));
+      await repo.saveMessage(makeMessage(
+        id: 'msg-3',
+        timestamp: DateTime.utc(2026, 1, 3),
+      ));
+
+      final page = await repo.getMessagesPage('group-1');
+      expect(page.length, 3);
+      expect(page[0].id, 'msg-1');
+      expect(page[1].id, 'msg-2');
+      expect(page[2].id, 'msg-3');
+    });
+
+    test('respects limit parameter', () async {
+      for (var i = 1; i <= 5; i++) {
+        await repo.saveMessage(makeMessage(
+          id: 'msg-$i',
+          timestamp: DateTime.utc(2026, 1, i),
+        ));
+      }
+
+      final page = await repo.getMessagesPage('group-1', limit: 3);
+      expect(page.length, 3);
+    });
+  });
+
+  group('getLatestMessage', () {
+    test('returns null when no messages', () async {
+      final result = await repo.getLatestMessage('group-1');
+      expect(result, isNull);
+    });
+
+    test('returns the most recent message', () async {
+      await repo.saveMessage(makeMessage(
+        id: 'msg-old',
+        timestamp: DateTime.utc(2026, 1, 1),
+      ));
+      await repo.saveMessage(makeMessage(
+        id: 'msg-new',
+        timestamp: DateTime.utc(2026, 1, 2),
+      ));
+
+      final result = await repo.getLatestMessage('group-1');
+      expect(result!.id, 'msg-new');
+    });
+  });
+
+  group('updateMessageStatus', () {
+    test('updates the status field', () async {
+      await repo.saveMessage(makeMessage(status: 'sent'));
+
+      await repo.updateMessageStatus('msg-001', 'delivered');
+
+      final result = await repo.getMessage('msg-001');
+      expect(result!.status, 'delivered');
+    });
+  });
+
+  group('getMessageCount', () {
+    test('returns correct count', () async {
+      await repo.saveMessage(makeMessage(id: 'msg-1'));
+      await repo.saveMessage(makeMessage(id: 'msg-2'));
+
+      final count = await repo.getMessageCount('group-1');
+      expect(count, 2);
+    });
+  });
+
+  group('getUnreadCount', () {
+    test('counts only unread incoming messages', () async {
+      await repo.saveMessage(makeMessage(
+        id: 'msg-unread',
+        isIncoming: true,
+        readAt: null,
+      ));
+      await repo.saveMessage(makeMessage(
+        id: 'msg-read',
+        isIncoming: true,
+        readAt: DateTime.utc(2026, 1, 15, 13),
+      ));
+      await repo.saveMessage(makeMessage(
+        id: 'msg-out',
+        isIncoming: false,
+        readAt: null,
+      ));
+
+      final count = await repo.getUnreadCount('group-1');
+      expect(count, 1);
+    });
+  });
+
+  group('getTotalUnreadCount', () {
+    test('counts across all groups', () async {
+      await repo.saveMessage(makeMessage(
+        id: 'msg-g1',
+        groupId: 'group-1',
+        isIncoming: true,
+        readAt: null,
+      ));
+      await repo.saveMessage(makeMessage(
+        id: 'msg-g2',
+        groupId: 'group-2',
+        isIncoming: true,
+        readAt: null,
+      ));
+
+      final count = await repo.getTotalUnreadCount();
+      expect(count, 2);
+    });
+  });
+
+  group('markAsRead', () {
+    test('marks unread incoming messages as read', () async {
+      await repo.saveMessage(makeMessage(
+        id: 'msg-unread',
+        isIncoming: true,
+        readAt: null,
+      ));
+
+      await repo.markAsRead('group-1');
+
+      final result = await repo.getMessage('msg-unread');
+      expect(result!.readAt, isNotNull);
+    });
+
+    test('does not mark outgoing messages', () async {
+      await repo.saveMessage(makeMessage(
+        id: 'msg-out',
+        isIncoming: false,
+        readAt: null,
+      ));
+
+      await repo.markAsRead('group-1');
+
+      final result = await repo.getMessage('msg-out');
+      expect(result!.readAt, isNull);
+    });
+  });
+
+  group('deleteMessage', () {
+    test('removes the message', () async {
+      await repo.saveMessage(makeMessage());
+      await repo.deleteMessage('msg-001');
+
+      final result = await repo.getMessage('msg-001');
+      expect(result, isNull);
+    });
+
+    test('does not affect other messages', () async {
+      await repo.saveMessage(makeMessage(id: 'msg-1'));
+      await repo.saveMessage(makeMessage(id: 'msg-2'));
+
+      await repo.deleteMessage('msg-1');
+
+      expect(await repo.getMessage('msg-1'), isNull);
+      expect(await repo.getMessage('msg-2'), isNotNull);
+    });
+  });
+}

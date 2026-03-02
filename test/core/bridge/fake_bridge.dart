@@ -22,6 +22,9 @@ class FakeBridge implements Bridge {
   /// Ordered log of all command names sent to the bridge.
   final List<String> commandLog = [];
 
+  /// Ordered log of all raw JSON messages sent to the bridge.
+  final List<String> sentMessages = [];
+
   // Last arguments
   String? lastSentMessage;
   String? lastCommand;
@@ -52,6 +55,7 @@ class FakeBridge implements Bridge {
   Future<String> send(String message) async {
     sendCallCount++;
     lastSentMessage = message;
+    sentMessages.add(message);
 
     if (throwOnSend) {
       throw Exception(throwOnSendMessage ?? 'FakeBridge: send error');
@@ -107,6 +111,9 @@ class FakeBridge implements Bridge {
   @override
   void Function(List<String> listenAddresses, List<String> circuitAddresses)?
       onAddressesUpdated;
+
+  @override
+  void Function(Map<String, dynamic>)? onGroupMessageReceived;
 }
 
 /// A [FakeBridge] that passes plaintext through encrypt/decrypt transparently.
@@ -119,14 +126,18 @@ class FakeBridge implements Bridge {
 class PassthroughCryptoBridge extends FakeBridge {
   @override
   Future<String> send(String message) async {
-    sendCallCount++;
-    lastSentMessage = message;
-
+    // Peek at the command to intercept encrypt/decrypt
     final parsed = jsonDecode(message) as Map<String, dynamic>;
     final cmd = parsed['cmd'] as String?;
-    lastCommand = cmd;
 
     if (cmd == 'message.encrypt') {
+      // Track (same bookkeeping as FakeBridge.send)
+      sendCallCount++;
+      lastSentMessage = message;
+      sentMessages.add(message);
+      lastCommand = cmd;
+      commandLog.add(cmd!);
+
       final payload = parsed['payload'] as Map<String, dynamic>;
       return jsonEncode({
         'ok': true,
@@ -137,6 +148,12 @@ class PassthroughCryptoBridge extends FakeBridge {
     }
 
     if (cmd == 'message.decrypt') {
+      sendCallCount++;
+      lastSentMessage = message;
+      sentMessages.add(message);
+      lastCommand = cmd;
+      commandLog.add(cmd!);
+
       final payload = parsed['payload'] as Map<String, dynamic>;
       return jsonEncode({
         'ok': true,
@@ -144,6 +161,7 @@ class PassthroughCryptoBridge extends FakeBridge {
       });
     }
 
+    // Delegate to FakeBridge for all other commands
     return super.send(message);
   }
 }

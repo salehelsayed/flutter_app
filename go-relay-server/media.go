@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/network"
@@ -24,8 +23,6 @@ const (
 	mediaCleanupInterval = 10 * time.Minute
 	mediaDataDir         = "/data/media"
 )
-
-var activeMediaStreams atomic.Int64
 
 // --- Media metadata ---
 
@@ -93,8 +90,12 @@ func (ms *MediaStore) cleanupExpired() {
 
 	for id, meta := range ms.index {
 		if meta.CreatedAt < cutoff {
+			size := meta.Size
 			ms.removeLocked(id)
 			removed++
+			mediaExpiredCounter.Inc()
+			mediaDeletedCounter.WithLabelValues("ttl_cleanup").Inc()
+			mediaDeletedBytesCounter.WithLabelValues("ttl_cleanup").Add(float64(size))
 		}
 	}
 
@@ -143,6 +144,10 @@ func (ms *MediaStore) store(meta *mediaMeta) {
 		// Remove oldest entries beyond the limit
 		toRemove := ids[:len(ids)-maxMediaPerPeer]
 		for _, id := range toRemove {
+			if m := ms.index[id]; m != nil {
+				mediaDeletedCounter.WithLabelValues("peer_cap").Inc()
+				mediaDeletedBytesCounter.WithLabelValues("peer_cap").Add(float64(m.Size))
+			}
 			ms.removeLocked(id)
 		}
 		log.Printf("[MEDIA] Pruned %d blob(s) for peer %s", len(toRemove), meta.To[:min(20, len(meta.To))])
@@ -232,24 +237,30 @@ type mediaResponse struct {
 
 func HandleMediaStream(s network.Stream, media *MediaStore, profile *ProfileStore) {
 	start := time.Now()
-	current := activeMediaStreams.Add(1)
+	activeStreams.WithLabelValues("media").Inc()
+	streamResult := "ok"
 	defer func() {
-		activeMediaStreams.Add(-1)
+		activeStreams.WithLabelValues("media").Dec()
+		streamDuration.WithLabelValues("media", streamResult).Observe(time.Since(start).Seconds())
 		log.Printf("[MEDIA] stream handled in %s", time.Since(start))
 	}()
 	defer s.Close()
 
 	remotePeer := s.Conn().RemotePeer().String()
-	log.Printf("[MEDIA] Incoming stream from %s (active=%d)", remotePeer[:min(20, len(remotePeer))], current)
+	log.Printf("[MEDIA] Incoming stream from %s", remotePeer[:min(20, len(remotePeer))])
 
 	requestBytes, err := readFrame(s)
 	if err != nil {
+		streamResult = "error"
+		streamErrorsCounter.WithLabelValues("media", "read").Inc()
 		log.Printf("[MEDIA] Read error from %s: %v", remotePeer[:min(20, len(remotePeer))], err)
 		return
 	}
 
 	var req mediaRequest
 	if err := json.Unmarshal(requestBytes, &req); err != nil {
+		streamResult = "error"
+		streamErrorsCounter.WithLabelValues("media", "decode").Inc()
 		log.Printf("[MEDIA] JSON decode error: %v", err)
 		writeMediaResponse(s, mediaResponse{Status: "ERROR", Error: "invalid JSON"})
 		return
@@ -329,6 +340,8 @@ func handleMediaUpload(s network.Stream, media *MediaStore, remotePeer string, r
 		CreatedAt: time.Now().UnixMilli(),
 	}
 	media.store(meta)
+	mediaUploadedCounter.Inc()
+	mediaUploadedBytesCounter.Add(float64(written))
 
 	writeMediaResponse(s, mediaResponse{Status: "OK", ID: req.ID})
 	log.Printf("[MEDIA] Uploaded blob %s (%d bytes) from %s to %s",
@@ -374,9 +387,13 @@ func handleMediaDownload(s network.Stream, media *MediaStore, remotePeer string,
 		log.Printf("[MEDIA] Download stream error for %s: %v", req.ID, err)
 		return
 	}
+	mediaDownloadedCounter.Inc()
+	mediaDownloadedBytesCounter.Add(float64(written))
 	log.Printf("[MEDIA] Downloaded blob %s (%d bytes) to %s", req.ID, written, remotePeer[:min(20, len(remotePeer))])
 
 	// Auto-delete after successful download — server is a dumb pipe, not storage
+	mediaDeletedCounter.WithLabelValues("auto_download").Inc()
+	mediaDeletedBytesCounter.WithLabelValues("auto_download").Add(float64(meta.Size))
 	media.remove(req.ID)
 	log.Printf("[MEDIA] Auto-deleted blob %s after download", req.ID)
 }
@@ -398,6 +415,8 @@ func handleMediaDelete(s network.Stream, media *MediaStore, remotePeer string, r
 		return
 	}
 
+	mediaDeletedCounter.WithLabelValues("explicit").Inc()
+	mediaDeletedBytesCounter.WithLabelValues("explicit").Add(float64(meta.Size))
 	media.remove(req.ID)
 	writeMediaResponse(s, mediaResponse{Status: "OK"})
 	log.Printf("[MEDIA] Deleted blob %s for %s", req.ID, remotePeer[:min(20, len(remotePeer))])
@@ -412,10 +431,12 @@ func handleMediaList(s network.Stream, media *MediaStore, remotePeer string) {
 func writeMediaResponse(s network.Stream, resp mediaResponse) {
 	data, err := json.Marshal(resp)
 	if err != nil {
+		streamErrorsCounter.WithLabelValues("media", "write").Inc()
 		log.Printf("[MEDIA] JSON encode error: %v", err)
 		return
 	}
 	if err := writeFrame(s, data); err != nil {
+		streamErrorsCounter.WithLabelValues("media", "write").Inc()
 		log.Printf("[MEDIA] Write error: %v", err)
 	}
 }

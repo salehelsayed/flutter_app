@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"runtime"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -19,6 +19,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/relay"
 	ma "github.com/multiformats/go-multiaddr"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 // Same private key as the JS server — produces the same Peer ID.
@@ -39,8 +40,6 @@ const (
 	wssPort    = 4001 // Announced WSS port (via nginx)
 	quicPort   = 4002 // New: direct QUIC for mobile clients
 )
-
-var totalConnected atomic.Int64
 
 func main() {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -89,6 +88,7 @@ func main() {
 	}
 	push := NewPushService(ctx, fcmPath)
 	inbox := NewInboxStore(push)
+	groupInbox := NewGroupInboxStore(maxMessagesPerGroup, groupMessageTTL)
 	media := NewMediaStore(mediaDataDir)
 	media.StartCleanup(ctx)
 	profile := NewProfileStore(profileDataDir)
@@ -98,11 +98,25 @@ func main() {
 		HandleRendezvousStream(s, store)
 	})
 	h.SetStreamHandler(InboxProtocol, func(s network.Stream) {
-		HandleInboxStream(s, inbox)
+		HandleInboxStream(s, inbox, groupInbox)
 	})
 	h.SetStreamHandler(MediaProtocol, func(s network.Stream) {
 		HandleMediaStream(s, media, profile)
 	})
+
+	// Start periodic group inbox prune (every 1 hour).
+	go func() {
+		ticker := time.NewTicker(1 * time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				groupInbox.Prune()
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
 
 	// Subscribe to connection events
 	sub, err := h.EventBus().Subscribe([]interface{}{
@@ -116,11 +130,15 @@ func main() {
 			switch e := ev.(type) {
 			case event.EvtPeerConnectednessChanged:
 				if e.Connectedness == network.Connected {
-					current := totalConnected.Add(1)
-					logPeerConnected(e.Peer, inbox, current)
+					connectionsActive.Inc()
+					connectionsCounter.Inc()
+					conns := len(h.Network().Peers())
+					logPeerConnected(e.Peer, inbox, int64(conns))
 				} else if e.Connectedness == network.NotConnected {
-					current := totalConnected.Add(-1)
-					log.Printf("[NODE] Peer disconnected: %s (total=%d)", shortPeerId(e.Peer), current)
+					connectionsActive.Dec()
+					disconnectionsCounter.Inc()
+					conns := len(h.Network().Peers())
+					log.Printf("[NODE] Peer disconnected: %s (total=%d)", shortPeerId(e.Peer), conns)
 				}
 			}
 		}
@@ -147,8 +165,18 @@ func main() {
 	log.Printf("  Push:       %s", push.Status())
 	log.Println()
 
+	// Prometheus metrics endpoint on :2112
+	go func() {
+		mux := http.NewServeMux()
+		mux.Handle("/metrics", promhttp.Handler())
+		log.Println("[METRICS] Serving Prometheus metrics on :2112/metrics")
+		if err := http.ListenAndServe(":2112", mux); err != nil {
+			log.Printf("[METRICS] HTTP server error: %v", err)
+		}
+	}()
+
 	// Periodic stats
-	go logStatsPeriodically(ctx, h, inbox, store, media, profile)
+	go logStatsPeriodically(ctx, h, inbox, groupInbox, store, media, profile)
 
 	// Wait for shutdown signal
 	sigCh := make(chan os.Signal, 1)
@@ -174,7 +202,7 @@ func logPeerConnected(p peer.ID, inbox *InboxStore, total int64) {
 	}
 }
 
-func logStatsPeriodically(ctx context.Context, h host.Host, inbox *InboxStore, rz *RendezvousStore, media *MediaStore, profile *ProfileStore) {
+func logStatsPeriodically(ctx context.Context, h host.Host, inbox *InboxStore, groupInbox *GroupInboxStore, rz *RendezvousStore, media *MediaStore, profile *ProfileStore) {
 	ticker := time.NewTicker(60 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -185,15 +213,30 @@ func logStatsPeriodically(ctx context.Context, h host.Host, inbox *InboxStore, r
 			inboxPeers, inboxMsgs := inbox.Stats()
 			tokenCount := inbox.push.TokenCount()
 			mediaBlobs, mediaDiskMB := media.Stats()
-			profileCount, profileDiskMB := profile.Stats()
+			pCount, pDiskMB := profile.Stats()
+			groupInboxGroups, groupInboxMsgs := groupInbox.Stats()
 			var mem runtime.MemStats
 			runtime.ReadMemStats(&mem)
-			log.Printf("[STATS] conns=%d rz_ns=%d rz_peers=%d inbox_peers=%d inbox_msgs=%d push_tokens=%d media_blobs=%d media_disk_mb=%d profile_count=%d profile_disk_mb=%d heap_mb=%d goroutines=%d active_rz_streams=%d active_inbox_streams=%d active_media_streams=%d",
+
+			// Update Prometheus gauges
+			rendezvousNamespacesGauge.Set(float64(rzNs))
+			rendezvousPeersGauge.Set(float64(rzPeers))
+			inboxPeersPending.Set(float64(inboxPeers))
+			inboxMessagesPending.Set(float64(inboxMsgs))
+			inboxPushTokens.Set(float64(tokenCount))
+			mediaBlobsPending.Set(float64(mediaBlobs))
+			mediaDiskBytes.Set(float64(mediaDiskMB * 1024 * 1024))
+			profileCountGauge.Set(float64(pCount))
+			profileDiskBytes.Set(float64(pDiskMB * 1024 * 1024))
+			groupInboxGroupsActiveGauge.Set(float64(groupInboxGroups))
+			groupInboxMessagesStoredGauge.Set(float64(groupInboxMsgs))
+
+			log.Printf("[STATS] conns=%d rz_ns=%d rz_peers=%d inbox_peers=%d inbox_msgs=%d push_tokens=%d media_blobs=%d media_disk_mb=%d profile_count=%d profile_disk_mb=%d group_inbox_groups=%d group_inbox_msgs=%d heap_mb=%d goroutines=%d",
 				conns, rzNs, rzPeers, inboxPeers, inboxMsgs, tokenCount,
 				mediaBlobs, mediaDiskMB,
-				profileCount, profileDiskMB,
-				mem.HeapAlloc/1024/1024, runtime.NumGoroutine(),
-				activeRendezvousStreams.Load(), activeInboxStreams.Load(), activeMediaStreams.Load())
+				pCount, pDiskMB,
+				groupInboxGroups, groupInboxMsgs,
+				mem.HeapAlloc/1024/1024, runtime.NumGoroutine())
 		case <-ctx.Done():
 			return
 		}

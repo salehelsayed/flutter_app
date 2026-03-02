@@ -36,6 +36,9 @@ abstract class Bridge {
 
   /// Event callback when local addresses change (circuit relay acquired/lost).
   void Function(List<String> listenAddresses, List<String> circuitAddresses)? onAddressesUpdated;
+
+  /// Event callback for incoming group messages.
+  void Function(Map<String, dynamic>)? onGroupMessageReceived;
 }
 
 /// Calls the bridge to generate a new identity.

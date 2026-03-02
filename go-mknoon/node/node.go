@@ -20,6 +20,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/p2p/host/autorelay"
 	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
+	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	ma "github.com/multiformats/go-multiaddr"
 )
 
@@ -45,6 +46,15 @@ type Node struct {
 	relayReadyOnce  sync.Once
 	startedAt       time.Time // for startup timing instrumentation
 	lastConfig      *NodeConfig // saved for Restart()
+
+	// PubSub / Group messaging
+	pubsub            *pubsub.PubSub
+	groupTopics       map[string]*pubsub.Topic
+	groupSubs         map[string]*pubsub.Subscription
+	groupConfigs      map[string]*GroupConfig
+	groupKeys         map[string]*GroupKeyInfo
+	groupSubCtx       map[string]context.CancelFunc
+	groupDiscoveryCtx map[string]context.CancelFunc // per-group rendezvous discovery loop cancellation
 }
 
 type connectionInfo struct {
@@ -175,6 +185,13 @@ func (n *Node) Start(cfg NodeConfig) (*NodeState, error) {
 
 	n.host = h
 	n.peerId = h.ID().String()
+
+	// Initialize PubSub (GossipSub) for group messaging.
+	if err := n.initPubSub(); err != nil {
+		h.Close()
+		return nil, fmt.Errorf("init pubsub: %w", err)
+	}
+
 	n.namespace = cfg.Namespace
 	if n.namespace == "" {
 		n.namespace = RendezvousPrefix + n.peerId
@@ -243,6 +260,30 @@ func (n *Node) Stop() error {
 	if n.eventSub != nil {
 		n.eventSub.Close()
 	}
+
+	// Cancel all group discovery loops (triggers rendezvous unregister).
+	for gid, cancel := range n.groupDiscoveryCtx {
+		cancel()
+		delete(n.groupDiscoveryCtx, gid)
+	}
+
+	// Cancel all group subscription goroutines.
+	for gid, cancel := range n.groupSubCtx {
+		cancel()
+		delete(n.groupSubCtx, gid)
+	}
+	for gid, sub := range n.groupSubs {
+		sub.Cancel()
+		delete(n.groupSubs, gid)
+	}
+	for gid, topic := range n.groupTopics {
+		topic.Close()
+		delete(n.groupTopics, gid)
+	}
+	n.groupConfigs = nil
+	n.groupKeys = nil
+	n.pubsub = nil
+
 	if n.cancel != nil {
 		n.cancel()
 	}

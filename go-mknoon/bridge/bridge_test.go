@@ -967,6 +967,294 @@ func TestRelayReconnect_PreservesPeerId(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Group messaging tests
+// ---------------------------------------------------------------------------
+
+func TestGenerateGroupKey_ReturnsKey(t *testing.T) {
+	result := GenerateGroupKey()
+	m := parseJSON(t, result)
+	assertOk(t, m)
+
+	groupKey, ok := m["groupKey"].(string)
+	if !ok || groupKey == "" {
+		t.Error("response missing or empty 'groupKey'")
+	}
+}
+
+func TestGroupEncryptDecryptRoundTrip(t *testing.T) {
+	// Generate a group key.
+	keyResult := GenerateGroupKey()
+	keyMap := parseJSON(t, keyResult)
+	assertOk(t, keyMap)
+	groupKey := keyMap["groupKey"].(string)
+
+	// Encrypt a message.
+	originalPlaintext := "Hello, group!"
+	encInput, _ := json.Marshal(map[string]string{
+		"groupKey":  groupKey,
+		"plaintext": originalPlaintext,
+	})
+
+	encResult := GroupEncryptMessage(string(encInput))
+	encMap := parseJSON(t, encResult)
+	assertOk(t, encMap)
+
+	ciphertext, ok := encMap["ciphertext"].(string)
+	if !ok || ciphertext == "" {
+		t.Fatal("encrypt response missing 'ciphertext'")
+	}
+	nonce, ok := encMap["nonce"].(string)
+	if !ok || nonce == "" {
+		t.Fatal("encrypt response missing 'nonce'")
+	}
+
+	// Decrypt the message.
+	decInput, _ := json.Marshal(map[string]string{
+		"groupKey":   groupKey,
+		"ciphertext": ciphertext,
+		"nonce":      nonce,
+	})
+
+	decResult := GroupDecryptMessage(string(decInput))
+	decMap := parseJSON(t, decResult)
+	assertOk(t, decMap)
+
+	plaintext, ok := decMap["plaintext"].(string)
+	if !ok {
+		t.Fatal("decrypt response missing 'plaintext'")
+	}
+
+	if plaintext != originalPlaintext {
+		t.Errorf("plaintext mismatch: got %q, want %q", plaintext, originalPlaintext)
+	}
+}
+
+func TestGroupEncryptMessage_InvalidJSON(t *testing.T) {
+	result := GroupEncryptMessage("not valid json")
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "INVALID_INPUT")
+}
+
+func TestGroupEncryptMessage_MissingFields(t *testing.T) {
+	result := GroupEncryptMessage(`{"groupKey": "abc"}`)
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "INVALID_INPUT")
+}
+
+func TestGroupDecryptMessage_InvalidJSON(t *testing.T) {
+	result := GroupDecryptMessage("not valid json")
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "INVALID_INPUT")
+}
+
+func TestGroupDecryptMessage_MissingFields(t *testing.T) {
+	result := GroupDecryptMessage(`{"groupKey": "abc"}`)
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "INVALID_INPUT")
+}
+
+func TestGroupDecryptMessage_WrongKey(t *testing.T) {
+	// Generate two different group keys.
+	key1Map := parseJSON(t, GenerateGroupKey())
+	assertOk(t, key1Map)
+	key2Map := parseJSON(t, GenerateGroupKey())
+	assertOk(t, key2Map)
+
+	groupKey1 := key1Map["groupKey"].(string)
+	groupKey2 := key2Map["groupKey"].(string)
+
+	// Encrypt with key1.
+	encInput, _ := json.Marshal(map[string]string{
+		"groupKey":  groupKey1,
+		"plaintext": "secret group message",
+	})
+	encMap := parseJSON(t, GroupEncryptMessage(string(encInput)))
+	assertOk(t, encMap)
+
+	// Decrypt with key2 should fail.
+	decInput, _ := json.Marshal(map[string]string{
+		"groupKey":   groupKey2,
+		"ciphertext": encMap["ciphertext"].(string),
+		"nonce":      encMap["nonce"].(string),
+	})
+	decResult := GroupDecryptMessage(string(decInput))
+	decMap := parseJSON(t, decResult)
+	assertNotOk(t, decMap, "INTERNAL_ERROR")
+}
+
+// --- Group: NOT_INITIALIZED (no singleton node) ---
+
+func TestGroupCreate_NodeNotInitialized(t *testing.T) {
+	withNilSingleton(t)
+	result := GroupCreate(`{"name": "test", "groupType": "chat", "creatorPeerId": "p1", "creatorPublicKey": "pk1"}`)
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "NOT_INITIALIZED")
+}
+
+func TestGroupJoinTopic_NodeNotInitialized(t *testing.T) {
+	withNilSingleton(t)
+	result := GroupJoinTopic(`{"groupId": "g1", "groupKey": "k1", "keyEpoch": 1}`)
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "NOT_INITIALIZED")
+}
+
+func TestGroupLeaveTopic_NodeNotInitialized(t *testing.T) {
+	withNilSingleton(t)
+	result := GroupLeaveTopic(`{"groupId": "g1"}`)
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "NOT_INITIALIZED")
+}
+
+func TestGroupPublish_NodeNotInitialized(t *testing.T) {
+	withNilSingleton(t)
+	result := GroupPublish(`{"groupId": "g1", "text": "hello", "senderPeerId": "p1", "senderPublicKey": "pk1", "senderPrivateKey": "sk1"}`)
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "NOT_INITIALIZED")
+}
+
+func TestGroupUpdateConfig_NodeNotInitialized(t *testing.T) {
+	withNilSingleton(t)
+	result := GroupUpdateConfig(`{"groupId": "g1"}`)
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "NOT_INITIALIZED")
+}
+
+func TestGroupRotateKey_NodeNotInitialized(t *testing.T) {
+	withNilSingleton(t)
+	result := GroupRotateKey(`{"groupId": "g1"}`)
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "NOT_INITIALIZED")
+}
+
+func TestGroupInboxStore_NodeNotInitialized(t *testing.T) {
+	withNilSingleton(t)
+	result := GroupInboxStore(`{"groupId": "g1", "message": "hello"}`)
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "NOT_INITIALIZED")
+}
+
+func TestGroupInboxRetrieve_NodeNotInitialized(t *testing.T) {
+	withNilSingleton(t)
+	result := GroupInboxRetrieve(`{"groupId": "g1"}`)
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "NOT_INITIALIZED")
+}
+
+// --- Group: JSON validation (requires initialized node) ---
+
+func TestGroupCreate_InvalidJSON(t *testing.T) {
+	withSingletonNode(t)
+	result := GroupCreate("not valid json")
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "INVALID_INPUT")
+}
+
+func TestGroupCreate_MissingFields(t *testing.T) {
+	withSingletonNode(t)
+	result := GroupCreate(`{"name": "test"}`)
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "INVALID_INPUT")
+}
+
+func TestGroupJoinTopic_InvalidJSON(t *testing.T) {
+	withSingletonNode(t)
+	result := GroupJoinTopic("not valid json")
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "INVALID_INPUT")
+}
+
+func TestGroupJoinTopic_MissingFields(t *testing.T) {
+	withSingletonNode(t)
+	result := GroupJoinTopic(`{"groupId": "g1"}`)
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "INVALID_INPUT")
+}
+
+func TestGroupLeaveTopic_InvalidJSON(t *testing.T) {
+	withSingletonNode(t)
+	result := GroupLeaveTopic("not valid json")
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "INVALID_INPUT")
+}
+
+func TestGroupLeaveTopic_MissingGroupId(t *testing.T) {
+	withSingletonNode(t)
+	result := GroupLeaveTopic(`{}`)
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "INVALID_INPUT")
+}
+
+func TestGroupPublish_InvalidJSON(t *testing.T) {
+	withSingletonNode(t)
+	result := GroupPublish("not valid json")
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "INVALID_INPUT")
+}
+
+func TestGroupPublish_MissingFields(t *testing.T) {
+	withSingletonNode(t)
+	result := GroupPublish(`{"groupId": "g1"}`)
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "INVALID_INPUT")
+}
+
+func TestGroupUpdateConfig_InvalidJSON(t *testing.T) {
+	withSingletonNode(t)
+	result := GroupUpdateConfig("not valid json")
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "INVALID_INPUT")
+}
+
+func TestGroupUpdateConfig_MissingGroupId(t *testing.T) {
+	withSingletonNode(t)
+	result := GroupUpdateConfig(`{}`)
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "INVALID_INPUT")
+}
+
+func TestGroupRotateKey_InvalidJSON(t *testing.T) {
+	withSingletonNode(t)
+	result := GroupRotateKey("not valid json")
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "INVALID_INPUT")
+}
+
+func TestGroupRotateKey_MissingGroupId(t *testing.T) {
+	withSingletonNode(t)
+	result := GroupRotateKey(`{}`)
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "INVALID_INPUT")
+}
+
+func TestGroupInboxStore_InvalidJSON(t *testing.T) {
+	withSingletonNode(t)
+	result := GroupInboxStore("not valid json")
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "INVALID_INPUT")
+}
+
+func TestGroupInboxStore_MissingFields(t *testing.T) {
+	withSingletonNode(t)
+	result := GroupInboxStore(`{"groupId": "g1"}`)
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "INVALID_INPUT")
+}
+
+func TestGroupInboxRetrieve_InvalidJSON(t *testing.T) {
+	withSingletonNode(t)
+	result := GroupInboxRetrieve("not valid json")
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "INVALID_INPUT")
+}
+
+func TestGroupInboxRetrieve_MissingGroupId(t *testing.T) {
+	withSingletonNode(t)
+	result := GroupInboxRetrieve(`{}`)
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "INVALID_INPUT")
+}
+
+// ---------------------------------------------------------------------------
 // Full lifecycle test
 // ---------------------------------------------------------------------------
 
@@ -1004,5 +1292,183 @@ func TestStartNode_StopNode_FullCycle(t *testing.T) {
 	isStarted, _ = statusMap["isStarted"].(bool)
 	if isStarted {
 		t.Error("expected isStarted=false after Stop")
+	}
+}
+
+// ===========================================================================
+// Phase 3: Bridge-level integration tests for group invite flow
+// ===========================================================================
+
+// Test 3.1: GroupUpdateConfig bridge -- happy path with new member.
+func TestGroupUpdateConfig_WithNewMember(t *testing.T) {
+	withFreshSingletonNode(t)
+
+	keyHex := generateTestKeyHex(t)
+	input := startNodeJSON(t, keyHex)
+	startResult := StartNode(input)
+	assertOk(t, parseJSON(t, startResult))
+
+	// Create a group (admin-only config).
+	genIdentity := parseJSON(t, GenerateIdentity())
+	assertOk(t, genIdentity)
+	identity := genIdentity["identity"].(map[string]interface{})
+
+	createInput, _ := json.Marshal(map[string]interface{}{
+		"name":             "Invite Test Group",
+		"groupType":        "chat",
+		"creatorPeerId":    identity["peerId"].(string),
+		"creatorPublicKey": identity["publicKey"].(string),
+	})
+	createResult := GroupCreate(string(createInput))
+	createMap := parseJSON(t, createResult)
+	assertOk(t, createMap)
+
+	groupId := createMap["groupId"].(string)
+
+	// Build a new config with an additional member.
+	updatedConfig := map[string]interface{}{
+		"name":      "Invite Test Group",
+		"groupType": "chat",
+		"members": []map[string]interface{}{
+			{
+				"peerId":    identity["peerId"].(string),
+				"role":      "admin",
+				"publicKey": identity["publicKey"].(string),
+			},
+			{
+				"peerId":    "peer-new-member",
+				"role":      "writer",
+				"publicKey": "newMemberPubKey",
+			},
+		},
+		"createdBy": identity["peerId"].(string),
+		"createdAt": "2026-01-01T00:00:00Z",
+	}
+
+	updateInput, _ := json.Marshal(map[string]interface{}{
+		"groupId":     groupId,
+		"groupConfig": updatedConfig,
+	})
+	updateResult := GroupUpdateConfig(string(updateInput))
+	updateMap := parseJSON(t, updateResult)
+	assertOk(t, updateMap)
+}
+
+// Test 3.2: GroupJoinTopic bridge -- happy path with received invite data.
+func TestGroupJoinTopic_WithInviteData(t *testing.T) {
+	withFreshSingletonNode(t)
+
+	keyHex := generateTestKeyHex(t)
+	input := startNodeJSON(t, keyHex)
+	startResult := StartNode(input)
+	assertOk(t, parseJSON(t, startResult))
+
+	// Generate a group key.
+	keyResult := GenerateGroupKey()
+	keyMap := parseJSON(t, keyResult)
+	assertOk(t, keyMap)
+	groupKey := keyMap["groupKey"].(string)
+
+	// Build a config with 2 members (simulating invite payload).
+	inviteConfig := map[string]interface{}{
+		"name":      "Invite Group",
+		"groupType": "chat",
+		"members": []map[string]interface{}{
+			{
+				"peerId":    "peer-admin",
+				"role":      "admin",
+				"publicKey": "adminPubKey",
+			},
+			{
+				"peerId":    "peer-invitee",
+				"role":      "writer",
+				"publicKey": "inviteePubKey",
+			},
+		},
+		"createdBy": "peer-admin",
+		"createdAt": "2026-01-01T00:00:00Z",
+	}
+
+	joinInput, _ := json.Marshal(map[string]interface{}{
+		"groupId":     "invite-group-1",
+		"groupConfig": inviteConfig,
+		"groupKey":    groupKey,
+		"keyEpoch":    1,
+	})
+	joinResult := GroupJoinTopic(string(joinInput))
+	joinMap := parseJSON(t, joinResult)
+	assertOk(t, joinMap)
+}
+
+// ===========================================================================
+// Phase 6: Bridge-level GroupRotateKey for post-invite key distribution
+// ===========================================================================
+
+// Test 6.1: GroupRotateKey increments epoch.
+func TestGroupRotateKey_IncrementsEpoch(t *testing.T) {
+	withFreshSingletonNode(t)
+
+	keyHex := generateTestKeyHex(t)
+	input := startNodeJSON(t, keyHex)
+	startResult := StartNode(input)
+	assertOk(t, parseJSON(t, startResult))
+
+	// Create a group (keyEpoch starts at 1).
+	genIdentity := parseJSON(t, GenerateIdentity())
+	assertOk(t, genIdentity)
+	identity := genIdentity["identity"].(map[string]interface{})
+
+	createInput, _ := json.Marshal(map[string]interface{}{
+		"name":             "Key Rotation Group",
+		"groupType":        "chat",
+		"creatorPeerId":    identity["peerId"].(string),
+		"creatorPublicKey": identity["publicKey"].(string),
+	})
+	createResult := GroupCreate(string(createInput))
+	createMap := parseJSON(t, createResult)
+	assertOk(t, createMap)
+
+	groupId := createMap["groupId"].(string)
+
+	// First rotation: epoch should go from 1 to 2.
+	rotateInput, _ := json.Marshal(map[string]string{"groupId": groupId})
+	rotateResult1 := GroupRotateKey(string(rotateInput))
+	rotateMap1 := parseJSON(t, rotateResult1)
+	assertOk(t, rotateMap1)
+
+	epoch1, ok := rotateMap1["keyEpoch"].(float64)
+	if !ok {
+		t.Fatal("response missing 'keyEpoch'")
+	}
+	if int(epoch1) != 2 {
+		t.Errorf("expected keyEpoch=2 after first rotation, got %d", int(epoch1))
+	}
+
+	newKey1, ok := rotateMap1["groupKey"].(string)
+	if !ok || newKey1 == "" {
+		t.Fatal("response missing or empty 'groupKey'")
+	}
+
+	// Second rotation: epoch should go from 2 to 3.
+	rotateResult2 := GroupRotateKey(string(rotateInput))
+	rotateMap2 := parseJSON(t, rotateResult2)
+	assertOk(t, rotateMap2)
+
+	epoch2, ok := rotateMap2["keyEpoch"].(float64)
+	if !ok {
+		t.Fatal("response missing 'keyEpoch'")
+	}
+	if int(epoch2) != 3 {
+		t.Errorf("expected keyEpoch=3 after second rotation, got %d", int(epoch2))
+	}
+
+	newKey2, ok := rotateMap2["groupKey"].(string)
+	if !ok || newKey2 == "" {
+		t.Fatal("response missing or empty 'groupKey' after second rotation")
+	}
+
+	// Keys should differ between rotations.
+	if newKey1 == newKey2 {
+		t.Error("rotated keys should be different")
 	}
 }

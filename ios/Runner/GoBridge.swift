@@ -116,6 +116,30 @@ class GoBridge: NSObject {
         case "profileDownload":
             runOnBackground({ BridgeProfileDownload(args ?? "") }, result: result)
 
+        // Groups
+        case "generateGroupKey":
+            runOnBackground({ BridgeGenerateGroupKey() }, result: result)
+        case "groupCreate":
+            runOnBackground({ BridgeGroupCreate(args ?? "") }, result: result)
+        case "groupJoinTopic":
+            runOnBackground({ BridgeGroupJoinTopic(args ?? "") }, result: result)
+        case "groupLeaveTopic":
+            runOnBackground({ BridgeGroupLeaveTopic(args ?? "") }, result: result)
+        case "groupPublish":
+            runOnBackground({ BridgeGroupPublish(args ?? "") }, result: result)
+        case "groupUpdateConfig":
+            runOnBackground({ BridgeGroupUpdateConfig(args ?? "") }, result: result)
+        case "groupRotateKey":
+            runOnBackground({ BridgeGroupRotateKey(args ?? "") }, result: result)
+        case "groupEncryptMessage":
+            runOnBackground({ BridgeGroupEncryptMessage(args ?? "") }, result: result)
+        case "groupDecryptMessage":
+            runOnBackground({ BridgeGroupDecryptMessage(args ?? "") }, result: result)
+        case "groupInboxStore":
+            runOnBackground({ BridgeGroupInboxStore(args ?? "") }, result: result)
+        case "groupInboxRetrieve":
+            runOnBackground({ BridgeGroupInboxRetrieve(args ?? "") }, result: result)
+
         default:
             result(FlutterMethodNotImplemented)
         }

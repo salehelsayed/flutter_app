@@ -136,6 +136,7 @@ func handleProfileUpload(s network.Stream, profile *ProfileStore, remotePeer str
 		UpdatedAt: time.Now().UnixMilli(),
 	}
 	profile.store(meta)
+	profileUploadedCounter.Inc()
 
 	writeMediaResponse(s, mediaResponse{Status: "OK"})
 	log.Printf("[PROFILE] Uploaded profile for %s (%d bytes, %s)",
@@ -175,11 +176,13 @@ func handleProfileDownload(s network.Stream, profile *ProfileStore, req *mediaRe
 		log.Printf("[PROFILE] Download stream error for %s: %v", req.Owner[:min(20, len(req.Owner))], err)
 		return
 	}
+	profileDownloadedCounter.Inc()
 	log.Printf("[PROFILE] Downloaded profile for %s (%d bytes)", req.Owner[:min(20, len(req.Owner))], written)
 }
 
 func handleProfileDelete(s network.Stream, profile *ProfileStore, remotePeer string) {
 	profile.remove(remotePeer)
+	profileDeletedCounter.Inc()
 	writeMediaResponse(s, mediaResponse{Status: "OK"})
 	log.Printf("[PROFILE] Deleted profile for %s", remotePeer[:min(20, len(remotePeer))])
 }

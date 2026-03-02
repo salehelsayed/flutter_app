@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/network"
@@ -21,8 +20,6 @@ const (
 	maxNamespaceLen    = 256
 	cleanupInterval    = 60 * time.Second
 )
-
-var activeRendezvousStreams atomic.Int64
 
 // --- In-memory store ---
 
@@ -74,6 +71,7 @@ func (s *RendezvousStore) cleanupExpired() {
 		for pid, reg := range peers {
 			if reg.expiresAt.Before(now) {
 				delete(peers, pid)
+				rendezvousExpiredCounter.Inc()
 				log.Printf("[RENDEZVOUS] Expired registration: %s / %s", ns, pid[:20])
 			}
 		}
@@ -147,20 +145,24 @@ func (s *RendezvousStore) Stats() (namespaces, totalPeers int) {
 
 func HandleRendezvousStream(s network.Stream, store *RendezvousStore) {
 	start := time.Now()
-	current := activeRendezvousStreams.Add(1)
+	activeStreams.WithLabelValues("rendezvous").Inc()
+	streamResult := "ok"
 	defer func() {
-		activeRendezvousStreams.Add(-1)
+		activeStreams.WithLabelValues("rendezvous").Dec()
+		streamDuration.WithLabelValues("rendezvous", streamResult).Observe(time.Since(start).Seconds())
 		log.Printf("[RENDEZVOUS] stream handled in %s", time.Since(start))
 	}()
 	defer s.Close()
 
 	remotePeer := s.Conn().RemotePeer()
-	log.Printf("[RENDEZVOUS] Incoming stream from %s (active=%d)", shortPeerId(remotePeer), current)
+	log.Printf("[RENDEZVOUS] Incoming stream from %s", shortPeerId(remotePeer))
 
 	// Read varint-prefixed request
 	reader := msgio.NewVarintReaderSize(s, 1<<20) // 1MB max
 	msgBytes, err := reader.ReadMsg()
 	if err != nil {
+		streamResult = "error"
+		streamErrorsCounter.WithLabelValues("rendezvous", "read").Inc()
 		log.Printf("[RENDEZVOUS] Read error from %s: %v", shortPeerId(remotePeer), err)
 		return
 	}
@@ -168,6 +170,8 @@ func HandleRendezvousStream(s network.Stream, store *RendezvousStore) {
 
 	req, err := UnmarshalRzMessage(msgBytes)
 	if err != nil {
+		streamResult = "error"
+		streamErrorsCounter.WithLabelValues("rendezvous", "decode").Inc()
 		log.Printf("[RENDEZVOUS] Decode error: %v", err)
 		return
 	}
@@ -176,6 +180,7 @@ func HandleRendezvousStream(s network.Stream, store *RendezvousStore) {
 
 	resp, err := handleRendezvousRequest(remotePeer, req, store)
 	if err != nil {
+		streamResult = "error"
 		log.Printf("[RENDEZVOUS] Handler error: %v", err)
 		return
 	}
@@ -188,6 +193,8 @@ func HandleRendezvousStream(s network.Stream, store *RendezvousStore) {
 	respBytes := resp.Marshal()
 	writer := msgio.NewVarintWriter(s)
 	if err := writer.WriteMsg(respBytes); err != nil {
+		streamResult = "error"
+		streamErrorsCounter.WithLabelValues("rendezvous", "write").Inc()
 		log.Printf("[RENDEZVOUS] Write error: %v", err)
 	} else {
 		log.Printf("[RENDEZVOUS] Sent response type=%d", resp.Type)
@@ -241,6 +248,7 @@ func handleRegister(remotePeer peer.ID, reg *Register, store *RendezvousStore) (
 	}
 
 	store.Register(reg.Ns, remotePeer.String(), reg.SignedPeerRecord, ttl)
+	rendezvousRegisteredCounter.Inc()
 
 	return &RzMessage{
 		Type: MessageType_REGISTER_RESPONSE,
@@ -279,6 +287,7 @@ func handleDiscover(remotePeer peer.ID, disc *Discover, store *RendezvousStore) 
 	log.Printf("[RENDEZVOUS] DISCOVER ns=%s limit=%d from %s", disc.Ns, limit, shortPeerId(remotePeer))
 
 	regs := store.Discover(disc.Ns, remotePeer.String(), limit)
+	rendezvousDiscoveredCounter.Inc()
 
 	return &RzMessage{
 		Type: MessageType_DISCOVER_RESPONSE,

@@ -30,6 +30,11 @@ const (
 	InboxTimeout    = 15 * time.Second
 	MediaTimeout    = 5 * time.Minute // large files need generous timeout
 
+	// PubSub.
+	GroupTopicPrefix       = "/mknoon/group/"
+	PubSubTimeout          = 30 * time.Second
+	GroupDiscoveryInterval = 30 * time.Second // periodic rendezvous re-discovery for group peers
+
 	// Inbox framing.
 	MaxFrameLen = 128 * 1024 // 128 KB, matches relay server
 )

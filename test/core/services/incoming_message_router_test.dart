@@ -246,6 +246,59 @@ void main() {
       expect(msg.content, contains('"type":"message_reaction"'));
     });
 
+    // --- Cycle 3.1: group_invite routing ---
+    test('routes group_invite messages to groupInviteStream', () async {
+      final chatMessages = <ChatMessage>[];
+      final contactRequests = <ChatMessage>[];
+      final unknowns = <ChatMessage>[];
+      final groupInvites = <ChatMessage>[];
+
+      router.chatMessageStream.listen(chatMessages.add);
+      router.contactRequestStream.listen(contactRequests.add);
+      router.unknownMessageStream.listen(unknowns.add);
+      router.groupInviteStream.listen(groupInvites.add);
+
+      p2pService.inject(_makeMessage('group_invite'));
+
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      expect(groupInvites.length, 1);
+      expect(groupInvites.first.content, contains('"type":"group_invite"'));
+      expect(chatMessages, isEmpty);
+      expect(contactRequests, isEmpty);
+      expect(unknowns, isEmpty);
+    });
+
+    // --- Cycle 3.2: v2 group_invite routing ---
+    test('routes v2 group_invite envelope (type in top-level) to groupInviteStream',
+        () async {
+      final groupInvites = <ChatMessage>[];
+      router.groupInviteStream.listen(groupInvites.add);
+
+      // V2 envelope has type at top level
+      p2pService.inject(ChatMessage(
+        from: 'peer-a',
+        to: 'peer-b',
+        content: jsonEncode({
+          'type': 'group_invite',
+          'version': '2',
+          'senderPeerId': 'peer-a',
+          'encrypted': {
+            'kem': 'fakeKem',
+            'ciphertext': 'fakeCt',
+            'nonce': 'fakeNonce',
+          },
+        }),
+        timestamp: DateTime.now().toUtc().toIso8601String(),
+        isIncoming: true,
+      ));
+
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      expect(groupInvites.length, 1);
+      expect(groupInvites.first.content, contains('"type":"group_invite"'));
+    });
+
     test('message_reaction not routed to chatMessageStream or unknownMessageStream',
         () async {
       final chatMessages = <ChatMessage>[];

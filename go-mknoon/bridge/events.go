@@ -9,9 +9,10 @@ type EventCallback interface {
 	// Format: { "event": "<name>", "data": { ... } }
 	//
 	// Events:
-	//   "message:received" — { from, to, content, timestamp, isIncoming }
-	//   "peer:connected"   — { peerId, address, direction }
-	//   "peer:disconnected"   — { peerId }
-	//   "addresses:updated"   — { listenAddresses, circuitAddresses }
+	//   "message:received"        — { from, to, content, timestamp, isIncoming }
+	//   "peer:connected"          — { peerId, address, direction }
+	//   "peer:disconnected"       — { peerId }
+	//   "addresses:updated"       — { listenAddresses, circuitAddresses }
+	//   "group_message:received"  — { groupId, senderId, senderUsername, keyEpoch, text, timestamp }
 	OnEvent(jsonString string)
 }

@@ -97,6 +97,19 @@ class GoBridge(flutterEngine: FlutterEngine) : MethodChannel.MethodCallHandler,
             "profileUpload" -> runOnBackground({ GoMknoon.profileUpload(args ?: "") }, result)
             "profileDownload" -> runOnBackground({ GoMknoon.profileDownload(args ?: "") }, result)
 
+            // Groups
+            "generateGroupKey" -> runOnBackground({ GoMknoon.generateGroupKey() }, result)
+            "groupCreate" -> runOnBackground({ GoMknoon.groupCreate(args ?: "") }, result)
+            "groupJoinTopic" -> runOnBackground({ GoMknoon.groupJoinTopic(args ?: "") }, result)
+            "groupLeaveTopic" -> runOnBackground({ GoMknoon.groupLeaveTopic(args ?: "") }, result)
+            "groupPublish" -> runOnBackground({ GoMknoon.groupPublish(args ?: "") }, result)
+            "groupUpdateConfig" -> runOnBackground({ GoMknoon.groupUpdateConfig(args ?: "") }, result)
+            "groupRotateKey" -> runOnBackground({ GoMknoon.groupRotateKey(args ?: "") }, result)
+            "groupEncryptMessage" -> runOnBackground({ GoMknoon.groupEncryptMessage(args ?: "") }, result)
+            "groupDecryptMessage" -> runOnBackground({ GoMknoon.groupDecryptMessage(args ?: "") }, result)
+            "groupInboxStore" -> runOnBackground({ GoMknoon.groupInboxStore(args ?: "") }, result)
+            "groupInboxRetrieve" -> runOnBackground({ GoMknoon.groupInboxRetrieve(args ?: "") }, result)
+
             else -> result.notImplemented()
         }
     }
