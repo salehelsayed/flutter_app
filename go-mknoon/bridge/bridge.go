@@ -15,6 +15,9 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
+
+	"github.com/google/uuid"
 
 	mcrypto "github.com/mknoon/go-mknoon/crypto"
 	"github.com/mknoon/go-mknoon/identity"
@@ -1095,6 +1098,503 @@ func ProfileDownload(paramsJSON string) (result string) {
 		"ok":   true,
 		"mime": mime,
 		"size": size,
+	})
+}
+
+// --- Group Messaging ---
+
+// GenerateGroupKey generates a random AES-256 key for group symmetric encryption.
+// Returns JSON: { "ok": true, "groupKey": "<base64>" }
+func GenerateGroupKey() (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+		}
+	}()
+
+	groupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		return errJSON("INTERNAL_ERROR", err.Error())
+	}
+
+	return okJSON(map[string]interface{}{
+		"ok":       true,
+		"groupKey": groupKey,
+	})
+}
+
+// GroupCreate creates a new group: generates UUID, group key, builds config, joins topic.
+// Input JSON: { "name": "...", "groupType": "chat"|"announcement"|"qa", "creatorPeerId": "...", "creatorPublicKey": "...", "creatorMlKemPublicKey": "..." }
+// Returns JSON: { "ok": true, "groupId": "...", "groupKey": "...", "keyEpoch": 1, "groupConfig": {...} }
+func GroupCreate(paramsJSON string) (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+		}
+	}()
+
+	nodeMu.Lock()
+	n := singletonNode
+	nodeMu.Unlock()
+
+	if n == nil {
+		return errJSON("NOT_INITIALIZED", "call Initialize first")
+	}
+
+	var params struct {
+		Name                string `json:"name"`
+		GroupType           string `json:"groupType"`
+		CreatorPeerId       string `json:"creatorPeerId"`
+		CreatorPublicKey    string `json:"creatorPublicKey"`
+		CreatorMlKemPublicKey string `json:"creatorMlKemPublicKey"`
+	}
+	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
+		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
+	}
+
+	if params.Name == "" || params.GroupType == "" || params.CreatorPeerId == "" || params.CreatorPublicKey == "" {
+		return errJSON("INVALID_INPUT", "missing name, groupType, creatorPeerId, or creatorPublicKey")
+	}
+
+	// 1. Generate UUID for groupId.
+	groupId := uuid.New().String()
+
+	// 2. Generate group key.
+	groupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		return errJSON("INTERNAL_ERROR", err.Error())
+	}
+
+	// 3. Build GroupConfig with creator as admin member.
+	config := &node.GroupConfig{
+		Name:      params.Name,
+		GroupType: node.GroupType(params.GroupType),
+		Members: []node.GroupMember{
+			{
+				PeerId:         params.CreatorPeerId,
+				Role:           node.GroupRoleAdmin,
+				PublicKey:      params.CreatorPublicKey,
+				MlKemPublicKey: params.CreatorMlKemPublicKey,
+			},
+		},
+		CreatedBy: params.CreatorPeerId,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
+	}
+
+	// 4. Build GroupKeyInfo with keyEpoch=1.
+	keyInfo := &node.GroupKeyInfo{
+		Key:      groupKey,
+		KeyEpoch: 1,
+	}
+
+	// 5. Join group topic.
+	if err := n.JoinGroupTopic(groupId, config, keyInfo); err != nil {
+		return errJSON("GROUP_ERROR", err.Error())
+	}
+
+	// 6. Serialize config for return.
+	configMap := map[string]interface{}{
+		"name":      config.Name,
+		"groupType": string(config.GroupType),
+		"members":   config.Members,
+		"createdBy": config.CreatedBy,
+		"createdAt": config.CreatedAt,
+	}
+
+	return okJSON(map[string]interface{}{
+		"ok":          true,
+		"groupId":     groupId,
+		"groupKey":    groupKey,
+		"keyEpoch":    1,
+		"groupConfig": configMap,
+	})
+}
+
+// GroupJoinTopic joins an existing group topic.
+// Input JSON: { "groupId": "...", "groupConfig": {...}, "groupKey": "...", "keyEpoch": N }
+// Returns JSON: { "ok": true }
+func GroupJoinTopic(paramsJSON string) (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+		}
+	}()
+
+	nodeMu.Lock()
+	n := singletonNode
+	nodeMu.Unlock()
+
+	if n == nil {
+		return errJSON("NOT_INITIALIZED", "call Initialize first")
+	}
+
+	var params struct {
+		GroupId     string            `json:"groupId"`
+		GroupConfig node.GroupConfig  `json:"groupConfig"`
+		GroupKey    string            `json:"groupKey"`
+		KeyEpoch   int               `json:"keyEpoch"`
+	}
+	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
+		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
+	}
+
+	if params.GroupId == "" || params.GroupKey == "" {
+		return errJSON("INVALID_INPUT", "missing groupId or groupKey")
+	}
+
+	keyInfo := &node.GroupKeyInfo{
+		Key:      params.GroupKey,
+		KeyEpoch: params.KeyEpoch,
+	}
+
+	if err := n.JoinGroupTopic(params.GroupId, &params.GroupConfig, keyInfo); err != nil {
+		return errJSON("GROUP_ERROR", err.Error())
+	}
+
+	return okJSON(map[string]interface{}{
+		"ok": true,
+	})
+}
+
+// GroupLeaveTopic leaves a group topic.
+// Input JSON: { "groupId": "..." }
+// Returns JSON: { "ok": true }
+func GroupLeaveTopic(paramsJSON string) (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+		}
+	}()
+
+	nodeMu.Lock()
+	n := singletonNode
+	nodeMu.Unlock()
+
+	if n == nil {
+		return errJSON("NOT_INITIALIZED", "call Initialize first")
+	}
+
+	var params struct {
+		GroupId string `json:"groupId"`
+	}
+	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
+		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
+	}
+
+	if params.GroupId == "" {
+		return errJSON("INVALID_INPUT", "missing groupId")
+	}
+
+	if err := n.LeaveGroupTopic(params.GroupId); err != nil {
+		return errJSON("GROUP_ERROR", err.Error())
+	}
+
+	return okJSON(map[string]interface{}{
+		"ok": true,
+	})
+}
+
+// GroupPublish encrypts, signs, and publishes a message to a group topic.
+// Input JSON: { "groupId": "...", "text": "...", "senderPeerId": "...", "senderPublicKey": "...", "senderPrivateKey": "...", "senderUsername": "..." }
+// Returns JSON: { "ok": true, "messageId": "..." }
+func GroupPublish(paramsJSON string) (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+		}
+	}()
+
+	nodeMu.Lock()
+	n := singletonNode
+	nodeMu.Unlock()
+
+	if n == nil {
+		return errJSON("NOT_INITIALIZED", "call Initialize first")
+	}
+
+	var params struct {
+		GroupId          string `json:"groupId"`
+		Text             string `json:"text"`
+		SenderPeerId     string `json:"senderPeerId"`
+		SenderPublicKey  string `json:"senderPublicKey"`
+		SenderPrivateKey string `json:"senderPrivateKey"`
+		SenderUsername   string `json:"senderUsername"`
+	}
+	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
+		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
+	}
+
+	if params.GroupId == "" || params.Text == "" || params.SenderPeerId == "" ||
+		params.SenderPublicKey == "" || params.SenderPrivateKey == "" {
+		return errJSON("INVALID_INPUT", "missing groupId, text, senderPeerId, senderPublicKey, or senderPrivateKey")
+	}
+
+	msgId, err := n.PublishGroupMessage(
+		params.GroupId,
+		params.SenderPrivateKey,
+		params.SenderPeerId,
+		params.SenderPublicKey,
+		params.SenderUsername,
+		params.Text,
+		nil,
+	)
+	if err != nil {
+		return errJSON("GROUP_ERROR", err.Error())
+	}
+
+	return okJSON(map[string]interface{}{
+		"ok":        true,
+		"messageId": msgId,
+	})
+}
+
+// GroupUpdateConfig updates the stored group configuration.
+// Input JSON: { "groupId": "...", "groupConfig": {...} }
+// Returns JSON: { "ok": true }
+func GroupUpdateConfig(paramsJSON string) (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+		}
+	}()
+
+	nodeMu.Lock()
+	n := singletonNode
+	nodeMu.Unlock()
+
+	if n == nil {
+		return errJSON("NOT_INITIALIZED", "call Initialize first")
+	}
+
+	var params struct {
+		GroupId     string           `json:"groupId"`
+		GroupConfig node.GroupConfig `json:"groupConfig"`
+	}
+	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
+		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
+	}
+
+	if params.GroupId == "" {
+		return errJSON("INVALID_INPUT", "missing groupId")
+	}
+
+	n.UpdateGroupConfig(params.GroupId, &params.GroupConfig)
+
+	return okJSON(map[string]interface{}{
+		"ok": true,
+	})
+}
+
+// GroupRotateKey generates a new group key and updates the stored key info.
+// Input JSON: { "groupId": "..." }
+// Returns JSON: { "ok": true, "groupKey": "...", "keyEpoch": N }
+func GroupRotateKey(paramsJSON string) (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+		}
+	}()
+
+	nodeMu.Lock()
+	n := singletonNode
+	nodeMu.Unlock()
+
+	if n == nil {
+		return errJSON("NOT_INITIALIZED", "call Initialize first")
+	}
+
+	var params struct {
+		GroupId string `json:"groupId"`
+	}
+	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
+		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
+	}
+
+	if params.GroupId == "" {
+		return errJSON("INVALID_INPUT", "missing groupId")
+	}
+
+	// Generate new key.
+	newKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		return errJSON("INTERNAL_ERROR", err.Error())
+	}
+
+	// Get current key info to increment epoch, start at 2 if not found.
+	currentKeyInfo := n.GetGroupKeyInfo(params.GroupId)
+	newEpoch := 2
+	if currentKeyInfo != nil {
+		newEpoch = currentKeyInfo.KeyEpoch + 1
+	}
+
+	newKeyInfo := &node.GroupKeyInfo{
+		Key:      newKey,
+		KeyEpoch: newEpoch,
+	}
+
+	n.UpdateGroupKey(params.GroupId, newKeyInfo)
+
+	return okJSON(map[string]interface{}{
+		"ok":       true,
+		"groupKey": newKey,
+		"keyEpoch": newEpoch,
+	})
+}
+
+// GroupEncryptMessage encrypts a plaintext message with a group key.
+// Input JSON: { "groupKey": "<base64>", "plaintext": "..." }
+// Returns JSON: { "ok": true, "ciphertext": "<base64>", "nonce": "<base64>" }
+func GroupEncryptMessage(paramsJSON string) (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+		}
+	}()
+
+	var params struct {
+		GroupKey  string `json:"groupKey"`
+		Plaintext string `json:"plaintext"`
+	}
+	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
+		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
+	}
+
+	if params.GroupKey == "" || params.Plaintext == "" {
+		return errJSON("INVALID_INPUT", "missing groupKey or plaintext")
+	}
+
+	ctB64, nonceB64, err := mcrypto.EncryptGroupMessage(params.GroupKey, params.Plaintext)
+	if err != nil {
+		return errJSON("INTERNAL_ERROR", err.Error())
+	}
+
+	return okJSON(map[string]interface{}{
+		"ok":         true,
+		"ciphertext": ctB64,
+		"nonce":      nonceB64,
+	})
+}
+
+// GroupDecryptMessage decrypts a ciphertext message with a group key.
+// Input JSON: { "groupKey": "<base64>", "ciphertext": "<base64>", "nonce": "<base64>" }
+// Returns JSON: { "ok": true, "plaintext": "..." }
+func GroupDecryptMessage(paramsJSON string) (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+		}
+	}()
+
+	var params struct {
+		GroupKey   string `json:"groupKey"`
+		Ciphertext string `json:"ciphertext"`
+		Nonce      string `json:"nonce"`
+	}
+	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
+		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
+	}
+
+	if params.GroupKey == "" || params.Ciphertext == "" || params.Nonce == "" {
+		return errJSON("INVALID_INPUT", "missing groupKey, ciphertext, or nonce")
+	}
+
+	plaintext, err := mcrypto.DecryptGroupMessage(params.GroupKey, params.Ciphertext, params.Nonce)
+	if err != nil {
+		return errJSON("INTERNAL_ERROR", err.Error())
+	}
+
+	return okJSON(map[string]interface{}{
+		"ok":        true,
+		"plaintext": plaintext,
+	})
+}
+
+// GroupInboxStore stores a group message in the relay's group inbox.
+// Input JSON: { "groupId": "...", "message": "..." }
+// Returns JSON: { "ok": true }
+func GroupInboxStore(paramsJSON string) (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+		}
+	}()
+
+	nodeMu.Lock()
+	n := singletonNode
+	nodeMu.Unlock()
+
+	if n == nil {
+		return errJSON("NOT_INITIALIZED", "call Initialize first")
+	}
+
+	var params struct {
+		GroupId string `json:"groupId"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
+		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
+	}
+
+	if params.GroupId == "" || params.Message == "" {
+		return errJSON("INVALID_INPUT", "missing groupId or message")
+	}
+
+	if err := n.GroupInboxStore(params.GroupId, params.Message); err != nil {
+		return errJSON("GROUP_INBOX_ERROR", err.Error())
+	}
+
+	return okJSON(map[string]interface{}{
+		"ok": true,
+	})
+}
+
+// GroupInboxRetrieve retrieves missed group messages from the relay's group inbox.
+// Input JSON: { "groupId": "...", "sinceTimestamp": N }
+// Returns JSON: { "ok": true, "messages": [...] }
+func GroupInboxRetrieve(paramsJSON string) (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+		}
+	}()
+
+	nodeMu.Lock()
+	n := singletonNode
+	nodeMu.Unlock()
+
+	if n == nil {
+		return errJSON("NOT_INITIALIZED", "call Initialize first")
+	}
+
+	var params struct {
+		GroupId        string `json:"groupId"`
+		SinceTimestamp int64  `json:"sinceTimestamp"`
+	}
+	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
+		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
+	}
+
+	if params.GroupId == "" {
+		return errJSON("INVALID_INPUT", "missing groupId")
+	}
+
+	msgs, err := n.GroupInboxRetrieve(params.GroupId, params.SinceTimestamp)
+	if err != nil {
+		return errJSON("GROUP_INBOX_ERROR", err.Error())
+	}
+
+	msgList := make([]map[string]interface{}, len(msgs))
+	for i, m := range msgs {
+		msgList[i] = map[string]interface{}{
+			"from":      m.From,
+			"message":   m.Message,
+			"timestamp": m.Timestamp,
+		}
+	}
+
+	return okJSON(map[string]interface{}{
+		"ok":       true,
+		"messages": msgList,
 	})
 }
 

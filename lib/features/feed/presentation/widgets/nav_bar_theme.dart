@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 abstract final class NavBarTheme {
   // ── Bar ──────────────────────────────────────────────────────────────
 
-  static const double barMaxWidth = 270;
+  static const double barMaxWidth = 340;
   static const double barBorderRadius = 30;
   static const EdgeInsets barPadding =
       EdgeInsets.symmetric(horizontal: 6, vertical: 5);

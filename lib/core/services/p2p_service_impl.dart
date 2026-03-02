@@ -718,6 +718,19 @@ class P2PServiceImpl implements P2PService {
     } catch (_) {
       envelopeType = null;
     }
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'P2P_SERVICE_MESSAGE_RECEIVED',
+      details: {
+        'from': message.from.length > 10
+            ? message.from.substring(0, 10)
+            : message.from,
+        'isIncoming': message.isIncoming,
+        'contentLength': message.content.length,
+        'envelopeType': envelopeType,
+        'streamClosed': _messageController.isClosed,
+      },
+    );
     logChatTransportIncoming(
       fromPeerId: message.from,
       toPeerId: message.to,

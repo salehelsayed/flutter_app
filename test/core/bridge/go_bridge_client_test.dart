@@ -235,7 +235,7 @@ void main() {
   // ---------------------------------------------------------------------------
   // Total command coverage sanity check
   // ---------------------------------------------------------------------------
-  test('all 28 commands are covered', () async {
+  test('all 39 commands are covered', () async {
     // Exhaustive list of every command in _cmdMap.
     final allCmds = [
       // Identity
@@ -276,9 +276,21 @@ void main() {
       // Profile
       'profile:upload',
       'profile:download',
+      // Groups
+      'group:create',
+      'group:join',
+      'group:leave',
+      'group:publish',
+      'group:updateConfig',
+      'group:rotateKey',
+      'group:inboxStore',
+      'group:inboxRetrieve',
+      'group.keygen',
+      'group.encrypt',
+      'group.decrypt',
     ];
 
-    expect(allCmds, hasLength(28));
+    expect(allCmds, hasLength(39));
 
     for (final cmd in allCmds) {
       final request = jsonEncode({

@@ -44,6 +44,11 @@ import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
 import 'package:flutter_app/features/feed/domain/models/session_reply.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
+import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
+import 'package:flutter_app/features/groups/presentation/screens/group_list_wired.dart';
 import 'package:flutter_app/features/orbit/presentation/navigation/orbit_route_transition.dart';
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_wired.dart';
 import 'package:flutter_app/features/settings/presentation/navigation/settings_route_transition.dart';
@@ -74,6 +79,10 @@ class FeedWired extends StatefulWidget {
   final AudioRecorderService? audioRecorderService;
   final ReactionRepository? reactionRepository;
   final ReactionListener? reactionListener;
+  final GroupRepository? groupRepository;
+  final GroupMessageRepository? groupMessageRepository;
+  final GroupMessageListener? groupMessageListener;
+  final GroupInviteListener? groupInviteListener;
 
   const FeedWired({
     super.key,
@@ -93,6 +102,10 @@ class FeedWired extends StatefulWidget {
     this.audioRecorderService,
     this.reactionRepository,
     this.reactionListener,
+    this.groupRepository,
+    this.groupMessageRepository,
+    this.groupMessageListener,
+    this.groupInviteListener,
   });
 
   @override
@@ -858,14 +871,43 @@ class _FeedWiredState extends State<FeedWired> {
             audioRecorderService: widget.audioRecorderService,
             reactionRepository: widget.reactionRepository,
             reactionListener: widget.reactionListener,
+            groupRepository: widget.groupRepository,
+            groupMessageRepository: widget.groupMessageRepository,
+            groupMessageListener: widget.groupMessageListener,
+            groupInviteListener: widget.groupInviteListener,
           ),
         ),
       ).then((_) => _refreshFeed());
       return;
     }
+    if (tab == 'groups') {
+      _navigateToGroups();
+      return;
+    }
     setState(() {
       _activeTab = tab;
     });
+  }
+
+  void _navigateToGroups() {
+    final groupRepo = widget.groupRepository;
+    final msgRepo = widget.groupMessageRepository;
+    final listener = widget.groupMessageListener;
+    if (groupRepo == null || msgRepo == null || listener == null) return;
+
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => GroupListWired(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupMessageListener: listener,
+          bridge: widget.bridge,
+          identityRepo: widget.repository,
+          contactRepo: widget.contactRepository,
+          p2pService: widget.p2pService,
+        ),
+      ),
+    ).then((_) => _refreshFeed());
   }
 
   Future<void> _onUsernameChanged(String newUsername) async {

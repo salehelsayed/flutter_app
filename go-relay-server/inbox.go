@@ -8,7 +8,6 @@ import (
 	"io"
 	"log"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/network"
@@ -23,9 +22,11 @@ const (
 	maxFrameLen         = 128 * 1024     // 128 KB
 	maxMessagesPerPeer  = 100
 	maxMessageAge       = 7 * 24 * time.Hour
-)
 
-var activeInboxStreams atomic.Int64
+	// Group inbox constants.
+	maxMessagesPerGroup = 500
+	groupMessageTTL     = 7 * 24 * time.Hour
+)
 
 // --- Push service ---
 
@@ -125,10 +126,14 @@ func (ps *PushService) SendNotification(ctx context.Context, toPeerId, fromPeerI
 		// Remove invalid tokens
 		if isInvalidTokenError(err) {
 			ps.tokens.Delete(toPeerId)
+			pushSentCounter.WithLabelValues("invalid_token").Inc()
 			log.Printf("[PUSH] Removed invalid token for %s", toPeerId[:min(20, len(toPeerId))])
+		} else {
+			pushSentCounter.WithLabelValues("failed").Inc()
 		}
 		return
 	}
+	pushSentCounter.WithLabelValues("success").Inc()
 	log.Printf("[PUSH] Notification sent to %s", toPeerId[:min(20, len(toPeerId))])
 }
 
@@ -187,15 +192,23 @@ func (is *InboxStore) Store(toPeerId string, entry inboxMessage) {
 	is.mu.Lock()
 	defer is.mu.Unlock()
 
-	messages := is.pruneExpired(is.store[toPeerId])
+	before := is.store[toPeerId]
+	messages := is.pruneExpired(before)
+	expired := len(before) - len(messages)
+	if expired > 0 {
+		inboxExpiredCounter.Add(float64(expired))
+	}
 
 	// Cap at max
 	if len(messages) >= maxMessagesPerPeer {
+		overflow := len(messages) - maxMessagesPerPeer + 1
+		inboxCappedCounter.Add(float64(overflow))
 		messages = messages[len(messages)-maxMessagesPerPeer+1:]
 	}
 
 	messages = append(messages, entry)
 	is.store[toPeerId] = messages
+	inboxStoredCounter.Inc()
 
 	log.Printf("[INBOX] Stored message for %s from %s (total: %d)",
 		toPeerId[:min(20, len(toPeerId))],
@@ -207,7 +220,12 @@ func (is *InboxStore) Retrieve(peerId string, limit int) []inboxMessage {
 	is.mu.Lock()
 	defer is.mu.Unlock()
 
-	messages := is.pruneExpired(is.store[peerId])
+	before := is.store[peerId]
+	messages := is.pruneExpired(before)
+	expired := len(before) - len(messages)
+	if expired > 0 {
+		inboxExpiredCounter.Add(float64(expired))
+	}
 	is.store[peerId] = messages
 
 	if len(messages) == 0 {
@@ -228,6 +246,8 @@ func (is *InboxStore) Retrieve(peerId string, limit int) []inboxMessage {
 	} else {
 		delete(is.store, peerId)
 	}
+
+	inboxRetrievedCounter.Add(float64(len(result)))
 
 	log.Printf("[INBOX] Retrieved %d message(s) for %s — deleted from memory (%d remaining)",
 		len(result), peerId[:min(20, len(peerId))], len(remaining))
@@ -256,6 +276,135 @@ func (is *InboxStore) pruneExpired(messages []inboxMessage) []inboxMessage {
 	}
 	cutoff := time.Now().Add(-maxMessageAge).UnixMilli()
 	var result []inboxMessage
+	for _, m := range messages {
+		if m.Timestamp > cutoff {
+			result = append(result, m)
+		}
+	}
+	return result
+}
+
+// --- Group Inbox store ---
+
+type groupInboxMessage struct {
+	From      string `json:"from"`
+	Message   string `json:"message"`
+	Timestamp int64  `json:"timestamp"`
+}
+
+type GroupInboxStore struct {
+	mu          sync.RWMutex
+	messages    map[string][]groupInboxMessage // key: groupId
+	maxPerGroup int
+	ttl         time.Duration
+}
+
+func NewGroupInboxStore(maxPerGroup int, ttl time.Duration) *GroupInboxStore {
+	return &GroupInboxStore{
+		messages:    make(map[string][]groupInboxMessage),
+		maxPerGroup: maxPerGroup,
+		ttl:         ttl,
+	}
+}
+
+func (s *GroupInboxStore) Store(groupId, from, message string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	msgs := s.pruneExpiredLocked(s.messages[groupId])
+
+	// Cap enforcement: drop oldest when exceeding max.
+	if len(msgs) >= s.maxPerGroup {
+		overflow := len(msgs) - s.maxPerGroup + 1
+		groupInboxCappedCounter.Add(float64(overflow))
+		msgs = msgs[overflow:]
+	}
+
+	msgs = append(msgs, groupInboxMessage{
+		From:      from,
+		Message:   message,
+		Timestamp: time.Now().UnixMilli(),
+	})
+	s.messages[groupId] = msgs
+	groupInboxStoredCounter.Inc()
+
+	log.Printf("[GROUP_INBOX] Stored message for group %s from %s (total: %d)",
+		groupId[:min(20, len(groupId))],
+		from[:min(20, len(from))],
+		len(msgs))
+	return nil
+}
+
+func (s *GroupInboxStore) Retrieve(groupId string, sinceTimestamp int64) []groupInboxMessage {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	msgs := s.messages[groupId]
+	if len(msgs) == 0 {
+		return nil
+	}
+
+	var result []groupInboxMessage
+	cutoff := time.Now().Add(-s.ttl).UnixMilli()
+	for _, m := range msgs {
+		if m.Timestamp <= cutoff {
+			continue // expired
+		}
+		if sinceTimestamp > 0 && m.Timestamp <= sinceTimestamp {
+			continue // before requested window
+		}
+		result = append(result, m)
+	}
+
+	groupInboxRetrievedCounter.Add(float64(len(result)))
+
+	log.Printf("[GROUP_INBOX] Retrieved %d message(s) for group %s (since=%d)",
+		len(result), groupId[:min(20, len(groupId))], sinceTimestamp)
+	return result
+}
+
+// Prune removes expired messages across all groups. Called periodically.
+func (s *GroupInboxStore) Prune() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	totalExpired := 0
+	for groupId, msgs := range s.messages {
+		before := len(msgs)
+		pruned := s.pruneExpiredLocked(msgs)
+		expired := before - len(pruned)
+		totalExpired += expired
+
+		if len(pruned) == 0 {
+			delete(s.messages, groupId)
+		} else {
+			s.messages[groupId] = pruned
+		}
+	}
+
+	if totalExpired > 0 {
+		groupInboxExpiredCounter.Add(float64(totalExpired))
+		log.Printf("[GROUP_INBOX] Pruned %d expired messages across %d groups",
+			totalExpired, len(s.messages))
+	}
+}
+
+func (s *GroupInboxStore) Stats() (groups int, totalMessages int) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	groups = len(s.messages)
+	for _, msgs := range s.messages {
+		totalMessages += len(msgs)
+	}
+	return
+}
+
+func (s *GroupInboxStore) pruneExpiredLocked(messages []groupInboxMessage) []groupInboxMessage {
+	if len(messages) == 0 {
+		return messages
+	}
+	cutoff := time.Now().Add(-s.ttl).UnixMilli()
+	var result []groupInboxMessage
 	for _, m := range messages {
 		if m.Timestamp > cutoff {
 			result = append(result, m)
@@ -308,34 +457,44 @@ type inboxRequest struct {
 	Limit    int                    `json:"limit,omitempty"`
 	Token    string                 `json:"token,omitempty"`
 	Platform string                 `json:"platform,omitempty"`
+	// Group inbox fields.
+	GroupId        string `json:"groupId,omitempty"`
+	SinceTimestamp int64  `json:"sinceTimestamp,omitempty"`
 }
 
 type inboxResponse struct {
-	Status   string         `json:"status"`
-	Error    string         `json:"error,omitempty"`
-	Messages []inboxMessage `json:"messages,omitempty"`
+	Status        string              `json:"status"`
+	Error         string              `json:"error,omitempty"`
+	Messages      []inboxMessage      `json:"messages,omitempty"`
+	GroupMessages []groupInboxMessage `json:"groupMessages,omitempty"`
 }
 
-func HandleInboxStream(s network.Stream, inbox *InboxStore) {
+func HandleInboxStream(s network.Stream, inbox *InboxStore, groupInbox *GroupInboxStore) {
 	start := time.Now()
-	current := activeInboxStreams.Add(1)
+	activeStreams.WithLabelValues("inbox").Inc()
+	streamResult := "ok"
 	defer func() {
-		activeInboxStreams.Add(-1)
+		activeStreams.WithLabelValues("inbox").Dec()
+		streamDuration.WithLabelValues("inbox", streamResult).Observe(time.Since(start).Seconds())
 		log.Printf("[INBOX] stream handled in %s", time.Since(start))
 	}()
 	defer s.Close()
 
 	remotePeer := s.Conn().RemotePeer().String()
-	log.Printf("[INBOX] Incoming stream from %s (active=%d)", remotePeer[:min(20, len(remotePeer))], current)
+	log.Printf("[INBOX] Incoming stream from %s", remotePeer[:min(20, len(remotePeer))])
 
 	requestBytes, err := readFrame(s)
 	if err != nil {
+		streamResult = "error"
+		streamErrorsCounter.WithLabelValues("inbox", "read").Inc()
 		log.Printf("[INBOX] Read error from %s: %v", remotePeer[:min(20, len(remotePeer))], err)
 		return
 	}
 
 	var req inboxRequest
 	if err := json.Unmarshal(requestBytes, &req); err != nil {
+		streamResult = "error"
+		streamErrorsCounter.WithLabelValues("inbox", "decode").Inc()
 		log.Printf("[INBOX] JSON decode error: %v", err)
 		writeResponse(s, inboxResponse{Status: "ERROR", Error: "invalid JSON"})
 		return
@@ -389,6 +548,33 @@ func HandleInboxStream(s network.Stream, inbox *InboxStore) {
 		inbox.push.UnregisterToken(remotePeer)
 		resp = inboxResponse{Status: "OK"}
 
+	case "group_store":
+		if req.GroupId == "" || req.Message == "" {
+			resp = inboxResponse{Status: "ERROR", Error: "Missing required fields: groupId, message"}
+		} else {
+			from := req.From
+			if from == "" {
+				from = remotePeer
+			}
+			if err := groupInbox.Store(req.GroupId, from, req.Message); err != nil {
+				resp = inboxResponse{Status: "ERROR", Error: err.Error()}
+			} else {
+				resp = inboxResponse{Status: "OK"}
+			}
+		}
+
+	case "group_retrieve":
+		if req.GroupId == "" {
+			resp = inboxResponse{Status: "ERROR", Error: "Missing required field: groupId"}
+		} else {
+			messages := groupInbox.Retrieve(req.GroupId, req.SinceTimestamp)
+			if len(messages) > 0 {
+				resp = inboxResponse{Status: "OK", GroupMessages: messages}
+			} else {
+				resp = inboxResponse{Status: "NO_MESSAGES"}
+			}
+		}
+
 	default:
 		resp = inboxResponse{Status: "ERROR", Error: fmt.Sprintf("Unknown action: %s", req.Action)}
 	}
@@ -400,10 +586,12 @@ func HandleInboxStream(s network.Stream, inbox *InboxStore) {
 func writeResponse(s network.Stream, resp inboxResponse) {
 	data, err := json.Marshal(resp)
 	if err != nil {
+		streamErrorsCounter.WithLabelValues("inbox", "write").Inc()
 		log.Printf("[INBOX] JSON encode error: %v", err)
 		return
 	}
 	if err := writeFrame(s, data); err != nil {
+		streamErrorsCounter.WithLabelValues("inbox", "write").Inc()
 		log.Printf("[INBOX] Write error: %v", err)
 	}
 }

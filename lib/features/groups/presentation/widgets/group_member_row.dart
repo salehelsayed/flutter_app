@@ -1,0 +1,117 @@
+import 'package:flutter/material.dart';
+
+import 'package:flutter_app/features/groups/domain/models/group_member.dart';
+
+/// Shows a member's name, role badge, and optional action buttons.
+class GroupMemberRow extends StatelessWidget {
+  final GroupMember member;
+  final bool isAdmin;
+  final bool isSelf;
+  final VoidCallback? onRemove;
+
+  const GroupMemberRow({
+    super.key,
+    required this.member,
+    this.isAdmin = false,
+    this.isSelf = false,
+    this.onRemove,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Row(
+        children: [
+          // Avatar placeholder
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.08),
+              shape: BoxShape.circle,
+            ),
+            child: Center(
+              child: Text(
+                _initial(member.username ?? member.peerId),
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.white.withOpacity(0.6),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          // Name + role
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  isSelf
+                      ? 'You'
+                      : (member.username ??
+                          (member.peerId.length > 12
+                              ? '${member.peerId.substring(0, 12)}...'
+                              : member.peerId)),
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    color: Colors.white,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                _RoleBadge(role: member.role),
+              ],
+            ),
+          ),
+          // Admin action: remove member
+          if (isAdmin && onRemove != null)
+            IconButton(
+              icon: Icon(
+                Icons.remove_circle_outline,
+                color: Colors.white.withOpacity(0.4),
+                size: 20,
+              ),
+              onPressed: onRemove,
+            ),
+        ],
+      ),
+    );
+  }
+
+  String _initial(String name) {
+    if (name.isEmpty) return '?';
+    return name[0].toUpperCase();
+  }
+}
+
+class _RoleBadge extends StatelessWidget {
+  final MemberRole role;
+
+  const _RoleBadge({required this.role});
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      role.toValue(),
+      style: TextStyle(
+        fontSize: 11,
+        color: _colorForRole(role),
+        fontWeight: FontWeight.w500,
+      ),
+    );
+  }
+
+  Color _colorForRole(MemberRole role) {
+    switch (role) {
+      case MemberRole.admin:
+        return const Color(0xFFFFB74D);
+      case MemberRole.writer:
+        return const Color(0xFF64B5F6);
+      case MemberRole.reader:
+        return Colors.white.withOpacity(0.4);
+    }
+  }
+}

@@ -73,6 +73,18 @@ class GoBridgeClient extends Bridge {
     // Profile
     'profile:upload': _CmdSpec('profileUpload', true),
     'profile:download': _CmdSpec('profileDownload', true),
+    // Groups
+    'group:create': _CmdSpec('groupCreate', true),
+    'group:join': _CmdSpec('groupJoinTopic', true),
+    'group:leave': _CmdSpec('groupLeaveTopic', true),
+    'group:publish': _CmdSpec('groupPublish', true),
+    'group:updateConfig': _CmdSpec('groupUpdateConfig', true),
+    'group:rotateKey': _CmdSpec('groupRotateKey', true),
+    'group:inboxStore': _CmdSpec('groupInboxStore', true),
+    'group:inboxRetrieve': _CmdSpec('groupInboxRetrieve', true),
+    'group.keygen': _CmdSpec('generateGroupKey', false),
+    'group.encrypt': _CmdSpec('groupEncryptMessage', true),
+    'group.decrypt': _CmdSpec('groupDecryptMessage', true),
   };
 
   @override
@@ -160,6 +172,7 @@ class GoBridgeClient extends Bridge {
     final savedOnConnect = onPeerConnected;
     final savedOnDisconnect = onPeerDisconnected;
     final savedOnAddresses = onAddressesUpdated;
+    final savedOnGroupMessage = onGroupMessageReceived;
 
     // Cancel existing subscription
     await _eventSubscription?.cancel();
@@ -172,6 +185,7 @@ class GoBridgeClient extends Bridge {
     onPeerConnected = savedOnConnect;
     onPeerDisconnected = savedOnDisconnect;
     onAddressesUpdated = savedOnAddresses;
+    onGroupMessageReceived = savedOnGroupMessage;
 
     // Re-initialize
     await initialize();
@@ -188,6 +202,7 @@ class GoBridgeClient extends Bridge {
     onPeerConnected = null;
     onPeerDisconnected = null;
     onAddressesUpdated = null;
+    onGroupMessageReceived = null;
   }
 
   /// Handle push events from the Go layer.
@@ -252,6 +267,17 @@ class GoBridgeClient extends Bridge {
                         .toList() ??
                     [];
             onAddressesUpdated!(listenAddrs, circuitAddrs);
+          }
+          break;
+
+        case 'group_message:received':
+          if (onGroupMessageReceived != null) {
+            try {
+              onGroupMessageReceived!(eventData);
+            } catch (e) {
+              debugPrint(
+                  '[GoBridgeClient] Error handling group message: $e');
+            }
           }
           break;
 

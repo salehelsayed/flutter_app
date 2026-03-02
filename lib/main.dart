@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:flutter_app/core/database/migrations/001_identity_table.dart';
@@ -16,6 +17,8 @@ import 'package:flutter_app/core/database/migrations/013_waveform_column.dart';
 import 'package:flutter_app/core/database/migrations/014_wire_envelope_column.dart';
 import 'package:flutter_app/core/database/migrations/015_message_status_cleanup.dart';
 import 'package:flutter_app/core/database/migrations/016_message_reactions.dart';
+import 'package:flutter_app/core/database/migrations/017_groups_tables.dart';
+import 'package:flutter_app/core/database/migrations/018_group_messages_tables.dart';
 import 'package:flutter_app/core/database/encrypted_db_opener.dart';
 import 'package:flutter_app/core/database/helpers/identity_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
@@ -23,6 +26,10 @@ import 'package:flutter_app/core/database/helpers/contact_requests_db_helpers.da
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/reactions_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/groups_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/group_members_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/group_keys_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/secure_storage/flutter_secure_key_store.dart';
 import 'package:flutter_app/core/secure_storage/migrate_secrets_to_secure_storage.dart';
@@ -35,6 +42,10 @@ import 'package:flutter_app/features/conversation/domain/repositories/media_atta
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository_impl.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/application/reaction_listener.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_repository_impl.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_message_repository_impl.dart';
+import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
 import 'package:flutter_app/features/settings/application/profile_update_listener.dart';
 import 'package:flutter_app/core/services/incoming_message_router.dart';
 import 'package:flutter_app/core/services/pending_message_retrier.dart';
@@ -107,7 +118,7 @@ void main() async {
   final db = await openEncryptedDatabase(
     secureKeyStore: secureKeyStore,
     dbName: 'identity.db',
-    version: 16,
+    version: 18,
     onCreate: (db, version) async {
       await runIdentityTableMigration(db);
       await runMessagesTableMigration(db);
@@ -125,6 +136,8 @@ void main() async {
       await runWireEnvelopeMigration(db);
       await runMessageStatusCleanupMigration(db);
       await runMessageReactionsMigration(db);
+      await runGroupsTablesMigration(db);
+      await runGroupMessagesTablesMigration(db);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) {
@@ -169,6 +182,12 @@ void main() async {
       }
       if (oldVersion < 16) {
         await runMessageReactionsMigration(db);
+      }
+      if (oldVersion < 17) {
+        await runGroupsTablesMigration(db);
+      }
+      if (oldVersion < 18) {
+        await runGroupMessagesTablesMigration(db);
       }
     },
   );
@@ -280,6 +299,53 @@ void main() async {
         dbDeleteReactionsForContact(db, contactPeerId),
   );
 
+  // Create group repository
+  final groupRepository = GroupRepositoryImpl(
+    dbInsertGroup: (row) => dbInsertGroup(db, row),
+    dbLoadAllGroups: () => dbLoadAllGroups(db),
+    dbLoadGroup: (id) => dbLoadGroup(db, id),
+    dbUpdateGroup: (row) => dbUpdateGroup(db, row),
+    dbDeleteGroup: (id) => dbDeleteGroup(db, id),
+    dbLoadActiveGroups: () => dbLoadActiveGroups(db),
+    dbArchiveGroup: (id) => dbArchiveGroup(db, id),
+    dbUnarchiveGroup: (id) => dbUnarchiveGroup(db, id),
+    dbInsertGroupMember: (row) => dbInsertGroupMember(db, row),
+    dbLoadAllGroupMembers: (groupId) => dbLoadAllGroupMembers(db, groupId),
+    dbLoadGroupMember: (groupId, peerId) =>
+        dbLoadGroupMember(db, groupId, peerId),
+    dbUpdateGroupMemberRole: (groupId, peerId, role) =>
+        dbUpdateGroupMemberRole(db, groupId, peerId, role),
+    dbDeleteGroupMember: (groupId, peerId) =>
+        dbDeleteGroupMember(db, groupId, peerId),
+    dbDeleteAllGroupMembers: (groupId) =>
+        dbDeleteAllGroupMembers(db, groupId),
+    dbInsertGroupKey: (row) => dbInsertGroupKey(db, row),
+    dbLoadLatestGroupKey: (groupId) => dbLoadLatestGroupKey(db, groupId),
+    dbLoadGroupKeyByGeneration: (groupId, generation) =>
+        dbLoadGroupKeyByGeneration(db, groupId, generation),
+    dbDeleteAllGroupKeys: (groupId) => dbDeleteAllGroupKeys(db, groupId),
+  );
+
+  // Create group message repository
+  final groupMessageRepository = GroupMessageRepositoryImpl(
+    dbInsertGroupMessage: (row) => dbInsertGroupMessage(db, row),
+    dbLoadGroupMessagesPage: (groupId, {limit = 50, offset = 0}) =>
+        dbLoadGroupMessagesPage(db, groupId, limit: limit, offset: offset),
+    dbLoadGroupMessage: (id) => dbLoadGroupMessage(db, id),
+    dbLoadLatestGroupMessage: (groupId) =>
+        dbLoadLatestGroupMessage(db, groupId),
+    dbUpdateGroupMessageStatus: (id, status) =>
+        dbUpdateGroupMessageStatus(db, id, status),
+    dbCountGroupMessages: (groupId) => dbCountGroupMessages(db, groupId),
+    dbCountUnreadGroupMessages: (groupId) =>
+        dbCountUnreadGroupMessages(db, groupId),
+    dbCountTotalUnreadGroupMessages: () =>
+        dbCountTotalUnreadGroupMessages(db),
+    dbMarkGroupMessagesAsRead: (groupId) =>
+        dbMarkGroupMessagesAsRead(db, groupId),
+    dbDeleteGroupMessage: (id) => dbDeleteGroupMessage(db, id),
+  );
+
   // Create media file manager
   final mediaFileManager = MediaFileManager();
 
@@ -365,6 +431,30 @@ void main() async {
     bridge: bridge,
   );
 
+  // Create group message listener and wire bridge callback to stream
+  final groupMessageListener = GroupMessageListener(
+    groupRepo: groupRepository,
+    msgRepo: groupMessageRepository,
+    bridge: bridge,
+  );
+  final groupMessageStreamController =
+      StreamController<Map<String, dynamic>>.broadcast();
+  bridge.onGroupMessageReceived = (data) {
+    groupMessageStreamController.add(data);
+  };
+
+  // Create group invite listener
+  final groupInviteListener = GroupInviteListener(
+    groupInviteStream: messageRouter.groupInviteStream,
+    groupRepo: groupRepository,
+    contactRepo: contactRepository,
+    bridge: bridge,
+    getOwnMlKemSecretKey: () async {
+      final identity = await repository.loadIdentity();
+      return identity?.mlKemSecretKey;
+    },
+  );
+
   // Create pending message retrier
   final pendingMessageRetrier = PendingMessageRetrier(
     p2pService: p2pService,
@@ -388,6 +478,8 @@ void main() async {
   chatMessageListener.start();
   reactionListener.start();
   profileUpdateListener.start();
+  groupMessageListener.start(groupMessageStreamController.stream);
+  groupInviteListener.start();
   pendingMessageRetrier.start();
   keyExchangeRetrier.start();
 
@@ -427,6 +519,10 @@ void main() async {
       isDesktop: isDesktop,
       notificationService: notificationService,
       conversationTracker: conversationTracker,
+      groupRepository: groupRepository,
+      groupMessageRepository: groupMessageRepository,
+      groupMessageListener: groupMessageListener,
+      groupInviteListener: groupInviteListener,
     ),
   );
   StartupTiming.instance.mark('run_app_called');
@@ -455,6 +551,10 @@ class MyApp extends StatefulWidget {
   final ReactionRepositoryImpl reactionRepository;
   final NotificationService notificationService;
   final ActiveConversationTracker conversationTracker;
+  final GroupRepositoryImpl groupRepository;
+  final GroupMessageRepositoryImpl groupMessageRepository;
+  final GroupMessageListener groupMessageListener;
+  final GroupInviteListener groupInviteListener;
 
   static final navigatorKey = GlobalKey<NavigatorState>();
 
@@ -482,6 +582,10 @@ class MyApp extends StatefulWidget {
     required this.isDesktop,
     required this.notificationService,
     required this.conversationTracker,
+    required this.groupRepository,
+    required this.groupMessageRepository,
+    required this.groupMessageListener,
+    required this.groupInviteListener,
   }) : super(key: key);
 
   @override
@@ -546,6 +650,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     // Orderly teardown: retriers → listeners → router → service → bridge
     widget.keyExchangeRetrier.dispose();
     widget.pendingMessageRetrier.dispose();
+    widget.groupInviteListener.dispose();
+    widget.groupMessageListener.dispose();
     widget.profileUpdateListener.dispose();
     widget.reactionListener.dispose();
     widget.chatMessageListener.dispose();
@@ -648,6 +754,10 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         conversationTracker: widget.conversationTracker,
         reactionRepository: widget.reactionRepository,
         reactionListener: widget.reactionListener,
+        groupRepository: widget.groupRepository,
+        groupMessageRepository: widget.groupMessageRepository,
+        groupMessageListener: widget.groupMessageListener,
+        groupInviteListener: widget.groupInviteListener,
       ),
       debugShowCheckedModeBanner: false,
     );

@@ -7,6 +7,10 @@ import 'package:flutter_app/core/notifications/active_conversation_tracker.dart'
 import 'package:flutter_app/features/conversation/application/reaction_listener.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
+import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
 import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository.dart';
@@ -88,6 +92,18 @@ class StartupRouter extends StatefulWidget {
   /// The reaction listener for incoming reactions.
   final ReactionListener? reactionListener;
 
+  /// The group repository for group persistence.
+  final GroupRepository? groupRepository;
+
+  /// The group message repository for group message persistence.
+  final GroupMessageRepository? groupMessageRepository;
+
+  /// The group message listener for incoming group messages.
+  final GroupMessageListener? groupMessageListener;
+
+  /// The group invite listener for incoming group invites.
+  final GroupInviteListener? groupInviteListener;
+
   const StartupRouter({
     super.key,
     required this.repository,
@@ -106,6 +122,10 @@ class StartupRouter extends StatefulWidget {
     this.audioRecorderService,
     this.reactionRepository,
     this.reactionListener,
+    this.groupRepository,
+    this.groupMessageRepository,
+    this.groupMessageListener,
+    this.groupInviteListener,
   });
 
   @override
@@ -174,6 +194,10 @@ class _StartupRouterState extends State<StartupRouter> {
                 audioRecorderService: widget.audioRecorderService,
                 reactionRepository: widget.reactionRepository,
                 reactionListener: widget.reactionListener,
+                groupRepository: widget.groupRepository,
+                groupMessageRepository: widget.groupMessageRepository,
+                groupMessageListener: widget.groupMessageListener,
+                groupInviteListener: widget.groupInviteListener,
               ),
             ),
           );
@@ -207,6 +231,10 @@ class _StartupRouterState extends State<StartupRouter> {
             audioRecorderService: widget.audioRecorderService,
             reactionRepository: widget.reactionRepository,
             reactionListener: widget.reactionListener,
+            groupRepository: widget.groupRepository,
+            groupMessageRepository: widget.groupMessageRepository,
+            groupMessageListener: widget.groupMessageListener,
+            groupInviteListener: widget.groupInviteListener,
           );
           StartupTiming.instance.mark('route_pushed');
 
@@ -249,6 +277,10 @@ class _StartupRouterState extends State<StartupRouter> {
                         audioRecorderService: widget.audioRecorderService,
                         reactionRepository: widget.reactionRepository,
                         reactionListener: widget.reactionListener,
+                        groupRepository: widget.groupRepository,
+                        groupMessageRepository: widget.groupMessageRepository,
+                        groupMessageListener: widget.groupMessageListener,
+                        groupInviteListener: widget.groupInviteListener,
                       ),
                     ),
                   );
@@ -421,6 +453,10 @@ class _StartupRouterState extends State<StartupRouter> {
     AudioRecorderService? audioRecorderService,
     ReactionRepository? reactionRepository,
     ReactionListener? reactionListener,
+    GroupRepository? groupRepository,
+    GroupMessageRepository? groupMessageRepository,
+    GroupMessageListener? groupMessageListener,
+    GroupInviteListener? groupInviteListener,
   }) {
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(
@@ -441,6 +477,10 @@ class _StartupRouterState extends State<StartupRouter> {
           audioRecorderService: audioRecorderService,
           reactionRepository: reactionRepository,
           reactionListener: reactionListener,
+          groupRepository: groupRepository,
+          groupMessageRepository: groupMessageRepository,
+          groupMessageListener: groupMessageListener,
+          groupInviteListener: groupInviteListener,
         ),
       ),
     );

@@ -19,6 +19,10 @@ import 'package:flutter_app/features/conversation/application/reaction_listener.
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
+import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/feed/presentation/navigation/feed_route_transition.dart';
 import 'package:flutter_app/features/feed/presentation/screens/feed_wired.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
@@ -53,6 +57,10 @@ class QRScannerWired extends StatelessWidget {
   final AudioRecorderService? audioRecorderService;
   final ReactionRepository? reactionRepository;
   final ReactionListener? reactionListener;
+  final GroupRepository? groupRepository;
+  final GroupMessageRepository? groupMessageRepository;
+  final GroupMessageListener? groupMessageListener;
+  final GroupInviteListener? groupInviteListener;
 
   const QRScannerWired({
     super.key,
@@ -73,6 +81,10 @@ class QRScannerWired extends StatelessWidget {
     this.audioRecorderService,
     this.reactionRepository,
     this.reactionListener,
+    this.groupRepository,
+    this.groupMessageRepository,
+    this.groupMessageListener,
+    this.groupInviteListener,
   });
 
   @override
@@ -279,6 +291,10 @@ class QRScannerWired extends StatelessWidget {
                         audioRecorderService: audioRecorderService,
                         reactionRepository: reactionRepository,
                         reactionListener: reactionListener,
+                        groupRepository: groupRepository,
+                        groupMessageRepository: groupMessageRepository,
+                        groupMessageListener: groupMessageListener,
+                        groupInviteListener: groupInviteListener,
                       ),
                     ),
                     (route) => false,
