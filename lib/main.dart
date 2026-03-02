@@ -436,6 +436,10 @@ void main() async {
     groupRepo: groupRepository,
     msgRepo: groupMessageRepository,
     bridge: bridge,
+    getSelfPeerId: () async {
+      final identity = await repository.loadIdentity();
+      return identity?.peerId;
+    },
   );
   final groupMessageStreamController =
       StreamController<Map<String, dynamic>>.broadcast();

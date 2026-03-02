@@ -1,6 +1,9 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
@@ -90,12 +93,73 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
 
   Future<void> _onRemoveMember(GroupMember member) async {
     try {
+      // 1. Remove from DB + update admin's Go config
       await removeGroupMember(
         bridge: widget.bridge,
         groupRepo: widget.groupRepo,
         groupId: widget.group.id,
         memberPeerId: member.peerId,
       );
+
+      // 2. Broadcast member_removed system message to remaining members
+      final identity = await widget.identityRepo.loadIdentity();
+      if (identity != null) {
+        final group = await widget.groupRepo.getGroup(widget.group.id);
+        final allMembers =
+            await widget.groupRepo.getMembers(widget.group.id);
+
+        if (group != null) {
+          final groupConfig = {
+            'name': group.name,
+            'groupType': group.type.toValue(),
+            if (group.description != null) 'description': group.description,
+            'members': allMembers
+                .map((m) => {
+                      'peerId': m.peerId,
+                      'username': m.username,
+                      'role': m.role.toValue(),
+                      'publicKey': m.publicKey,
+                      if (m.mlKemPublicKey != null)
+                        'mlKemPublicKey': m.mlKemPublicKey,
+                    })
+                .toList(),
+            'createdBy': group.createdBy,
+            'createdAt': group.createdAt.toUtc().toIso8601String(),
+          };
+
+          final sysMessage = jsonEncode({
+            '__sys': 'member_removed',
+            'member': {
+              'peerId': member.peerId,
+              'username': member.username,
+            },
+            'groupConfig': groupConfig,
+          });
+
+          await callGroupPublish(
+            widget.bridge,
+            groupId: widget.group.id,
+            text: sysMessage,
+            senderPeerId: identity.peerId,
+            senderPublicKey: identity.publicKey,
+            senderPrivateKey: identity.privateKey,
+            senderUsername: identity.username ?? '',
+          );
+
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'GROUP_INFO_FL_REMOVE_BROADCAST_SENT',
+            details: {
+              'groupId': widget.group.id.length > 8
+                  ? widget.group.id.substring(0, 8)
+                  : widget.group.id,
+              'removedPeerId': member.peerId.length > 10
+                  ? member.peerId.substring(0, 10)
+                  : member.peerId,
+            },
+          );
+        }
+      }
 
       _loadMembers();
     } catch (e) {
