@@ -6,6 +6,7 @@ import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/contact_request/application/accept_and_reciprocate_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/accept_contact_request_use_case.dart';
 import 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart';
+import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
@@ -317,5 +318,124 @@ void main() {
     expect(sent['version'], equals('2'));
     expect(sent['encrypted'], isA<Map>());
     expect(sent.containsKey('payload'), isFalse);
+  });
+
+  test('success: calls downloadProfilePictureFn after accepting', () async {
+    _seedPendingRequest(requestRepo);
+    String? capturedPeerId;
+    ContactModel? callbackContact;
+
+    final result = await acceptAndReciprocateContactRequest(
+      requestRepo: requestRepo,
+      contactRepo: contactRepo,
+      peerId: _bobPeerId,
+      p2pService: p2pService,
+      identityRepo: identityRepo,
+      bridge: bridge,
+      downloadProfilePictureFn: ({
+        required bridge,
+        required contactRepo,
+        required ownerPeerId,
+        required avatarVersion,
+      }) async {
+        capturedPeerId = ownerPeerId;
+        return null;
+      },
+      onProfileDownloaded: (c) => callbackContact = c,
+    );
+
+    expect(result, AcceptContactRequestResult.success);
+    await Future.delayed(Duration.zero);
+    expect(capturedPeerId, _bobPeerId);
+    // download returned null → callback should NOT fire
+    expect(callbackContact, isNull);
+  });
+
+  test('success: calls onProfileDownloaded when download succeeds', () async {
+    _seedPendingRequest(requestRepo);
+    final fakeUpdated = ContactModel(
+      peerId: _bobPeerId,
+      publicKey: 'pk-bob',
+      rendezvous: '/dns4/relay/tcp/443/p2p/relay',
+      username: 'Bob',
+      signature: 'sig-bob',
+      scannedAt: '2026-01-01T00:00:00Z',
+      avatarPath: 'media/avatars/$_bobPeerId.jpg',
+      avatarVersion: 'initial',
+    );
+    ContactModel? callbackContact;
+
+    final result = await acceptAndReciprocateContactRequest(
+      requestRepo: requestRepo,
+      contactRepo: contactRepo,
+      peerId: _bobPeerId,
+      p2pService: p2pService,
+      identityRepo: identityRepo,
+      bridge: bridge,
+      downloadProfilePictureFn: ({
+        required bridge,
+        required contactRepo,
+        required ownerPeerId,
+        required avatarVersion,
+      }) async {
+        return fakeUpdated;
+      },
+      onProfileDownloaded: (c) => callbackContact = c,
+    );
+
+    expect(result, AcceptContactRequestResult.success);
+    await Future.delayed(const Duration(milliseconds: 50));
+    expect(callbackContact, equals(fakeUpdated));
+  });
+
+  test('success: downloadProfilePictureFn failure does not affect result',
+      () async {
+    _seedPendingRequest(requestRepo);
+
+    final result = await acceptAndReciprocateContactRequest(
+      requestRepo: requestRepo,
+      contactRepo: contactRepo,
+      peerId: _bobPeerId,
+      p2pService: p2pService,
+      identityRepo: identityRepo,
+      bridge: bridge,
+      downloadProfilePictureFn: ({
+        required bridge,
+        required contactRepo,
+        required ownerPeerId,
+        required avatarVersion,
+      }) async {
+        throw Exception('download failed');
+      },
+    );
+
+    expect(result, AcceptContactRequestResult.success);
+    await Future.delayed(Duration.zero);
+  });
+
+  test('notFound: does not call downloadProfilePictureFn', () async {
+    bool wasCalled = false;
+
+    final result = await acceptAndReciprocateContactRequest(
+      requestRepo: requestRepo,
+      contactRepo: contactRepo,
+      peerId: _bobPeerId,
+      p2pService: p2pService,
+      identityRepo: identityRepo,
+      bridge: bridge,
+      downloadProfilePictureFn: ({
+        required bridge,
+        required contactRepo,
+        required ownerPeerId,
+        required avatarVersion,
+      }) async {
+        wasCalled = true;
+        return null;
+      },
+    );
+
+    expect(result, AcceptContactRequestResult.notFound);
+    await Future.delayed(Duration.zero);
+    expect(wasCalled, isFalse);
   });
 }

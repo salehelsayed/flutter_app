@@ -310,6 +310,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       p2pService: widget.p2pService,
       identityRepo: widget.identityRepo,
       bridge: widget.bridge,
+      onProfileDownloaded: widget.chatMessageListener.emitContactUpdate,
     );
     if (!mounted) return;
     if (result == AcceptContactRequestResult.success) {
