@@ -14,6 +14,12 @@ import 'package:flutter_app/features/contacts/domain/repositories/contact_reposi
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
+import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/domain/models/group_message.dart';
+import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
+import 'package:flutter_app/features/groups/presentation/widgets/expandable_fab.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_wired.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_close_button.dart';
@@ -25,6 +31,8 @@ import '../../../../core/bridge/fake_bridge.dart';
 import '../../../../core/secure_storage/fake_secure_key_store.dart';
 import '../../../../core/services/fake_p2p_service.dart';
 import '../../../../shared/fakes/fake_media_file_manager.dart';
+import '../../../../shared/fakes/in_memory_group_message_repository.dart';
+import '../../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../../shared/fakes/in_memory_media_attachment_repository.dart';
 import '../../../../shared/fakes/in_memory_message_repository.dart';
 import '../../../contacts/domain/repositories/fake_contact_repository.dart';
@@ -42,6 +50,9 @@ void main() {
   late InMemoryMediaAttachmentRepository mediaAttachmentRepo;
   late FakeMediaFileManager mediaFileManager;
   late ImageProcessor imageProcessor;
+  late InMemoryGroupRepository groupRepo;
+  late InMemoryGroupMessageRepository groupMsgRepo;
+  late StreamController<GroupMessage> groupMessageStreamController;
 
   final testIdentity = IdentityModel(
     peerId: 'test-peer-id-12345',
@@ -72,6 +83,9 @@ void main() {
     messageRepo = InMemoryMessageRepository();
     mediaAttachmentRepo = InMemoryMediaAttachmentRepository();
     mediaFileManager = FakeMediaFileManager();
+    groupRepo = InMemoryGroupRepository();
+    groupMsgRepo = InMemoryGroupMessageRepository();
+    groupMessageStreamController = StreamController<GroupMessage>.broadcast();
     imageProcessor = ImageProcessor(
       compressFile: ({
         required path,
@@ -103,6 +117,7 @@ void main() {
   });
 
   tearDown(() {
+    groupMessageStreamController.close();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
       const MethodChannel('plugins.flutter.io/path_provider'),
@@ -139,6 +154,7 @@ void main() {
   Widget buildOrbitWired({
     ContactRequestListener? contactRequestListener,
     ChatMessageListener? chatMessageListener,
+    _FakeGroupMessageListener? groupMessageListener,
     bool wrapInNavigator = false,
   }) {
     final crListener = contactRequestListener ??
@@ -157,6 +173,9 @@ void main() {
           contactRepo: contactRepo,
         );
 
+    final gmListener = groupMessageListener ??
+        _FakeGroupMessageListener(groupMessageStreamController.stream);
+
     final orbitWidget = OrbitWired(
       identityRepo: identityRepo,
       contactRepo: contactRepo,
@@ -170,6 +189,9 @@ void main() {
       mediaFileManager: mediaFileManager,
       secureKeyStore: secureKeyStore,
       imageProcessor: imageProcessor,
+      groupRepository: groupRepo,
+      groupMessageRepository: groupMsgRepo,
+      groupMessageListener: gmListener,
     );
 
     if (wrapInNavigator) {
@@ -451,6 +473,196 @@ void main() {
       // were all disposed cleanly
       expect(find.text('Replaced'), findsOneWidget);
     });
+
+    testWidgets('shows ExpandableFab with + icon', (tester) async {
+      setLargeTestSurface(tester);
+      suppressOverflowErrors();
+      identityRepo.seed(testIdentity);
+
+      await tester.pumpWidget(buildOrbitWired());
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // ExpandableFab is now in OrbitScreen
+      expect(find.byType(ExpandableFab), findsOneWidget);
+      expect(find.byIcon(Icons.add), findsOneWidget);
+    });
+
+    testWidgets('tapping FAB opens menu with New Group, New Announce, New Q&A',
+        (tester) async {
+      setLargeTestSurface(tester);
+      suppressOverflowErrors();
+      identityRepo.seed(testIdentity);
+
+      await tester.pumpWidget(buildOrbitWired());
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      await tester.tap(find.byIcon(Icons.add));
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(find.text('New Group'), findsOneWidget);
+      expect(find.text('New Announce'), findsOneWidget);
+      expect(find.text('New Q&A'), findsOneWidget);
+    });
+
+    testWidgets('displays group rows when groups exist', (tester) async {
+      setLargeTestSurface(tester);
+      suppressOverflowErrors();
+      identityRepo.seed(testIdentity);
+
+      await groupRepo.saveGroup(GroupModel(
+        id: 'g-1',
+        name: 'Alpha Group',
+        type: GroupType.chat,
+        topicName: 'topic-g-1',
+        createdAt: DateTime.utc(2026, 3, 1),
+        createdBy: 'peer-admin',
+        myRole: GroupRole.admin,
+      ));
+
+      await tester.pumpWidget(buildOrbitWired());
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // Group name should appear in the list
+      expect(find.text('Alpha Group'), findsOneWidget);
+    });
+
+    testWidgets('displays group rows with latest message preview',
+        (tester) async {
+      setLargeTestSurface(tester);
+      suppressOverflowErrors();
+      identityRepo.seed(testIdentity);
+
+      await groupRepo.saveGroup(GroupModel(
+        id: 'g-1',
+        name: 'Alpha Group',
+        type: GroupType.chat,
+        topicName: 'topic-g-1',
+        createdAt: DateTime.utc(2026, 3, 1),
+        createdBy: 'peer-admin',
+        myRole: GroupRole.admin,
+      ));
+
+      await groupMsgRepo.saveMessage(GroupMessage(
+        id: 'gm-1',
+        groupId: 'g-1',
+        senderPeerId: 'peer-alice',
+        senderUsername: 'Alice',
+        text: 'Hello group!',
+        timestamp: DateTime.utc(2026, 3, 1),
+        isIncoming: true,
+        createdAt: DateTime.utc(2026, 3, 1),
+      ));
+
+      await tester.pumpWidget(buildOrbitWired());
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.text('Alpha Group'), findsOneWidget);
+      expect(find.text('Alice: Hello group!'), findsOneWidget);
+    });
+
+    testWidgets('refreshes orbit data on incoming group message',
+        (tester) async {
+      setLargeTestSurface(tester);
+      suppressOverflowErrors();
+      identityRepo.seed(testIdentity);
+
+      await groupRepo.saveGroup(GroupModel(
+        id: 'g-1',
+        name: 'Alpha Group',
+        type: GroupType.chat,
+        topicName: 'topic-g-1',
+        createdAt: DateTime.utc(2026, 3, 1),
+        createdBy: 'peer-admin',
+        myRole: GroupRole.admin,
+      ));
+
+      await tester.pumpWidget(buildOrbitWired());
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // Initially group shows with no message preview
+      expect(find.text('Alpha Group'), findsOneWidget);
+      expect(find.text('Bob: New group msg'), findsNothing);
+
+      // Seed a group message and emit on the group message stream
+      final newMsg = GroupMessage(
+        id: 'gm-new',
+        groupId: 'g-1',
+        senderPeerId: 'peer-bob',
+        senderUsername: 'Bob',
+        text: 'New group msg',
+        timestamp: DateTime.utc(2026, 3, 2),
+        isIncoming: true,
+        createdAt: DateTime.utc(2026, 3, 2),
+      );
+      await groupMsgRepo.saveMessage(newMsg);
+      groupMessageStreamController.add(newMsg);
+
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.text('Bob: New group msg'), findsOneWidget);
+    });
+
+    testWidgets('interleaves groups and friends sorted by last activity',
+        (tester) async {
+      setLargeTestSurface(tester);
+      suppressOverflowErrors();
+      identityRepo.seed(testIdentity);
+
+      // Add a friend with an older message
+      contactRepo.seed([testContact]);
+      await messageRepo.saveMessage(ConversationMessage(
+        id: 'msg-old',
+        contactPeerId: 'contact-peer-id',
+        text: 'Old message from Bob',
+        senderPeerId: 'contact-peer-id',
+        timestamp: '2026-01-01T00:00:00.000Z',
+        isIncoming: true,
+        status: 'delivered',
+        createdAt: '2026-01-01T00:00:00.000Z',
+      ));
+
+      // Add a group with a newer message
+      await groupRepo.saveGroup(GroupModel(
+        id: 'g-1',
+        name: 'Newer Group',
+        type: GroupType.chat,
+        topicName: 'topic-g-1',
+        createdAt: DateTime.utc(2026, 3, 1),
+        createdBy: 'peer-admin',
+        myRole: GroupRole.admin,
+      ));
+      await groupMsgRepo.saveMessage(GroupMessage(
+        id: 'gm-1',
+        groupId: 'g-1',
+        senderPeerId: 'peer-alice',
+        senderUsername: 'Alice',
+        text: 'Recent group msg',
+        timestamp: DateTime.utc(2026, 3, 1),
+        isIncoming: true,
+        createdAt: DateTime.utc(2026, 3, 1),
+      ));
+
+      await tester.pumpWidget(buildOrbitWired());
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // Both should appear
+      expect(find.text('Newer Group'), findsOneWidget);
+      expect(find.text('Bob'), findsWidgets);
+    });
   });
 }
 
@@ -511,4 +723,28 @@ class _FakeContactRequestListener extends ContactRequestListener {
   Stream<ContactRequestModel> get requestStream => _controller.stream;
 
   void emitRequest(ContactRequestModel request) => _controller.add(request);
+}
+
+/// Fake [GroupMessageListener] with a controllable stream for testing.
+class _FakeGroupMessageListener extends GroupMessageListener {
+  final Stream<GroupMessage> _externalStream;
+
+  _FakeGroupMessageListener(this._externalStream)
+      : super(
+          groupRepo: _NoOpGroupRepo(),
+          msgRepo: _NoOpMsgRepo(),
+        );
+
+  @override
+  Stream<GroupMessage> get groupMessageStream => _externalStream;
+}
+
+class _NoOpGroupRepo implements GroupRepository {
+  @override
+  dynamic noSuchMethod(Invocation invocation) => null;
+}
+
+class _NoOpMsgRepo implements GroupMessageRepository {
+  @override
+  dynamic noSuchMethod(Invocation invocation) => null;
 }

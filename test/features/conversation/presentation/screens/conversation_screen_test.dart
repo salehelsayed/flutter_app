@@ -296,7 +296,7 @@ void main() {
       );
       await tester.pump();
 
-      await tester.tap(find.byIcon(Icons.add_circle_outline));
+      await tester.tap(find.byIcon(Icons.add_rounded));
       expect(attachCalled, true);
     });
   });

@@ -37,6 +37,8 @@ class _FakeBridge implements Bridge {
   @override
   void Function(List<String> listenAddresses, List<String> circuitAddresses)?
       onAddressesUpdated;
+  @override
+  void Function(Map<String, dynamic>)? onGroupMessageReceived;
 }
 
 class _FakeContactRepo implements ContactRepository {

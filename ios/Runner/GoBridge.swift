@@ -131,6 +131,8 @@ class GoBridge: NSObject {
             runOnBackground({ BridgeGroupUpdateConfig(args ?? "") }, result: result)
         case "groupRotateKey":
             runOnBackground({ BridgeGroupRotateKey(args ?? "") }, result: result)
+        case "groupUpdateKey":
+            runOnBackground({ BridgeGroupUpdateKey(args ?? "") }, result: result)
         case "groupEncryptMessage":
             runOnBackground({ BridgeGroupEncryptMessage(args ?? "") }, result: result)
         case "groupDecryptMessage":

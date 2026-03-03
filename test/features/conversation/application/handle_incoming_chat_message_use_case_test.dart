@@ -226,6 +226,8 @@ class FakeDecryptBridge implements Bridge {
 
   @override
   void Function(List<String> p1, List<String> p2)? onAddressesUpdated;
+  @override
+  void Function(Map<String, dynamic>)? onGroupMessageReceived;
 }
 
 Future<List<String>> capturePrintedLines(Future<void> Function() action) async {

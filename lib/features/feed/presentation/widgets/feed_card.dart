@@ -12,7 +12,7 @@ import 'package:flutter_app/features/feed/presentation/widgets/open_mode_card_bo
 /// Replaces the old ThreadCard. Flat card (no stacked layers) with
 /// glassmorphism background and state-driven border/glow colors.
 class FeedCard extends StatefulWidget {
-  final ThreadFeedItem thread;
+  final CardThreadFeedItem thread;
   final SessionReply? sessionReply;
   final bool isExpanded;
   final VoidCallback? onToggleExpand;

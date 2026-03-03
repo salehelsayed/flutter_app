@@ -8,6 +8,7 @@ import 'package:flutter_app/features/feed/presentation/widgets/collapsed_mode_ca
 import 'package:flutter_app/features/feed/presentation/widgets/feed_card.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/open_mode_card_body.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/scrollable_message_preview.dart';
+import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 
 void main() {
   Widget wrap(Widget child) => MaterialApp(
@@ -169,6 +170,45 @@ void main() {
       await tester.pump(const Duration(milliseconds: 600));
       // Card should be fully visible after animation
       expect(find.byType(FeedCard), findsOneWidget);
+    });
+  });
+
+  group('FeedCard with GroupThreadFeedItem', () {
+    testWidgets('renders OpenModeCardBody for unread GroupThreadFeedItem',
+        (tester) async {
+      final groupThread = GroupThreadFeedItem(
+        id: 'g1',
+        timestamp: DateTime(2026, 2, 9),
+        groupId: 'group-abc',
+        groupName: 'Test Group',
+        groupType: GroupType.chat,
+        messages: [
+          _msg('gm1', isUnread: true),
+        ],
+        unreadCount: 1,
+        conversationState: ConversationState.unread,
+      );
+
+      await tester.pumpWidget(wrap(FeedCard(thread: groupThread)));
+      expect(find.byType(OpenModeCardBody), findsOneWidget);
+      expect(find.byType(CollapsedModeCardBody), findsNothing);
+    });
+
+    testWidgets('renders CollapsedModeCardBody for read GroupThreadFeedItem',
+        (tester) async {
+      final groupThread = GroupThreadFeedItem(
+        id: 'g1',
+        timestamp: DateTime(2026, 2, 9),
+        groupId: 'group-abc',
+        groupName: 'Test Group',
+        groupType: GroupType.chat,
+        messages: [_msg('gm1')],
+        conversationState: ConversationState.read,
+      );
+
+      await tester.pumpWidget(wrap(FeedCard(thread: groupThread)));
+      expect(find.byType(CollapsedModeCardBody), findsOneWidget);
+      expect(find.byType(OpenModeCardBody), findsNothing);
     });
   });
 

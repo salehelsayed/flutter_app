@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
@@ -102,6 +103,15 @@ class GroupKeyUpdateListener {
         createdAt: DateTime.now().toUtc(),
       );
       await _groupRepo.saveKey(keyInfo);
+
+      // Update Go's stored key so the topic validator accepts messages
+      // signed with the new epoch.
+      await callGroupUpdateKey(
+        _bridge,
+        groupId: groupId,
+        groupKey: encryptedKey,
+        keyEpoch: keyGeneration,
+      );
 
       emitFlowEvent(
         layer: 'FL',

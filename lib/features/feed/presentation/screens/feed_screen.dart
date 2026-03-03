@@ -47,6 +47,8 @@ class FeedScreen extends StatelessWidget {
   final SessionReplyTracker? sessionReplies;
   final Map<String, List<MessageReaction>> reactions;
   final void Function(String messageId, String emoji)? onReactionSelected;
+  final void Function(GroupThreadFeedItem)? onGroupTap;
+  final void Function(String groupId, String text)? onGroupInlineSend;
 
   const FeedScreen({
     super.key,
@@ -78,6 +80,8 @@ class FeedScreen extends StatelessWidget {
     this.sessionReplies,
     this.reactions = const {},
     this.onReactionSelected,
+    this.onGroupTap,
+    this.onGroupInlineSend,
   });
 
   @override
@@ -200,6 +204,13 @@ class FeedScreen extends StatelessWidget {
     for (final item in feedItems) {
       if (item is ConnectionFeedItem) {
         belowDivider.add(item);
+      } else if (item is GroupThreadFeedItem) {
+        if (item.conversationState == ConversationState.unread ||
+            item.conversationState == ConversationState.active) {
+          aboveDivider.add(item);
+        } else {
+          belowDivider.add(item);
+        }
       } else if (item is ThreadFeedItem) {
         if (item.conversationState == ConversationState.unread ||
             item.conversationState == ConversationState.active) {
@@ -275,7 +286,23 @@ class FeedScreen extends StatelessWidget {
   }
 
   void _addCardWidget(BuildContext context, List<Widget> widgets, FeedItem item) {
-    if (item is ConnectionFeedItem) {
+    if (item is GroupThreadFeedItem) {
+      widgets.add(
+        FeedCard(
+          thread: item,
+          isExpanded: expandedCardId == item.id,
+          onToggleExpand: onToggleExpand != null
+              ? () => onToggleExpand!(item.id)
+              : null,
+          onInlineSend: onGroupInlineSend != null
+              ? (text) => onGroupInlineSend!(item.groupId, text)
+              : null,
+          onViewFullConversation: onGroupTap != null
+              ? () => onGroupTap!(item)
+              : null,
+        ),
+      );
+    } else if (item is ConnectionFeedItem) {
       widgets.add(
         ConnectionCard(
           contactPeerId: item.contactPeerId,

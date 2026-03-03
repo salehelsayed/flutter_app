@@ -2,19 +2,18 @@ import 'package:flutter/material.dart';
 
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
-import 'package:flutter_app/features/groups/presentation/widgets/expandable_fab.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_card.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
 
 /// Pure UI screen displaying a list of groups.
 ///
 /// No business logic -- all data passed via props.
+/// The ExpandableFab has been moved to OrbitScreen (Phase 1).
 class GroupListScreen extends StatelessWidget {
   final List<GroupModel> groups;
   final Map<String, GroupMessage?> latestMessages;
   final Map<String, int> unreadCounts;
   final ValueChanged<GroupModel> onGroupTap;
-  final ValueChanged<GroupType> onCreateGroup;
   final VoidCallback onBack;
 
   const GroupListScreen({
@@ -23,7 +22,6 @@ class GroupListScreen extends StatelessWidget {
     this.latestMessages = const {},
     this.unreadCounts = const {},
     required this.onGroupTap,
-    required this.onCreateGroup,
     required this.onBack,
   });
 
@@ -33,34 +31,11 @@ class GroupListScreen extends StatelessWidget {
       child: Scaffold(
         backgroundColor: Colors.transparent,
         body: SafeArea(
-          child: Stack(
+          child: Column(
             children: [
-              Column(
-                children: [
-                  _buildHeader(context),
-                  Expanded(
-                    child: groups.isEmpty ? _buildEmptyState() : _buildList(),
-                  ),
-                ],
-              ),
-              ExpandableFab(
-                items: [
-                  ExpandableFabItem(
-                    label: 'New Group',
-                    icon: Icons.group_outlined,
-                    onTap: () => onCreateGroup(GroupType.chat),
-                  ),
-                  ExpandableFabItem(
-                    label: 'New Announce',
-                    icon: Icons.campaign_outlined,
-                    onTap: () => onCreateGroup(GroupType.announcement),
-                  ),
-                  ExpandableFabItem(
-                    label: 'New Q&A',
-                    icon: Icons.quiz_outlined,
-                    onTap: () => onCreateGroup(GroupType.qa),
-                  ),
-                ],
+              _buildHeader(context),
+              Expanded(
+                child: groups.isEmpty ? _buildEmptyState() : _buildList(),
               ),
             ],
           ),

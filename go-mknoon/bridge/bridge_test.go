@@ -1126,6 +1126,13 @@ func TestGroupRotateKey_NodeNotInitialized(t *testing.T) {
 	assertNotOk(t, m, "NOT_INITIALIZED")
 }
 
+func TestGroupUpdateKey_NodeNotInitialized(t *testing.T) {
+	withNilSingleton(t)
+	result := GroupUpdateKey(`{"groupId": "g1", "groupKey": "k1", "keyEpoch": 2}`)
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "NOT_INITIALIZED")
+}
+
 func TestGroupInboxStore_NodeNotInitialized(t *testing.T) {
 	withNilSingleton(t)
 	result := GroupInboxStore(`{"groupId": "g1", "message": "hello"}`)
@@ -1208,6 +1215,20 @@ func TestGroupUpdateConfig_InvalidJSON(t *testing.T) {
 func TestGroupUpdateConfig_MissingGroupId(t *testing.T) {
 	withSingletonNode(t)
 	result := GroupUpdateConfig(`{}`)
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "INVALID_INPUT")
+}
+
+func TestGroupUpdateKey_InvalidJSON(t *testing.T) {
+	withSingletonNode(t)
+	result := GroupUpdateKey("not valid json")
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "INVALID_INPUT")
+}
+
+func TestGroupUpdateKey_MissingFields(t *testing.T) {
+	withSingletonNode(t)
+	result := GroupUpdateKey(`{"groupId": "g1"}`)
 	m := parseJSON(t, result)
 	assertNotOk(t, m, "INVALID_INPUT")
 }
@@ -1471,4 +1492,51 @@ func TestGroupRotateKey_IncrementsEpoch(t *testing.T) {
 	if newKey1 == newKey2 {
 		t.Error("rotated keys should be different")
 	}
+}
+
+// ===========================================================================
+// GroupUpdateKey — updates stored key without generating a new one
+// ===========================================================================
+
+// Test: GroupUpdateKey updates the stored key so subsequent publishes use it.
+func TestGroupUpdateKey_UpdatesStoredKey(t *testing.T) {
+	withFreshSingletonNode(t)
+
+	keyHex := generateTestKeyHex(t)
+	input := startNodeJSON(t, keyHex)
+	startResult := StartNode(input)
+	assertOk(t, parseJSON(t, startResult))
+
+	// Create a group.
+	genIdentity := parseJSON(t, GenerateIdentity())
+	assertOk(t, genIdentity)
+	identity := genIdentity["identity"].(map[string]interface{})
+
+	createInput, _ := json.Marshal(map[string]interface{}{
+		"name":             "UpdateKey Test Group",
+		"groupType":        "chat",
+		"creatorPeerId":    identity["peerId"].(string),
+		"creatorPublicKey": identity["publicKey"].(string),
+	})
+	createResult := GroupCreate(string(createInput))
+	createMap := parseJSON(t, createResult)
+	assertOk(t, createMap)
+
+	groupId := createMap["groupId"].(string)
+
+	// Generate a new group key to simulate receiving from admin.
+	newKeyResult := GenerateGroupKey()
+	newKeyMap := parseJSON(t, newKeyResult)
+	assertOk(t, newKeyMap)
+	newKey := newKeyMap["groupKey"].(string)
+
+	// Call GroupUpdateKey with the new key and epoch 5.
+	updateInput, _ := json.Marshal(map[string]interface{}{
+		"groupId":  groupId,
+		"groupKey": newKey,
+		"keyEpoch": 5,
+	})
+	updateResult := GroupUpdateKey(string(updateInput))
+	updateMap := parseJSON(t, updateResult)
+	assertOk(t, updateMap)
 }

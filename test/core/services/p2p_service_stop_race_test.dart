@@ -59,6 +59,8 @@ class _ReconnectGateBridge implements Bridge {
   void Function(ConnectionState)? onPeerDisconnected;
   @override
   void Function(List<String>, List<String>)? onAddressesUpdated;
+  @override
+  void Function(Map<String, dynamic>)? onGroupMessageReceived;
 
   @override
   Future<void> initialize() async {

@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
+import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 
 void main() {
   group('ConnectionFeedItem', () {
@@ -569,6 +570,305 @@ void main() {
     });
   });
 
+  group('CardThreadFeedItem', () {
+    test('ThreadFeedItem.isGroup returns false', () {
+      final item = ThreadFeedItem(
+        id: 'thread_1',
+        timestamp: DateTime(2026, 2, 9),
+        contactPeerId: 'peer1',
+        contactUsername: 'Alice',
+        messages: const [],
+      );
+      expect(item.isGroup, isFalse);
+      expect(item.displayName, 'Alice');
+      expect(item.displayId, 'peer1');
+    });
+
+    test('GroupThreadFeedItem.isGroup returns true', () {
+      final item = GroupThreadFeedItem(
+        id: 'g1',
+        timestamp: DateTime(2026, 2, 9),
+        groupId: 'group-abc',
+        groupName: 'My Group',
+        groupType: GroupType.chat,
+        messages: const [],
+      );
+      expect(item.isGroup, isTrue);
+      expect(item.displayName, 'My Group');
+      expect(item.displayId, 'group-abc');
+    });
+
+    test('GroupThreadFeedItem provides all CardThreadFeedItem getters', () {
+      final item = GroupThreadFeedItem(
+        id: 'g1',
+        timestamp: DateTime(2026, 2, 9),
+        groupId: 'g1',
+        groupName: 'Test Group',
+        groupType: GroupType.chat,
+        messages: [
+          ThreadMessage(
+            id: 'm1', text: 'Hi', time: '3:00 PM',
+            timestamp: DateTime(2026, 2, 9, 15, 0),
+            isIncoming: true,
+          ),
+          ThreadMessage(
+            id: 'm2', text: 'Reply', time: '3:05 PM',
+            timestamp: DateTime(2026, 2, 9, 15, 5),
+            isIncoming: false,
+          ),
+          ThreadMessage(
+            id: 'm3', text: 'New', time: '3:10 PM',
+            timestamp: DateTime(2026, 2, 9, 15, 10),
+            isUnread: true,
+            isIncoming: true,
+          ),
+        ],
+        unreadCount: 1,
+        conversationState: ConversationState.active,
+      );
+
+      // isBlocked always false for groups
+      expect(item.isBlocked, isFalse);
+      // lastRepliedAt always null for groups
+      expect(item.lastRepliedAt, isNull);
+      // isUnreadCard always false for groups
+      expect(item.isUnreadCard, isFalse);
+      // computed getters work
+      expect(item.isMultiMessage, isTrue);
+      expect(item.additionalCount, 2);
+      expect(item.hasReply, isTrue);
+      expect(item.lastSentMessage?.id, 'm2');
+      expect(item.previewMessages.length, 1);
+      expect(item.hasEarlierHistory, isTrue);
+      expect(item.exchangePreview.length, 2);
+      expect(item.recentInteractionMessages.length, 1);
+    });
+
+    test('ThreadFeedItem provides all CardThreadFeedItem getters', () {
+      final item = ThreadFeedItem(
+        id: 'thread_1',
+        timestamp: DateTime(2026, 2, 9),
+        contactPeerId: 'peer1',
+        contactUsername: 'Alice',
+        messages: [
+          ThreadMessage(
+            id: 'm1', text: 'Hi', time: '3:00 PM',
+            timestamp: DateTime(2026, 2, 9, 15, 0),
+            isIncoming: true,
+          ),
+        ],
+        conversationState: ConversationState.read,
+        isBlocked: true,
+        lastRepliedAt: DateTime(2026, 2, 9, 16, 0),
+        isUnreadCard: true,
+      );
+
+      expect(item.isGroup, isFalse);
+      expect(item.displayName, 'Alice');
+      expect(item.displayId, 'peer1');
+      expect(item.isBlocked, isTrue);
+      expect(item.lastRepliedAt, DateTime(2026, 2, 9, 16, 0));
+      expect(item.isUnreadCard, isTrue);
+    });
+  });
+
+  group('GroupThreadFeedItem', () {
+    test('has type groupThread', () {
+      final item = GroupThreadFeedItem(
+        id: 'group_thread_g1',
+        timestamp: DateTime(2026, 2, 9),
+        groupId: 'g1',
+        groupName: 'Test Group',
+        groupType: GroupType.chat,
+        messages: [
+          ThreadMessage(
+            id: 'gm-1',
+            text: 'Hello',
+            time: '3:30 PM',
+            timestamp: DateTime(2026, 2, 9, 15, 30),
+          ),
+        ],
+      );
+      expect(item.type, FeedItemType.groupThread);
+    });
+
+    test('latestMessage returns last message', () {
+      final item = GroupThreadFeedItem(
+        id: 'group_thread_g1',
+        timestamp: DateTime(2026, 2, 9),
+        groupId: 'g1',
+        groupName: 'Test Group',
+        groupType: GroupType.chat,
+        messages: [
+          ThreadMessage(
+            id: 'gm-1',
+            text: 'First',
+            time: '3:00 PM',
+            timestamp: DateTime(2026, 2, 9, 15, 0),
+          ),
+          ThreadMessage(
+            id: 'gm-2',
+            text: 'Second',
+            time: '3:30 PM',
+            timestamp: DateTime(2026, 2, 9, 15, 30),
+          ),
+        ],
+      );
+      expect(item.latestMessage.id, 'gm-2');
+    });
+
+    test('isOpenMode true for unread, false for read', () {
+      final unread = GroupThreadFeedItem(
+        id: 'g1',
+        timestamp: DateTime(2026, 2, 9),
+        groupId: 'g1',
+        groupName: 'Group',
+        groupType: GroupType.chat,
+        messages: const [],
+        conversationState: ConversationState.unread,
+      );
+      expect(unread.isOpenMode, isTrue);
+
+      final read = GroupThreadFeedItem(
+        id: 'g2',
+        timestamp: DateTime(2026, 2, 9),
+        groupId: 'g2',
+        groupName: 'Group',
+        groupType: GroupType.chat,
+        messages: const [],
+        conversationState: ConversationState.read,
+      );
+      expect(read.isOpenMode, isFalse);
+    });
+
+    test('unreadMessages returns only unread incoming', () {
+      final item = GroupThreadFeedItem(
+        id: 'g1',
+        timestamp: DateTime(2026, 2, 9),
+        groupId: 'g1',
+        groupName: 'Group',
+        groupType: GroupType.chat,
+        messages: [
+          ThreadMessage(
+            id: 'gm-1', text: 'read', time: '3:00 PM',
+            timestamp: DateTime(2026, 2, 9, 15, 0),
+          ),
+          ThreadMessage(
+            id: 'gm-2', text: 'unread', time: '3:30 PM',
+            timestamp: DateTime(2026, 2, 9, 15, 30),
+            isUnread: true,
+          ),
+          ThreadMessage(
+            id: 'gm-3', text: 'sent', time: '3:31 PM',
+            timestamp: DateTime(2026, 2, 9, 15, 31),
+            isIncoming: false,
+          ),
+        ],
+      );
+      final unread = item.unreadMessages;
+      expect(unread.length, 1);
+      expect(unread[0].id, 'gm-2');
+    });
+
+    test('collapsedPreviewMessage returns latest', () {
+      final item = GroupThreadFeedItem(
+        id: 'g1',
+        timestamp: DateTime(2026, 2, 9),
+        groupId: 'g1',
+        groupName: 'Group',
+        groupType: GroupType.chat,
+        messages: [
+          ThreadMessage(
+            id: 'gm-1', text: 'First', time: '3:00 PM',
+            timestamp: DateTime(2026, 2, 9, 15, 0),
+          ),
+          ThreadMessage(
+            id: 'gm-2', text: 'Last', time: '3:30 PM',
+            timestamp: DateTime(2026, 2, 9, 15, 30),
+          ),
+        ],
+      );
+      expect(item.collapsedPreviewMessage.id, 'gm-2');
+    });
+
+    test('hasSentMessage returns true when outgoing exists', () {
+      final withSent = GroupThreadFeedItem(
+        id: 'g1',
+        timestamp: DateTime(2026, 2, 9),
+        groupId: 'g1',
+        groupName: 'Group',
+        groupType: GroupType.chat,
+        messages: [
+          ThreadMessage(
+            id: 'gm-1', text: 'Incoming', time: '3:00 PM',
+            timestamp: DateTime(2026, 2, 9, 15, 0),
+          ),
+          ThreadMessage(
+            id: 'gm-2', text: 'My msg', time: '3:05 PM',
+            timestamp: DateTime(2026, 2, 9, 15, 5),
+            isIncoming: false,
+          ),
+        ],
+      );
+      expect(withSent.hasSentMessage, isTrue);
+
+      final noSent = GroupThreadFeedItem(
+        id: 'g2',
+        timestamp: DateTime(2026, 2, 9),
+        groupId: 'g2',
+        groupName: 'Group',
+        groupType: GroupType.chat,
+        messages: [
+          ThreadMessage(
+            id: 'gm-1', text: 'Incoming', time: '3:00 PM',
+            timestamp: DateTime(2026, 2, 9, 15, 0),
+          ),
+        ],
+      );
+      expect(noSent.hasSentMessage, isFalse);
+    });
+
+    test('stores group type correctly for all types', () {
+      for (final gType in GroupType.values) {
+        final item = GroupThreadFeedItem(
+          id: 'g-${gType.name}',
+          timestamp: DateTime(2026, 2, 9),
+          groupId: 'g-${gType.name}',
+          groupName: '${gType.name} group',
+          groupType: gType,
+          messages: const [],
+        );
+        expect(item.groupType, gType);
+      }
+    });
+
+    test('unreadCount stored correctly', () {
+      final item = GroupThreadFeedItem(
+        id: 'g1',
+        timestamp: DateTime(2026, 2, 9),
+        groupId: 'g1',
+        groupName: 'Group',
+        groupType: GroupType.chat,
+        messages: const [],
+        unreadCount: 5,
+      );
+      expect(item.unreadCount, 5);
+    });
+
+    test('defaults unreadCount to 0 and conversationState to read', () {
+      final item = GroupThreadFeedItem(
+        id: 'g1',
+        timestamp: DateTime(2026, 2, 9),
+        groupId: 'g1',
+        groupName: 'Group',
+        groupType: GroupType.chat,
+        messages: const [],
+      );
+      expect(item.unreadCount, 0);
+      expect(item.conversationState, ConversationState.read);
+    });
+  });
+
   group('ThreadMessage', () {
     test('stores all fields', () {
       final ts = DateTime(2026, 2, 9, 15, 30);
@@ -596,6 +896,32 @@ void main() {
       );
 
       expect(msg.isUnread, isFalse);
+    });
+
+    test('stores optional senderUsername and senderPeerId', () {
+      final msg = ThreadMessage(
+        id: 'msg-1',
+        text: 'Hello',
+        time: '3:30 PM',
+        timestamp: DateTime(2026, 2, 9, 15, 30),
+        senderUsername: 'Sarah',
+        senderPeerId: '12D3KooWSarah',
+      );
+
+      expect(msg.senderUsername, 'Sarah');
+      expect(msg.senderPeerId, '12D3KooWSarah');
+    });
+
+    test('senderUsername and senderPeerId default to null', () {
+      final msg = ThreadMessage(
+        id: 'msg-1',
+        text: 'Hello',
+        time: '3:30 PM',
+        timestamp: DateTime(2026, 2, 9, 15, 30),
+      );
+
+      expect(msg.senderUsername, isNull);
+      expect(msg.senderPeerId, isNull);
     });
   });
 }

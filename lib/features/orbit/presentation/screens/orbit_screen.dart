@@ -1,14 +1,19 @@
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/presentation/widgets/expandable_fab.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_friend.dart';
+import 'package:flutter_app/features/orbit/domain/models/orbit_group.dart';
+import 'package:flutter_app/features/orbit/domain/models/orbit_item.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_close_button.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_header.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbital_visualization.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/friends_list_header.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/friend_row.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/group_row.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_search_trigger.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_search_dock.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/friends_filter_toggle.dart';
@@ -49,6 +54,9 @@ class OrbitScreen extends StatelessWidget {
   final void Function(OrbitFriend) onUnblockFriend;
   final void Function(OrbitFriend) onDeleteFriend;
   final ValueNotifier<Key?> openRowNotifier;
+  final List<OrbitGroup> groups;
+  final void Function(OrbitGroup) onGroupTap;
+  final void Function(GroupType) onCreateGroup;
 
   const OrbitScreen({
     super.key,
@@ -82,11 +90,36 @@ class OrbitScreen extends StatelessWidget {
     required this.onUnblockFriend,
     required this.onDeleteFriend,
     required this.openRowNotifier,
+    this.groups = const [],
+    required this.onGroupTap,
+    required this.onCreateGroup,
   });
+
+  /// Builds a merged and sorted list of orbit items (friends + groups)
+  /// for the current tab and search state.
+  List<OrbitItem> _buildMergedItems() {
+    final items = <OrbitItem>[];
+
+    for (final friend in displayedFriends) {
+      items.add(OrbitFriendItem(friend));
+    }
+
+    // Only show groups in the 'all' tab and when not searching
+    if (filterTab == 'all' && !searchActive) {
+      for (final group in groups) {
+        items.add(OrbitGroupItem(group));
+      }
+    }
+
+    // Sort by most recent activity first
+    items.sort((a, b) => b.sortKey.compareTo(a.sortKey));
+    return items;
+  }
 
   @override
   Widget build(BuildContext context) {
     final userPeerId = identity?.peerId;
+    final mergedItems = _buildMergedItems();
 
     return AmbientBackground(
       child: Scaffold(
@@ -174,7 +207,7 @@ class OrbitScreen extends StatelessWidget {
 
                           const SizedBox(height: 8),
 
-                          // Friend rows
+                          // Merged orbit items (friends + groups)
                           if (searchActive &&
                               searchQuery.isNotEmpty &&
                               displayedFriends.isEmpty)
@@ -184,37 +217,14 @@ class OrbitScreen extends StatelessWidget {
                               !searchActive)
                             const ArchivedEmptyState()
                           else
-                            ...List.generate(displayedFriends.length, (index) {
-                              final friend = displayedFriends[index];
-                              final isInnerCircle =
-                                  allFriends.indexOf(friend) < 13;
-                              final isArchived = friend.isArchived;
-                              final rowKey = ValueKey(friend.peerId);
-                              return Padding(
-                                padding: const EdgeInsets.only(bottom: 8),
-                                child: AnimatedFriendRow(
-                                  index: index,
-                                  child: SwipeableFriendRow(
-                                    key: rowKey,
-                                    isArchived: isArchived,
-                                    isBlocked: friend.isBlocked,
-                                    openRowNotifier: openRowNotifier,
-                                    onArchive: () => onArchiveFriend(friend),
-                                    onUnarchive: () =>
-                                        onUnarchiveFriend(friend),
-                                    onBlock: () => onBlockFriend(friend),
-                                    onUnblock: () => onUnblockFriend(friend),
-                                    onDelete: () => onDeleteFriend(friend),
-                                    child: FriendRow(
-                                      friend: friend,
-                                      showInnerCircleBadge:
-                                          searchActive && isInnerCircle,
-                                      hideUnreadBadge: isArchived,
-                                      onTap: () => onFriendTap(friend),
-                                    ),
-                                  ),
-                                ),
-                              );
+                            ...List.generate(mergedItems.length, (index) {
+                              final item = mergedItems[index];
+                              return switch (item) {
+                                OrbitFriendItem(:final friend) =>
+                                    _buildFriendRow(friend, index),
+                                OrbitGroupItem(:final group) =>
+                                    _buildGroupRow(group, index),
+                              };
                             }),
 
                         ],
@@ -289,7 +299,70 @@ class OrbitScreen extends StatelessWidget {
                 query: searchQuery,
               ),
             ),
+
+            // Layer 5: ExpandableFab (create group)
+            ExpandableFab(
+              items: [
+                ExpandableFabItem(
+                  label: 'New Group',
+                  icon: Icons.group_outlined,
+                  onTap: () => onCreateGroup(GroupType.chat),
+                ),
+                ExpandableFabItem(
+                  label: 'New Announce',
+                  icon: Icons.campaign_outlined,
+                  onTap: () => onCreateGroup(GroupType.announcement),
+                ),
+                ExpandableFabItem(
+                  label: 'New Q&A',
+                  icon: Icons.quiz_outlined,
+                  onTap: () => onCreateGroup(GroupType.qa),
+                ),
+              ],
+            ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFriendRow(OrbitFriend friend, int index) {
+    final isInnerCircle = allFriends.indexOf(friend) < 13;
+    final isArchived = friend.isArchived;
+    final rowKey = ValueKey(friend.peerId);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: AnimatedFriendRow(
+        index: index,
+        child: SwipeableFriendRow(
+          key: rowKey,
+          isArchived: isArchived,
+          isBlocked: friend.isBlocked,
+          openRowNotifier: openRowNotifier,
+          onArchive: () => onArchiveFriend(friend),
+          onUnarchive: () => onUnarchiveFriend(friend),
+          onBlock: () => onBlockFriend(friend),
+          onUnblock: () => onUnblockFriend(friend),
+          onDelete: () => onDeleteFriend(friend),
+          child: FriendRow(
+            friend: friend,
+            showInnerCircleBadge: searchActive && isInnerCircle,
+            hideUnreadBadge: isArchived,
+            onTap: () => onFriendTap(friend),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGroupRow(OrbitGroup group, int index) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: AnimatedFriendRow(
+        index: index,
+        child: GroupRow(
+          group: group,
+          onTap: () => onGroupTap(group),
         ),
       ),
     );

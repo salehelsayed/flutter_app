@@ -4,6 +4,7 @@ import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
 import 'package:flutter_app/features/feed/domain/models/session_reply.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/collapsed_mode_card_body.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/scrollable_message_preview.dart';
+import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 
 void main() {
   Widget wrap(Widget child) => MaterialApp(
@@ -224,6 +225,61 @@ void main() {
         isExpanded: false,
       )));
       expect(find.text('Tap to expand'), findsOneWidget);
+    });
+  });
+
+  group('CollapsedModeCardBody group support', () {
+    testWidgets('renders group icon for GroupThreadFeedItem', (tester) async {
+      final groupThread = GroupThreadFeedItem(
+        id: 'g1',
+        timestamp: DateTime(2026, 2, 9, 15, 0),
+        groupId: 'group-abc',
+        groupName: 'Test Group',
+        groupType: GroupType.chat,
+        messages: [
+          ThreadMessage(
+            id: 'gm1',
+            text: 'Group message',
+            time: '3:00 PM',
+            timestamp: DateTime(2026, 2, 9, 15, 0),
+            isIncoming: true,
+            senderUsername: 'Sarah',
+            senderPeerId: 'peer-sarah',
+          ),
+        ],
+        conversationState: ConversationState.read,
+      );
+
+      await tester.pumpWidget(wrap(CollapsedModeCardBody(thread: groupThread)));
+      expect(find.byIcon(Icons.group_rounded), findsOneWidget);
+      expect(find.text('Test Group'), findsOneWidget);
+    });
+
+    testWidgets('preview label uses per-message senderUsername for group',
+        (tester) async {
+      final groupThread = GroupThreadFeedItem(
+        id: 'g1',
+        timestamp: DateTime(2026, 2, 9, 15, 0),
+        groupId: 'group-abc',
+        groupName: 'Test Group',
+        groupType: GroupType.chat,
+        messages: [
+          ThreadMessage(
+            id: 'gm1',
+            text: 'Hello from Mike',
+            time: '3:00 PM',
+            timestamp: DateTime(2026, 2, 9, 15, 0),
+            isIncoming: true,
+            senderUsername: 'Mike',
+            senderPeerId: 'peer-mike',
+          ),
+        ],
+        conversationState: ConversationState.read,
+      );
+
+      await tester.pumpWidget(wrap(CollapsedModeCardBody(thread: groupThread)));
+      // Should show "Mike: " as the preview label, not "Test Group: "
+      expect(find.text('Mike: '), findsOneWidget);
     });
   });
 

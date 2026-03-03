@@ -408,6 +408,64 @@ Future<Map<String, dynamic>> callGroupRotateKey(
   }
 }
 
+/// Calls the bridge to update the stored group key without generating a new one.
+///
+/// Used by non-admin members when receiving a key update via P2P.
+/// This updates Go's `n.groupKeys[groupId]` so the topic validator accepts
+/// messages signed with the new epoch.
+Future<void> callGroupUpdateKey(
+  Bridge bridge, {
+  required String groupId,
+  required String groupKey,
+  required int keyEpoch,
+  Duration timeout = const Duration(seconds: 10),
+}) async {
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'GROUP_FL_BRIDGE_UPDATE_KEY_REQUEST',
+    details: {
+      'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+      'keyEpoch': keyEpoch,
+    },
+  );
+
+  final request = {
+    'cmd': 'group:updateKey',
+    'payload': {
+      'groupId': groupId,
+      'groupKey': groupKey,
+      'keyEpoch': keyEpoch,
+    },
+  };
+
+  try {
+    final responseJson =
+        await bridge.send(jsonEncode(request)).timeout(timeout);
+    final response = jsonDecode(responseJson) as Map<String, dynamic>;
+
+    if (response['ok'] != true) {
+      throw BridgeCommandException(
+        'group:updateKey',
+        response['errorCode']?.toString() ?? 'UNKNOWN',
+        response['errorMessage']?.toString(),
+      );
+    }
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_FL_BRIDGE_UPDATE_KEY_RESPONSE',
+      details: {'ok': true},
+    );
+  } on TimeoutException {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_FL_BRIDGE_UPDATE_KEY_RESPONSE',
+      details: {'ok': false, 'errorCode': 'BRIDGE_TIMEOUT'},
+    );
+    rethrow;
+  }
+}
+
 /// Calls the bridge to store a message in the group inbox on the relay.
 Future<void> callGroupInboxStore(
   Bridge bridge,

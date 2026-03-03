@@ -43,9 +43,15 @@ import 'package:flutter_app/features/orbit/presentation/widgets/confirmation_dia
 import 'package:flutter_app/features/orbit/application/load_orbit_data_use_case.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_friend.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
+import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
+import 'package:flutter_app/features/groups/presentation/screens/create_group_picker_wired.dart';
+import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
+import 'package:flutter_app/features/orbit/application/load_orbit_groups_use_case.dart';
+import 'package:flutter_app/features/orbit/domain/models/orbit_group.dart';
 import 'package:flutter_app/features/qr_code/presentation/screens/qr_display_wired.dart';
 import 'package:flutter_app/features/qr_code/presentation/screens/qr_scanner_wired.dart';
 import 'orbit_screen.dart';
@@ -108,6 +114,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   Uint8List? _avatarBytes;
   List<OrbitFriend> _activeFriends = [];
   List<OrbitFriend> _archivedFriends = [];
+  List<OrbitGroup> _groups = [];
   String _filterTab = 'all';
   bool _searchActive = false;
   String _searchQuery = '';
@@ -126,6 +133,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   StreamSubscription<ConversationMessage>? _chatSubscription;
   StreamSubscription<ContactModel>? _contactUpdateSubscription;
   StreamSubscription<ContactRequestModel>? _requestSubscription;
+  StreamSubscription<GroupMessage>? _groupMessageSubscription;
   ImageQualityPreference _qualityPreference = ImageQualityPreference.compressed;
   ImageQualityPreference _videoQualityPreference = ImageQualityPreference.compressed;
 
@@ -155,9 +163,11 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     _loadQualityPreference();
     _loadVideoQualityPreference();
     _loadOrbitData();
+    _loadGroupData();
     _startListeningForChatMessages();
     _startListeningForContactUpdates();
     _startListeningForContactRequests();
+    _startListeningForGroupMessages();
     _scrollController.addListener(_onScroll);
   }
 
@@ -236,6 +246,55 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         details: {'error': e.toString()},
       );
     }
+  }
+
+  Future<void> _loadGroupData() async {
+    final groupRepository = widget.groupRepository;
+    final groupMessageRepository = widget.groupMessageRepository;
+    if (groupRepository == null || groupMessageRepository == null) return;
+
+    try {
+      final groups = await loadOrbitGroups(
+        groupRepo: groupRepository,
+        msgRepo: groupMessageRepository,
+      );
+      if (!mounted) return;
+      setState(() {
+        _groups = groups;
+      });
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'ORBIT_FL_LOAD_GROUP_DATA_ERROR',
+        details: {'error': e.toString()},
+      );
+    }
+  }
+
+  void _startListeningForGroupMessages() {
+    final listener = widget.groupMessageListener;
+    if (listener == null) return;
+
+    _groupMessageSubscription = listener.groupMessageStream.listen(
+      (_) {
+        _loadOrbitData();
+        _loadGroupData();
+      },
+      onError: (error) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'ORBIT_GROUP_MSG_STREAM_ERROR',
+          details: {'error': error.toString()},
+        );
+      },
+      onDone: () {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'ORBIT_GROUP_MSG_STREAM_DONE',
+          details: {},
+        );
+      },
+    );
   }
 
   void _startListeningForChatMessages() {
@@ -581,6 +640,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     _chatSubscription?.cancel();
     _contactUpdateSubscription?.cancel();
     _requestSubscription?.cancel();
+    _groupMessageSubscription?.cancel();
     _collapseController.dispose();
     _searchDockController.dispose();
     _searchTriggerController.dispose();
@@ -633,6 +693,67 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       onUnblockFriend: _onUnblockFriend,
       onDeleteFriend: _onDeleteFriend,
       openRowNotifier: _openRowNotifier,
+      groups: _groups,
+      onGroupTap: _onGroupTap,
+      onCreateGroup: _onCreateGroup,
     );
+  }
+
+  void _onGroupTap(OrbitGroup group) {
+    final groupRepository = widget.groupRepository;
+    final groupMessageRepository = widget.groupMessageRepository;
+    final groupMessageListener = widget.groupMessageListener;
+    if (groupRepository == null ||
+        groupMessageRepository == null ||
+        groupMessageListener == null) {
+      return;
+    }
+
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => GroupConversationWired(
+          group: group.group,
+          groupRepo: groupRepository,
+          msgRepo: groupMessageRepository,
+          groupMessageListener: groupMessageListener,
+          bridge: widget.bridge,
+          identityRepo: widget.identityRepo,
+          contactRepo: widget.contactRepo,
+          p2pService: widget.p2pService,
+        ),
+      ),
+    ).then((_) {
+      _loadOrbitData();
+      _loadGroupData();
+    });
+  }
+
+  void _onCreateGroup(GroupType type) {
+    final groupRepository = widget.groupRepository;
+    final groupMessageRepository = widget.groupMessageRepository;
+    final groupMessageListener = widget.groupMessageListener;
+    if (groupRepository == null ||
+        groupMessageRepository == null ||
+        groupMessageListener == null) {
+      return;
+    }
+
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => CreateGroupPickerWired(
+          groupType: type,
+          groupRepo: groupRepository,
+          msgRepo: groupMessageRepository,
+          groupMessageListener: groupMessageListener,
+          contactRepo: widget.contactRepo,
+          bridge: widget.bridge,
+          identityRepo: widget.identityRepo,
+          p2pService: widget.p2pService,
+        ),
+      ),
+    ).then((_) {
+      _loadOrbitData();
+      _loadGroupData();
+    });
   }
 }

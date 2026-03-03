@@ -160,26 +160,21 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
             },
           );
 
-          // Rotate key after member removal for forward secrecy
-          try {
-            await rotateAndDistributeGroupKey(
-              bridge: widget.bridge,
-              groupRepo: widget.groupRepo,
-              groupId: widget.group.id,
-              selfPeerId: identity.peerId,
-              senderPublicKey: identity.publicKey,
-              senderPrivateKey: identity.privateKey,
-              senderUsername: identity.username ?? '',
-              sendP2PMessage: (peerId, message) =>
-                  widget.p2pService.sendMessage(peerId, message),
-            );
-          } catch (e) {
-            emitFlowEvent(
-              layer: 'FL',
-              event: 'GROUP_INFO_FL_KEY_ROTATION_ERROR',
-              details: {'error': e.toString()},
-            );
-          }
+          // 3. Rotate group key and distribute to remaining members
+          await rotateAndDistributeGroupKey(
+            bridge: widget.bridge,
+            groupRepo: widget.groupRepo,
+            groupId: widget.group.id,
+            selfPeerId: identity.peerId,
+            senderPublicKey: identity.publicKey,
+            senderPrivateKey: identity.privateKey,
+            senderUsername: identity.username ?? '',
+            sendP2PMessage: (peerId, message) async {
+              await widget.p2pService.sendMessage(peerId, message);
+              return true;
+            },
+          );
+
         }
       }
 

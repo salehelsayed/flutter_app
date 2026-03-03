@@ -6,7 +6,11 @@ import 'package:flutter_app/features/conversation/domain/models/media_attachment
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
+import 'package:flutter_app/features/feed/domain/utils/group_group_messages_into_threads.dart';
 import 'package:flutter_app/features/feed/domain/utils/group_messages_into_threads.dart';
+import 'package:flutter_app/features/groups/domain/models/group_message.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 
 /// Loads the full feed from the database: all contacts + thread-grouped messages.
 ///
@@ -17,6 +21,8 @@ Future<List<FeedItem>> loadFeed({
   required MessageRepository messageRepo,
   MediaAttachmentRepository? mediaAttachmentRepo,
   MediaFileManager? mediaFileManager,
+  GroupRepository? groupRepo,
+  GroupMessageRepository? groupMsgRepo,
 }) async {
   emitFlowEvent(layer: 'FL', event: 'FEED_LOAD_START', details: {});
 
@@ -81,8 +87,32 @@ Future<List<FeedItem>> loadFeed({
         .map((c) => ConnectionFeedItem.fromContact(c))
         .toList();
 
+    // Load group threads if repos provided
+    List<GroupThreadFeedItem> groupThreadItems = [];
+    if (groupRepo != null && groupMsgRepo != null) {
+      final groups = await groupRepo.getActiveGroups();
+      if (groups.isNotEmpty) {
+        List<GroupMessage> allGroupMessages = [];
+        for (final group in groups) {
+          final msgs = await groupMsgRepo.getMessagesPage(
+            group.id,
+            limit: 200,
+          );
+          allGroupMessages.addAll(msgs);
+        }
+        groupThreadItems = groupGroupMessagesIntoThreads(
+          allGroupMessages: allGroupMessages,
+          groups: groups,
+        );
+      }
+    }
+
     // Merge: connection items sorted by timestamp among thread items
-    final List<FeedItem> items = [...connectionItems, ...threadItems];
+    final List<FeedItem> items = [
+      ...connectionItems,
+      ...threadItems,
+      ...groupThreadItems,
+    ];
     items.sort((a, b) => b.timestamp.compareTo(a.timestamp));
 
     emitFlowEvent(

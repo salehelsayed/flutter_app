@@ -14,7 +14,7 @@ import 'package:flutter_app/shared/widgets/media/media_preview_text.dart';
 /// Shows friend header, single message preview line, optional reply indicator,
 /// and "Continue..." inline input. Tappable to expand or navigate.
 class CollapsedModeCardBody extends StatelessWidget {
-  final ThreadFeedItem thread;
+  final CardThreadFeedItem thread;
   final SessionReply? sessionReply;
   final bool isExpanded;
   final VoidCallback? onTapExpand;
@@ -104,14 +104,29 @@ class CollapsedModeCardBody extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(20, 18, 20, 12),
       child: Row(
         children: [
-          UserAvatar(peerId: thread.contactPeerId, size: 42),
+          if (thread.isGroup)
+            Container(
+              width: 42,
+              height: 42,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: FeedColors.accentPurple.withValues(alpha: 0.15),
+              ),
+              child: const Icon(
+                Icons.group_rounded,
+                size: 20,
+                color: FeedColors.accentPurple,
+              ),
+            )
+          else
+            UserAvatar(peerId: thread.displayId, size: 42),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  thread.contactUsername,
+                  thread.displayName,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
@@ -182,7 +197,14 @@ class CollapsedModeCardBody extends StatelessWidget {
     }
 
     final isSent = sessionReply != null || !previewMsg.isIncoming;
-    final label = isSent ? 'You' : thread.contactUsername;
+    final String label;
+    if (isSent) {
+      label = 'You';
+    } else if (thread.isGroup) {
+      label = previewMsg.senderUsername ?? thread.displayName;
+    } else {
+      label = thread.displayName;
+    }
     final labelColor = isSent
         ? FeedColors.accentTeal
         : Colors.white;
@@ -230,8 +252,8 @@ class CollapsedModeCardBody extends StatelessWidget {
   Widget _buildExpandedContent() {
     return ScrollableMessagePreview(
       messages: thread.recentInteractionMessages,
-      contactPeerId: thread.contactPeerId,
-      contactUsername: thread.contactUsername,
+      contactPeerId: thread.displayId,
+      contactUsername: thread.displayName,
       hasEarlierHistory: thread.hasEarlierInteractionHistory,
       onViewEarlier: onViewFullConversation,
       onCollapse: onCollapse,
