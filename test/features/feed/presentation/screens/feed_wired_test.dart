@@ -19,6 +19,10 @@ import 'package:flutter_app/features/conversation/domain/repositories/message_re
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/reaction_display.dart';
 import 'package:flutter_app/features/feed/presentation/screens/feed_wired.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/feed_card.dart';
+import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/domain/models/group_message.dart';
+import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/collapsed_mode_card_body.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/open_mode_card_body.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/scrollable_message_preview.dart';
@@ -32,6 +36,8 @@ import '../../../../core/secure_storage/fake_secure_key_store.dart';
 import '../../../../core/services/fake_p2p_service.dart';
 import '../../../../shared/fakes/fake_media_file_manager.dart';
 import '../../../../shared/fakes/in_memory_media_attachment_repository.dart';
+import '../../../../shared/fakes/in_memory_group_message_repository.dart';
+import '../../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../../shared/fakes/in_memory_message_repository.dart';
 import '../../../contacts/domain/repositories/fake_contact_repository.dart';
 import '../../../contact_request/domain/repositories/fake_contact_request_repository.dart';
@@ -129,6 +135,9 @@ void main() {
     ChatMessageListener? chatMessageListener,
     FakeReactionRepository? reactionRepository,
     ReactionListener? reactionListener,
+    InMemoryGroupRepository? groupRepository,
+    InMemoryGroupMessageRepository? groupMessageRepository,
+    GroupMessageListener? groupMessageListener,
   }) {
     final crListener = contactRequestListener ??
         ContactRequestListener(
@@ -162,6 +171,9 @@ void main() {
         imageProcessor: imageProcessor,
         reactionRepository: reactionRepository,
         reactionListener: reactionListener,
+        groupRepository: groupRepository,
+        groupMessageRepository: groupMessageRepository,
+        groupMessageListener: groupMessageListener,
       ),
     );
   }
@@ -435,6 +447,83 @@ void main() {
       // Card should now be CollapsedModeCardBody without ScrollableMessagePreview
       expect(find.byType(CollapsedModeCardBody), findsOneWidget);
       expect(find.byType(ScrollableMessagePreview), findsNothing);
+    });
+
+    testWidgets(
+        'collapse from open-mode group card marks messages read and collapses',
+        (tester) async {
+      // Regression: _onToggleExpand must find GroupThreadFeedItem (not just
+      // ThreadFeedItem) and call groupMessageRepository.markAsRead so the
+      // card transitions from open mode to collapsed mode.
+      final originalOnError = FlutterError.onError;
+      FlutterError.onError = (details) {
+        if (details.toString().contains('overflowed')) return;
+        originalOnError?.call(details);
+      };
+      addTearDown(() => FlutterError.onError = originalOnError);
+
+      identityRepo.seed(testIdentity);
+
+      final groupRepo = InMemoryGroupRepository();
+      final groupMsgRepo = InMemoryGroupMessageRepository();
+
+      await groupRepo.saveGroup(GroupModel(
+        id: 'g1',
+        name: 'Collapse Group',
+        type: GroupType.chat,
+        topicName: '/mknoon/group/g1',
+        createdAt: DateTime(2026, 2, 1),
+        createdBy: 'admin',
+        myRole: GroupRole.member,
+      ));
+
+      // Seed an unread incoming group message → open-mode card
+      await groupMsgRepo.saveMessage(GroupMessage(
+        id: 'gm-unread-1',
+        groupId: 'g1',
+        senderPeerId: 'other-peer',
+        senderUsername: 'OtherUser',
+        text: 'Unread group message',
+        timestamp: DateTime.now().toUtc(),
+        createdAt: DateTime.now().toUtc(),
+      ));
+
+      final fakeGroupListener = _FakeGroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: groupMsgRepo,
+      );
+
+      await tester.pumpWidget(buildFeedWired(
+        groupRepository: groupRepo,
+        groupMessageRepository: groupMsgRepo,
+        groupMessageListener: fakeGroupListener,
+      ));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // Group card should be in open mode (unread)
+      expect(find.byType(OpenModeCardBody), findsOneWidget);
+      expect(find.text('Collapse Group'), findsOneWidget);
+
+      // Tap the "Collapse" link (shown in OpenModeCardBody's
+      // ScrollableMessagePreview)
+      expect(find.text('Collapse'), findsOneWidget);
+      await tester.tap(find.text('Collapse'));
+
+      // Pump through markAsRead + refreshFeed
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // Card should now be collapsed (messages marked as read)
+      expect(find.byType(CollapsedModeCardBody), findsOneWidget);
+      expect(find.byType(OpenModeCardBody), findsNothing);
+
+      // Verify that markAsRead was actually called — the message should
+      // have a readAt value now
+      final msgs = await groupMsgRepo.getMessagesPage('g1');
+      expect(msgs.first.readAt, isNotNull,
+          reason: 'Group message should be marked as read after collapse');
     });
 
     testWidgets('loads image quality preference from SecureKeyStore',
@@ -716,6 +805,120 @@ void main() {
       expect(find.text('❤️'), findsOneWidget);
     });
 
+    testWidgets('displays group thread cards when group data exists',
+        (tester) async {
+      // Suppress RenderFlex overflow errors from card layouts in test surface
+      final originalOnError = FlutterError.onError;
+      FlutterError.onError = (details) {
+        if (details.toString().contains('overflowed')) return;
+        originalOnError?.call(details);
+      };
+      addTearDown(() => FlutterError.onError = originalOnError);
+
+      identityRepo.seed(testIdentity);
+
+      final groupRepo = InMemoryGroupRepository();
+      final groupMsgRepo = InMemoryGroupMessageRepository();
+
+      await groupRepo.saveGroup(GroupModel(
+        id: 'g1',
+        name: 'Alpha Group',
+        type: GroupType.chat,
+        topicName: '/mknoon/group/g1',
+        createdAt: DateTime(2026, 2, 1),
+        createdBy: 'admin',
+        myRole: GroupRole.member,
+      ));
+      await groupMsgRepo.saveMessage(GroupMessage(
+        id: 'gm-1',
+        groupId: 'g1',
+        senderPeerId: 'other-peer',
+        senderUsername: 'OtherUser',
+        text: 'Hello from group!',
+        timestamp: DateTime.now().toUtc(),
+        createdAt: DateTime.now().toUtc(),
+      ));
+
+      final fakeGroupListener = _FakeGroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: groupMsgRepo,
+      );
+
+      await tester.pumpWidget(buildFeedWired(
+        groupRepository: groupRepo,
+        groupMessageRepository: groupMsgRepo,
+        groupMessageListener: fakeGroupListener,
+      ));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // Group renders through FeedCard now
+      expect(find.byType(FeedCard), findsOneWidget);
+      expect(find.text('Alpha Group'), findsOneWidget);
+    });
+
+    testWidgets('refreshes feed on incoming group message',
+        (tester) async {
+      // Suppress RenderFlex overflow errors from card layouts in test surface
+      final originalOnError = FlutterError.onError;
+      FlutterError.onError = (details) {
+        if (details.toString().contains('overflowed')) return;
+        originalOnError?.call(details);
+      };
+      addTearDown(() => FlutterError.onError = originalOnError);
+
+      identityRepo.seed(testIdentity);
+
+      final groupRepo = InMemoryGroupRepository();
+      final groupMsgRepo = InMemoryGroupMessageRepository();
+
+      await groupRepo.saveGroup(GroupModel(
+        id: 'g1',
+        name: 'Beta Group',
+        type: GroupType.chat,
+        topicName: '/mknoon/group/g1',
+        createdAt: DateTime(2026, 2, 1),
+        createdBy: 'admin',
+        myRole: GroupRole.member,
+      ));
+
+      final fakeGroupListener = _FakeGroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: groupMsgRepo,
+      );
+
+      await tester.pumpWidget(buildFeedWired(
+        groupRepository: groupRepo,
+        groupMessageRepository: groupMsgRepo,
+        groupMessageListener: fakeGroupListener,
+      ));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // No group card initially (no messages)
+      expect(find.byType(FeedCard), findsNothing);
+
+      // Seed a message and emit group message event
+      final newMsg = GroupMessage(
+        id: 'gm-1',
+        groupId: 'g1',
+        senderPeerId: 'other-peer',
+        senderUsername: 'OtherUser',
+        text: 'New group message!',
+        timestamp: DateTime.now().toUtc(),
+        createdAt: DateTime.now().toUtc(),
+      );
+      await groupMsgRepo.saveMessage(newMsg);
+      fakeGroupListener.emitGroupMessage(newMsg);
+
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // Group FeedCard should now appear after refresh
+      expect(find.byType(FeedCard), findsOneWidget);
+      expect(find.text('Beta Group'), findsOneWidget);
+    });
+
     testWidgets('disposes stream subscriptions without errors',
         (tester) async {
       identityRepo.seed(testIdentity);
@@ -831,4 +1034,22 @@ class _FakeReactionListener extends ReactionListener {
 
   void emitReaction(MessageReaction reaction) =>
       _reactionEmitter.add(reaction);
+}
+
+/// Fake [GroupMessageListener] with a controllable stream for testing.
+class _FakeGroupMessageListener extends GroupMessageListener {
+  final _groupMsgEmitter = StreamController<GroupMessage>.broadcast();
+
+  _FakeGroupMessageListener({
+    required InMemoryGroupRepository groupRepo,
+    required InMemoryGroupMessageRepository msgRepo,
+  }) : super(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+        );
+
+  @override
+  Stream<GroupMessage> get groupMessageStream => _groupMsgEmitter.stream;
+
+  void emitGroupMessage(GroupMessage msg) => _groupMsgEmitter.add(msg);
 }

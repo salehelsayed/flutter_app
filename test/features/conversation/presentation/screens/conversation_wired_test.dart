@@ -362,7 +362,7 @@ void main() {
 
       await tester.enterText(find.byType(TextField), 'Hello optimistic');
       await tester.pump(const Duration(milliseconds: 300));
-      await tester.tap(find.text('Send'));
+      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
       await tester.pump();
 
       expect(find.text('Hello optimistic'), findsOneWidget);
@@ -421,7 +421,7 @@ void main() {
 
       await tester.enterText(find.byType(TextField), 'Fail me');
       await tester.pump(const Duration(milliseconds: 300));
-      await tester.tap(find.text('Send'));
+      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
       await tester.pump();
 
       expect(find.text('Fail me'), findsOneWidget);
@@ -488,7 +488,7 @@ void main() {
 
       await tester.enterText(find.byType(TextField), 'Inbox delivered');
       await tester.pump(const Duration(milliseconds: 300));
-      await tester.tap(find.text('Send'));
+      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
       await tester.pump();
 
       expect(find.text('Inbox delivered'), findsOneWidget);
@@ -556,7 +556,7 @@ void main() {
 
       await tester.enterText(find.byType(TextField), 'Inbox delivered');
       await tester.pump(const Duration(milliseconds: 300));
-      await tester.tap(find.text('Send'));
+      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
       await tester.pump();
 
       expect(find.text('Inbox delivered'), findsOneWidget);
@@ -592,7 +592,7 @@ void main() {
       );
 
       // Tap the attachment button
-      await tester.tap(find.byIcon(Icons.add_circle_outline));
+      await tester.tap(find.byIcon(Icons.add_rounded));
       // Use pump with duration instead of pumpAndSettle because
       // AmbientBackground has a repeating 8s animation that never settles.
       await tester.pump(const Duration(milliseconds: 500));
@@ -680,7 +680,7 @@ void main() {
 
       await tester.enterText(find.byType(TextField), 'Text only');
       await tester.pump(const Duration(milliseconds: 300));
-      await tester.tap(find.text('Send'));
+      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
       await tester.pump(const Duration(milliseconds: 50));
 
       // No media should be passed for text-only sends
@@ -733,7 +733,7 @@ void main() {
 
       // Tap send without entering text — the tap won't go through because
       // GestureDetector's onTap is null when no text and no attachments
-      await tester.tap(find.text('Send'));
+      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
       await tester.pump();
 
       expect(sendCalled, false);

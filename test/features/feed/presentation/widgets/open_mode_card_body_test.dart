@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/open_mode_card_body.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/scrollable_message_preview.dart';
+import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 
 void main() {
   Widget wrap(Widget child) => MaterialApp(
@@ -81,6 +82,37 @@ void main() {
         thread: _thread(unreadCount: 3),
       )));
       expect(find.text('3'), findsOneWidget);
+    });
+
+    testWidgets('renders group icon and group name for GroupThreadFeedItem',
+        (tester) async {
+      final groupThread = GroupThreadFeedItem(
+        id: 'g1',
+        timestamp: DateTime(2026, 2, 9, 15, 5),
+        groupId: 'group-abc',
+        groupName: 'Test Group',
+        groupType: GroupType.chat,
+        messages: [
+          ThreadMessage(
+            id: 'gm1',
+            text: 'Group message',
+            time: '3:00 PM',
+            timestamp: DateTime(2026, 2, 9, 15, 0),
+            isUnread: true,
+            isIncoming: true,
+            senderUsername: 'Sarah',
+            senderPeerId: 'peer-sarah',
+          ),
+        ],
+        unreadCount: 1,
+        conversationState: ConversationState.unread,
+      );
+
+      await tester.pumpWidget(wrap(OpenModeCardBody(thread: groupThread)));
+      // Group icon should be present
+      expect(find.byIcon(Icons.group_rounded), findsOneWidget);
+      // Group name should be shown
+      expect(find.text('Test Group'), findsOneWidget);
     });
   });
 }

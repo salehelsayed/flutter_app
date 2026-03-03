@@ -5,6 +5,10 @@ import 'package:flutter_app/features/conversation/domain/models/conversation_mes
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/feed/application/load_feed_use_case.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
+import 'package:flutter_app/features/groups/domain/models/group_message.dart';
+import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import '../../../shared/fakes/in_memory_group_repository.dart';
+import '../../../shared/fakes/in_memory_group_message_repository.dart';
 
 // -- Fake Contact Repository --
 class FakeContactRepository implements ContactRepository {
@@ -329,6 +333,171 @@ void main() {
       expect(bob.isBlocked, isTrue);
       expect(alice.contactUsername, 'Alice');
       expect(alice.isBlocked, isFalse);
+    });
+  });
+
+  group('loadFeed with group messages', () {
+    test('returns group thread items when group repos provided', () async {
+      final groupRepo = InMemoryGroupRepository();
+      final groupMsgRepo = InMemoryGroupMessageRepository();
+
+      await groupRepo.saveGroup(GroupModel(
+        id: 'g1',
+        name: 'Alpha Group',
+        type: GroupType.chat,
+        topicName: '/mknoon/group/g1',
+        createdAt: DateTime(2026, 2, 1),
+        createdBy: 'admin',
+        myRole: GroupRole.member,
+      ));
+      await groupMsgRepo.saveMessage(GroupMessage(
+        id: 'gm-1',
+        groupId: 'g1',
+        senderPeerId: 'p1',
+        senderUsername: 'User1',
+        text: 'Hello group!',
+        timestamp: DateTime.utc(2026, 2, 9, 12, 0),
+        createdAt: DateTime.utc(2026, 2, 9, 12, 0),
+      ));
+
+      final result = await loadFeed(
+        contactRepo: FakeContactRepository(),
+        messageRepo: FakeMessageRepository(),
+        groupRepo: groupRepo,
+        groupMsgRepo: groupMsgRepo,
+      );
+
+      final groupItems = result.whereType<GroupThreadFeedItem>().toList();
+      expect(groupItems.length, 1);
+      expect(groupItems[0].groupName, 'Alpha Group');
+      expect(groupItems[0].messages.length, 1);
+    });
+
+    test('group items merge with contact items sorted by timestamp', () async {
+      final groupRepo = InMemoryGroupRepository();
+      final groupMsgRepo = InMemoryGroupMessageRepository();
+
+      final contacts = [
+        _makeContact('peer-A', 'Alice', '2026-02-09T10:00:00.000Z'),
+      ];
+
+      await groupRepo.saveGroup(GroupModel(
+        id: 'g1',
+        name: 'Group Alpha',
+        type: GroupType.chat,
+        topicName: '/mknoon/group/g1',
+        createdAt: DateTime(2026, 2, 1),
+        createdBy: 'admin',
+        myRole: GroupRole.member,
+      ));
+      await groupMsgRepo.saveMessage(GroupMessage(
+        id: 'gm-1',
+        groupId: 'g1',
+        senderPeerId: 'p1',
+        text: 'Group msg',
+        timestamp: DateTime.utc(2026, 2, 9, 14, 0),
+        createdAt: DateTime.utc(2026, 2, 9, 14, 0),
+      ));
+
+      final result = await loadFeed(
+        contactRepo: FakeContactRepository(contacts: contacts),
+        messageRepo: FakeMessageRepository(),
+        groupRepo: groupRepo,
+        groupMsgRepo: groupMsgRepo,
+      );
+
+      expect(result.length, 2);
+      // Group at 14:00, Alice connection at 10:00
+      expect(result[0], isA<GroupThreadFeedItem>());
+      expect(result[1], isA<ConnectionFeedItem>());
+    });
+
+    test('no group items when group repos not provided', () async {
+      final result = await loadFeed(
+        contactRepo: FakeContactRepository(),
+        messageRepo: FakeMessageRepository(),
+      );
+
+      final groupItems = result.whereType<GroupThreadFeedItem>().toList();
+      expect(groupItems, isEmpty);
+    });
+
+    test('archived groups excluded from feed', () async {
+      final groupRepo = InMemoryGroupRepository();
+      final groupMsgRepo = InMemoryGroupMessageRepository();
+
+      await groupRepo.saveGroup(GroupModel(
+        id: 'g1',
+        name: 'Active Group',
+        type: GroupType.chat,
+        topicName: '/mknoon/group/g1',
+        createdAt: DateTime(2026, 2, 1),
+        createdBy: 'admin',
+        myRole: GroupRole.member,
+      ));
+      await groupRepo.saveGroup(GroupModel(
+        id: 'g2',
+        name: 'Archived Group',
+        type: GroupType.chat,
+        topicName: '/mknoon/group/g2',
+        createdAt: DateTime(2026, 2, 1),
+        createdBy: 'admin',
+        myRole: GroupRole.member,
+        isArchived: true,
+        archivedAt: DateTime(2026, 2, 5),
+      ));
+      await groupMsgRepo.saveMessage(GroupMessage(
+        id: 'gm-1',
+        groupId: 'g1',
+        senderPeerId: 'p1',
+        text: 'Active msg',
+        timestamp: DateTime.utc(2026, 2, 9, 12, 0),
+        createdAt: DateTime.utc(2026, 2, 9, 12, 0),
+      ));
+      await groupMsgRepo.saveMessage(GroupMessage(
+        id: 'gm-2',
+        groupId: 'g2',
+        senderPeerId: 'p1',
+        text: 'Archived msg',
+        timestamp: DateTime.utc(2026, 2, 9, 13, 0),
+        createdAt: DateTime.utc(2026, 2, 9, 13, 0),
+      ));
+
+      final result = await loadFeed(
+        contactRepo: FakeContactRepository(),
+        messageRepo: FakeMessageRepository(),
+        groupRepo: groupRepo,
+        groupMsgRepo: groupMsgRepo,
+      );
+
+      final groupItems = result.whereType<GroupThreadFeedItem>().toList();
+      expect(groupItems.length, 1);
+      expect(groupItems[0].groupName, 'Active Group');
+    });
+
+    test('groups with no messages produce no thread items', () async {
+      final groupRepo = InMemoryGroupRepository();
+      final groupMsgRepo = InMemoryGroupMessageRepository();
+
+      await groupRepo.saveGroup(GroupModel(
+        id: 'g1',
+        name: 'Empty Group',
+        type: GroupType.chat,
+        topicName: '/mknoon/group/g1',
+        createdAt: DateTime(2026, 2, 1),
+        createdBy: 'admin',
+        myRole: GroupRole.member,
+      ));
+
+      final result = await loadFeed(
+        contactRepo: FakeContactRepository(),
+        messageRepo: FakeMessageRepository(),
+        groupRepo: groupRepo,
+        groupMsgRepo: groupMsgRepo,
+      );
+
+      final groupItems = result.whereType<GroupThreadFeedItem>().toList();
+      expect(groupItems, isEmpty);
     });
   });
 }

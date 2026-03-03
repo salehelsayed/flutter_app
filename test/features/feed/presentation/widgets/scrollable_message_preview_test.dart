@@ -163,6 +163,54 @@ void main() {
       expect(find.text('Hello there'), findsWidgets);
     });
 
+    testWidgets('uses per-message senderLabel when ThreadMessage has senderUsername',
+        (tester) async {
+      final messages = [
+        ThreadMessage(
+          id: 'm1',
+          text: 'Hello from Sarah',
+          time: '3:00 PM',
+          timestamp: DateTime(2026, 2, 9, 15, 0),
+          isUnread: true,
+          isIncoming: true,
+          senderUsername: 'Sarah',
+          senderPeerId: 'peer-sarah',
+        ),
+      ];
+
+      await tester.pumpWidget(wrap(ScrollableMessagePreview(
+        messages: messages,
+        contactPeerId: 'peer-fallback',
+        contactUsername: 'FallbackName',
+      )));
+
+      // Should show "Sarah" as the sender label, not "FallbackName"
+      expect(find.textContaining('Sarah'), findsOneWidget);
+    });
+
+    testWidgets('falls back to widget contactUsername when ThreadMessage has no senderUsername',
+        (tester) async {
+      final messages = [
+        ThreadMessage(
+          id: 'm1',
+          text: 'Hello',
+          time: '3:00 PM',
+          timestamp: DateTime(2026, 2, 9, 15, 0),
+          isUnread: true,
+          isIncoming: true,
+        ),
+      ];
+
+      await tester.pumpWidget(wrap(ScrollableMessagePreview(
+        messages: messages,
+        contactPeerId: 'peer1',
+        contactUsername: 'Alice',
+      )));
+
+      // Should show "Alice" as the sender label (widget default)
+      expect(find.textContaining('Alice'), findsOneWidget);
+    });
+
     testWidgets('shows unavailable for unknown quoted message', (tester) async {
       final messages = [
         ThreadMessage(

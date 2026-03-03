@@ -80,6 +80,7 @@ class GoBridgeClient extends Bridge {
     'group:publish': _CmdSpec('groupPublish', true),
     'group:updateConfig': _CmdSpec('groupUpdateConfig', true),
     'group:rotateKey': _CmdSpec('groupRotateKey', true),
+    'group:updateKey': _CmdSpec('groupUpdateKey', true),
     'group:inboxStore': _CmdSpec('groupInboxStore', true),
     'group:inboxRetrieve': _CmdSpec('groupInboxRetrieve', true),
     'group.keygen': _CmdSpec('generateGroupKey', false),

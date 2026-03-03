@@ -247,8 +247,8 @@ class _ScrollableMessagePreviewState extends State<ScrollableMessagePreview> {
         isUnread: msg.isUnread,
         isIncoming: msg.isIncoming,
         status: msg.status,
-        senderPeerId: msg.isIncoming ? widget.contactPeerId : null,
-        senderLabel: msg.isIncoming ? widget.contactUsername : 'You',
+        senderPeerId: msg.isIncoming ? (msg.senderPeerId ?? widget.contactPeerId) : null,
+        senderLabel: msg.isIncoming ? (msg.senderUsername ?? widget.contactUsername) : 'You',
         media: msg.media,
         onMediaTap: msg.media.isNotEmpty
             ? (index) => _openMediaViewer(context, msg.media, index)

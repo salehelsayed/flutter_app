@@ -1,11 +1,13 @@
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 
 /// Types of feed items.
 enum FeedItemType {
   connection,
   message,
   thread,
+  groupThread,
 }
 
 /// Conversation state for a thread card.
@@ -76,6 +78,8 @@ class ThreadMessage {
   final String? status;
   final String? quotedMessageId;
   final List<MediaAttachment> media;
+  final String? senderUsername;
+  final String? senderPeerId;
 
   const ThreadMessage({
     required this.id,
@@ -87,40 +91,41 @@ class ThreadMessage {
     this.status,
     this.quotedMessageId,
     this.media = const [],
+    this.senderUsername,
+    this.senderPeerId,
   });
 }
 
-/// A feed item representing a thread of messages from a contact.
+/// Abstract base for thread-based feed items rendered as feed cards.
 ///
-/// Groups multiple messages (sent and received) from the same contact,
-/// split by 24-hour time gaps. Derives conversation state from message
-/// read status and direction.
-class ThreadFeedItem extends FeedItem {
-  final String contactPeerId;
-  final String contactUsername;
-  final List<ThreadMessage> messages;
-  final int unreadCount;
-  final bool isUnreadCard;
-  final ConversationState conversationState;
-  final DateTime? lastRepliedAt;
-  final bool isBlocked;
-
-  const ThreadFeedItem({
+/// Both [ThreadFeedItem] (1:1) and [GroupThreadFeedItem] (group) extend this,
+/// allowing [FeedCard], [OpenModeCardBody], and [CollapsedModeCardBody] to
+/// accept either type.
+abstract class CardThreadFeedItem extends FeedItem {
+  const CardThreadFeedItem({
     required super.id,
     required super.timestamp,
-    required this.contactPeerId,
-    required this.contactUsername,
-    required this.messages,
-    this.unreadCount = 0,
-    this.isUnreadCard = false,
-    this.conversationState = ConversationState.read,
-    this.lastRepliedAt,
-    this.isBlocked = false,
-  }) : super(type: FeedItemType.thread);
+    required super.type,
+  });
 
   /// Maximum number of unread messages visible in open-mode preview.
   static const int maxPreview = 3;
 
+  List<ThreadMessage> get messages;
+  int get unreadCount;
+  ConversationState get conversationState;
+
+  // Display
+  String get displayName;
+  String get displayId;
+  bool get isGroup;
+
+  // 1:1-specific (safe defaults for groups)
+  bool get isBlocked;
+  DateTime? get lastRepliedAt;
+  bool get isUnreadCard;
+
+  // Computed getters (shared logic)
   bool get isMultiMessage => messages.length > 1;
   ThreadMessage get latestMessage => messages.last;
   int get additionalCount => messages.length - 1;
@@ -193,6 +198,48 @@ class ThreadFeedItem extends FeedItem {
   ThreadMessage get collapsedPreviewMessage => latestMessage;
 }
 
+/// A feed item representing a thread of messages from a contact.
+///
+/// Groups multiple messages (sent and received) from the same contact,
+/// split by 24-hour time gaps. Derives conversation state from message
+/// read status and direction.
+class ThreadFeedItem extends CardThreadFeedItem {
+  final String contactPeerId;
+  final String contactUsername;
+  @override
+  final List<ThreadMessage> messages;
+  @override
+  final int unreadCount;
+  @override
+  final bool isUnreadCard;
+  @override
+  final ConversationState conversationState;
+  @override
+  final DateTime? lastRepliedAt;
+  @override
+  final bool isBlocked;
+
+  const ThreadFeedItem({
+    required super.id,
+    required super.timestamp,
+    required this.contactPeerId,
+    required this.contactUsername,
+    required this.messages,
+    this.unreadCount = 0,
+    this.isUnreadCard = false,
+    this.conversationState = ConversationState.read,
+    this.lastRepliedAt,
+    this.isBlocked = false,
+  }) : super(type: FeedItemType.thread);
+
+  @override
+  String get displayName => contactUsername;
+  @override
+  String get displayId => contactPeerId;
+  @override
+  bool get isGroup => false;
+}
+
 /// A feed item representing an incoming message from a contact.
 class MessageFeedItem extends FeedItem {
   final String contactPeerId;
@@ -212,4 +259,47 @@ class MessageFeedItem extends FeedItem {
     required this.messageTime,
     this.unreadCount = 0,
   }) : super(type: FeedItemType.message);
+}
+
+/// A feed item representing a thread of messages in a group.
+///
+/// Groups multiple messages from the same group conversation.
+/// Derives conversation state from message read status and direction.
+class GroupThreadFeedItem extends CardThreadFeedItem {
+  final String groupId;
+  final String groupName;
+  final GroupType groupType;
+  @override
+  final List<ThreadMessage> messages;
+  @override
+  final int unreadCount;
+  @override
+  final ConversationState conversationState;
+
+  const GroupThreadFeedItem({
+    required super.id,
+    required super.timestamp,
+    required this.groupId,
+    required this.groupName,
+    required this.groupType,
+    required this.messages,
+    this.unreadCount = 0,
+    this.conversationState = ConversationState.read,
+  }) : super(type: FeedItemType.groupThread);
+
+  @override
+  String get displayName => groupName;
+  @override
+  String get displayId => groupId;
+  @override
+  bool get isGroup => true;
+  @override
+  bool get isBlocked => false;
+  @override
+  DateTime? get lastRepliedAt => null;
+  @override
+  bool get isUnreadCard => false;
+
+  /// Whether the thread contains any sent (outgoing) message.
+  bool get hasSentMessage => messages.any((m) => !m.isIncoming);
 }

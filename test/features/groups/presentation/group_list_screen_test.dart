@@ -28,13 +28,11 @@ void main() {
 
   Widget buildTestWidget({
     List<GroupModel> groups = const [],
-    ValueChanged<GroupType>? onCreateGroup,
   }) {
     return MaterialApp(
       home: GroupListScreen(
         groups: groups,
         onGroupTap: (_) {},
-        onCreateGroup: onCreateGroup ?? (_) {},
         onBack: () {},
       ),
     );
@@ -60,70 +58,9 @@ void main() {
     expect(find.text('Announce'), findsOneWidget);
   });
 
-  testWidgets('shows FAB with + icon', (tester) async {
+  testWidgets('does not show FAB (FAB moved to Orbit screen)', (tester) async {
     await tester.pumpWidget(buildTestWidget());
 
-    expect(find.byIcon(Icons.add), findsOneWidget);
-  });
-
-  testWidgets('tapping FAB opens menu with New Group, New Announce, New Q&A',
-      (tester) async {
-    await tester.pumpWidget(buildTestWidget());
-
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump(const Duration(milliseconds: 300));
-
-    expect(find.text('New Group'), findsOneWidget);
-    expect(find.text('New Announce'), findsOneWidget);
-    expect(find.text('New Q&A'), findsOneWidget);
-  });
-
-  testWidgets('tapping New Group calls onCreateGroup with GroupType.chat',
-      (tester) async {
-    GroupType? captured;
-    await tester.pumpWidget(
-      buildTestWidget(onCreateGroup: (type) => captured = type),
-    );
-
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump(const Duration(milliseconds: 300));
-
-    await tester.tap(find.text('New Group'));
-    await tester.pump(const Duration(milliseconds: 300));
-
-    expect(captured, GroupType.chat);
-  });
-
-  testWidgets(
-      'tapping New Announce calls onCreateGroup with GroupType.announcement',
-      (tester) async {
-    GroupType? captured;
-    await tester.pumpWidget(
-      buildTestWidget(onCreateGroup: (type) => captured = type),
-    );
-
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump(const Duration(milliseconds: 300));
-
-    await tester.tap(find.text('New Announce'));
-    await tester.pump(const Duration(milliseconds: 300));
-
-    expect(captured, GroupType.announcement);
-  });
-
-  testWidgets('tapping New Q&A calls onCreateGroup with GroupType.qa',
-      (tester) async {
-    GroupType? captured;
-    await tester.pumpWidget(
-      buildTestWidget(onCreateGroup: (type) => captured = type),
-    );
-
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump(const Duration(milliseconds: 300));
-
-    await tester.tap(find.text('New Q&A'));
-    await tester.pump(const Duration(milliseconds: 300));
-
-    expect(captured, GroupType.qa);
+    expect(find.byIcon(Icons.add), findsNothing);
   });
 }

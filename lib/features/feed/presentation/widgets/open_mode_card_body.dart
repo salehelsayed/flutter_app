@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/feed_colors.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/inline_reply_input.dart';
@@ -11,7 +12,7 @@ import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart'
 /// Shows the friend header, scrollable unread message preview,
 /// and an inline reply input with "Reply..." hint.
 class OpenModeCardBody extends StatelessWidget {
-  final ThreadFeedItem thread;
+  final CardThreadFeedItem thread;
   final VoidCallback? onViewEarlier;
   final VoidCallback? onCollapse;
   final ValueChanged<String>? onQuoteReply;
@@ -58,8 +59,8 @@ class OpenModeCardBody extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
           child: ScrollableMessagePreview(
             messages: thread.unreadMessages,
-            contactPeerId: thread.contactPeerId,
-            contactUsername: thread.contactUsername,
+            contactPeerId: thread.displayId,
+            contactUsername: thread.displayName,
             hasEarlierHistory: true,
             onViewEarlier: onViewEarlier,
             onCollapse: onCollapse,
@@ -81,14 +82,29 @@ class OpenModeCardBody extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(20, 18, 20, 12),
       child: Row(
         children: [
-          UserAvatar(peerId: thread.contactPeerId, size: 42),
+          if (thread.isGroup)
+            Container(
+              width: 42,
+              height: 42,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: FeedColors.accentPurple.withValues(alpha: 0.15),
+              ),
+              child: const Icon(
+                Icons.group_rounded,
+                size: 20,
+                color: FeedColors.accentPurple,
+              ),
+            )
+          else
+            UserAvatar(peerId: thread.displayId, size: 42),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  thread.contactUsername,
+                  thread.displayName,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(

@@ -1441,6 +1441,48 @@ func GroupRotateKey(paramsJSON string) (result string) {
 	})
 }
 
+// GroupUpdateKey updates the stored group key without generating a new one.
+// Used by non-admin members when receiving a key update via P2P.
+// Input JSON: { "groupId": "...", "groupKey": "...", "keyEpoch": N }
+// Returns JSON: { "ok": true }
+func GroupUpdateKey(paramsJSON string) (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+		}
+	}()
+
+	nodeMu.Lock()
+	n := singletonNode
+	nodeMu.Unlock()
+
+	if n == nil {
+		return errJSON("NOT_INITIALIZED", "call Initialize first")
+	}
+
+	var params struct {
+		GroupId  string `json:"groupId"`
+		GroupKey string `json:"groupKey"`
+		KeyEpoch int    `json:"keyEpoch"`
+	}
+	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
+		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
+	}
+
+	if params.GroupId == "" || params.GroupKey == "" {
+		return errJSON("INVALID_INPUT", "missing groupId or groupKey")
+	}
+
+	n.UpdateGroupKey(params.GroupId, &node.GroupKeyInfo{
+		Key:      params.GroupKey,
+		KeyEpoch: params.KeyEpoch,
+	})
+
+	return okJSON(map[string]interface{}{
+		"ok": true,
+	})
+}
+
 // GroupEncryptMessage encrypts a plaintext message with a group key.
 // Input JSON: { "groupKey": "<base64>", "plaintext": "..." }
 // Returns JSON: { "ok": true, "ciphertext": "<base64>", "nonce": "<base64>" }

@@ -46,8 +46,11 @@ import 'package:flutter_app/features/identity/domain/models/identity_model.dart'
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
+import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
+import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_list_wired.dart';
 import 'package:flutter_app/features/orbit/presentation/navigation/orbit_route_transition.dart';
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_wired.dart';
@@ -130,6 +133,7 @@ class _FeedWiredState extends State<FeedWired> {
   StreamSubscription<ConversationMessage>? _chatSubscription;
   StreamSubscription<ContactModel>? _contactUpdateSubscription;
   StreamSubscription<MessageReaction>? _reactionSubscription;
+  StreamSubscription<dynamic>? _groupMessageSubscription;
   Map<String, List<MessageReaction>> _reactions = {};
   ImageQualityPreference _qualityPreference = ImageQualityPreference.compressed;
   ImageQualityPreference _videoQualityPreference = ImageQualityPreference.compressed;
@@ -147,6 +151,7 @@ class _FeedWiredState extends State<FeedWired> {
     _startListeningForChatMessages();
     _startListeningForContactUpdates();
     _startListeningForReactions();
+    _startListeningForGroupMessages();
   }
 
   void _loadIdentity() async {
@@ -210,6 +215,8 @@ class _FeedWiredState extends State<FeedWired> {
         messageRepo: widget.messageRepository,
         mediaAttachmentRepo: widget.mediaAttachmentRepository,
         mediaFileManager: widget.mediaFileManager,
+        groupRepo: widget.groupRepository,
+        groupMsgRepo: widget.groupMessageRepository,
       );
       if (!mounted) return;
 
@@ -738,6 +745,105 @@ class _FeedWiredState extends State<FeedWired> {
     });
   }
 
+  void _startListeningForGroupMessages() {
+    final listener = widget.groupMessageListener;
+    if (listener == null) return;
+    _groupMessageSubscription = listener.groupMessageStream.listen(
+      (_) {
+        if (!mounted) return;
+        _refreshFeed();
+      },
+      onError: (error) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'FEED_GROUP_MSG_STREAM_ERROR',
+          details: {'error': error.toString()},
+        );
+      },
+    );
+  }
+
+  void _onGroupTap(GroupThreadFeedItem groupThread) {
+    final groupRepo = widget.groupRepository;
+    final msgRepo = widget.groupMessageRepository;
+    final listener = widget.groupMessageListener;
+    if (groupRepo == null || msgRepo == null || listener == null) return;
+
+    final group = GroupModel(
+      id: groupThread.groupId,
+      name: groupThread.groupName,
+      type: groupThread.groupType,
+      topicName: '/mknoon/group/${groupThread.groupId}',
+      createdAt: DateTime.now(),
+      createdBy: '',
+      myRole: GroupRole.member,
+    );
+
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => GroupConversationWired(
+          group: group,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupMessageListener: listener,
+          bridge: widget.bridge,
+          identityRepo: widget.repository,
+          contactRepo: widget.contactRepository,
+          p2pService: widget.p2pService,
+        ),
+      ),
+    ).then((_) => _refreshFeed());
+  }
+
+  Future<void> _onGroupInlineSend(String groupId, String text) async {
+    final identity = _identity;
+    final groupRepo = widget.groupRepository;
+    final msgRepo = widget.groupMessageRepository;
+    if (identity == null || groupRepo == null || msgRepo == null) return;
+
+    try {
+      final (result, _) = await sendGroupMessage(
+        bridge: widget.bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: groupId,
+        text: text,
+        senderPeerId: identity.peerId,
+        senderPublicKey: identity.publicKey,
+        senderPrivateKey: identity.privateKey ?? '',
+        senderUsername: identity.username,
+      );
+
+      if (!mounted) return;
+
+      if (result == SendGroupMessageResult.success) {
+        await _refreshFeed();
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Message failed to send. Try again.'),
+            backgroundColor: Colors.red[700],
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'FEED_FL_GROUP_INLINE_SEND_ERROR',
+        details: {'error': e.toString()},
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Message failed to send. Try again.'),
+          backgroundColor: Colors.red[700],
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
   Future<void> _onReactionSelected(String messageId, String emoji) async {
     final identity = _identity;
     if (identity == null) return;
@@ -962,21 +1068,28 @@ class _FeedWiredState extends State<FeedWired> {
   }
 
   void _onToggleExpand(String cardId) {
-    // Mark as read when expanding an unread/active card
-    final item = _feedItems.whereType<ThreadFeedItem>().where(
+    // Find the card — could be 1:1 or group
+    final cardItem = _feedItems.whereType<CardThreadFeedItem>().where(
       (t) => t.id == cardId,
     ).firstOrNull;
 
-    if (item != null &&
+    // Mark as read when collapsing an unread/active card
+    if (cardItem != null &&
         _expandedCardId != cardId &&
-        (item.conversationState == ConversationState.unread ||
-            item.conversationState == ConversationState.active)) {
-      markConversationRead(
-        messageRepo: widget.messageRepository,
-        contactPeerId: item.contactPeerId,
-      ).then((_) {
-        if (mounted) _refreshFeed();
-      });
+        (cardItem.conversationState == ConversationState.unread ||
+            cardItem.conversationState == ConversationState.active)) {
+      if (cardItem is ThreadFeedItem) {
+        markConversationRead(
+          messageRepo: widget.messageRepository,
+          contactPeerId: cardItem.contactPeerId,
+        ).then((_) {
+          if (mounted) _refreshFeed();
+        });
+      } else if (cardItem is GroupThreadFeedItem) {
+        widget.groupMessageRepository?.markAsRead(cardItem.groupId).then((_) {
+          if (mounted) _refreshFeed();
+        });
+      }
       // Ensure the resulting collapsed card is NOT expanded
       setState(() {
         _expandedCardId = null;
@@ -984,17 +1097,14 @@ class _FeedWiredState extends State<FeedWired> {
       return;
     }
 
-    // Clear quote when collapsing
-    if (_expandedCardId == cardId) {
-      final collapsingItem = item;
-      if (collapsingItem != null) {
-        _activeQuoteMessageIds.remove(collapsingItem.contactPeerId);
-      }
+    // Clear quote when collapsing (1:1 only)
+    if (_expandedCardId == cardId && cardItem is ThreadFeedItem) {
+      _activeQuoteMessageIds.remove(cardItem.contactPeerId);
     }
 
-    // Clear session reply when expanding so expanded messages become visible
-    if (_expandedCardId != cardId && item != null) {
-      _sessionReplies.clear(item.contactPeerId);
+    // Clear session reply when expanding so expanded messages become visible (1:1 only)
+    if (_expandedCardId != cardId && cardItem is ThreadFeedItem) {
+      _sessionReplies.clear(cardItem.contactPeerId);
     }
 
     setState(() {
@@ -1034,6 +1144,7 @@ class _FeedWiredState extends State<FeedWired> {
     _chatSubscription?.cancel();
     _contactUpdateSubscription?.cancel();
     _reactionSubscription?.cancel();
+    _groupMessageSubscription?.cancel();
     super.dispose();
   }
 
@@ -1069,6 +1180,8 @@ class _FeedWiredState extends State<FeedWired> {
         sessionReplies: _sessionReplies,
         reactions: _reactions,
         onReactionSelected: _onReactionSelected,
+        onGroupTap: _onGroupTap,
+        onGroupInlineSend: _onGroupInlineSend,
       ),
     );
   }
