@@ -260,12 +260,112 @@ void main() {
       await tester.tap(removeButtons.last);
       await pumpFrames(tester, count: 20);
 
-      // Verify bridge received group:updateConfig (not rotateKey)
+      // Verify bridge received group:updateConfig and group:rotateKey
       expect(bridge.commandLog, contains('group:updateConfig'));
-      expect(bridge.commandLog, isNot(contains('group:rotateKey')));
+      expect(bridge.commandLog, contains('group:rotateKey'));
 
       // Alice should disappear after the member list refresh
       expect(find.text('Alice'), findsNothing);
+    });
+
+    testWidgets(
+        'remove member broadcasts system message and sends key updates via P2P',
+        (tester) async {
+      final groupRepo = InMemoryGroupRepository();
+      final group = makeAdminGroup();
+      await groupRepo.saveGroup(group);
+
+      // Create members with publicKey and mlKemPublicKey for key rotation
+      final admin = GroupMember(
+        groupId: 'group-1',
+        peerId: 'peer-admin',
+        username: 'Admin',
+        role: MemberRole.admin,
+        publicKey: 'pk-admin',
+        mlKemPublicKey: 'mlkem-pk-admin',
+        joinedAt: DateTime.now().toUtc(),
+      );
+      final alice = GroupMember(
+        groupId: 'group-1',
+        peerId: 'peer-alice',
+        username: 'Alice',
+        role: MemberRole.writer,
+        publicKey: 'pk-alice',
+        mlKemPublicKey: 'mlkem-pk-alice',
+        joinedAt: DateTime.now().toUtc(),
+      );
+      final bob = GroupMember(
+        groupId: 'group-1',
+        peerId: 'peer-bob',
+        username: 'Bob',
+        role: MemberRole.writer,
+        publicKey: 'pk-bob',
+        mlKemPublicKey: 'mlkem-pk-bob',
+        joinedAt: DateTime.now().toUtc(),
+      );
+
+      await groupRepo.saveMember(admin);
+      await groupRepo.saveMember(alice);
+      await groupRepo.saveMember(bob);
+
+      // PassthroughCryptoBridge handles message.encrypt transparently
+      final bridge = PassthroughCryptoBridge();
+
+      // group:rotateKey must return keyEpoch and groupKey
+      bridge.responses['group:rotateKey'] = {
+        'ok': true,
+        'keyEpoch': 2,
+        'groupKey': 'newKey==',
+      };
+
+      final p2pService = FakeP2PService();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: GroupInfoWired(
+            group: group,
+            groupRepo: groupRepo,
+            contactRepo: InMemoryContactRepository(),
+            bridge: bridge,
+            identityRepo: FakeIdentityRepository(identity: testIdentity),
+            p2pService: p2pService,
+          ),
+        ),
+      );
+      await pumpFrames(tester);
+
+      // Verify all members are shown
+      expect(find.text('You'), findsOneWidget); // admin shows as "You"
+      expect(find.text('Alice'), findsOneWidget);
+      expect(find.text('Bob'), findsOneWidget);
+
+      // Find the remove button specifically on Alice's row.
+      // Each GroupMemberRow is a Row; find the one containing 'Alice' text.
+      final aliceRow = find.ancestor(
+        of: find.text('Alice'),
+        matching: find.byType(Row),
+      );
+      final aliceRemoveButton = find.descendant(
+        of: aliceRow,
+        matching: find.byIcon(Icons.remove_circle_outline),
+      );
+      expect(aliceRemoveButton, findsOneWidget);
+
+      await tester.tap(aliceRemoveButton);
+      await pumpFrames(tester, count: 30);
+
+      // Verify group:publish was called for the member_removed system message
+      expect(bridge.commandLog, contains('group:publish'));
+
+      // Verify at least one P2P sendMessage call was made (key update to Bob)
+      expect(p2pService.sendMessageCallCount, greaterThanOrEqualTo(1));
+
+      // Verify the key update was sent specifically to peer-bob
+      final bobMessages = p2pService.sentMessageLog
+          .where((entry) => entry.peerId == 'peer-bob')
+          .toList();
+      expect(bobMessages, isNotEmpty,
+          reason: 'Key update should be sent to remaining member peer-bob');
     });
   });
 }
