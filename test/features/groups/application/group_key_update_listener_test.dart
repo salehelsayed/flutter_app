@@ -151,6 +151,31 @@ void main() {
     failListener.dispose();
   });
 
+  test('saves key to DB AND updates Go via group:updateKey', () async {
+    listener.start();
+
+    controller.add(_makeMessage(_validEnvelope(
+      groupId: 'group-99',
+      keyGeneration: 5,
+      encryptedKey: 'rotated-key-xyz',
+    )));
+
+    // Allow the async listener pipeline to complete.
+    await Future<void>.delayed(Duration.zero);
+
+    // Verify key was saved to DB.
+    final saved = await groupRepo.getLatestKey('group-99');
+    expect(saved, isNotNull);
+    expect(saved!.groupId, 'group-99');
+    expect(saved.keyGeneration, 5);
+    expect(saved.encryptedKey, 'rotated-key-xyz');
+
+    // Verify bridge was called with message.decrypt (for decryption)
+    // AND group:updateKey (to update Go's stored key).
+    expect(bridge.commandLog, contains('message.decrypt'));
+    expect(bridge.commandLog, contains('group:updateKey'));
+  });
+
   test('does not crash on malformed JSON', () async {
     listener.start();
 
@@ -163,4 +188,121 @@ void main() {
     expect(saved, isNull);
     expect(bridge.commandLog, isEmpty);
   });
+
+  test('group:updateKey payload contains correct groupId, groupKey, keyEpoch',
+      () async {
+    listener.start();
+
+    controller.add(_makeMessage(_validEnvelope(
+      groupId: 'group-77',
+      keyGeneration: 4,
+      encryptedKey: 'specific-key-material',
+    )));
+
+    await Future<void>.delayed(Duration.zero);
+
+    // Find the group:updateKey command in sentMessages
+    final updateKeyMsg = bridge.sentMessages.firstWhere((m) {
+      final parsed = jsonDecode(m) as Map<String, dynamic>;
+      return parsed['cmd'] == 'group:updateKey';
+    });
+    final payload =
+        (jsonDecode(updateKeyMsg) as Map<String, dynamic>)['payload']
+            as Map<String, dynamic>;
+
+    expect(payload['groupId'], 'group-77');
+    expect(payload['groupKey'], 'specific-key-material');
+    expect(payload['keyEpoch'], 4);
+  });
+
+  test('handles sequential key updates (epoch 2 then epoch 3)', () async {
+    listener.start();
+
+    // Send epoch 2
+    controller.add(_makeMessage(_validEnvelope(
+      groupId: 'group-seq',
+      keyGeneration: 2,
+      encryptedKey: 'key-epoch-2',
+    )));
+    await Future<void>.delayed(Duration.zero);
+
+    // Send epoch 3
+    controller.add(_makeMessage(_validEnvelope(
+      groupId: 'group-seq',
+      keyGeneration: 3,
+      encryptedKey: 'key-epoch-3',
+    )));
+    await Future<void>.delayed(Duration.zero);
+
+    // Both should be saved to DB
+    final key2 = await groupRepo.getKeyByGeneration('group-seq', 2);
+    expect(key2, isNotNull);
+    expect(key2!.encryptedKey, 'key-epoch-2');
+
+    final key3 = await groupRepo.getKeyByGeneration('group-seq', 3);
+    expect(key3, isNotNull);
+    expect(key3!.encryptedKey, 'key-epoch-3');
+
+    // Latest key should be epoch 3
+    final latest = await groupRepo.getLatestKey('group-seq');
+    expect(latest!.keyGeneration, 3);
+
+    // Both should have triggered group:updateKey
+    final updateKeyCount =
+        bridge.commandLog.where((c) => c == 'group:updateKey').length;
+    expect(updateKeyCount, 2);
+  });
+
+  test('group:updateKey bridge failure does not crash listener', () async {
+    // Custom bridge that passes decrypt but fails updateKey
+    final failUpdateKeyBridge = _UpdateKeyFailBridge();
+
+    final failListener = GroupKeyUpdateListener(
+      groupKeyUpdateStream: controller.stream,
+      groupRepo: groupRepo,
+      bridge: failUpdateKeyBridge,
+      getOwnMlKemSecretKey: () async => 'my-secret-key',
+    );
+
+    failListener.start();
+
+    controller.add(_makeMessage(_validEnvelope(
+      groupId: 'group-fail',
+      keyGeneration: 2,
+      encryptedKey: 'key-despite-bridge-fail',
+    )));
+
+    await Future<void>.delayed(Duration.zero);
+
+    // Key should still be saved to DB (saveKey runs before updateKey)
+    final saved = await groupRepo.getLatestKey('group-fail');
+    expect(saved, isNotNull);
+    expect(saved!.encryptedKey, 'key-despite-bridge-fail');
+    expect(saved.keyGeneration, 2);
+
+    // Bridge was called for both decrypt and updateKey
+    expect(failUpdateKeyBridge.commandLog, contains('message.decrypt'));
+    expect(failUpdateKeyBridge.commandLog, contains('group:updateKey'));
+
+    failListener.dispose();
+  });
+}
+
+/// A PassthroughCryptoBridge that returns {ok: false} for group:updateKey
+/// but handles encrypt/decrypt normally.
+class _UpdateKeyFailBridge extends PassthroughCryptoBridge {
+  @override
+  Future<String> send(String message) async {
+    final parsed = jsonDecode(message) as Map<String, dynamic>;
+    final cmd = parsed['cmd'] as String?;
+    if (cmd == 'group:updateKey') {
+      sendCallCount++;
+      lastSentMessage = message;
+      sentMessages.add(message);
+      lastCommand = cmd;
+      commandLog.add(cmd!);
+      return jsonEncode({'ok': false, 'errorCode': 'UPDATE_KEY_FAILED'});
+    }
+    return super.send(message);
+  }
 }

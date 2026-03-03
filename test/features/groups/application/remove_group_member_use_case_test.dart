@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/features/groups/application/remove_group_member_use_case.dart';
@@ -141,5 +143,68 @@ void main() {
 
     // Bridge was called for updateConfig
     expect(bridge.commandLog, equals(['group:updateConfig']));
+  });
+
+  test('groupConfig sent to bridge excludes removed member', () async {
+    await removeGroupMember(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      groupId: 'group-1',
+      memberPeerId: 'peer-to-remove',
+    );
+
+    // Parse the group:updateConfig command from sentMessages
+    final updateConfigMsg = bridge.sentMessages.firstWhere((m) {
+      final parsed = jsonDecode(m) as Map<String, dynamic>;
+      return parsed['cmd'] == 'group:updateConfig';
+    });
+    final payload =
+        (jsonDecode(updateConfigMsg) as Map<String, dynamic>)['payload']
+            as Map<String, dynamic>;
+    final groupConfig = payload['groupConfig'] as Map<String, dynamic>;
+    final memberPeerIds = (groupConfig['members'] as List)
+        .map((m) => (m as Map<String, dynamic>)['peerId'] as String)
+        .toList();
+
+    // Removed member must NOT be in the config
+    expect(memberPeerIds, isNot(contains('peer-to-remove')));
+
+    // Admin and bystander must still be present
+    expect(memberPeerIds, contains('peer-admin'));
+    expect(memberPeerIds, contains('peer-bystander'));
+  });
+
+  test('groupConfig has correct structure with all required fields', () async {
+    await removeGroupMember(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      groupId: 'group-1',
+      memberPeerId: 'peer-to-remove',
+    );
+
+    final updateConfigMsg = bridge.sentMessages.firstWhere((m) {
+      final parsed = jsonDecode(m) as Map<String, dynamic>;
+      return parsed['cmd'] == 'group:updateConfig';
+    });
+    final payload =
+        (jsonDecode(updateConfigMsg) as Map<String, dynamic>)['payload']
+            as Map<String, dynamic>;
+    final groupConfig = payload['groupConfig'] as Map<String, dynamic>;
+
+    // Top-level required fields
+    expect(groupConfig['name'], 'Test Group');
+    expect(groupConfig['groupType'], isNotNull);
+    expect(groupConfig['createdBy'], 'peer-admin');
+    expect(groupConfig['createdAt'], isNotNull);
+    expect(groupConfig['members'], isList);
+
+    // Each member must have peerId, role, publicKey
+    final members = groupConfig['members'] as List;
+    for (final m in members) {
+      final member = m as Map<String, dynamic>;
+      expect(member['peerId'], isNotNull);
+      expect(member['role'], isNotNull);
+      expect(member['publicKey'], isNotNull);
+    }
   });
 }
