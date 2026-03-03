@@ -156,6 +156,7 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
       p2pService: widget.p2pService,
       identityRepo: widget.repository,
       bridge: widget.bridge,
+      onProfileDownloaded: widget.chatMessageListener.emitContactUpdate,
     );
 
     if (!mounted) return;

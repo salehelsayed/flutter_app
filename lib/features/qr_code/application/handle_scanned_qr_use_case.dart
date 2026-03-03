@@ -6,6 +6,7 @@ import 'package:flutter_app/features/contacts/domain/repositories/contact_reposi
 import 'package:flutter_app/features/contact_request/application/send_contact_request_use_case.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/qr_code/application/parse_qr_payload_use_case.dart';
+import 'package:flutter_app/features/settings/application/download_profile_picture_use_case.dart';
 
 /// Result of handling a scanned QR code.
 enum HandleScannedQRResult {
@@ -33,6 +34,7 @@ Future<HandleScannedQRResult> handleScannedQR({
   required IdentityRepository identityRepo,
   required P2PService p2pService,
   required String ownPeerId,
+  DownloadProfilePictureFn downloadProfilePictureFn = downloadProfilePicture,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -77,7 +79,25 @@ Future<HandleScannedQRResult> handleScannedQR({
       break;
   }
 
-  // 3. Send contact request in background (fire and forget)
+  // 3. Speculatively download the contact's profile picture (fire and forget)
+  () async {
+    try {
+      await downloadProfilePictureFn(
+        bridge: bridge,
+        contactRepo: contactRepo,
+        ownerPeerId: contact.peerId,
+        avatarVersion: 'initial',
+      );
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'INITIAL_PROFILE_DOWNLOAD_ERROR',
+        details: {'peerId': contact.peerId, 'error': e.toString()},
+      );
+    }
+  }();
+
+  // 4. Send contact request in background (fire and forget)
   sendContactRequest(
     p2pService: p2pService,
     identityRepo: identityRepo,

@@ -14,6 +14,7 @@ import 'package:flutter_app/features/contact_request/domain/repositories/contact
 import 'package:flutter_app/features/contacts/application/add_contact_use_case.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
+import 'package:flutter_app/features/settings/application/download_profile_picture_use_case.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/application/reaction_listener.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
@@ -61,6 +62,7 @@ class QRScannerWired extends StatelessWidget {
   final GroupMessageRepository? groupMessageRepository;
   final GroupMessageListener? groupMessageListener;
   final GroupInviteListener? groupInviteListener;
+  final DownloadProfilePictureFn? downloadProfilePictureFn;
 
   const QRScannerWired({
     super.key,
@@ -85,6 +87,7 @@ class QRScannerWired extends StatelessWidget {
     this.groupMessageRepository,
     this.groupMessageListener,
     this.groupInviteListener,
+    this.downloadProfilePictureFn,
   });
 
   @override
@@ -173,6 +176,8 @@ class QRScannerWired extends StatelessWidget {
         _showSuccessDialog(context, contact);
         // Send contact request to the scanned peer (fire and forget)
         _sendContactRequestInBackground(contact.peerId, contact.publicKey);
+        // Download profile picture (fire and forget)
+        _downloadProfilePictureInBackground(contact.peerId);
         break;
 
       case AddContactResult.alreadyExists:
@@ -212,6 +217,27 @@ class QRScannerWired extends StatelessWidget {
             : targetPeerId,
       },
     );
+  }
+
+  /// Downloads the contact's profile picture in the background.
+  ///
+  /// On success, notifies the UI via [chatMessageListener.emitContactUpdate].
+  void _downloadProfilePictureInBackground(String peerId) async {
+    try {
+      final updated = await (downloadProfilePictureFn ?? downloadProfilePicture)(
+        bridge: bridge,
+        contactRepo: contactRepository,
+        ownerPeerId: peerId,
+        avatarVersion: 'initial',
+      );
+      if (updated != null) chatMessageListener.emitContactUpdate(updated);
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'INITIAL_PROFILE_DOWNLOAD_ERROR',
+        details: {'peerId': peerId, 'error': e.toString()},
+      );
+    }
   }
 
   void _showError(BuildContext context, String title, String message) {
