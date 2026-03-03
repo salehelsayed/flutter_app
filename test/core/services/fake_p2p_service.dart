@@ -27,6 +27,9 @@ class FakeP2PService implements P2PService {
   bool throwOnHealthCheck;
   bool throwOnDrainInbox;
 
+  /// Ordered log of all sendMessage calls for multi-send assertions.
+  final List<({String peerId, String content})> sentMessageLog = [];
+
   // Call tracking
   int startNodeCallCount = 0;
   int stopNodeCallCount = 0;
@@ -113,6 +116,7 @@ class FakeP2PService implements P2PService {
     sendMessageCallCount++;
     lastSendMessagePeerId = peerId;
     lastSendMessageContent = message;
+    sentMessageLog.add((peerId: peerId, content: message));
     return sendMessageResult;
   }
 

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
+import 'package:flutter_app/features/groups/presentation/widgets/expandable_fab.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_card.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
 
@@ -13,7 +14,7 @@ class GroupListScreen extends StatelessWidget {
   final Map<String, GroupMessage?> latestMessages;
   final Map<String, int> unreadCounts;
   final ValueChanged<GroupModel> onGroupTap;
-  final VoidCallback onCreateGroup;
+  final ValueChanged<GroupType> onCreateGroup;
   final VoidCallback onBack;
 
   const GroupListScreen({
@@ -32,21 +33,37 @@ class GroupListScreen extends StatelessWidget {
       child: Scaffold(
         backgroundColor: Colors.transparent,
         body: SafeArea(
-          child: Column(
+          child: Stack(
             children: [
-              // Header
-              _buildHeader(context),
-              // Body
-              Expanded(
-                child: groups.isEmpty ? _buildEmptyState() : _buildList(),
+              Column(
+                children: [
+                  _buildHeader(context),
+                  Expanded(
+                    child: groups.isEmpty ? _buildEmptyState() : _buildList(),
+                  ),
+                ],
+              ),
+              ExpandableFab(
+                items: [
+                  ExpandableFabItem(
+                    label: 'New Group',
+                    icon: Icons.group_outlined,
+                    onTap: () => onCreateGroup(GroupType.chat),
+                  ),
+                  ExpandableFabItem(
+                    label: 'New Announce',
+                    icon: Icons.campaign_outlined,
+                    onTap: () => onCreateGroup(GroupType.announcement),
+                  ),
+                  ExpandableFabItem(
+                    label: 'New Q&A',
+                    icon: Icons.quiz_outlined,
+                    onTap: () => onCreateGroup(GroupType.qa),
+                  ),
+                ],
               ),
             ],
           ),
-        ),
-        floatingActionButton: FloatingActionButton(
-          onPressed: onCreateGroup,
-          backgroundColor: const Color(0xFF64B5F6),
-          child: const Icon(Icons.add, color: Colors.black),
         ),
       ),
     );

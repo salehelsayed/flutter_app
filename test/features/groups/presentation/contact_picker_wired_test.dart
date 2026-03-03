@@ -201,7 +201,42 @@ void main() {
       expect(find.text('Admin'), findsNothing);
     });
 
-    testWidgets('shows confirmation dialog on contact selection',
+    testWidgets('tapping contact toggles selection state', (tester) async {
+      final contactRepo = InMemoryContactRepository();
+      contactRepo.addTestContact(contactAlice);
+
+      final groupRepo = InMemoryGroupRepository();
+      await groupRepo.saveGroup(testGroup);
+      await groupRepo.saveMember(memberAdmin);
+
+      await tester.pumpWidget(
+        buildDirectWiredTestWidget(
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+        ),
+      );
+      await pumpFrames(tester);
+
+      // Initially unselected
+      expect(find.byIcon(Icons.add_circle_outline), findsOneWidget);
+      expect(find.byIcon(Icons.check_circle), findsNothing);
+
+      // Tap Alice → selected
+      await tester.tap(find.text('Alice'));
+      await tester.pump();
+
+      expect(find.byIcon(Icons.check_circle), findsOneWidget);
+      expect(find.byIcon(Icons.add_circle_outline), findsNothing);
+
+      // Tap Alice again → deselected
+      await tester.tap(find.text('Alice'));
+      await tester.pump();
+
+      expect(find.byIcon(Icons.add_circle_outline), findsOneWidget);
+      expect(find.byIcon(Icons.check_circle), findsNothing);
+    });
+
+    testWidgets('confirm button appears after selecting one contact',
         (tester) async {
       final contactRepo = InMemoryContactRepository();
       contactRepo.addTestContact(contactAlice);
@@ -218,70 +253,272 @@ void main() {
       );
       await pumpFrames(tester);
 
+      // Initially no confirm button
+      expect(find.text('Send Invites'), findsNothing);
+
       // Tap Alice
       await tester.tap(find.text('Alice'));
-      await pumpFrames(tester);
+      await tester.pump();
 
-      // Confirmation dialog should appear
-      expect(find.text('Invite Alice?'), findsOneWidget);
-      expect(find.text('Cancel'), findsOneWidget);
-      expect(find.text('Invite'), findsOneWidget);
+      // Confirm button appears
+      expect(find.text('Send Invites'), findsOneWidget);
     });
 
-    testWidgets('cancelling confirmation does not invoke use case',
-        (tester) async {
+    testWidgets('header shows selected count', (tester) async {
       final contactRepo = InMemoryContactRepository();
       contactRepo.addTestContact(contactAlice);
+      contactRepo.addTestContact(contactCharlie);
 
       final groupRepo = InMemoryGroupRepository();
       await groupRepo.saveGroup(testGroup);
       await groupRepo.saveMember(memberAdmin);
 
-      final bridge = FakeBridge();
+      await tester.pumpWidget(
+        buildDirectWiredTestWidget(
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+        ),
+      );
+      await pumpFrames(tester);
+
+      // Initially "Add Member"
+      expect(find.text('Add Member'), findsOneWidget);
+
+      // Tap Alice
+      await tester.tap(find.text('Alice'));
+      await tester.pump();
+      expect(find.text('Add Members (1)'), findsOneWidget);
+
+      // Tap Charlie
+      await tester.tap(find.text('Charlie'));
+      await tester.pump();
+      expect(find.text('Add Members (2)'), findsOneWidget);
+    });
+
+    testWidgets('batch invite adds all selected members to DB',
+        (tester) async {
+      final contactRepo = InMemoryContactRepository();
+      contactRepo.addTestContact(contactAlice);
+      contactRepo.addTestContact(contactCharlie);
+
+      final groupRepo = InMemoryGroupRepository();
+      await groupRepo.saveGroup(testGroup);
+      await groupRepo.saveMember(memberAdmin);
+
+      await tester.pumpWidget(
+        buildDirectWiredTestWidget(
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+        ),
+      );
+      await pumpFrames(tester);
+
+      // Select Alice + Charlie
+      await tester.tap(find.text('Alice'));
+      await tester.pump();
+      await tester.tap(find.text('Charlie'));
+      await tester.pump();
+
+      // Tap Send Invites
+      await tester.tap(find.text('Send Invites'));
+      await pumpFrames(tester, count: 20);
+
+      // Both should be in group members
+      final members = await groupRepo.getMembers('group-1');
+      final peerIds = members.map((m) => m.peerId).toSet();
+      expect(peerIds, contains('peer-alice'));
+      expect(peerIds, contains('peer-charlie'));
+    });
+
+    testWidgets(
+        'batch invite calls callGroupUpdateConfig once with all new members',
+        (tester) async {
+      final contactRepo = InMemoryContactRepository();
+      contactRepo.addTestContact(contactAlice);
+      contactRepo.addTestContact(contactCharlie);
+
+      final groupRepo = InMemoryGroupRepository();
+      await groupRepo.saveGroup(testGroup);
+      await groupRepo.saveMember(memberAdmin);
+      await groupRepo.saveKey(GroupKeyInfo(
+        groupId: 'group-1',
+        keyGeneration: 1,
+        encryptedKey: 'test-group-key-base64',
+        createdAt: DateTime.now().toUtc(),
+      ));
+
+      final bridge = PassthroughCryptoBridge();
 
       await tester.pumpWidget(
         buildDirectWiredTestWidget(
           groupRepo: groupRepo,
           contactRepo: contactRepo,
           bridge: bridge,
+          p2pService:
+              FakeP2PService(initialState: const NodeState(isStarted: true)),
         ),
       );
       await pumpFrames(tester);
 
-      // Tap Alice
+      // Select Alice + Charlie, tap Send Invites
       await tester.tap(find.text('Alice'));
-      await pumpFrames(tester);
+      await tester.pump();
+      await tester.tap(find.text('Charlie'));
+      await tester.pump();
+      await tester.tap(find.text('Send Invites'));
+      await pumpFrames(tester, count: 20);
 
-      // Tap Cancel
-      await tester.tap(find.text('Cancel'));
-      await pumpFrames(tester);
+      // Exactly 1 group:updateConfig call
+      final updateConfigCalls = bridge.commandLog
+          .where((c) => c == 'group:updateConfig')
+          .length;
+      expect(updateConfigCalls, equals(1));
 
-      // No bridge calls should have been made
-      expect(bridge.sendCallCount, equals(0));
-
-      // Alice's peerId should NOT be in group members
-      final members = await groupRepo.getMembers('group-1');
-      final memberPeerIds = members.map((m) => m.peerId).toSet();
-      expect(memberPeerIds.contains('peer-alice'), isFalse);
+      // Config members list includes both new members
+      final updateConfigMsg = bridge.sentMessages.firstWhere((msg) {
+        final parsed = jsonDecode(msg) as Map<String, dynamic>;
+        return parsed['cmd'] == 'group:updateConfig';
+      });
+      final parsed = jsonDecode(updateConfigMsg) as Map<String, dynamic>;
+      final payload = parsed['payload'] as Map<String, dynamic>;
+      final groupConfig = payload['groupConfig'] as Map<String, dynamic>;
+      final members = groupConfig['members'] as List<dynamic>;
+      final peerIds =
+          members.map((m) => (m as Map<String, dynamic>)['peerId']).toSet();
+      expect(peerIds, contains('peer-admin'));
+      expect(peerIds, contains('peer-alice'));
+      expect(peerIds, contains('peer-charlie'));
     });
 
-    testWidgets('confirming invite adds member and pops screen',
+    testWidgets('batch invite broadcasts one members_added system message',
         (tester) async {
       final contactRepo = InMemoryContactRepository();
       contactRepo.addTestContact(contactAlice);
+      contactRepo.addTestContact(contactCharlie);
+
+      final groupRepo = InMemoryGroupRepository();
+      await groupRepo.saveGroup(testGroup);
+      await groupRepo.saveMember(memberAdmin);
+      await groupRepo.saveKey(GroupKeyInfo(
+        groupId: 'group-1',
+        keyGeneration: 1,
+        encryptedKey: 'test-group-key-base64',
+        createdAt: DateTime.now().toUtc(),
+      ));
+
+      final bridge = PassthroughCryptoBridge();
+
+      await tester.pumpWidget(
+        buildDirectWiredTestWidget(
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          p2pService:
+              FakeP2PService(initialState: const NodeState(isStarted: true)),
+        ),
+      );
+      await pumpFrames(tester);
+
+      // Select Alice + Charlie, tap Send Invites
+      await tester.tap(find.text('Alice'));
+      await tester.pump();
+      await tester.tap(find.text('Charlie'));
+      await tester.pump();
+      await tester.tap(find.text('Send Invites'));
+      await pumpFrames(tester, count: 20);
+
+      // Exactly 1 group:publish call
+      final publishCalls =
+          bridge.commandLog.where((c) => c == 'group:publish').length;
+      expect(publishCalls, equals(1));
+
+      // Published text has __sys: 'members_added' with 2 members
+      final publishMsg = bridge.sentMessages.firstWhere((msg) {
+        final parsed = jsonDecode(msg) as Map<String, dynamic>;
+        return parsed['cmd'] == 'group:publish';
+      });
+      final parsed = jsonDecode(publishMsg) as Map<String, dynamic>;
+      final payload = parsed['payload'] as Map<String, dynamic>;
+      final sysText = jsonDecode(payload['text'] as String) as Map<String, dynamic>;
+      expect(sysText['__sys'], equals('members_added'));
+      final sysMembers = sysText['members'] as List<dynamic>;
+      expect(sysMembers.length, equals(2));
+    });
+
+    testWidgets('batch invite sends individual P2P invites to each contact',
+        (tester) async {
+      final contactRepo = InMemoryContactRepository();
+      contactRepo.addTestContact(contactAlice);
+      contactRepo.addTestContact(contactCharlie);
+
+      final groupRepo = InMemoryGroupRepository();
+      await groupRepo.saveGroup(testGroup);
+      await groupRepo.saveMember(memberAdmin);
+      await groupRepo.saveKey(GroupKeyInfo(
+        groupId: 'group-1',
+        keyGeneration: 1,
+        encryptedKey: 'test-group-key-base64',
+        createdAt: DateTime.now().toUtc(),
+      ));
+
+      final bridge = PassthroughCryptoBridge();
+      final p2pService = FakeP2PService(
+        initialState: const NodeState(isStarted: true),
+      );
+
+      await tester.pumpWidget(
+        buildDirectWiredTestWidget(
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          p2pService: p2pService,
+        ),
+      );
+      await pumpFrames(tester);
+
+      // Select Alice + Charlie, tap Send Invites
+      await tester.tap(find.text('Alice'));
+      await tester.pump();
+      await tester.tap(find.text('Charlie'));
+      await tester.pump();
+      await tester.tap(find.text('Send Invites'));
+      await pumpFrames(tester, count: 20);
+
+      // 2 entries in sentMessageLog (one per contact)
+      expect(p2pService.sentMessageLog.length, equals(2));
+
+      // Each is a v2 group_invite envelope
+      final peerIds = p2pService.sentMessageLog.map((e) => e.peerId).toSet();
+      expect(peerIds, contains('peer-alice'));
+      expect(peerIds, contains('peer-charlie'));
+
+      for (final entry in p2pService.sentMessageLog) {
+        final envelope = jsonDecode(entry.content) as Map<String, dynamic>;
+        expect(envelope['type'], equals('group_invite'));
+        expect(envelope['version'], equals('2'));
+        expect(envelope['encrypted'], isNotNull);
+      }
+    });
+
+    testWidgets('batch invite pops with count of invited members',
+        (tester) async {
+      final contactRepo = InMemoryContactRepository();
+      contactRepo.addTestContact(contactAlice);
+      contactRepo.addTestContact(contactCharlie);
 
       final groupRepo = InMemoryGroupRepository();
       await groupRepo.saveGroup(testGroup);
       await groupRepo.saveMember(memberAdmin);
 
-      // Build with a Navigator to verify pop
+      int? popResult;
+
       await tester.pumpWidget(
         MaterialApp(
           home: Builder(
             builder: (context) => Scaffold(
               body: ElevatedButton(
-                onPressed: () {
-                  Navigator.of(context).push(
+                onPressed: () async {
+                  final result = await Navigator.of(context).push<int>(
                     MaterialPageRoute(
                       builder: (_) => ContactPickerWired(
                         groupId: 'group-1',
@@ -294,6 +531,7 @@ void main() {
                       ),
                     ),
                   );
+                  popResult = result;
                 },
                 child: const Text('Open Picker'),
               ),
@@ -305,26 +543,72 @@ void main() {
       // Open the picker
       await tester.tap(find.text('Open Picker'));
       await pumpFrames(tester, count: 20);
-
-      // Verify picker screen is showing
       expect(find.byType(ContactPickerScreen), findsOneWidget);
 
-      // Tap Alice
+      // Select Alice + Charlie
       await tester.tap(find.text('Alice'));
-      await pumpFrames(tester);
+      await tester.pump();
+      await tester.tap(find.text('Charlie'));
+      await tester.pump();
 
-      // Confirm invite
-      await tester.tap(find.text('Invite'));
+      // Tap Send Invites
+      await tester.tap(find.text('Send Invites'));
       await pumpFrames(tester, count: 20);
 
-      // Picker should be popped
-      expect(find.byType(ContactPickerScreen), findsNothing);
-      expect(find.text('Open Picker'), findsOneWidget);
+      // Should pop with count 2
+      expect(popResult, equals(2));
+    });
 
-      // Alice should be a member now
-      final members = await groupRepo.getMembers('group-1');
-      final memberPeerIds = members.map((m) => m.peerId).toSet();
-      expect(memberPeerIds.contains('peer-alice'), isTrue);
+    testWidgets('back button pops with 0', (tester) async {
+      final contactRepo = InMemoryContactRepository();
+      contactRepo.addTestContact(contactAlice);
+
+      final groupRepo = InMemoryGroupRepository();
+      await groupRepo.saveGroup(testGroup);
+      await groupRepo.saveMember(memberAdmin);
+
+      int? popResult;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: ElevatedButton(
+                onPressed: () async {
+                  final result = await Navigator.of(context).push<int>(
+                    MaterialPageRoute(
+                      builder: (_) => ContactPickerWired(
+                        groupId: 'group-1',
+                        groupRepo: groupRepo,
+                        contactRepo: contactRepo,
+                        bridge: FakeBridge(),
+                        identityRepo:
+                            FakeIdentityRepository(identity: testIdentity),
+                        p2pService: FakeP2PService(),
+                      ),
+                    ),
+                  );
+                  popResult = result;
+                },
+                child: const Text('Open Picker'),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      // Open the picker
+      await tester.tap(find.text('Open Picker'));
+      await pumpFrames(tester, count: 20);
+      expect(find.byType(ContactPickerScreen), findsOneWidget);
+
+      // Tap back button
+      await tester.tap(find.byIcon(Icons.arrow_back_ios_new));
+      await pumpFrames(tester, count: 20);
+
+      // Picker should be popped with 0
+      expect(find.byType(ContactPickerScreen), findsNothing);
+      expect(popResult, equals(0));
     });
 
     testWidgets('shows error snackbar when invite fails', (tester) async {
@@ -345,7 +629,6 @@ void main() {
 
       final groupRepo = InMemoryGroupRepository();
       await groupRepo.saveGroup(nonAdminGroup);
-      // Still need identity to match admin for the filter
       await groupRepo.saveMember(memberAdmin);
 
       await tester.pumpWidget(
@@ -356,185 +639,16 @@ void main() {
       );
       await pumpFrames(tester);
 
-      // Tap Alice
+      // Tap Alice to select
       await tester.tap(find.text('Alice'));
-      await pumpFrames(tester);
+      await tester.pump();
 
-      // Confirm invite
-      await tester.tap(find.text('Invite'));
+      // Tap Send Invites
+      await tester.tap(find.text('Send Invites'));
       await pumpFrames(tester);
 
       // Error snackbar should appear
-      expect(find.text('Failed to invite member'), findsOneWidget);
-    });
-
-    testWidgets('back button pops the screen', (tester) async {
-      final contactRepo = InMemoryContactRepository();
-      contactRepo.addTestContact(contactAlice);
-
-      final groupRepo = InMemoryGroupRepository();
-      await groupRepo.saveGroup(testGroup);
-      await groupRepo.saveMember(memberAdmin);
-
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Builder(
-            builder: (context) => Scaffold(
-              body: ElevatedButton(
-                onPressed: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => ContactPickerWired(
-                        groupId: 'group-1',
-                        groupRepo: groupRepo,
-                        contactRepo: contactRepo,
-                        bridge: FakeBridge(),
-                        identityRepo:
-                            FakeIdentityRepository(identity: testIdentity),
-                        p2pService: FakeP2PService(),
-                      ),
-                    ),
-                  );
-                },
-                child: const Text('Open Picker'),
-              ),
-            ),
-          ),
-        ),
-      );
-
-      // Open the picker
-      await tester.tap(find.text('Open Picker'));
-      await pumpFrames(tester, count: 20);
-
-      // Verify picker is showing
-      expect(find.byType(ContactPickerScreen), findsOneWidget);
-
-      // Tap back button
-      await tester.tap(find.byIcon(Icons.arrow_back_ios_new));
-      await pumpFrames(tester, count: 20);
-
-      // Picker should be popped
-      expect(find.byType(ContactPickerScreen), findsNothing);
-      expect(find.text('Open Picker'), findsOneWidget);
-    });
-
-    testWidgets(
-        'confirming invite calls callGroupUpdateConfig with full GroupConfig including new member',
-        (tester) async {
-      final contactRepo = InMemoryContactRepository();
-      contactRepo.addTestContact(contactAlice);
-
-      final groupRepo = InMemoryGroupRepository();
-      await groupRepo.saveGroup(testGroup);
-      await groupRepo.saveMember(memberAdmin);
-      await groupRepo.saveKey(GroupKeyInfo(
-        groupId: 'group-1',
-        keyGeneration: 1,
-        encryptedKey: 'test-group-key-base64',
-        createdAt: DateTime.now().toUtc(),
-      ));
-
-      final bridge = PassthroughCryptoBridge();
-      final p2pService = FakeP2PService(
-        initialState: const NodeState(isStarted: true),
-      );
-
-      await tester.pumpWidget(
-        buildDirectWiredTestWidget(
-          groupRepo: groupRepo,
-          contactRepo: contactRepo,
-          bridge: bridge,
-          p2pService: p2pService,
-        ),
-      );
-      await pumpFrames(tester);
-
-      // Tap Alice
-      await tester.tap(find.text('Alice'));
-      await pumpFrames(tester);
-
-      // Confirm invite
-      await tester.tap(find.text('Invite'));
-      await pumpFrames(tester, count: 20);
-
-      // Find the group:updateConfig command in sentMessages
-      expect(bridge.commandLog, contains('group:updateConfig'));
-
-      final updateConfigMsg = bridge.sentMessages.firstWhere((msg) {
-        final parsed = jsonDecode(msg) as Map<String, dynamic>;
-        return parsed['cmd'] == 'group:updateConfig';
-      });
-      final parsed = jsonDecode(updateConfigMsg) as Map<String, dynamic>;
-      final payload = parsed['payload'] as Map<String, dynamic>;
-      final groupConfig = payload['groupConfig'] as Map<String, dynamic>;
-      final members = groupConfig['members'] as List<dynamic>;
-
-      // Should contain both Admin and Alice
-      final peerIds = members.map((m) => (m as Map<String, dynamic>)['peerId']).toSet();
-      expect(peerIds, contains('peer-admin'));
-      expect(peerIds, contains('peer-alice'));
-      expect(members.length, equals(2));
-
-      // Verify groupConfig fields
-      expect(groupConfig['name'], equals('Test Group'));
-      expect(groupConfig['groupType'], equals('chat'));
-      expect(groupConfig['createdBy'], equals('peer-admin'));
-    });
-
-    testWidgets('confirming invite calls sendGroupInvite via P2P',
-        (tester) async {
-      final contactRepo = InMemoryContactRepository();
-      contactRepo.addTestContact(contactAlice);
-
-      final groupRepo = InMemoryGroupRepository();
-      await groupRepo.saveGroup(testGroup);
-      await groupRepo.saveMember(memberAdmin);
-      await groupRepo.saveKey(GroupKeyInfo(
-        groupId: 'group-1',
-        keyGeneration: 1,
-        encryptedKey: 'test-group-key-base64',
-        createdAt: DateTime.now().toUtc(),
-      ));
-
-      final bridge = PassthroughCryptoBridge();
-      final p2pService = FakeP2PService(
-        initialState: const NodeState(isStarted: true),
-      );
-
-      await tester.pumpWidget(
-        buildDirectWiredTestWidget(
-          groupRepo: groupRepo,
-          contactRepo: contactRepo,
-          bridge: bridge,
-          p2pService: p2pService,
-        ),
-      );
-      await pumpFrames(tester);
-
-      // Tap Alice
-      await tester.tap(find.text('Alice'));
-      await pumpFrames(tester);
-
-      // Confirm invite
-      await tester.tap(find.text('Invite'));
-      await pumpFrames(tester, count: 20);
-
-      // Verify P2P sendMessage was called to Alice
-      expect(p2pService.sendMessageCallCount, equals(1));
-      expect(p2pService.lastSendMessagePeerId, equals('peer-alice'));
-
-      // Verify the sent message is a v2 group_invite envelope
-      final sentContent = p2pService.lastSendMessageContent!;
-      final envelope = jsonDecode(sentContent) as Map<String, dynamic>;
-      expect(envelope['type'], equals('group_invite'));
-      expect(envelope['version'], equals('2'));
-      expect(envelope['encrypted'], isNotNull);
-
-      final encrypted = envelope['encrypted'] as Map<String, dynamic>;
-      expect(encrypted['kem'], isNotNull);
-      expect(encrypted['ciphertext'], isNotNull);
-      expect(encrypted['nonce'], isNotNull);
+      expect(find.text('Failed to invite members'), findsOneWidget);
     });
 
     testWidgets(
@@ -570,20 +684,16 @@ void main() {
       );
       await pumpFrames(tester);
 
-      // Tap Alice
+      // Select Alice, tap Send Invites
       await tester.tap(find.text('Alice'));
-      await pumpFrames(tester);
-
-      // Confirm invite
-      await tester.tap(find.text('Invite'));
+      await tester.pump();
+      await tester.tap(find.text('Send Invites'));
       await pumpFrames(tester, count: 20);
 
-      // PassthroughCryptoBridge passes plaintext through as ciphertext,
-      // so we can decode the v2 envelope's ciphertext to read the inner payload.
+      // PassthroughCryptoBridge passes plaintext through as ciphertext
       final sentContent = p2pService.lastSendMessageContent!;
       final envelope = jsonDecode(sentContent) as Map<String, dynamic>;
       final encrypted = envelope['encrypted'] as Map<String, dynamic>;
-      // ciphertext IS the plaintext because PassthroughCryptoBridge echoes it
       final innerJson = encrypted['ciphertext'] as String;
       final innerPayload = jsonDecode(innerJson) as Map<String, dynamic>;
 
@@ -593,7 +703,7 @@ void main() {
     });
 
     testWidgets(
-        'invite succeeds even when sendGroupInvite fails (member still added locally)',
+        'invite succeeds even when sendGroupInvite fails (members still added locally)',
         (tester) async {
       final contactRepo = InMemoryContactRepository();
       contactRepo.addTestContact(contactAlice);
@@ -616,8 +726,8 @@ void main() {
         storeInInboxResult: false,
       );
 
-      // Use Navigator pattern to verify pop with true
-      bool? popResult;
+      // Use Navigator pattern to verify pop with count
+      int? popResult;
 
       await tester.pumpWidget(
         MaterialApp(
@@ -625,7 +735,7 @@ void main() {
             builder: (context) => Scaffold(
               body: ElevatedButton(
                 onPressed: () async {
-                  final result = await Navigator.of(context).push<bool>(
+                  final result = await Navigator.of(context).push<int>(
                     MaterialPageRoute(
                       builder: (_) => ContactPickerWired(
                         groupId: 'group-1',
@@ -651,12 +761,10 @@ void main() {
       await tester.tap(find.text('Open Picker'));
       await pumpFrames(tester, count: 20);
 
-      // Tap Alice
+      // Select Alice, tap Send Invites
       await tester.tap(find.text('Alice'));
-      await pumpFrames(tester);
-
-      // Confirm invite
-      await tester.tap(find.text('Invite'));
+      await tester.pump();
+      await tester.tap(find.text('Send Invites'));
       await pumpFrames(tester, count: 20);
 
       // Member should be saved locally despite P2P failure
@@ -664,10 +772,10 @@ void main() {
       final memberPeerIds = members.map((m) => m.peerId).toSet();
       expect(memberPeerIds, contains('peer-alice'));
 
-      // Screen should have popped with true (success)
-      expect(popResult, isTrue);
+      // Screen should have popped with 1 (success)
+      expect(popResult, equals(1));
 
-      // Verify P2P was attempted (sendMessage was called)
+      // Verify P2P was attempted
       expect(p2pService.sendMessageCallCount, greaterThan(0));
       // storeInInbox was also attempted as fallback
       expect(p2pService.storeInInboxCallCount, greaterThan(0));
@@ -698,12 +806,10 @@ void main() {
       );
       await pumpFrames(tester);
 
-      // Tap Alice
+      // Select Alice, tap Send Invites
       await tester.tap(find.text('Alice'));
-      await pumpFrames(tester);
-
-      // Confirm invite
-      await tester.tap(find.text('Invite'));
+      await tester.pump();
+      await tester.tap(find.text('Send Invites'));
       await pumpFrames(tester, count: 20);
 
       // Member should be saved locally
@@ -720,6 +826,80 @@ void main() {
 
       // No message.encrypt call should have been made either
       expect(bridge.commandLog, isNot(contains('message.encrypt')));
+    });
+
+    testWidgets('batch invite with no group key still adds members locally',
+        (tester) async {
+      final contactRepo = InMemoryContactRepository();
+      contactRepo.addTestContact(contactAlice);
+      contactRepo.addTestContact(contactCharlie);
+
+      final groupRepo = InMemoryGroupRepository();
+      await groupRepo.saveGroup(testGroup);
+      await groupRepo.saveMember(memberAdmin);
+      // No GroupKeyInfo saved
+
+      final bridge = FakeBridge();
+      final p2pService = FakeP2PService(
+        initialState: const NodeState(isStarted: true),
+      );
+
+      int? popResult;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: ElevatedButton(
+                onPressed: () async {
+                  final result = await Navigator.of(context).push<int>(
+                    MaterialPageRoute(
+                      builder: (_) => ContactPickerWired(
+                        groupId: 'group-1',
+                        groupRepo: groupRepo,
+                        contactRepo: contactRepo,
+                        bridge: bridge,
+                        identityRepo:
+                            FakeIdentityRepository(identity: testIdentity),
+                        p2pService: p2pService,
+                      ),
+                    ),
+                  );
+                  popResult = result;
+                },
+                child: const Text('Open Picker'),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      // Open the picker
+      await tester.tap(find.text('Open Picker'));
+      await pumpFrames(tester, count: 20);
+
+      // Select Alice + Charlie, tap Send Invites
+      await tester.tap(find.text('Alice'));
+      await tester.pump();
+      await tester.tap(find.text('Charlie'));
+      await tester.pump();
+      await tester.tap(find.text('Send Invites'));
+      await pumpFrames(tester, count: 20);
+
+      // Members should be saved locally
+      final members = await groupRepo.getMembers('group-1');
+      final peerIds = members.map((m) => m.peerId).toSet();
+      expect(peerIds, contains('peer-alice'));
+      expect(peerIds, contains('peer-charlie'));
+
+      // Config updated
+      expect(bridge.commandLog, contains('group:updateConfig'));
+
+      // No P2P sends (no key)
+      expect(p2pService.sendMessageCallCount, equals(0));
+
+      // Pops with 2
+      expect(popResult, equals(2));
     });
   });
 }

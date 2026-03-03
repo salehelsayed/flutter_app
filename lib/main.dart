@@ -46,6 +46,7 @@ import 'package:flutter_app/features/groups/domain/repositories/group_repository
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository_impl.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
+import 'package:flutter_app/features/groups/application/group_key_update_listener.dart';
 import 'package:flutter_app/features/settings/application/profile_update_listener.dart';
 import 'package:flutter_app/core/services/incoming_message_router.dart';
 import 'package:flutter_app/core/services/pending_message_retrier.dart';
@@ -344,6 +345,9 @@ void main() async {
     dbMarkGroupMessagesAsRead: (groupId) =>
         dbMarkGroupMessagesAsRead(db, groupId),
     dbDeleteGroupMessage: (id) => dbDeleteGroupMessage(db, id),
+    dbExistsGroupMessageByContent: (groupId, senderPeerId, text, timestamp) =>
+        dbExistsGroupMessageByContent(
+            db, groupId, senderPeerId, text, timestamp),
   );
 
   // Create media file manager
@@ -453,6 +457,18 @@ void main() async {
     groupRepo: groupRepository,
     contactRepo: contactRepository,
     bridge: bridge,
+    msgRepo: groupMessageRepository,
+    getOwnMlKemSecretKey: () async {
+      final identity = await repository.loadIdentity();
+      return identity?.mlKemSecretKey;
+    },
+  );
+
+  // Create group key update listener
+  final groupKeyUpdateListener = GroupKeyUpdateListener(
+    groupKeyUpdateStream: messageRouter.groupKeyUpdateStream,
+    groupRepo: groupRepository,
+    bridge: bridge,
     getOwnMlKemSecretKey: () async {
       final identity = await repository.loadIdentity();
       return identity?.mlKemSecretKey;
@@ -484,6 +500,11 @@ void main() async {
   profileUpdateListener.start();
   groupMessageListener.start(groupMessageStreamController.stream);
   groupInviteListener.start();
+  groupKeyUpdateListener.start();
+
+  // NOTE: rejoinGroupTopics and drainGroupOfflineInbox are called in
+  // StartupRouter._doStartP2P() AFTER node:start completes. They require
+  // the Go node to be running (pubsub must be initialized).
   pendingMessageRetrier.start();
   keyExchangeRetrier.start();
 
@@ -527,6 +548,7 @@ void main() async {
       groupMessageRepository: groupMessageRepository,
       groupMessageListener: groupMessageListener,
       groupInviteListener: groupInviteListener,
+      groupKeyUpdateListener: groupKeyUpdateListener,
     ),
   );
   StartupTiming.instance.mark('run_app_called');
@@ -559,6 +581,7 @@ class MyApp extends StatefulWidget {
   final GroupMessageRepositoryImpl groupMessageRepository;
   final GroupMessageListener groupMessageListener;
   final GroupInviteListener groupInviteListener;
+  final GroupKeyUpdateListener groupKeyUpdateListener;
 
   static final navigatorKey = GlobalKey<NavigatorState>();
 
@@ -590,6 +613,7 @@ class MyApp extends StatefulWidget {
     required this.groupMessageRepository,
     required this.groupMessageListener,
     required this.groupInviteListener,
+    required this.groupKeyUpdateListener,
   }) : super(key: key);
 
   @override
@@ -654,6 +678,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     // Orderly teardown: retriers → listeners → router → service → bridge
     widget.keyExchangeRetrier.dispose();
     widget.pendingMessageRetrier.dispose();
+    widget.groupKeyUpdateListener.dispose();
     widget.groupInviteListener.dispose();
     widget.groupMessageListener.dispose();
     widget.profileUpdateListener.dispose();

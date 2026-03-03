@@ -16,8 +16,15 @@ import (
 
 // initPubSub creates a new GossipSub instance attached to the node's libp2p host.
 // Must be called after the host is created in Start().
+//
+// FloodPublish is enabled so that published messages are sent to ALL connected
+// peers interested in a topic, not just the GossipSub mesh subset. This is
+// critical for small groups (2–10 members) where mesh formation may be slow
+// or incomplete — especially over relay circuit connections.
 func (n *Node) initPubSub() error {
-	ps, err := pubsub.NewGossipSub(n.ctx, n.host)
+	ps, err := pubsub.NewGossipSub(n.ctx, n.host,
+		pubsub.WithFloodPublish(true),
+	)
 	if err != nil {
 		return fmt.Errorf("create gossipsub: %w", err)
 	}
@@ -197,11 +204,20 @@ func (n *Node) PublishGroupMessage(groupId, privateKeyB64, senderPeerId, senderP
 	ctx, cancel := context.WithTimeout(n.ctx, PubSubTimeout)
 	defer cancel()
 
+	// Log peer count for diagnostics — if 0, no peers will receive the message.
+	topicPeers := topic.ListPeers()
+	log.Printf("[PUBSUB] Publishing message %s to group %s (peers in topic: %d)", msgId, groupId, len(topicPeers))
+
 	if err := topic.Publish(ctx, []byte(envelopeJSON)); err != nil {
 		return "", fmt.Errorf("publish to topic: %w", err)
 	}
 
-	log.Printf("[PUBSUB] Published message %s to group %s", msgId, groupId)
+	n.emitEvent("group:publish_debug", map[string]interface{}{
+		"groupId":    groupId,
+		"messageId":  msgId,
+		"topicPeers": len(topicPeers),
+	})
+
 	return msgId, nil
 }
 
@@ -289,7 +305,7 @@ func (n *Node) groupTopicValidator(groupId string) func(context.Context, peer.ID
 		}
 
 		sigData := mcrypto.BuildGroupSignatureData(groupId, keyInfo.KeyEpoch, env.Encrypted.Ciphertext)
-		valid, err := mcrypto.VerifyPayload(env.SenderPublicKey, sigData, env.Signature)
+		valid, err := mcrypto.VerifyPayload(member.PublicKey, sigData, env.Signature)
 		if err != nil || !valid {
 			log.Printf("[PUBSUB] Validator: invalid signature from %s in group %s: %v", env.SenderId, groupId, err)
 			return pubsub.ValidationReject
@@ -404,17 +420,20 @@ func filterDiscoveredPeers(discovered []peer.AddrInfo, selfId peer.ID, connected
 }
 
 // discoverAndConnectGroupPeers discovers peers on the group rendezvous namespace
-// and dials any that are not already connected. Errors are logged, not returned,
+// and dials any that are not already connected. For each new peer, it first adds
+// the discovered addresses to the peerstore (so h.Connect has more options), then
+// dials via relay circuit. Errors are logged and emitted as events, not returned,
 // because discovery is best-effort.
 func (n *Node) discoverAndConnectGroupPeers(groupId string) {
 	ns := groupRendezvousNamespace(groupId)
 	peers, err := n.RendezvousDiscover(ns, nil)
 	if err != nil {
 		log.Printf("[PUBSUB] Group %s discover failed: %v", groupId, err)
-		return
-	}
-
-	if len(peers) == 0 {
+		n.emitEvent("group:discovery", map[string]interface{}{
+			"groupId": groupId,
+			"step":    "discover_failed",
+			"error":   err.Error(),
+		})
 		return
 	}
 
@@ -430,6 +449,15 @@ func (n *Node) discoverAndConnectGroupPeers(groupId string) {
 	}
 
 	newPeers := filterDiscoveredPeers(peers, selfId, connectedSet)
+
+	n.emitEvent("group:discovery", map[string]interface{}{
+		"groupId":       groupId,
+		"step":          "discover_result",
+		"totalFound":    len(peers),
+		"newPeers":      len(newPeers),
+		"alreadyConnected": len(peers) - len(newPeers),
+	})
+
 	if len(newPeers) == 0 {
 		return
 	}
@@ -437,32 +465,138 @@ func (n *Node) discoverAndConnectGroupPeers(groupId string) {
 	log.Printf("[PUBSUB] Group %s: discovered %d peers, %d new — dialing", groupId, len(peers), len(newPeers))
 
 	for _, p := range newPeers {
-		if err := n.DialPeerViaRelay(p.ID.String()); err != nil {
-			log.Printf("[PUBSUB] Group %s: dial %s failed: %v", groupId, p.ID.String()[:min(20, len(p.ID.String()))], err)
+		pidStr := p.ID.String()
+		pidShort := pidStr
+		if len(pidShort) > 16 {
+			pidShort = pidShort[:16]
+		}
+
+		// Add discovered addresses to peerstore so h.Connect can use them.
+		if len(p.Addrs) > 0 {
+			h.Peerstore().AddAddrs(p.ID, p.Addrs, time.Hour)
+			log.Printf("[PUBSUB] Group %s: added %d discovered addrs for %s", groupId, len(p.Addrs), pidShort)
+		}
+
+		// Dial via relay circuit — this is the primary path for mobile peers.
+		if err := n.DialPeerViaRelay(pidStr); err != nil {
+			log.Printf("[PUBSUB] Group %s: relay dial %s failed: %v", groupId, pidShort, err)
+			n.emitEvent("group:discovery", map[string]interface{}{
+				"groupId": groupId,
+				"step":    "dial_failed",
+				"peerId":  pidShort,
+				"error":   err.Error(),
+			})
+		} else {
+			log.Printf("[PUBSUB] Group %s: connected to %s via relay", groupId, pidShort)
+			n.emitEvent("group:discovery", map[string]interface{}{
+				"groupId": groupId,
+				"step":    "dial_success",
+				"peerId":  pidShort,
+			})
 		}
 	}
 }
 
+// dialKnownGroupMembers dials all group members directly via relay circuit.
+// This is the primary connectivity path: since group configs contain all member
+// peer IDs, we can dial them directly without depending on rendezvous discovery.
+// Already-connected peers are skipped. Errors are logged per-member and do not
+// prevent dialing other members.
+func (n *Node) dialKnownGroupMembers(groupId string) {
+	n.mu.RLock()
+	config, ok := n.groupConfigs[groupId]
+	h := n.host
+	selfId := ""
+	if h != nil {
+		selfId = h.ID().String()
+	}
+	n.mu.RUnlock()
+
+	if !ok || h == nil {
+		return
+	}
+
+	// Build set of already-connected peers.
+	connectedSet := make(map[string]struct{})
+	for _, pid := range h.Network().Peers() {
+		connectedSet[pid.String()] = struct{}{}
+	}
+
+	dialed := 0
+	connected := 0
+	for _, member := range config.Members {
+		if member.PeerId == selfId {
+			continue
+		}
+		if _, alreadyConnected := connectedSet[member.PeerId]; alreadyConnected {
+			connected++
+			continue
+		}
+
+		pidShort := member.PeerId
+		if len(pidShort) > 16 {
+			pidShort = pidShort[:16]
+		}
+
+		dialed++
+		if err := n.DialPeerViaRelay(member.PeerId); err != nil {
+			log.Printf("[PUBSUB] Group %s: direct dial %s (%s) failed: %v", groupId, member.Username, pidShort, err)
+		} else {
+			connected++
+			log.Printf("[PUBSUB] Group %s: connected to %s (%s) via relay", groupId, member.Username, pidShort)
+		}
+	}
+
+	n.emitEvent("group:discovery", map[string]interface{}{
+		"groupId":          groupId,
+		"step":             "direct_dial",
+		"membersDialed":    dialed,
+		"membersConnected": connected,
+		"totalMembers":     len(config.Members),
+	})
+}
+
 // groupPeerDiscoveryLoop runs periodic peer discovery for a group.
-// It registers on the group rendezvous namespace, performs an initial discovery,
-// then re-discovers every GroupDiscoveryInterval. On context cancellation it
-// unregisters from the namespace (best-effort).
+// It waits for a circuit relay address to appear (so the peer record includes
+// the relay address), then uses two strategies to connect to group peers:
+// 1. Direct relay dialing: dials known group members by peer ID via relay circuit
+// 2. Rendezvous: registers/discovers on group namespace (backup for unknown peers)
+//
+// Direct dialing is the primary path since all member peer IDs are in the config.
+// On context cancellation it unregisters from the namespace (best-effort).
 func (n *Node) groupPeerDiscoveryLoop(ctx context.Context, groupId string) {
 	ns := groupRendezvousNamespace(groupId)
 
-	// Wait for relay to be ready before registering.
+	// Wait for relay to be ready before dialing/registering.
 	select {
 	case <-n.relayReady:
 	case <-ctx.Done():
 		return
 	}
 
-	// Register on the group namespace.
+	// Wait for circuit address so peer record includes relay address.
+	n.waitForCircuitAddress(10 * time.Second)
+
+	// Primary strategy: dial known group members directly via relay.
+	n.dialKnownGroupMembers(groupId)
+
+	// Secondary strategy: register on rendezvous for discoverability.
 	if err := n.RendezvousRegister(ns, nil); err != nil {
 		log.Printf("[PUBSUB] Group %s: rendezvous register failed: %v", groupId, err)
+		n.emitEvent("group:discovery", map[string]interface{}{
+			"groupId": groupId,
+			"step":    "register_failed",
+			"error":   err.Error(),
+		})
+	} else {
+		log.Printf("[PUBSUB] Group %s: registered on rendezvous ns=%s", groupId, ns)
+		n.emitEvent("group:discovery", map[string]interface{}{
+			"groupId": groupId,
+			"step":    "registered",
+		})
 	}
 
-	// Initial discovery.
+	// Initial rendezvous discovery (may find peers that joined after config was set).
 	n.discoverAndConnectGroupPeers(groupId)
 
 	ticker := time.NewTicker(GroupDiscoveryInterval)
@@ -477,6 +611,9 @@ func (n *Node) groupPeerDiscoveryLoop(ctx context.Context, groupId string) {
 			}
 			return
 		case <-ticker.C:
+			// Re-dial known members (handles reconnection after disconnect)
+			// and rendezvous discover (handles new members).
+			n.dialKnownGroupMembers(groupId)
 			n.discoverAndConnectGroupPeers(groupId)
 		}
 	}

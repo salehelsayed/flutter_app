@@ -21,6 +21,9 @@ class GroupMessageRepositoryImpl implements GroupMessageRepository {
   final Future<int> Function() dbCountTotalUnreadGroupMessages;
   final Future<int> Function(String groupId) dbMarkGroupMessagesAsRead;
   final Future<void> Function(String id) dbDeleteGroupMessage;
+  final Future<bool> Function(
+          String groupId, String senderPeerId, String text, String timestamp)
+      dbExistsGroupMessageByContent;
 
   GroupMessageRepositoryImpl({
     required this.dbInsertGroupMessage,
@@ -33,6 +36,7 @@ class GroupMessageRepositoryImpl implements GroupMessageRepository {
     required this.dbCountTotalUnreadGroupMessages,
     required this.dbMarkGroupMessagesAsRead,
     required this.dbDeleteGroupMessage,
+    required this.dbExistsGroupMessageByContent,
   });
 
   @override
@@ -122,5 +126,16 @@ class GroupMessageRepositoryImpl implements GroupMessageRepository {
   @override
   Future<void> deleteMessage(String id) async {
     await dbDeleteGroupMessage(id);
+  }
+
+  @override
+  Future<bool> existsByContent(
+      String groupId, String senderPeerId, String text, DateTime timestamp) async {
+    return dbExistsGroupMessageByContent(
+      groupId,
+      senderPeerId,
+      text,
+      timestamp.toUtc().toIso8601String(),
+    );
   }
 }

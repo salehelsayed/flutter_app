@@ -4,6 +4,17 @@ import 'dart:convert';
 import '../utils/flow_event_emitter.dart';
 import 'bridge.dart';
 
+/// Thrown when a Go bridge command returns `{ "ok": false }`.
+class BridgeCommandException implements Exception {
+  final String command;
+  final String errorCode;
+  final String? errorMessage;
+  BridgeCommandException(this.command, this.errorCode, [this.errorMessage]);
+  @override
+  String toString() =>
+      'BridgeCommandException($command: $errorCode${errorMessage != null ? ' — $errorMessage' : ''})';
+}
+
 /// Calls the bridge to create a new group on the P2P network.
 ///
 /// Returns a map with:
@@ -89,7 +100,17 @@ Future<void> callGroupJoin(
   };
 
   try {
-    await bridge.send(jsonEncode(request)).timeout(timeout);
+    final responseJson =
+        await bridge.send(jsonEncode(request)).timeout(timeout);
+    final response = jsonDecode(responseJson) as Map<String, dynamic>;
+
+    if (response['ok'] != true) {
+      throw BridgeCommandException(
+        'group:join',
+        response['errorCode']?.toString() ?? 'UNKNOWN',
+        response['errorMessage']?.toString(),
+      );
+    }
 
     emitFlowEvent(
       layer: 'FL',
@@ -138,7 +159,17 @@ Future<void> callGroupJoinWithConfig(
   };
 
   try {
-    await bridge.send(jsonEncode(request)).timeout(timeout);
+    final responseJson =
+        await bridge.send(jsonEncode(request)).timeout(timeout);
+    final response = jsonDecode(responseJson) as Map<String, dynamic>;
+
+    if (response['ok'] != true) {
+      throw BridgeCommandException(
+        'group:join',
+        response['errorCode']?.toString() ?? 'UNKNOWN',
+        response['errorMessage']?.toString(),
+      );
+    }
 
     emitFlowEvent(
       layer: 'FL',
@@ -177,7 +208,17 @@ Future<void> callGroupLeave(
   };
 
   try {
-    await bridge.send(jsonEncode(request)).timeout(timeout);
+    final responseJson =
+        await bridge.send(jsonEncode(request)).timeout(timeout);
+    final response = jsonDecode(responseJson) as Map<String, dynamic>;
+
+    if (response['ok'] != true) {
+      throw BridgeCommandException(
+        'group:leave',
+        response['errorCode']?.toString() ?? 'UNKNOWN',
+        response['errorMessage']?.toString(),
+      );
+    }
 
     emitFlowEvent(
       layer: 'FL',
@@ -288,7 +329,17 @@ Future<void> callGroupUpdateConfig(
   };
 
   try {
-    await bridge.send(jsonEncode(request)).timeout(timeout);
+    final responseJson =
+        await bridge.send(jsonEncode(request)).timeout(timeout);
+    final response = jsonDecode(responseJson) as Map<String, dynamic>;
+
+    if (response['ok'] != true) {
+      throw BridgeCommandException(
+        'group:updateConfig',
+        response['errorCode']?.toString() ?? 'UNKNOWN',
+        response['errorMessage']?.toString(),
+      );
+    }
 
     emitFlowEvent(
       layer: 'FL',
@@ -308,7 +359,7 @@ Future<void> callGroupUpdateConfig(
 /// Calls the bridge to rotate the group encryption key.
 ///
 /// Returns a map with:
-/// - On success: `{ "ok": true, "keyGeneration": N, "encryptedKey": "base64..." }`
+/// - On success: `{ "ok": true, "groupKey": "base64...", "keyEpoch": N }`
 /// - On error: `{ "ok": false, "errorCode": "...", "errorMessage": "..." }`
 Future<Map<String, dynamic>> callGroupRotateKey(
   Bridge bridge,

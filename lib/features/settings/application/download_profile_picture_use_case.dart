@@ -9,6 +9,14 @@ import 'package:flutter_app/features/contacts/domain/repositories/contact_reposi
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 
+/// Signature of [downloadProfilePicture] for dependency injection.
+typedef DownloadProfilePictureFn = Future<ContactModel?> Function({
+  required Bridge bridge,
+  required ContactRepository contactRepo,
+  required String ownerPeerId,
+  required String avatarVersion,
+});
+
 /// Downloads a peer's profile picture from the relay and updates the contact.
 ///
 /// 1. Resolves output path in local avatars directory

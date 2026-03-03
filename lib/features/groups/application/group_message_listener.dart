@@ -139,8 +139,20 @@ class GroupMessageListener {
 
       if (sysType == 'member_added') {
         await _handleMemberAdded(groupId, parsed);
+      } else if (sysType == 'members_added') {
+        await _handleMembersAdded(groupId, parsed);
       } else if (sysType == 'member_removed') {
         await _handleMemberRemoved(groupId, parsed);
+      } else if (sysType == 'key_rotated') {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_MESSAGE_LISTENER_KEY_ROTATED',
+          details: {
+            'groupId':
+                groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+            'newKeyEpoch': parsed['newKeyEpoch'] ?? -1,
+          },
+        );
       } else {
         emitFlowEvent(
           layer: 'FL',
@@ -197,6 +209,51 @@ class GroupMessageListener {
       details: {
         'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
         'memberPeerId': (memberData?['peerId'] as String?) ?? '?',
+      },
+    );
+  }
+
+  /// Handles a members_added (batch) system message.
+  ///
+  /// Saves all new members to the local DB and updates the Go topic validator
+  /// config so that messages from the new members are accepted.
+  Future<void> _handleMembersAdded(
+    String groupId,
+    Map<String, dynamic> parsed,
+  ) async {
+    final membersList = parsed['members'] as List<dynamic>?;
+    if (membersList != null) {
+      for (final memberData in membersList) {
+        final data = memberData as Map<String, dynamic>;
+        final member = GroupMember(
+          groupId: groupId,
+          peerId: data['peerId'] as String,
+          username: data['username'] as String?,
+          role: MemberRole.fromValue(data['role'] as String? ?? 'writer'),
+          publicKey: data['publicKey'] as String?,
+          mlKemPublicKey: data['mlKemPublicKey'] as String?,
+          joinedAt: DateTime.now().toUtc(),
+        );
+        await _groupRepo.saveMember(member);
+      }
+    }
+
+    // Update Go topic validator config
+    final groupConfig = parsed['groupConfig'] as Map<String, dynamic>?;
+    if (groupConfig != null && _bridge != null) {
+      await callGroupUpdateConfig(
+        _bridge!,
+        groupId: groupId,
+        groupConfig: groupConfig,
+      );
+    }
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_MESSAGE_LISTENER_MEMBERS_ADDED',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        'count': membersList?.length ?? 0,
       },
     );
   }

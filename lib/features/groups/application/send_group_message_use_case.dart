@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:uuid/uuid.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
@@ -95,9 +97,28 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     return (SendGroupMessageResult.error, null);
   }
 
-  // 4. Create GroupMessage (isIncoming: false, status: 'sent')
-  final messageId = const Uuid().v4();
+  // 4. Fire-and-forget: store message in relay inbox for offline members
   final latestKey = await groupRepo.getLatestKey(groupId);
+  try {
+    final inboxPayload = jsonEncode({
+      'groupId': groupId,
+      'senderId': senderPeerId,
+      'senderUsername': senderUsername,
+      'keyEpoch': latestKey?.keyGeneration ?? 0,
+      'text': text,
+      'timestamp': now.toIso8601String(),
+    });
+    await callGroupInboxStore(bridge, groupId, inboxPayload);
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_SEND_MSG_INBOX_STORE_FAILED',
+      details: {'error': e.toString()},
+    );
+  }
+
+  // 5. Create GroupMessage (isIncoming: false, status: 'sent')
+  final messageId = const Uuid().v4();
 
   final message = GroupMessage(
     id: messageId,
@@ -112,7 +133,7 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     createdAt: now,
   );
 
-  // 5. Save to repo
+  // 6. Save to repo
   await msgRepo.saveMessage(message);
 
   emitFlowEvent(

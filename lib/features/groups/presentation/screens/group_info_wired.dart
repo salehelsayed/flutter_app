@@ -9,6 +9,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/groups/application/leave_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/remove_group_member_use_case.dart';
+import 'package:flutter_app/features/groups/application/rotate_and_distribute_group_key_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
@@ -158,6 +159,27 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
                   : member.peerId,
             },
           );
+
+          // Rotate key after member removal for forward secrecy
+          try {
+            await rotateAndDistributeGroupKey(
+              bridge: widget.bridge,
+              groupRepo: widget.groupRepo,
+              groupId: widget.group.id,
+              selfPeerId: identity.peerId,
+              senderPublicKey: identity.publicKey,
+              senderPrivateKey: identity.privateKey,
+              senderUsername: identity.username ?? '',
+              sendP2PMessage: (peerId, message) =>
+                  widget.p2pService.sendMessage(peerId, message),
+            );
+          } catch (e) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'GROUP_INFO_FL_KEY_ROTATION_ERROR',
+              details: {'error': e.toString()},
+            );
+          }
         }
       }
 
@@ -172,7 +194,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
   }
 
   void _onAddMember() {
-    Navigator.of(context).push(
+    Navigator.of(context).push<int>(
       MaterialPageRoute(
         builder: (_) => ContactPickerWired(
           groupId: widget.group.id,
@@ -183,12 +205,16 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
           p2pService: widget.p2pService,
         ),
       ),
-    ).then((added) {
-      if (added == true) {
+    ).then((count) {
+      if (count != null && count > 0) {
         _loadMembers();
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Member invited')),
+            SnackBar(
+              content: Text(
+                count == 1 ? 'Member invited' : '$count members invited',
+              ),
+            ),
           );
         }
       }

@@ -320,6 +320,24 @@ Future<int> dbMarkGroupMessagesAsRead(Database db, String groupId) async {
   }
 }
 
+/// Returns true if a group message with the same content already exists.
+Future<bool> dbExistsGroupMessageByContent(
+  Database db,
+  String groupId,
+  String senderPeerId,
+  String text,
+  String timestamp,
+) async {
+  final result = await db.query(
+    'group_messages',
+    where:
+        'group_id = ? AND sender_peer_id = ? AND text = ? AND timestamp = ?',
+    whereArgs: [groupId, senderPeerId, text, timestamp],
+    limit: 1,
+  );
+  return result.isNotEmpty;
+}
+
 /// Deletes a single group message by ID.
 Future<void> dbDeleteGroupMessage(Database db, String id) async {
   emitFlowEvent(

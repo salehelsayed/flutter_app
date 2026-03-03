@@ -13,12 +13,14 @@ class CreateGroupWired extends StatefulWidget {
   final Bridge bridge;
   final GroupRepository groupRepo;
   final IdentityRepository identityRepo;
+  final GroupType initialType;
 
   const CreateGroupWired({
     super.key,
     required this.bridge,
     required this.groupRepo,
     required this.identityRepo,
+    this.initialType = GroupType.chat,
   });
 
   @override
@@ -76,6 +78,7 @@ class _CreateGroupWiredState extends State<CreateGroupWired> {
   Widget build(BuildContext context) {
     return CreateGroupScreen(
       isCreating: _isCreating,
+      initialType: widget.initialType,
       onCreate: _onCreate,
       onBack: _onBack,
     );

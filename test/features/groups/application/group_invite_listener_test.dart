@@ -10,6 +10,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../features/contacts/domain/repositories/fake_contact_repository.dart';
+import '../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
 
 const _testGroupConfig = {
@@ -129,6 +130,7 @@ class _FailDecryptBridge extends FakeBridge {
 void main() {
   late StreamController<ChatMessage> incomingController;
   late InMemoryGroupRepository groupRepo;
+  late InMemoryGroupMessageRepository msgRepo;
   late FakeContactRepository contactRepo;
   late PassthroughCryptoBridge bridge;
   late GroupInviteListener listener;
@@ -136,6 +138,7 @@ void main() {
   setUp(() {
     incomingController = StreamController<ChatMessage>.broadcast();
     groupRepo = InMemoryGroupRepository();
+    msgRepo = InMemoryGroupMessageRepository();
     contactRepo = FakeContactRepository();
     bridge = PassthroughCryptoBridge();
     contactRepo.seed([_aliceContact()]);
@@ -145,6 +148,7 @@ void main() {
       groupRepo: groupRepo,
       contactRepo: contactRepo,
       bridge: bridge,
+      msgRepo: msgRepo,
       getOwnMlKemSecretKey: () async => 'mySecretKey',
     );
   });
@@ -176,7 +180,7 @@ void main() {
       expect(storedGroup, isNotNull);
 
       // Bridge group:join was called
-      expect(bridge.lastCommand, equals('group:join'));
+      expect(bridge.commandLog, contains('group:join'));
     });
 
     // --- Cycle 6.2 ---
@@ -304,6 +308,86 @@ void main() {
 
       expect(groups, isEmpty);
       expect(groupRepo.groupCount, equals(0));
+    });
+
+    // --- Cycle 6.9 ---
+    test('drains offline inbox after successful invite', () async {
+      // Pre-configure bridge to return stored messages in relay format:
+      // {from, message (JSON string), timestamp}
+      bridge.responses['group:inboxRetrieve'] = {
+        'ok': true,
+        'messages': [
+          {
+            'from': '12D3KooWAlice',
+            'message': jsonEncode({
+              'groupId': 'grp-abc123',
+              'senderId': '12D3KooWAlice',
+              'senderUsername': 'Alice',
+              'keyEpoch': 1,
+              'text': 'Missed while offline',
+              'timestamp': '2026-03-02T13:00:00.000Z',
+            }),
+            'timestamp': 1709384400000,
+          },
+          {
+            'from': '12D3KooWAlice',
+            'message': jsonEncode({
+              'groupId': 'grp-abc123',
+              'senderId': '12D3KooWAlice',
+              'senderUsername': 'Alice',
+              'keyEpoch': 1,
+              'text': 'Another offline message',
+              'timestamp': '2026-03-02T13:01:00.000Z',
+            }),
+            'timestamp': 1709384460000,
+          },
+        ],
+      };
+
+      listener.start();
+
+      final groups = <GroupModel>[];
+      listener.groupJoinedStream.listen(groups.add);
+
+      incomingController.add(_makeV1InviteMessage());
+
+      await Future.delayed(const Duration(milliseconds: 200));
+
+      // Group was joined
+      expect(groups, hasLength(1));
+
+      // Offline inbox messages were drained and saved
+      expect(msgRepo.count, 2);
+      final messages = await msgRepo.getMessagesPage('grp-abc123');
+      expect(messages.map((m) => m.text).toSet(),
+          {'Missed while offline', 'Another offline message'});
+      expect(messages.every((m) => m.isIncoming), isTrue);
+    });
+
+    // --- Cycle 6.10 ---
+    test('drain error does not prevent group from being broadcast', () async {
+      // Make inboxRetrieve fail
+      bridge.responses['group:inboxRetrieve'] = {
+        'ok': false,
+        'errorCode': 'RELAY_UNREACHABLE',
+        'errorMessage': 'Cannot reach relay',
+      };
+
+      listener.start();
+
+      final groups = <GroupModel>[];
+      listener.groupJoinedStream.listen(groups.add);
+
+      incomingController.add(_makeV1InviteMessage());
+
+      await Future.delayed(const Duration(milliseconds: 200));
+
+      // Group should still be broadcast despite drain error
+      expect(groups, hasLength(1));
+      expect(groups.first.id, 'grp-abc123');
+
+      // No messages saved (drain failed)
+      expect(msgRepo.count, 0);
     });
   });
 }
