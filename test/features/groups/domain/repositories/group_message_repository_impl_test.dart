@@ -35,6 +35,8 @@ void main() {
       dbMarkGroupMessagesAsRead: (groupId) =>
           dbMarkGroupMessagesAsRead(db, groupId),
       dbDeleteGroupMessage: (id) => dbDeleteGroupMessage(db, id),
+      dbExistsGroupMessageByContent: (groupId, senderPeerId, text, timestamp) =>
+          dbExistsGroupMessageByContent(db, groupId, senderPeerId, text, timestamp),
     );
   });
 
@@ -256,6 +258,85 @@ void main() {
 
       expect(await repo.getMessage('msg-1'), isNull);
       expect(await repo.getMessage('msg-2'), isNotNull);
+    });
+  });
+
+  group('existsByContent', () {
+    test('returns true for exact match', () async {
+      await repo.saveMessage(makeMessage(
+        groupId: 'group-1',
+        senderPeerId: 'peer-sender',
+        text: 'Hello group',
+        timestamp: now,
+      ));
+
+      final result = await repo.existsByContent(
+        'group-1', 'peer-sender', 'Hello group', now,
+      );
+      expect(result, isTrue);
+    });
+
+    test('returns false when no match exists', () async {
+      final result = await repo.existsByContent(
+        'group-1', 'peer-sender', 'Hello group', now,
+      );
+      expect(result, isFalse);
+    });
+
+    test('returns false for different sender', () async {
+      await repo.saveMessage(makeMessage(
+        groupId: 'group-1',
+        senderPeerId: 'peer-sender',
+        text: 'Hello group',
+        timestamp: now,
+      ));
+
+      final result = await repo.existsByContent(
+        'group-1', 'peer-other', 'Hello group', now,
+      );
+      expect(result, isFalse);
+    });
+
+    test('returns false for different text', () async {
+      await repo.saveMessage(makeMessage(
+        groupId: 'group-1',
+        senderPeerId: 'peer-sender',
+        text: 'Hello group',
+        timestamp: now,
+      ));
+
+      final result = await repo.existsByContent(
+        'group-1', 'peer-sender', 'Different text', now,
+      );
+      expect(result, isFalse);
+    });
+
+    test('returns false for different timestamp', () async {
+      await repo.saveMessage(makeMessage(
+        groupId: 'group-1',
+        senderPeerId: 'peer-sender',
+        text: 'Hello group',
+        timestamp: now,
+      ));
+
+      final result = await repo.existsByContent(
+        'group-1', 'peer-sender', 'Hello group', now.add(const Duration(seconds: 1)),
+      );
+      expect(result, isFalse);
+    });
+
+    test('does not match across groups', () async {
+      await repo.saveMessage(makeMessage(
+        groupId: 'group-1',
+        senderPeerId: 'peer-sender',
+        text: 'Hello group',
+        timestamp: now,
+      ));
+
+      final result = await repo.existsByContent(
+        'group-2', 'peer-sender', 'Hello group', now,
+      );
+      expect(result, isFalse);
     });
   });
 }

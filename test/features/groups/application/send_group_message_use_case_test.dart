@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
@@ -6,6 +8,26 @@ import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
+
+/// A bridge that throws on group:inboxStore commands.
+class _InboxStoreFailBridge extends FakeBridge {
+  @override
+  Future<String> send(String message) async {
+    final parsed = jsonDecode(message) as Map<String, dynamic>;
+    final cmd = parsed['cmd'] as String?;
+
+    if (cmd == 'group:inboxStore') {
+      sendCallCount++;
+      lastSentMessage = message;
+      sentMessages.add(message);
+      lastCommand = cmd;
+      commandLog.add(cmd!);
+      throw Exception('Relay inbox store failed');
+    }
+
+    return super.send(message);
+  }
+}
 
 void main() {
   late FakeBridge bridge;
@@ -117,5 +139,117 @@ void main() {
     final latest = await msgRepo.getLatestMessage('group-1');
     expect(latest, isNotNull);
     expect(latest!.text, 'Hello group!');
+  });
+
+  test('stores message in relay inbox after successful publish', () async {
+    await sendGroupMessage(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      groupId: 'group-1',
+      text: 'Hello group!',
+      senderPeerId: 'peer-1',
+      senderPublicKey: 'pk-1',
+      senderPrivateKey: 'sk-1',
+      senderUsername: 'Alice',
+    );
+
+    // commandLog should contain both group:publish AND group:inboxStore
+    expect(bridge.commandLog, contains('group:publish'));
+    expect(bridge.commandLog, contains('group:inboxStore'));
+
+    // group:inboxStore should come after group:publish
+    final publishIdx = bridge.commandLog.indexOf('group:publish');
+    final inboxIdx = bridge.commandLog.indexOf('group:inboxStore');
+    expect(inboxIdx, greaterThan(publishIdx));
+  });
+
+  test('send succeeds even if inbox store throws', () async {
+    final failBridge = _InboxStoreFailBridge();
+    failBridge.responses['group:publish'] = {
+      'ok': true,
+      'messageId': 'msg-123',
+    };
+
+    final (result, message) = await sendGroupMessage(
+      bridge: failBridge,
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      groupId: 'group-1',
+      text: 'Hello!',
+      senderPeerId: 'peer-1',
+      senderPublicKey: 'pk-1',
+      senderPrivateKey: 'sk-1',
+      senderUsername: 'Alice',
+    );
+
+    // Send should still succeed despite inbox store failure
+    expect(result, SendGroupMessageResult.success);
+    expect(message, isNotNull);
+    expect(failBridge.commandLog, contains('group:publish'));
+    expect(failBridge.commandLog, contains('group:inboxStore'));
+  });
+
+  test('returns error when publish returns ok: false', () async {
+    bridge.responses['group:publish'] = {
+      'ok': false,
+      'errorCode': 'PUBLISH_FAILED',
+    };
+
+    final (result, message) = await sendGroupMessage(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      groupId: 'group-1',
+      text: 'Hello!',
+      senderPeerId: 'peer-1',
+      senderPublicKey: 'pk-1',
+      senderPrivateKey: 'sk-1',
+      senderUsername: 'Alice',
+    );
+
+    expect(result, SendGroupMessageResult.error);
+    expect(message, isNull);
+  });
+
+  test('returns error when publish throws exception', () async {
+    bridge.throwOnSend = true;
+
+    final (result, message) = await sendGroupMessage(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      groupId: 'group-1',
+      text: 'Hello!',
+      senderPeerId: 'peer-1',
+      senderPublicKey: 'pk-1',
+      senderPrivateKey: 'sk-1',
+      senderUsername: 'Alice',
+    );
+
+    expect(result, SendGroupMessageResult.error);
+    expect(message, isNull);
+  });
+
+  test('does not persist message when publish fails', () async {
+    bridge.responses['group:publish'] = {
+      'ok': false,
+      'errorCode': 'PUBLISH_FAILED',
+    };
+
+    final (result, message) = await sendGroupMessage(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      groupId: 'group-1',
+      text: 'Hello!',
+      senderPeerId: 'peer-1',
+      senderPublicKey: 'pk-1',
+      senderPrivateKey: 'sk-1',
+      senderUsername: 'Alice',
+    );
+
+    expect(result, SendGroupMessageResult.error);
+    expect(msgRepo.count, 0);
   });
 }
