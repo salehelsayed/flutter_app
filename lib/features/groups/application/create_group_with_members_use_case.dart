@@ -146,36 +146,26 @@ Future<CreateGroupWithMembersResult> createGroupWithMembers({
     senderUsername: identity.username,
   );
 
-  // 6. Send individual P2P invites (continue on individual failures)
+  // 6. Send individual P2P invites in parallel
   var invitesSent = 0;
   final keyInfo = await groupRepo.getLatestKey(group.id);
   if (keyInfo != null) {
-    for (final contact in selectedContacts) {
-      if (!addedMembers.any((m) => m.peerId == contact.peerId)) continue;
-      try {
-        final result = await sendGroupInvite(
-          p2pService: p2pService,
-          bridge: bridge,
-          recipientPeerId: contact.peerId,
-          recipientMlKemPublicKey: contact.mlKemPublicKey,
-          senderPeerId: identity.peerId,
-          senderUsername: identity.username,
-          groupId: group.id,
-          groupKey: keyInfo.encryptedKey,
-          keyEpoch: keyInfo.keyGeneration,
-          groupConfig: groupConfig,
-        );
-        if (result == SendGroupInviteResult.success) {
-          invitesSent++;
-        }
-      } catch (e) {
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'CREATE_GROUP_WITH_MEMBERS_INVITE_ERROR',
-          details: {'peerId': contact.peerId, 'error': e.toString()},
-        );
-      }
-    }
+    final recipients = selectedContacts
+        .where((c) => addedMembers.any((m) => m.peerId == c.peerId))
+        .map((c) => (peerId: c.peerId, mlKemPublicKey: c.mlKemPublicKey))
+        .toList();
+
+    invitesSent = await sendGroupInvitesInParallel(
+      p2pService: p2pService,
+      bridge: bridge,
+      senderPeerId: identity.peerId,
+      senderUsername: identity.username,
+      groupId: group.id,
+      groupKey: keyInfo.encryptedKey,
+      keyEpoch: keyInfo.keyGeneration,
+      groupConfig: groupConfig,
+      recipients: recipients,
+    );
   }
 
   emitFlowEvent(

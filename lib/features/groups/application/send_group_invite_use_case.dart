@@ -191,3 +191,63 @@ Future<SendGroupInviteResult> sendGroupInvite({
   );
   return SendGroupInviteResult.sendFailed;
 }
+
+/// Sends group invites to multiple recipients in parallel via [Future.wait].
+///
+/// Each invite is independent — different recipient, different encryption.
+/// Returns the count of successful invites. Individual failures are caught
+/// and logged, never propagated.
+Future<int> sendGroupInvitesInParallel({
+  required P2PService p2pService,
+  required Bridge bridge,
+  required String senderPeerId,
+  required String senderUsername,
+  required String groupId,
+  required String groupKey,
+  required int keyEpoch,
+  required Map<String, dynamic> groupConfig,
+  required List<({String peerId, String? mlKemPublicKey})> recipients,
+}) async {
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'GROUP_INVITES_PARALLEL_BEGIN',
+    details: {
+      'count': recipients.length,
+      'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+    },
+  );
+
+  final results = await Future.wait(
+    recipients.map((r) async {
+      try {
+        return await sendGroupInvite(
+          p2pService: p2pService,
+          bridge: bridge,
+          recipientPeerId: r.peerId,
+          recipientMlKemPublicKey: r.mlKemPublicKey,
+          senderPeerId: senderPeerId,
+          senderUsername: senderUsername,
+          groupId: groupId,
+          groupKey: groupKey,
+          keyEpoch: keyEpoch,
+          groupConfig: groupConfig,
+        );
+      } catch (e) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_INVITES_PARALLEL_SINGLE_ERROR',
+          details: {'peerId': r.peerId, 'error': e.toString()},
+        );
+        return SendGroupInviteResult.sendFailed;
+      }
+    }),
+  );
+
+  final sent = results.where((r) => r == SendGroupInviteResult.success).length;
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'GROUP_INVITES_PARALLEL_DONE',
+    details: {'sent': sent, 'total': recipients.length},
+  );
+  return sent;
+}
