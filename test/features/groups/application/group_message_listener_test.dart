@@ -208,6 +208,84 @@ void main() {
       expect(bridge.commandLog, contains('group:updateConfig'));
     });
 
+    test('members_added saves all members and calls updateConfig', () async {
+      listener.start(sourceController.stream);
+
+      final sysText = jsonEncode({
+        '__sys': 'members_added',
+        'members': [
+          {
+            'peerId': 'peer-dave',
+            'username': 'Dave',
+            'role': 'writer',
+            'publicKey': 'pk-dave',
+          },
+          {
+            'peerId': 'peer-eve',
+            'username': 'Eve',
+            'role': 'writer',
+            'publicKey': 'pk-eve',
+          },
+        ],
+        'groupConfig': {
+          'name': 'Test Group',
+          'groupType': 'chat',
+          'members': [
+            {
+              'peerId': 'peer-admin',
+              'role': 'admin',
+              'publicKey': 'pk-admin',
+            },
+            {
+              'peerId': 'peer-sender',
+              'role': 'writer',
+              'publicKey': 'pk-sender',
+            },
+            {
+              'peerId': 'peer-dave',
+              'role': 'writer',
+              'publicKey': 'pk-dave',
+            },
+            {
+              'peerId': 'peer-eve',
+              'role': 'writer',
+              'publicKey': 'pk-eve',
+            },
+          ],
+          'createdBy': 'peer-admin',
+          'createdAt': DateTime.now().toUtc().toIso8601String(),
+        },
+      });
+
+      sourceController.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-admin',
+        'senderUsername': 'Admin',
+        'keyEpoch': 0,
+        'text': sysText,
+        'timestamp': DateTime.now().toUtc().toIso8601String(),
+      });
+
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      // Both members saved
+      final dave = await groupRepo.getMember('group-1', 'peer-dave');
+      expect(dave, isNotNull);
+      expect(dave!.username, 'Dave');
+      final eve = await groupRepo.getMember('group-1', 'peer-eve');
+      expect(eve, isNotNull);
+      expect(eve!.username, 'Eve');
+
+      // Config updated once
+      final updateConfigCalls = bridge.commandLog
+          .where((c) => c == 'group:updateConfig')
+          .length;
+      expect(updateConfigCalls, 1);
+
+      // Not saved as regular message
+      expect(msgRepo.count, 0);
+    });
+
     test('member_added is not emitted on groupMessageStream', () async {
       listener.start(sourceController.stream);
 
@@ -437,6 +515,36 @@ void main() {
 
       await sub.cancel();
       selfListener.dispose();
+    });
+
+    test('handles key_rotated system message without error', () async {
+      listener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+      );
+      listener.start(sourceController.stream);
+
+      final sysText = jsonEncode({
+        '__sys': 'key_rotated',
+        'newKeyEpoch': 2,
+      });
+
+      sourceController.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-admin',
+        'senderUsername': 'Admin',
+        'keyEpoch': 0,
+        'text': sysText,
+        'timestamp': DateTime.now().toUtc().toIso8601String(),
+      });
+
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      // System message should NOT be saved as a regular message
+      expect(msgRepo.count, 0);
+
+      // No crash, no error — just handled gracefully
     });
 
     test('removal of other member does NOT call leaveGroup', () async {

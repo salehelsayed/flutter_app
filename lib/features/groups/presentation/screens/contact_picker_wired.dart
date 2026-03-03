@@ -14,11 +14,9 @@ import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/groups/presentation/screens/contact_picker_screen.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
-import 'package:flutter_app/features/orbit/presentation/widgets/confirmation_dialog.dart';
 
 /// Wired widget that loads contacts, filters out existing members,
-/// handles selection with a confirmation dialog, adds the member locally,
-/// updates the Go topic validator, and sends the encrypted group invite.
+/// provides multi-select toggling, and batch-invites all selected contacts.
 class ContactPickerWired extends StatefulWidget {
   final String groupId;
   final GroupRepository groupRepo;
@@ -43,6 +41,7 @@ class ContactPickerWired extends StatefulWidget {
 
 class _ContactPickerWiredState extends State<ContactPickerWired> {
   List<ContactModel> _availableContacts = [];
+  final Set<String> _selectedPeerIds = {};
   bool _isInviting = false;
 
   @override
@@ -75,44 +74,59 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
     });
   }
 
-  Future<void> _onSelect(ContactModel contact) async {
-    final confirmed = await showConfirmationDialog(
-      context: context,
-      title: 'Invite ${contact.username}?',
-      description: 'They will be added as a member of this group.',
-      confirmLabel: 'Invite',
-    );
-    if (!confirmed || !mounted) return;
-    _inviteMember(contact);
+  void _onToggle(ContactModel contact) {
+    setState(() {
+      if (_selectedPeerIds.contains(contact.peerId)) {
+        _selectedPeerIds.remove(contact.peerId);
+      } else {
+        _selectedPeerIds.add(contact.peerId);
+      }
+    });
   }
 
-  Future<void> _inviteMember(ContactModel contact) async {
+  Future<void> _inviteSelected() async {
     setState(() => _isInviting = true);
 
     try {
       final identity = await widget.identityRepo.loadIdentity();
       if (identity == null) throw StateError('No identity found');
 
-      final newMember = GroupMember(
-        groupId: widget.groupId,
-        peerId: contact.peerId,
-        username: contact.username,
-        role: MemberRole.writer,
-        publicKey: contact.publicKey,
-        mlKemPublicKey: contact.mlKemPublicKey,
-        joinedAt: DateTime.now().toUtc(),
-      );
+      final selectedContacts = _availableContacts
+          .where((c) => _selectedPeerIds.contains(c.peerId))
+          .toList();
 
-      // 1. Save member to local DB
-      await addGroupMember(
-        bridge: widget.bridge,
-        groupRepo: widget.groupRepo,
-        groupId: widget.groupId,
-        newMember: newMember,
-        selfPeerId: identity.peerId,
-      );
+      // 1. Add all members locally (continue on individual errors)
+      final addedMembers = <GroupMember>[];
+      for (final contact in selectedContacts) {
+        try {
+          final newMember = GroupMember(
+            groupId: widget.groupId,
+            peerId: contact.peerId,
+            username: contact.username,
+            role: MemberRole.writer,
+            publicKey: contact.publicKey,
+            mlKemPublicKey: contact.mlKemPublicKey,
+            joinedAt: DateTime.now().toUtc(),
+          );
+          await addGroupMember(
+            bridge: widget.bridge,
+            groupRepo: widget.groupRepo,
+            groupId: widget.groupId,
+            newMember: newMember,
+            selfPeerId: identity.peerId,
+          );
+          addedMembers.add(newMember);
+        } catch (e) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'CONTACT_PICKER_FL_ADD_MEMBER_ERROR',
+            details: {'peerId': contact.peerId, 'error': e.toString()},
+          );
+        }
+      }
+      if (addedMembers.isEmpty) throw StateError('No members could be added');
 
-      // 2. Build full GroupConfig and update Go topic validator
+      // 2. Build full GroupConfig and update Go topic validator ONCE
       final group = await widget.groupRepo.getGroup(widget.groupId);
       final allMembers = await widget.groupRepo.getMembers(widget.groupId);
       if (group == null) throw StateError('Group not found');
@@ -141,18 +155,19 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
         groupConfig: groupConfig,
       );
 
-      // 2b. Broadcast config update to existing members via group pubsub
-      //     so they update their Go topic validator to accept the new member.
+      // 3. Broadcast ONE members_added system message
       final sysMessage = jsonEncode({
-        '__sys': 'member_added',
-        'member': {
-          'peerId': contact.peerId,
-          'username': contact.username,
-          'role': 'writer',
-          'publicKey': contact.publicKey,
-          if (contact.mlKemPublicKey != null)
-            'mlKemPublicKey': contact.mlKemPublicKey,
-        },
+        '__sys': 'members_added',
+        'members': addedMembers
+            .map((m) => {
+                  'peerId': m.peerId,
+                  'username': m.username,
+                  'role': m.role.toValue(),
+                  'publicKey': m.publicKey,
+                  if (m.mlKemPublicKey != null)
+                    'mlKemPublicKey': m.mlKemPublicKey,
+                })
+            .toList(),
         'groupConfig': groupConfig,
       });
 
@@ -173,55 +188,35 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
           'groupId': widget.groupId.length > 8
               ? widget.groupId.substring(0, 8)
               : widget.groupId,
-          'newMemberPeerId': contact.peerId.length > 10
-              ? contact.peerId.substring(0, 10)
-              : contact.peerId,
+          'addedCount': addedMembers.length,
         },
       );
 
-      // 3. Send encrypted invite to the new member via 1:1 P2P
+      // 4. Send individual encrypted P2P invites
       final keyInfo = await widget.groupRepo.getLatestKey(widget.groupId);
       if (keyInfo != null) {
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'CONTACT_PICKER_FL_INVITE_SENDING',
-          details: {
-            'groupId': widget.groupId.length > 8
-                ? widget.groupId.substring(0, 8)
-                : widget.groupId,
-            'recipientPeerId': contact.peerId.length > 10
-                ? contact.peerId.substring(0, 10)
-                : contact.peerId,
-            'hasRecipientMlKemKey': contact.mlKemPublicKey != null,
-            'keyEpoch': keyInfo.keyGeneration,
-          },
-        );
-
-        final result = await sendGroupInvite(
-          p2pService: widget.p2pService,
-          bridge: widget.bridge,
-          recipientPeerId: contact.peerId,
-          recipientMlKemPublicKey: contact.mlKemPublicKey,
-          senderPeerId: identity.peerId,
-          senderUsername: identity.username ?? '',
-          groupId: widget.groupId,
-          groupKey: keyInfo.encryptedKey,
-          keyEpoch: keyInfo.keyGeneration,
-          groupConfig: groupConfig,
-        );
-
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'CONTACT_PICKER_FL_INVITE_SEND_RESULT',
-          details: {'result': result.name},
-        );
-
-        if (result != SendGroupInviteResult.success) {
-          emitFlowEvent(
-            layer: 'FL',
-            event: 'CONTACT_PICKER_FL_INVITE_SEND_FAILED',
-            details: {'result': result.name},
-          );
+        for (final contact in selectedContacts) {
+          if (!addedMembers.any((m) => m.peerId == contact.peerId)) continue;
+          try {
+            await sendGroupInvite(
+              p2pService: widget.p2pService,
+              bridge: widget.bridge,
+              recipientPeerId: contact.peerId,
+              recipientMlKemPublicKey: contact.mlKemPublicKey,
+              senderPeerId: identity.peerId,
+              senderUsername: identity.username ?? '',
+              groupId: widget.groupId,
+              groupKey: keyInfo.encryptedKey,
+              keyEpoch: keyInfo.keyGeneration,
+              groupConfig: groupConfig,
+            );
+          } catch (e) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'CONTACT_PICKER_FL_INVITE_SEND_ERROR',
+              details: {'peerId': contact.peerId, 'error': e.toString()},
+            );
+          }
         }
       } else {
         emitFlowEvent(
@@ -236,7 +231,7 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
       }
 
       if (!mounted) return;
-      Navigator.of(context).pop(true); // pop with success result
+      Navigator.of(context).pop(addedMembers.length);
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -246,14 +241,14 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
       if (mounted) {
         setState(() => _isInviting = false);
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Failed to invite member')),
+          const SnackBar(content: Text('Failed to invite members')),
         );
       }
     }
   }
 
   void _onBack() {
-    Navigator.of(context).pop(false); // pop with no-change result
+    Navigator.of(context).pop(0);
   }
 
   @override
@@ -261,7 +256,9 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
     return ContactPickerScreen(
       contacts: _availableContacts,
       isInviting: _isInviting,
-      onSelect: _onSelect,
+      onToggle: _onToggle,
+      selectedPeerIds: _selectedPeerIds,
+      onConfirm: _selectedPeerIds.isNotEmpty ? _inviteSelected : null,
       onBack: _onBack,
     );
   }

@@ -23,10 +23,11 @@ type groupInboxRequest struct {
 
 // groupInboxResponse is the JSON envelope received from the relay
 // server for group inbox operations.
+// NOTE: The relay uses "groupMessages" (not "messages") for group inbox.
 type groupInboxResponse struct {
 	Status   string         `json:"status"`
 	Error    string         `json:"error,omitempty"`
-	Messages []InboxMessage `json:"messages,omitempty"`
+	Messages []InboxMessage `json:"groupMessages,omitempty"`
 }
 
 // GroupInboxStore stores a group message in the relay's group inbox.

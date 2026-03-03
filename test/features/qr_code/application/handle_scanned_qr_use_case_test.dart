@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
+import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/qr_code/application/handle_scanned_qr_use_case.dart';
 
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
@@ -230,6 +231,97 @@ void main() {
       expect(envelope.containsKey('payload'), isFalse);
 
       runningP2P.dispose();
+    });
+
+    test('success: calls downloadProfilePictureFn after adding contact',
+        () async {
+      final qrData = buildValidQRData();
+      String? capturedPeerId;
+
+      final result = await handleScannedQR(
+        qrData: qrData,
+        bridge: bridge,
+        contactRepo: contactRepo,
+        identityRepo: identityRepo,
+        p2pService: p2pService,
+        ownPeerId: ownPeerId,
+        downloadProfilePictureFn: ({
+          required bridge,
+          required contactRepo,
+          required ownerPeerId,
+          required avatarVersion,
+        }) async {
+          capturedPeerId = ownerPeerId;
+          return null;
+        },
+      );
+
+      expect(result, HandleScannedQRResult.success);
+      await Future.delayed(Duration.zero);
+      expect(capturedPeerId, 'scanned-peer-id');
+    });
+
+    test('success: downloadProfilePictureFn failure does not affect result',
+        () async {
+      final qrData = buildValidQRData();
+
+      final result = await handleScannedQR(
+        qrData: qrData,
+        bridge: bridge,
+        contactRepo: contactRepo,
+        identityRepo: identityRepo,
+        p2pService: p2pService,
+        ownPeerId: ownPeerId,
+        downloadProfilePictureFn: ({
+          required bridge,
+          required contactRepo,
+          required ownerPeerId,
+          required avatarVersion,
+        }) async {
+          throw Exception('download failed');
+        },
+      );
+
+      expect(result, HandleScannedQRResult.success);
+      await Future.delayed(Duration.zero);
+    });
+
+    test('alreadyExists: does not call downloadProfilePictureFn', () async {
+      final qrData = buildValidQRData();
+      bool wasCalled = false;
+
+      // First call adds the contact
+      await handleScannedQR(
+        qrData: qrData,
+        bridge: bridge,
+        contactRepo: contactRepo,
+        identityRepo: identityRepo,
+        p2pService: p2pService,
+        ownPeerId: ownPeerId,
+      );
+
+      // Second call should return alreadyExists and NOT call download
+      final result = await handleScannedQR(
+        qrData: qrData,
+        bridge: bridge,
+        contactRepo: contactRepo,
+        identityRepo: identityRepo,
+        p2pService: p2pService,
+        ownPeerId: ownPeerId,
+        downloadProfilePictureFn: ({
+          required bridge,
+          required contactRepo,
+          required ownerPeerId,
+          required avatarVersion,
+        }) async {
+          wasCalled = true;
+          return null;
+        },
+      );
+
+      expect(result, HandleScannedQRResult.alreadyExists);
+      await Future.delayed(Duration.zero);
+      expect(wasCalled, isFalse);
     });
   });
 }

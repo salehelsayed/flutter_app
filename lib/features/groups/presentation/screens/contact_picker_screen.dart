@@ -4,21 +4,25 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/contact_picker_row.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
 
-/// Pure UI screen for picking a contact to invite to a group.
+/// Pure UI screen for picking contacts to invite to a group.
 ///
 /// StatefulWidget only because it manages a local search filter. All data
 /// and callbacks come from props.
 class ContactPickerScreen extends StatefulWidget {
   final List<ContactModel> contacts;
   final bool isInviting;
-  final ValueChanged<ContactModel> onSelect;
+  final ValueChanged<ContactModel> onToggle;
+  final Set<String> selectedPeerIds;
+  final VoidCallback? onConfirm;
   final VoidCallback onBack;
 
   const ContactPickerScreen({
     super.key,
     required this.contacts,
     this.isInviting = false,
-    required this.onSelect,
+    required this.onToggle,
+    this.selectedPeerIds = const {},
+    this.onConfirm,
     required this.onBack,
   });
 
@@ -74,6 +78,9 @@ class _ContactPickerScreenState extends State<ContactPickerScreen> {
                         ? _buildEmptyState()
                         : _buildContactList(),
                   ),
+                  if (widget.selectedPeerIds.isNotEmpty &&
+                      widget.onConfirm != null)
+                    _buildConfirmButton(),
                 ],
               ),
               if (widget.isInviting)
@@ -110,9 +117,11 @@ class _ContactPickerScreenState extends State<ContactPickerScreen> {
             onPressed: widget.onBack,
           ),
           const SizedBox(width: 4),
-          const Text(
-            'Add Member',
-            style: TextStyle(
+          Text(
+            widget.selectedPeerIds.isNotEmpty
+                ? 'Add Members (${widget.selectedPeerIds.length})'
+                : 'Add Member',
+            style: const TextStyle(
               fontSize: 20,
               fontWeight: FontWeight.w600,
               color: Colors.white,
@@ -184,9 +193,38 @@ class _ContactPickerScreenState extends State<ContactPickerScreen> {
         final contact = contacts[index];
         return ContactPickerRow(
           contact: contact,
-          onTap: () => widget.onSelect(contact),
+          isSelected: widget.selectedPeerIds.contains(contact.peerId),
+          onTap: () => widget.onToggle(contact),
         );
       },
+    );
+  }
+
+  Widget _buildConfirmButton() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+      child: GestureDetector(
+        onTap: widget.onConfirm,
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [Color(0xFF64B5F6), Color(0xFF42A5F5)],
+            ),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: const Text(
+            'Send Invites',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+              color: Colors.white,
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

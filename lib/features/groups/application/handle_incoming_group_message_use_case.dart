@@ -54,8 +54,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
     // Still process the message — member list may be stale
   }
 
-  // 3. Generate message ID
-  final messageId = const Uuid().v4();
+  // 3. Parse timestamp and check for duplicates
   final now = DateTime.now().toUtc();
 
   DateTime parsedTimestamp;
@@ -65,7 +64,24 @@ Future<GroupMessage?> handleIncomingGroupMessage({
     parsedTimestamp = now;
   }
 
-  // 4. Create GroupMessage (isIncoming: true)
+  final isDuplicate =
+      await msgRepo.existsByContent(groupId, senderId, text, parsedTimestamp);
+  if (isDuplicate) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_HANDLE_INCOMING_MSG_DUPLICATE',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        'senderId': senderId.length > 8 ? senderId.substring(0, 8) : senderId,
+      },
+    );
+    return null;
+  }
+
+  // 4. Generate message ID
+  final messageId = const Uuid().v4();
+
+  // 5. Create GroupMessage (isIncoming: true)
   final message = GroupMessage(
     id: messageId,
     groupId: groupId,
@@ -79,7 +95,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
     createdAt: now,
   );
 
-  // 5. Save to repo
+  // 6. Save to repo
   await msgRepo.saveMessage(message);
 
   emitFlowEvent(

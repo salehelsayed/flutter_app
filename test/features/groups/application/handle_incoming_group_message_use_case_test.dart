@@ -105,4 +105,72 @@ void main() {
     expect(result!.text, 'Hello from unknown');
     expect(msgRepo.count, 1);
   });
+
+  test('deduplicates identical incoming messages', () async {
+    final ts = DateTime.now().toUtc().toIso8601String();
+
+    final result1 = await handleIncomingGroupMessage(
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      groupId: 'group-1',
+      senderId: 'peer-sender',
+      senderUsername: 'Sender',
+      keyEpoch: 0,
+      text: 'Hello!',
+      timestamp: ts,
+    );
+    expect(result1, isNotNull);
+
+    // Second call with same fields
+    final result2 = await handleIncomingGroupMessage(
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      groupId: 'group-1',
+      senderId: 'peer-sender',
+      senderUsername: 'Sender',
+      keyEpoch: 0,
+      text: 'Hello!',
+      timestamp: ts,
+    );
+    expect(result2, isNull); // duplicate → skipped
+    expect(msgRepo.count, 1); // still only 1 message
+  });
+
+  test('allows messages with different text or timestamp', () async {
+    final ts1 = DateTime(2026, 1, 1).toUtc().toIso8601String();
+    final ts2 = DateTime(2026, 1, 2).toUtc().toIso8601String();
+
+    await handleIncomingGroupMessage(
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      groupId: 'group-1',
+      senderId: 'peer-sender',
+      senderUsername: 'Sender',
+      keyEpoch: 0,
+      text: 'A',
+      timestamp: ts1,
+    );
+    await handleIncomingGroupMessage(
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      groupId: 'group-1',
+      senderId: 'peer-sender',
+      senderUsername: 'Sender',
+      keyEpoch: 0,
+      text: 'B',
+      timestamp: ts1,
+    ); // different text
+    await handleIncomingGroupMessage(
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      groupId: 'group-1',
+      senderId: 'peer-sender',
+      senderUsername: 'Sender',
+      keyEpoch: 0,
+      text: 'A',
+      timestamp: ts2,
+    ); // different time
+
+    expect(msgRepo.count, 3); // all unique
+  });
 }

@@ -72,6 +72,40 @@ void main() {
       await tester.tap(find.text('Alice'));
       expect(tapped, isTrue);
     });
+
+    testWidgets('shows check_circle when isSelected is true', (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ContactPickerRow(
+              contact: contactAlice,
+              onTap: () {},
+              isSelected: true,
+            ),
+          ),
+        ),
+      );
+
+      expect(find.byIcon(Icons.check_circle), findsOneWidget);
+      expect(find.byIcon(Icons.add_circle_outline), findsNothing);
+    });
+
+    testWidgets('shows add_circle_outline when isSelected is false (default)',
+        (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ContactPickerRow(
+              contact: contactAlice,
+              onTap: () {},
+            ),
+          ),
+        ),
+      );
+
+      expect(find.byIcon(Icons.add_circle_outline), findsOneWidget);
+      expect(find.byIcon(Icons.check_circle), findsNothing);
+    });
   });
 
   // --- Phase 2: ContactPickerScreen (Pure UI) ---
@@ -80,14 +114,18 @@ void main() {
     Widget buildTestWidget({
       List<ContactModel> contacts = const [],
       bool isInviting = false,
-      ValueChanged<ContactModel>? onSelect,
+      ValueChanged<ContactModel>? onToggle,
+      Set<String> selectedPeerIds = const {},
+      VoidCallback? onConfirm,
       VoidCallback? onBack,
     }) {
       return MaterialApp(
         home: ContactPickerScreen(
           contacts: contacts,
           isInviting: isInviting,
-          onSelect: onSelect ?? (_) {},
+          onToggle: onToggle ?? (_) {},
+          selectedPeerIds: selectedPeerIds,
+          onConfirm: onConfirm,
           onBack: onBack ?? () {},
         ),
       );
@@ -116,18 +154,18 @@ void main() {
       expect(find.text('No contacts available'), findsOneWidget);
     });
 
-    testWidgets('calls onSelect when contact is tapped', (tester) async {
-      ContactModel? selected;
+    testWidgets('calls onToggle when contact is tapped', (tester) async {
+      ContactModel? toggled;
 
       await tester.pumpWidget(
         buildTestWidget(
           contacts: [contactAlice, contactBob],
-          onSelect: (c) => selected = c,
+          onToggle: (c) => toggled = c,
         ),
       );
 
       await tester.tap(find.text('Alice'));
-      expect(selected?.username, equals('Alice'));
+      expect(toggled?.username, equals('Alice'));
     });
 
     testWidgets('calls onBack when back button is tapped', (tester) async {
@@ -141,10 +179,89 @@ void main() {
       expect(backCalled, isTrue);
     });
 
-    testWidgets('search filters contacts by username', (tester) async {
+    testWidgets('header shows "Add Members (N)" when contacts are selected',
+        (tester) async {
+      await tester.pumpWidget(
+        buildTestWidget(
+          contacts: [contactAlice, contactBob],
+          selectedPeerIds: {contactAlice.peerId, contactBob.peerId},
+        ),
+      );
+
+      expect(find.text('Add Members (2)'), findsOneWidget);
+      expect(find.text('Add Member'), findsNothing);
+    });
+
+    testWidgets('header shows "Add Member" when nothing selected',
+        (tester) async {
+      await tester.pumpWidget(
+        buildTestWidget(
+          contacts: [contactAlice],
+          selectedPeerIds: {},
+        ),
+      );
+
+      expect(find.text('Add Member'), findsOneWidget);
+    });
+
+    testWidgets('shows check_circle for selected contacts in list',
+        (tester) async {
+      await tester.pumpWidget(
+        buildTestWidget(
+          contacts: [contactAlice, contactBob],
+          selectedPeerIds: {contactAlice.peerId},
+        ),
+      );
+
+      expect(find.byIcon(Icons.check_circle), findsOneWidget);
+      expect(find.byIcon(Icons.add_circle_outline), findsOneWidget);
+    });
+
+    testWidgets('shows Send Invites button when 1+ selected', (tester) async {
+      await tester.pumpWidget(
+        buildTestWidget(
+          contacts: [contactAlice],
+          selectedPeerIds: {contactAlice.peerId},
+          onConfirm: () {},
+        ),
+      );
+
+      expect(find.text('Send Invites'), findsOneWidget);
+    });
+
+    testWidgets('hides Send Invites button when none selected',
+        (tester) async {
+      await tester.pumpWidget(
+        buildTestWidget(
+          contacts: [contactAlice],
+          selectedPeerIds: {},
+          onConfirm: () {},
+        ),
+      );
+
+      expect(find.text('Send Invites'), findsNothing);
+    });
+
+    testWidgets('calls onConfirm when Send Invites tapped', (tester) async {
+      var confirmed = false;
+
+      await tester.pumpWidget(
+        buildTestWidget(
+          contacts: [contactAlice],
+          selectedPeerIds: {contactAlice.peerId},
+          onConfirm: () => confirmed = true,
+        ),
+      );
+
+      await tester.tap(find.text('Send Invites'));
+      expect(confirmed, isTrue);
+    });
+
+    testWidgets('search still works in multi-select mode', (tester) async {
       await tester.pumpWidget(
         buildTestWidget(
           contacts: [contactAlice, contactBob, contactCharlie],
+          selectedPeerIds: {contactAlice.peerId},
         ),
       );
 

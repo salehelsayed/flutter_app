@@ -1,0 +1,100 @@
+import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
+
+/// Rejoins all active group pubsub topics on startup.
+///
+/// After an app restart the Go node is fresh — no pubsub topics are
+/// subscribed. This function iterates every active (non-archived) group,
+/// builds the full groupConfig from stored members, and calls
+/// [callGroupJoinWithConfig] so the node can receive and validate
+/// real-time group messages again.
+///
+/// Groups without a stored key are skipped (can't join without key material).
+/// Errors on individual groups are logged and do not prevent other groups
+/// from being rejoined.
+Future<void> rejoinGroupTopics({
+  required Bridge bridge,
+  required GroupRepository groupRepo,
+}) async {
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'GROUP_REJOIN_TOPICS_BEGIN',
+    details: {},
+  );
+
+  final groups = await groupRepo.getActiveGroups();
+
+  for (final group in groups) {
+    try {
+      final keyInfo = await groupRepo.getLatestKey(group.id);
+      if (keyInfo == null) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_REJOIN_TOPICS_SKIP_NO_KEY',
+          details: {
+            'groupId':
+                group.id.length > 8 ? group.id.substring(0, 8) : group.id,
+          },
+        );
+        continue;
+      }
+
+      final members = await groupRepo.getMembers(group.id);
+
+      final groupConfig = {
+        'name': group.name,
+        'groupType': group.type.toValue(),
+        if (group.description != null) 'description': group.description,
+        'members': members
+            .map((m) => {
+                  'peerId': m.peerId,
+                  'username': m.username,
+                  'role': m.role.toValue(),
+                  'publicKey': m.publicKey,
+                  if (m.mlKemPublicKey != null)
+                    'mlKemPublicKey': m.mlKemPublicKey,
+                })
+            .toList(),
+        'createdBy': group.createdBy,
+        'createdAt': group.createdAt.toUtc().toIso8601String(),
+      };
+
+      await callGroupJoinWithConfig(
+        bridge,
+        groupId: group.id,
+        groupConfig: groupConfig,
+        groupKey: keyInfo.encryptedKey,
+        keyEpoch: keyInfo.keyGeneration,
+      );
+
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_REJOIN_TOPICS_JOINED',
+        details: {
+          'groupId':
+              group.id.length > 8 ? group.id.substring(0, 8) : group.id,
+          'keyEpoch': keyInfo.keyGeneration,
+          'memberCount': members.length,
+        },
+      );
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_REJOIN_TOPICS_ERROR',
+        details: {
+          'groupId':
+              group.id.length > 8 ? group.id.substring(0, 8) : group.id,
+          'error': e.toString(),
+        },
+      );
+    }
+  }
+
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'GROUP_REJOIN_TOPICS_DONE',
+    details: {'groupCount': groups.length},
+  );
+}

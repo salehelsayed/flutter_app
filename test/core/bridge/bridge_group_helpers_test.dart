@@ -647,15 +647,15 @@ void main() {
     test('sends group:rotateKey and returns key info', () async {
       bridge.responses['group:rotateKey'] = {
         'ok': true,
-        'keyGeneration': 2,
-        'encryptedKey': 'newKeyBase64==',
+        'groupKey': 'newKeyBase64==',
+        'keyEpoch': 2,
       };
 
       final result = await callGroupRotateKey(bridge, 'grp-rotate-001');
 
       expect(result['ok'], isTrue);
-      expect(result['keyGeneration'], equals(2));
-      expect(result['encryptedKey'], equals('newKeyBase64=='));
+      expect(result['keyEpoch'], equals(2));
+      expect(result['groupKey'], equals('newKeyBase64=='));
 
       final sent = jsonDecode(bridge.lastSentMessage!) as Map<String, dynamic>;
       expect(sent['cmd'], equals('group:rotateKey'));
@@ -768,6 +768,79 @@ void main() {
       );
 
       expect(messages, isEmpty);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Bridge error propagation (Finding 5)
+  // ---------------------------------------------------------------------------
+  group('BridgeCommandException on ok:false', () {
+    test('throws BridgeCommandException when group:join returns ok:false',
+        () async {
+      bridge.responses['group:join'] = {
+        'ok': false,
+        'errorCode': 'TOPIC_ERROR',
+        'errorMessage': 'failed',
+      };
+
+      expect(
+        () => callGroupJoin(bridge, groupId: 'grp-1', topicName: '/t/grp-1'),
+        throwsA(isA<BridgeCommandException>()),
+      );
+    });
+
+    test(
+        'throws BridgeCommandException when group:join (with config) returns ok:false',
+        () async {
+      bridge.responses['group:join'] = {
+        'ok': false,
+        'errorCode': 'CONFIG_ERROR',
+        'errorMessage': 'bad config',
+      };
+
+      expect(
+        () => callGroupJoinWithConfig(
+          bridge,
+          groupId: 'grp-1',
+          groupConfig: {'name': 'Test'},
+          groupKey: 'key',
+          keyEpoch: 1,
+        ),
+        throwsA(isA<BridgeCommandException>()),
+      );
+    });
+
+    test('throws BridgeCommandException when group:leave returns ok:false',
+        () async {
+      bridge.responses['group:leave'] = {
+        'ok': false,
+        'errorCode': 'NOT_SUBSCRIBED',
+        'errorMessage': 'not in group',
+      };
+
+      expect(
+        () => callGroupLeave(bridge, 'grp-1'),
+        throwsA(isA<BridgeCommandException>()),
+      );
+    });
+
+    test(
+        'throws BridgeCommandException when group:updateConfig returns ok:false',
+        () async {
+      bridge.responses['group:updateConfig'] = {
+        'ok': false,
+        'errorCode': 'PERMISSION_DENIED',
+        'errorMessage': 'not admin',
+      };
+
+      expect(
+        () => callGroupUpdateConfig(
+          bridge,
+          groupId: 'grp-1',
+          groupConfig: {'name': 'x', 'groupType': 'chat', 'members': []},
+        ),
+        throwsA(isA<BridgeCommandException>()),
+      );
     });
   });
 }

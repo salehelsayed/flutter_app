@@ -33,6 +33,8 @@ import 'package:flutter_app/features/push/application/request_push_permission_us
 import 'package:flutter_app/features/push/application/register_push_token_use_case.dart';
 import 'package:flutter_app/core/utils/startup_timing.dart';
 import 'package:flutter_app/core/config/startup_config.dart';
+import 'package:flutter_app/features/groups/application/rejoin_group_topics_use_case.dart';
+import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
 
 /// Router widget that handles app startup navigation.
 ///
@@ -345,6 +347,25 @@ class _StartupRouterState extends State<StartupRouter> {
       StartupTiming.instance.mark('p2p_startup_complete');
       StartupTiming.instance.printSummary();
       _registerPushToken();
+
+      // Now that the Go node is running (pubsub initialized), rejoin group
+      // topics and drain offline inboxes. Fire-and-forget — errors are logged
+      // inside each function and don't block startup.
+      final groupRepo = widget.groupRepository;
+      final groupMsgRepo = widget.groupMessageRepository;
+      if (groupRepo != null) {
+        rejoinGroupTopics(
+          bridge: widget.bridge,
+          groupRepo: groupRepo,
+        );
+        if (groupMsgRepo != null) {
+          drainGroupOfflineInbox(
+            bridge: widget.bridge,
+            groupRepo: groupRepo,
+            msgRepo: groupMsgRepo,
+          );
+        }
+      }
     }
   }
 

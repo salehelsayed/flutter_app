@@ -9,12 +9,14 @@ import 'package:flutter_app/features/identity/presentation/widgets/ambient_backg
 /// Form with name field, type selector, description, and create button.
 class CreateGroupScreen extends StatefulWidget {
   final bool isCreating;
+  final GroupType initialType;
   final void Function(String name, GroupType type, String? description) onCreate;
   final VoidCallback onBack;
 
   const CreateGroupScreen({
     super.key,
     this.isCreating = false,
+    this.initialType = GroupType.chat,
     required this.onCreate,
     required this.onBack,
   });
@@ -26,7 +28,13 @@ class CreateGroupScreen extends StatefulWidget {
 class _CreateGroupScreenState extends State<CreateGroupScreen> {
   final _nameController = TextEditingController();
   final _descriptionController = TextEditingController();
-  GroupType _selectedType = GroupType.chat;
+  late GroupType _selectedType;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedType = widget.initialType;
+  }
 
   @override
   void dispose() {

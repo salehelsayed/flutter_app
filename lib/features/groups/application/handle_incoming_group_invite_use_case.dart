@@ -127,6 +127,23 @@ Future<(HandleGroupInviteResult, String?)> handleIncomingGroupInvite({
     return (HandleGroupInviteResult.invalidPayload, null);
   }
 
+  // 2b. Verify transport sender matches payload sender (anti-replay)
+  if (payload.senderPeerId != message.from) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_INVITE_HANDLE_SENDER_MISMATCH',
+      details: {
+        'transportSender': message.from.length > 10
+            ? message.from.substring(0, 10)
+            : message.from,
+        'payloadSender': payload.senderPeerId.length > 10
+            ? payload.senderPeerId.substring(0, 10)
+            : payload.senderPeerId,
+      },
+    );
+    return (HandleGroupInviteResult.invalidPayload, null);
+  }
+
   // 3. Verify sender is a known contact
   final senderPeerId = payload.senderPeerId;
   final contact = await contactRepo.getContact(senderPeerId);

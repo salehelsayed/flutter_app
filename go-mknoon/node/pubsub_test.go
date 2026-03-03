@@ -538,7 +538,7 @@ func validateGroupEnvelope(data string, groupId string, config *GroupConfig, key
 	}
 
 	sigData := mcrypto.BuildGroupSignatureData(groupId, keyInfo.KeyEpoch, env.Encrypted.Ciphertext)
-	valid, err := mcrypto.VerifyPayload(env.SenderPublicKey, sigData, env.Signature)
+	valid, err := mcrypto.VerifyPayload(member.PublicKey, sigData, env.Signature)
 	if err != nil || !valid {
 		return "reject:bad_signature"
 	}
@@ -734,6 +734,37 @@ func TestGroupTopicValidator_BadSignature(t *testing.T) {
 	}
 
 	_ = pubB64 // suppress unused warning
+}
+
+func TestGroupTopicValidator_SpoofedPublicKey(t *testing.T) {
+	// Real member key pair (trusted, registered in config)
+	_, pubA := generateEd25519KeyPair(t)
+
+	// Attacker key pair (untrusted, NOT in config)
+	privX, pubX := generateEd25519KeyPair(t)
+
+	groupKey, _ := mcrypto.GenerateGroupKey()
+	groupId := "group-spoof"
+
+	// Config registers peer-A with pubA (the real member's key)
+	config := &GroupConfig{
+		Name:      "Test",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: "peer-A", Role: GroupRoleAdmin, PublicKey: pubA},
+		},
+		CreatedBy: "peer-A",
+	}
+	keyInfo := &GroupKeyInfo{Key: groupKey, KeyEpoch: 1}
+
+	// Attacker builds envelope claiming to be peer-A, but signs with privX
+	// and puts pubX in the SenderPublicKey field
+	envelopeJSON := buildTestEnvelope(t, groupId, "peer-A", privX, pubX, groupKey, 1, "spoofed message")
+
+	result := validateGroupEnvelope(envelopeJSON, groupId, config, keyInfo)
+	if result != "reject:bad_signature" {
+		t.Errorf("expected reject:bad_signature for spoofed public key, got %s", result)
+	}
 }
 
 // --- End-to-end encrypt/decrypt round-trip ---

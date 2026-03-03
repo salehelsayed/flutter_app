@@ -12,7 +12,7 @@ import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
-import 'package:flutter_app/features/groups/presentation/screens/create_group_wired.dart';
+import 'package:flutter_app/features/groups/presentation/screens/create_group_picker_wired.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_list_screen.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
@@ -133,13 +133,18 @@ class _GroupListWiredState extends State<GroupListWired> {
     ).then((_) => _loadGroups());
   }
 
-  void _onCreateGroup() {
+  void _onCreateGroup(GroupType type) {
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => CreateGroupWired(
-          bridge: widget.bridge,
+        builder: (_) => CreateGroupPickerWired(
+          groupType: type,
           groupRepo: widget.groupRepo,
+          msgRepo: widget.msgRepo,
+          groupMessageListener: widget.groupMessageListener,
+          contactRepo: widget.contactRepo,
+          bridge: widget.bridge,
           identityRepo: widget.identityRepo,
+          p2pService: widget.p2pService,
         ),
       ),
     ).then((_) => _loadGroups());

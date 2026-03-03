@@ -535,6 +535,64 @@ void main() {
       expect(peerIds, contains('12D3KooWCarol'));
     });
 
+    // --- Security: sender binding ---
+    test('rejects v1 invite where transport sender != payload sender',
+        () async {
+      // Payload says sender is Alice, but transport says attacker
+      final payload = _makePayload(); // senderPeerId = '12D3KooWAlice'
+      final msg = ChatMessage(
+        from: 'peer-attacker-X', // transport sender differs
+        to: 'myPeerId',
+        content: payload.toJson(),
+        timestamp: DateTime.now().toUtc().toIso8601String(),
+        isIncoming: true,
+      );
+
+      final (result, groupId) = await handleIncomingGroupInvite(
+        message: msg,
+        groupRepo: groupRepo,
+        contactRepo: contactRepo,
+        bridge: bridge,
+      );
+
+      expect(result, equals(HandleGroupInviteResult.invalidPayload));
+      expect(groupId, isNull);
+      expect(groupRepo.groupCount, equals(0));
+    });
+
+    test('rejects v2 encrypted invite where transport sender != payload sender',
+        () async {
+      final cryptoBridge = PassthroughCryptoBridge();
+      final payload = _makePayload(); // senderPeerId = '12D3KooWAlice'
+      final innerJson = payload.toInnerJson();
+      final envelope = GroupInvitePayload.buildEncryptedEnvelope(
+        senderPeerId: payload.senderPeerId,
+        kem: 'fake-kem',
+        ciphertext: innerJson,
+        nonce: 'fake-nonce',
+      );
+
+      final msg = ChatMessage(
+        from: 'peer-attacker-X', // transport sender differs
+        to: 'myPeerId',
+        content: envelope,
+        timestamp: DateTime.now().toUtc().toIso8601String(),
+        isIncoming: true,
+      );
+
+      final (result, groupId) = await handleIncomingGroupInvite(
+        message: msg,
+        groupRepo: groupRepo,
+        contactRepo: contactRepo,
+        bridge: cryptoBridge,
+        ownMlKemSecretKey: 'mySecretKey',
+      );
+
+      expect(result, equals(HandleGroupInviteResult.invalidPayload));
+      expect(groupId, isNull);
+      expect(groupRepo.groupCount, equals(0));
+    });
+
     test(
         'handles bridge group:join timeout without losing persisted data',
         () async {

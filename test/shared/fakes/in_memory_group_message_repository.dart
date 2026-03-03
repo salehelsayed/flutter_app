@@ -84,5 +84,15 @@ class InMemoryGroupMessageRepository implements GroupMessageRepository {
     _messages.remove(id);
   }
 
+  @override
+  Future<bool> existsByContent(
+      String groupId, String senderPeerId, String text, DateTime timestamp) async {
+    return _messages.values.any((m) =>
+        m.groupId == groupId &&
+        m.senderPeerId == senderPeerId &&
+        m.text == text &&
+        m.timestamp == timestamp);
+  }
+
   int get count => _messages.length;
 }

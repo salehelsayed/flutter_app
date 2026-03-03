@@ -281,6 +281,16 @@ class GoBridgeClient extends Bridge {
           }
           break;
 
+        // Forward Go diagnostic events to FLOW logs for debugging.
+        case 'group:discovery':
+        case 'group:publish_debug':
+          emitFlowEvent(
+            layer: 'GO',
+            event: eventName!.replaceAll(':', '_').toUpperCase(),
+            details: eventData,
+          );
+          break;
+
         default:
           debugPrint('[GoBridgeClient] Unknown push event: $eventName');
       }

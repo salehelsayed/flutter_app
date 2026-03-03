@@ -67,4 +67,80 @@ void main() {
     expect(capturedName, 'My New Group');
     expect(capturedType, GroupType.chat);
   });
+
+  group('initialType', () {
+    testWidgets('defaults to chat type when no initialType provided',
+        (tester) async {
+      GroupType? submittedType;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: CreateGroupScreen(
+            onCreate: (_, type, __) => submittedType = type,
+            onBack: () {},
+          ),
+        ),
+      );
+
+      await tester.enterText(
+        find.widgetWithText(TextField, 'Enter group name'),
+        'Test',
+      );
+      await tester.pump();
+
+      await tester.tap(find.text('Create Group').last);
+      await tester.pump();
+
+      expect(submittedType, GroupType.chat);
+    });
+
+    testWidgets(
+        'pre-selects announcement type when initialType is announcement',
+        (tester) async {
+      GroupType? submittedType;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: CreateGroupScreen(
+            initialType: GroupType.announcement,
+            onCreate: (_, type, __) => submittedType = type,
+            onBack: () {},
+          ),
+        ),
+      );
+
+      await tester.enterText(
+        find.widgetWithText(TextField, 'Enter group name'),
+        'Test',
+      );
+      await tester.pump();
+
+      await tester.tap(find.text('Create Group').last);
+      await tester.pump();
+
+      expect(submittedType, GroupType.announcement);
+    });
+
+    testWidgets('pre-selects qa type when initialType is qa', (tester) async {
+      GroupType? submittedType;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: CreateGroupScreen(
+            initialType: GroupType.qa,
+            onCreate: (_, type, __) => submittedType = type,
+            onBack: () {},
+          ),
+        ),
+      );
+
+      await tester.enterText(
+        find.widgetWithText(TextField, 'Enter group name'),
+        'Test',
+      );
+      await tester.pump();
+
+      await tester.tap(find.text('Create Group').last);
+      await tester.pump();
+
+      expect(submittedType, GroupType.qa);
+    });
+  });
 }
