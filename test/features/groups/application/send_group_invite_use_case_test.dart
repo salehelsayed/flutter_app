@@ -32,6 +32,46 @@ const _testGroupConfig = {
   'createdAt': '2026-03-02T00:00:00.000Z',
 };
 
+/// A [FakeP2PService] that delays each sendMessage by [delay].
+class _SlowFakeP2PService extends FakeP2PService {
+  final Duration delay;
+
+  _SlowFakeP2PService({
+    required this.delay,
+    super.initialState,
+    super.sendMessageResult,
+  });
+
+  @override
+  Future<bool> sendMessage(String peerId, String message) async {
+    await Future.delayed(delay);
+    return super.sendMessage(peerId, message);
+  }
+}
+
+/// A bridge that throws on encrypt for a specific ML-KEM public key.
+class _ThrowOnKeyBridge extends PassthroughCryptoBridge {
+  final String throwForKey;
+
+  _ThrowOnKeyBridge({required this.throwForKey});
+
+  @override
+  Future<String> send(String message) async {
+    final parsed = jsonDecode(message) as Map<String, dynamic>;
+    final cmd = parsed['cmd'] as String?;
+    if (cmd == 'message.encrypt') {
+      final payload = parsed['payload'] as Map<String, dynamic>;
+      if (payload['recipientPublicKey'] == throwForKey) {
+        sendCallCount++;
+        lastSentMessage = message;
+        lastCommand = cmd;
+        throw Exception('Encrypt failed for key $throwForKey');
+      }
+    }
+    return super.send(message);
+  }
+}
+
 /// A bridge that returns ok=false for message.encrypt
 class _FailEncryptBridge extends FakeBridge {
   @override
@@ -256,6 +296,150 @@ void main() {
       expect(firstMember['role'], equals('admin'));
       expect(firstMember['publicKey'], equals('alicePubKey64'));
       expect(firstMember['mlKemPublicKey'], equals('aliceMlKem64'));
+    });
+  });
+
+  group('sendGroupInvitesInParallel', () {
+    const sharedArgs = (
+      senderPeerId: '12D3KooWAlice',
+      senderUsername: 'Alice',
+      groupId: 'grp-abc123',
+      groupKey: 'base64GroupKey==',
+      keyEpoch: 1,
+      groupConfig: _testGroupConfig,
+    );
+
+    test('sends invites to all recipients and returns success count',
+        () async {
+      final recipients = [
+        (peerId: '12D3KooWBob', mlKemPublicKey: 'bobMlKem64' as String?),
+        (
+          peerId: '12D3KooWCharlie',
+          mlKemPublicKey: 'charlieMlKem64' as String?
+        ),
+      ];
+
+      final sent = await sendGroupInvitesInParallel(
+        p2pService: p2pService,
+        bridge: bridge,
+        senderPeerId: sharedArgs.senderPeerId,
+        senderUsername: sharedArgs.senderUsername,
+        groupId: sharedArgs.groupId,
+        groupKey: sharedArgs.groupKey,
+        keyEpoch: sharedArgs.keyEpoch,
+        groupConfig: sharedArgs.groupConfig,
+        recipients: recipients,
+      );
+
+      expect(sent, equals(2));
+      expect(p2pService.sentMessageLog.length, equals(2));
+    });
+
+    test('runs invites concurrently', () async {
+      final slowP2P = _SlowFakeP2PService(
+        delay: const Duration(milliseconds: 100),
+        initialState: const NodeState(isStarted: true),
+      );
+
+      final recipients = [
+        (peerId: '12D3KooWBob', mlKemPublicKey: 'bobMlKem64' as String?),
+        (
+          peerId: '12D3KooWCharlie',
+          mlKemPublicKey: 'charlieMlKem64' as String?
+        ),
+        (peerId: '12D3KooWDave', mlKemPublicKey: 'daveMlKem64' as String?),
+      ];
+
+      final sw = Stopwatch()..start();
+      final sent = await sendGroupInvitesInParallel(
+        p2pService: slowP2P,
+        bridge: bridge,
+        senderPeerId: sharedArgs.senderPeerId,
+        senderUsername: sharedArgs.senderUsername,
+        groupId: sharedArgs.groupId,
+        groupKey: sharedArgs.groupKey,
+        keyEpoch: sharedArgs.keyEpoch,
+        groupConfig: sharedArgs.groupConfig,
+        recipients: recipients,
+      );
+      sw.stop();
+
+      expect(sent, equals(3));
+      expect(slowP2P.sentMessageLog.length, equals(3));
+      // Sequential would be ~300ms+; parallel should be ~100ms
+      expect(sw.elapsedMilliseconds, lessThan(250));
+
+      slowP2P.dispose();
+    });
+
+    test('counts only successful invites when some fail', () async {
+      final recipients = [
+        (peerId: '12D3KooWBob', mlKemPublicKey: 'bobMlKem64' as String?),
+        (peerId: '12D3KooWNoKey', mlKemPublicKey: null as String?),
+        (
+          peerId: '12D3KooWCharlie',
+          mlKemPublicKey: 'charlieMlKem64' as String?
+        ),
+      ];
+
+      final sent = await sendGroupInvitesInParallel(
+        p2pService: p2pService,
+        bridge: bridge,
+        senderPeerId: sharedArgs.senderPeerId,
+        senderUsername: sharedArgs.senderUsername,
+        groupId: sharedArgs.groupId,
+        groupKey: sharedArgs.groupKey,
+        keyEpoch: sharedArgs.keyEpoch,
+        groupConfig: sharedArgs.groupConfig,
+        recipients: recipients,
+      );
+
+      expect(sent, equals(2));
+    });
+
+    test('returns 0 for empty recipients list', () async {
+      final sent = await sendGroupInvitesInParallel(
+        p2pService: p2pService,
+        bridge: bridge,
+        senderPeerId: sharedArgs.senderPeerId,
+        senderUsername: sharedArgs.senderUsername,
+        groupId: sharedArgs.groupId,
+        groupKey: sharedArgs.groupKey,
+        keyEpoch: sharedArgs.keyEpoch,
+        groupConfig: sharedArgs.groupConfig,
+        recipients: [],
+      );
+
+      expect(sent, equals(0));
+      expect(p2pService.sendMessageCallCount, equals(0));
+    });
+
+    test('continues sending when one invite throws', () async {
+      final throwBridge = _ThrowOnKeyBridge(throwForKey: 'badKey');
+
+      final recipients = [
+        (peerId: '12D3KooWBob', mlKemPublicKey: 'bobMlKem64' as String?),
+        (peerId: '12D3KooWEvil', mlKemPublicKey: 'badKey' as String?),
+        (
+          peerId: '12D3KooWCharlie',
+          mlKemPublicKey: 'charlieMlKem64' as String?
+        ),
+      ];
+
+      final sent = await sendGroupInvitesInParallel(
+        p2pService: p2pService,
+        bridge: throwBridge,
+        senderPeerId: sharedArgs.senderPeerId,
+        senderUsername: sharedArgs.senderUsername,
+        groupId: sharedArgs.groupId,
+        groupKey: sharedArgs.groupKey,
+        keyEpoch: sharedArgs.keyEpoch,
+        groupConfig: sharedArgs.groupConfig,
+        recipients: recipients,
+      );
+
+      expect(sent, equals(2));
+      expect(p2pService.sentMessageLog.length, equals(2));
     });
   });
 }

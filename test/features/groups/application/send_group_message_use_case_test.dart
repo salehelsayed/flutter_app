@@ -9,6 +9,34 @@ import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
 
+/// A bridge that delays group:publish by [delay] to test concurrency.
+class _SlowPublishBridge extends FakeBridge {
+  final Duration delay;
+  _SlowPublishBridge({this.delay = const Duration(milliseconds: 200)});
+
+  @override
+  Future<String> send(String message) async {
+    final parsed = jsonDecode(message) as Map<String, dynamic>;
+    final cmd = parsed['cmd'] as String?;
+
+    if (cmd == 'group:publish') {
+      await Future<void>.delayed(delay);
+    }
+
+    return super.send(message);
+  }
+}
+
+/// A bridge that returns ok: false for group:publish but tracks all commands.
+class _FailPublishBridge extends FakeBridge {
+  _FailPublishBridge() {
+    responses['group:publish'] = {
+      'ok': false,
+      'errorCode': 'PUBLISH_FAILED',
+    };
+  }
+}
+
 /// A bridge that throws on group:inboxStore commands.
 class _InboxStoreFailBridge extends FakeBridge {
   @override
@@ -141,7 +169,7 @@ void main() {
     expect(latest!.text, 'Hello group!');
   });
 
-  test('stores message in relay inbox after successful publish', () async {
+  test('stores message in relay inbox on publish', () async {
     await sendGroupMessage(
       bridge: bridge,
       groupRepo: groupRepo,
@@ -154,14 +182,9 @@ void main() {
       senderUsername: 'Alice',
     );
 
-    // commandLog should contain both group:publish AND group:inboxStore
+    // Both operations should run (order is non-deterministic due to parallelism)
     expect(bridge.commandLog, contains('group:publish'));
     expect(bridge.commandLog, contains('group:inboxStore'));
-
-    // group:inboxStore should come after group:publish
-    final publishIdx = bridge.commandLog.indexOf('group:publish');
-    final inboxIdx = bridge.commandLog.indexOf('group:inboxStore');
-    expect(inboxIdx, greaterThan(publishIdx));
   });
 
   test('send succeeds even if inbox store throws', () async {
@@ -251,5 +274,59 @@ void main() {
 
     expect(result, SendGroupMessageResult.error);
     expect(msgRepo.count, 0);
+  });
+
+  test('publish and inbox store run concurrently', () async {
+    final slowBridge = _SlowPublishBridge(
+      delay: const Duration(milliseconds: 200),
+    );
+    slowBridge.responses['group:publish'] = {
+      'ok': true,
+      'messageId': 'msg-123',
+    };
+
+    final stopwatch = Stopwatch()..start();
+    await sendGroupMessage(
+      bridge: slowBridge,
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      groupId: 'group-1',
+      text: 'Hello!',
+      senderPeerId: 'peer-1',
+      senderPublicKey: 'pk-1',
+      senderPrivateKey: 'sk-1',
+      senderUsername: 'Alice',
+    );
+    stopwatch.stop();
+
+    // If sequential: publish(200ms) + inboxStore(~0ms) > 200ms (plus overhead)
+    // If parallel: max(publish(200ms), inboxStore(~0ms)) ≈ 200ms
+    // Both should be present
+    expect(slowBridge.commandLog, contains('group:publish'));
+    expect(slowBridge.commandLog, contains('group:inboxStore'));
+
+    // Wall-clock should be under 400ms (sequential would be ~400ms+ with overhead)
+    expect(stopwatch.elapsedMilliseconds, lessThan(400));
+  });
+
+  test('inbox store runs even when publish fails', () async {
+    final failBridge = _FailPublishBridge();
+
+    final (result, _) = await sendGroupMessage(
+      bridge: failBridge,
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      groupId: 'group-1',
+      text: 'Hello!',
+      senderPeerId: 'peer-1',
+      senderPublicKey: 'pk-1',
+      senderPrivateKey: 'sk-1',
+      senderUsername: 'Alice',
+    );
+
+    expect(result, SendGroupMessageResult.error);
+    // inbox store should still have run despite publish failure
+    expect(failBridge.commandLog, contains('group:publish'));
+    expect(failBridge.commandLog, contains('group:inboxStore'));
   });
 }

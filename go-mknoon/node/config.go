@@ -23,7 +23,7 @@ const (
 
 	// Timeouts.
 	DialTimeout       = 15 * time.Second // Relay server connection
-	PeerDialTimeout   = 5 * time.Second  // Peer-to-peer dial
+	PeerDialTimeout   = 2 * time.Second  // Peer-to-peer dial
 	RelayProbeTimeout = 5 * time.Second  // Relay probe via circuit
 	SendTimeout       = 15 * time.Second
 	DiscoverTimeout = 10 * time.Second

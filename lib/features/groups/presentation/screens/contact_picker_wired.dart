@@ -192,32 +192,25 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
         },
       );
 
-      // 4. Send individual encrypted P2P invites
+      // 4. Send individual encrypted P2P invites in parallel
       final keyInfo = await widget.groupRepo.getLatestKey(widget.groupId);
       if (keyInfo != null) {
-        for (final contact in selectedContacts) {
-          if (!addedMembers.any((m) => m.peerId == contact.peerId)) continue;
-          try {
-            await sendGroupInvite(
-              p2pService: widget.p2pService,
-              bridge: widget.bridge,
-              recipientPeerId: contact.peerId,
-              recipientMlKemPublicKey: contact.mlKemPublicKey,
-              senderPeerId: identity.peerId,
-              senderUsername: identity.username ?? '',
-              groupId: widget.groupId,
-              groupKey: keyInfo.encryptedKey,
-              keyEpoch: keyInfo.keyGeneration,
-              groupConfig: groupConfig,
-            );
-          } catch (e) {
-            emitFlowEvent(
-              layer: 'FL',
-              event: 'CONTACT_PICKER_FL_INVITE_SEND_ERROR',
-              details: {'peerId': contact.peerId, 'error': e.toString()},
-            );
-          }
-        }
+        final recipients = selectedContacts
+            .where((c) => addedMembers.any((m) => m.peerId == c.peerId))
+            .map((c) => (peerId: c.peerId, mlKemPublicKey: c.mlKemPublicKey))
+            .toList();
+
+        await sendGroupInvitesInParallel(
+          p2pService: widget.p2pService,
+          bridge: widget.bridge,
+          senderPeerId: identity.peerId,
+          senderUsername: identity.username ?? '',
+          groupId: widget.groupId,
+          groupKey: keyInfo.encryptedKey,
+          keyEpoch: keyInfo.keyGeneration,
+          groupConfig: groupConfig,
+          recipients: recipients,
+        );
       } else {
         emitFlowEvent(
           layer: 'FL',

@@ -66,19 +66,33 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     return (SendGroupMessageResult.unauthorized, null);
   }
 
-  // 3. Publish via bridge (Go handles encryption + signing internally)
+  // 3. Publish + inbox store run concurrently (independent operations)
   final now = DateTime.now().toUtc();
+  final latestKey = await groupRepo.getLatestKey(groupId);
 
+  // Start both operations concurrently
+  final publishFuture = callGroupPublish(
+    bridge,
+    groupId: groupId,
+    text: text,
+    senderPeerId: senderPeerId,
+    senderPublicKey: senderPublicKey,
+    senderPrivateKey: senderPrivateKey,
+    senderUsername: senderUsername,
+  );
+  final inboxFuture = _safeInboxStore(
+    bridge: bridge,
+    groupId: groupId,
+    senderPeerId: senderPeerId,
+    senderUsername: senderUsername,
+    keyEpoch: latestKey?.keyGeneration ?? 0,
+    text: text,
+    timestamp: now,
+  );
+
+  // Await publish — determines success/failure
   try {
-    final result = await callGroupPublish(
-      bridge,
-      groupId: groupId,
-      text: text,
-      senderPeerId: senderPeerId,
-      senderPublicKey: senderPublicKey,
-      senderPrivateKey: senderPrivateKey,
-      senderUsername: senderUsername,
-    );
+    final result = await publishFuture;
 
     if (result['ok'] != true) {
       emitFlowEvent(
@@ -86,6 +100,7 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
         event: 'GROUP_SEND_MSG_USE_CASE_PUBLISH_ERROR',
         details: {'errorCode': result['errorCode']},
       );
+      await inboxFuture;
       return (SendGroupMessageResult.error, null);
     }
   } catch (e) {
@@ -94,28 +109,12 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
       event: 'GROUP_SEND_MSG_USE_CASE_ERROR',
       details: {'error': e.toString()},
     );
+    await inboxFuture;
     return (SendGroupMessageResult.error, null);
   }
 
-  // 4. Fire-and-forget: store message in relay inbox for offline members
-  final latestKey = await groupRepo.getLatestKey(groupId);
-  try {
-    final inboxPayload = jsonEncode({
-      'groupId': groupId,
-      'senderId': senderPeerId,
-      'senderUsername': senderUsername,
-      'keyEpoch': latestKey?.keyGeneration ?? 0,
-      'text': text,
-      'timestamp': now.toIso8601String(),
-    });
-    await callGroupInboxStore(bridge, groupId, inboxPayload);
-  } catch (e) {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'GROUP_SEND_MSG_INBOX_STORE_FAILED',
-      details: {'error': e.toString()},
-    );
-  }
+  // Await inbox store (already completed or nearly done)
+  await inboxFuture;
 
   // 5. Create GroupMessage (isIncoming: false, status: 'sent')
   final messageId = const Uuid().v4();
@@ -145,4 +144,33 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
   );
 
   return (SendGroupMessageResult.success, message);
+}
+
+/// Wraps [callGroupInboxStore] in try/catch so failures don't propagate.
+Future<void> _safeInboxStore({
+  required Bridge bridge,
+  required String groupId,
+  required String senderPeerId,
+  required String senderUsername,
+  required int keyEpoch,
+  required String text,
+  required DateTime timestamp,
+}) async {
+  try {
+    final inboxPayload = jsonEncode({
+      'groupId': groupId,
+      'senderId': senderPeerId,
+      'senderUsername': senderUsername,
+      'keyEpoch': keyEpoch,
+      'text': text,
+      'timestamp': timestamp.toIso8601String(),
+    });
+    await callGroupInboxStore(bridge, groupId, inboxPayload);
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_SEND_MSG_INBOX_STORE_FAILED',
+      details: {'error': e.toString()},
+    );
+  }
 }
