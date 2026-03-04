@@ -6,6 +6,7 @@ import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 
 import '../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
+import '../../../shared/fakes/in_memory_media_attachment_repository.dart';
 
 void main() {
   late InMemoryGroupRepository groupRepo;
@@ -172,5 +173,144 @@ void main() {
     ); // different time
 
     expect(msgRepo.count, 3); // all unique
+  });
+
+  // ---------------------------------------------------------------------------
+  // Media attachment tests
+  // ---------------------------------------------------------------------------
+  group('media attachments', () {
+    late InMemoryMediaAttachmentRepository mediaRepo;
+
+    setUp(() {
+      mediaRepo = InMemoryMediaAttachmentRepository();
+    });
+
+    test('saves media attachments when media list provided', () async {
+      final media = [
+        {
+          'id': 'blob-1',
+          'mime': 'image/jpeg',
+          'size': 12345,
+          'mediaType': 'image',
+          'downloadStatus': 'pending',
+          'createdAt': DateTime.now().toUtc().toIso8601String(),
+        },
+      ];
+
+      final result = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 0,
+        text: 'Check this out',
+        timestamp: DateTime.now().toUtc().toIso8601String(),
+        media: media,
+        mediaAttachmentRepo: mediaRepo,
+      );
+
+      expect(result, isNotNull);
+      expect(mediaRepo.count, 1);
+
+      // Verify attachment has the message's ID
+      final attachments =
+          await mediaRepo.getAttachmentsForMessage(result!.id);
+      expect(attachments.length, 1);
+      expect(attachments.first.mime, 'image/jpeg');
+    });
+
+    test('creates MediaAttachment with downloadStatus pending', () async {
+      final media = [
+        {
+          'id': 'blob-2',
+          'mime': 'audio/mp4',
+          'size': 5000,
+          'mediaType': 'audio',
+          'downloadStatus': 'pending',
+          'createdAt': DateTime.now().toUtc().toIso8601String(),
+        },
+      ];
+
+      final result = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 0,
+        text: 'Voice note',
+        timestamp: DateTime.now().toUtc().toIso8601String(),
+        media: media,
+        mediaAttachmentRepo: mediaRepo,
+      );
+
+      expect(result, isNotNull);
+      final pending = await mediaRepo.getPendingDownloads();
+      expect(pending.length, 1);
+      expect(pending.first.downloadStatus, 'pending');
+    });
+
+    test('handles message without media (backward compat)', () async {
+      final result = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 0,
+        text: 'Plain text',
+        timestamp: DateTime.now().toUtc().toIso8601String(),
+        mediaAttachmentRepo: mediaRepo,
+      );
+
+      expect(result, isNotNull);
+      expect(mediaRepo.count, 0);
+    });
+
+    test('ignores duplicate messages — does not re-save media', () async {
+      final ts = DateTime.now().toUtc().toIso8601String();
+      final media = [
+        {
+          'id': 'blob-dup',
+          'mime': 'image/png',
+          'size': 1000,
+          'mediaType': 'image',
+          'downloadStatus': 'pending',
+          'createdAt': ts,
+        },
+      ];
+
+      await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 0,
+        text: 'Duplicate test',
+        timestamp: ts,
+        media: media,
+        mediaAttachmentRepo: mediaRepo,
+      );
+
+      // Second call with same content — should be duplicate
+      final result2 = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 0,
+        text: 'Duplicate test',
+        timestamp: ts,
+        media: media,
+        mediaAttachmentRepo: mediaRepo,
+      );
+
+      expect(result2, isNull); // duplicate
+      expect(mediaRepo.count, 1); // only saved once
+    });
+
   });
 }

@@ -5,6 +5,8 @@ import 'package:uuid/uuid.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
@@ -35,6 +37,8 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
   required String senderPublicKey,
   required String senderPrivateKey,
   required String senderUsername,
+  List<MediaAttachment>? mediaAttachments,
+  MediaAttachmentRepository? mediaAttachmentRepo,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -70,6 +74,8 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
   final now = DateTime.now().toUtc();
   final latestKey = await groupRepo.getLatestKey(groupId);
 
+  final mediaJson = mediaAttachments?.map((a) => a.toJson()).toList();
+
   // Start both operations concurrently
   final publishFuture = callGroupPublish(
     bridge,
@@ -79,6 +85,7 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     senderPublicKey: senderPublicKey,
     senderPrivateKey: senderPrivateKey,
     senderUsername: senderUsername,
+    media: mediaJson,
   );
   final inboxFuture = _safeInboxStore(
     bridge: bridge,
@@ -88,6 +95,7 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     keyEpoch: latestKey?.keyGeneration ?? 0,
     text: text,
     timestamp: now,
+    media: mediaJson,
   );
 
   // Await publish — determines success/failure
@@ -135,6 +143,15 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
   // 6. Save to repo
   await msgRepo.saveMessage(message);
 
+  // 7. Save media attachments with resolved messageId
+  if (mediaAttachments != null && mediaAttachmentRepo != null) {
+    for (final a in mediaAttachments) {
+      await mediaAttachmentRepo.saveAttachment(
+        a.copyWith(messageId: messageId),
+      );
+    }
+  }
+
   emitFlowEvent(
     layer: 'FL',
     event: 'GROUP_SEND_MSG_USE_CASE_SUCCESS',
@@ -155,6 +172,7 @@ Future<void> _safeInboxStore({
   required int keyEpoch,
   required String text,
   required DateTime timestamp,
+  List<Map<String, dynamic>>? media,
 }) async {
   try {
     final inboxPayload = jsonEncode({
@@ -164,6 +182,7 @@ Future<void> _safeInboxStore({
       'keyEpoch': keyEpoch,
       'text': text,
       'timestamp': timestamp.toIso8601String(),
+      if (media != null && media.isNotEmpty) 'media': media,
     });
     await callGroupInboxStore(bridge, groupId, inboxPayload);
   } catch (e) {

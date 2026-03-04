@@ -692,7 +692,7 @@ func cmdMediaUpload(params map[string]interface{}) map[string]interface{} {
 	if id == "" || toPeerId == "" || mime == "" || filePath == "" {
 		return errResult("missing id, toPeerId, mime, or filePath")
 	}
-	if err := state.node.MediaUpload(id, toPeerId, mime, filePath); err != nil {
+	if err := state.node.MediaUpload(id, toPeerId, mime, filePath, nil); err != nil {
 		return errResult(fmt.Sprintf("media upload: %v", err))
 	}
 	return okResult(map[string]interface{}{

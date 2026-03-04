@@ -878,10 +878,11 @@ func MediaUpload(paramsJSON string) (result string) {
 	}
 
 	var params struct {
-		ID       string `json:"id"`
-		To       string `json:"to"`
-		Mime     string `json:"mime"`
-		FilePath string `json:"filePath"`
+		ID           string   `json:"id"`
+		To           string   `json:"to"`
+		Mime         string   `json:"mime"`
+		FilePath     string   `json:"filePath"`
+		AllowedPeers []string `json:"allowedPeers,omitempty"`
 	}
 	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
 		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
@@ -890,7 +891,7 @@ func MediaUpload(paramsJSON string) (result string) {
 		return errJSON("INVALID_INPUT", "missing id, to, or filePath")
 	}
 
-	if err := n.MediaUpload(params.ID, params.To, params.Mime, params.FilePath); err != nil {
+	if err := n.MediaUpload(params.ID, params.To, params.Mime, params.FilePath, params.AllowedPeers); err != nil {
 		return errJSON("MEDIA_ERROR", err.Error())
 	}
 
@@ -1313,12 +1314,13 @@ func GroupPublish(paramsJSON string) (result string) {
 	}
 
 	var params struct {
-		GroupId          string `json:"groupId"`
-		Text             string `json:"text"`
-		SenderPeerId     string `json:"senderPeerId"`
-		SenderPublicKey  string `json:"senderPublicKey"`
-		SenderPrivateKey string `json:"senderPrivateKey"`
-		SenderUsername   string `json:"senderUsername"`
+		GroupId          string                   `json:"groupId"`
+		Text             string                   `json:"text"`
+		SenderPeerId     string                   `json:"senderPeerId"`
+		SenderPublicKey  string                   `json:"senderPublicKey"`
+		SenderPrivateKey string                   `json:"senderPrivateKey"`
+		SenderUsername   string                   `json:"senderUsername"`
+		Media            []map[string]interface{} `json:"media,omitempty"`
 	}
 	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
 		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
@@ -1329,6 +1331,13 @@ func GroupPublish(paramsJSON string) (result string) {
 		return errJSON("INVALID_INPUT", "missing groupId, text, senderPeerId, senderPublicKey, or senderPrivateKey")
 	}
 
+	var opts map[string]interface{}
+	if len(params.Media) > 0 {
+		opts = map[string]interface{}{
+			"media": params.Media,
+		}
+	}
+
 	msgId, err := n.PublishGroupMessage(
 		params.GroupId,
 		params.SenderPrivateKey,
@@ -1336,7 +1345,7 @@ func GroupPublish(paramsJSON string) (result string) {
 		params.SenderPublicKey,
 		params.SenderUsername,
 		params.Text,
-		nil,
+		opts,
 	)
 	if err != nil {
 		return errJSON("GROUP_ERROR", err.Error())

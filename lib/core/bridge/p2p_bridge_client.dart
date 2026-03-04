@@ -474,6 +474,7 @@ Future<Map<String, dynamic>> callP2PMediaUpload(
   required String toPeerId,
   required String mime,
   required String filePath,
+  List<String>? allowedPeers,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -488,6 +489,8 @@ Future<Map<String, dynamic>> callP2PMediaUpload(
       'to': toPeerId,
       'mime': mime,
       'filePath': filePath,
+      if (allowedPeers != null && allowedPeers.isNotEmpty)
+        'allowedPeers': allowedPeers,
     },
   };
 

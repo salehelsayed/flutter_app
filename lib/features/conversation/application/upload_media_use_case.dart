@@ -27,6 +27,7 @@ Future<MediaAttachment?> uploadMedia({
   int? height,
   int? durationMs,
   List<double>? waveform,
+  List<String>? allowedPeers,
 }) async {
   final blobId = _uuid.v4();
 
@@ -52,6 +53,7 @@ Future<MediaAttachment?> uploadMedia({
       toPeerId: recipientPeerId,
       mime: mime,
       filePath: localFilePath,
+      allowedPeers: allowedPeers,
     );
 
     if (result['ok'] != true) {

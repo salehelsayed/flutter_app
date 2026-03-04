@@ -27,12 +27,13 @@ const (
 // --- Media metadata ---
 
 type mediaMeta struct {
-	ID        string `json:"id"`
-	From      string `json:"from"`
-	To        string `json:"to"`
-	Mime      string `json:"mime"`
-	Size      int64  `json:"size"`
-	CreatedAt int64  `json:"created_at"`
+	ID           string   `json:"id"`
+	From         string   `json:"from"`
+	To           string   `json:"to"`
+	Mime         string   `json:"mime"`
+	Size         int64    `json:"size"`
+	CreatedAt    int64    `json:"created_at"`
+	AllowedPeers []string `json:"allowed_peers,omitempty"`
 }
 
 // --- Media store ---
@@ -216,12 +217,13 @@ func (ms *MediaStore) blobPath(to, id string) string {
 // --- Request/response types ---
 
 type mediaRequest struct {
-	Action string `json:"action"`
-	ID     string `json:"id,omitempty"`
-	To     string `json:"to,omitempty"`
-	Owner  string `json:"owner,omitempty"` // for profile_download
-	Size   int64  `json:"size,omitempty"`
-	Mime   string `json:"mime,omitempty"`
+	Action       string   `json:"action"`
+	ID           string   `json:"id,omitempty"`
+	To           string   `json:"to,omitempty"`
+	Owner        string   `json:"owner,omitempty"` // for profile_download
+	Size         int64    `json:"size,omitempty"`
+	Mime         string   `json:"mime,omitempty"`
+	AllowedPeers []string `json:"allowedPeers,omitempty"`
 }
 
 type mediaResponse struct {
@@ -332,12 +334,13 @@ func handleMediaUpload(s network.Stream, media *MediaStore, remotePeer string, r
 	}
 
 	meta := &mediaMeta{
-		ID:        req.ID,
-		From:      remotePeer,
-		To:        req.To,
-		Mime:      req.Mime,
-		Size:      req.Size,
-		CreatedAt: time.Now().UnixMilli(),
+		ID:           req.ID,
+		From:         remotePeer,
+		To:           req.To,
+		Mime:         req.Mime,
+		Size:         req.Size,
+		CreatedAt:    time.Now().UnixMilli(),
+		AllowedPeers: req.AllowedPeers,
 	}
 	media.store(meta)
 	mediaUploadedCounter.Inc()
@@ -360,9 +363,18 @@ func handleMediaDownload(s network.Stream, media *MediaStore, remotePeer string,
 		return
 	}
 
-	if meta.To != remotePeer {
-		writeMediaResponse(s, mediaResponse{Status: "ERROR", Error: "not authorized"})
-		return
+	// Authorization check: group mode (AllowedPeers) vs 1:1 mode (To)
+	isGroupMode := len(meta.AllowedPeers) > 0
+	if isGroupMode {
+		if !containsPeer(meta.AllowedPeers, remotePeer) {
+			writeMediaResponse(s, mediaResponse{Status: "ERROR", Error: "not authorized"})
+			return
+		}
+	} else {
+		if meta.To != remotePeer {
+			writeMediaResponse(s, mediaResponse{Status: "ERROR", Error: "not authorized"})
+			return
+		}
 	}
 
 	// Send metadata response first
@@ -391,11 +403,13 @@ func handleMediaDownload(s network.Stream, media *MediaStore, remotePeer string,
 	mediaDownloadedBytesCounter.Add(float64(written))
 	log.Printf("[MEDIA] Downloaded blob %s (%d bytes) to %s", req.ID, written, remotePeer[:min(20, len(remotePeer))])
 
-	// Auto-delete after successful download — server is a dumb pipe, not storage
-	mediaDeletedCounter.WithLabelValues("auto_download").Inc()
-	mediaDeletedBytesCounter.WithLabelValues("auto_download").Add(float64(meta.Size))
-	media.remove(req.ID)
-	log.Printf("[MEDIA] Auto-deleted blob %s after download", req.ID)
+	// Auto-delete after download — but NOT for group blobs (other members still need it)
+	if !isGroupMode {
+		mediaDeletedCounter.WithLabelValues("auto_download").Inc()
+		mediaDeletedBytesCounter.WithLabelValues("auto_download").Add(float64(meta.Size))
+		media.remove(req.ID)
+		log.Printf("[MEDIA] Auto-deleted blob %s after download", req.ID)
+	}
 }
 
 func handleMediaDelete(s network.Stream, media *MediaStore, remotePeer string, req *mediaRequest) {
@@ -410,9 +424,16 @@ func handleMediaDelete(s network.Stream, media *MediaStore, remotePeer string, r
 		return
 	}
 
-	if meta.To != remotePeer {
-		writeMediaResponse(s, mediaResponse{Status: "ERROR", Error: "not authorized"})
-		return
+	if len(meta.AllowedPeers) > 0 {
+		if !containsPeer(meta.AllowedPeers, remotePeer) {
+			writeMediaResponse(s, mediaResponse{Status: "ERROR", Error: "not authorized"})
+			return
+		}
+	} else {
+		if meta.To != remotePeer {
+			writeMediaResponse(s, mediaResponse{Status: "ERROR", Error: "not authorized"})
+			return
+		}
 	}
 
 	mediaDeletedCounter.WithLabelValues("explicit").Inc()
@@ -426,6 +447,15 @@ func handleMediaList(s network.Stream, media *MediaStore, remotePeer string) {
 	blobs := media.listForPeer(remotePeer)
 	writeMediaResponse(s, mediaResponse{Status: "OK", Blobs: blobs})
 	log.Printf("[MEDIA] Listed %d blob(s) for %s", len(blobs), remotePeer[:min(20, len(remotePeer))])
+}
+
+func containsPeer(peers []string, target string) bool {
+	for _, p := range peers {
+		if p == target {
+			return true
+		}
+	}
+	return false
 }
 
 func writeMediaResponse(s network.Stream, resp mediaResponse) {

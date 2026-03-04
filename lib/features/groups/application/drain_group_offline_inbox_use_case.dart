@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
@@ -16,6 +17,7 @@ Future<void> drainGroupOfflineInbox({
   required Bridge bridge,
   required GroupRepository groupRepo,
   required GroupMessageRepository msgRepo,
+  MediaAttachmentRepository? mediaAttachmentRepo,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -33,6 +35,9 @@ Future<void> drainGroupOfflineInbox({
         // The relay returns {from, message, timestamp} where `message`
         // is a JSON-encoded string with the actual message payload.
         final payload = _decodeInboxMessage(msg, group.id);
+        final mediaRaw = payload['media'] as List<dynamic>?;
+        final media = mediaRaw?.cast<Map<String, dynamic>>();
+
         await handleIncomingGroupMessage(
           groupRepo: groupRepo,
           msgRepo: msgRepo,
@@ -43,6 +48,8 @@ Future<void> drainGroupOfflineInbox({
           text: payload['text'] as String? ?? '',
           timestamp: payload['timestamp'] as String? ??
               DateTime.now().toUtc().toIso8601String(),
+          media: media,
+          mediaAttachmentRepo: mediaAttachmentRepo,
         );
       }
 

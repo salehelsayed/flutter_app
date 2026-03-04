@@ -1,6 +1,8 @@
 import 'package:uuid/uuid.dart';
 
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
@@ -19,6 +21,8 @@ Future<GroupMessage?> handleIncomingGroupMessage({
   required int keyEpoch,
   required String text,
   required String timestamp,
+  List<Map<String, dynamic>>? media,
+  MediaAttachmentRepository? mediaAttachmentRepo,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -97,6 +101,15 @@ Future<GroupMessage?> handleIncomingGroupMessage({
 
   // 6. Save to repo
   await msgRepo.saveMessage(message);
+
+  // 7. Save media attachments (pending for relay download)
+  if (media != null && mediaAttachmentRepo != null) {
+    for (final m in media) {
+      final attachment = MediaAttachment.fromJson(m)
+          .copyWith(messageId: messageId);
+      await mediaAttachmentRepo.saveAttachment(attachment);
+    }
+  }
 
   emitFlowEvent(
     layer: 'FL',
