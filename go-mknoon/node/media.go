@@ -15,12 +15,13 @@ import (
 // --- Types (mirror relay server) ---
 
 type mediaRequest struct {
-	Action string `json:"action"`
-	ID     string `json:"id,omitempty"`
-	To     string `json:"to,omitempty"`
-	Owner  string `json:"owner,omitempty"` // for profile_download
-	Size   int64  `json:"size,omitempty"`
-	Mime   string `json:"mime,omitempty"`
+	Action       string   `json:"action"`
+	ID           string   `json:"id,omitempty"`
+	To           string   `json:"to,omitempty"`
+	Owner        string   `json:"owner,omitempty"` // for profile_download
+	Size         int64    `json:"size,omitempty"`
+	Mime         string   `json:"mime,omitempty"`
+	AllowedPeers []string `json:"allowedPeers,omitempty"`
 }
 
 type mediaResponse struct {
@@ -102,7 +103,7 @@ func sendMediaRequest(s network.Stream, req *mediaRequest) (*mediaResponse, erro
 // --- Public methods ---
 
 // MediaUpload uploads a file to the relay's media store.
-func (n *Node) MediaUpload(id, toPeerId, mime, filePath string) error {
+func (n *Node) MediaUpload(id, toPeerId, mime, filePath string, allowedPeers []string) error {
 	s, cancel, err := n.openMediaStream()
 	if err != nil {
 		return err
@@ -124,11 +125,12 @@ func (n *Node) MediaUpload(id, toPeerId, mime, filePath string) error {
 
 	// Send upload request
 	resp, err := sendMediaRequest(s, &mediaRequest{
-		Action: "upload",
-		ID:     id,
-		To:     toPeerId,
-		Size:   fi.Size(),
-		Mime:   mime,
+		Action:       "upload",
+		ID:           id,
+		To:           toPeerId,
+		Size:         fi.Size(),
+		Mime:         mime,
+		AllowedPeers: allowedPeers,
 	})
 	if err != nil {
 		return fmt.Errorf("upload request: %w", err)

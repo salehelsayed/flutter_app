@@ -144,6 +144,40 @@ func (env *testEnv) upload(t *testing.T, from host.Host, blobID, toStr, mime str
 	}
 }
 
+// uploadWithAllowedPeers opens a stream, uploads a blob with allowedPeers, and waits for OK.
+func (env *testEnv) uploadWithAllowedPeers(t *testing.T, from host.Host, blobID, toStr, mime string, data []byte, allowedPeers []string) {
+	t.Helper()
+
+	s, err := from.NewStream(context.Background(), env.server.ID(), MediaProtocol)
+	if err != nil {
+		t.Fatalf("open upload stream: %v", err)
+	}
+	defer s.Close()
+
+	sendMediaReq(t, s, mediaRequest{
+		Action:       "upload",
+		ID:           blobID,
+		To:           toStr,
+		Size:         int64(len(data)),
+		Mime:         mime,
+		AllowedPeers: allowedPeers,
+	})
+
+	resp := recvMediaResp(t, s)
+	if resp.Status != "READY" {
+		t.Fatalf("upload %s: expected READY, got %s: %s", blobID, resp.Status, resp.Error)
+	}
+
+	if _, err := s.Write(data); err != nil {
+		t.Fatalf("write blob data: %v", err)
+	}
+
+	resp = recvMediaResp(t, s)
+	if resp.Status != "OK" {
+		t.Fatalf("upload %s: expected OK, got %s: %s", blobID, resp.Status, resp.Error)
+	}
+}
+
 // --- Smoke tests ---
 
 // TestUploadDownloadAutoDelete verifies the core happy path:
@@ -536,5 +570,184 @@ func TestDownloadAfterAutoDeleteReturnsNotFound(t *testing.T) {
 
 	if resp2.Status != "ERROR" || resp2.Error != "not found" {
 		t.Fatalf("second download: expected 'not found', got status=%s error=%s", resp2.Status, resp2.Error)
+	}
+}
+
+// --- Group media tests (AllowedPeers) ---
+
+// TestGroupMediaUploadDownload verifies that uploading with allowedPeers
+// allows listed peers to download and rejects unlisted peers.
+func TestGroupMediaUploadDownload(t *testing.T) {
+	env := setupTestEnv(t)
+	recipientStr := env.recipient.ID().String()
+	intruderStr := env.intruder.ID().String()
+
+	// Upload with allowedPeers containing recipient and sender (but not intruder)
+	data := make([]byte, 1024)
+	rand.Read(data)
+
+	allowedPeers := []string{recipientStr, env.sender.ID().String()}
+	env.uploadWithAllowedPeers(t, env.sender, "group-blob-1", "group-id-1", "image/jpeg", data, allowedPeers)
+
+	// Recipient can download
+	s, err := env.recipient.NewStream(context.Background(), env.server.ID(), MediaProtocol)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sendMediaReq(t, s, mediaRequest{Action: "download", ID: "group-blob-1"})
+	resp := recvMediaResp(t, s)
+	if resp.Status != "OK" {
+		t.Fatalf("recipient download: expected OK, got %s: %s", resp.Status, resp.Error)
+	}
+	downloaded := make([]byte, resp.Size)
+	io.ReadFull(s, downloaded)
+	s.Close()
+
+	if !bytes.Equal(data, downloaded) {
+		t.Fatal("downloaded data does not match uploaded data")
+	}
+
+	// Intruder cannot download
+	s2, err := env.intruder.NewStream(context.Background(), env.server.ID(), MediaProtocol)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sendMediaReq(t, s2, mediaRequest{Action: "download", ID: "group-blob-1"})
+	resp2 := recvMediaResp(t, s2)
+	s2.Close()
+
+	if resp2.Status != "ERROR" || resp2.Error != "not authorized" {
+		t.Fatalf("intruder download: expected 'not authorized', got status=%s error=%s", resp2.Status, resp2.Error)
+	}
+
+	_ = intruderStr // suppress unused
+}
+
+// TestGroupMediaNoAutoDelete verifies that group blobs (with AllowedPeers)
+// are NOT auto-deleted after the first download.
+func TestGroupMediaNoAutoDelete(t *testing.T) {
+	env := setupTestEnv(t)
+	recipientStr := env.recipient.ID().String()
+	senderStr := env.sender.ID().String()
+
+	data := make([]byte, 512)
+	rand.Read(data)
+
+	allowedPeers := []string{recipientStr, senderStr}
+	env.uploadWithAllowedPeers(t, env.sender, "group-persist", "group-id-2", "audio/aac", data, allowedPeers)
+
+	// First download by recipient
+	s, err := env.recipient.NewStream(context.Background(), env.server.ID(), MediaProtocol)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sendMediaReq(t, s, mediaRequest{Action: "download", ID: "group-persist"})
+	resp := recvMediaResp(t, s)
+	if resp.Status != "OK" {
+		t.Fatalf("first download: expected OK, got %s: %s", resp.Status, resp.Error)
+	}
+	buf := make([]byte, resp.Size)
+	io.ReadFull(s, buf)
+	s.Close()
+
+	// Blob should still exist (no auto-delete for group)
+	time.Sleep(200 * time.Millisecond)
+	if meta := env.media.lookup("group-persist"); meta == nil {
+		t.Fatal("group blob should NOT be auto-deleted after download")
+	}
+
+	// Second download by sender — should still succeed
+	s2, err := env.sender.NewStream(context.Background(), env.server.ID(), MediaProtocol)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sendMediaReq(t, s2, mediaRequest{Action: "download", ID: "group-persist"})
+	resp2 := recvMediaResp(t, s2)
+	if resp2.Status != "OK" {
+		t.Fatalf("second download: expected OK, got %s: %s", resp2.Status, resp2.Error)
+	}
+	buf2 := make([]byte, resp2.Size)
+	io.ReadFull(s2, buf2)
+	s2.Close()
+
+	if !bytes.Equal(data, buf2) {
+		t.Fatal("second download data does not match")
+	}
+}
+
+// TestGroupMediaUnauthorizedPeer verifies that a peer NOT in allowedPeers
+// cannot download a group blob.
+func TestGroupMediaUnauthorizedPeer(t *testing.T) {
+	env := setupTestEnv(t)
+	recipientStr := env.recipient.ID().String()
+
+	data := make([]byte, 256)
+	rand.Read(data)
+
+	// Only recipient is allowed — intruder is NOT
+	allowedPeers := []string{recipientStr}
+	env.uploadWithAllowedPeers(t, env.sender, "group-secret", "group-id-3", "image/png", data, allowedPeers)
+
+	// Intruder tries to download
+	s, err := env.intruder.NewStream(context.Background(), env.server.ID(), MediaProtocol)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sendMediaReq(t, s, mediaRequest{Action: "download", ID: "group-secret"})
+	resp := recvMediaResp(t, s)
+	s.Close()
+
+	if resp.Status != "ERROR" || resp.Error != "not authorized" {
+		t.Fatalf("expected 'not authorized', got status=%s error=%s", resp.Status, resp.Error)
+	}
+
+	// Blob should still exist for authorized recipient
+	if meta := env.media.lookup("group-secret"); meta == nil {
+		t.Fatal("blob should still exist after unauthorized download attempt")
+	}
+}
+
+// TestBackwardCompat verifies that uploads WITHOUT allowedPeers still
+// behave the same (1:1 mode with auto-delete).
+func TestBackwardCompat(t *testing.T) {
+	env := setupTestEnv(t)
+	recipientStr := env.recipient.ID().String()
+
+	data := make([]byte, 256)
+	rand.Read(data)
+
+	// Upload without allowedPeers (1:1 mode)
+	env.upload(t, env.sender, "compat-blob", recipientStr, "image/jpeg", data)
+
+	// Download — should succeed
+	s, err := env.recipient.NewStream(context.Background(), env.server.ID(), MediaProtocol)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sendMediaReq(t, s, mediaRequest{Action: "download", ID: "compat-blob"})
+	resp := recvMediaResp(t, s)
+	if resp.Status != "OK" {
+		t.Fatalf("download: expected OK, got %s: %s", resp.Status, resp.Error)
+	}
+	buf := make([]byte, resp.Size)
+	io.ReadFull(s, buf)
+	s.Close()
+
+	// Should auto-delete (1:1 mode)
+	waitFor(t, 2*time.Second, func() bool {
+		return env.media.lookup("compat-blob") == nil
+	}, "blob should be auto-deleted after 1:1 download")
+
+	// Second download should fail
+	s2, err := env.recipient.NewStream(context.Background(), env.server.ID(), MediaProtocol)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sendMediaReq(t, s2, mediaRequest{Action: "download", ID: "compat-blob"})
+	resp2 := recvMediaResp(t, s2)
+	s2.Close()
+
+	if resp2.Status != "ERROR" || resp2.Error != "not found" {
+		t.Fatalf("expected 'not found' after auto-delete, got status=%s error=%s", resp2.Status, resp2.Error)
 	}
 }

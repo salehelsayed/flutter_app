@@ -3,7 +3,10 @@ import 'dart:convert';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
+import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/conversation/application/download_media_use_case.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/application/leave_group_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
@@ -29,6 +32,8 @@ class GroupMessageListener {
   final GroupMessageRepository _msgRepo;
   final Bridge? _bridge;
   final Future<String?> Function()? _getSelfPeerId;
+  final MediaAttachmentRepository? _mediaAttachmentRepo;
+  final MediaFileManager? _mediaFileManager;
 
   StreamSubscription<Map<String, dynamic>>? _subscription;
   final _messageController = StreamController<GroupMessage>.broadcast();
@@ -39,10 +44,14 @@ class GroupMessageListener {
     required GroupMessageRepository msgRepo,
     Bridge? bridge,
     Future<String?> Function()? getSelfPeerId,
+    MediaAttachmentRepository? mediaAttachmentRepo,
+    MediaFileManager? mediaFileManager,
   })  : _groupRepo = groupRepo,
         _msgRepo = msgRepo,
         _bridge = bridge,
-        _getSelfPeerId = getSelfPeerId;
+        _getSelfPeerId = getSelfPeerId,
+        _mediaAttachmentRepo = mediaAttachmentRepo,
+        _mediaFileManager = mediaFileManager;
 
   /// Stream of new incoming group messages for the UI to listen to.
   Stream<GroupMessage> get groupMessageStream => _messageController.stream;
@@ -104,6 +113,9 @@ class GroupMessageListener {
         return;
       }
 
+      final mediaRaw = data['media'] as List<dynamic>?;
+      final media = mediaRaw?.cast<Map<String, dynamic>>();
+
       final result = await handleIncomingGroupMessage(
         groupRepo: _groupRepo,
         msgRepo: _msgRepo,
@@ -113,16 +125,77 @@ class GroupMessageListener {
         keyEpoch: keyEpoch,
         text: text,
         timestamp: timestamp,
+        media: media,
+        mediaAttachmentRepo: _mediaAttachmentRepo,
       );
 
       if (result != null) {
         _messageController.add(result);
+
+        // Fire-and-forget: auto-download media attachments
+        if (_bridge != null &&
+            _mediaAttachmentRepo != null &&
+            _mediaFileManager != null &&
+            media != null &&
+            media.isNotEmpty) {
+          _autoDownloadMedia(result);
+        }
       }
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
         event: 'GROUP_MESSAGE_LISTENER_ERROR',
         details: {'error': e.toString()},
+      );
+    }
+  }
+
+  /// Downloads media attachments for an incoming group message.
+  ///
+  /// Runs fire-and-forget after the message is emitted. On completion,
+  /// re-emits the message so the UI can update with resolved local paths.
+  Future<void> _autoDownloadMedia(GroupMessage message) async {
+    try {
+      final attachments =
+          await _mediaAttachmentRepo!.getAttachmentsForMessage(message.id);
+      if (attachments.isEmpty) return;
+
+      for (final attachment in attachments) {
+        if (attachment.downloadStatus != 'pending') continue;
+        try {
+          await downloadMedia(
+            bridge: _bridge!,
+            mediaAttachmentRepo: _mediaAttachmentRepo!,
+            mediaFileManager: _mediaFileManager!,
+            attachment: attachment,
+            contactPeerId: message.groupId,
+          );
+        } catch (e) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'GROUP_LISTENER_DOWNLOAD_ERROR',
+            details: {
+              'blobId': attachment.id.length > 8
+                  ? attachment.id.substring(0, 8)
+                  : attachment.id,
+              'error': e.toString(),
+            },
+          );
+        }
+      }
+
+      // Re-emit so the UI refreshes with downloaded media
+      _messageController.add(message);
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_LISTENER_AUTO_DOWNLOAD_ERROR',
+        details: {
+          'messageId': message.id.length > 8
+              ? message.id.substring(0, 8)
+              : message.id,
+          'error': e.toString(),
+        },
       );
     }
   }
