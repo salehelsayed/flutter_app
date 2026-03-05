@@ -106,6 +106,9 @@ class StartupRouter extends StatefulWidget {
   /// The group invite listener for incoming group invites.
   final GroupInviteListener? groupInviteListener;
 
+  /// Tracks which group conversation is currently open (for notification suppression).
+  final ActiveConversationTracker? groupConversationTracker;
+
   const StartupRouter({
     super.key,
     required this.repository,
@@ -128,6 +131,7 @@ class StartupRouter extends StatefulWidget {
     this.groupMessageRepository,
     this.groupMessageListener,
     this.groupInviteListener,
+    this.groupConversationTracker,
   });
 
   @override
@@ -200,6 +204,7 @@ class _StartupRouterState extends State<StartupRouter> {
                 groupMessageRepository: widget.groupMessageRepository,
                 groupMessageListener: widget.groupMessageListener,
                 groupInviteListener: widget.groupInviteListener,
+                groupConversationTracker: widget.groupConversationTracker,
               ),
             ),
           );
@@ -237,6 +242,7 @@ class _StartupRouterState extends State<StartupRouter> {
             groupMessageRepository: widget.groupMessageRepository,
             groupMessageListener: widget.groupMessageListener,
             groupInviteListener: widget.groupInviteListener,
+            groupConversationTracker: widget.groupConversationTracker,
           );
           StartupTiming.instance.mark('route_pushed');
 
@@ -283,6 +289,7 @@ class _StartupRouterState extends State<StartupRouter> {
                         groupMessageRepository: widget.groupMessageRepository,
                         groupMessageListener: widget.groupMessageListener,
                         groupInviteListener: widget.groupInviteListener,
+                        groupConversationTracker: widget.groupConversationTracker,
                       ),
                     ),
                   );
@@ -479,6 +486,7 @@ class _StartupRouterState extends State<StartupRouter> {
     GroupMessageRepository? groupMessageRepository,
     GroupMessageListener? groupMessageListener,
     GroupInviteListener? groupInviteListener,
+    ActiveConversationTracker? groupConversationTracker,
   }) {
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(
@@ -503,6 +511,7 @@ class _StartupRouterState extends State<StartupRouter> {
           groupMessageRepository: groupMessageRepository,
           groupMessageListener: groupMessageListener,
           groupInviteListener: groupInviteListener,
+          groupConversationTracker: groupConversationTracker,
         ),
       ),
     );

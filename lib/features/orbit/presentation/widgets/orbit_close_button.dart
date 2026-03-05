@@ -1,7 +1,7 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
 
-/// 36x36 glass circle X button for closing the Orbit screen.
+/// 24x24 glass circle X button for closing the Orbit screen.
 class OrbitCloseButton extends StatelessWidget {
   final VoidCallback onTap;
 
@@ -15,8 +15,8 @@ class OrbitCloseButton extends StatelessWidget {
         child: BackdropFilter(
           filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
           child: Container(
-            width: 36,
-            height: 36,
+            width: 24,
+            height: 24,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
               color: const Color(0x1AFFFFFF), // rgba(255,255,255,0.1)
@@ -40,12 +40,12 @@ class _XPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
       ..color = const Color(0xCCFFFFFF) // rgba(255,255,255,0.8)
-      ..strokeWidth = 2.5
+      ..strokeWidth = 1.5
       ..strokeCap = StrokeCap.round;
 
-    // Center the X in the 36x36 container
-    const inset = 10.0;
-    const containerSize = 36.0;
+    // Center the X in the 24x24 container
+    const inset = 7.0;
+    const containerSize = 24.0;
     canvas.drawLine(
       const Offset(inset, inset),
       const Offset(containerSize - inset, containerSize - inset),

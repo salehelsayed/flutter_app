@@ -188,3 +188,66 @@ func TestMarshalParseGroupPayload_WithExtra(t *testing.T) {
 		t.Fatalf("MarshalGroupPayload output is not valid JSON: %v", err)
 	}
 }
+
+func TestGroupMessagePayloadWithMediaExtra(t *testing.T) {
+	media := []interface{}{
+		map[string]interface{}{
+			"id":   "blob-1",
+			"mime": "image/jpeg",
+			"size": float64(12345),
+		},
+		map[string]interface{}{
+			"id":        "blob-2",
+			"mime":      "audio/mp4",
+			"durationMs": float64(5000),
+		},
+	}
+
+	original := &GroupMessagePayload{
+		Text:      "Check this out",
+		Timestamp: "2026-03-03T10:00:00Z",
+		Username:  "alice",
+		Extra: map[string]interface{}{
+			"media": media,
+		},
+	}
+
+	data, err := MarshalGroupPayload(original)
+	if err != nil {
+		t.Fatalf("MarshalGroupPayload() error: %v", err)
+	}
+
+	parsed, err := ParseGroupPayload(data)
+	if err != nil {
+		t.Fatalf("ParseGroupPayload() error: %v", err)
+	}
+
+	if parsed.Extra == nil {
+		t.Fatal("Extra is nil after round-trip")
+	}
+
+	mediaRaw, ok := parsed.Extra["media"]
+	if !ok {
+		t.Fatal("Extra missing 'media' key")
+	}
+
+	mediaList, ok := mediaRaw.([]interface{})
+	if !ok {
+		t.Fatalf("Extra['media'] is %T, want []interface{}", mediaRaw)
+	}
+
+	if len(mediaList) != 2 {
+		t.Fatalf("media list has %d items, want 2", len(mediaList))
+	}
+
+	first, ok := mediaList[0].(map[string]interface{})
+	if !ok {
+		t.Fatalf("media[0] is %T, want map[string]interface{}", mediaList[0])
+	}
+	if first["id"] != "blob-1" {
+		t.Errorf("media[0].id = %v, want blob-1", first["id"])
+	}
+	if first["mime"] != "image/jpeg" {
+		t.Errorf("media[0].mime = %v, want image/jpeg", first["mime"])
+	}
+}

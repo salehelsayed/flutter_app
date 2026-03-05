@@ -62,6 +62,7 @@ class QRScannerWired extends StatelessWidget {
   final GroupMessageRepository? groupMessageRepository;
   final GroupMessageListener? groupMessageListener;
   final GroupInviteListener? groupInviteListener;
+  final ActiveConversationTracker? groupConversationTracker;
   final DownloadProfilePictureFn? downloadProfilePictureFn;
 
   const QRScannerWired({
@@ -87,6 +88,7 @@ class QRScannerWired extends StatelessWidget {
     this.groupMessageRepository,
     this.groupMessageListener,
     this.groupInviteListener,
+    this.groupConversationTracker,
     this.downloadProfilePictureFn,
   });
 
@@ -321,6 +323,7 @@ class QRScannerWired extends StatelessWidget {
                         groupMessageRepository: groupMessageRepository,
                         groupMessageListener: groupMessageListener,
                         groupInviteListener: groupInviteListener,
+                        groupConversationTracker: groupConversationTracker,
                       ),
                     ),
                     (route) => false,

@@ -38,6 +38,9 @@ abstract class GroupMessageRepository {
   /// Deletes a single message by ID.
   Future<void> deleteMessage(String id);
 
+  /// Deletes all messages for a group. Returns the number of deleted messages.
+  Future<int> deleteMessagesForGroup(String groupId);
+
   /// Returns true if a message with the same content already exists.
   Future<bool> existsByContent(
       String groupId, String senderPeerId, String text, DateTime timestamp);

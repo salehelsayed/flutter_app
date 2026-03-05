@@ -3,9 +3,14 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
+import 'package:flutter_app/core/media/audio_recorder_service.dart';
+import 'package:flutter_app/core/media/image_processor.dart';
+import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
@@ -15,6 +20,7 @@ import 'package:flutter_app/features/groups/domain/repositories/group_repository
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_list_screen.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
+import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 
 /// Wired widget connecting GroupListScreen to business logic.
 class GroupListWired extends StatefulWidget {
@@ -26,6 +32,13 @@ class GroupListWired extends StatefulWidget {
   final ContactRepository contactRepo;
   final P2PService p2pService;
   final GroupInviteListener? groupInviteListener;
+  final MediaAttachmentRepository? mediaAttachmentRepo;
+  final MediaFileManager? mediaFileManager;
+  final ImageProcessor? imageProcessor;
+  final ImageQualityPreference qualityPreference;
+  final ImageQualityPreference videoQualityPreference;
+  final AudioRecorderService? audioRecorderService;
+  final ActiveConversationTracker? groupConversationTracker;
 
   const GroupListWired({
     super.key,
@@ -37,6 +50,13 @@ class GroupListWired extends StatefulWidget {
     required this.contactRepo,
     required this.p2pService,
     this.groupInviteListener,
+    this.mediaAttachmentRepo,
+    this.mediaFileManager,
+    this.imageProcessor,
+    this.qualityPreference = ImageQualityPreference.compressed,
+    this.videoQualityPreference = ImageQualityPreference.compressed,
+    this.audioRecorderService,
+    this.groupConversationTracker,
   });
 
   @override
@@ -127,6 +147,13 @@ class _GroupListWiredState extends State<GroupListWired> {
           identityRepo: widget.identityRepo,
           contactRepo: widget.contactRepo,
           p2pService: widget.p2pService,
+          mediaAttachmentRepo: widget.mediaAttachmentRepo,
+          mediaFileManager: widget.mediaFileManager,
+          imageProcessor: widget.imageProcessor,
+          qualityPreference: widget.qualityPreference,
+          videoQualityPreference: widget.videoQualityPreference,
+          audioRecorderService: widget.audioRecorderService,
+          groupConversationTracker: widget.groupConversationTracker,
         ),
       ),
     ).then((_) => _loadGroups());

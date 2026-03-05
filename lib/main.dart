@@ -76,6 +76,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
 import 'package:flutter_app/features/conversation/presentation/navigation/conversation_route_transition.dart';
+import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/push/application/background_message_handler.dart';
 
@@ -348,6 +349,8 @@ void main() async {
     dbExistsGroupMessageByContent: (groupId, senderPeerId, text, timestamp) =>
         dbExistsGroupMessageByContent(
             db, groupId, senderPeerId, text, timestamp),
+    dbDeleteGroupMessagesForGroup: (groupId) =>
+        dbDeleteGroupMessagesForGroup(db, groupId),
   );
 
   // Create media file manager
@@ -393,10 +396,11 @@ void main() async {
     getOwnPrivateKey: () => secureKeyStore.read('identity_private_key'),
   );
 
-  // Create notification service and conversation tracker
+  // Create notification service and conversation trackers
   final notificationService = FlutterNotificationService();
   await notificationService.initialize();
   final conversationTracker = ActiveConversationTracker();
+  final groupConversationTracker = ActiveConversationTracker();
 
   // Create chat message listener
   final chatMessageListener = ChatMessageListener(
@@ -444,6 +448,12 @@ void main() async {
       final identity = await repository.loadIdentity();
       return identity?.peerId;
     },
+    mediaAttachmentRepo: mediaAttachmentRepository,
+    mediaFileManager: mediaFileManager,
+    notificationService: notificationService,
+    groupConversationTracker: groupConversationTracker,
+    getAppLifecycleState: () =>
+        WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.resumed,
   );
   final groupMessageStreamController =
       StreamController<Map<String, dynamic>>.broadcast();
@@ -549,6 +559,7 @@ void main() async {
       groupMessageListener: groupMessageListener,
       groupInviteListener: groupInviteListener,
       groupKeyUpdateListener: groupKeyUpdateListener,
+      groupConversationTracker: groupConversationTracker,
     ),
   );
   StartupTiming.instance.mark('run_app_called');
@@ -582,6 +593,7 @@ class MyApp extends StatefulWidget {
   final GroupMessageListener groupMessageListener;
   final GroupInviteListener groupInviteListener;
   final GroupKeyUpdateListener groupKeyUpdateListener;
+  final ActiveConversationTracker groupConversationTracker;
 
   static final navigatorKey = GlobalKey<NavigatorState>();
 
@@ -614,6 +626,7 @@ class MyApp extends StatefulWidget {
     required this.groupMessageListener,
     required this.groupInviteListener,
     required this.groupKeyUpdateListener,
+    required this.groupConversationTracker,
   }) : super(key: key);
 
   @override
@@ -635,9 +648,37 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     widget.notificationService.onNotificationTap = _onNotificationTap;
   }
 
-  Future<void> _onNotificationTap(String contactPeerId) async {
+  Future<void> _onNotificationTap(String payload) async {
     try {
-      final contact = await widget.contactRepository.getContact(contactPeerId);
+      // Handle group notification taps (prefixed with "group:")
+      if (payload.startsWith('group:')) {
+        final groupId = payload.substring(6);
+        final group = await widget.groupRepository.getGroup(groupId);
+        if (group == null) return;
+
+        final navigator = MyApp.navigatorKey.currentState;
+        if (navigator == null) return;
+
+        navigator.push(
+          MaterialPageRoute(
+            builder: (_) => GroupConversationWired(
+              group: group,
+              groupRepo: widget.groupRepository,
+              msgRepo: widget.groupMessageRepository,
+              groupMessageListener: widget.groupMessageListener,
+              bridge: widget.bridge,
+              identityRepo: widget.repository,
+              contactRepo: widget.contactRepository,
+              p2pService: widget.p2pService,
+              groupConversationTracker: widget.groupConversationTracker,
+            ),
+          ),
+        );
+        return;
+      }
+
+      // Handle 1:1 notification taps
+      final contact = await widget.contactRepository.getContact(payload);
       if (contact == null) return;
 
       final navigator = MyApp.navigatorKey.currentState;
@@ -787,6 +828,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         groupMessageRepository: widget.groupMessageRepository,
         groupMessageListener: widget.groupMessageListener,
         groupInviteListener: widget.groupInviteListener,
+        groupConversationTracker: widget.groupConversationTracker,
       ),
       debugShowCheckedModeBanner: false,
     );

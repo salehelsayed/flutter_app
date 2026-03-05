@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/features/groups/presentation/widgets/expandable_fab.dart';
+import 'package:flutter_app/features/groups/presentation/widgets/glow_fab.dart';
 
 void main() {
   group('ExpandableFab', () {
@@ -11,30 +12,39 @@ void main() {
       tappedItems = [];
     });
 
-    Widget buildWidget() {
+    List<ExpandableFabItem> _items() => [
+          ExpandableFabItem(
+            label: 'New Group',
+            icon: Icons.group_outlined,
+            onTap: () => tappedItems.add('group'),
+          ),
+          ExpandableFabItem(
+            label: 'New Announce',
+            icon: Icons.campaign_outlined,
+            onTap: () => tappedItems.add('announce'),
+          ),
+          ExpandableFabItem(
+            label: 'New Q&A',
+            icon: Icons.quiz_outlined,
+            onTap: () => tappedItems.add('qa'),
+          ),
+        ];
+
+    Widget buildWidget({
+      ExpandableFabAnchor anchor = ExpandableFabAnchor.bottomRight,
+      double fabSize = 56,
+      EdgeInsets? safeAreaPadding,
+    }) {
       return MaterialApp(
         home: Scaffold(
           body: Stack(
             children: [
               const SizedBox.expand(),
               ExpandableFab(
-                items: [
-                  ExpandableFabItem(
-                    label: 'New Group',
-                    icon: Icons.group_outlined,
-                    onTap: () => tappedItems.add('group'),
-                  ),
-                  ExpandableFabItem(
-                    label: 'New Announce',
-                    icon: Icons.campaign_outlined,
-                    onTap: () => tappedItems.add('announce'),
-                  ),
-                  ExpandableFabItem(
-                    label: 'New Q&A',
-                    icon: Icons.quiz_outlined,
-                    onTap: () => tappedItems.add('qa'),
-                  ),
-                ],
+                items: _items(),
+                anchor: anchor,
+                fabSize: fabSize,
+                safeAreaPadding: safeAreaPadding,
               ),
             ],
           ),
@@ -143,6 +153,62 @@ void main() {
         find.byKey(const Key('expandable_fab_scrim')),
         findsOneWidget,
       );
+    });
+
+    testWidgets('defaults to bottom-right positioning', (tester) async {
+      await tester.pumpWidget(buildWidget());
+
+      final positioned = tester.widget<Positioned>(
+        find.ancestor(
+          of: find.byType(GlowFab),
+          matching: find.byType(Positioned),
+        ).last,
+      );
+
+      expect(positioned.bottom, 16);
+      expect(positioned.right, 16);
+      expect(positioned.top, isNull);
+    });
+
+    testWidgets('positions at top-right when anchor is topRight',
+        (tester) async {
+      await tester.pumpWidget(
+        buildWidget(anchor: ExpandableFabAnchor.topRight),
+      );
+
+      final positioned = tester.widget<Positioned>(
+        find.ancestor(
+          of: find.byType(GlowFab),
+          matching: find.byType(Positioned),
+        ).last,
+      );
+
+      expect(positioned.top, isNotNull);
+      expect(positioned.right, 16);
+      expect(positioned.bottom, isNull);
+    });
+
+    testWidgets('menu items appear below FAB when anchor is topRight',
+        (tester) async {
+      await tester.pumpWidget(
+        buildWidget(anchor: ExpandableFabAnchor.topRight),
+      );
+
+      // Open
+      await tester.tap(find.byIcon(Icons.add));
+      await tester.pumpAndSettle();
+
+      // FAB should be above the first menu item
+      final fabCenter = tester.getCenter(find.byType(GlowFab));
+      final menuItemCenter = tester.getCenter(find.text('New Group'));
+      expect(fabCenter.dy, lessThan(menuItemCenter.dy));
+    });
+
+    testWidgets('passes fabSize to GlowFab', (tester) async {
+      await tester.pumpWidget(buildWidget(fabSize: 40));
+
+      final glowFab = tester.widget<GlowFab>(find.byType(GlowFab));
+      expect(glowFab.size, 40);
     });
   });
 }

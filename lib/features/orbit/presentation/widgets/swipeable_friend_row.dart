@@ -46,9 +46,13 @@ class _SwipeableFriendRowState extends State<SwipeableFriendRow>
   bool _directionLocked = false;
   bool _isCollapsing = false;
 
-  // Active: 3 buttons (48×3) + gaps (8×2) + padding (8×2) = 176 → 180
+  // Active with block: 3 buttons (48×3) + gaps (8×2) + padding (8×2) = 176 → 180
+  // Active without block: 2 buttons (48×2) + gap (8×1) + padding (8×2) = 128 → 130
   // Archived: Unarchive pill (~170) + padding
-  double get _actionWidth => 180.0;
+  bool get _hasBlockAction =>
+      widget.onBlock != null || widget.onUnblock != null;
+  double get _actionWidth =>
+      widget.isArchived ? 180.0 : (_hasBlockAction ? 180.0 : 130.0);
 
   static const _snapThreshold = 0.5; // 50% of action width
   static const _snapCurve = Cubic(0.25, 0.46, 0.45, 0.94);
@@ -226,11 +230,13 @@ class _SwipeableFriendRowState extends State<SwipeableFriendRow>
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.end,
                   children: [
-                    if (widget.isBlocked)
-                      UnblockActionButton(onTap: _handleUnblock)
-                    else
-                      BlockActionButton(onTap: _handleBlock),
-                    const SizedBox(width: 8),
+                    if (_hasBlockAction) ...[
+                      if (widget.isBlocked)
+                        UnblockActionButton(onTap: _handleUnblock)
+                      else
+                        BlockActionButton(onTap: _handleBlock),
+                      const SizedBox(width: 8),
+                    ],
                     DeleteActionButton(onTap: _handleDelete),
                     const SizedBox(width: 8),
                     ArchiveActionButton(onTap: _handleArchive),

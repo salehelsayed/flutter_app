@@ -9,7 +9,6 @@ import 'package:flutter_app/features/orbit/domain/models/orbit_friend.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_group.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_item.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_close_button.dart';
-import 'package:flutter_app/features/orbit/presentation/widgets/orbit_header.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbital_visualization.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/friends_list_header.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/friend_row.dart';
@@ -57,6 +56,9 @@ class OrbitScreen extends StatelessWidget {
   final List<OrbitGroup> groups;
   final void Function(OrbitGroup) onGroupTap;
   final void Function(GroupType) onCreateGroup;
+  final void Function(OrbitGroup) onArchiveGroup;
+  final void Function(OrbitGroup) onUnarchiveGroup;
+  final void Function(OrbitGroup) onDeleteGroup;
 
   const OrbitScreen({
     super.key,
@@ -93,6 +95,9 @@ class OrbitScreen extends StatelessWidget {
     this.groups = const [],
     required this.onGroupTap,
     required this.onCreateGroup,
+    required this.onArchiveGroup,
+    required this.onUnarchiveGroup,
+    required this.onDeleteGroup,
   });
 
   /// Builds a merged and sorted list of orbit items (friends + groups)
@@ -104,8 +109,8 @@ class OrbitScreen extends StatelessWidget {
       items.add(OrbitFriendItem(friend));
     }
 
-    // Only show groups in the 'all' tab and when not searching
-    if (filterTab == 'all' && !searchActive) {
+    // Show groups when not searching (groups list is pre-filtered by tab in OrbitWired)
+    if (!searchActive) {
       for (final group in groups) {
         items.add(OrbitGroupItem(group));
       }
@@ -153,7 +158,6 @@ class OrbitScreen extends StatelessWidget {
                     },
                     child: Column(
                       children: [
-                        OrbitHeader(userPeerId: userPeerId, avatarBytes: userAvatarBytes),
                         OrbitalVisualization(
                           userPeerId: userPeerId,
                           userAvatarBytes: userAvatarBytes,
@@ -214,6 +218,7 @@ class OrbitScreen extends StatelessWidget {
                             _buildNoResults()
                           else if (filterTab == 'archived' &&
                               displayedFriends.isEmpty &&
+                              groups.isEmpty &&
                               !searchActive)
                             const ArchivedEmptyState()
                           else
@@ -235,22 +240,21 @@ class OrbitScreen extends StatelessWidget {
               ),
             ),
 
-            // Layer 2: Close button (top-left)
+            // Layer 2: Close button (bottom-right, below search)
             Positioned(
-              top: MediaQuery.of(context).padding.top + 8,
-              left: 16,
+              bottom: 40,
+              right: 18,
               child: OrbitCloseButton(onTap: onClose),
             ),
 
-            // Layer 3: Floating search trigger
+            // Layer 3: Search trigger (bottom-right, above X)
             AnimatedBuilder(
               animation: searchTriggerAnimation,
               builder: (context, child) {
                 final t = searchTriggerAnimation.value;
                 return Positioned(
-                  bottom: 40,
-                  left: 0,
-                  right: 0,
+                  bottom: 80,
+                  right: 18,
                   child: Opacity(
                     opacity: t,
                     child: Transform.scale(
@@ -268,7 +272,6 @@ class OrbitScreen extends StatelessWidget {
               },
               child: OrbitSearchTrigger(
                 onSearchTap: onSearchOpen,
-                onCloseTap: onClose,
               ),
             ),
 
@@ -302,6 +305,9 @@ class OrbitScreen extends StatelessWidget {
 
             // Layer 5: ExpandableFab (create group)
             ExpandableFab(
+              anchor: ExpandableFabAnchor.topRight,
+              fabSize: 40,
+              safeAreaPadding: MediaQuery.of(context).padding,
               items: [
                 ExpandableFabItem(
                   label: 'New Group',
@@ -356,13 +362,24 @@ class OrbitScreen extends StatelessWidget {
   }
 
   Widget _buildGroupRow(OrbitGroup group, int index) {
+    final isArchived = group.group.isArchived;
+    final rowKey = ValueKey(group.group.id);
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: AnimatedFriendRow(
         index: index,
-        child: GroupRow(
-          group: group,
-          onTap: () => onGroupTap(group),
+        child: SwipeableFriendRow(
+          key: rowKey,
+          isArchived: isArchived,
+          isBlocked: false,
+          openRowNotifier: openRowNotifier,
+          onArchive: () => onArchiveGroup(group),
+          onUnarchive: () => onUnarchiveGroup(group),
+          onDelete: () => onDeleteGroup(group),
+          child: GroupRow(
+            group: group,
+            onTap: () => onGroupTap(group),
+          ),
         ),
       ),
     );

@@ -58,7 +58,7 @@ void main() {
   testWidgets('shows compose area when canWrite is true', (tester) async {
     await tester.pumpWidget(buildTestWidget(canWrite: true));
 
-    expect(find.text('Message'), findsOneWidget);
+    expect(find.text('Write something...'), findsOneWidget);
   });
 
   testWidgets('hides compose area for readers in announcement group',

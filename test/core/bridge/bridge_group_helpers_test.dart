@@ -353,6 +353,77 @@ void main() {
       expect(result['ok'], isFalse);
       expect(result['errorCode'], equals('BRIDGE_TIMEOUT'));
     });
+
+    test('includes media in payload when provided', () async {
+      bridge.responses['group:publish'] = {
+        'ok': true,
+        'messageId': 'msg-media-001',
+      };
+
+      final media = [
+        {'id': 'blob-1', 'mime': 'image/jpeg', 'size': 12345},
+        {'id': 'blob-2', 'mime': 'audio/mp4', 'durationMs': 5000},
+      ];
+
+      await callGroupPublish(
+        bridge,
+        groupId: 'grp-media',
+        text: 'Check this out',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        senderUsername: 'alice',
+        media: media,
+      );
+
+      final sent = jsonDecode(bridge.lastSentMessage!) as Map<String, dynamic>;
+      final payload = sent['payload'] as Map<String, dynamic>;
+      expect(payload['media'], isNotNull);
+      expect(payload['media'], isList);
+      expect((payload['media'] as List).length, 2);
+      expect((payload['media'] as List)[0]['id'], 'blob-1');
+    });
+
+    test('omits media when null', () async {
+      bridge.responses['group:publish'] = {
+        'ok': true,
+        'messageId': 'msg-no-media',
+      };
+
+      await callGroupPublish(
+        bridge,
+        groupId: 'grp-text',
+        text: 'Hello',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+      );
+
+      final sent = jsonDecode(bridge.lastSentMessage!) as Map<String, dynamic>;
+      final payload = sent['payload'] as Map<String, dynamic>;
+      expect(payload.containsKey('media'), isFalse);
+    });
+
+    test('omits media when empty list', () async {
+      bridge.responses['group:publish'] = {
+        'ok': true,
+        'messageId': 'msg-empty-media',
+      };
+
+      await callGroupPublish(
+        bridge,
+        groupId: 'grp-empty',
+        text: 'Hello',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        media: [],
+      );
+
+      final sent = jsonDecode(bridge.lastSentMessage!) as Map<String, dynamic>;
+      final payload = sent['payload'] as Map<String, dynamic>;
+      expect(payload.containsKey('media'), isFalse);
+    });
   });
 
   // ---------------------------------------------------------------------------

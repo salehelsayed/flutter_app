@@ -8,9 +8,9 @@ import 'package:flutter_app/features/groups/application/handle_incoming_group_me
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 
-/// Drains offline inboxes for all active groups on startup.
+/// Drains offline inboxes for all groups on startup.
 ///
-/// For each active group, retrieves stored messages from the relay inbox
+/// For each group, retrieves stored messages from the relay inbox
 /// and processes them as incoming messages. Errors per-group are logged
 /// and do not prevent other groups from being drained.
 Future<void> drainGroupOfflineInbox({
@@ -25,7 +25,7 @@ Future<void> drainGroupOfflineInbox({
     details: {},
   );
 
-  final groups = await groupRepo.getActiveGroups();
+  final groups = await groupRepo.getAllGroups();
 
   for (final group in groups) {
     try {

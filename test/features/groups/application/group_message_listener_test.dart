@@ -1,16 +1,20 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
+import '../../../shared/fakes/fake_notification_service.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
+import '../../../shared/fakes/in_memory_media_attachment_repository.dart';
 
 void main() {
   late InMemoryGroupRepository groupRepo;
@@ -597,6 +601,237 @@ void main() {
       expect(group, isNotNull);
 
       selfListener.dispose();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Media forwarding tests
+  // ---------------------------------------------------------------------------
+  group('media forwarding', () {
+    test('forwards media field from event to handleIncomingGroupMessage',
+        () async {
+      final mediaRepo = InMemoryMediaAttachmentRepository();
+      final mediaListener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+        mediaAttachmentRepo: mediaRepo,
+      );
+      final mediaSource =
+          StreamController<Map<String, dynamic>>.broadcast();
+
+      mediaListener.start(mediaSource.stream);
+
+      mediaSource.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-sender',
+        'senderUsername': 'Sender',
+        'keyEpoch': 0,
+        'text': 'Photo message',
+        'timestamp': DateTime.now().toUtc().toIso8601String(),
+        'media': [
+          {
+            'id': 'blob-event-1',
+            'mime': 'image/jpeg',
+            'size': 12345,
+            'mediaType': 'image',
+            'downloadStatus': 'pending',
+            'createdAt': DateTime.now().toUtc().toIso8601String(),
+          },
+        ],
+      });
+
+      await Future.delayed(const Duration(milliseconds: 100));
+
+      expect(msgRepo.count, 1);
+      expect(mediaRepo.count, 1);
+
+      mediaListener.dispose();
+      await mediaSource.close();
+    });
+
+    test('handles event without media field (backward compat)', () async {
+      final mediaRepo = InMemoryMediaAttachmentRepository();
+      final mediaListener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+        mediaAttachmentRepo: mediaRepo,
+      );
+      final mediaSource =
+          StreamController<Map<String, dynamic>>.broadcast();
+
+      mediaListener.start(mediaSource.stream);
+
+      mediaSource.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-sender',
+        'senderUsername': 'Sender',
+        'keyEpoch': 0,
+        'text': 'Text only',
+        'timestamp': DateTime.now().toUtc().toIso8601String(),
+      });
+
+      await Future.delayed(const Duration(milliseconds: 100));
+
+      expect(msgRepo.count, 1);
+      expect(mediaRepo.count, 0);
+
+      mediaListener.dispose();
+      await mediaSource.close();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Group notifications
+  // ---------------------------------------------------------------------------
+  group('group notifications', () {
+    test('shows notification for incoming group message', () async {
+      final notifService = FakeNotificationService();
+      final tracker = ActiveConversationTracker();
+
+      final notifListener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+        getSelfPeerId: () async => 'peer-self',
+        notificationService: notifService,
+        groupConversationTracker: tracker,
+        getAppLifecycleState: () => AppLifecycleState.paused,
+      );
+      notifListener.start(sourceController.stream);
+
+      sourceController.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-sender',
+        'senderUsername': 'Sender',
+        'keyEpoch': 0,
+        'text': 'Hello group!',
+        'timestamp': DateTime.now().toUtc().toIso8601String(),
+      });
+
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      expect(notifService.shown, hasLength(1));
+      expect(notifService.shown.first.contactPeerId, 'group:group-1');
+      expect(notifService.shown.first.senderUsername, 'Test Group');
+      expect(notifService.shown.first.messageText, 'Sender: Hello group!');
+
+      notifListener.dispose();
+    });
+
+    test('suppresses notification when viewing group conversation', () async {
+      final notifService = FakeNotificationService();
+      final tracker = ActiveConversationTracker();
+      tracker.setActive('group:group-1');
+
+      final notifListener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+        getSelfPeerId: () async => 'peer-self',
+        notificationService: notifService,
+        groupConversationTracker: tracker,
+        getAppLifecycleState: () => AppLifecycleState.resumed,
+      );
+      notifListener.start(sourceController.stream);
+
+      sourceController.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-sender',
+        'senderUsername': 'Sender',
+        'keyEpoch': 0,
+        'text': 'Hello group!',
+        'timestamp': DateTime.now().toUtc().toIso8601String(),
+      });
+
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      expect(notifService.shown, isEmpty);
+
+      notifListener.dispose();
+    });
+
+    test('does not notify for own messages', () async {
+      final notifService = FakeNotificationService();
+      final tracker = ActiveConversationTracker();
+
+      final notifListener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+        getSelfPeerId: () async => 'peer-sender',
+        notificationService: notifService,
+        groupConversationTracker: tracker,
+        getAppLifecycleState: () => AppLifecycleState.paused,
+      );
+      notifListener.start(sourceController.stream);
+
+      sourceController.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-sender',
+        'senderUsername': 'Sender',
+        'keyEpoch': 0,
+        'text': 'My own message',
+        'timestamp': DateTime.now().toUtc().toIso8601String(),
+      });
+
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      expect(notifService.shown, isEmpty);
+
+      notifListener.dispose();
+    });
+
+    test('does not notify when notification deps are null', () async {
+      // Default listener without notification params (current behavior)
+      listener.start(sourceController.stream);
+
+      sourceController.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-sender',
+        'senderUsername': 'Sender',
+        'keyEpoch': 0,
+        'text': 'No crash please',
+        'timestamp': DateTime.now().toUtc().toIso8601String(),
+      });
+
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      // No crash, message still persisted
+      expect(msgRepo.count, 1);
+    });
+
+    test('shows notification when viewing different group', () async {
+      final notifService = FakeNotificationService();
+      final tracker = ActiveConversationTracker();
+      tracker.setActive('group:other-group');
+
+      final notifListener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+        getSelfPeerId: () async => 'peer-self',
+        notificationService: notifService,
+        groupConversationTracker: tracker,
+        getAppLifecycleState: () => AppLifecycleState.resumed,
+      );
+      notifListener.start(sourceController.stream);
+
+      sourceController.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-sender',
+        'senderUsername': 'Sender',
+        'keyEpoch': 0,
+        'text': 'Hello!',
+        'timestamp': DateTime.now().toUtc().toIso8601String(),
+      });
+
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      expect(notifService.shown, hasLength(1));
+
+      notifListener.dispose();
     });
   });
 }

@@ -8,6 +8,7 @@ import 'package:uuid/uuid.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/amplitude_buffer.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
+import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/media/downsample_waveform.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
@@ -61,6 +62,7 @@ class GroupConversationWired extends StatefulWidget {
   final ImageQualityPreference qualityPreference;
   final ImageQualityPreference videoQualityPreference;
   final AudioRecorderService? audioRecorderService;
+  final ActiveConversationTracker? groupConversationTracker;
 
   const GroupConversationWired({
     super.key,
@@ -78,6 +80,7 @@ class GroupConversationWired extends StatefulWidget {
     this.qualityPreference = ImageQualityPreference.compressed,
     this.videoQualityPreference = ImageQualityPreference.compressed,
     this.audioRecorderService,
+    this.groupConversationTracker,
   });
 
   @override
@@ -115,6 +118,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
   @override
   void initState() {
     super.initState();
+    widget.groupConversationTracker?.setActive('group:${widget.group.id}');
     emitFlowEvent(
       layer: 'FL',
       event: 'GROUP_CONV_FL_SCREEN_INIT',
@@ -716,6 +720,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
 
   @override
   void dispose() {
+    widget.groupConversationTracker?.clear();
     _messageSubscription?.cancel();
     _durationSub?.cancel();
     _amplitudeSub?.cancel();

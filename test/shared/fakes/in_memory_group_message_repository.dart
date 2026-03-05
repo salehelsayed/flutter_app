@@ -94,5 +94,15 @@ class InMemoryGroupMessageRepository implements GroupMessageRepository {
         m.timestamp == timestamp);
   }
 
+  @override
+  Future<int> deleteMessagesForGroup(String groupId) async {
+    final toRemove =
+        _messages.entries.where((e) => e.value.groupId == groupId).toList();
+    for (final entry in toRemove) {
+      _messages.remove(entry.key);
+    }
+    return toRemove.length;
+  }
+
   int get count => _messages.length;
 }

@@ -1,9 +1,13 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/widgets.dart';
+
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
+import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/application/download_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
@@ -13,6 +17,7 @@ import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
+import 'package:flutter_app/features/push/application/show_notification_use_case.dart';
 
 /// Listener service that monitors incoming group messages.
 ///
@@ -34,6 +39,9 @@ class GroupMessageListener {
   final Future<String?> Function()? _getSelfPeerId;
   final MediaAttachmentRepository? _mediaAttachmentRepo;
   final MediaFileManager? _mediaFileManager;
+  final NotificationService? _notificationService;
+  final ActiveConversationTracker? _groupConversationTracker;
+  final AppLifecycleState Function()? _getAppLifecycleState;
 
   StreamSubscription<Map<String, dynamic>>? _subscription;
   final _messageController = StreamController<GroupMessage>.broadcast();
@@ -46,12 +54,18 @@ class GroupMessageListener {
     Future<String?> Function()? getSelfPeerId,
     MediaAttachmentRepository? mediaAttachmentRepo,
     MediaFileManager? mediaFileManager,
+    NotificationService? notificationService,
+    ActiveConversationTracker? groupConversationTracker,
+    AppLifecycleState Function()? getAppLifecycleState,
   })  : _groupRepo = groupRepo,
         _msgRepo = msgRepo,
         _bridge = bridge,
         _getSelfPeerId = getSelfPeerId,
         _mediaAttachmentRepo = mediaAttachmentRepo,
-        _mediaFileManager = mediaFileManager;
+        _mediaFileManager = mediaFileManager,
+        _notificationService = notificationService,
+        _groupConversationTracker = groupConversationTracker,
+        _getAppLifecycleState = getAppLifecycleState;
 
   /// Stream of new incoming group messages for the UI to listen to.
   Stream<GroupMessage> get groupMessageStream => _messageController.stream;
@@ -131,6 +145,25 @@ class GroupMessageListener {
 
       if (result != null) {
         _messageController.add(result);
+
+        // Show notification for incoming group messages (skip own messages)
+        final selfPeerId =
+            _getSelfPeerId != null ? await _getSelfPeerId!() : null;
+        if (senderId != selfPeerId &&
+            _notificationService != null &&
+            _groupConversationTracker != null &&
+            _getAppLifecycleState != null) {
+          final group = await _groupRepo.getGroup(groupId);
+          final groupName = group?.name ?? 'Group';
+          maybeShowNotification(
+            notificationService: _notificationService!,
+            conversationTracker: _groupConversationTracker!,
+            getAppLifecycleState: _getAppLifecycleState!,
+            contactPeerId: 'group:$groupId',
+            senderUsername: groupName,
+            messageText: '$senderUsername: $text',
+          );
+        }
 
         // Fire-and-forget: auto-download media attachments
         if (_bridge != null &&

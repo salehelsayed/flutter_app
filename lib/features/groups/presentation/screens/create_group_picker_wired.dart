@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
@@ -28,6 +29,7 @@ class CreateGroupPickerWired extends StatefulWidget {
   final Bridge bridge;
   final IdentityRepository identityRepo;
   final P2PService p2pService;
+  final ActiveConversationTracker? groupConversationTracker;
 
   const CreateGroupPickerWired({
     super.key,
@@ -39,6 +41,7 @@ class CreateGroupPickerWired extends StatefulWidget {
     required this.bridge,
     required this.identityRepo,
     required this.p2pService,
+    this.groupConversationTracker,
   });
 
   @override
@@ -130,6 +133,7 @@ class _CreateGroupPickerWiredState extends State<CreateGroupPickerWired> {
             identityRepo: widget.identityRepo,
             contactRepo: widget.contactRepo,
             p2pService: widget.p2pService,
+            groupConversationTracker: widget.groupConversationTracker,
           ),
         ),
       );

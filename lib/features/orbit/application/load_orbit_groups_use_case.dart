@@ -1,24 +1,35 @@
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_group.dart';
 
-/// Loads active groups with their latest message and unread count,
+/// Loads groups with their latest message and unread count,
 /// sorted by most recent activity first.
+///
+/// When [includeArchived] is true, returns only archived groups.
+/// Otherwise returns only active (non-archived) groups.
 ///
 /// This drives group rows in the Orbit screen alongside friend rows.
 Future<List<OrbitGroup>> loadOrbitGroups({
   required GroupRepository groupRepo,
   required GroupMessageRepository msgRepo,
+  bool includeArchived = false,
 }) async {
   emitFlowEvent(
     layer: 'UC',
     event: 'LOAD_ORBIT_GROUPS_START',
-    details: {},
+    details: {'includeArchived': includeArchived},
   );
 
   try {
-    final groups = await groupRepo.getActiveGroups();
+    final List<GroupModel> groups;
+    if (includeArchived) {
+      final all = await groupRepo.getAllGroups();
+      groups = all.where((g) => g.isArchived).toList();
+    } else {
+      groups = await groupRepo.getActiveGroups();
+    }
     final orbitGroups = <OrbitGroup>[];
 
     for (final group in groups) {
