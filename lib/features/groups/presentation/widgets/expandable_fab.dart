@@ -17,14 +17,26 @@ class ExpandableFabItem {
   });
 }
 
+/// Where the FAB is anchored on screen.
+enum ExpandableFabAnchor { bottomRight, topRight }
+
 /// Speed dial FAB that expands a vertical column of pill-shaped menu items.
 ///
 /// Must be placed inside a [Stack] (not as `Scaffold.floatingActionButton`),
 /// because it renders its own scrim overlay.
 class ExpandableFab extends StatefulWidget {
   final List<ExpandableFabItem> items;
+  final ExpandableFabAnchor anchor;
+  final double fabSize;
+  final EdgeInsets? safeAreaPadding;
 
-  const ExpandableFab({super.key, required this.items});
+  const ExpandableFab({
+    super.key,
+    required this.items,
+    this.anchor = ExpandableFabAnchor.bottomRight,
+    this.fabSize = 56,
+    this.safeAreaPadding,
+  });
 
   @override
   State<ExpandableFab> createState() => _ExpandableFabState();
@@ -71,6 +83,63 @@ class _ExpandableFabState extends State<ExpandableFab>
 
   @override
   Widget build(BuildContext context) {
+    final isTopRight = widget.anchor == ExpandableFabAnchor.topRight;
+
+    final fab = GlowFab(
+      size: widget.fabSize,
+      onPressed: _toggle,
+      icon: AnimatedBuilder(
+        animation: _controller,
+        builder: (context, child) {
+          return Transform.rotate(
+            angle: _controller.value * math.pi / 4,
+            child: child,
+          );
+        },
+        child: Icon(
+          _isOpen ? Icons.close : Icons.add,
+          color: Colors.white,
+          size: 28,
+        ),
+      ),
+    );
+
+    final menuItems = _isOpen
+        ? widget.items.map((item) => _buildMenuItem(item)).toList()
+        : <Widget>[];
+
+    final children = isTopRight
+        ? [
+            fab,
+            if (menuItems.isNotEmpty) const SizedBox(height: 12),
+            ...menuItems,
+          ]
+        : [
+            ...menuItems,
+            const SizedBox(height: 12),
+            fab,
+          ];
+
+    final positioned = isTopRight
+        ? Positioned(
+            top: (widget.safeAreaPadding?.top ?? 0) + 8,
+            right: 16,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: children,
+            ),
+          )
+        : Positioned(
+            bottom: 16,
+            right: 16,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: children,
+            ),
+          );
+
     return Stack(
       children: [
         // Scrim
@@ -85,38 +154,7 @@ class _ExpandableFabState extends State<ExpandableFab>
             ),
           ),
         // FAB + menu
-        Positioned(
-          bottom: 16,
-          right: 16,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              // Menu items (shown when open)
-              if (_isOpen)
-                ...widget.items.map((item) => _buildMenuItem(item)),
-              const SizedBox(height: 12),
-              // The FAB itself
-              GlowFab(
-                onPressed: _toggle,
-                icon: AnimatedBuilder(
-                  animation: _controller,
-                  builder: (context, child) {
-                    return Transform.rotate(
-                      angle: _controller.value * math.pi / 4,
-                      child: child,
-                    );
-                  },
-                  child: Icon(
-                    _isOpen ? Icons.close : Icons.add,
-                    color: Colors.white,
-                    size: 28,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
+        positioned,
       ],
     );
   }

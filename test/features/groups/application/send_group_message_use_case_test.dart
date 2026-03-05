@@ -2,12 +2,14 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
+import '../../../shared/fakes/in_memory_media_attachment_repository.dart';
 
 /// A bridge that delays group:publish by [delay] to test concurrency.
 class _SlowPublishBridge extends FakeBridge {
@@ -328,5 +330,124 @@ void main() {
     // inbox store should still have run despite publish failure
     expect(failBridge.commandLog, contains('group:publish'));
     expect(failBridge.commandLog, contains('group:inboxStore'));
+  });
+
+  // ---------------------------------------------------------------------------
+  // Media attachment tests
+  // ---------------------------------------------------------------------------
+  group('media attachments', () {
+    late InMemoryMediaAttachmentRepository mediaRepo;
+
+    final testAttachment = MediaAttachment(
+      id: 'att-1',
+      messageId: '',
+      mime: 'image/jpeg',
+      size: 12345,
+      mediaType: 'image',
+      downloadStatus: 'done',
+      createdAt: DateTime.now().toUtc().toIso8601String(),
+      localPath: '/tmp/photo.jpg',
+    );
+
+    setUp(() {
+      mediaRepo = InMemoryMediaAttachmentRepository();
+    });
+
+    test('includes media in publish payload', () async {
+      final (result, _) = await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        text: 'Check this out',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        senderUsername: 'Alice',
+        mediaAttachments: [testAttachment],
+        mediaAttachmentRepo: mediaRepo,
+      );
+
+      expect(result, SendGroupMessageResult.success);
+
+      // Verify bridge received media in publish payload
+      final publishMsg = bridge.sentMessages.firstWhere(
+        (m) => (jsonDecode(m) as Map)['cmd'] == 'group:publish',
+      );
+      final payload =
+          (jsonDecode(publishMsg) as Map)['payload'] as Map<String, dynamic>;
+      expect(payload['media'], isNotNull);
+      expect((payload['media'] as List).length, 1);
+    });
+
+    test('includes media in inbox payload', () async {
+      await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        text: 'Check this out',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        senderUsername: 'Alice',
+        mediaAttachments: [testAttachment],
+        mediaAttachmentRepo: mediaRepo,
+      );
+
+      // Verify inbox store received media in payload
+      final inboxMsg = bridge.sentMessages.firstWhere(
+        (m) => (jsonDecode(m) as Map)['cmd'] == 'group:inboxStore',
+      );
+      final inboxPayload = (jsonDecode(inboxMsg) as Map)['payload']
+          as Map<String, dynamic>;
+      final innerPayload =
+          jsonDecode(inboxPayload['message'] as String) as Map<String, dynamic>;
+      expect(innerPayload['media'], isNotNull);
+      expect((innerPayload['media'] as List).length, 1);
+    });
+
+    test('saves attachments to MediaAttachmentRepository', () async {
+      await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        text: 'Check this out',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        senderUsername: 'Alice',
+        mediaAttachments: [testAttachment],
+        mediaAttachmentRepo: mediaRepo,
+      );
+
+      expect(mediaRepo.count, 1);
+      // The saved attachment should have a non-empty messageId
+      final saved = (await mediaRepo.getPendingDownloads()).isEmpty;
+      // Since testAttachment has downloadStatus: 'done', getPendingDownloads returns empty
+      expect(saved, isTrue);
+    });
+
+    test('text-only message without media — no media in payload', () async {
+      await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        text: 'Hello!',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        senderUsername: 'Alice',
+      );
+
+      final publishMsg = bridge.sentMessages.firstWhere(
+        (m) => (jsonDecode(m) as Map)['cmd'] == 'group:publish',
+      );
+      final payload =
+          (jsonDecode(publishMsg) as Map)['payload'] as Map<String, dynamic>;
+      expect(payload.containsKey('media'), isFalse);
+    });
   });
 }

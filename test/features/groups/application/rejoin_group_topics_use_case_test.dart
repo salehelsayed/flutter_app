@@ -310,7 +310,7 @@ void main() {
       expect(regularMember['role'], 'writer');
     });
 
-    test('skips archived groups', () async {
+    test('rejoins archived groups', () async {
       final now = DateTime.now().toUtc();
 
       // Active group
@@ -335,7 +335,7 @@ void main() {
         ),
       );
 
-      // Archived group
+      // Archived group — should still be rejoined
       await seedGroup(
         groupId: 'group-archived',
         name: 'Archived',
@@ -367,8 +367,10 @@ void main() {
           .where((m) => m['cmd'] == 'group:join')
           .toList();
 
-      expect(joinCommands, hasLength(1));
-      expect(joinCommands.first['payload']['groupId'], 'group-active');
+      expect(joinCommands, hasLength(2));
+      final groupIds =
+          joinCommands.map((c) => c['payload']['groupId'] as String).toSet();
+      expect(groupIds, {'group-active', 'group-archived'});
     });
   });
 }

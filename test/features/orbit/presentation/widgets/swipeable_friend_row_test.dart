@@ -79,6 +79,7 @@ void main() {
     testWidgets('reveals Unblock, Delete, Archive on swipe left (active, blocked)', (tester) async {
       await tester.pumpWidget(buildSwipeableRow(
         isBlocked: true,
+        onUnblock: () {},
       ));
 
       // Perform a left swipe

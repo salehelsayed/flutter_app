@@ -9,6 +9,7 @@ import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
+import '../../../shared/fakes/in_memory_media_attachment_repository.dart';
 
 void main() {
   late FakeBridge bridge;
@@ -244,6 +245,107 @@ void main() {
 
     // Second group's message should still be persisted.
     expect(msgRepo.count, 1);
+  });
+
+  test('drains inbox for archived groups too', () async {
+    await groupRepo.archiveGroup('group-1');
+
+    bridge.responses['group:inboxRetrieve'] = {
+      'ok': true,
+      'messages': <Map<String, dynamic>>[
+        {
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Sender',
+          'keyEpoch': 1,
+          'text': 'Archived group msg',
+          'timestamp': DateTime.now().toUtc().toIso8601String(),
+        },
+      ],
+    };
+
+    await drainGroupOfflineInbox(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+    );
+
+    expect(msgRepo.count, 1);
+    expect(bridge.commandLog, contains('group:inboxRetrieve'));
+  });
+
+  // ---------------------------------------------------------------------------
+  // Media attachment tests
+  // ---------------------------------------------------------------------------
+  test('drains inbox message with media — saves media attachments', () async {
+    final mediaRepo = InMemoryMediaAttachmentRepository();
+
+    final inboxMessage = jsonEncode({
+      'groupId': 'group-1',
+      'senderId': 'peer-sender',
+      'senderUsername': 'Sender',
+      'keyEpoch': 1,
+      'text': 'Photo message',
+      'timestamp': DateTime.now().toUtc().toIso8601String(),
+      'media': [
+        {
+          'id': 'blob-inbox-1',
+          'mime': 'image/jpeg',
+          'size': 12345,
+          'mediaType': 'image',
+          'downloadStatus': 'pending',
+          'createdAt': DateTime.now().toUtc().toIso8601String(),
+        },
+      ],
+    });
+
+    bridge.responses['group:inboxRetrieve'] = {
+      'ok': true,
+      'messages': [
+        {'from': 'peer-sender', 'message': inboxMessage, 'timestamp': 123},
+      ],
+    };
+
+    await drainGroupOfflineInbox(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      mediaAttachmentRepo: mediaRepo,
+    );
+
+    expect(msgRepo.count, 1);
+    expect(mediaRepo.count, 1);
+    final pending = await mediaRepo.getPendingDownloads();
+    expect(pending.length, 1);
+    expect(pending.first.mime, 'image/jpeg');
+  });
+
+  test('drains inbox message without media — backward compat', () async {
+    final mediaRepo = InMemoryMediaAttachmentRepository();
+
+    bridge.responses['group:inboxRetrieve'] = {
+      'ok': true,
+      'messages': <Map<String, dynamic>>[
+        {
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Sender',
+          'keyEpoch': 1,
+          'text': 'Text only',
+          'timestamp': DateTime.now().toUtc().toIso8601String(),
+        },
+      ],
+    };
+
+    await drainGroupOfflineInbox(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      mediaAttachmentRepo: mediaRepo,
+    );
+
+    expect(msgRepo.count, 1);
+    expect(mediaRepo.count, 0);
   });
 }
 

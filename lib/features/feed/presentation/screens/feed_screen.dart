@@ -171,7 +171,7 @@ class FeedScreen extends StatelessWidget {
               Positioned(
                 left: 0,
                 right: 0,
-                bottom: bottomInset + 8,
+                bottom: bottomInset - 14,
                 child: Center(
                   child: FeedNavigationBar(
                     activeTab: activeTab,

@@ -160,6 +160,7 @@ func (n *Node) PublishGroupMessage(groupId, privateKeyB64, senderPeerId, senderP
 		Text:      text,
 		Timestamp: timestamp,
 		Username:  senderUsername,
+		Extra:     opts,
 	}
 
 	payloadJSON, err := internal.MarshalGroupPayload(payload)
@@ -368,14 +369,18 @@ func (n *Node) handleGroupSubscription(ctx context.Context, groupId string, sub 
 		}
 
 		// Emit event to Flutter.
-		n.emitEvent("group_message:received", map[string]interface{}{
+		event := map[string]interface{}{
 			"groupId":        groupId,
 			"senderId":       env.SenderId,
 			"senderUsername": payload.Username,
 			"keyEpoch":       env.KeyEpoch,
 			"text":           payload.Text,
 			"timestamp":      payload.Timestamp,
-		})
+		}
+		if media, ok := payload.Extra["media"]; ok {
+			event["media"] = media
+		}
+		n.emitEvent("group_message:received", event)
 	}
 }
 

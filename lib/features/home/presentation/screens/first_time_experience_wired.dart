@@ -59,6 +59,7 @@ class FirstTimeExperienceWired extends StatefulWidget {
   final GroupMessageRepository? groupMessageRepository;
   final GroupMessageListener? groupMessageListener;
   final GroupInviteListener? groupInviteListener;
+  final ActiveConversationTracker? groupConversationTracker;
 
   const FirstTimeExperienceWired({
     super.key,
@@ -82,6 +83,7 @@ class FirstTimeExperienceWired extends StatefulWidget {
     this.groupMessageRepository,
     this.groupMessageListener,
     this.groupInviteListener,
+    this.groupConversationTracker,
   });
 
   @override
@@ -185,6 +187,7 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
             groupMessageRepository: widget.groupMessageRepository,
             groupMessageListener: widget.groupMessageListener,
             groupInviteListener: widget.groupInviteListener,
+            groupConversationTracker: widget.groupConversationTracker,
           ),
         ),
       );
@@ -443,6 +446,7 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
           groupMessageRepository: widget.groupMessageRepository,
           groupMessageListener: widget.groupMessageListener,
           groupInviteListener: widget.groupInviteListener,
+          groupConversationTracker: widget.groupConversationTracker,
         ),
       ),
     );

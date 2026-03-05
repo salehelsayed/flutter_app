@@ -338,6 +338,40 @@ Future<bool> dbExistsGroupMessageByContent(
   return result.isNotEmpty;
 }
 
+/// Deletes all group messages for a group. Returns the number deleted.
+Future<int> dbDeleteGroupMessagesForGroup(Database db, String groupId) async {
+  emitFlowEvent(
+    layer: 'DB',
+    event: 'GROUP_MESSAGES_DB_DELETE_FOR_GROUP_START',
+    details: {
+      'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+    },
+  );
+
+  try {
+    final count = await db.delete(
+      'group_messages',
+      where: 'group_id = ?',
+      whereArgs: [groupId],
+    );
+
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'GROUP_MESSAGES_DB_DELETE_FOR_GROUP_SUCCESS',
+      details: {'count': count},
+    );
+
+    return count;
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'GROUP_MESSAGES_DB_DELETE_FOR_GROUP_ERROR',
+      details: {'error': e.toString()},
+    );
+    rethrow;
+  }
+}
+
 /// Deletes a single group message by ID.
 Future<void> dbDeleteGroupMessage(Database db, String id) async {
   emitFlowEvent(

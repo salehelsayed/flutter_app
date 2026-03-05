@@ -35,6 +35,9 @@ import 'package:flutter_app/features/conversation/presentation/screens/conversat
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/contacts/application/archive_contact_use_case.dart';
+import 'package:flutter_app/features/groups/application/archive_group_use_case.dart';
+import 'package:flutter_app/features/groups/application/unarchive_group_use_case.dart';
+import 'package:flutter_app/features/groups/application/delete_group_and_messages_use_case.dart';
 import 'package:flutter_app/features/contacts/application/block_contact_use_case.dart';
 import 'package:flutter_app/features/contacts/application/delete_contact_use_case.dart';
 import 'package:flutter_app/features/contacts/application/unarchive_contact_use_case.dart';
@@ -80,6 +83,7 @@ class OrbitWired extends StatefulWidget {
   final GroupMessageRepository? groupMessageRepository;
   final GroupMessageListener? groupMessageListener;
   final GroupInviteListener? groupInviteListener;
+  final ActiveConversationTracker? groupConversationTracker;
 
   const OrbitWired({
     super.key,
@@ -103,6 +107,7 @@ class OrbitWired extends StatefulWidget {
     this.groupMessageRepository,
     this.groupMessageListener,
     this.groupInviteListener,
+    this.groupConversationTracker,
   });
 
   @override
@@ -114,7 +119,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   Uint8List? _avatarBytes;
   List<OrbitFriend> _activeFriends = [];
   List<OrbitFriend> _archivedFriends = [];
-  List<OrbitGroup> _groups = [];
+  List<OrbitGroup> _activeGroups = [];
+  List<OrbitGroup> _archivedGroups = [];
   String _filterTab = 'all';
   bool _searchActive = false;
   String _searchQuery = '';
@@ -254,13 +260,19 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     if (groupRepository == null || groupMessageRepository == null) return;
 
     try {
-      final groups = await loadOrbitGroups(
+      final active = await loadOrbitGroups(
         groupRepo: groupRepository,
         msgRepo: groupMessageRepository,
       );
+      final archived = await loadOrbitGroups(
+        groupRepo: groupRepository,
+        msgRepo: groupMessageRepository,
+        includeArchived: true,
+      );
       if (!mounted) return;
       setState(() {
-        _groups = groups;
+        _activeGroups = active;
+        _archivedGroups = archived;
       });
     } catch (e) {
       emitFlowEvent(
@@ -626,6 +638,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           groupMessageRepository: widget.groupMessageRepository,
           groupMessageListener: widget.groupMessageListener,
           groupInviteListener: widget.groupInviteListener,
+          groupConversationTracker: widget.groupConversationTracker,
         ),
       ),
     );
@@ -685,7 +698,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       onSearchClear: _onSearchClear,
       filterTab: _filterTab,
       activeCount: _activeFriends.length,
-      archivedCount: _archivedFriends.length,
+      archivedCount: _archivedFriends.length + _archivedGroups.length,
       onFilterChanged: _onFilterChanged,
       onArchiveFriend: _onArchiveFriend,
       onUnarchiveFriend: _onUnarchiveFriend,
@@ -693,10 +706,83 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       onUnblockFriend: _onUnblockFriend,
       onDeleteFriend: _onDeleteFriend,
       openRowNotifier: _openRowNotifier,
-      groups: _groups,
+      groups: _filterTab == 'archived' ? _archivedGroups : _activeGroups,
       onGroupTap: _onGroupTap,
       onCreateGroup: _onCreateGroup,
+      onArchiveGroup: _onArchiveGroup,
+      onUnarchiveGroup: _onUnarchiveGroup,
+      onDeleteGroup: _onDeleteGroup,
     );
+  }
+
+  Future<void> _onArchiveGroup(OrbitGroup group) async {
+    final groupRepository = widget.groupRepository;
+    if (groupRepository == null) return;
+
+    try {
+      await archiveGroup(
+        groupRepo: groupRepository,
+        groupId: group.group.id,
+      );
+      _loadGroupData();
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'ORBIT_FL_ARCHIVE_GROUP_ERROR',
+        details: {'error': e.toString()},
+      );
+    }
+  }
+
+  Future<void> _onUnarchiveGroup(OrbitGroup group) async {
+    final groupRepository = widget.groupRepository;
+    if (groupRepository == null) return;
+
+    try {
+      await unarchiveGroup(
+        groupRepo: groupRepository,
+        groupId: group.group.id,
+      );
+      _loadGroupData();
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'ORBIT_FL_UNARCHIVE_GROUP_ERROR',
+        details: {'error': e.toString()},
+      );
+    }
+  }
+
+  Future<void> _onDeleteGroup(OrbitGroup group) async {
+    final groupRepository = widget.groupRepository;
+    final groupMessageRepository = widget.groupMessageRepository;
+    if (groupRepository == null || groupMessageRepository == null) return;
+
+    final confirmed = await showConfirmationDialog(
+      context: context,
+      title: 'Leave & delete group?',
+      description:
+          'This will permanently leave the group and delete all messages. This cannot be undone.',
+      confirmLabel: 'Delete',
+    );
+    if (!confirmed || !mounted) return;
+
+    try {
+      await deleteGroupAndMessages(
+        bridge: widget.bridge,
+        groupRepo: groupRepository,
+        groupMessageRepo: groupMessageRepository,
+        groupId: group.group.id,
+      );
+      _openRowNotifier.value = null;
+      _loadGroupData();
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'ORBIT_FL_DELETE_GROUP_ERROR',
+        details: {'error': e.toString()},
+      );
+    }
   }
 
   void _onGroupTap(OrbitGroup group) {
@@ -720,6 +806,13 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           identityRepo: widget.identityRepo,
           contactRepo: widget.contactRepo,
           p2pService: widget.p2pService,
+          mediaAttachmentRepo: widget.mediaAttachmentRepo,
+          mediaFileManager: widget.mediaFileManager,
+          imageProcessor: widget.imageProcessor,
+          qualityPreference: _qualityPreference,
+          videoQualityPreference: _videoQualityPreference,
+          audioRecorderService: widget.audioRecorderService,
+          groupConversationTracker: widget.groupConversationTracker,
         ),
       ),
     ).then((_) {
@@ -749,6 +842,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           bridge: widget.bridge,
           identityRepo: widget.identityRepo,
           p2pService: widget.p2pService,
+          groupConversationTracker: widget.groupConversationTracker,
         ),
       ),
     ).then((_) {

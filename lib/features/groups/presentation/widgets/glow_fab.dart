@@ -4,11 +4,13 @@ import 'package:flutter/material.dart';
 class GlowFab extends StatelessWidget {
   final VoidCallback onPressed;
   final Widget icon;
+  final double size;
 
   const GlowFab({
     super.key,
     required this.onPressed,
     this.icon = const Icon(Icons.add, color: Colors.white, size: 28),
+    this.size = 56,
   });
 
   @override
@@ -16,8 +18,8 @@ class GlowFab extends StatelessWidget {
     return GestureDetector(
       onTap: onPressed,
       child: Container(
-        width: 56,
-        height: 56,
+        width: size,
+        height: size,
         decoration: BoxDecoration(
           shape: BoxShape.circle,
           color: const Color(0xFF1A1A2E),

@@ -251,6 +251,7 @@ Future<Map<String, dynamic>> callGroupPublish(
   required String senderPublicKey,
   required String senderPrivateKey,
   String senderUsername = '',
+  List<Map<String, dynamic>>? media,
   Duration timeout = const Duration(seconds: 10),
 }) async {
   emitFlowEvent(
@@ -262,16 +263,21 @@ Future<Map<String, dynamic>> callGroupPublish(
     },
   );
 
+  final payload = <String, dynamic>{
+    'groupId': groupId,
+    'text': text,
+    'senderPeerId': senderPeerId,
+    'senderPublicKey': senderPublicKey,
+    'senderPrivateKey': senderPrivateKey,
+    'senderUsername': senderUsername,
+  };
+  if (media != null && media.isNotEmpty) {
+    payload['media'] = media;
+  }
+
   final request = {
     'cmd': 'group:publish',
-    'payload': {
-      'groupId': groupId,
-      'text': text,
-      'senderPeerId': senderPeerId,
-      'senderPublicKey': senderPublicKey,
-      'senderPrivateKey': senderPrivateKey,
-      'senderUsername': senderUsername,
-    },
+    'payload': payload,
   };
 
   try {

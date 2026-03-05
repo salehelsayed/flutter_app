@@ -3,10 +3,10 @@ import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 
-/// Rejoins all active group pubsub topics on startup.
+/// Rejoins all group pubsub topics on startup.
 ///
 /// After an app restart the Go node is fresh — no pubsub topics are
-/// subscribed. This function iterates every active (non-archived) group,
+/// subscribed. This function iterates every group (including archived),
 /// builds the full groupConfig from stored members, and calls
 /// [callGroupJoinWithConfig] so the node can receive and validate
 /// real-time group messages again.
@@ -24,7 +24,7 @@ Future<void> rejoinGroupTopics({
     details: {},
   );
 
-  final groups = await groupRepo.getActiveGroups();
+  final groups = await groupRepo.getAllGroups();
 
   for (final group in groups) {
     try {

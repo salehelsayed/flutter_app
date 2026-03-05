@@ -86,6 +86,7 @@ class FeedWired extends StatefulWidget {
   final GroupMessageRepository? groupMessageRepository;
   final GroupMessageListener? groupMessageListener;
   final GroupInviteListener? groupInviteListener;
+  final ActiveConversationTracker? groupConversationTracker;
 
   const FeedWired({
     super.key,
@@ -109,6 +110,7 @@ class FeedWired extends StatefulWidget {
     this.groupMessageRepository,
     this.groupMessageListener,
     this.groupInviteListener,
+    this.groupConversationTracker,
   });
 
   @override
@@ -790,6 +792,13 @@ class _FeedWiredState extends State<FeedWired> {
           identityRepo: widget.repository,
           contactRepo: widget.contactRepository,
           p2pService: widget.p2pService,
+          mediaAttachmentRepo: widget.mediaAttachmentRepository,
+          mediaFileManager: widget.mediaFileManager,
+          imageProcessor: widget.imageProcessor,
+          qualityPreference: _qualityPreference,
+          videoQualityPreference: _videoQualityPreference,
+          audioRecorderService: widget.audioRecorderService,
+          groupConversationTracker: widget.groupConversationTracker,
         ),
       ),
     ).then((_) => _refreshFeed());
@@ -982,6 +991,7 @@ class _FeedWiredState extends State<FeedWired> {
             groupMessageRepository: widget.groupMessageRepository,
             groupMessageListener: widget.groupMessageListener,
             groupInviteListener: widget.groupInviteListener,
+            groupConversationTracker: widget.groupConversationTracker,
           ),
         ),
       ).then((_) => _refreshFeed());
@@ -1012,6 +1022,13 @@ class _FeedWiredState extends State<FeedWired> {
           identityRepo: widget.repository,
           contactRepo: widget.contactRepository,
           p2pService: widget.p2pService,
+          mediaAttachmentRepo: widget.mediaAttachmentRepository,
+          mediaFileManager: widget.mediaFileManager,
+          imageProcessor: widget.imageProcessor,
+          qualityPreference: _qualityPreference,
+          videoQualityPreference: _videoQualityPreference,
+          audioRecorderService: widget.audioRecorderService,
+          groupConversationTracker: widget.groupConversationTracker,
         ),
       ),
     ).then((_) => _refreshFeed());

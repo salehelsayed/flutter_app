@@ -9,6 +9,7 @@ import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
+import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_info_screen.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
@@ -201,8 +202,8 @@ void main() {
       await tester.enterText(textField, 'Test message');
       await pumpFrames(tester);
 
-      // Tap send button (the arrow_upward icon inside the compose area)
-      final sendButton = find.byIcon(Icons.arrow_upward);
+      // Tap send button (the arrow_upward_rounded icon inside ComposeArea)
+      final sendButton = find.byIcon(Icons.arrow_upward_rounded);
       expect(sendButton, findsOneWidget);
       await tester.tap(sendButton);
       await pumpFrames(tester, count: 20);
@@ -274,6 +275,60 @@ void main() {
 
       // TextField should not be present (canWrite=false hides it)
       expect(find.byType(TextField), findsNothing);
+    });
+
+    testWidgets('sets tracker active on init', (tester) async {
+      final group = makeChatGroup();
+      await groupRepo.saveGroup(group);
+      final tracker = ActiveConversationTracker();
+
+      await tester.pumpWidget(MaterialApp(
+        home: GroupConversationWired(
+          group: group,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupMessageListener:
+              FakeGroupMessageListener(messageStreamController.stream),
+          bridge: bridge,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          p2pService: p2pService,
+          groupConversationTracker: tracker,
+        ),
+      ));
+      await pumpFrames(tester);
+
+      expect(tracker.isViewing('group:${group.id}'), isTrue);
+    });
+
+    testWidgets('clears tracker on dispose', (tester) async {
+      final group = makeChatGroup();
+      await groupRepo.saveGroup(group);
+      final tracker = ActiveConversationTracker();
+
+      await tester.pumpWidget(MaterialApp(
+        home: GroupConversationWired(
+          group: group,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupMessageListener:
+              FakeGroupMessageListener(messageStreamController.stream),
+          bridge: bridge,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          p2pService: p2pService,
+          groupConversationTracker: tracker,
+        ),
+      ));
+      await pumpFrames(tester);
+
+      expect(tracker.isViewing('group:${group.id}'), isTrue);
+
+      // Replace the widget to trigger dispose
+      await tester.pumpWidget(const MaterialApp(home: SizedBox()));
+      await pumpFrames(tester);
+
+      expect(tracker.isViewing('group:${group.id}'), isFalse);
     });
   });
 }

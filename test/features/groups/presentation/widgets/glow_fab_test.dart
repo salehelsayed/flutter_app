@@ -41,6 +41,40 @@ void main() {
       expect(tapped, isTrue);
     });
 
+    testWidgets('defaults to 56 when no size given', (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(home: Scaffold(body: GlowFab(onPressed: () {}))),
+      );
+
+      final container = tester.widget<Container>(
+        find.descendant(
+          of: find.byType(GlowFab),
+          matching: find.byType(Container),
+        ),
+      );
+
+      expect(container.constraints?.maxWidth, 56);
+      expect(container.constraints?.maxHeight, 56);
+    });
+
+    testWidgets('uses custom size when provided', (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(body: GlowFab(onPressed: () {}, size: 40)),
+        ),
+      );
+
+      final container = tester.widget<Container>(
+        find.descendant(
+          of: find.byType(GlowFab),
+          matching: find.byType(Container),
+        ),
+      );
+
+      expect(container.constraints?.maxWidth, 40);
+      expect(container.constraints?.maxHeight, 40);
+    });
+
     testWidgets('has circular shape with blue border', (tester) async {
       await tester.pumpWidget(
         MaterialApp(home: Scaffold(body: GlowFab(onPressed: () {}))),

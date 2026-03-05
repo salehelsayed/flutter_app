@@ -1,8 +1,13 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/attachment_preview_strip.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/letter_card.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
-import 'package:flutter_app/features/groups/presentation/widgets/group_compose_area.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_type_badge.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
 
@@ -19,6 +24,20 @@ class GroupConversationScreen extends StatelessWidget {
   final VoidCallback? onInfo;
   final bool canWrite;
   final ScrollController? scrollController;
+  final Map<String, List<MediaAttachment>> mediaMap;
+  final List<File> pendingAttachments;
+  final bool isUploading;
+  final bool isProcessing;
+  final double processingProgress;
+  final ValueChanged<int>? onRemoveAttachment;
+  final VoidCallback? onAttach;
+  final VoidCallback? onRecordStart;
+  final VoidCallback? onRecordStop;
+  final VoidCallback? onRecordCancel;
+  final bool isRecording;
+  final Duration recordingDuration;
+  final List<double> amplitudeValues;
+  final void Function(String messageId, int index)? onMediaTap;
 
   const GroupConversationScreen({
     super.key,
@@ -30,6 +49,20 @@ class GroupConversationScreen extends StatelessWidget {
     this.onInfo,
     this.canWrite = true,
     this.scrollController,
+    this.mediaMap = const {},
+    this.pendingAttachments = const [],
+    this.isUploading = false,
+    this.isProcessing = false,
+    this.processingProgress = 0.0,
+    this.onRemoveAttachment,
+    this.onAttach,
+    this.onRecordStart,
+    this.onRecordStop,
+    this.onRecordCancel,
+    this.isRecording = false,
+    this.recordingDuration = Duration.zero,
+    this.amplitudeValues = const [],
+    this.onMediaTap,
   });
 
   @override
@@ -45,11 +78,31 @@ class GroupConversationScreen extends StatelessWidget {
           Expanded(
             child: messages.isEmpty ? _buildEmptyState() : _buildMessageList(),
           ),
+          // Attachment preview strip
+          if (pendingAttachments.isNotEmpty || isProcessing)
+            AttachmentPreviewStrip(
+              attachments: pendingAttachments,
+              isUploading: isUploading,
+              isProcessing: isProcessing,
+              processingProgress: processingProgress,
+              onRemove: onRemoveAttachment,
+            ),
           // Compose area
-          GroupComposeArea(
-            onSend: onSend,
-            canWrite: canWrite,
-          ),
+          if (!canWrite)
+            _buildReadOnlyBanner()
+          else
+            ComposeArea(
+              onSend: onSend,
+              onAttach: onAttach,
+              hasAttachments: pendingAttachments.isNotEmpty,
+              isProcessing: isProcessing,
+              onRecordStart: onRecordStart,
+              onRecordStop: onRecordStop,
+              onRecordCancel: onRecordCancel,
+              isRecording: isRecording,
+              recordingDuration: recordingDuration,
+              amplitudeValues: amplitudeValues,
+            ),
         ],
       ),
     ),
@@ -165,93 +218,46 @@ class GroupConversationScreen extends StatelessWidget {
         return Padding(
           key: ValueKey('grp-msg-${message.id}'),
           padding: const EdgeInsets.only(bottom: 12),
-          child: _GroupLetterCard(
-            message: message,
-            isSent: isSent,
+          child: LetterCard(
+            senderPeerId: message.senderPeerId,
+            senderName: isSent ? 'You' : (message.senderUsername ?? 'Unknown'),
+            text: message.text,
+            time: _formatTime(message.timestamp),
+            isIncoming: !isSent,
+            status: isSent ? message.status : null,
+            media: mediaMap[message.id] ?? const [],
+            onMediaTap: onMediaTap != null
+                ? (index) => onMediaTap!(message.id, index)
+                : null,
           ),
         );
       },
     );
   }
-}
 
-/// Letter card for group messages.
-///
-/// Full-width card with left accent for received, right accent for sent.
-class _GroupLetterCard extends StatelessWidget {
-  final GroupMessage message;
-  final bool isSent;
-
-  const _GroupLetterCard({
-    required this.message,
-    required this.isSent,
-  });
-
-  @override
-  Widget build(BuildContext context) {
+  Widget _buildReadOnlyBanner() {
     return Container(
-      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.04),
-        borderRadius: BorderRadius.circular(12),
         border: Border(
-          left: isSent
-              ? BorderSide.none
-              : const BorderSide(
-                  color: Color(0xFF64B5F6),
-                  width: 3,
-                ),
-          right: isSent
-              ? const BorderSide(
-                  color: Color(0xFF81C784),
-                  width: 3,
-                )
-              : BorderSide.none,
+          top: BorderSide(
+            color: Colors.white.withOpacity(0.06),
+            width: 0.5,
+          ),
         ),
       ),
-      padding: const EdgeInsets.all(12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Sender name + time
-          Row(
-            children: [
-              Text(
-                isSent ? 'You' : (message.senderUsername ?? 'Unknown'),
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  color: isSent
-                      ? const Color(0xFF81C784)
-                      : const Color(0xFF64B5F6),
-                ),
-              ),
-              const Spacer(),
-              Text(
-                _formatTime(message.timestamp),
-                style: TextStyle(
-                  fontSize: 11,
-                  color: Colors.white.withOpacity(0.3),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          // Message text
-          Text(
-            message.text,
-            style: TextStyle(
-              fontSize: 14,
-              color: Colors.white.withOpacity(0.85),
-              height: 1.4,
-            ),
-          ),
-        ],
+      child: Text(
+        'Only admins can send messages in this group',
+        textAlign: TextAlign.center,
+        style: TextStyle(
+          fontSize: 13,
+          color: Colors.white.withOpacity(0.35),
+        ),
       ),
     );
   }
 
-  String _formatTime(DateTime timestamp) {
+  static String _formatTime(DateTime timestamp) {
     final local = timestamp.toLocal();
     final hour = local.hour == 0
         ? 12
