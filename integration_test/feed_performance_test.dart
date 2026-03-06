@@ -9,7 +9,7 @@ import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
 import 'package:flutter_app/features/feed/presentation/screens/feed_screen.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/expanded_compose_input.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bubble.dart';
-import 'package:flutter_app/features/feed/presentation/widgets/thread_card.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/feed_card.dart';
 
 final binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
@@ -298,7 +298,7 @@ void main() {
 
       final collector = _FrameTimingCollector()..start();
 
-      final threadCards = find.byType(ThreadCard);
+      final threadCards = find.byType(FeedCard);
       final cardCount = min(3, tester.widgetList(threadCards).length);
 
       for (var i = 0; i < cardCount; i++) {

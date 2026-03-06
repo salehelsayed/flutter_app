@@ -87,6 +87,10 @@ class _FakeContactRepo implements ContactRepository {
   Future<void> blockContact(String peerId) async {}
   @override
   Future<void> unblockContact(String peerId) async {}
+  @override
+  Future<void> dismissIntroBanner(String peerId) async {}
+  @override
+  Future<void> setIntrosSentAt(String peerId, String timestamp) async {}
 }
 
 class _FakeP2PService implements P2PService {

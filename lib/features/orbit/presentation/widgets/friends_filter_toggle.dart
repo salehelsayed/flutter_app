@@ -7,6 +7,7 @@ class FriendsFilterToggle extends StatelessWidget {
   final String activeFilter;
   final int activeCount;
   final int archivedCount;
+  final int introsCount;
   final ValueChanged<String> onFilterChanged;
 
   const FriendsFilterToggle({
@@ -14,6 +15,7 @@ class FriendsFilterToggle extends StatelessWidget {
     required this.activeFilter,
     required this.activeCount,
     required this.archivedCount,
+    this.introsCount = 0,
     required this.onFilterChanged,
   });
 
@@ -37,6 +39,15 @@ class FriendsFilterToggle extends StatelessWidget {
               showCount: true,
               isActive: activeFilter == 'all',
               onTap: () => onFilterChanged('all'),
+            ),
+          ),
+          Expanded(
+            child: _FilterTab(
+              label: 'Intros',
+              count: introsCount,
+              showCount: introsCount > 0,
+              isActive: activeFilter == 'intros',
+              onTap: () => onFilterChanged('intros'),
             ),
           ),
           Expanded(

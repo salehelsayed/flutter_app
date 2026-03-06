@@ -10,6 +10,16 @@ abstract class NotificationService {
     required String messageText,
   });
 
+  /// Show a generic notification with a title, body, and optional payload.
+  ///
+  /// The [payload] string is passed to [onNotificationTap] when the user taps
+  /// the notification, enabling deep-link navigation.
+  Future<void> showNotification({
+    required String title,
+    required String body,
+    String? payload,
+  });
+
   /// Callback invoked when the user taps a notification.
   void Function(String contactPeerId)? onNotificationTap;
 

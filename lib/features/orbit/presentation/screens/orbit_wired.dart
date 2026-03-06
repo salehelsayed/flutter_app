@@ -51,6 +51,14 @@ import 'package:flutter_app/features/groups/application/group_invite_listener.da
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
+import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
+import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository.dart';
+import 'package:flutter_app/features/introduction/application/introduction_listener.dart';
+import 'package:flutter_app/features/introduction/application/accept_introduction_use_case.dart';
+import 'package:flutter_app/features/introduction/application/pass_introduction_use_case.dart';
+import 'package:flutter_app/features/introduction/application/expire_old_introductions_use_case.dart';
+import 'package:flutter_app/features/introduction/application/load_introductions_use_case.dart';
+import 'package:flutter_app/features/introduction/presentation/widgets/intros_tab.dart';
 import 'package:flutter_app/features/groups/presentation/screens/create_group_picker_wired.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
 import 'package:flutter_app/features/orbit/application/load_orbit_groups_use_case.dart';
@@ -84,6 +92,9 @@ class OrbitWired extends StatefulWidget {
   final GroupMessageListener? groupMessageListener;
   final GroupInviteListener? groupInviteListener;
   final ActiveConversationTracker? groupConversationTracker;
+  final IntroductionRepository? introductionRepository;
+  final IntroductionListener? introductionListener;
+  final String? initialFilterTab;
 
   const OrbitWired({
     super.key,
@@ -108,6 +119,9 @@ class OrbitWired extends StatefulWidget {
     this.groupMessageListener,
     this.groupInviteListener,
     this.groupConversationTracker,
+    this.introductionRepository,
+    this.introductionListener,
+    this.initialFilterTab,
   });
 
   @override
@@ -121,7 +135,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   List<OrbitFriend> _archivedFriends = [];
   List<OrbitGroup> _activeGroups = [];
   List<OrbitGroup> _archivedGroups = [];
-  String _filterTab = 'all';
+  late String _filterTab;
   bool _searchActive = false;
   String _searchQuery = '';
   bool _isSearchTriggerVisible = true;
@@ -140,14 +154,21 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   StreamSubscription<ContactModel>? _contactUpdateSubscription;
   StreamSubscription<ContactRequestModel>? _requestSubscription;
   StreamSubscription<GroupMessage>? _groupMessageSubscription;
+  StreamSubscription<IntroductionModel>? _introReceivedSubscription;
+  StreamSubscription<IntroductionModel>? _introStatusSubscription;
   ImageQualityPreference _qualityPreference = ImageQualityPreference.compressed;
   ImageQualityPreference _videoQualityPreference = ImageQualityPreference.compressed;
+  int _introsCount = 0;
+  Map<String, List<IntroductionModel>> _groupedIntros = {};
+  Map<String, String> _introducerUsernames = {};
+  Set<String> _blockedPeerIds = {};
 
   static const _animCurve = Cubic(0.22, 0.61, 0.36, 1);
 
   @override
   void initState() {
     super.initState();
+    _filterTab = widget.initialFilterTab ?? 'all';
     emitFlowEvent(layer: 'FL', event: 'ORBIT_FL_SCREEN_INIT', details: {});
 
     _collapseController = AnimationController(
@@ -170,10 +191,12 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     _loadVideoQualityPreference();
     _loadOrbitData();
     _loadGroupData();
+    _loadIntroductions();
     _startListeningForChatMessages();
     _startListeningForContactUpdates();
     _startListeningForContactRequests();
     _startListeningForGroupMessages();
+    _startListeningForIntroductions();
     _scrollController.addListener(_onScroll);
   }
 
@@ -220,6 +243,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         _identity = identity;
         _avatarBytes = avatarBytes;
       });
+      // Now that identity is loaded, load introductions
+      _loadIntroductions();
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -241,9 +266,17 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         includeArchived: true,
       );
       if (!mounted) return;
+      final blocked = <String>{};
+      for (final f in active) {
+        if (f.isBlocked) blocked.add(f.peerId);
+      }
+      for (final f in archived) {
+        if (f.isBlocked) blocked.add(f.peerId);
+      }
       setState(() {
         _activeFriends = active;
         _archivedFriends = archived;
+        _blockedPeerIds = blocked;
       });
     } catch (e) {
       emitFlowEvent(
@@ -280,6 +313,113 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         event: 'ORBIT_FL_LOAD_GROUP_DATA_ERROR',
         details: {'error': e.toString()},
       );
+    }
+  }
+
+  Future<void> _loadIntroductions() async {
+    final introRepo = widget.introductionRepository;
+    if (introRepo == null || _identity == null) return;
+
+    try {
+      final ownPeerId = _identity!.peerId;
+      await expireOldIntroductions(
+        introRepo: introRepo,
+        peerId: ownPeerId,
+      );
+      final pending = await loadIntroductionsForUser(
+        introRepo: introRepo,
+        peerId: ownPeerId,
+      );
+      final grouped = groupByIntroducer(pending);
+      final usernames = <String, String>{};
+      for (final intro in pending) {
+        usernames.putIfAbsent(
+          intro.introducerId,
+          () => intro.introducerUsername ?? 'Unknown',
+        );
+      }
+      if (!mounted) return;
+      setState(() {
+        _introsCount = pending.length;
+        _groupedIntros = grouped;
+        _introducerUsernames = usernames;
+      });
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'ORBIT_FL_LOAD_INTROS_ERROR',
+        details: {'error': e.toString()},
+      );
+    }
+  }
+
+  void _startListeningForIntroductions() {
+    final listener = widget.introductionListener;
+    if (listener == null) return;
+
+    _introReceivedSubscription = listener.introReceivedStream.listen(
+      (_) => _loadIntroductions(),
+      onError: (error) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'ORBIT_INTRO_RECEIVED_STREAM_ERROR',
+          details: {'error': error.toString()},
+        );
+      },
+    );
+
+    _introStatusSubscription = listener.introStatusChangedStream.listen(
+      (_) => _loadIntroductions(),
+      onError: (error) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'ORBIT_INTRO_STATUS_STREAM_ERROR',
+          details: {'error': error.toString()},
+        );
+      },
+    );
+  }
+
+  Future<void> _onAcceptIntro(String introductionId) async {
+    if (_identity == null) return;
+
+    await acceptIntroduction(
+      introRepo: widget.introductionRepository!,
+      contactRepo: widget.contactRepo,
+      p2pService: widget.p2pService,
+      bridge: widget.bridge,
+      introductionId: introductionId,
+      ownPeerId: _identity!.peerId,
+      ownUsername: _identity!.username,
+      messageRepo: widget.messageRepo,
+    );
+    _loadIntroductions();
+    _loadOrbitData();
+  }
+
+  Future<void> _onPassIntro(String introductionId) async {
+    if (_identity == null) return;
+
+    await passIntroduction(
+      introRepo: widget.introductionRepository!,
+      contactRepo: widget.contactRepo,
+      p2pService: widget.p2pService,
+      bridge: widget.bridge,
+      introductionId: introductionId,
+      ownPeerId: _identity!.peerId,
+      ownUsername: _identity!.username,
+    );
+    _loadIntroductions();
+  }
+
+  void _onIntroSendMessage(String peerId) {
+    // Find the contact matching this peerId and navigate to conversation
+    final friend = _activeFriends.cast<OrbitFriend?>().firstWhere(
+      (f) => f!.peerId == peerId,
+      orElse: () => null,
+    );
+    if (friend != null) {
+      _onFriendTap(friend);
     }
   }
 
@@ -595,6 +735,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           audioRecorderService: widget.audioRecorderService,
           reactionRepo: widget.reactionRepository,
           reactionListener: widget.reactionListener,
+          introductionRepository: widget.introductionRepository,
         ),
       ),
     ).then((_) => _loadOrbitData());
@@ -639,6 +780,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           groupMessageListener: widget.groupMessageListener,
           groupInviteListener: widget.groupInviteListener,
           groupConversationTracker: widget.groupConversationTracker,
+          introductionRepository: widget.introductionRepository,
+          introductionListener: widget.introductionListener,
         ),
       ),
     );
@@ -654,6 +797,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     _contactUpdateSubscription?.cancel();
     _requestSubscription?.cancel();
     _groupMessageSubscription?.cancel();
+    _introReceivedSubscription?.cancel();
+    _introStatusSubscription?.cancel();
     _collapseController.dispose();
     _searchDockController.dispose();
     _searchTriggerController.dispose();
@@ -712,6 +857,17 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       onArchiveGroup: _onArchiveGroup,
       onUnarchiveGroup: _onUnarchiveGroup,
       onDeleteGroup: _onDeleteGroup,
+      introsCount: _introsCount,
+      introsWidget: IntrosTab(
+        groupedIntros: _groupedIntros,
+        introducerUsernames: _introducerUsernames,
+        onAccept: _onAcceptIntro,
+        onPass: _onPassIntro,
+        ownPeerId: _identity?.peerId ?? '',
+        onSendMessage: _onIntroSendMessage,
+        blockedPeerIds: _blockedPeerIds,
+      ),
+      onIntroBannerTap: () => _onFilterChanged('intros'),
     );
   }
 

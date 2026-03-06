@@ -10,6 +10,7 @@ class ConnectionCard extends StatefulWidget {
   final String? contactAvatarPath;
   final VoidCallback? onSendMessage;
   final bool isBlocked;
+  final String? introducedBy;
 
   const ConnectionCard({
     super.key,
@@ -18,6 +19,7 @@ class ConnectionCard extends StatefulWidget {
     this.contactAvatarPath,
     this.onSendMessage,
     this.isBlocked = false,
+    this.introducedBy,
   });
 
   @override
@@ -154,6 +156,17 @@ class _ConnectionCardState extends State<ConnectionCard>
                                 compact: compact,
                                 contactNameSize: contactNameSize,
                               ),
+                              if (widget.introducedBy != null) ...[
+                                const SizedBox(height: 4),
+                                Text(
+                                  'Introduced by ${widget.introducedBy}',
+                                  style: TextStyle(
+                                    fontSize: compact ? 12 : 13,
+                                    color: const Color(0x99FFFFFF),
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ],
                               SizedBox(height: compact ? 12 : 16),
                               _buildSendMessageButton(compact),
                             ],

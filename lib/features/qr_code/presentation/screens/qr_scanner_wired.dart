@@ -24,6 +24,8 @@ import 'package:flutter_app/features/groups/application/group_message_listener.d
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
+import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository.dart';
+import 'package:flutter_app/features/introduction/application/introduction_listener.dart';
 import 'package:flutter_app/features/feed/presentation/navigation/feed_route_transition.dart';
 import 'package:flutter_app/features/feed/presentation/screens/feed_wired.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
@@ -64,6 +66,8 @@ class QRScannerWired extends StatelessWidget {
   final GroupInviteListener? groupInviteListener;
   final ActiveConversationTracker? groupConversationTracker;
   final DownloadProfilePictureFn? downloadProfilePictureFn;
+  final IntroductionRepository? introductionRepository;
+  final IntroductionListener? introductionListener;
 
   const QRScannerWired({
     super.key,
@@ -90,6 +94,8 @@ class QRScannerWired extends StatelessWidget {
     this.groupInviteListener,
     this.groupConversationTracker,
     this.downloadProfilePictureFn,
+    this.introductionRepository,
+    this.introductionListener,
   });
 
   @override
@@ -324,6 +330,8 @@ class QRScannerWired extends StatelessWidget {
                         groupMessageListener: groupMessageListener,
                         groupInviteListener: groupInviteListener,
                         groupConversationTracker: groupConversationTracker,
+                        introductionRepository: introductionRepository,
+                        introductionListener: introductionListener,
                       ),
                     ),
                     (route) => false,

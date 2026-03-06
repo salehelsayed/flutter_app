@@ -28,6 +28,8 @@ import 'package:flutter_app/features/groups/application/group_message_listener.d
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
+import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository.dart';
+import 'package:flutter_app/features/introduction/application/introduction_listener.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/qr_code/application/build_qr_payload_use_case.dart';
@@ -60,6 +62,8 @@ class FirstTimeExperienceWired extends StatefulWidget {
   final GroupMessageListener? groupMessageListener;
   final GroupInviteListener? groupInviteListener;
   final ActiveConversationTracker? groupConversationTracker;
+  final IntroductionRepository? introductionRepository;
+  final IntroductionListener? introductionListener;
 
   const FirstTimeExperienceWired({
     super.key,
@@ -84,6 +88,8 @@ class FirstTimeExperienceWired extends StatefulWidget {
     this.groupMessageListener,
     this.groupInviteListener,
     this.groupConversationTracker,
+    this.introductionRepository,
+    this.introductionListener,
   });
 
   @override
@@ -188,6 +194,8 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
             groupMessageListener: widget.groupMessageListener,
             groupInviteListener: widget.groupInviteListener,
             groupConversationTracker: widget.groupConversationTracker,
+            introductionRepository: widget.introductionRepository,
+            introductionListener: widget.introductionListener,
           ),
         ),
       );
@@ -447,6 +455,8 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
           groupMessageListener: widget.groupMessageListener,
           groupInviteListener: widget.groupInviteListener,
           groupConversationTracker: widget.groupConversationTracker,
+          introductionRepository: widget.introductionRepository,
+          introductionListener: widget.introductionListener,
         ),
       ),
     );

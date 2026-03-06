@@ -49,6 +49,8 @@ import 'package:flutter_app/features/groups/application/group_invite_listener.da
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
+import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository.dart';
+import 'package:flutter_app/features/introduction/application/introduction_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_list_wired.dart';
@@ -87,6 +89,8 @@ class FeedWired extends StatefulWidget {
   final GroupMessageListener? groupMessageListener;
   final GroupInviteListener? groupInviteListener;
   final ActiveConversationTracker? groupConversationTracker;
+  final IntroductionRepository? introductionRepository;
+  final IntroductionListener? introductionListener;
 
   const FeedWired({
     super.key,
@@ -111,6 +115,8 @@ class FeedWired extends StatefulWidget {
     this.groupMessageListener,
     this.groupInviteListener,
     this.groupConversationTracker,
+    this.introductionRepository,
+    this.introductionListener,
   });
 
   @override
@@ -143,7 +149,9 @@ class _FeedWiredState extends State<FeedWired> {
   @override
   void initState() {
     super.initState();
-    emitFlowEvent(layer: 'FL', event: 'FEED_FL_SCREEN_INIT', details: {});
+    emitFlowEvent(layer: 'FL', event: 'FEED_FL_SCREEN_INIT', details: {
+      'introRepoNull': widget.introductionRepository == null,
+    });
     _loadIdentity();
     _loadQualityPreference();
     _loadVideoQualityPreference();
@@ -410,6 +418,7 @@ class _FeedWiredState extends State<FeedWired> {
           audioRecorderService: widget.audioRecorderService,
           reactionRepo: widget.reactionRepository,
           reactionListener: widget.reactionListener,
+          introductionRepository: widget.introductionRepository,
         ),
       ),
     ).then((_) => _refreshFeed());
@@ -450,6 +459,7 @@ class _FeedWiredState extends State<FeedWired> {
           audioRecorderService: widget.audioRecorderService,
           reactionRepo: widget.reactionRepository,
           reactionListener: widget.reactionListener,
+          introductionRepository: widget.introductionRepository,
         ),
       ),
     ).then((_) => _refreshFeed());
@@ -660,6 +670,7 @@ class _FeedWiredState extends State<FeedWired> {
             audioRecorderService: widget.audioRecorderService,
             reactionRepo: widget.reactionRepository,
             reactionListener: widget.reactionListener,
+            introductionRepository: widget.introductionRepository,
           ),
         ),
       ).then((_) => _refreshFeed());
@@ -992,6 +1003,8 @@ class _FeedWiredState extends State<FeedWired> {
             groupMessageListener: widget.groupMessageListener,
             groupInviteListener: widget.groupInviteListener,
             groupConversationTracker: widget.groupConversationTracker,
+            introductionRepository: widget.introductionRepository,
+            introductionListener: widget.introductionListener,
           ),
         ),
       ).then((_) => _refreshFeed());

@@ -114,6 +114,9 @@ void main() {
       dbLoadArchivedContacts: () => dbLoadArchivedContacts(db),
       dbBlockContact: (peerId) => dbBlockContact(db, peerId),
       dbUnblockContact: (peerId) => dbUnblockContact(db, peerId),
+      dbDismissIntroBanner: (peerId) => dbDismissIntroBanner(db, peerId),
+      dbSetIntrosSentAt: (peerId, timestamp) =>
+          dbSetIntrosSentAt(db, peerId, timestamp),
     );
     final contactRequestRepository = ContactRequestRepositoryImpl(
       dbLoadPendingRequests: () => dbLoadPendingRequests(db),
@@ -148,6 +151,8 @@ void main() {
           dbLoadMessagesPage(db, contactPeerId,
               limit: limit, beforeTimestamp: beforeTimestamp),
       dbLoadFailedOutgoingMessages: () => dbLoadFailedOutgoingMessages(db),
+      dbLoadUnackedOutgoingMessages: ({required olderThan, limit = 50}) =>
+          dbLoadUnackedOutgoingMessages(db, olderThan: olderThan, limit: limit),
     );
 
     final mediaAttachmentRepository = MediaAttachmentRepositoryImpl(

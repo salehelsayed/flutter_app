@@ -37,6 +37,11 @@ import 'package:flutter_app/features/conversation/application/send_reaction_use_
 import 'package:flutter_app/features/conversation/application/remove_reaction_use_case.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
+import 'package:flutter_app/features/introduction/application/check_intro_banner_use_case.dart';
+import 'package:flutter_app/features/introduction/application/insert_intro_system_message.dart';
+import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository.dart';
+import 'package:flutter_app/features/introduction/presentation/screens/friend_picker_wired.dart';
+import 'package:flutter_app/features/introduction/presentation/screens/sent_confirmation_wired.dart';
 import 'conversation_screen.dart';
 
 typedef SendChatMessageFn =
@@ -94,6 +99,7 @@ class ConversationWired extends StatefulWidget {
   final AudioRecorderService? audioRecorderService;
   final ReactionRepository? reactionRepo;
   final ReactionListener? reactionListener;
+  final IntroductionRepository? introductionRepository;
 
   const ConversationWired({
     super.key,
@@ -116,6 +122,7 @@ class ConversationWired extends StatefulWidget {
     this.audioRecorderService,
     this.reactionRepo,
     this.reactionListener,
+    this.introductionRepository,
   });
 
   @override
@@ -156,6 +163,10 @@ class _ConversationWiredState extends State<ConversationWired> {
   Map<String, List<MessageReaction>> _reactions = {};
   StreamSubscription<MessageReaction>? _reactionSubscription;
 
+  // Introduction banner state
+  bool _showIntroBanner = false;
+  bool _hasOtherFriends = false;
+
   @override
   void initState() {
     super.initState();
@@ -184,6 +195,115 @@ class _ConversationWiredState extends State<ConversationWired> {
     _startListeningForMessages();
     _startListeningForContactUpdates();
     _startListeningForReactions();
+    _checkIntroBanner();
+    _checkHasOtherFriends();
+  }
+
+  Future<void> _checkIntroBanner() async {
+    final contactRepo = widget.contactRepo;
+    if (contactRepo == null) return;
+
+    final show = await shouldShowIntroBanner(
+      contactRepo: contactRepo,
+      contact: _contact,
+      messageCount: _messages.length,
+    );
+    if (mounted && show != _showIntroBanner) {
+      setState(() => _showIntroBanner = show);
+    }
+  }
+
+  Future<void> _checkHasOtherFriends() async {
+    final contactRepo = widget.contactRepo;
+    if (contactRepo == null) return;
+
+    final activeContacts = await contactRepo.getActiveContacts();
+    final others = activeContacts
+        .where((c) => c.peerId != _contact.peerId && !c.isBlocked)
+        .toList();
+    if (mounted) {
+      setState(() => _hasOtherFriends = others.isNotEmpty);
+    }
+  }
+
+  Future<void> _onMaybeLater() async {
+    final contactRepo = widget.contactRepo;
+    if (contactRepo == null) return;
+
+    await contactRepo.dismissIntroBanner(_contact.peerId);
+    if (mounted) {
+      setState(() => _showIntroBanner = false);
+      _contact = _contact.copyWith(introsBannerDismissed: true);
+    }
+  }
+
+  void _onMakeIntroductions() {
+    // The FriendPickerWired integration is handled at a higher level.
+    // For now, this triggers the same flow as the overflow menu introduce action.
+    _onIntroduce();
+  }
+
+  void _onIntroduce() {
+    final introRepo = widget.introductionRepository;
+    final contactRepo = widget.contactRepo;
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CONV_FL_INTRODUCE_TAP',
+      details: {
+        'introRepoNull': introRepo == null,
+        'contactRepoNull': contactRepo == null,
+        'bridgeNull': widget.bridge == null,
+      },
+    );
+    if (introRepo == null || contactRepo == null) return;
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CONV_FL_INTRODUCE_TRIGGERED',
+      details: {'contactPeerId': _contact.peerId},
+    );
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) => FriendPickerWired(
+        recipient: _contact,
+        contactRepo: contactRepo,
+        introRepo: introRepo,
+        p2pService: widget.p2pService,
+        bridge: widget.bridge!,
+        identityRepo: widget.identityRepo,
+        onIntroductionsSent: (intros) {
+          // Insert system message into conversation history
+          final identity = _identity;
+          if (identity != null && intros.isNotEmpty) {
+            final count = intros.length;
+            final noun = count == 1 ? 'person' : 'people';
+            insertIntroSystemMessage(
+              messageRepo: widget.messageRepo,
+              contactPeerId: _contact.peerId,
+              text: 'You introduced $count $noun to ${_contact.username}',
+              ownPeerId: identity.peerId,
+            ).then((_) {
+              if (mounted) _loadInitialPage();
+            });
+          }
+          Navigator.of(sheetContext).pop();
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => SentConfirmationWired(
+                introductionCount: intros.length,
+                introducedUsernames: intros
+                    .map((i) => i.introducedUsername ?? 'Unknown')
+                    .toList(),
+                onBackToConversation: () => Navigator.of(context).pop(),
+              ),
+            ),
+          );
+        },
+      ),
+    );
   }
 
   Future<void> _loadIdentity() async {
@@ -320,6 +440,10 @@ class _ConversationWiredState extends State<ConversationWired> {
     });
     _scrollToBottom();
     _markAsRead();
+    // Auto-dismiss intro banner when message count reaches threshold
+    if (_showIntroBanner && _messages.length >= 3) {
+      _onMaybeLater();
+    }
   }
 
   void _startListeningForContactUpdates() {
@@ -1310,6 +1434,28 @@ class _ConversationWiredState extends State<ConversationWired> {
         side: const BorderSide(color: Color.fromRGBO(255, 255, 255, 0.14)),
       ),
       items: [
+        if (!_contact.isBlocked && _hasOtherFriends)
+          const PopupMenuItem<String>(
+            value: 'introduce',
+            child: Row(
+              children: [
+                Icon(
+                  Icons.people_outline,
+                  size: 18,
+                  color: Color(0xFF10B981),
+                ),
+                SizedBox(width: 10),
+                Text(
+                  'Introduce to your circle',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    color: Color(0xFF10B981),
+                  ),
+                ),
+              ],
+            ),
+          ),
         PopupMenuItem<String>(
           value: 'block',
           child: Row(
@@ -1356,7 +1502,9 @@ class _ConversationWiredState extends State<ConversationWired> {
         ),
       ],
     ).then((value) {
-      if (value == 'block') {
+      if (value == 'introduce') {
+        _onIntroduce();
+      } else if (value == 'block') {
         if (_contact.isBlocked) {
           _onUnblock();
         } else {
@@ -1539,6 +1687,10 @@ class _ConversationWiredState extends State<ConversationWired> {
         onReactionSelected: widget.reactionRepo != null
             ? _onReactionSelected
             : null,
+        showIntroBanner: _showIntroBanner,
+        bannerContactUsername: _contact.username,
+        onMakeIntroductions: _onMakeIntroductions,
+        onMaybeLater: _onMaybeLater,
       ),
     );
   }

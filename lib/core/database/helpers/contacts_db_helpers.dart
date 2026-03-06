@@ -339,3 +339,61 @@ Future<bool> dbContactExists(Database db, String peerId) async {
     return false;
   }
 }
+
+/// Dismisses the intro banner for a contact.
+Future<void> dbDismissIntroBanner(Database db, String peerId) async {
+  emitFlowEvent(
+    layer: 'DB',
+    event: 'CONTACTS_DB_DISMISS_INTRO_BANNER_START',
+    details: {'peerId': peerId.substring(0, 10)},
+  );
+
+  try {
+    await db.rawUpdate(
+      'UPDATE contacts SET intros_banner_dismissed = 1 WHERE peer_id = ?',
+      [peerId],
+    );
+
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'CONTACTS_DB_DISMISS_INTRO_BANNER_SUCCESS',
+      details: {'peerId': peerId.substring(0, 10)},
+    );
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'CONTACTS_DB_DISMISS_INTRO_BANNER_ERROR',
+      details: {'error': e.toString()},
+    );
+    rethrow;
+  }
+}
+
+/// Sets the intros_sent_at timestamp and auto-dismisses the banner.
+Future<void> dbSetIntrosSentAt(Database db, String peerId, String timestamp) async {
+  emitFlowEvent(
+    layer: 'DB',
+    event: 'CONTACTS_DB_SET_INTROS_SENT_AT_START',
+    details: {'peerId': peerId.substring(0, 10)},
+  );
+
+  try {
+    await db.rawUpdate(
+      'UPDATE contacts SET intros_sent_at = ?, intros_banner_dismissed = 1 WHERE peer_id = ?',
+      [timestamp, peerId],
+    );
+
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'CONTACTS_DB_SET_INTROS_SENT_AT_SUCCESS',
+      details: {'peerId': peerId.substring(0, 10)},
+    );
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'CONTACTS_DB_SET_INTROS_SENT_AT_ERROR',
+      details: {'error': e.toString()},
+    );
+    rethrow;
+  }
+}

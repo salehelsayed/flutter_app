@@ -195,6 +195,9 @@ Future<_SmokeTestStack> _setupStack() async {
     dbLoadArchivedContacts: () => dbLoadArchivedContacts(db),
     dbBlockContact: (peerId) => dbBlockContact(db, peerId),
     dbUnblockContact: (peerId) => dbUnblockContact(db, peerId),
+    dbDismissIntroBanner: (peerId) => dbDismissIntroBanner(db, peerId),
+    dbSetIntrosSentAt: (peerId, timestamp) =>
+        dbSetIntrosSentAt(db, peerId, timestamp),
   );
 
   final messageRepo = MessageRepositoryImpl(
@@ -221,6 +224,8 @@ Future<_SmokeTestStack> _setupStack() async {
         dbLoadMessagesPage(db, contactPeerId,
             limit: limit, beforeTimestamp: beforeTimestamp),
     dbLoadFailedOutgoingMessages: () => dbLoadFailedOutgoingMessages(db),
+    dbLoadUnackedOutgoingMessages: ({required olderThan, limit = 50}) =>
+        dbLoadUnackedOutgoingMessages(db, olderThan: olderThan, limit: limit),
   );
 
   final bridge = GoBridgeClient();

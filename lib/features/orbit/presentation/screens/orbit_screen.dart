@@ -59,6 +59,9 @@ class OrbitScreen extends StatelessWidget {
   final void Function(OrbitGroup) onArchiveGroup;
   final void Function(OrbitGroup) onUnarchiveGroup;
   final void Function(OrbitGroup) onDeleteGroup;
+  final int introsCount;
+  final Widget? introsWidget;
+  final VoidCallback? onIntroBannerTap;
 
   const OrbitScreen({
     super.key,
@@ -98,6 +101,9 @@ class OrbitScreen extends StatelessWidget {
     required this.onArchiveGroup,
     required this.onUnarchiveGroup,
     required this.onDeleteGroup,
+    this.introsCount = 0,
+    this.introsWidget,
+    this.onIntroBannerTap,
   });
 
   /// Builds a merged and sorted list of orbit items (friends + groups)
@@ -205,14 +211,61 @@ class OrbitScreen extends StatelessWidget {
                               activeFilter: filterTab,
                               activeCount: activeCount,
                               archivedCount: archivedCount,
+                              introsCount: introsCount,
                               onFilterChanged: onFilterChanged,
                             ),
                           ],
 
                           const SizedBox(height: 8),
 
+                          // Intro banner (shown when pending intros exist and not on intros tab)
+                          if (introsCount > 0 && filterTab != 'intros')
+                            GestureDetector(
+                              onTap: onIntroBannerTap,
+                              child: Container(
+                                margin: const EdgeInsets.only(bottom: 8),
+                                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                                decoration: BoxDecoration(
+                                  color: const Color(0x141DB954),
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(color: const Color(0x331DB954)),
+                                ),
+                                child: Row(
+                                  children: [
+                                    const Icon(Icons.people_outline, size: 18, color: Color(0xFF1DB954)),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            '$introsCount introduction${introsCount == 1 ? '' : 's'} pending',
+                                            style: const TextStyle(
+                                              fontSize: 13,
+                                              fontWeight: FontWeight.w600,
+                                              color: Color(0xF2FFFFFF),
+                                            ),
+                                          ),
+                                          const Text(
+                                            'Review and accept to start chatting',
+                                            style: TextStyle(
+                                              fontSize: 11,
+                                              color: Color(0x66FFFFFF),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    const Icon(Icons.chevron_right, size: 18, color: Color(0x66FFFFFF)),
+                                  ],
+                                ),
+                              ),
+                            ),
+
                           // Merged orbit items (friends + groups)
-                          if (searchActive &&
+                          if (filterTab == 'intros' && introsWidget != null)
+                            introsWidget!
+                          else if (searchActive &&
                               searchQuery.isNotEmpty &&
                               displayedFriends.isEmpty)
                             _buildNoResults()

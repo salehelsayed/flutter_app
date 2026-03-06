@@ -50,6 +50,8 @@ void main() {
           archived.map((c) => c.toMap()).toList(),
       dbBlockContact: (peerId) async => blockCalls.add(peerId),
       dbUnblockContact: (peerId) async => unblockCalls.add(peerId),
+      dbDismissIntroBanner: (peerId) async {},
+      dbSetIntrosSentAt: (peerId, timestamp) async {},
     );
   });
 

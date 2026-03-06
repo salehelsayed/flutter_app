@@ -43,4 +43,10 @@ abstract class ContactRepository {
 
   /// Unblocks a contact by peer ID.
   Future<void> unblockContact(String peerId);
+
+  /// Dismisses the introduction banner for a contact.
+  Future<void> dismissIntroBanner(String peerId);
+
+  /// Sets the timestamp when introductions were sent for a contact.
+  Future<void> setIntrosSentAt(String peerId, String timestamp);
 }
