@@ -27,6 +27,21 @@ class FakeNotificationService implements NotificationService {
   }
 
   @override
+  Future<void> showNotification({
+    required String title,
+    required String body,
+    String? payload,
+  }) async {
+    shownGeneric.add(FakeGenericNotification(
+      title: title,
+      body: body,
+      payload: payload,
+    ));
+  }
+
+  final List<FakeGenericNotification> shownGeneric = [];
+
+  @override
   void dispose() {}
 }
 
@@ -39,5 +54,17 @@ class FakeNotification {
     required this.contactPeerId,
     required this.senderUsername,
     required this.messageText,
+  });
+}
+
+class FakeGenericNotification {
+  final String title;
+  final String body;
+  final String? payload;
+
+  const FakeGenericNotification({
+    required this.title,
+    required this.body,
+    this.payload,
   });
 }

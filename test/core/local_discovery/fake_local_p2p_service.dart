@@ -76,6 +76,23 @@ class FakeLocalP2PService implements LocalP2PService {
   }
 
   @override
+  Stream<LocalMediaReady>? get mediaReadyStream => null;
+
+  @override
+  Future<bool> sendMedia({
+    required String peerId,
+    required String filePath,
+    required String mime,
+    required String mediaId,
+    required String fromPeerId,
+    int? durationMs,
+    List<double>? waveform,
+    String? filename,
+  }) async {
+    return sendWillSucceed;
+  }
+
+  @override
   void dispose() {
     _messageController.close();
     _peersController.close();

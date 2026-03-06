@@ -41,6 +41,15 @@ class ContactModel {
   /// ISO-8601 timestamp when the contact was blocked, null if not blocked.
   final String? blockedAt;
 
+  /// Whether the intro banner has been dismissed for this contact.
+  final bool introsBannerDismissed;
+
+  /// ISO-8601 timestamp when introductions were last sent for this contact.
+  final String? introsSentAt;
+
+  /// Username of the introducer who facilitated this connection, if any.
+  final String? introducedBy;
+
   const ContactModel({
     required this.peerId,
     required this.publicKey,
@@ -55,6 +64,9 @@ class ContactModel {
     this.archivedAt,
     this.isBlocked = false,
     this.blockedAt,
+    this.introsBannerDismissed = false,
+    this.introsSentAt,
+    this.introducedBy,
   });
 
   /// Creates a ContactModel from a QR payload JSON map.
@@ -88,6 +100,9 @@ class ContactModel {
       archivedAt: map['archived_at'] as String?,
       isBlocked: (map['is_blocked'] as int? ?? 0) == 1,
       blockedAt: map['blocked_at'] as String?,
+      introsBannerDismissed: (map['intros_banner_dismissed'] as int? ?? 0) == 1,
+      introsSentAt: map['intros_sent_at'] as String?,
+      introducedBy: map['introduced_by'] as String?,
     );
   }
 
@@ -107,6 +122,9 @@ class ContactModel {
       'archived_at': archivedAt,
       'is_blocked': isBlocked ? 1 : 0,
       'blocked_at': blockedAt,
+      'intros_banner_dismissed': introsBannerDismissed ? 1 : 0,
+      'intros_sent_at': introsSentAt,
+      'introduced_by': introducedBy,
     };
   }
 
@@ -127,6 +145,10 @@ class ContactModel {
     bool? isBlocked,
     String? blockedAt,
     bool clearBlockedAt = false,
+    bool? introsBannerDismissed,
+    String? introsSentAt,
+    bool clearIntrosSentAt = false,
+    String? introducedBy,
   }) {
     return ContactModel(
       peerId: peerId ?? this.peerId,
@@ -142,6 +164,9 @@ class ContactModel {
       archivedAt: clearArchivedAt ? null : (archivedAt ?? this.archivedAt),
       isBlocked: isBlocked ?? this.isBlocked,
       blockedAt: clearBlockedAt ? null : (blockedAt ?? this.blockedAt),
+      introsBannerDismissed: introsBannerDismissed ?? this.introsBannerDismissed,
+      introsSentAt: clearIntrosSentAt ? null : (introsSentAt ?? this.introsSentAt),
+      introducedBy: introducedBy ?? this.introducedBy,
     );
   }
 

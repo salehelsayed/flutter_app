@@ -37,6 +37,10 @@ class FakeContactRepository implements ContactRepository {
   Future<List<ContactModel>> getActiveContacts() async => [];
   @override
   Future<List<ContactModel>> getArchivedContacts() async => [];
+  @override
+  Future<void> dismissIntroBanner(String peerId) async {}
+  @override
+  Future<void> setIntrosSentAt(String peerId, String timestamp) async {}
 }
 
 class FakeMessageRepository implements MessageRepository {

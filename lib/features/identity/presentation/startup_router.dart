@@ -35,6 +35,8 @@ import 'package:flutter_app/core/utils/startup_timing.dart';
 import 'package:flutter_app/core/config/startup_config.dart';
 import 'package:flutter_app/features/groups/application/rejoin_group_topics_use_case.dart';
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
+import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository.dart';
+import 'package:flutter_app/features/introduction/application/introduction_listener.dart';
 
 /// Router widget that handles app startup navigation.
 ///
@@ -109,6 +111,12 @@ class StartupRouter extends StatefulWidget {
   /// Tracks which group conversation is currently open (for notification suppression).
   final ActiveConversationTracker? groupConversationTracker;
 
+  /// The introduction repository for managing introductions.
+  final IntroductionRepository? introductionRepository;
+
+  /// The introduction listener for incoming introductions.
+  final IntroductionListener? introductionListener;
+
   const StartupRouter({
     super.key,
     required this.repository,
@@ -132,6 +140,8 @@ class StartupRouter extends StatefulWidget {
     this.groupMessageListener,
     this.groupInviteListener,
     this.groupConversationTracker,
+    this.introductionRepository,
+    this.introductionListener,
   });
 
   @override
@@ -205,6 +215,8 @@ class _StartupRouterState extends State<StartupRouter> {
                 groupMessageListener: widget.groupMessageListener,
                 groupInviteListener: widget.groupInviteListener,
                 groupConversationTracker: widget.groupConversationTracker,
+                introductionRepository: widget.introductionRepository,
+                introductionListener: widget.introductionListener,
               ),
             ),
           );
@@ -243,6 +255,8 @@ class _StartupRouterState extends State<StartupRouter> {
             groupMessageListener: widget.groupMessageListener,
             groupInviteListener: widget.groupInviteListener,
             groupConversationTracker: widget.groupConversationTracker,
+            introductionRepository: widget.introductionRepository,
+            introductionListener: widget.introductionListener,
           );
           StartupTiming.instance.mark('route_pushed');
 
@@ -290,6 +304,8 @@ class _StartupRouterState extends State<StartupRouter> {
                         groupMessageListener: widget.groupMessageListener,
                         groupInviteListener: widget.groupInviteListener,
                         groupConversationTracker: widget.groupConversationTracker,
+                        introductionRepository: widget.introductionRepository,
+                        introductionListener: widget.introductionListener,
                       ),
                     ),
                   );
@@ -487,6 +503,8 @@ class _StartupRouterState extends State<StartupRouter> {
     GroupMessageListener? groupMessageListener,
     GroupInviteListener? groupInviteListener,
     ActiveConversationTracker? groupConversationTracker,
+    IntroductionRepository? introductionRepository,
+    IntroductionListener? introductionListener,
   }) {
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(
@@ -512,6 +530,8 @@ class _StartupRouterState extends State<StartupRouter> {
           groupMessageListener: groupMessageListener,
           groupInviteListener: groupInviteListener,
           groupConversationTracker: groupConversationTracker,
+          introductionRepository: introductionRepository,
+          introductionListener: introductionListener,
         ),
       ),
     );

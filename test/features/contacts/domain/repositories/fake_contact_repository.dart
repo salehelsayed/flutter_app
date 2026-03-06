@@ -118,4 +118,20 @@ class FakeContactRepository implements ContactRepository {
       );
     }
   }
+
+  @override
+  Future<void> dismissIntroBanner(String peerId) async {
+    final c = _contacts[peerId];
+    if (c != null) {
+      _contacts[peerId] = c.copyWith(introsBannerDismissed: true);
+    }
+  }
+
+  @override
+  Future<void> setIntrosSentAt(String peerId, String timestamp) async {
+    final c = _contacts[peerId];
+    if (c != null) {
+      _contacts[peerId] = c.copyWith(introsSentAt: timestamp);
+    }
+  }
 }

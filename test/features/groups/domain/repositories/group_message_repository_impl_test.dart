@@ -37,6 +37,8 @@ void main() {
       dbDeleteGroupMessage: (id) => dbDeleteGroupMessage(db, id),
       dbExistsGroupMessageByContent: (groupId, senderPeerId, text, timestamp) =>
           dbExistsGroupMessageByContent(db, groupId, senderPeerId, text, timestamp),
+      dbDeleteGroupMessagesForGroup: (groupId) =>
+          dbDeleteGroupMessagesForGroup(db, groupId),
     );
   });
 

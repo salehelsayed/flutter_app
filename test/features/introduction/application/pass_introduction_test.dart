@@ -1,0 +1,138 @@
+import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/features/introduction/application/pass_introduction_use_case.dart';
+import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+import '../../../core/bridge/fake_bridge.dart';
+import '../../../shared/fakes/fake_p2p_network.dart';
+import '../../../shared/fakes/fake_p2p_service_integration.dart';
+import '../../../shared/fakes/in_memory_contact_repository.dart';
+import '../../../shared/fakes/in_memory_introduction_repository.dart';
+
+void main() {
+  late FakeP2PNetwork network;
+  late FakeP2PService p2pServiceB;
+  late PassthroughCryptoBridge bridge;
+  late InMemoryContactRepository contactRepo;
+  late InMemoryIntroductionRepository introRepo;
+
+  final now = DateTime.now().toUtc().toIso8601String();
+
+  setUp(() {
+    network = FakeP2PNetwork();
+    // Register all peers so messages can be delivered
+    FakeP2PService(peerId: 'peer-A', network: network); // introducer
+    p2pServiceB = FakeP2PService(peerId: 'peer-B', network: network);
+    FakeP2PService(peerId: 'peer-C', network: network); // introduced
+    bridge = PassthroughCryptoBridge();
+    contactRepo = InMemoryContactRepository();
+    introRepo = InMemoryIntroductionRepository();
+
+    // Add contacts so pass can look up ML-KEM keys for encryption
+    contactRepo.addTestContact(ContactModel(
+      peerId: 'peer-A',
+      publicKey: 'pk-peer-A',
+      rendezvous: '/dns4/relay/tcp/443/p2p/relay',
+      username: 'Alice',
+      signature: 'sig-peer-A',
+      scannedAt: now,
+      mlKemPublicKey: 'test-mlkem-pk-peer-A',
+    ));
+    contactRepo.addTestContact(ContactModel(
+      peerId: 'peer-B',
+      publicKey: 'pk-peer-B',
+      rendezvous: '/dns4/relay/tcp/443/p2p/relay',
+      username: 'Bob',
+      signature: 'sig-peer-B',
+      scannedAt: now,
+      mlKemPublicKey: 'test-mlkem-pk-peer-B',
+    ));
+    contactRepo.addTestContact(ContactModel(
+      peerId: 'peer-C',
+      publicKey: 'pk-peer-C',
+      rendezvous: '/dns4/relay/tcp/443/p2p/relay',
+      username: 'Charlie',
+      signature: 'sig-peer-C',
+      scannedAt: now,
+      mlKemPublicKey: 'test-mlkem-pk-peer-C',
+    ));
+
+    // Pre-seed a pending introduction
+    introRepo.saveIntroduction(IntroductionModel(
+      id: 'intro-1',
+      introducerId: 'peer-A',
+      recipientId: 'peer-B',
+      introducedId: 'peer-C',
+      introducerUsername: 'Alice',
+      recipientUsername: 'Bob',
+      introducedUsername: 'Charlie',
+      createdAt: now,
+    ));
+  });
+
+  test("pass sets the passing user's status to passed", () async {
+    final result = await passIntroduction(
+      introRepo: introRepo,
+      contactRepo: contactRepo,
+      p2pService: p2pServiceB,
+      bridge: bridge,
+      introductionId: 'intro-1',
+      ownPeerId: 'peer-B',
+      ownUsername: 'Bob',
+    );
+
+    expect(result, isNotNull);
+    expect(result!.recipientStatus, IntroductionStatus.passed);
+    // The other party's status should remain pending
+    expect(result.introducedStatus, IntroductionStatus.pending);
+  });
+
+  test('pass changes overall status to passed', () async {
+    final result = await passIntroduction(
+      introRepo: introRepo,
+      contactRepo: contactRepo,
+      p2pService: p2pServiceB,
+      bridge: bridge,
+      introductionId: 'intro-1',
+      ownPeerId: 'peer-B',
+      ownUsername: 'Bob',
+    );
+
+    expect(result, isNotNull);
+    expect(result!.status, IntroductionOverallStatus.passed);
+  });
+
+  test('pass does NOT create a connection', () async {
+    final contactCountBefore = await contactRepo.getContactCount();
+
+    await passIntroduction(
+      introRepo: introRepo,
+      contactRepo: contactRepo,
+      p2pService: p2pServiceB,
+      bridge: bridge,
+      introductionId: 'intro-1',
+      ownPeerId: 'peer-B',
+      ownUsername: 'Bob',
+    );
+
+    final contactCountAfter = await contactRepo.getContactCount();
+    expect(contactCountAfter, contactCountBefore);
+  });
+
+  test('pass sends notification to introducer and other party', () async {
+    network.resetCounters();
+
+    await passIntroduction(
+      introRepo: introRepo,
+      contactRepo: contactRepo,
+      p2pService: p2pServiceB,
+      bridge: bridge,
+      introductionId: 'intro-1',
+      ownPeerId: 'peer-B',
+      ownUsername: 'Bob',
+    );
+
+    // Should send to introducer (peer-A) and other party (peer-C)
+    expect(network.deliverCallCount, 2);
+  });
+}

@@ -30,6 +30,14 @@ import 'package:flutter_app/core/database/helpers/groups_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_members_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_keys_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart';
+import 'package:flutter_app/core/database/migrations/019_introductions_table.dart';
+import 'package:flutter_app/core/database/migrations/020_intro_banner_columns.dart';
+import 'package:flutter_app/core/database/migrations/021_contact_introduced_by.dart';
+import 'package:flutter_app/core/database/migrations/022_introduction_keys.dart';
+import 'package:flutter_app/core/database/migrations/023_introduction_recipient_keys.dart';
+import 'package:flutter_app/core/database/helpers/introductions_db_helpers.dart';
+import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository_impl.dart';
+import 'package:flutter_app/features/introduction/application/introduction_listener.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/secure_storage/flutter_secure_key_store.dart';
 import 'package:flutter_app/core/secure_storage/migrate_secrets_to_secure_storage.dart';
@@ -77,6 +85,8 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
 import 'package:flutter_app/features/conversation/presentation/navigation/conversation_route_transition.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
+import 'package:flutter_app/features/orbit/presentation/screens/orbit_wired.dart';
+import 'package:flutter_app/features/orbit/presentation/navigation/orbit_route_transition.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/push/application/background_message_handler.dart';
 
@@ -120,7 +130,7 @@ void main() async {
   final db = await openEncryptedDatabase(
     secureKeyStore: secureKeyStore,
     dbName: 'identity.db',
-    version: 18,
+    version: 23,
     onCreate: (db, version) async {
       await runIdentityTableMigration(db);
       await runMessagesTableMigration(db);
@@ -140,6 +150,11 @@ void main() async {
       await runMessageReactionsMigration(db);
       await runGroupsTablesMigration(db);
       await runGroupMessagesTablesMigration(db);
+      await runIntroductionsTableMigration(db);
+      await runIntroBannerColumnsMigration(db);
+      await runContactIntroducedByMigration(db);
+      await runIntroductionKeysMigration(db);
+      await runIntroductionRecipientKeysMigration(db);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) {
@@ -191,6 +206,21 @@ void main() async {
       if (oldVersion < 18) {
         await runGroupMessagesTablesMigration(db);
       }
+      if (oldVersion < 19) {
+        await runIntroductionsTableMigration(db);
+      }
+      if (oldVersion < 20) {
+        await runIntroBannerColumnsMigration(db);
+      }
+      if (oldVersion < 21) {
+        await runContactIntroducedByMigration(db);
+      }
+      if (oldVersion < 22) {
+        await runIntroductionKeysMigration(db);
+      }
+      if (oldVersion < 23) {
+        await runIntroductionRecipientKeysMigration(db);
+      }
     },
   );
 
@@ -223,6 +253,8 @@ void main() async {
     dbLoadArchivedContacts: () => dbLoadArchivedContacts(db),
     dbBlockContact: (peerId) => dbBlockContact(db, peerId),
     dbUnblockContact: (peerId) => dbUnblockContact(db, peerId),
+    dbDismissIntroBanner: (peerId) => dbDismissIntroBanner(db, peerId),
+    dbSetIntrosSentAt: (peerId, timestamp) => dbSetIntrosSentAt(db, peerId, timestamp),
   );
 
   // Create contact request repository
@@ -351,6 +383,21 @@ void main() async {
             db, groupId, senderPeerId, text, timestamp),
     dbDeleteGroupMessagesForGroup: (groupId) =>
         dbDeleteGroupMessagesForGroup(db, groupId),
+  );
+
+  // Create introduction repository
+  final introductionRepository = IntroductionRepositoryImpl(
+    dbInsertIntroduction: (row) => dbInsertIntroduction(db, row),
+    dbLoadIntroduction: (id) => dbLoadIntroduction(db, id),
+    dbLoadIntroductionsByRecipient: (recipientId) => dbLoadIntroductionsByRecipient(db, recipientId),
+    dbLoadIntroductionsByIntroduced: (introducedId) => dbLoadIntroductionsByIntroduced(db, introducedId),
+    dbLoadIntroductionsByIntroducer: (introducerId) => dbLoadIntroductionsByIntroducer(db, introducerId),
+    dbLoadIntroductionsForRecipientAndIntroducer: (recipientId, introducerId) => dbLoadIntroductionsForRecipientAndIntroducer(db, recipientId, introducerId),
+    dbUpdateRecipientStatus: (id, status, respondedAt) => dbUpdateRecipientStatus(db, id, status, respondedAt),
+    dbUpdateIntroducedStatus: (id, status, respondedAt) => dbUpdateIntroducedStatus(db, id, status, respondedAt),
+    dbUpdateOverallStatus: (id, status) => dbUpdateOverallStatus(db, id, status),
+    dbLoadPendingIntroductionsForUser: (peerId) => dbLoadPendingIntroductionsForUser(db, peerId),
+    dbCountPendingIntroductions: (peerId) => dbCountPendingIntroductions(db, peerId),
   );
 
   // Create media file manager
@@ -485,6 +532,24 @@ void main() async {
     },
   );
 
+  // Create introduction listener
+  final introductionListener = IntroductionListener(
+    introductionStream: messageRouter.introductionStream,
+    introRepo: introductionRepository,
+    contactRepo: contactRepository,
+    bridge: bridge,
+    messageRepo: messageRepository,
+    getOwnMlKemSecretKey: () async {
+      final identity = await repository.loadIdentity();
+      return identity?.mlKemSecretKey;
+    },
+    getOwnPeerId: () async {
+      final identity = await repository.loadIdentity();
+      return identity?.peerId;
+    },
+    notificationService: notificationService,
+  );
+
   // Create pending message retrier
   final pendingMessageRetrier = PendingMessageRetrier(
     p2pService: p2pService,
@@ -511,6 +576,8 @@ void main() async {
   groupMessageListener.start(groupMessageStreamController.stream);
   groupInviteListener.start();
   groupKeyUpdateListener.start();
+
+  introductionListener.start();
 
   // NOTE: rejoinGroupTopics and drainGroupOfflineInbox are called in
   // StartupRouter._doStartP2P() AFTER node:start completes. They require
@@ -560,6 +627,8 @@ void main() async {
       groupInviteListener: groupInviteListener,
       groupKeyUpdateListener: groupKeyUpdateListener,
       groupConversationTracker: groupConversationTracker,
+      introductionRepository: introductionRepository,
+      introductionListener: introductionListener,
     ),
   );
   StartupTiming.instance.mark('run_app_called');
@@ -594,6 +663,8 @@ class MyApp extends StatefulWidget {
   final GroupInviteListener groupInviteListener;
   final GroupKeyUpdateListener groupKeyUpdateListener;
   final ActiveConversationTracker groupConversationTracker;
+  final IntroductionRepositoryImpl introductionRepository;
+  final IntroductionListener introductionListener;
 
   static final navigatorKey = GlobalKey<NavigatorState>();
 
@@ -627,6 +698,8 @@ class MyApp extends StatefulWidget {
     required this.groupInviteListener,
     required this.groupKeyUpdateListener,
     required this.groupConversationTracker,
+    required this.introductionRepository,
+    required this.introductionListener,
   }) : super(key: key);
 
   @override
@@ -650,6 +723,50 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
   Future<void> _onNotificationTap(String payload) async {
     try {
+      // Handle introduction notification taps
+      if (payload == 'intros') {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'NOTIFICATION_TAP_INTROS',
+          details: {},
+        );
+
+        final navigator = MyApp.navigatorKey.currentState;
+        if (navigator == null) return;
+
+        navigator.push(
+          buildOrbitSlideUpRoute(
+            builder: (_) => OrbitWired(
+              identityRepo: widget.repository,
+              contactRepo: widget.contactRepository,
+              contactRequestRepo: widget.contactRequestRepository,
+              contactRequestListener: widget.contactRequestListener,
+              messageRepo: widget.messageRepository,
+              mediaAttachmentRepo: widget.mediaAttachmentRepository,
+              chatMessageListener: widget.chatMessageListener,
+              bridge: widget.bridge,
+              p2pService: widget.p2pService,
+              mediaFileManager: widget.mediaFileManager,
+              secureKeyStore: widget.secureKeyStore,
+              imageProcessor: widget.imageProcessor,
+              conversationTracker: widget.conversationTracker,
+              audioRecorderService: widget.audioRecorderService,
+              reactionRepository: widget.reactionRepository,
+              reactionListener: widget.reactionListener,
+              groupRepository: widget.groupRepository,
+              groupMessageRepository: widget.groupMessageRepository,
+              groupMessageListener: widget.groupMessageListener,
+              groupInviteListener: widget.groupInviteListener,
+              groupConversationTracker: widget.groupConversationTracker,
+              introductionRepository: widget.introductionRepository,
+              introductionListener: widget.introductionListener,
+              initialFilterTab: 'intros',
+            ),
+          ),
+        );
+        return;
+      }
+
       // Handle group notification taps (prefixed with "group:")
       if (payload.startsWith('group:')) {
         final groupId = payload.substring(6);
@@ -700,6 +817,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
             audioRecorderService: widget.audioRecorderService,
             reactionRepo: widget.reactionRepository,
             reactionListener: widget.reactionListener,
+            introductionRepository: widget.introductionRepository,
           ),
         ),
       );
@@ -719,6 +837,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     // Orderly teardown: retriers → listeners → router → service → bridge
     widget.keyExchangeRetrier.dispose();
     widget.pendingMessageRetrier.dispose();
+    widget.introductionListener.dispose();
     widget.groupKeyUpdateListener.dispose();
     widget.groupInviteListener.dispose();
     widget.groupMessageListener.dispose();
@@ -829,6 +948,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         groupMessageListener: widget.groupMessageListener,
         groupInviteListener: widget.groupInviteListener,
         groupConversationTracker: widget.groupConversationTracker,
+        introductionRepository: widget.introductionRepository,
+        introductionListener: widget.introductionListener,
       ),
       debugShowCheckedModeBanner: false,
     );

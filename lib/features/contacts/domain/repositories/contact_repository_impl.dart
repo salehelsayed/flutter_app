@@ -17,6 +17,8 @@ class ContactRepositoryImpl implements ContactRepository {
   final Future<List<Map<String, Object?>>> Function() dbLoadArchivedContacts;
   final Future<void> Function(String peerId) dbBlockContact;
   final Future<void> Function(String peerId) dbUnblockContact;
+  final Future<void> Function(String peerId) dbDismissIntroBanner;
+  final Future<void> Function(String peerId, String timestamp) dbSetIntrosSentAt;
 
   ContactRepositoryImpl({
     required this.dbLoadAllContacts,
@@ -31,6 +33,8 @@ class ContactRepositoryImpl implements ContactRepository {
     required this.dbLoadArchivedContacts,
     required this.dbBlockContact,
     required this.dbUnblockContact,
+    required this.dbDismissIntroBanner,
+    required this.dbSetIntrosSentAt,
   });
 
   @override
@@ -197,6 +201,58 @@ class ContactRepositoryImpl implements ContactRepository {
       emitFlowEvent(
         layer: 'FL',
         event: 'CONTACTS_REPO_UNBLOCK_ERROR',
+        details: {'error': e.toString()},
+      );
+      rethrow;
+    }
+  }
+
+  @override
+  Future<void> dismissIntroBanner(String peerId) async {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CONTACTS_REPO_DISMISS_INTRO_BANNER_START',
+      details: {'peerId': peerId.substring(0, 10)},
+    );
+
+    try {
+      await dbDismissIntroBanner(peerId);
+
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONTACTS_REPO_DISMISS_INTRO_BANNER_SUCCESS',
+        details: {'peerId': peerId.substring(0, 10)},
+      );
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONTACTS_REPO_DISMISS_INTRO_BANNER_ERROR',
+        details: {'error': e.toString()},
+      );
+      rethrow;
+    }
+  }
+
+  @override
+  Future<void> setIntrosSentAt(String peerId, String timestamp) async {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CONTACTS_REPO_SET_INTROS_SENT_AT_START',
+      details: {'peerId': peerId.substring(0, 10)},
+    );
+
+    try {
+      await dbSetIntrosSentAt(peerId, timestamp);
+
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONTACTS_REPO_SET_INTROS_SENT_AT_SUCCESS',
+        details: {'peerId': peerId.substring(0, 10)},
+      );
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONTACTS_REPO_SET_INTROS_SENT_AT_ERROR',
         details: {'error': e.toString()},
       );
       rethrow;

@@ -46,6 +46,10 @@ class _FakeContactRepository implements ContactRepository {
   Future<void> unarchiveContact(String peerId) async {}
   @override
   Future<void> unblockContact(String peerId) async {}
+  @override
+  Future<void> dismissIntroBanner(String peerId) async {}
+  @override
+  Future<void> setIntrosSentAt(String peerId, String timestamp) async {}
 }
 
 // ---------------------------------------------------------------------------

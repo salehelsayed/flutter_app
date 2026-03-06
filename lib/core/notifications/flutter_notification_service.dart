@@ -110,6 +110,53 @@ class FlutterNotificationService implements NotificationService {
   }
 
   @override
+  Future<void> showNotification({
+    required String title,
+    required String body,
+    String? payload,
+  }) async {
+    const androidDetails = AndroidNotificationDetails(
+      _channelId,
+      _channelName,
+      channelDescription: _channelDescription,
+      importance: Importance.high,
+      priority: Priority.high,
+      playSound: true,
+    );
+
+    const iosDetails = DarwinNotificationDetails(
+      presentSound: true,
+      presentAlert: true,
+      presentBadge: true,
+    );
+
+    const details = NotificationDetails(
+      android: androidDetails,
+      iOS: iosDetails,
+    );
+
+    // Use payload hashCode for notification ID so same-type notifications update
+    final notificationId = (payload ?? title).hashCode;
+
+    await _plugin.show(
+      notificationId,
+      title,
+      body,
+      details,
+      payload: payload,
+    );
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'NOTIFICATION_SHOWN',
+      details: {
+        'title': title,
+        'payload': payload ?? '',
+      },
+    );
+  }
+
+  @override
   void dispose() {
     // Nothing to dispose — plugin is a singleton.
   }

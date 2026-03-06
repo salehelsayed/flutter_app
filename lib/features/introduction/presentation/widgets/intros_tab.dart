@@ -1,0 +1,130 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
+import 'package:flutter_app/features/introduction/presentation/widgets/intro_group_header.dart';
+import 'package:flutter_app/features/introduction/presentation/widgets/intro_row.dart';
+
+/// Tab content for the Orbit screen's "Intros" filter tab.
+///
+/// Renders introductions grouped by introducer. Each group has a header
+/// ("From [username]") followed by individual [IntroRow] widgets.
+class IntrosTab extends StatelessWidget {
+  final Map<String, List<IntroductionModel>> groupedIntros;
+  final Map<String, String> introducerUsernames;
+  final void Function(String introductionId) onAccept;
+  final void Function(String introductionId) onPass;
+  final String ownPeerId;
+  final void Function(String peerId)? onSendMessage;
+  final Set<String> blockedPeerIds;
+
+  const IntrosTab({
+    super.key,
+    required this.groupedIntros,
+    required this.introducerUsernames,
+    required this.onAccept,
+    required this.onPass,
+    this.ownPeerId = '',
+    this.onSendMessage,
+    this.blockedPeerIds = const {},
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (groupedIntros.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Text(
+            'No introductions yet',
+            style: TextStyle(
+              fontSize: 14,
+              color: Colors.white.withValues(alpha: 0.4),
+            ),
+          ),
+        ),
+      );
+    }
+
+    final introducerIds = groupedIntros.keys.toList();
+
+    return ListView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      itemCount: introducerIds.length + 1,
+      itemBuilder: (context, index) {
+        // First item: context text
+        if (index == 0) {
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 16),
+            child: Text(
+              'These are people your friends know well. Once you both accept, you can start chatting.',
+              style: TextStyle(
+                fontSize: 13,
+                color: Colors.white.withValues(alpha: 0.4),
+              ),
+              textAlign: TextAlign.center,
+            ),
+          );
+        }
+
+        final groupIndex = index - 1;
+        final introducerId = introducerIds[groupIndex];
+        final intros = groupedIntros[introducerId]!;
+        final introducerName =
+            introducerUsernames[introducerId] ?? 'Unknown';
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (groupIndex > 0) const SizedBox(height: 16),
+            IntroGroupHeader(introducerUsername: introducerName),
+            const SizedBox(height: 8),
+            ...intros.map((intro) {
+              // Determine direction: am I the recipient or the introduced party?
+              final amRecipient = intro.recipientId == ownPeerId;
+              final displayUsername = amRecipient
+                  ? (intro.introducedUsername ?? 'Unknown')
+                  : (intro.recipientUsername ?? 'Unknown');
+              final displayPeerId = amRecipient
+                  ? intro.introducedId
+                  : intro.recipientId;
+
+              final ownPartyStatus = amRecipient
+                  ? intro.recipientStatus
+                  : intro.introducedStatus;
+              final waitingForUsername = amRecipient
+                  ? (intro.introducedUsername ?? 'Unknown')
+                  : (intro.recipientUsername ?? 'Unknown');
+
+              final showActions =
+                  ownPartyStatus == IntroductionStatus.pending &&
+                  intro.status == IntroductionOverallStatus.pending;
+
+              final isOtherBlocked = blockedPeerIds.contains(displayPeerId);
+
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: IntroRow(
+                  introduction: intro,
+                  displayUsername: displayUsername,
+                  displayPeerId: displayPeerId,
+                  showActions: showActions,
+                  onAccept: showActions ? () => onAccept(intro.id) : null,
+                  onPass: showActions ? () => onPass(intro.id) : null,
+                  ownPartyStatus: ownPartyStatus,
+                  waitingForUsername: waitingForUsername,
+                  onSendMessage: intro.status ==
+                              IntroductionOverallStatus.mutualAccepted &&
+                          onSendMessage != null
+                      ? () => onSendMessage!(displayPeerId)
+                      : null,
+                  isOtherBlocked: isOtherBlocked,
+                ),
+              );
+            }),
+          ],
+        );
+      },
+    );
+  }
+}

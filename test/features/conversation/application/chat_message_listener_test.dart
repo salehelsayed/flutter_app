@@ -68,6 +68,12 @@ class _FakeContactRepository implements ContactRepository {
 
   @override
   Future<void> unblockContact(String peerId) async {}
+
+  @override
+  Future<void> dismissIntroBanner(String peerId) async {}
+
+  @override
+  Future<void> setIntrosSentAt(String peerId, String timestamp) async {}
 }
 
 class _FakeMessageRepository implements MessageRepository {

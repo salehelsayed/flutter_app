@@ -54,6 +54,12 @@ class FakeContactRepository implements ContactRepository {
   @override
   Future<List<ContactModel>> getArchivedContacts() async =>
       contacts.where((c) => c.isArchived).toList();
+
+  @override
+  Future<void> dismissIntroBanner(String peerId) async {}
+
+  @override
+  Future<void> setIntrosSentAt(String peerId, String timestamp) async {}
 }
 
 // -- Fake Message Repository --

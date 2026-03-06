@@ -13,6 +13,8 @@ import 'package:flutter_app/features/conversation/presentation/widgets/letter_ca
 import 'package:flutter_app/features/conversation/presentation/widgets/reaction_bar.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/full_emoji_picker.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
+import 'package:flutter_app/features/introduction/presentation/widgets/intro_banner.dart';
+import 'package:flutter_app/features/introduction/presentation/widgets/intro_system_message.dart';
 import 'package:flutter_app/shared/widgets/media/full_screen_image_viewer.dart';
 import 'package:flutter_app/shared/widgets/media/media_preview_text.dart';
 
@@ -50,6 +52,10 @@ class ConversationScreen extends StatefulWidget {
   final Map<String, List<MessageReaction>> reactions;
   final void Function(String messageId, String emoji)? onReactionSelected;
   final void Function(String messageId)? onReactionPlusTap;
+  final bool showIntroBanner;
+  final String? bannerContactUsername;
+  final VoidCallback? onMakeIntroductions;
+  final VoidCallback? onMaybeLater;
 
   const ConversationScreen({
     super.key,
@@ -82,6 +88,10 @@ class ConversationScreen extends StatefulWidget {
     this.reactions = const {},
     this.onReactionSelected,
     this.onReactionPlusTap,
+    this.showIntroBanner = false,
+    this.bannerContactUsername,
+    this.onMakeIntroductions,
+    this.onMaybeLater,
   });
 
   @override
@@ -112,16 +122,58 @@ class _ConversationScreenState extends State<ConversationScreen> {
             onBack: widget.onBack,
             onOverflow: widget.onOverflow,
           ),
+          // Intro banner above messages (when messages exist)
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 300),
+            child: widget.showIntroBanner &&
+                    widget.messages.isNotEmpty &&
+                    widget.onMakeIntroductions != null
+                ? Padding(
+                    key: const ValueKey('intro-banner'),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    child: IntroBanner(
+                      contactUsername: widget.bannerContactUsername ??
+                          widget.contactUsername,
+                      onMakeIntroductions: widget.onMakeIntroductions!,
+                      onMaybeLater: widget.onMaybeLater ?? () {},
+                    ),
+                  )
+                : const SizedBox.shrink(key: ValueKey('no-banner')),
+          ),
           // Body with animated transition
           Expanded(
             child: AnimatedSwitcher(
               duration: const Duration(milliseconds: 400),
               child: widget.messages.isEmpty
-                  ? EmptyConversationState(
-                      key: const ValueKey('empty'),
-                      contactPeerId: widget.contactPeerId,
-                      connectionDate: widget.connectionDate,
-                    )
+                  ? widget.showIntroBanner && widget.onMakeIntroductions != null
+                      ? Column(
+                          key: const ValueKey('empty-with-banner'),
+                          children: [
+                            Padding(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 16, vertical: 8),
+                              child: IntroBanner(
+                                contactUsername: widget.bannerContactUsername ??
+                                    widget.contactUsername,
+                                onMakeIntroductions:
+                                    widget.onMakeIntroductions!,
+                                onMaybeLater: widget.onMaybeLater ?? () {},
+                              ),
+                            ),
+                            Expanded(
+                              child: EmptyConversationState(
+                                contactPeerId: widget.contactPeerId,
+                                connectionDate: widget.connectionDate,
+                              ),
+                            ),
+                          ],
+                        )
+                      : EmptyConversationState(
+                          key: const ValueKey('empty'),
+                          contactPeerId: widget.contactPeerId,
+                          connectionDate: widget.connectionDate,
+                        )
                   : _buildMessageList(),
             ),
           ),
@@ -193,6 +245,15 @@ class _ConversationScreenState extends State<ConversationScreen> {
           case _ItemType.message:
             final message = item.message!;
             final isNew = item.isLastAndWasEmpty;
+
+            // System messages render as centered muted bubbles
+            if (message.transport == 'system') {
+              return Padding(
+                key: ValueKey('msg-${message.id}'),
+                padding: const EdgeInsets.only(bottom: 16),
+                child: IntroSystemMessage(text: message.text),
+              );
+            }
 
             // Resolve quoted message text
             String? quotedText;

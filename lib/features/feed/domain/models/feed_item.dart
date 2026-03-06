@@ -44,6 +44,8 @@ class ConnectionFeedItem extends FeedItem {
   final String contactUsername;
   final String? contactAvatarPath;
   final bool isBlocked;
+  final String? connectedVia;
+  final String? introducedBy;
 
   const ConnectionFeedItem({
     required super.id,
@@ -52,6 +54,8 @@ class ConnectionFeedItem extends FeedItem {
     required this.contactUsername,
     this.contactAvatarPath,
     this.isBlocked = false,
+    this.connectedVia,
+    this.introducedBy,
   }) : super(type: FeedItemType.connection);
 
   /// Creates a ConnectionFeedItem from a ContactModel.
@@ -63,6 +67,7 @@ class ConnectionFeedItem extends FeedItem {
       contactUsername: contact.username,
       contactAvatarPath: contact.avatarPath,
       isBlocked: contact.isBlocked,
+      introducedBy: contact.introducedBy,
     );
   }
 }
