@@ -20,9 +20,21 @@ List<FeedItem> _generateFeedItems() {
   final items = <FeedItem>[];
   final states = ConversationState.values; // unread, active, replied, read
   final usernames = [
-    'Alice', 'Bob', 'Charlie', 'Diana', 'Eve',
-    'Frank', 'Grace', 'Hector', 'Iris', 'Jack',
-    'Kate', 'Leo', 'Maya', 'Nora', 'Oscar',
+    'Alice',
+    'Bob',
+    'Charlie',
+    'Diana',
+    'Eve',
+    'Frank',
+    'Grace',
+    'Hector',
+    'Iris',
+    'Jack',
+    'Kate',
+    'Leo',
+    'Maya',
+    'Nora',
+    'Oscar',
   ];
 
   // 15 ThreadFeedItems — mix of all 4 conversation states, 3–8 messages each
@@ -34,41 +46,47 @@ List<FeedItem> _generateFeedItems() {
     for (var j = 0; j < messageCount; j++) {
       final isIncoming = j % 3 != 0; // 2/3 incoming, 1/3 outgoing
       final msgTime = now.subtract(Duration(hours: i * 2, minutes: j * 15));
-      messages.add(ThreadMessage(
-        id: 'msg_${i}_$j',
-        text: 'Message $j in thread $i — lorem ipsum dolor sit amet.',
-        time: '${msgTime.hour}:${msgTime.minute.toString().padLeft(2, '0')}',
-        timestamp: msgTime,
-        isUnread: state == ConversationState.unread && j >= messageCount - 2,
-        isIncoming: isIncoming,
-        status: isIncoming ? null : 'delivered',
-        quotedMessageId: (j > 1 && j % 4 == 0) ? 'msg_${i}_${j - 1}' : null,
-      ));
+      messages.add(
+        ThreadMessage(
+          id: 'msg_${i}_$j',
+          text: 'Message $j in thread $i — lorem ipsum dolor sit amet.',
+          time: '${msgTime.hour}:${msgTime.minute.toString().padLeft(2, '0')}',
+          timestamp: msgTime,
+          isUnread: state == ConversationState.unread && j >= messageCount - 2,
+          isIncoming: isIncoming,
+          status: isIncoming ? null : 'delivered',
+          quotedMessageId: (j > 1 && j % 4 == 0) ? 'msg_${i}_${j - 1}' : null,
+        ),
+      );
     }
 
-    items.add(ThreadFeedItem(
-      id: 'thread_$i',
-      timestamp: now.subtract(Duration(hours: i * 2)),
-      contactPeerId: 'peer_$i',
-      contactUsername: usernames[i],
-      messages: messages,
-      unreadCount: state == ConversationState.unread ? 3 : 0,
-      isUnreadCard: state == ConversationState.unread,
-      conversationState: state,
-      lastRepliedAt: state == ConversationState.replied
-          ? now.subtract(Duration(hours: i))
-          : null,
-    ));
+    items.add(
+      ThreadFeedItem(
+        id: 'thread_$i',
+        timestamp: now.subtract(Duration(hours: i * 2)),
+        contactPeerId: 'peer_$i',
+        contactUsername: usernames[i],
+        messages: messages,
+        unreadCount: state == ConversationState.unread ? 3 : 0,
+        isUnreadCard: state == ConversationState.unread,
+        conversationState: state,
+        lastRepliedAt: state == ConversationState.replied
+            ? now.subtract(Duration(hours: i))
+            : null,
+      ),
+    );
   }
 
   // 5 ConnectionFeedItems
   for (var i = 0; i < 5; i++) {
-    items.add(ConnectionFeedItem(
-      id: 'connection_${i + 15}',
-      timestamp: now.subtract(Duration(days: i + 1)),
-      contactPeerId: 'peer_${i + 15}',
-      contactUsername: 'Contact${i + 15}',
-    ));
+    items.add(
+      ConnectionFeedItem(
+        id: 'connection_${i + 15}',
+        timestamp: now.subtract(Duration(days: i + 1)),
+        contactPeerId: 'peer_${i + 15}',
+        contactUsername: 'Contact${i + 15}',
+      ),
+    );
   }
 
   return items;
@@ -80,10 +98,7 @@ class _FeedTestHarness extends StatefulWidget {
   final List<FeedItem> feedItems;
   final String? initialExpandedCardId;
 
-  const _FeedTestHarness({
-    required this.feedItems,
-    this.initialExpandedCardId,
-  });
+  const _FeedTestHarness({required this.feedItems, this.initialExpandedCardId});
 
   @override
   State<_FeedTestHarness> createState() => _FeedTestHarnessState();
@@ -255,15 +270,29 @@ void _assertThresholds(
   stats.printSummary(label);
 
   if (!stats.hasData) {
-    fail('[$label] No FrameTiming data collected — cannot validate performance');
+    fail(
+      '[$label] No FrameTiming data collected — cannot validate performance',
+    );
   }
 
-  expect(stats.average, lessThan(maxAvgMs),
-      reason: '[$label] Average build time ${stats.average.toStringAsFixed(2)}ms > ${maxAvgMs}ms');
-  expect(stats.percentile(99), lessThan(maxP99Ms),
-      reason: '[$label] P99 build time ${stats.percentile(99).toStringAsFixed(2)}ms > ${maxP99Ms}ms');
-  expect(stats.worst, lessThan(maxWorstMs),
-      reason: '[$label] Worst build time ${stats.worst.toStringAsFixed(2)}ms > ${maxWorstMs}ms');
+  expect(
+    stats.average,
+    lessThan(maxAvgMs),
+    reason:
+        '[$label] Average build time ${stats.average.toStringAsFixed(2)}ms > ${maxAvgMs}ms',
+  );
+  expect(
+    stats.percentile(99),
+    lessThan(maxP99Ms),
+    reason:
+        '[$label] P99 build time ${stats.percentile(99).toStringAsFixed(2)}ms > ${maxP99Ms}ms',
+  );
+  expect(
+    stats.worst,
+    lessThan(maxWorstMs),
+    reason:
+        '[$label] Worst build time ${stats.worst.toStringAsFixed(2)}ms > ${maxWorstMs}ms',
+  );
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -275,7 +304,7 @@ void main() {
     testWidgets('1. Scroll performance', (tester) async {
       await _pumpFeedScreen(tester, items);
 
-      final scrollable = find.byType(SingleChildScrollView);
+      final scrollable = find.byType(CustomScrollView);
       expect(scrollable, findsOneWidget);
 
       final collector = _FrameTimingCollector()..start();
@@ -323,8 +352,13 @@ void main() {
       // Expand triggers first-mount of 6 message bubbles + AnimatedSize +
       // BackdropFilter recalc. First frame spikes are expected in debug mode;
       // wider budget catches regressions without false positives.
-      _assertThresholds(collector.stats, 'Expand/Collapse',
-          maxAvgMs: 16, maxP99Ms: 64, maxWorstMs: 100);
+      _assertThresholds(
+        collector.stats,
+        'Expand/Collapse',
+        maxAvgMs: 16,
+        maxP99Ms: 64,
+        maxWorstMs: 100,
+      );
     });
 
     testWidgets('3. Swipe-to-quote gesture performance', (tester) async {
@@ -332,8 +366,11 @@ void main() {
       await _pumpFeedScreen(tester, items, expandedCardId: 'thread_0');
 
       final swipeable = find.byType(SwipeToQuoteBubble);
-      expect(swipeable, findsWidgets,
-          reason: 'No SwipeToQuoteBubble found — is the card expanded?');
+      expect(
+        swipeable,
+        findsWidgets,
+        reason: 'No SwipeToQuoteBubble found — is the card expanded?',
+      );
 
       final target = swipeable.first;
       final center = tester.getCenter(target);
@@ -397,8 +434,13 @@ void main() {
       // harness → full FeedScreen rebuild each keystroke. Expensive in debug
       // mode; wider budget avoids false positives while still catching
       // regressions (e.g. O(n²) rebuild or new heavyweight widget mount).
-      _assertThresholds(collector.stats, 'Compose input',
-          maxAvgMs: 32, maxP99Ms: 64, maxWorstMs: 100);
+      _assertThresholds(
+        collector.stats,
+        'Compose input',
+        maxAvgMs: 32,
+        maxP99Ms: 64,
+        maxWorstMs: 100,
+      );
     });
   });
 }
