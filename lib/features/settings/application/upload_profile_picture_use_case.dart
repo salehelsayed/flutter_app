@@ -7,6 +7,7 @@ import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
+import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:path_provider/path_provider.dart';
@@ -67,6 +68,7 @@ Future<bool> uploadProfilePicture({
 
     // Evict Flutter image cache so UserAvatar picks up the new file
     FileImage(File(localPath)).evict();
+    UserAvatar.invalidatePeer(identity.peerId);
 
     // 4. Update identity with new avatarVersion
     final updated = IdentityModel(
@@ -89,10 +91,7 @@ Future<bool> uploadProfilePicture({
     final envelope = jsonEncode({
       'type': 'profile_update',
       'version': '1',
-      'payload': {
-        'peerId': identity.peerId,
-        'avatarVersion': avatarVersion,
-      },
+      'payload': {'peerId': identity.peerId, 'avatarVersion': avatarVersion},
     });
 
     for (final contact in contacts) {
