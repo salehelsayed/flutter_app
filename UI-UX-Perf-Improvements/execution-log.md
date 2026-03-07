@@ -69,7 +69,7 @@ Dirty files captured before checkpoint:
   - `PERF-09 audit`: Complete
 - Wave 1
   - `PERF-01`: Done
-  - `PERF-03`: Pending
+  - `PERF-03`: Done
   - `PERF-06`: Pending
   - `PERF-08`: Pending
   - `PERF-07`: Pending
@@ -196,3 +196,31 @@ Follow-up pattern:
 
 Residual notes:
 - sync avatar file probing still exists in some wired-layer identity/avatar loaders, but the shared list-surface widget hot path is clean, which is the scoped `PERF-01` requirement
+
+### PERF-03 Isolate Recording, Processing, And Progress State From Page Rebuilds
+
+Lane:
+- `perf-exec/lane-c-perf03`
+
+Implementation:
+- introduced `ConversationComposerViewState` plus an optional composer `ValueListenable` path in `ConversationScreen`
+- moved attachment-strip, upload/progress, and recording waveform/duration updates behind a dedicated `_composerState` notifier in `ConversationWired`
+- left message, contact, intro-banner, and reaction updates on the existing route state so only the composer subtree churns during recording / processing
+- added a regression test proving composer-state updates keep the existing `ConversationHeader` and message-list widgets mounted and unchanged
+
+Follow-up pattern:
+1. local implementation checks
+   - `flutter analyze lib/features/conversation/presentation/screens/conversation_screen.dart lib/features/conversation/presentation/screens/conversation_wired.dart test/features/conversation/presentation/screens/conversation_screen_test.dart`
+   - result: passed, no issues
+2. follow-up diff review
+   - confirmed recording duration, waveform amplitude, attachment-strip state, upload state, and video processing progress no longer rely on page-wide `setState`
+   - confirmed `ConversationScreen` keeps header and message list outside the composer listenable rebuild path
+3. targeted QA / regression surface
+   - `flutter test test/features/conversation/presentation/screens/conversation_screen_test.dart test/features/conversation/presentation/screens/conversation_banner_test.dart test/features/conversation/presentation/screens/conversation_audio_source_regression_test.dart test/features/conversation/presentation/screens/conversation_wired_test.dart test/features/conversation/presentation/widgets/compose_area_test.dart test/features/conversation/presentation/widgets/recording_overlay_test.dart`
+   - result: all tests passed
+4. visible UX delta
+   - none intended; behavior should remain visually equivalent with a more stable header/list during recording and processing updates
+
+Residual notes:
+- no existing automated route harness was found for the exact `impl-backlog.md` observation flows `Conversation open -> record voice` and `Conversation open -> attach video`; the lane used the targeted widget/wired suite above as the best available fallback and leaves real route-level device QA as an outstanding follow-up gap
+- group conversation still uses the older broad recording / processing state path and remains intentionally deferred to `PERF-06`
