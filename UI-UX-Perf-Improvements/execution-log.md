@@ -68,7 +68,7 @@ Dirty files captured before checkpoint:
   - `PERF-00`: Complete enough to proceed, with documented route-validation gaps
   - `PERF-09 audit`: Complete
 - Wave 1
-  - `PERF-01`: Pending
+  - `PERF-01`: Done
   - `PERF-03`: Pending
   - `PERF-06`: Pending
   - `PERF-08`: Pending
@@ -169,3 +169,30 @@ Missing tests to add during later Feed reconciliation:
 Issues to fold into later `PERF-09` reconciliation:
 - the data refresh is incremental, but `FeedWired` still applies snapshot changes via parent `setState`; after `PERF-07`, re-check whether remaining rebuild fan-out is acceptable or needs finer-grained UI scoping
 - `integration_test/feed_performance_test.dart` currently targets the eager Feed structure; it must be updated again after `PERF-07` virtualization so the baseline gate stays valid
+
+## Wave 1
+
+### PERF-01 Move Avatar Lookup And Caching Out Of Widget Build
+
+Lane:
+- `perf-exec/lane-b-perf01`
+
+Implementation:
+- replaced sync avatar file probing inside `UserAvatar.build` with an async per-peer resolver backed by shared notifiers
+- kept the `UserAvatar` call site API stable
+- added explicit cache invalidation when profile pictures are downloaded or uploaded locally
+
+Follow-up pattern:
+1. local implementation checks
+   - `flutter analyze lib/features/home/presentation/widgets/user_avatar.dart lib/features/settings/application/download_profile_picture_use_case.dart lib/features/settings/application/upload_profile_picture_use_case.dart test/features/home/presentation/widgets/user_avatar_test.dart`
+   - result: passed, no issues
+2. follow-up diff review
+   - confirmed the shared avatar widget no longer performs `existsSync()` in `build`
+3. targeted QA / regression surface
+   - `flutter test test/features/home/presentation/widgets/user_avatar_test.dart test/features/home/presentation/widgets/profile_avatar_widget_test.dart test/features/settings/presentation/widgets/settings_profile_section_test.dart test/features/conversation/presentation/widgets/conversation_header_test.dart test/features/orbit/presentation/widgets/friend_row_test.dart test/features/orbit/presentation/widgets/orbital_visualization_test.dart test/features/feed/presentation/widgets/connection_card_test.dart test/features/settings/application/download_profile_picture_use_case_test.dart test/features/settings/application/upload_profile_picture_use_case_test.dart`
+   - result: all tests passed
+4. visible UX delta
+   - none intended
+
+Residual notes:
+- sync avatar file probing still exists in some wired-layer identity/avatar loaders, but the shared list-surface widget hot path is clean, which is the scoped `PERF-01` requirement
