@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/blocked_banner.dart';
@@ -17,6 +18,47 @@ import 'package:flutter_app/features/introduction/presentation/widgets/intro_ban
 import 'package:flutter_app/features/introduction/presentation/widgets/intro_system_message.dart';
 import 'package:flutter_app/shared/widgets/media/full_screen_image_viewer.dart';
 import 'package:flutter_app/shared/widgets/media/media_preview_text.dart';
+
+@immutable
+class ConversationComposerViewState {
+  final List<File> pendingAttachments;
+  final bool isUploading;
+  final bool isProcessing;
+  final double processingProgress;
+  final bool isRecording;
+  final Duration recordingDuration;
+  final List<double> amplitudeValues;
+
+  const ConversationComposerViewState({
+    this.pendingAttachments = const [],
+    this.isUploading = false,
+    this.isProcessing = false,
+    this.processingProgress = 0.0,
+    this.isRecording = false,
+    this.recordingDuration = Duration.zero,
+    this.amplitudeValues = const [],
+  });
+
+  ConversationComposerViewState copyWith({
+    List<File>? pendingAttachments,
+    bool? isUploading,
+    bool? isProcessing,
+    double? processingProgress,
+    bool? isRecording,
+    Duration? recordingDuration,
+    List<double>? amplitudeValues,
+  }) {
+    return ConversationComposerViewState(
+      pendingAttachments: pendingAttachments ?? this.pendingAttachments,
+      isUploading: isUploading ?? this.isUploading,
+      isProcessing: isProcessing ?? this.isProcessing,
+      processingProgress: processingProgress ?? this.processingProgress,
+      isRecording: isRecording ?? this.isRecording,
+      recordingDuration: recordingDuration ?? this.recordingDuration,
+      amplitudeValues: amplitudeValues ?? this.amplitudeValues,
+    );
+  }
+}
 
 /// Pure UI conversation screen.
 ///
@@ -49,6 +91,7 @@ class ConversationScreen extends StatefulWidget {
   final bool isRecording;
   final Duration recordingDuration;
   final List<double> amplitudeValues;
+  final ValueListenable<ConversationComposerViewState>? composerStateListenable;
   final Map<String, List<MessageReaction>> reactions;
   final void Function(String messageId, String emoji)? onReactionSelected;
   final void Function(String messageId)? onReactionPlusTap;
@@ -85,6 +128,7 @@ class ConversationScreen extends StatefulWidget {
     this.isRecording = false,
     this.recordingDuration = Duration.zero,
     this.amplitudeValues = const [],
+    this.composerStateListenable,
     this.reactions = const {},
     this.onReactionSelected,
     this.onReactionPlusTap,
@@ -100,6 +144,17 @@ class ConversationScreen extends StatefulWidget {
 
 class _ConversationScreenState extends State<ConversationScreen> {
   bool _wasEmpty = true;
+
+  ConversationComposerViewState get _legacyComposerState =>
+      ConversationComposerViewState(
+        pendingAttachments: widget.pendingAttachments,
+        isUploading: widget.isUploading,
+        isProcessing: widget.isProcessing,
+        processingProgress: widget.processingProgress,
+        isRecording: widget.isRecording,
+        recordingDuration: widget.recordingDuration,
+        amplitudeValues: widget.amplitudeValues,
+      );
 
   @override
   void didUpdateWidget(ConversationScreen oldWidget) {
@@ -125,15 +180,19 @@ class _ConversationScreenState extends State<ConversationScreen> {
           // Intro banner above messages (when messages exist)
           AnimatedSwitcher(
             duration: const Duration(milliseconds: 300),
-            child: widget.showIntroBanner &&
+            child:
+                widget.showIntroBanner &&
                     widget.messages.isNotEmpty &&
                     widget.onMakeIntroductions != null
                 ? Padding(
                     key: const ValueKey('intro-banner'),
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 8,
+                    ),
                     child: IntroBanner(
-                      contactUsername: widget.bannerContactUsername ??
+                      contactUsername:
+                          widget.bannerContactUsername ??
                           widget.contactUsername,
                       onMakeIntroductions: widget.onMakeIntroductions!,
                       onMaybeLater: widget.onMaybeLater ?? () {},
@@ -147,64 +206,82 @@ class _ConversationScreenState extends State<ConversationScreen> {
               duration: const Duration(milliseconds: 400),
               child: widget.messages.isEmpty
                   ? widget.showIntroBanner && widget.onMakeIntroductions != null
-                      ? Column(
-                          key: const ValueKey('empty-with-banner'),
-                          children: [
-                            Padding(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 16, vertical: 8),
-                              child: IntroBanner(
-                                contactUsername: widget.bannerContactUsername ??
-                                    widget.contactUsername,
-                                onMakeIntroductions:
-                                    widget.onMakeIntroductions!,
-                                onMaybeLater: widget.onMaybeLater ?? () {},
+                        ? Column(
+                            key: const ValueKey('empty-with-banner'),
+                            children: [
+                              Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                  vertical: 8,
+                                ),
+                                child: IntroBanner(
+                                  contactUsername:
+                                      widget.bannerContactUsername ??
+                                      widget.contactUsername,
+                                  onMakeIntroductions:
+                                      widget.onMakeIntroductions!,
+                                  onMaybeLater: widget.onMaybeLater ?? () {},
+                                ),
                               ),
-                            ),
-                            Expanded(
-                              child: EmptyConversationState(
-                                contactPeerId: widget.contactPeerId,
-                                connectionDate: widget.connectionDate,
+                              Expanded(
+                                child: EmptyConversationState(
+                                  contactPeerId: widget.contactPeerId,
+                                  connectionDate: widget.connectionDate,
+                                ),
                               ),
-                            ),
-                          ],
-                        )
-                      : EmptyConversationState(
-                          key: const ValueKey('empty'),
-                          contactPeerId: widget.contactPeerId,
-                          connectionDate: widget.connectionDate,
-                        )
+                            ],
+                          )
+                        : EmptyConversationState(
+                            key: const ValueKey('empty'),
+                            contactPeerId: widget.contactPeerId,
+                            connectionDate: widget.connectionDate,
+                          )
                   : _buildMessageList(),
             ),
           ),
-          // Attachment preview strip
-          if (!widget.isBlocked &&
-              (widget.pendingAttachments.isNotEmpty || widget.isProcessing))
-            AttachmentPreviewStrip(
-              attachments: widget.pendingAttachments,
-              isUploading: widget.isUploading,
-              isProcessing: widget.isProcessing,
-              processingProgress: widget.processingProgress,
-              onRemove: widget.onRemoveAttachment,
-            ),
-          // Compose area or blocked banner
-          if (widget.isBlocked)
-            BlockedBanner(onUnblock: widget.onUnblock)
+          if (widget.composerStateListenable == null)
+            _buildComposerSection(_legacyComposerState)
           else
-            ComposeArea(
-              onSend: widget.onSend,
-              onAttach: widget.onAttach,
-              hasAttachments: widget.pendingAttachments.isNotEmpty,
-              isProcessing: widget.isProcessing,
-              onRecordStart: widget.onRecordStart,
-              onRecordStop: widget.onRecordStop,
-              onRecordCancel: widget.onRecordCancel,
-              isRecording: widget.isRecording,
-              recordingDuration: widget.recordingDuration,
-              amplitudeValues: widget.amplitudeValues,
+            ValueListenableBuilder<ConversationComposerViewState>(
+              valueListenable: widget.composerStateListenable!,
+              builder: (context, composerState, child) =>
+                  _buildComposerSection(composerState),
             ),
         ],
       ),
+    );
+  }
+
+  Widget _buildComposerSection(ConversationComposerViewState composerState) {
+    if (widget.isBlocked) {
+      return BlockedBanner(onUnblock: widget.onUnblock);
+    }
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (composerState.pendingAttachments.isNotEmpty ||
+            composerState.isProcessing)
+          AttachmentPreviewStrip(
+            attachments: composerState.pendingAttachments,
+            isUploading: composerState.isUploading,
+            isProcessing: composerState.isProcessing,
+            processingProgress: composerState.processingProgress,
+            onRemove: widget.onRemoveAttachment,
+          ),
+        ComposeArea(
+          onSend: widget.onSend,
+          onAttach: widget.onAttach,
+          hasAttachments: composerState.pendingAttachments.isNotEmpty,
+          isProcessing: composerState.isProcessing,
+          onRecordStart: widget.onRecordStart,
+          onRecordStop: widget.onRecordStop,
+          onRecordCancel: widget.onRecordCancel,
+          isRecording: composerState.isRecording,
+          recordingDuration: composerState.recordingDuration,
+          amplitudeValues: composerState.amplitudeValues,
+        ),
+      ],
     );
   }
 
@@ -273,8 +350,7 @@ class _ConversationScreenState extends State<ConversationScreen> {
               }
             }
 
-            final messageReactions =
-                widget.reactions[message.id] ?? const [];
+            final messageReactions = widget.reactions[message.id] ?? const [];
 
             final letterCard = LetterCard(
               senderPeerId: message.senderPeerId,
@@ -385,9 +461,7 @@ class _ConversationScreenState extends State<ConversationScreen> {
     // Find current reaction for this message by own user
     final reactions = widget.reactions[messageId] ?? [];
     final ownReaction = widget.ownPeerId != null
-        ? reactions
-            .where((r) => r.senderPeerId == widget.ownPeerId)
-            .firstOrNull
+        ? reactions.where((r) => r.senderPeerId == widget.ownPeerId).firstOrNull
         : null;
 
     showDialog(
