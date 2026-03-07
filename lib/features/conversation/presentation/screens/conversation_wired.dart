@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:uuid/uuid.dart';
@@ -146,18 +147,12 @@ class _ConversationWiredState extends State<ConversationWired> {
   bool _initialLoadDone = false;
 
   List<_PendingMedia> _pendingAttachments = [];
-  bool _isUploading = false;
-  bool _isProcessingVideo = false;
-  double _processingProgress = 0.0;
+  final _composerState = ValueNotifier(const ConversationComposerViewState());
   static const _maxAttachments = 10;
 
-  // Voice recording state
-  bool _isRecording = false;
-  Duration _recordingDuration = Duration.zero;
   StreamSubscription<Duration>? _durationSub;
   StreamSubscription<double>? _amplitudeSub;
   final _amplitudeBuffer = AmplitudeBuffer(size: 25);
-  List<double> _amplitudeValues = const [];
   List<double> _waveformSamples = [];
 
   // Reaction state
@@ -167,6 +162,10 @@ class _ConversationWiredState extends State<ConversationWired> {
   // Introduction banner state
   bool _showIntroBanner = false;
   bool _hasOtherFriends = false;
+
+  ConversationComposerViewState get _composerViewState => _composerState.value;
+
+  bool get _isRecording => _composerViewState.isRecording;
 
   @override
   void initState() {
@@ -179,6 +178,7 @@ class _ConversationWiredState extends State<ConversationWired> {
           .map((f) => _PendingMedia(file: f))
           .toList();
     }
+    _updateComposerState(pendingAttachments: _pendingAttachmentFiles());
     emitFlowEvent(layer: 'FL', event: 'CONV_FL_SCREEN_INIT', details: {});
     _scrollController.addListener(_onScroll);
     _loadIdentity();
@@ -475,6 +475,7 @@ class _ConversationWiredState extends State<ConversationWired> {
   Future<void> _onSend(String text) async {
     final identity = _identity;
     if (identity == null) return;
+    final messenger = ScaffoldMessenger.maybeOf(context);
 
     final hasAttachments = _pendingAttachments.isNotEmpty;
     if (text.isEmpty && !hasAttachments) return;
@@ -512,10 +513,11 @@ class _ConversationWiredState extends State<ConversationWired> {
       }).toList();
     }
 
-    setState(() {
-      _pendingAttachments = [];
-      if (mediaToUpload.isNotEmpty) _isUploading = true;
-    });
+    _pendingAttachments = [];
+    _updateComposerState(
+      pendingAttachments: const [],
+      isUploading: mediaToUpload.isNotEmpty,
+    );
 
     final now = DateTime.now().toUtc().toIso8601String();
     final optimisticMessage = ConversationMessage(
@@ -600,13 +602,14 @@ class _ConversationWiredState extends State<ConversationWired> {
           if (result == null) {
             // Upload failed — restore attachments, mark message failed
             if (mounted) {
-              setState(() {
-                _isUploading = false;
-                _pendingAttachments = mediaToUpload;
-              });
+              _pendingAttachments = mediaToUpload;
+              _updateComposerState(
+                pendingAttachments: _pendingAttachmentFiles(),
+                isUploading: false,
+              );
               _updateLocalMessageStatus(optimisticMessage.id, 'failed');
               await _persistMessageStatus(optimisticMessage.id, 'failed');
-              ScaffoldMessenger.of(context).showSnackBar(
+              messenger?.showSnackBar(
                 SnackBar(
                   content: const Text('Failed to upload media. Try again.'),
                   backgroundColor: Colors.red[700],
@@ -620,7 +623,7 @@ class _ConversationWiredState extends State<ConversationWired> {
         }
       }
       if (mounted) {
-        setState(() => _isUploading = false);
+        _updateComposerState(isUploading: false);
       }
     }
 
@@ -696,7 +699,7 @@ class _ConversationWiredState extends State<ConversationWired> {
           'Cannot send: contact does not support encryption.',
         _ => 'Failed to send message. Message saved.',
       };
-      ScaffoldMessenger.of(context).showSnackBar(
+      messenger?.showSnackBar(
         SnackBar(
           content: Text(snackText),
           backgroundColor: Colors.red[700],
@@ -804,9 +807,8 @@ class _ConversationWiredState extends State<ConversationWired> {
       }
 
       if (!mounted) return;
-      setState(() {
-        _pendingAttachments = [..._pendingAttachments, ...media];
-      });
+      _pendingAttachments = [..._pendingAttachments, ...media];
+      _updateComposerState(pendingAttachments: _pendingAttachmentFiles());
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -826,9 +828,8 @@ class _ConversationWiredState extends State<ConversationWired> {
       final result = await _processMediaIfNeeded(picked.path);
       if (!mounted) return;
 
-      setState(() {
-        _pendingAttachments = [..._pendingAttachments, result];
-      });
+      _pendingAttachments = [..._pendingAttachments, result];
+      _updateComposerState(pendingAttachments: _pendingAttachmentFiles());
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -848,9 +849,8 @@ class _ConversationWiredState extends State<ConversationWired> {
       final result = await _processMediaIfNeeded(picked.path);
       if (!mounted) return;
 
-      setState(() {
-        _pendingAttachments = [..._pendingAttachments, result];
-      });
+      _pendingAttachments = [..._pendingAttachments, result];
+      _updateComposerState(pendingAttachments: _pendingAttachmentFiles());
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -866,31 +866,30 @@ class _ConversationWiredState extends State<ConversationWired> {
     if (processor == null) return _PendingMedia(file: File(path));
 
     if (processor.isProcessableVideo(path)) {
-      setState(() {
-        _isProcessingVideo = true;
-        _processingProgress = 0.0;
-      });
+      _updateComposerState(isProcessing: true, processingProgress: 0.0);
 
-      final result = await processor.processVideo(
-        inputPath: path,
-        quality: widget.videoQualityPreference,
-        onProgress: (progress) {
-          if (mounted) {
-            setState(() => _processingProgress = progress / 100.0);
-          }
-        },
-      );
+      try {
+        final result = await processor.processVideo(
+          inputPath: path,
+          quality: widget.videoQualityPreference,
+          onProgress: (progress) {
+            if (mounted) {
+              _updateComposerState(processingProgress: progress / 100.0);
+            }
+          },
+        );
 
-      if (mounted) {
-        setState(() => _isProcessingVideo = false);
+        return _PendingMedia(
+          file: File(result.path),
+          width: result.width,
+          height: result.height,
+          durationMs: result.durationMs,
+        );
+      } finally {
+        if (mounted) {
+          _updateComposerState(isProcessing: false);
+        }
       }
-
-      return _PendingMedia(
-        file: File(result.path),
-        width: result.width,
-        height: result.height,
-        durationMs: result.durationMs,
-      );
     }
 
     // Image processing (existing behavior)
@@ -936,7 +935,9 @@ class _ConversationWiredState extends State<ConversationWired> {
     }
 
     _durationSub = recorder.durationStream.listen((d) {
-      if (mounted) setState(() => _recordingDuration = d);
+      if (mounted) {
+        _updateComposerState(recordingDuration: d);
+      }
     });
 
     _amplitudeBuffer.reset();
@@ -945,16 +946,16 @@ class _ConversationWiredState extends State<ConversationWired> {
       if (mounted) {
         _amplitudeBuffer.push(value);
         _waveformSamples.add(value);
-        setState(() => _amplitudeValues = _amplitudeBuffer.values);
+        _updateComposerState(amplitudeValues: _amplitudeBuffer.values);
       }
     });
 
     if (mounted) {
-      setState(() {
-        _isRecording = true;
-        _recordingDuration = Duration.zero;
-        _amplitudeValues = _amplitudeBuffer.values;
-      });
+      _updateComposerState(
+        isRecording: true,
+        recordingDuration: Duration.zero,
+        amplitudeValues: _amplitudeBuffer.values,
+      );
     }
 
     emitFlowEvent(layer: 'FL', event: 'CONV_FL_RECORD_STARTED', details: {});
@@ -976,10 +977,7 @@ class _ConversationWiredState extends State<ConversationWired> {
     final recording = await recorder.stop();
 
     if (mounted) {
-      setState(() {
-        _isRecording = false;
-        _amplitudeValues = const [];
-      });
+      _updateComposerState(isRecording: false, amplitudeValues: const []);
     }
 
     if (recording == null) {
@@ -1030,8 +1028,8 @@ class _ConversationWiredState extends State<ConversationWired> {
     if (mounted) {
       setState(() {
         _upsertMessageById(optimisticMessage);
-        _isUploading = true;
       });
+      _updateComposerState(isUploading: true);
       _scrollToBottom();
     }
 
@@ -1097,7 +1095,7 @@ class _ConversationWiredState extends State<ConversationWired> {
         );
 
         if (mounted) {
-          setState(() => _isUploading = false);
+          _updateComposerState(isUploading: false);
         }
 
         if (result == SendChatMessageResult.success && voiceMessage != null) {
@@ -1154,7 +1152,7 @@ class _ConversationWiredState extends State<ConversationWired> {
     );
 
     if (mounted) {
-      setState(() => _isUploading = false);
+      _updateComposerState(isUploading: false);
     }
 
     if (result == SendVoiceMessageResult.success && voiceMessage != null) {
@@ -1206,11 +1204,11 @@ class _ConversationWiredState extends State<ConversationWired> {
     await recorder.cancel();
 
     if (mounted) {
-      setState(() {
-        _isRecording = false;
-        _recordingDuration = Duration.zero;
-        _amplitudeValues = const [];
-      });
+      _updateComposerState(
+        isRecording: false,
+        recordingDuration: Duration.zero,
+        amplitudeValues: const [],
+      );
     }
 
     emitFlowEvent(layer: 'FL', event: 'CONV_FL_RECORD_CANCELLED', details: {});
@@ -1370,11 +1368,60 @@ class _ConversationWiredState extends State<ConversationWired> {
 
   void _removeAttachment(int index) {
     if (index < 0 || index >= _pendingAttachments.length) return;
-    setState(() {
-      final updated = List<_PendingMedia>.from(_pendingAttachments);
-      updated.removeAt(index);
-      _pendingAttachments = updated;
-    });
+    final updated = List<_PendingMedia>.from(_pendingAttachments);
+    updated.removeAt(index);
+    _pendingAttachments = updated;
+    _updateComposerState(pendingAttachments: _pendingAttachmentFiles());
+  }
+
+  List<File> _pendingAttachmentFiles() {
+    return _pendingAttachments
+        .map((media) => media.file)
+        .toList(growable: false);
+  }
+
+  void _updateComposerState({
+    List<File>? pendingAttachments,
+    bool? isUploading,
+    bool? isProcessing,
+    double? processingProgress,
+    bool? isRecording,
+    Duration? recordingDuration,
+    List<double>? amplitudeValues,
+  }) {
+    final current = _composerState.value;
+    final next = current.copyWith(
+      pendingAttachments: pendingAttachments,
+      isUploading: isUploading,
+      isProcessing: isProcessing,
+      processingProgress: processingProgress,
+      isRecording: isRecording,
+      recordingDuration: recordingDuration,
+      amplitudeValues: amplitudeValues,
+    );
+    if (_composerStateEquals(current, next)) return;
+    _composerState.value = next;
+  }
+
+  bool _composerStateEquals(
+    ConversationComposerViewState a,
+    ConversationComposerViewState b,
+  ) {
+    return a.isUploading == b.isUploading &&
+        a.isProcessing == b.isProcessing &&
+        a.processingProgress == b.processingProgress &&
+        a.isRecording == b.isRecording &&
+        a.recordingDuration == b.recordingDuration &&
+        listEquals(a.amplitudeValues, b.amplitudeValues) &&
+        _fileListsEqual(a.pendingAttachments, b.pendingAttachments);
+  }
+
+  bool _fileListsEqual(List<File> a, List<File> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i].path != b[i].path) return false;
+    }
+    return true;
   }
 
   void _upsertMessageById(ConversationMessage message) {
@@ -1641,6 +1688,7 @@ class _ConversationWiredState extends State<ConversationWired> {
     if (_isRecording) {
       widget.audioRecorderService?.cancel();
     }
+    _composerState.dispose();
     _scrollController.dispose();
     super.dispose();
   }
@@ -1664,11 +1712,7 @@ class _ConversationWiredState extends State<ConversationWired> {
         hasMoreOlderMessages: _hasMoreOlderMessages,
         initialLoadDone: _initialLoadDone,
         onAttach: _onAttach,
-        pendingAttachments: _pendingAttachments.map((m) => m.file).toList(),
-        isUploading: _isUploading,
         onRemoveAttachment: _removeAttachment,
-        isProcessing: _isProcessingVideo,
-        processingProgress: _processingProgress,
         onRecordStart: widget.audioRecorderService != null
             ? _onRecordStart
             : null,
@@ -1678,9 +1722,7 @@ class _ConversationWiredState extends State<ConversationWired> {
         onRecordCancel: widget.audioRecorderService != null
             ? _onRecordCancel
             : null,
-        isRecording: _isRecording,
-        recordingDuration: _recordingDuration,
-        amplitudeValues: _amplitudeValues,
+        composerStateListenable: _composerState,
         reactions: _reactions,
         onReactionSelected: widget.reactionRepo != null
             ? _onReactionSelected

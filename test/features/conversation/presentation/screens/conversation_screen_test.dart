@@ -1,10 +1,12 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_screen.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/conversation_header.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/attachment_preview_strip.dart';
 
 void main() {
@@ -20,6 +22,7 @@ void main() {
     bool isUploading = false,
     ValueChanged<int>? onRemoveAttachment,
     bool isBlocked = false,
+    ValueListenable<ConversationComposerViewState>? composerStateListenable,
   }) {
     return MaterialApp(
       home: Scaffold(
@@ -39,6 +42,7 @@ void main() {
           isUploading: isUploading,
           onRemoveAttachment: onRemoveAttachment,
           isBlocked: isBlocked,
+          composerStateListenable: composerStateListenable,
         ),
       ),
     );
@@ -207,6 +211,86 @@ void main() {
       expect(find.byKey(const ValueKey('aud-1')), findsOneWidget);
       expect(find.byKey(const ValueKey('aud-2')), findsOneWidget);
     });
+
+    testWidgets(
+      'composer listenable updates do not rebuild header or message list',
+      (tester) async {
+        final composerState = ValueNotifier(
+          const ConversationComposerViewState(),
+        );
+        addTearDown(composerState.dispose);
+
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: [makeMessage(id: 'msg-1', text: 'First message')],
+            initialLoadDone: true,
+            composerStateListenable: composerState,
+          ),
+        );
+        await pumpFrames(tester);
+
+        final headerElement = tester.element(find.byType(ConversationHeader));
+        final listElement = tester.element(
+          find.byKey(const ValueKey('messages')),
+        );
+        final headerWidget = tester.widget<ConversationHeader>(
+          find.byType(ConversationHeader),
+        );
+        final listWidget = tester.widget<ListView>(
+          find.byKey(const ValueKey('messages')),
+        );
+
+        composerState.value = const ConversationComposerViewState(
+          isRecording: true,
+          recordingDuration: Duration(seconds: 3),
+          amplitudeValues: [0.2, 0.5, 0.8],
+        );
+        await tester.pump();
+
+        expect(find.text('Slide to cancel'), findsOneWidget);
+        expect(find.text('0:03'), findsOneWidget);
+        expect(
+          identical(
+            headerElement,
+            tester.element(find.byType(ConversationHeader)),
+          ),
+          isTrue,
+        );
+        expect(
+          identical(
+            listElement,
+            tester.element(find.byKey(const ValueKey('messages'))),
+          ),
+          isTrue,
+        );
+        expect(
+          tester.widget<ConversationHeader>(find.byType(ConversationHeader)),
+          same(headerWidget),
+        );
+        expect(
+          tester.widget<ListView>(find.byKey(const ValueKey('messages'))),
+          same(listWidget),
+        );
+
+        composerState.value = const ConversationComposerViewState(
+          pendingAttachments: [],
+          isProcessing: true,
+          processingProgress: 0.4,
+        );
+        await tester.pump();
+
+        expect(find.byType(AttachmentPreviewStrip), findsOneWidget);
+        expect(find.text('40%'), findsOneWidget);
+        expect(
+          tester.widget<ConversationHeader>(find.byType(ConversationHeader)),
+          same(headerWidget),
+        );
+        expect(
+          tester.widget<ListView>(find.byKey(const ValueKey('messages'))),
+          same(listWidget),
+        );
+      },
+    );
   });
 
   group('ConversationScreen attachments', () {
