@@ -71,11 +71,11 @@ Dirty files captured before checkpoint:
   - `PERF-01`: Done
   - `PERF-03`: Done
   - `PERF-06`: Done
+  - `PERF-07`: Done
   - `PERF-08`: Done
-  - `PERF-07`: Pending
 - Wave 2
   - `PERF-10`: Done
-  - `PERF-09 reconciliation`: Pending
+  - `PERF-09 reconciliation`: Done
 - Wave 3
   - `PERF-11`: Pending
 - Wave 4
@@ -253,6 +253,42 @@ Residual notes:
 - no automated route-level harness exists for the `impl-backlog.md` observation flow `Group conversation while messages arrive`; the wired/widget tests above are the best available fallback and real multi-user device QA remains outstanding
 - group recording / processing composer state still follows the older broad route-state pattern; this lane intentionally focused on incremental message/media updates and did not change the recording overlay path
 
+### PERF-07 Virtualize Feed With Slivers Or Builders
+
+Lane:
+- `perf-exec/lane-e-feed`
+
+Implementation:
+- replaced the eager Feed `SingleChildScrollView` surface with a `CustomScrollView` + `SliverList` structure and explicit spacer/divider entries
+- preserved Feed sectioning and card identity by keeping `ValueKey(item.id)` on cards and wiring `findChildIndexCallback` so reused items stay stable under reorder and virtualization
+- updated the Feed performance harness and added a dedicated screen test to prove the far-off tail card is not built until scrolled into view
+- tuned the Feed sliver cache extent from `600` to `1200` after follow-up showed lazy-mounted cards were entering the viewport too late during fast scroll perf runs
+
+Follow-up pattern:
+1. local implementation checks
+   - `flutter analyze lib/features/feed/presentation/screens/feed_screen.dart integration_test/feed_performance_test.dart test/features/feed/presentation/screens/feed_screen_test.dart`
+   - result: passed, no issues
+2. follow-up diff review
+   - confirmed Feed now renders through `CustomScrollView` + `SliverList`
+   - confirmed unread/read section spacing and `SessionDivider` placement were preserved as explicit feed entries
+   - confirmed card identity remains keyed to stable feed ids so expanded / focused subtrees are reusable under sliver virtualization
+3. targeted QA / regression surface
+   - `flutter test test/features/feed/presentation/screens/feed_screen_test.dart test/features/feed/presentation/screens/feed_wired_test.dart test/features/feed/presentation/widgets/feed_card_test.dart test/features/feed/presentation/widgets/collapsed_mode_card_body_test.dart test/features/feed/presentation/widgets/open_mode_card_body_test.dart test/features/feed/presentation/widgets/scrollable_message_preview_test.dart test/features/feed/presentation/widgets/connection_card_test.dart test/features/feed/presentation/widgets/introduction_connection_card_test.dart test/features/feed/integration/expanded_collapsed_card_test.dart test/features/feed/integration/feed_card_flow_test.dart`
+   - `flutter test integration_test/feed_performance_test.dart -d macos`
+   - result: all tests passed
+   - final Feed perf route:
+     - `Scroll`: avg `2.80ms`, p99 `12.42ms`, worst `19.58ms`
+     - `Expand/Collapse`: avg `2.20ms`, p99 `24.48ms`, worst `30.86ms`
+     - `Swipe-to-quote`: avg `1.41ms`, p99 `2.50ms`, worst `2.50ms`
+     - `Compose input`: avg `7.86ms`, p99 `23.25ms`, worst `23.25ms`
+4. visible UX delta
+   - minor structural scroll-behavior change only, as expected for virtualization; no intentional redesign
+   - no screenshot set was captured because no existing screenshot harness exists for this Flutter desktop route and the lane targeted no intentional visual redesign
+
+Residual notes:
+- the first `PERF-07` follow-up run exposed a stale `SingleChildScrollView` assumption in `integration_test/feed_performance_test.dart`; that harness was updated as part of the lane closeout
+- `PERF-07` was not marked done until `PERF-09` reconciliation was rerun on top of the sliver-based Feed, per `plan.md`
+
 ### PERF-08 Virtualize Orbit With Slivers Or Builders
 
 Lane:
@@ -283,6 +319,40 @@ Residual notes:
 - the non-sliver `introsWidget` fallback remains in `OrbitScreen` for compatibility, but `OrbitWired` now uses the sliver-native path that satisfies the scoped `PERF-08` requirement
 
 ## Wave 2
+
+### PERF-09 Replace Full Feed Reloads With Incremental Thread State
+
+Lane:
+- `perf-exec/lane-e-feed`
+
+Implementation:
+- revalidated the existing incremental Feed refresh paths on top of the virtualized Feed surface without needing new production logic changes in `FeedWired`
+- added missing regression coverage for the audit gaps:
+  - focused inline reply draft / focus retention across a targeted contact refresh
+  - explicit `reloadAllContacts` route-return behavior
+  - explicit `reloadAllGroups` route-return behavior
+- confirmed the existing incremental contact, group, intro, and reaction update paths still operate correctly after the `PERF-07` structural change
+
+Follow-up pattern:
+1. local implementation checks
+   - `flutter analyze lib/features/feed/presentation/screens/feed_screen.dart lib/features/feed/presentation/screens/feed_wired.dart integration_test/feed_performance_test.dart test/features/feed/presentation/screens/feed_screen_test.dart test/features/feed/presentation/screens/feed_wired_test.dart`
+   - result: passed, no issues
+2. follow-up diff review
+   - confirmed isolated incoming events still use targeted `_refreshContactFeedItem(...)` / `_refreshGroupFeedItem(...)` paths instead of falling back to full Feed reloads
+   - confirmed explicit broad reloads remain only for cold start, explicit `reloadAllContacts` / `reloadAllGroups` route returns, and integrity fallback after targeted refresh errors
+   - confirmed the remaining parent-level `setState` fan-out in `FeedWired` stayed functionally correct on top of sliver virtualization, so no further UI-scoping change was required for this plan
+3. targeted QA / regression surface
+   - `flutter test test/features/feed/presentation/screens/feed_wired_test.dart`
+   - `flutter test test/features/feed/presentation/screens/feed_screen_test.dart test/features/feed/presentation/screens/feed_wired_test.dart test/features/feed/presentation/widgets/feed_card_test.dart test/features/feed/presentation/widgets/collapsed_mode_card_body_test.dart test/features/feed/presentation/widgets/open_mode_card_body_test.dart test/features/feed/presentation/widgets/scrollable_message_preview_test.dart test/features/feed/presentation/widgets/connection_card_test.dart test/features/feed/presentation/widgets/introduction_connection_card_test.dart test/features/feed/integration/expanded_collapsed_card_test.dart test/features/feed/integration/feed_card_flow_test.dart`
+   - `flutter test integration_test/feed_performance_test.dart -d macos`
+   - result: all tests passed
+4. visible UX delta
+   - none intended; this reconciliation pass was correctness and regression hardening for the already-implemented incremental update model
+   - no screenshot set was captured because no existing screenshot harness exists for this Flutter desktop route and the pass targeted no intentional visual redesign
+
+Residual notes:
+- real device-route QA for `Feed idle while new message arrives` remains an open gap because the repo still lacks an automated route harness for that exact observation flow
+- the Feed still uses route-level `setState` around the incremental store, but the scoped `PERF-09` acceptance criteria are satisfied: common incoming events refresh one contact or one group, route-return reload-all behavior is explicitly covered, and focus/draft state is retained across targeted refresh
 
 ### PERF-10 Replace Full Orbit Reloads With Incremental State Updates
 
