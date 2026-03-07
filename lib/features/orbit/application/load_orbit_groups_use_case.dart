@@ -1,7 +1,9 @@
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/models/group_thread_summary.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_thread_summary_repository.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_group.dart';
 
 /// Loads groups with their latest message and unread count,
@@ -30,18 +32,18 @@ Future<List<OrbitGroup>> loadOrbitGroups({
     } else {
       groups = await groupRepo.getActiveGroups();
     }
-    final orbitGroups = <OrbitGroup>[];
-
-    for (final group in groups) {
-      orbitGroups.add(
-        await _buildOrbitGroup(
-          groupId: group.id,
-          groupRepo: groupRepo,
-          msgRepo: msgRepo,
-          groupOverride: group,
-        ),
-      );
-    }
+    final summaries = await _loadGroupThreadSummaries(
+      msgRepo: msgRepo,
+      groupIds: groups.map((group) => group.id),
+    );
+    final orbitGroups = groups
+        .map(
+          (group) => _buildOrbitGroup(
+            group: group,
+            summary: summaries[group.id] ?? GroupThreadSummary(groupId: group.id),
+          ),
+        )
+        .toList(growable: false);
 
     _sortOrbitGroups(orbitGroups);
 
@@ -84,12 +86,11 @@ Future<OrbitGroup?> loadOrbitGroupSnapshot({
       return null;
     }
 
-    final orbitGroup = await _buildOrbitGroup(
-      groupId: groupId,
-      groupRepo: groupRepo,
+    final summary = await _loadGroupThreadSummary(
       msgRepo: msgRepo,
-      groupOverride: group,
+      groupId: groupId,
     );
+    final orbitGroup = _buildOrbitGroup(group: group, summary: summary);
 
     emitFlowEvent(
       layer: 'UC',
@@ -107,28 +108,61 @@ Future<OrbitGroup?> loadOrbitGroupSnapshot({
   }
 }
 
-Future<OrbitGroup> _buildOrbitGroup({
-  required String groupId,
-  required GroupRepository groupRepo,
-  required GroupMessageRepository msgRepo,
-  GroupModel? groupOverride,
-}) async {
-  final group = groupOverride ?? await groupRepo.getGroup(groupId);
-  if (group == null) {
-    throw StateError('Group not found for Orbit snapshot: $groupId');
-  }
-
-  final latestMessage = await msgRepo.getLatestMessage(groupId);
-  final unreadCount = await msgRepo.getUnreadCount(groupId);
-
+OrbitGroup _buildOrbitGroup({
+  required GroupModel group,
+  required GroupThreadSummary summary,
+}) {
+  final latestMessage = summary.latestMessage;
   return OrbitGroup(
     group: group,
     latestMessage: latestMessage != null
         ? '${latestMessage.senderUsername ?? 'Unknown'}: ${latestMessage.text}'
         : null,
-    unreadCount: unreadCount,
+    unreadCount: summary.unreadCount,
     lastActivityTimestamp: latestMessage?.timestamp ?? group.createdAt,
   );
+}
+
+Future<GroupThreadSummary> _loadGroupThreadSummary({
+  required GroupMessageRepository msgRepo,
+  required String groupId,
+}) async {
+  final summaryRepo = msgRepo is GroupThreadSummaryRepository
+      ? msgRepo as GroupThreadSummaryRepository
+      : null;
+  if (summaryRepo != null) {
+    return summaryRepo.getGroupThreadSummary(groupId);
+  }
+
+  return GroupThreadSummary(
+    groupId: groupId,
+    latestMessage: await msgRepo.getLatestMessage(groupId),
+    unreadCount: await msgRepo.getUnreadCount(groupId),
+  );
+}
+
+Future<Map<String, GroupThreadSummary>> _loadGroupThreadSummaries({
+  required GroupMessageRepository msgRepo,
+  required Iterable<String> groupIds,
+}) async {
+  final ids = groupIds.toList(growable: false);
+  if (ids.isEmpty) return const <String, GroupThreadSummary>{};
+
+  final summaryRepo = msgRepo is GroupThreadSummaryRepository
+      ? msgRepo as GroupThreadSummaryRepository
+      : null;
+  if (summaryRepo != null) {
+    return summaryRepo.getGroupThreadSummaries(ids);
+  }
+
+  final summaries = <String, GroupThreadSummary>{};
+  for (final groupId in ids) {
+    summaries[groupId] = await _loadGroupThreadSummary(
+      msgRepo: msgRepo,
+      groupId: groupId,
+    );
+  }
+  return summaries;
 }
 
 void _sortOrbitGroups(List<OrbitGroup> groups) {

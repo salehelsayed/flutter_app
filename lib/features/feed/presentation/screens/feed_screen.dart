@@ -25,6 +25,7 @@ class FeedScreen extends StatelessWidget {
   final Uint8List? userAvatarBytes;
   final String? userPeerId;
   final List<FeedItem> feedItems;
+  final ValueListenable<List<FeedItem>>? feedItemsListenable;
   final bool feedLoaded;
   final ValueChanged<String>? onUsernameChanged;
   final P2PService? p2pService;
@@ -33,6 +34,7 @@ class FeedScreen extends StatelessWidget {
   final void Function(ConnectionFeedItem)? onSendMessage;
   final void Function(String contactPeerId)? onReplyToMessage;
   final int totalUnreadCount;
+  final ValueListenable<int>? totalUnreadCountListenable;
   final String? expandedCardId;
   final void Function(String)? onToggleExpand;
   final void Function(String contactPeerId, String text)? onInlineSend;
@@ -60,6 +62,7 @@ class FeedScreen extends StatelessWidget {
     this.userAvatarBytes,
     this.userPeerId,
     required this.feedItems,
+    this.feedItemsListenable,
     this.feedLoaded = true,
     this.onUsernameChanged,
     this.p2pService,
@@ -68,6 +71,7 @@ class FeedScreen extends StatelessWidget {
     this.onSendMessage,
     this.onReplyToMessage,
     this.totalUnreadCount = 0,
+    this.totalUnreadCountListenable,
     this.expandedCardId,
     this.onToggleExpand,
     this.onInlineSend,
@@ -130,31 +134,28 @@ class FeedScreen extends StatelessWidget {
                       Expanded(
                         child: LayoutBuilder(
                           builder: (context, contentConstraints) {
-                            final maxFeedWidth =
-                                contentConstraints.maxWidth >= 900
-                                ? 640.0
-                                : contentConstraints.maxWidth >= 600
-                                ? 560.0
-                                : 460.0;
-                            final centeredHorizontalPadding = math.max(
-                              horizontalPadding,
-                              (contentConstraints.maxWidth - maxFeedWidth) / 2,
-                            );
+                            final feedItemsListenable =
+                                this.feedItemsListenable;
+                            if (feedItemsListenable == null) {
+                              return _buildFeedContent(
+                                context: context,
+                                horizontalPadding: horizontalPadding,
+                                contentConstraints: contentConstraints,
+                                bottomInset: bottomInset,
+                                items: feedItems,
+                              );
+                            }
 
-                            return CustomScrollView(
-                              key: const PageStorageKey<String>('feed-scroll'),
-                              physics: const BouncingScrollPhysics(),
-                              cacheExtent: 1200,
-                              slivers: [
-                                SliverPadding(
-                                  padding: EdgeInsets.only(
-                                    left: centeredHorizontalPadding,
-                                    right: centeredHorizontalPadding,
-                                    bottom: 60 + bottomInset,
+                            return ValueListenableBuilder<List<FeedItem>>(
+                              valueListenable: feedItemsListenable,
+                              builder: (context, items, child) =>
+                                  _buildFeedContent(
+                                    context: context,
+                                    horizontalPadding: horizontalPadding,
+                                    contentConstraints: contentConstraints,
+                                    bottomInset: bottomInset,
+                                    items: items,
                                   ),
-                                  sliver: _buildFeedSliver(context),
-                                ),
-                              ],
                             );
                           },
                         ),
@@ -170,13 +171,7 @@ class FeedScreen extends StatelessWidget {
                 left: 0,
                 right: 0,
                 bottom: bottomInset - 14,
-                child: Center(
-                  child: FeedNavigationBar(
-                    activeTab: activeTab,
-                    onSwitchView: onSwitchView,
-                    feedBadgeCount: totalUnreadCount,
-                  ),
-                ),
+                child: Center(child: _buildNavigationBar()),
               ),
           ],
         ),
@@ -184,8 +179,66 @@ class FeedScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildFeedSliver(BuildContext context) {
-    final entries = _buildFeedEntries();
+  Widget _buildFeedContent({
+    required BuildContext context,
+    required double horizontalPadding,
+    required BoxConstraints contentConstraints,
+    required double bottomInset,
+    required List<FeedItem> items,
+  }) {
+    final maxFeedWidth = contentConstraints.maxWidth >= 900
+        ? 640.0
+        : contentConstraints.maxWidth >= 600
+        ? 560.0
+        : 460.0;
+    final centeredHorizontalPadding = math.max(
+      horizontalPadding,
+      (contentConstraints.maxWidth - maxFeedWidth) / 2,
+    );
+
+    return CustomScrollView(
+      key: const PageStorageKey<String>('feed-scroll'),
+      physics: const BouncingScrollPhysics(),
+      cacheExtent: 1200,
+      slivers: [
+        SliverPadding(
+          padding: EdgeInsets.only(
+            left: centeredHorizontalPadding,
+            right: centeredHorizontalPadding,
+            bottom: 60 + bottomInset,
+          ),
+          sliver: _buildFeedSliver(context, items),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildNavigationBar() {
+    final unreadCountListenable = totalUnreadCountListenable;
+    if (unreadCountListenable == null) {
+      return FeedNavigationBar(
+        activeTab: activeTab,
+        onSwitchView: onSwitchView,
+        feedBadgeCount: totalUnreadCount,
+      );
+    }
+
+    return ValueListenableBuilder<int>(
+      valueListenable: unreadCountListenable,
+      builder: (context, unreadCount, child) => FeedNavigationBar(
+        activeTab: activeTab,
+        onSwitchView: onSwitchView,
+        feedBadgeCount: unreadCount,
+      ),
+    );
+  }
+
+  Widget _buildFeedSliver(BuildContext context, List<FeedItem> items) {
+    if (!feedLoaded && items.isEmpty) {
+      return _buildLoadingSliver();
+    }
+
+    final entries = _buildFeedEntries(items);
     if (entries.isEmpty) {
       return const SliverToBoxAdapter(child: SizedBox.shrink());
     }
@@ -199,8 +252,22 @@ class FeedScreen extends StatelessWidget {
     );
   }
 
-  List<_FeedEntry> _buildFeedEntries() {
-    if (feedItems.isEmpty) {
+  Widget _buildLoadingSliver() {
+    return SliverList(
+      delegate: SliverChildListDelegate.fixed([
+        const SizedBox(height: 16),
+        const _FeedLoadingCard(index: 0),
+        const SizedBox(height: 16),
+        const _FeedLoadingCard(index: 1),
+        const SizedBox(height: 16),
+        const _FeedLoadingCard(index: 2),
+        const SizedBox(height: 20),
+      ]),
+    );
+  }
+
+  List<_FeedEntry> _buildFeedEntries(List<FeedItem> items) {
+    if (items.isEmpty) {
       if (!feedLoaded) return const [];
       return [
         const _FeedEntry.spacer(height: 12),
@@ -214,7 +281,7 @@ class FeedScreen extends StatelessWidget {
     final aboveDivider = <FeedItem>[];
     final belowDivider = <FeedItem>[];
 
-    for (final item in feedItems) {
+    for (final item in items) {
       if (item is ConnectionFeedItem) {
         belowDivider.add(item);
       } else if (item is GroupThreadFeedItem) {
@@ -469,6 +536,59 @@ class _EmptyFeedStateCard extends StatelessWidget {
           fontSize: 15,
           height: 1.35,
           fontWeight: FontWeight.w500,
+        ),
+      ),
+    );
+  }
+}
+
+class _FeedLoadingCard extends StatelessWidget {
+  final int index;
+
+  const _FeedLoadingCard({required this.index});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      key: ValueKey('feed-loading-card-$index'),
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 18),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(24),
+        color: const Color.fromRGBO(24, 26, 32, 0.6),
+        border: Border.all(color: const Color.fromRGBO(255, 255, 255, 0.1)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: const [
+          _FeedLoadingBar(widthFactor: 0.34, height: 16),
+          SizedBox(height: 14),
+          _FeedLoadingBar(widthFactor: 0.82),
+          SizedBox(height: 10),
+          _FeedLoadingBar(widthFactor: 0.66),
+          SizedBox(height: 18),
+          _FeedLoadingBar(widthFactor: 0.48, height: 38),
+        ],
+      ),
+    );
+  }
+}
+
+class _FeedLoadingBar extends StatelessWidget {
+  final double widthFactor;
+  final double height;
+
+  const _FeedLoadingBar({required this.widthFactor, this.height = 12});
+
+  @override
+  Widget build(BuildContext context) {
+    return FractionallySizedBox(
+      widthFactor: widthFactor,
+      alignment: Alignment.centerLeft,
+      child: Container(
+        height: height,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(height / 2),
+          color: const Color.fromRGBO(255, 255, 255, 0.11),
         ),
       ),
     );

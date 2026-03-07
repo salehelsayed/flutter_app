@@ -186,6 +186,65 @@ Future<Map<String, Object?>?> dbLoadLatestMessageForContact(
   }
 }
 
+/// Loads conversation summaries for the provided contacts.
+///
+/// Returns one row per contact that has at least one message. Contacts with no
+/// messages are omitted so callers can provide their own zero-value fallback.
+Future<List<Map<String, Object?>>> dbLoadConversationThreadSummaries(
+  Database db,
+  List<String> contactPeerIds,
+) async {
+  if (contactPeerIds.isEmpty) return const [];
+
+  final placeholders = List.filled(contactPeerIds.length, '?').join(', ');
+  final results = await db.rawQuery(
+    '''
+    SELECT
+      summary.contact_peer_id,
+      summary.message_count,
+      summary.unread_count,
+      latest.id AS latest_id,
+      latest.contact_peer_id AS latest_contact_peer_id,
+      latest.sender_peer_id AS latest_sender_peer_id,
+      latest.text AS latest_text,
+      latest.timestamp AS latest_timestamp,
+      latest.status AS latest_status,
+      latest.is_incoming AS latest_is_incoming,
+      latest.created_at AS latest_created_at,
+      latest.read_at AS latest_read_at,
+      latest.quoted_message_id AS latest_quoted_message_id,
+      latest.transport AS latest_transport,
+      latest.wire_envelope AS latest_wire_envelope
+    FROM (
+      SELECT
+        contact_peer_id,
+        COUNT(*) AS message_count,
+        SUM(
+          CASE
+            WHEN is_incoming = 1 AND read_at IS NULL THEN 1
+            ELSE 0
+          END
+        ) AS unread_count
+      FROM messages
+      WHERE contact_peer_id IN ($placeholders)
+      GROUP BY contact_peer_id
+    ) summary
+    LEFT JOIN messages latest
+      ON latest.id = (
+        SELECT inner_latest.id
+        FROM messages inner_latest
+        WHERE inner_latest.contact_peer_id = summary.contact_peer_id
+        ORDER BY inner_latest.timestamp DESC,
+                 inner_latest.created_at DESC,
+                 inner_latest.id DESC
+        LIMIT 1
+      )
+    ''',
+    contactPeerIds,
+  );
+  return results;
+}
+
 /// Updates the status of a message by ID.
 Future<void> dbUpdateMessageStatus(
   Database db,

@@ -162,6 +162,62 @@ Future<Map<String, Object?>?> dbLoadLatestGroupMessage(
   }
 }
 
+/// Loads conversation summaries for the provided groups.
+///
+/// Returns one row per group that has at least one message. Groups with no
+/// messages are omitted so callers can provide their own zero-value fallback.
+Future<List<Map<String, Object?>>> dbLoadGroupThreadSummaries(
+  Database db,
+  List<String> groupIds,
+) async {
+  if (groupIds.isEmpty) return const [];
+
+  final placeholders = List.filled(groupIds.length, '?').join(', ');
+  final results = await db.rawQuery(
+    '''
+    SELECT
+      summary.group_id,
+      summary.unread_count,
+      latest.id AS latest_id,
+      latest.group_id AS latest_group_id,
+      latest.sender_peer_id AS latest_sender_peer_id,
+      latest.sender_username AS latest_sender_username,
+      latest.text AS latest_text,
+      latest.timestamp AS latest_timestamp,
+      latest.key_generation AS latest_key_generation,
+      latest.status AS latest_status,
+      latest.is_incoming AS latest_is_incoming,
+      latest.read_at AS latest_read_at,
+      latest.created_at AS latest_created_at
+    FROM (
+      SELECT
+        group_id,
+        SUM(
+          CASE
+            WHEN is_incoming = 1 AND read_at IS NULL THEN 1
+            ELSE 0
+          END
+        ) AS unread_count
+      FROM group_messages
+      WHERE group_id IN ($placeholders)
+      GROUP BY group_id
+    ) summary
+    LEFT JOIN group_messages latest
+      ON latest.id = (
+        SELECT inner_latest.id
+        FROM group_messages inner_latest
+        WHERE inner_latest.group_id = summary.group_id
+        ORDER BY inner_latest.timestamp DESC,
+                 inner_latest.created_at DESC,
+                 inner_latest.id DESC
+        LIMIT 1
+      )
+    ''',
+    groupIds,
+  );
+  return results;
+}
+
 /// Loads a single group message by ID.
 Future<Map<String, Object?>?> dbLoadGroupMessage(Database db, String id) async {
   try {

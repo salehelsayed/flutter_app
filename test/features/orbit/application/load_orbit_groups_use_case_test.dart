@@ -1,10 +1,30 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
+import 'package:flutter_app/features/groups/domain/models/group_thread_summary.dart';
 import 'package:flutter_app/features/orbit/application/load_orbit_groups_use_case.dart';
 
 import '../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
+
+class _CountingGroupMessageRepository extends InMemoryGroupMessageRepository {
+  int getGroupThreadSummariesCallCount = 0;
+  int getGroupThreadSummaryCallCount = 0;
+
+  @override
+  Future<GroupThreadSummary> getGroupThreadSummary(String groupId) {
+    getGroupThreadSummaryCallCount++;
+    return super.getGroupThreadSummary(groupId);
+  }
+
+  @override
+  Future<Map<String, GroupThreadSummary>> getGroupThreadSummaries(
+    Iterable<String> groupIds,
+  ) {
+    getGroupThreadSummariesCallCount++;
+    return super.getGroupThreadSummaries(groupIds);
+  }
+}
 
 GroupModel _makeGroup({
   required String id,
@@ -49,11 +69,11 @@ GroupMessage _makeMessage({
 void main() {
   group('loadOrbitGroups', () {
     late InMemoryGroupRepository groupRepo;
-    late InMemoryGroupMessageRepository msgRepo;
+    late _CountingGroupMessageRepository msgRepo;
 
     setUp(() {
       groupRepo = InMemoryGroupRepository();
-      msgRepo = InMemoryGroupMessageRepository();
+      msgRepo = _CountingGroupMessageRepository();
     });
 
     test('returns empty list when no groups', () async {
@@ -63,6 +83,7 @@ void main() {
       );
 
       expect(result, isEmpty);
+      expect(msgRepo.getGroupThreadSummariesCallCount, 0);
     });
 
     test('loads active groups only (excludes archived)', () async {
@@ -79,6 +100,7 @@ void main() {
       expect(result.length, 1);
       expect(result[0].groupId, 'g-1');
       expect(result[0].name, 'Active Group');
+      expect(msgRepo.getGroupThreadSummariesCallCount, 1);
     });
 
     test('includes latest message preview', () async {
@@ -100,6 +122,7 @@ void main() {
 
       expect(result.length, 1);
       expect(result[0].latestMessage, 'Bob: Hello group');
+      expect(msgRepo.getGroupThreadSummariesCallCount, 1);
     });
 
     test('includes unread count', () async {
@@ -127,6 +150,7 @@ void main() {
       );
 
       expect(result[0].unreadCount, 2);
+      expect(msgRepo.getGroupThreadSummariesCallCount, 1);
     });
 
     test('sorts by most recent activity first', () async {
@@ -169,6 +193,7 @@ void main() {
 
       expect(result[0].groupId, 'g-new');
       expect(result[1].groupId, 'g-old');
+      expect(msgRepo.getGroupThreadSummariesCallCount, 1);
     });
 
     test('uses createdAt as fallback when no messages', () async {
@@ -194,6 +219,7 @@ void main() {
 
       expect(result[0].groupId, 'g-newer');
       expect(result[1].groupId, 'g-older');
+      expect(msgRepo.getGroupThreadSummariesCallCount, 1);
     });
 
     test('returns null latestMessage when group has no messages', () async {
@@ -206,6 +232,7 @@ void main() {
 
       expect(result[0].latestMessage, isNull);
       expect(result[0].unreadCount, 0);
+      expect(msgRepo.getGroupThreadSummariesCallCount, 1);
     });
 
     test('loads a single group snapshot by group id', () async {
@@ -230,6 +257,7 @@ void main() {
       expect(result!.groupId, 'g-1');
       expect(result.latestMessage, 'Bob: Hello group');
       expect(result.unreadCount, 1);
+      expect(msgRepo.getGroupThreadSummaryCallCount, 1);
     });
 
     test('returns null when a group snapshot no longer exists', () async {

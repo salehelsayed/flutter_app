@@ -1,7 +1,12 @@
 import 'dart:async';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:flutter_app/core/media/image_processor.dart';
+import 'package:flutter_app/core/media/media_picker.dart';
+import 'package:flutter_app/core/media/video_process_result.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
@@ -14,6 +19,7 @@ import 'package:flutter_app/features/conversation/domain/repositories/message_re
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/attachment_preview_strip.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/conversation_header.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
@@ -21,6 +27,7 @@ import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
 import '../../../../shared/fakes/fake_audio_recorder_service.dart';
+import '../../../../shared/fakes/fake_media_picker.dart';
 
 class FakeIdentityRepository implements IdentityRepository {
   IdentityModel? identity;
@@ -82,6 +89,7 @@ class FakeContactRepository implements ContactRepository {
 
 class FakeMessageRepository implements MessageRepository {
   final Map<String, ConversationMessage> store = {};
+  int getMessagesPageCalls = 0;
 
   @override
   Future<List<ConversationMessage>> getMessagesForContact(
@@ -142,6 +150,7 @@ class FakeMessageRepository implements MessageRepository {
     int limit = 50,
     String? beforeTimestamp,
   }) async {
+    getMessagesPageCalls++;
     var messages = store.values
         .where((m) => m.contactPeerId == contactPeerId)
         .toList();
@@ -162,6 +171,24 @@ class FakeMessageRepository implements MessageRepository {
   Future<List<ConversationMessage>> getUnackedOutgoingMessages({
     required Duration olderThan,
   }) async => [];
+}
+
+class SlowInitialPageMessageRepository extends FakeMessageRepository {
+  final Completer<void> firstPageGate = Completer<void>();
+
+  @override
+  Future<List<ConversationMessage>> getMessagesPage(
+    String contactPeerId, {
+    int limit = 50,
+    String? beforeTimestamp,
+  }) async {
+    await firstPageGate.future;
+    return super.getMessagesPage(
+      contactPeerId,
+      limit: limit,
+      beforeTimestamp: beforeTimestamp,
+    );
+  }
 }
 
 class FakeP2PService implements P2PService {
@@ -293,6 +320,8 @@ void main() {
     required SendChatMessageFn sendFn,
     P2PService? p2pService,
     FakeAudioRecorderService? audioRecorderService,
+    ImageProcessor? imageProcessor,
+    MediaPicker? mediaPicker,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -304,6 +333,8 @@ void main() {
           p2pService: p2pService ?? FakeP2PService(),
           sendChatMessageFn: sendFn,
           audioRecorderService: audioRecorderService,
+          imageProcessor: imageProcessor,
+          mediaPicker: mediaPicker,
         ),
       ),
     );
@@ -311,6 +342,54 @@ void main() {
   }
 
   group('ConversationWired optimistic send', () {
+    testWidgets('shows loading shell until the initial page resolves', (
+      tester,
+    ) async {
+      final identityRepo = FakeIdentityRepository(makeIdentity());
+      final messageRepo = SlowInitialPageMessageRepository();
+      await messageRepo.saveMessage(
+        ConversationMessage(
+          id: 'msg-load-1',
+          contactPeerId: makeContact().peerId,
+          senderPeerId: makeContact().peerId,
+          text: 'Loaded after delay',
+          timestamp: '2026-02-11T10:05:00.000Z',
+          status: 'delivered',
+          isIncoming: true,
+          createdAt: '2026-02-11T10:05:00.000Z',
+        ),
+      );
+      final chatListener = ChatMessageListener(
+        chatMessageStream: const Stream.empty(),
+        messageRepo: messageRepo,
+        contactRepo: FakeContactRepository(),
+      );
+
+      await pumpScreen(
+        tester,
+        identityRepo: identityRepo,
+        messageRepo: messageRepo,
+        chatListener: chatListener,
+        sendFn: _instantSuccessSendFn,
+      );
+
+      expect(
+        find.byKey(const ValueKey('conversation-loading-shell')),
+        findsOneWidget,
+      );
+      expect(find.text('Loaded after delay'), findsNothing);
+
+      messageRepo.firstPageGate.complete();
+      await tester.pump(const Duration(milliseconds: 500));
+      await tester.pump(const Duration(milliseconds: 500));
+
+      expect(
+        find.byKey(const ValueKey('conversation-loading-shell')),
+        findsNothing,
+      );
+      expect(find.text('Loaded after delay'), findsOneWidget);
+    });
+
     testWidgets('shows message immediately then transitions to delivered', (
       tester,
     ) async {
@@ -629,6 +708,249 @@ void main() {
       );
 
       expect(find.byType(AttachmentPreviewStrip), findsNothing);
+    });
+
+    testWidgets(
+      'recording ticks update composer without rebuilding header or message list',
+      (tester) async {
+        final contact = makeContact();
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final recorder = FakeAudioRecorderService()..fakeDurationMs = 100;
+        await messageRepo.saveMessage(
+          ConversationMessage(
+            id: 'msg-rec-1',
+            contactPeerId: contact.peerId,
+            text: 'Seed message',
+            senderPeerId: contact.peerId,
+            timestamp: DateTime.now().toUtc().toIso8601String(),
+            status: 'delivered',
+            isIncoming: true,
+            createdAt: DateTime.now().toUtc().toIso8601String(),
+          ),
+        );
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+          audioRecorderService: recorder,
+        );
+
+        final headerFinder = find.byType(ConversationHeader);
+        final listFinder = find.byKey(const ValueKey('messages'));
+        final headerElement = tester.element(headerFinder);
+        final listElement = tester.element(listFinder);
+        final initialPageLoads = messageRepo.getMessagesPageCalls;
+
+        final gesture = await tester.startGesture(
+          tester.getCenter(find.byIcon(Icons.mic_rounded)),
+        );
+        await tester.pump(kLongPressTimeout + const Duration(milliseconds: 50));
+        await tester.pump();
+
+        recorder.emitDuration(const Duration(seconds: 1));
+        recorder.emitAmplitude(0.3);
+        await tester.pump();
+
+        expect(find.text('Slide to cancel'), findsOneWidget);
+        expect(find.text('0:01'), findsOneWidget);
+        expect(identical(headerElement, tester.element(headerFinder)), isTrue);
+        expect(identical(listElement, tester.element(listFinder)), isTrue);
+        expect(messageRepo.getMessagesPageCalls, initialPageLoads);
+
+        await gesture.up();
+        await tester.pump();
+      },
+    );
+
+    testWidgets(
+      'video processing progress updates composer without rebuilding header or message list',
+      (tester) async {
+        final contact = makeContact();
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        await messageRepo.saveMessage(
+          ConversationMessage(
+            id: 'msg-video-1',
+            contactPeerId: contact.peerId,
+            text: 'Seed message',
+            senderPeerId: contact.peerId,
+            timestamp: DateTime.now().toUtc().toIso8601String(),
+            status: 'delivered',
+            isIncoming: true,
+            createdAt: DateTime.now().toUtc().toIso8601String(),
+          ),
+        );
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        final mediaPicker = FakeMediaPicker()
+          ..videoResult = XFile('/tmp/test-video.mp4');
+        final resultCompleter = Completer<VideoProcessResult>();
+        void Function(double progress)? progressCallback;
+        final imageProcessor = ImageProcessor(
+          compressFile:
+              ({
+                required path,
+                required quality,
+                required keepExif,
+                minWidth = 1920,
+                minHeight = 1080,
+              }) async => null,
+          compressVideo:
+              ({
+                required path,
+                required compress,
+                void Function(double)? onProgress,
+              }) async {
+                progressCallback = onProgress;
+                return resultCompleter.future;
+              },
+        );
+
+        tester.view.physicalSize = const Size(800, 1600);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+          imageProcessor: imageProcessor,
+          mediaPicker: mediaPicker,
+        );
+
+        final headerFinder = find.byType(ConversationHeader);
+        final listFinder = find.byKey(const ValueKey('messages'));
+        final headerElement = tester.element(headerFinder);
+        final listElement = tester.element(listFinder);
+        final initialPageLoads = messageRepo.getMessagesPageCalls;
+
+        await tester.tap(find.byIcon(Icons.add_rounded));
+        await tester.pump(const Duration(milliseconds: 500));
+        tester
+            .widget<ListTile>(find.widgetWithText(ListTile, 'Record Video'))
+            .onTap!();
+        await tester.pump();
+
+        expect(progressCallback, isNotNull);
+
+        progressCallback!(25);
+        await tester.pump();
+
+        expect(find.byType(AttachmentPreviewStrip), findsOneWidget);
+        expect(find.text('25%'), findsOneWidget);
+        expect(identical(headerElement, tester.element(headerFinder)), isTrue);
+        expect(identical(listElement, tester.element(listFinder)), isTrue);
+        expect(messageRepo.getMessagesPageCalls, initialPageLoads);
+
+        progressCallback!(60);
+        await tester.pump();
+        expect(find.text('60%'), findsOneWidget);
+        expect(messageRepo.getMessagesPageCalls, initialPageLoads);
+
+        resultCompleter.complete(
+          VideoProcessResult(path: '/tmp/processed-video.mp4'),
+        );
+        await tester.pump();
+      },
+    );
+
+    testWidgets('video processing failure clears composer processing state', (
+      tester,
+    ) async {
+      final contact = makeContact();
+      final identityRepo = FakeIdentityRepository(makeIdentity());
+      final messageRepo = FakeMessageRepository();
+      await messageRepo.saveMessage(
+        ConversationMessage(
+          id: 'msg-video-fail-1',
+          contactPeerId: contact.peerId,
+          text: 'Seed message',
+          senderPeerId: contact.peerId,
+          timestamp: DateTime.now().toUtc().toIso8601String(),
+          status: 'delivered',
+          isIncoming: true,
+          createdAt: DateTime.now().toUtc().toIso8601String(),
+        ),
+      );
+      final chatListener = ChatMessageListener(
+        chatMessageStream: const Stream.empty(),
+        messageRepo: messageRepo,
+        contactRepo: FakeContactRepository(),
+      );
+      final mediaPicker = FakeMediaPicker()
+        ..videoResult = XFile('/tmp/test-video.mp4');
+      final resultCompleter = Completer<VideoProcessResult>();
+      void Function(double progress)? progressCallback;
+      final imageProcessor = ImageProcessor(
+        compressFile:
+            ({
+              required path,
+              required quality,
+              required keepExif,
+              minWidth = 1920,
+              minHeight = 1080,
+            }) async => null,
+        compressVideo:
+            ({
+              required path,
+              required compress,
+              void Function(double)? onProgress,
+            }) async {
+              progressCallback = onProgress;
+              return resultCompleter.future;
+            },
+      );
+
+      tester.view.physicalSize = const Size(800, 1600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await pumpScreen(
+        tester,
+        identityRepo: identityRepo,
+        messageRepo: messageRepo,
+        chatListener: chatListener,
+        sendFn: _instantSuccessSendFn,
+        imageProcessor: imageProcessor,
+        mediaPicker: mediaPicker,
+      );
+
+      await tester.tap(find.byIcon(Icons.add_rounded));
+      await tester.pump(const Duration(milliseconds: 500));
+      tester
+          .widget<ListTile>(find.widgetWithText(ListTile, 'Record Video'))
+          .onTap!();
+      await tester.pump();
+
+      progressCallback!(40);
+      await tester.pump();
+      expect(find.text('40%'), findsOneWidget);
+
+      resultCompleter.completeError(StateError('video failed'));
+      await tester.pump();
+
+      expect(find.byType(AttachmentPreviewStrip), findsNothing);
+      expect(find.text('40%'), findsNothing);
+
+      await tester.tap(find.byIcon(Icons.add_rounded));
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(find.text('Record Video'), findsOneWidget);
     });
 
     testWidgets('text-only send works without bridge or media repos', (

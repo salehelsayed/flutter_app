@@ -1,8 +1,11 @@
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/models/conversation_thread_summary.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/conversation_thread_summary_repository.dart';
 
 /// In-memory [MessageRepository] for integration tests.
-class InMemoryMessageRepository implements MessageRepository {
+class InMemoryMessageRepository
+    implements MessageRepository, ConversationThreadSummaryRepository {
   final Map<String, ConversationMessage> _messages = {};
 
   @override
@@ -128,6 +131,46 @@ class InMemoryMessageRepository implements MessageRepository {
             m.wireEnvelope!.isNotEmpty)
         .toList()
       ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+  }
+
+  @override
+  Future<ConversationThreadSummary> getConversationThreadSummary(
+    String contactPeerId,
+  ) async {
+    final messages = _messages.values
+        .where((message) => message.contactPeerId == contactPeerId)
+        .toList()
+      ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    return ConversationThreadSummary(
+      contactPeerId: contactPeerId,
+      messageCount: messages.length,
+      unreadCount: messages
+          .where((message) => message.isIncoming && message.readAt == null)
+          .length,
+      latestMessage: messages.isEmpty ? null : messages.first,
+    );
+  }
+
+  @override
+  Future<Map<String, ConversationThreadSummary>> getConversationThreadSummaries(
+    Iterable<String> contactPeerIds,
+  ) async {
+    final summaries = <String, ConversationThreadSummary>{};
+    for (final contactPeerId in contactPeerIds.toSet()) {
+      final messages = _messages.values
+          .where((message) => message.contactPeerId == contactPeerId)
+          .toList()
+        ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+      summaries[contactPeerId] = ConversationThreadSummary(
+        contactPeerId: contactPeerId,
+        messageCount: messages.length,
+        unreadCount: messages
+            .where((message) => message.isIncoming && message.readAt == null)
+            .length,
+        latestMessage: messages.isEmpty ? null : messages.first,
+      );
+    }
+    return summaries;
   }
 
   int get count => _messages.length;

@@ -49,6 +49,8 @@ void main() {
 
   Widget buildFeedScreen({
     required List<FeedItem> feedItems,
+    ValueNotifier<List<FeedItem>>? feedItemsListenable,
+    bool feedLoaded = true,
     String? expandedCardId,
   }) {
     return MaterialApp(
@@ -56,6 +58,8 @@ void main() {
         body: FeedScreen(
           username: 'Alice',
           feedItems: feedItems,
+          feedItemsListenable: feedItemsListenable,
+          feedLoaded: feedLoaded,
           activeTab: 'feed',
           onSwitchView: (_) {},
           expandedCardId: expandedCardId,
@@ -64,6 +68,73 @@ void main() {
       ),
     );
   }
+
+  testWidgets('renders loading placeholders while feed is still loading', (
+    tester,
+  ) async {
+    setPhoneViewport(tester);
+
+    await tester.pumpWidget(
+      buildFeedScreen(feedItems: const [], feedLoaded: false),
+    );
+    await tester.pump();
+
+    expect(find.byKey(const ValueKey('feed-loading-card-0')), findsOneWidget);
+    expect(find.byKey(const ValueKey('feed-loading-card-1')), findsOneWidget);
+    expect(find.byKey(const ValueKey('feed-loading-card-2')), findsOneWidget);
+    expect(find.textContaining('Your feed is ready'), findsNothing);
+    expect(find.text('Feed'), findsOneWidget);
+    expect(find.text('Orbit'), findsOneWidget);
+    expect(find.text('Remember'), findsOneWidget);
+  });
+
+  testWidgets('renders empty state once feed load completes with no items', (
+    tester,
+  ) async {
+    setPhoneViewport(tester);
+
+    await tester.pumpWidget(
+      buildFeedScreen(feedItems: const [], feedLoaded: true),
+    );
+    await tester.pump();
+
+    expect(find.byKey(const ValueKey('feed-loading-card-0')), findsNothing);
+    expect(find.textContaining('Your feed is ready'), findsOneWidget);
+  });
+
+  testWidgets(
+    'swaps loading placeholders for real feed items when data arrives',
+    (tester) async {
+      setPhoneViewport(tester);
+
+      final itemsNotifier = ValueNotifier<List<FeedItem>>(const <FeedItem>[]);
+      addTearDown(itemsNotifier.dispose);
+
+      await tester.pumpWidget(
+        buildFeedScreen(
+          feedItems: const [],
+          feedItemsListenable: itemsNotifier,
+          feedLoaded: false,
+        ),
+      );
+      await tester.pump();
+
+      expect(find.byKey(const ValueKey('feed-loading-card-0')), findsOneWidget);
+
+      itemsNotifier.value = [
+        buildThreadItem(
+          id: 'thread_bob',
+          username: 'Bob',
+          timestamp: DateTime.utc(2026, 3, 1, 10),
+        ),
+      ];
+      await tester.pump();
+
+      expect(find.byKey(const ValueKey('feed-loading-card-0')), findsNothing);
+      expect(find.byKey(const ValueKey<String>('thread_bob')), findsOneWidget);
+      expect(find.text('Bob'), findsOneWidget);
+    },
+  );
 
   testWidgets(
     'renders feed through CustomScrollView instead of eager scroll view',

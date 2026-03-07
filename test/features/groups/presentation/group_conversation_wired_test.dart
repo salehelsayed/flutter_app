@@ -1,9 +1,15 @@
 import 'dart:async';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:image_picker/image_picker.dart';
 
+import 'package:flutter_app/core/media/image_processor.dart';
+import 'package:flutter_app/core/media/media_picker.dart';
+import 'package:flutter_app/core/media/video_process_result.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/attachment_preview_strip.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -17,6 +23,8 @@ import 'package:flutter_app/features/identity/domain/repositories/identity_repos
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../core/services/fake_p2p_service.dart';
+import '../../../shared/fakes/fake_audio_recorder_service.dart';
+import '../../../shared/fakes/fake_media_picker.dart';
 import '../../../shared/fakes/in_memory_contact_repository.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../shared/fakes/in_memory_media_attachment_repository.dart';
@@ -79,6 +87,21 @@ class CountingGroupMessageRepository extends InMemoryGroupMessageRepository {
   Future<GroupMessage?> getMessage(String id) async {
     getMessageCalls++;
     return super.getMessage(id);
+  }
+}
+
+class SlowInitialPageGroupMessageRepository
+    extends CountingGroupMessageRepository {
+  final Completer<void> firstPageGate = Completer<void>();
+
+  @override
+  Future<List<GroupMessage>> getMessagesPage(
+    String groupId, {
+    int limit = 50,
+    int offset = 0,
+  }) async {
+    await firstPageGate.future;
+    return super.getMessagesPage(groupId, limit: limit, offset: offset);
   }
 }
 
@@ -202,6 +225,9 @@ void main() {
     Widget buildWidget({
       GroupModel? group,
       CountingMediaAttachmentRepository? mediaRepo,
+      ImageProcessor? imageProcessor,
+      FakeAudioRecorderService? audioRecorderService,
+      MediaPicker? mediaPicker,
     }) {
       final g = group ?? makeChatGroup();
       return MaterialApp(
@@ -217,6 +243,9 @@ void main() {
           contactRepo: contactRepo,
           p2pService: p2pService,
           mediaAttachmentRepo: mediaRepo,
+          imageProcessor: imageProcessor,
+          audioRecorderService: audioRecorderService,
+          mediaPicker: mediaPicker,
         ),
       );
     }
@@ -309,6 +338,298 @@ void main() {
         );
       },
     );
+
+    testWidgets('shows loading shell until the initial group page resolves', (
+      tester,
+    ) async {
+      final group = makeChatGroup();
+      await groupRepo.saveGroup(group);
+
+      final slowRepo = SlowInitialPageGroupMessageRepository();
+      await slowRepo.saveMessage(
+        makeMessage(id: 'msg-delayed', text: 'Loaded after delay'),
+      );
+      msgRepo = slowRepo;
+
+      await tester.pumpWidget(
+        buildWidget(group: group, mediaRepo: mediaAttachmentRepo),
+      );
+      await tester.pump();
+
+      expect(find.byKey(const ValueKey('group-loading-shell')), findsOneWidget);
+      expect(find.text('Loaded after delay'), findsNothing);
+
+      slowRepo.firstPageGate.complete();
+      await pumpFrames(tester, count: 20);
+
+      expect(find.byKey(const ValueKey('group-loading-shell')), findsNothing);
+      expect(find.text('Loaded after delay'), findsOneWidget);
+    });
+
+    testWidgets(
+      'incoming message preserves scroll offset when reading older messages',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+
+        final start = DateTime.utc(2026, 2, 1, 10);
+        for (var index = 0; index < 40; index++) {
+          await msgRepo.saveMessage(
+            GroupMessage(
+              id: 'msg-$index',
+              groupId: group.id,
+              senderPeerId: 'peer-alice',
+              senderUsername: 'Alice',
+              text: 'Message $index',
+              timestamp: start.add(Duration(minutes: index)),
+              createdAt: start.add(Duration(minutes: index)),
+            ),
+          );
+        }
+
+        await tester.pumpWidget(
+          buildWidget(group: group, mediaRepo: mediaAttachmentRepo),
+        );
+        await pumpFrames(tester, count: 20);
+
+        final listFinder = find.byKey(const ValueKey('group-messages'));
+        expect(listFinder, findsOneWidget);
+
+        final controller = tester.widget<ListView>(listFinder).controller!;
+        expect(controller.hasClients, isTrue);
+
+        controller.jumpTo(240);
+        await pumpFrames(tester, count: 4);
+
+        final offsetBefore = controller.offset;
+        expect(offsetBefore, greaterThan(32));
+
+        final incoming = GroupMessage(
+          id: 'msg-late',
+          groupId: group.id,
+          senderPeerId: 'peer-bob',
+          senderUsername: 'Bob',
+          text: 'Newest while reading history',
+          timestamp: start.add(const Duration(minutes: 60)),
+          createdAt: start.add(const Duration(minutes: 60)),
+        );
+        await msgRepo.saveMessage(incoming);
+
+        messageStreamController.add(incoming);
+        await pumpFrames(tester, count: 20);
+
+        expect(controller.offset, closeTo(offsetBefore, 1.0));
+        expect(msgRepo.getMessagesPageCalls, 1);
+        expect(mediaAttachmentRepo.getAttachmentsForMessagesCalls, 1);
+      },
+    );
+
+    testWidgets(
+      'recording ticks update composer without rebuilding header or message list',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await msgRepo.saveMessage(makeMessage(id: 'msg-rec-1', text: 'Hello'));
+        final recorder = FakeAudioRecorderService()..fakeDurationMs = 100;
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            audioRecorderService: recorder,
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        final headerFinder = find.byKey(const ValueKey('group-header'));
+        final listFinder = find.byKey(const ValueKey('group-messages'));
+        final headerElement = tester.element(headerFinder);
+        final listElement = tester.element(listFinder);
+        final initialPageLoads = msgRepo.getMessagesPageCalls;
+        final initialBatchMediaLoads =
+            mediaAttachmentRepo.getAttachmentsForMessagesCalls;
+
+        final gesture = await tester.startGesture(
+          tester.getCenter(find.byIcon(Icons.mic_rounded)),
+        );
+        await tester.pump(kLongPressTimeout + const Duration(milliseconds: 50));
+        await tester.pump();
+
+        recorder.emitDuration(const Duration(seconds: 2));
+        recorder.emitAmplitude(0.5);
+        await tester.pump();
+
+        expect(find.text('Slide to cancel'), findsOneWidget);
+        expect(find.text('0:02'), findsOneWidget);
+        expect(identical(headerElement, tester.element(headerFinder)), isTrue);
+        expect(identical(listElement, tester.element(listFinder)), isTrue);
+        expect(msgRepo.getMessagesPageCalls, initialPageLoads);
+        expect(
+          mediaAttachmentRepo.getAttachmentsForMessagesCalls,
+          initialBatchMediaLoads,
+        );
+
+        await gesture.up();
+        await tester.pump();
+      },
+    );
+
+    testWidgets(
+      'video processing progress updates composer without rebuilding header or message list',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await msgRepo.saveMessage(
+          makeMessage(id: 'msg-video-1', text: 'Hello'),
+        );
+
+        final mediaPicker = FakeMediaPicker()
+          ..videoResult = XFile('/tmp/group-video.mp4');
+        final resultCompleter = Completer<VideoProcessResult>();
+        void Function(double progress)? progressCallback;
+        final imageProcessor = ImageProcessor(
+          compressFile:
+              ({
+                required path,
+                required quality,
+                required keepExif,
+                minWidth = 1920,
+                minHeight = 1080,
+              }) async => null,
+          compressVideo:
+              ({
+                required path,
+                required compress,
+                void Function(double)? onProgress,
+              }) async {
+                progressCallback = onProgress;
+                return resultCompleter.future;
+              },
+        );
+
+        tester.view.physicalSize = const Size(800, 1600);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            imageProcessor: imageProcessor,
+            mediaPicker: mediaPicker,
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        final headerFinder = find.byKey(const ValueKey('group-header'));
+        final listFinder = find.byKey(const ValueKey('group-messages'));
+        final headerElement = tester.element(headerFinder);
+        final listElement = tester.element(listFinder);
+        final initialPageLoads = msgRepo.getMessagesPageCalls;
+        final initialBatchMediaLoads =
+            mediaAttachmentRepo.getAttachmentsForMessagesCalls;
+
+        await tester.tap(find.byIcon(Icons.add_rounded));
+        await tester.pump(const Duration(milliseconds: 500));
+        tester
+            .widget<ListTile>(find.widgetWithText(ListTile, 'Record Video'))
+            .onTap!();
+        await tester.pump();
+
+        expect(progressCallback, isNotNull);
+
+        progressCallback!(35);
+        await tester.pump();
+
+        expect(find.byType(AttachmentPreviewStrip), findsOneWidget);
+        expect(find.text('35%'), findsOneWidget);
+        expect(identical(headerElement, tester.element(headerFinder)), isTrue);
+        expect(identical(listElement, tester.element(listFinder)), isTrue);
+        expect(msgRepo.getMessagesPageCalls, initialPageLoads);
+        expect(
+          mediaAttachmentRepo.getAttachmentsForMessagesCalls,
+          initialBatchMediaLoads,
+        );
+
+        progressCallback!(80);
+        await tester.pump();
+        expect(find.text('80%'), findsOneWidget);
+
+        resultCompleter.complete(
+          VideoProcessResult(path: '/tmp/processed-group-video.mp4'),
+        );
+        await tester.pump();
+      },
+    );
+
+    testWidgets('video processing failure clears composer processing state', (
+      tester,
+    ) async {
+      final group = makeChatGroup();
+      await groupRepo.saveGroup(group);
+      await msgRepo.saveMessage(makeMessage(id: 'msg-video-fail', text: 'Hi'));
+
+      final mediaPicker = FakeMediaPicker()
+        ..videoResult = XFile('/tmp/group-video.mp4');
+      final resultCompleter = Completer<VideoProcessResult>();
+      void Function(double progress)? progressCallback;
+      final imageProcessor = ImageProcessor(
+        compressFile:
+            ({
+              required path,
+              required quality,
+              required keepExif,
+              minWidth = 1920,
+              minHeight = 1080,
+            }) async => null,
+        compressVideo:
+            ({
+              required path,
+              required compress,
+              void Function(double)? onProgress,
+            }) async {
+              progressCallback = onProgress;
+              return resultCompleter.future;
+            },
+      );
+
+      tester.view.physicalSize = const Size(800, 1600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(
+        buildWidget(
+          group: group,
+          mediaRepo: mediaAttachmentRepo,
+          imageProcessor: imageProcessor,
+          mediaPicker: mediaPicker,
+        ),
+      );
+      await pumpFrames(tester, count: 20);
+
+      await tester.tap(find.byIcon(Icons.add_rounded));
+      await tester.pump(const Duration(milliseconds: 500));
+      tester
+          .widget<ListTile>(find.widgetWithText(ListTile, 'Record Video'))
+          .onTap!();
+      await tester.pump();
+
+      progressCallback!(40);
+      await tester.pump();
+      expect(find.text('40%'), findsOneWidget);
+
+      resultCompleter.completeError(StateError('group video failed'));
+      await tester.pump();
+
+      expect(find.byType(AttachmentPreviewStrip), findsNothing);
+      expect(find.text('40%'), findsNothing);
+
+      await tester.tap(find.byIcon(Icons.add_rounded));
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(find.text('Record Video'), findsOneWidget);
+    });
 
     testWidgets('info button navigates to group info', (tester) async {
       final group = makeChatGroup();

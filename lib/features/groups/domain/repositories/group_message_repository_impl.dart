@@ -1,10 +1,13 @@
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
 import '../models/group_message.dart';
+import '../models/group_thread_summary.dart';
+import 'group_thread_summary_repository.dart';
 import 'group_message_repository.dart';
 
 /// Implementation of GroupMessageRepository using constructor-injected DB helper functions.
-class GroupMessageRepositoryImpl implements GroupMessageRepository {
+class GroupMessageRepositoryImpl
+    implements GroupMessageRepository, GroupThreadSummaryRepository {
   final Future<void> Function(Map<String, Object?> row) dbInsertGroupMessage;
   final Future<List<Map<String, Object?>>> Function(
     String groupId, {
@@ -25,6 +28,8 @@ class GroupMessageRepositoryImpl implements GroupMessageRepository {
           String groupId, String senderPeerId, String text, String timestamp)
       dbExistsGroupMessageByContent;
   final Future<int> Function(String groupId) dbDeleteGroupMessagesForGroup;
+  final Future<List<Map<String, Object?>>> Function(List<String> groupIds)
+      dbLoadGroupThreadSummaries;
 
   GroupMessageRepositoryImpl({
     required this.dbInsertGroupMessage,
@@ -39,6 +44,7 @@ class GroupMessageRepositoryImpl implements GroupMessageRepository {
     required this.dbDeleteGroupMessage,
     required this.dbExistsGroupMessageByContent,
     required this.dbDeleteGroupMessagesForGroup,
+    required this.dbLoadGroupThreadSummaries,
   });
 
   @override
@@ -144,5 +150,51 @@ class GroupMessageRepositoryImpl implements GroupMessageRepository {
       text,
       timestamp.toUtc().toIso8601String(),
     );
+  }
+
+  @override
+  Future<GroupThreadSummary> getGroupThreadSummary(String groupId) async {
+    final summaries = await getGroupThreadSummaries([groupId]);
+    return summaries[groupId] ?? GroupThreadSummary(groupId: groupId);
+  }
+
+  @override
+  Future<Map<String, GroupThreadSummary>> getGroupThreadSummaries(
+    Iterable<String> groupIds,
+  ) async {
+    final ids = groupIds.toSet().toList(growable: false);
+    if (ids.isEmpty) return const <String, GroupThreadSummary>{};
+
+    final rows = await dbLoadGroupThreadSummaries(ids);
+    final summaries = <String, GroupThreadSummary>{};
+    for (final row in rows) {
+      final groupId = row['group_id'] as String;
+      summaries[groupId] = GroupThreadSummary(
+        groupId: groupId,
+        unreadCount: row['unread_count'] as int? ?? 0,
+        latestMessage: row['latest_id'] == null
+            ? null
+            : GroupMessage.fromMap({
+                'id': row['latest_id'],
+                'group_id': row['latest_group_id'],
+                'sender_peer_id': row['latest_sender_peer_id'],
+                'sender_username': row['latest_sender_username'],
+                'text': row['latest_text'],
+                'timestamp': row['latest_timestamp'],
+                'key_generation': row['latest_key_generation'],
+                'status': row['latest_status'],
+                'is_incoming': row['latest_is_incoming'],
+                'read_at': row['latest_read_at'],
+                'created_at': row['latest_created_at'],
+              }),
+      );
+    }
+    for (final groupId in ids) {
+      summaries.putIfAbsent(
+        groupId,
+        () => GroupThreadSummary(groupId: groupId),
+      );
+    }
+    return summaries;
   }
 }

@@ -4,8 +4,6 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:path/path.dart' as p;
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
@@ -14,6 +12,7 @@ import 'package:flutter_app/features/settings/application/image_quality_preferen
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
+import 'package:flutter_app/features/home/application/identity_avatar_resolver.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/settings/application/upload_profile_picture_use_case.dart';
@@ -53,16 +52,13 @@ class _SettingsWiredState extends State<SettingsWired> {
   Timer? _peerIdCopyTimer;
   Timer? _mnemonicCopyTimer;
   ImageQualityPreference _currentQuality = ImageQualityPreference.compressed;
-  ImageQualityPreference _currentVideoQuality = ImageQualityPreference.compressed;
+  ImageQualityPreference _currentVideoQuality =
+      ImageQualityPreference.compressed;
 
   @override
   void initState() {
     super.initState();
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'SETTINGS_FL_SCREEN_INIT',
-      details: {},
-    );
+    emitFlowEvent(layer: 'FL', event: 'SETTINGS_FL_SCREEN_INIT', details: {});
     _loadIdentity();
     _loadQualityPreference();
     _loadVideoQualityPreference();
@@ -73,19 +69,7 @@ class _SettingsWiredState extends State<SettingsWired> {
       final identity = await widget.identityRepo.loadIdentity();
       if (identity == null || !mounted) return;
 
-      // Load saved avatar from disk if avatarVersion is set
-      Uint8List? savedAvatar;
-      if (identity.avatarVersion != null) {
-        try {
-          final appDir = await getApplicationDocumentsDirectory();
-          final avatarFile = File(
-            p.join(appDir.path, 'media', 'avatars', '${identity.peerId}.jpg'),
-          );
-          if (avatarFile.existsSync()) {
-            savedAvatar = await avatarFile.readAsBytes();
-          }
-        } catch (_) {}
-      }
+      final savedAvatar = await IdentityAvatarResolver.resolve(identity);
 
       if (!mounted) return;
 
@@ -223,9 +207,7 @@ class _SettingsWiredState extends State<SettingsWired> {
   Future<void> _onPickAvatar() async {
     try {
       final picker = ImagePicker();
-      final picked = await picker.pickImage(
-        source: ImageSource.gallery,
-      );
+      final picked = await picker.pickImage(source: ImageSource.gallery);
       if (picked == null || !mounted) return;
 
       // Process avatar: strip EXIF, compress to 512x512

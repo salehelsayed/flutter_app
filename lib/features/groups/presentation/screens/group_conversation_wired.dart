@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
@@ -10,6 +11,7 @@ import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/media/downsample_waveform.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
+import 'package:flutter_app/core/media/media_picker.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -18,6 +20,7 @@ import 'package:flutter_app/features/conversation/application/download_media_use
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
+import 'package:flutter_app/features/conversation/presentation/screens/conversation_screen.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
@@ -58,6 +61,7 @@ class GroupConversationWired extends StatefulWidget {
   final MediaAttachmentRepository? mediaAttachmentRepo;
   final MediaFileManager? mediaFileManager;
   final ImageProcessor? imageProcessor;
+  final MediaPicker? mediaPicker;
   final ImageQualityPreference qualityPreference;
   final ImageQualityPreference videoQualityPreference;
   final AudioRecorderService? audioRecorderService;
@@ -76,6 +80,7 @@ class GroupConversationWired extends StatefulWidget {
     this.mediaAttachmentRepo,
     this.mediaFileManager,
     this.imageProcessor,
+    this.mediaPicker,
     this.qualityPreference = ImageQualityPreference.compressed,
     this.videoQualityPreference = ImageQualityPreference.compressed,
     this.audioRecorderService,
@@ -88,6 +93,8 @@ class GroupConversationWired extends StatefulWidget {
 
 class _GroupConversationWiredState extends State<GroupConversationWired> {
   static const _maxAttachments = 10;
+  static const _liveEdgeTolerance = 32.0;
+  static final MediaPicker _defaultMediaPicker = SystemMediaPicker();
 
   List<GroupMessage> _messages = [];
   String? _ownPeerId;
@@ -96,22 +103,24 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
   String _senderPrivateKey = '';
   StreamSubscription<GroupMessage>? _messageSubscription;
   final ScrollController _scrollController = ScrollController();
+  bool _initialLoadDone = false;
 
   // Media state
   List<_PendingMedia> _pendingAttachments = [];
-  bool _isUploading = false;
-  bool _isProcessingVideo = false;
-  double _processingProgress = 0.0;
+  final _composerState = ValueNotifier(const ConversationComposerViewState());
   Map<String, List<MediaAttachment>> _mediaMap = {};
 
   // Voice recording state
-  bool _isRecording = false;
-  Duration _recordingDuration = Duration.zero;
   StreamSubscription<Duration>? _durationSub;
   StreamSubscription<double>? _amplitudeSub;
   final _amplitudeBuffer = AmplitudeBuffer(size: 25);
-  List<double> _amplitudeValues = const [];
   List<double> _waveformSamples = [];
+
+  ConversationComposerViewState get _composerViewState => _composerState.value;
+
+  MediaPicker get _mediaPicker => widget.mediaPicker ?? _defaultMediaPicker;
+
+  bool get _isRecording => _composerViewState.isRecording;
 
   @override
   void initState() {
@@ -162,11 +171,15 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
       setState(() {
         _messages = messages;
         _mediaMap = mediaMap;
+        _initialLoadDone = true;
       });
 
       unawaited(_downloadPendingMedia(mediaMap));
       await widget.msgRepo.markAsRead(widget.group.id);
     } catch (e) {
+      if (mounted) {
+        setState(() => _initialLoadDone = true);
+      }
       emitFlowEvent(
         layer: 'FL',
         event: 'GROUP_CONV_FL_LOAD_MESSAGES_ERROR',
@@ -237,10 +250,11 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
     List<MediaAttachment>? uploadedAttachments;
     if (_pendingAttachments.isNotEmpty) {
       final mediaToUpload = List<_PendingMedia>.from(_pendingAttachments);
-      setState(() {
-        _pendingAttachments = [];
-        _isUploading = true;
-      });
+      _pendingAttachments = [];
+      _updateComposerState(
+        pendingAttachments: _pendingAttachmentFiles(),
+        isUploading: true,
+      );
 
       // Get group members for allowedPeers (relay access control)
       final members = await widget.groupRepo.getMembers(widget.group.id);
@@ -265,16 +279,17 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
         } else {
           // Upload failed — restore attachments and abort
           if (mounted) {
-            setState(() {
-              _isUploading = false;
-              _pendingAttachments = mediaToUpload;
-            });
+            _pendingAttachments = mediaToUpload;
+            _updateComposerState(
+              pendingAttachments: _pendingAttachmentFiles(),
+              isUploading: false,
+            );
           }
           return;
         }
       }
       if (mounted) {
-        setState(() => _isUploading = false);
+        _updateComposerState(isUploading: false);
       }
     }
 
@@ -355,10 +370,20 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
     final media = await _loadResolvedAttachmentsForMessage(latestMessage.id);
     if (!mounted) return;
 
+    final preserveScrollOffset = _shouldPreserveScrollOffset();
+    final previousOffset = _scrollController.hasClients
+        ? _scrollController.position.pixels
+        : 0.0;
+
     setState(() {
       _upsertMessage(latestMessage);
       _updateMediaForMessage(latestMessage.id, media);
     });
+
+    _restoreScrollAfterMessageUpdate(
+      preserveScrollOffset: preserveScrollOffset,
+      previousOffset: previousOffset,
+    );
 
     if (markAsRead) {
       await widget.msgRepo.markAsRead(widget.group.id);
@@ -432,10 +457,9 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
 
   Future<void> _pickFromGallery() async {
     try {
-      final picker = ImagePicker();
       final remaining = _maxAttachments - _pendingAttachments.length;
       if (remaining <= 0) return;
-      final picked = await picker.pickMultipleMedia();
+      final picked = await _mediaPicker.pickMultipleMedia();
       if (picked.isEmpty || !mounted) return;
       final selectedFiles = picked.take(remaining).toList();
       final media = <_PendingMedia>[];
@@ -444,9 +468,8 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
         media.add(result);
       }
       if (!mounted) return;
-      setState(() {
-        _pendingAttachments = [..._pendingAttachments, ...media];
-      });
+      _pendingAttachments = [..._pendingAttachments, ...media];
+      _updateComposerState(pendingAttachments: _pendingAttachmentFiles());
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -458,15 +481,13 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
 
   Future<void> _pickFromCamera() async {
     try {
-      final picker = ImagePicker();
-      final picked = await picker.pickImage(source: ImageSource.camera);
+      final picked = await _mediaPicker.pickImage(source: ImageSource.camera);
       if (picked == null || !mounted) return;
       if (_pendingAttachments.length >= _maxAttachments) return;
       final result = await _processMediaIfNeeded(picked.path);
       if (!mounted) return;
-      setState(() {
-        _pendingAttachments = [..._pendingAttachments, result];
-      });
+      _pendingAttachments = [..._pendingAttachments, result];
+      _updateComposerState(pendingAttachments: _pendingAttachmentFiles());
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -478,15 +499,13 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
 
   Future<void> _pickVideoFromCamera() async {
     try {
-      final picker = ImagePicker();
-      final picked = await picker.pickVideo(source: ImageSource.camera);
+      final picked = await _mediaPicker.pickVideo(source: ImageSource.camera);
       if (picked == null || !mounted) return;
       if (_pendingAttachments.length >= _maxAttachments) return;
       final result = await _processMediaIfNeeded(picked.path);
       if (!mounted) return;
-      setState(() {
-        _pendingAttachments = [..._pendingAttachments, result];
-      });
+      _pendingAttachments = [..._pendingAttachments, result];
+      _updateComposerState(pendingAttachments: _pendingAttachmentFiles());
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -501,28 +520,28 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
     if (processor == null) return _PendingMedia(file: File(path));
 
     if (processor.isProcessableVideo(path)) {
-      setState(() {
-        _isProcessingVideo = true;
-        _processingProgress = 0.0;
-      });
-      final result = await processor.processVideo(
-        inputPath: path,
-        quality: widget.videoQualityPreference,
-        onProgress: (progress) {
-          if (mounted) {
-            setState(() => _processingProgress = progress / 100.0);
-          }
-        },
-      );
-      if (mounted) {
-        setState(() => _isProcessingVideo = false);
+      _updateComposerState(isProcessing: true, processingProgress: 0.0);
+      try {
+        final result = await processor.processVideo(
+          inputPath: path,
+          quality: widget.videoQualityPreference,
+          onProgress: (progress) {
+            if (mounted) {
+              _updateComposerState(processingProgress: progress / 100.0);
+            }
+          },
+        );
+        return _PendingMedia(
+          file: File(result.path),
+          width: result.width,
+          height: result.height,
+          durationMs: result.durationMs,
+        );
+      } finally {
+        if (mounted) {
+          _updateComposerState(isProcessing: false, processingProgress: 0.0);
+        }
       }
-      return _PendingMedia(
-        file: File(result.path),
-        width: result.width,
-        height: result.height,
-        durationMs: result.durationMs,
-      );
     }
 
     final processed = await processor.processImage(
@@ -534,11 +553,10 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
 
   void _removeAttachment(int index) {
     if (index < 0 || index >= _pendingAttachments.length) return;
-    setState(() {
-      final updated = List<_PendingMedia>.from(_pendingAttachments);
-      updated.removeAt(index);
-      _pendingAttachments = updated;
-    });
+    final updated = List<_PendingMedia>.from(_pendingAttachments);
+    updated.removeAt(index);
+    _pendingAttachments = updated;
+    _updateComposerState(pendingAttachments: _pendingAttachmentFiles());
   }
 
   void _upsertMessage(GroupMessage message) {
@@ -564,6 +582,76 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
       next[messageId] = attachments;
     }
     _mediaMap = next;
+  }
+
+  List<File> _pendingAttachmentFiles() => _pendingAttachments
+      .map((attachment) => attachment.file)
+      .toList(growable: false);
+
+  void _updateComposerState({
+    List<File>? pendingAttachments,
+    bool? isUploading,
+    bool? isProcessing,
+    double? processingProgress,
+    bool? isRecording,
+    Duration? recordingDuration,
+    List<double>? amplitudeValues,
+  }) {
+    final current = _composerState.value;
+    final next = current.copyWith(
+      pendingAttachments: pendingAttachments,
+      isUploading: isUploading,
+      isProcessing: isProcessing,
+      processingProgress: processingProgress,
+      isRecording: isRecording,
+      recordingDuration: recordingDuration,
+      amplitudeValues: amplitudeValues,
+    );
+    if (_composerStateEquals(current, next)) return;
+    _composerState.value = next;
+  }
+
+  bool _composerStateEquals(
+    ConversationComposerViewState a,
+    ConversationComposerViewState b,
+  ) {
+    return a.isUploading == b.isUploading &&
+        a.isProcessing == b.isProcessing &&
+        a.processingProgress == b.processingProgress &&
+        a.isRecording == b.isRecording &&
+        a.recordingDuration == b.recordingDuration &&
+        listEquals(a.amplitudeValues, b.amplitudeValues) &&
+        _fileListsEqual(a.pendingAttachments, b.pendingAttachments);
+  }
+
+  bool _fileListsEqual(List<File> a, List<File> b) {
+    if (a.length != b.length) return false;
+    for (var index = 0; index < a.length; index++) {
+      if (a[index].path != b[index].path) return false;
+    }
+    return true;
+  }
+
+  bool _shouldPreserveScrollOffset() {
+    if (!_scrollController.hasClients) return false;
+    return _scrollController.position.pixels > _liveEdgeTolerance;
+  }
+
+  void _restoreScrollAfterMessageUpdate({
+    required bool preserveScrollOffset,
+    required double previousOffset,
+  }) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollController.hasClients) return;
+      if (!preserveScrollOffset) {
+        _scrollController.jumpTo(0);
+        return;
+      }
+
+      final maxExtent = _scrollController.position.maxScrollExtent;
+      final targetOffset = previousOffset.clamp(0.0, maxExtent);
+      _scrollController.jumpTo(targetOffset);
+    });
   }
 
   // -------------------------------------------------------------------------
@@ -602,7 +690,9 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
     }
 
     _durationSub = recorder.durationStream.listen((d) {
-      if (mounted) setState(() => _recordingDuration = d);
+      if (mounted) {
+        _updateComposerState(recordingDuration: d);
+      }
     });
 
     _amplitudeBuffer.reset();
@@ -611,16 +701,16 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
       if (mounted) {
         _amplitudeBuffer.push(value);
         _waveformSamples.add(value);
-        setState(() => _amplitudeValues = _amplitudeBuffer.values);
+        _updateComposerState(amplitudeValues: _amplitudeBuffer.values);
       }
     });
 
     if (mounted) {
-      setState(() {
-        _isRecording = true;
-        _recordingDuration = Duration.zero;
-        _amplitudeValues = _amplitudeBuffer.values;
-      });
+      _updateComposerState(
+        isRecording: true,
+        recordingDuration: Duration.zero,
+        amplitudeValues: _amplitudeBuffer.values,
+      );
     }
   }
 
@@ -640,16 +730,17 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
     final recording = await recorder.stop();
 
     if (mounted) {
-      setState(() {
-        _isRecording = false;
-        _amplitudeValues = const [];
-      });
+      _updateComposerState(
+        isRecording: false,
+        recordingDuration: Duration.zero,
+        amplitudeValues: const [],
+      );
     }
 
     if (recording == null || _ownPeerId == null) return;
 
     // Upload the voice recording
-    setState(() => _isUploading = true);
+    _updateComposerState(isUploading: true);
 
     // Get group members for allowedPeers (relay access control)
     final members = await widget.groupRepo.getMembers(widget.group.id);
@@ -667,11 +758,15 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
     );
 
     if (voiceAttachment == null) {
-      if (mounted) setState(() => _isUploading = false);
+      if (mounted) {
+        _updateComposerState(isUploading: false);
+      }
       return;
     }
 
-    if (mounted) setState(() => _isUploading = false);
+    if (mounted) {
+      _updateComposerState(isUploading: false);
+    }
 
     final (result, message) = await sendGroupMessage(
       bridge: widget.bridge,
@@ -706,11 +801,11 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
     await recorder.cancel();
 
     if (mounted) {
-      setState(() {
-        _isRecording = false;
-        _recordingDuration = Duration.zero;
-        _amplitudeValues = const [];
-      });
+      _updateComposerState(
+        isRecording: false,
+        recordingDuration: Duration.zero,
+        amplitudeValues: const [],
+      );
     }
   }
 
@@ -809,6 +904,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
       widget.audioRecorderService?.cancel();
     }
     _scrollController.dispose();
+    _composerState.dispose();
     super.dispose();
   }
 
@@ -822,12 +918,10 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
       onBack: _onBack,
       onInfo: _onInfo,
       canWrite: _canWrite,
+      initialLoadDone: _initialLoadDone,
       scrollController: _scrollController,
       mediaMap: _mediaMap,
-      pendingAttachments: _pendingAttachments.map((p) => p.file).toList(),
-      isUploading: _isUploading,
-      isProcessing: _isProcessingVideo,
-      processingProgress: _processingProgress,
+      composerStateListenable: _composerState,
       onRemoveAttachment: _removeAttachment,
       onAttach: _canWrite ? _onAttach : null,
       onRecordStart: _canWrite && widget.audioRecorderService != null
@@ -837,9 +931,6 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
       onRecordCancel: widget.audioRecorderService != null
           ? _onRecordCancel
           : null,
-      isRecording: _isRecording,
-      recordingDuration: _recordingDuration,
-      amplitudeValues: _amplitudeValues,
       onMediaTap: _onMediaTap,
     );
   }

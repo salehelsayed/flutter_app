@@ -1,8 +1,11 @@
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
+import 'package:flutter_app/features/groups/domain/models/group_thread_summary.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_thread_summary_repository.dart';
 
 /// In-memory [GroupMessageRepository] for integration tests.
-class InMemoryGroupMessageRepository implements GroupMessageRepository {
+class InMemoryGroupMessageRepository
+    implements GroupMessageRepository, GroupThreadSummaryRepository {
   final Map<String, GroupMessage> _messages = {};
 
   @override
@@ -102,6 +105,42 @@ class InMemoryGroupMessageRepository implements GroupMessageRepository {
       _messages.remove(entry.key);
     }
     return toRemove.length;
+  }
+
+  @override
+  Future<GroupThreadSummary> getGroupThreadSummary(String groupId) async {
+    final messages = _messages.values
+        .where((message) => message.groupId == groupId)
+        .toList()
+      ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    return GroupThreadSummary(
+      groupId: groupId,
+      unreadCount: messages
+          .where((message) => message.isIncoming && message.readAt == null)
+          .length,
+      latestMessage: messages.isEmpty ? null : messages.first,
+    );
+  }
+
+  @override
+  Future<Map<String, GroupThreadSummary>> getGroupThreadSummaries(
+    Iterable<String> groupIds,
+  ) async {
+    final summaries = <String, GroupThreadSummary>{};
+    for (final groupId in groupIds.toSet()) {
+      final messages = _messages.values
+          .where((message) => message.groupId == groupId)
+          .toList()
+        ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+      summaries[groupId] = GroupThreadSummary(
+        groupId: groupId,
+        unreadCount: messages
+            .where((message) => message.isIncoming && message.readAt == null)
+            .length,
+        latestMessage: messages.isEmpty ? null : messages.first,
+      );
+    }
+    return summaries;
   }
 
   int get count => _messages.length;

@@ -1,8 +1,10 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/conversation/presentation/screens/conversation_screen.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/attachment_preview_strip.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/letter_card.dart';
@@ -23,6 +25,7 @@ class GroupConversationScreen extends StatelessWidget {
   final VoidCallback onBack;
   final VoidCallback? onInfo;
   final bool canWrite;
+  final bool initialLoadDone;
   final ScrollController? scrollController;
   final Map<String, List<MediaAttachment>> mediaMap;
   final List<File> pendingAttachments;
@@ -37,6 +40,7 @@ class GroupConversationScreen extends StatelessWidget {
   final bool isRecording;
   final Duration recordingDuration;
   final List<double> amplitudeValues;
+  final ValueListenable<ConversationComposerViewState>? composerStateListenable;
   final void Function(String messageId, int index)? onMediaTap;
 
   const GroupConversationScreen({
@@ -48,6 +52,7 @@ class GroupConversationScreen extends StatelessWidget {
     required this.onBack,
     this.onInfo,
     this.canWrite = true,
+    this.initialLoadDone = false,
     this.scrollController,
     this.mediaMap = const {},
     this.pendingAttachments = const [],
@@ -62,50 +67,76 @@ class GroupConversationScreen extends StatelessWidget {
     this.isRecording = false,
     this.recordingDuration = Duration.zero,
     this.amplitudeValues = const [],
+    this.composerStateListenable,
     this.onMediaTap,
   });
+
+  ConversationComposerViewState get _legacyComposerState =>
+      ConversationComposerViewState(
+        pendingAttachments: pendingAttachments,
+        isUploading: isUploading,
+        isProcessing: isProcessing,
+        processingProgress: processingProgress,
+        isRecording: isRecording,
+        recordingDuration: recordingDuration,
+        amplitudeValues: amplitudeValues,
+      );
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.transparent,
       body: AmbientBackground(
-      child: Column(
-        children: [
-          // Header
-          _buildHeader(context),
-          // Body
-          Expanded(
-            child: messages.isEmpty ? _buildEmptyState() : _buildMessageList(),
-          ),
-          // Attachment preview strip
-          if (pendingAttachments.isNotEmpty || isProcessing)
-            AttachmentPreviewStrip(
-              attachments: pendingAttachments,
-              isUploading: isUploading,
-              isProcessing: isProcessing,
-              processingProgress: processingProgress,
-              onRemove: onRemoveAttachment,
+        child: Column(
+          children: [
+            _buildHeader(context),
+            Expanded(
+              child: messages.isEmpty
+                  ? _buildEmptyOrLoadingState()
+                  : _buildMessageList(),
             ),
-          // Compose area
-          if (!canWrite)
-            _buildReadOnlyBanner()
-          else
-            ComposeArea(
-              onSend: onSend,
-              onAttach: onAttach,
-              hasAttachments: pendingAttachments.isNotEmpty,
-              isProcessing: isProcessing,
-              onRecordStart: onRecordStart,
-              onRecordStop: onRecordStop,
-              onRecordCancel: onRecordCancel,
-              isRecording: isRecording,
-              recordingDuration: recordingDuration,
-              amplitudeValues: amplitudeValues,
-            ),
-        ],
+            if (composerStateListenable == null)
+              _buildComposerSection(_legacyComposerState)
+            else
+              ValueListenableBuilder<ConversationComposerViewState>(
+                valueListenable: composerStateListenable!,
+                builder: (context, composerState, child) =>
+                    _buildComposerSection(composerState),
+              ),
+          ],
+        ),
       ),
-    ),
+    );
+  }
+
+  Widget _buildComposerSection(ConversationComposerViewState composerState) {
+    return Column(
+      children: [
+        if (composerState.pendingAttachments.isNotEmpty ||
+            composerState.isProcessing)
+          AttachmentPreviewStrip(
+            attachments: composerState.pendingAttachments,
+            isUploading: composerState.isUploading,
+            isProcessing: composerState.isProcessing,
+            processingProgress: composerState.processingProgress,
+            onRemove: onRemoveAttachment,
+          ),
+        if (!canWrite)
+          _buildReadOnlyBanner()
+        else
+          ComposeArea(
+            onSend: onSend,
+            onAttach: onAttach,
+            hasAttachments: composerState.pendingAttachments.isNotEmpty,
+            isProcessing: composerState.isProcessing,
+            onRecordStart: onRecordStart,
+            onRecordStop: onRecordStop,
+            onRecordCancel: onRecordCancel,
+            isRecording: composerState.isRecording,
+            recordingDuration: composerState.recordingDuration,
+            amplitudeValues: composerState.amplitudeValues,
+          ),
+      ],
     );
   }
 
@@ -113,6 +144,7 @@ class GroupConversationScreen extends StatelessWidget {
     return SafeArea(
       bottom: false,
       child: Container(
+        key: const ValueKey('group-header'),
         padding: const EdgeInsets.fromLTRB(4, 8, 8, 8),
         decoration: BoxDecoration(
           border: Border(
@@ -170,6 +202,13 @@ class GroupConversationScreen extends StatelessWidget {
     );
   }
 
+  Widget _buildEmptyOrLoadingState() {
+    if (!initialLoadDone) {
+      return const _GroupConversationLoadingShell();
+    }
+    return _buildEmptyState();
+  }
+
   Widget _buildEmptyState() {
     return Center(
       child: Column(
@@ -205,6 +244,7 @@ class GroupConversationScreen extends StatelessWidget {
 
   Widget _buildMessageList() {
     return ListView.builder(
+      key: const ValueKey('group-messages'),
       controller: scrollController,
       reverse: true,
       physics: const BouncingScrollPhysics(),
@@ -240,19 +280,13 @@ class GroupConversationScreen extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
         border: Border(
-          top: BorderSide(
-            color: Colors.white.withOpacity(0.06),
-            width: 0.5,
-          ),
+          top: BorderSide(color: Colors.white.withOpacity(0.06), width: 0.5),
         ),
       ),
       child: Text(
         'Only admins can send messages in this group',
         textAlign: TextAlign.center,
-        style: TextStyle(
-          fontSize: 13,
-          color: Colors.white.withOpacity(0.35),
-        ),
+        style: TextStyle(fontSize: 13, color: Colors.white.withOpacity(0.35)),
       ),
     );
   }
@@ -265,5 +299,90 @@ class GroupConversationScreen extends StatelessWidget {
     final minute = local.minute.toString().padLeft(2, '0');
     final period = local.hour < 12 ? 'AM' : 'PM';
     return '$hour:$minute $period';
+  }
+}
+
+class _GroupConversationLoadingShell extends StatelessWidget {
+  const _GroupConversationLoadingShell();
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      key: const ValueKey('group-loading-shell'),
+      physics: const NeverScrollableScrollPhysics(),
+      padding: const EdgeInsets.fromLTRB(16, 18, 16, 24),
+      children: const [
+        _GroupConversationLoadingBubble(
+          index: 0,
+          alignment: Alignment.centerLeft,
+        ),
+        SizedBox(height: 14),
+        _GroupConversationLoadingBubble(
+          index: 1,
+          alignment: Alignment.centerRight,
+        ),
+        SizedBox(height: 14),
+        _GroupConversationLoadingBubble(
+          index: 2,
+          alignment: Alignment.centerLeft,
+        ),
+      ],
+    );
+  }
+}
+
+class _GroupConversationLoadingBubble extends StatelessWidget {
+  final int index;
+  final Alignment alignment;
+
+  const _GroupConversationLoadingBubble({
+    required this.index,
+    required this.alignment,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: alignment,
+      child: Container(
+        key: ValueKey('group-loading-bubble-$index'),
+        width: index == 1 ? 210 : 240,
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(22),
+          color: const Color.fromRGBO(255, 255, 255, 0.08),
+          border: Border.all(color: const Color.fromRGBO(255, 255, 255, 0.1)),
+        ),
+        child: const Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _GroupConversationLoadingBar(widthFactor: 0.78),
+            SizedBox(height: 10),
+            _GroupConversationLoadingBar(widthFactor: 0.52),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _GroupConversationLoadingBar extends StatelessWidget {
+  final double widthFactor;
+
+  const _GroupConversationLoadingBar({required this.widthFactor});
+
+  @override
+  Widget build(BuildContext context) {
+    return FractionallySizedBox(
+      widthFactor: widthFactor,
+      alignment: Alignment.centerLeft,
+      child: Container(
+        height: 12,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(999),
+          color: const Color.fromRGBO(255, 255, 255, 0.12),
+        ),
+      ),
+    );
   }
 }

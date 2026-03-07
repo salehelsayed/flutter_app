@@ -1,7 +1,9 @@
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
+import 'package:flutter_app/features/conversation/domain/models/conversation_thread_summary.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/conversation_thread_summary_repository.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_friend.dart';
 
 /// Loads all contacts with their message activity, sorted by most recent message first.
@@ -18,18 +20,19 @@ Future<List<OrbitFriend>> loadOrbitData({
     final contacts = includeArchived
         ? await contactRepo.getArchivedContacts()
         : await contactRepo.getActiveContacts();
-    final friends = <OrbitFriend>[];
-
-    for (final contact in contacts) {
-      friends.add(
-        await _buildOrbitFriend(
-          contactPeerId: contact.peerId,
-          contactRepo: contactRepo,
-          messageRepo: messageRepo,
-          contactOverride: contact,
-        ),
-      );
-    }
+    final summaries = await _loadConversationThreadSummaries(
+      messageRepo: messageRepo,
+      contactPeerIds: contacts.map((contact) => contact.peerId),
+    );
+    final friends = contacts
+        .map(
+          (contact) => _buildOrbitFriend(
+            contact: contact,
+            summary: summaries[contact.peerId] ??
+                ConversationThreadSummary(contactPeerId: contact.peerId),
+          ),
+        )
+        .toList(growable: false);
 
     _sortOrbitFriends(friends);
 
@@ -72,12 +75,11 @@ Future<OrbitFriend?> loadOrbitFriendSnapshot({
       return null;
     }
 
-    final friend = await _buildOrbitFriend(
-      contactPeerId: contactPeerId,
-      contactRepo: contactRepo,
+    final summary = await _loadConversationThreadSummary(
       messageRepo: messageRepo,
-      contactOverride: contact,
+      contactPeerId: contactPeerId,
     );
+    final friend = _buildOrbitFriend(contact: contact, summary: summary);
 
     emitFlowEvent(
       layer: 'UC',
@@ -95,33 +97,63 @@ Future<OrbitFriend?> loadOrbitFriendSnapshot({
   }
 }
 
-Future<OrbitFriend> _buildOrbitFriend({
-  required String contactPeerId,
-  required ContactRepository contactRepo,
+OrbitFriend _buildOrbitFriend({
+  required ContactModel contact,
+  required ConversationThreadSummary summary,
+}) {
+  return OrbitFriend(
+    contact: contact,
+    messageCount: summary.messageCount,
+    lastActivity: summary.latestMessage?.text,
+    lastMessageTimestamp: summary.latestMessage?.timestamp,
+    unreadCount: summary.unreadCount,
+  );
+}
+
+Future<ConversationThreadSummary> _loadConversationThreadSummary({
   required MessageRepository messageRepo,
-  ContactModel? contactOverride,
+  required String contactPeerId,
 }) async {
-  final contact =
-      contactOverride ?? await contactRepo.getContact(contactPeerId);
-  if (contact == null) {
-    throw StateError('Contact not found for Orbit snapshot: $contactPeerId');
+  final summaryRepo = messageRepo is ConversationThreadSummaryRepository
+      ? messageRepo as ConversationThreadSummaryRepository
+      : null;
+  if (summaryRepo != null) {
+    return summaryRepo.getConversationThreadSummary(contactPeerId);
   }
 
-  final messageCount = await messageRepo.getMessageCountForContact(
-    contactPeerId,
-  );
   final latestMessage = await messageRepo.getLatestMessageForContact(
     contactPeerId,
   );
-  final unreadCount = await messageRepo.getUnreadCountForContact(contactPeerId);
-
-  return OrbitFriend(
-    contact: contact,
-    messageCount: messageCount,
-    lastActivity: latestMessage?.text,
-    lastMessageTimestamp: latestMessage?.timestamp,
-    unreadCount: unreadCount,
+  return ConversationThreadSummary(
+    contactPeerId: contactPeerId,
+    messageCount: await messageRepo.getMessageCountForContact(contactPeerId),
+    unreadCount: await messageRepo.getUnreadCountForContact(contactPeerId),
+    latestMessage: latestMessage,
   );
+}
+
+Future<Map<String, ConversationThreadSummary>> _loadConversationThreadSummaries({
+  required MessageRepository messageRepo,
+  required Iterable<String> contactPeerIds,
+}) async {
+  final ids = contactPeerIds.toList(growable: false);
+  if (ids.isEmpty) return const <String, ConversationThreadSummary>{};
+
+  final summaryRepo = messageRepo is ConversationThreadSummaryRepository
+      ? messageRepo as ConversationThreadSummaryRepository
+      : null;
+  if (summaryRepo != null) {
+    return summaryRepo.getConversationThreadSummaries(ids);
+  }
+
+  final summaries = <String, ConversationThreadSummary>{};
+  for (final contactPeerId in ids) {
+    summaries[contactPeerId] = await _loadConversationThreadSummary(
+      messageRepo: messageRepo,
+      contactPeerId: contactPeerId,
+    );
+  }
+  return summaries;
 }
 
 void _sortOrbitFriends(List<OrbitFriend> friends) {

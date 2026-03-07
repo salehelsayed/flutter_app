@@ -10,9 +10,12 @@ import 'package:flutter_app/features/contact_request/domain/models/contact_reque
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/models/conversation_thread_summary.dart';
+import 'package:flutter_app/features/feed/domain/models/feed_route_changes.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/models/group_thread_summary.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/expandable_fab.dart';
@@ -152,6 +155,8 @@ void main() {
     InMemoryGroupRepository? groupRepository,
     InMemoryGroupMessageRepository? groupMessageRepository,
     bool wrapInNavigator = false,
+    VoidCallback? onHeaderBuild,
+    VoidCallback? onListBuild,
   }) {
     final effectiveContactRepo = contactRepository ?? contactRepo;
     final effectiveMessageRepo = messageRepository ?? messageRepo;
@@ -196,6 +201,8 @@ void main() {
       groupRepository: effectiveGroupRepo,
       groupMessageRepository: effectiveGroupMessageRepo,
       groupMessageListener: gmListener,
+      debugOnHeaderBuild: onHeaderBuild,
+      debugOnListBuild: onListBuild,
     );
 
     if (wrapInNavigator) {
@@ -265,6 +272,40 @@ void main() {
       // FriendRow renders the username and @username
       expect(find.text('Bob'), findsWidgets);
       expect(find.text('@Bob'), findsWidgets);
+    });
+
+    testWidgets('cold load batches friend thread summaries', (tester) async {
+      setLargeTestSurface(tester);
+      suppressOverflowErrors();
+      identityRepo.seed(testIdentity);
+
+      final spyContactRepo = _SpyContactRepository();
+      final spyMessageRepo = _SpyMessageRepository();
+      spyContactRepo.seed([
+        testContact,
+        testContact.copyWith(peerId: 'contact-peer-id-2', username: 'Cara'),
+      ]);
+
+      await tester.pumpWidget(
+        buildOrbitWired(
+          contactRepository: spyContactRepo,
+          messageRepository: spyMessageRepo,
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(spyContactRepo.getActiveContactsCallCount, 1);
+      expect(spyContactRepo.getArchivedContactsCallCount, 1);
+      expect(spyMessageRepo.getConversationThreadSummariesCallCount, 1);
+      expect(spyMessageRepo.getConversationThreadSummaryCallCountByPeerId, isEmpty);
+      expect(spyMessageRepo.getMessageCountForContactCallCountByPeerId, isEmpty);
+      expect(
+        spyMessageRepo.getLatestMessageForContactCallCountByPeerId,
+        isEmpty,
+      );
+      expect(spyMessageRepo.getUnreadCountForContactCallCountByPeerId, isEmpty);
     });
 
     testWidgets('search trigger button exists', (tester) async {
@@ -428,15 +469,16 @@ void main() {
       expect(spyContactRepo.getContactCallCountByPeerId, {
         'contact-peer-id': 1,
       });
-      expect(spyMessageRepo.getMessageCountForContactCallCountByPeerId, {
+      expect(spyMessageRepo.getConversationThreadSummaryCallCountByPeerId, {
         'contact-peer-id': 1,
       });
-      expect(spyMessageRepo.getLatestMessageForContactCallCountByPeerId, {
-        'contact-peer-id': 1,
-      });
-      expect(spyMessageRepo.getUnreadCountForContactCallCountByPeerId, {
-        'contact-peer-id': 1,
-      });
+      expect(spyMessageRepo.getConversationThreadSummariesCallCount, 0);
+      expect(spyMessageRepo.getMessageCountForContactCallCountByPeerId, isEmpty);
+      expect(
+        spyMessageRepo.getLatestMessageForContactCallCountByPeerId,
+        isEmpty,
+      );
+      expect(spyMessageRepo.getUnreadCountForContactCallCountByPeerId, isEmpty);
     });
 
     testWidgets(
@@ -514,6 +556,46 @@ void main() {
         expect(searchField.controller!.text, 'Bo');
       },
     );
+
+    testWidgets('typing search updates the list without rebuilding the header', (
+      tester,
+    ) async {
+      setLargeTestSurface(tester);
+      suppressOverflowErrors();
+      identityRepo.seed(testIdentity);
+      contactRepo.seed([
+        testContact,
+        testContact.copyWith(peerId: 'contact-peer-id-2', username: 'Cara'),
+      ]);
+
+      var headerBuildCount = 0;
+      var listBuildCount = 0;
+
+      await tester.pumpWidget(
+        buildOrbitWired(
+          onHeaderBuild: () => headerBuildCount++,
+          onListBuild: () => listBuildCount++,
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      await tester.tap(find.byType(OrbitSearchTrigger));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      final headerBuildsBeforeTyping = headerBuildCount;
+      final listBuildsBeforeTyping = listBuildCount;
+
+      await tester.enterText(find.byType(TextField), 'Bo');
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(headerBuildCount, headerBuildsBeforeTyping);
+      expect(listBuildCount, greaterThan(listBuildsBeforeTyping));
+      expect(find.text('Bob'), findsWidgets);
+      expect(find.text('Cara'), findsNothing);
+    });
 
     testWidgets('shows contact request dialog on incoming request', (
       tester,
@@ -764,8 +846,65 @@ void main() {
       expect(spyGroupRepo.getActiveGroupsCallCount, 0);
       expect(spyGroupRepo.getAllGroupsCallCount, 0);
       expect(spyGroupRepo.getGroupCallCountById, {'g-1': 1});
-      expect(spyGroupMsgRepo.getLatestMessageCallCountByGroupId, {'g-1': 1});
-      expect(spyGroupMsgRepo.getUnreadCountCallCountByGroupId, {'g-1': 1});
+      expect(spyGroupMsgRepo.getGroupThreadSummaryCallCountByGroupId, {
+        'g-1': 1,
+      });
+      expect(spyGroupMsgRepo.getGroupThreadSummariesCallCount, 0);
+      expect(spyGroupMsgRepo.getLatestMessageCallCountByGroupId, isEmpty);
+      expect(spyGroupMsgRepo.getUnreadCountCallCountByGroupId, isEmpty);
+    });
+
+    testWidgets('create-group route result refreshes only the affected group', (
+      tester,
+    ) async {
+      setLargeTestSurface(tester);
+      suppressOverflowErrors();
+      identityRepo.seed(testIdentity);
+
+      final spyGroupRepo = _SpyGroupRepository();
+      final spyGroupMsgRepo = _SpyGroupMessageRepository();
+      await spyGroupRepo.saveGroup(
+        GroupModel(
+          id: 'g-1',
+          name: 'Alpha Group',
+          type: GroupType.chat,
+          topicName: 'topic-g-1',
+          createdAt: DateTime.utc(2026, 3, 1),
+          createdBy: 'peer-admin',
+          myRole: GroupRole.admin,
+        ),
+      );
+
+      await tester.pumpWidget(
+        buildOrbitWired(
+          groupRepository: spyGroupRepo,
+          groupMessageRepository: spyGroupMsgRepo,
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      spyGroupRepo.resetTracking();
+      spyGroupMsgRepo.resetTracking();
+
+      await tester.tap(find.byIcon(Icons.add));
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.tap(find.text('New Group'));
+      await tester.pump(const Duration(milliseconds: 300));
+
+      final navigator = tester.state<NavigatorState>(find.byType(Navigator));
+      navigator.pop(const FeedRouteChanges(changedGroupIds: {'g-1'}));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(spyGroupRepo.getActiveGroupsCallCount, 0);
+      expect(spyGroupRepo.getAllGroupsCallCount, 0);
+      expect(spyGroupRepo.getGroupCallCountById, {'g-1': 1});
+      expect(spyGroupMsgRepo.getGroupThreadSummariesCallCount, 0);
+      expect(spyGroupMsgRepo.getGroupThreadSummaryCallCountByGroupId, {
+        'g-1': 1,
+      });
     });
 
     testWidgets('interleaves groups and friends sorted by last activity', (
@@ -865,6 +1004,8 @@ class _SpyMessageRepository extends InMemoryMessageRepository {
   final Map<String, int> getMessageCountForContactCallCountByPeerId = {};
   final Map<String, int> getLatestMessageForContactCallCountByPeerId = {};
   final Map<String, int> getUnreadCountForContactCallCountByPeerId = {};
+  int getConversationThreadSummariesCallCount = 0;
+  final Map<String, int> getConversationThreadSummaryCallCountByPeerId = {};
 
   @override
   Future<int> getMessageCountForContact(String contactPeerId) async {
@@ -898,10 +1039,31 @@ class _SpyMessageRepository extends InMemoryMessageRepository {
     return super.getUnreadCountForContact(contactPeerId);
   }
 
+  @override
+  Future<ConversationThreadSummary> getConversationThreadSummary(
+    String contactPeerId,
+  ) {
+    getConversationThreadSummaryCallCountByPeerId.update(
+      contactPeerId,
+      (count) => count + 1,
+      ifAbsent: () => 1,
+    );
+    return super.getConversationThreadSummary(contactPeerId);
+  }
+
+  @override
+  Future<Map<String, ConversationThreadSummary>>
+      getConversationThreadSummaries(Iterable<String> contactPeerIds) {
+    getConversationThreadSummariesCallCount++;
+    return super.getConversationThreadSummaries(contactPeerIds);
+  }
+
   void resetTracking() {
     getMessageCountForContactCallCountByPeerId.clear();
     getLatestMessageForContactCallCountByPeerId.clear();
     getUnreadCountForContactCallCountByPeerId.clear();
+    getConversationThreadSummariesCallCount = 0;
+    getConversationThreadSummaryCallCountByPeerId.clear();
   }
 }
 
@@ -938,6 +1100,8 @@ class _SpyGroupRepository extends InMemoryGroupRepository {
 class _SpyGroupMessageRepository extends InMemoryGroupMessageRepository {
   final Map<String, int> getLatestMessageCallCountByGroupId = {};
   final Map<String, int> getUnreadCountCallCountByGroupId = {};
+  int getGroupThreadSummariesCallCount = 0;
+  final Map<String, int> getGroupThreadSummaryCallCountByGroupId = {};
 
   @override
   Future<GroupMessage?> getLatestMessage(String groupId) async {
@@ -959,9 +1123,29 @@ class _SpyGroupMessageRepository extends InMemoryGroupMessageRepository {
     return super.getUnreadCount(groupId);
   }
 
+  @override
+  Future<GroupThreadSummary> getGroupThreadSummary(String groupId) {
+    getGroupThreadSummaryCallCountByGroupId.update(
+      groupId,
+      (count) => count + 1,
+      ifAbsent: () => 1,
+    );
+    return super.getGroupThreadSummary(groupId);
+  }
+
+  @override
+  Future<Map<String, GroupThreadSummary>> getGroupThreadSummaries(
+    Iterable<String> groupIds,
+  ) {
+    getGroupThreadSummariesCallCount++;
+    return super.getGroupThreadSummaries(groupIds);
+  }
+
   void resetTracking() {
     getLatestMessageCallCountByGroupId.clear();
     getUnreadCountCallCountByGroupId.clear();
+    getGroupThreadSummariesCallCount = 0;
+    getGroupThreadSummaryCallCountByGroupId.clear();
   }
 }
 

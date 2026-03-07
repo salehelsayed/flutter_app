@@ -79,7 +79,9 @@ void main() {
 
   group('ConversationScreen', () {
     testWidgets('shows empty state when no messages', (tester) async {
-      await tester.pumpWidget(buildTestWidget(messages: []));
+      await tester.pumpWidget(
+        buildTestWidget(messages: [], initialLoadDone: true),
+      );
       await tester.pump();
 
       expect(find.text('Connected!'), findsWidgets);
@@ -88,6 +90,27 @@ void main() {
         findsOneWidget,
       );
     });
+
+    testWidgets(
+      'shows loading shell while initial conversation page is still loading',
+      (tester) async {
+        await tester.pumpWidget(buildTestWidget(messages: []));
+        await tester.pump();
+
+        expect(
+          find.byKey(const ValueKey('conversation-loading-shell')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('conversation-loading-bubble-0')),
+          findsOneWidget,
+        );
+        expect(
+          find.text('Write the first letter\nto start your conversation'),
+          findsNothing,
+        );
+      },
+    );
 
     testWidgets('shows letter cards when messages present', (tester) async {
       await tester.pumpWidget(
