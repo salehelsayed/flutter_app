@@ -1,12 +1,10 @@
-import 'dart:typed_data';
-
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 import 'package:flutter_app/features/introduction/presentation/widgets/intro_group_header.dart';
 import 'package:flutter_app/features/introduction/presentation/widgets/intro_row.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/expandable_fab.dart';
-import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_friend.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_group.dart';
@@ -43,6 +41,48 @@ class OrbitIntrosViewData {
   });
 }
 
+@immutable
+class OrbitHeaderProjection {
+  final String? userPeerId;
+  final Uint8List? userAvatarBytes;
+  final List<OrbitFriend> allFriends;
+
+  const OrbitHeaderProjection({
+    this.userPeerId,
+    this.userAvatarBytes,
+    this.allFriends = const [],
+  });
+}
+
+@immutable
+class OrbitViewProjection {
+  final List<OrbitFriend> allFriends;
+  final List<OrbitFriend> displayedFriends;
+  final List<OrbitGroup> groups;
+  final List<OrbitItem> mergedItems;
+  final int activeCount;
+  final int archivedCount;
+  final int introsCount;
+  final OrbitIntrosViewData? introsData;
+  final bool searchActive;
+  final String searchQuery;
+  final String filterTab;
+
+  const OrbitViewProjection({
+    this.allFriends = const [],
+    this.displayedFriends = const [],
+    this.groups = const [],
+    this.mergedItems = const [],
+    this.activeCount = 0,
+    this.archivedCount = 0,
+    this.introsCount = 0,
+    this.introsData,
+    this.searchActive = false,
+    this.searchQuery = '',
+    this.filterTab = 'all',
+  });
+}
+
 enum _OrbitIntroEntryType { context, header, row, spacer }
 
 class _OrbitIntroEntry {
@@ -74,12 +114,8 @@ class _OrbitIntroEntry {
 ///
 /// Receives all state and callbacks from OrbitWired.
 class OrbitScreen extends StatelessWidget {
-  final IdentityModel? identity;
-  final Uint8List? userAvatarBytes;
-  final List<OrbitFriend> allFriends;
-  final List<OrbitFriend> displayedFriends;
-  final bool searchActive;
-  final String searchQuery;
+  final ValueListenable<OrbitHeaderProjection> headerProjectionListenable;
+  final ValueListenable<OrbitViewProjection> listProjectionListenable;
   final ScrollController scrollController;
   final TextEditingController searchController;
   final FocusNode searchFocusNode;
@@ -94,9 +130,6 @@ class OrbitScreen extends StatelessWidget {
   final VoidCallback onSearchClose;
   final void Function(String) onSearchChanged;
   final VoidCallback onSearchClear;
-  final String filterTab;
-  final int activeCount;
-  final int archivedCount;
   final void Function(String) onFilterChanged;
   final void Function(OrbitFriend) onArchiveFriend;
   final void Function(OrbitFriend) onUnarchiveFriend;
@@ -104,25 +137,19 @@ class OrbitScreen extends StatelessWidget {
   final void Function(OrbitFriend) onUnblockFriend;
   final void Function(OrbitFriend) onDeleteFriend;
   final ValueNotifier<Key?> openRowNotifier;
-  final List<OrbitGroup> groups;
   final void Function(OrbitGroup) onGroupTap;
   final void Function(GroupType) onCreateGroup;
   final void Function(OrbitGroup) onArchiveGroup;
   final void Function(OrbitGroup) onUnarchiveGroup;
   final void Function(OrbitGroup) onDeleteGroup;
-  final int introsCount;
-  final OrbitIntrosViewData? introsData;
-  final Widget? introsWidget;
   final VoidCallback? onIntroBannerTap;
+  final VoidCallback? onHeaderBuild;
+  final VoidCallback? onListBuild;
 
   const OrbitScreen({
     super.key,
-    required this.identity,
-    this.userAvatarBytes,
-    required this.allFriends,
-    required this.displayedFriends,
-    required this.searchActive,
-    required this.searchQuery,
+    required this.headerProjectionListenable,
+    required this.listProjectionListenable,
     required this.scrollController,
     required this.searchController,
     required this.searchFocusNode,
@@ -137,9 +164,6 @@ class OrbitScreen extends StatelessWidget {
     required this.onSearchClose,
     required this.onSearchChanged,
     required this.onSearchClear,
-    required this.filterTab,
-    required this.activeCount,
-    required this.archivedCount,
     required this.onFilterChanged,
     required this.onArchiveFriend,
     required this.onUnarchiveFriend,
@@ -147,44 +171,18 @@ class OrbitScreen extends StatelessWidget {
     required this.onUnblockFriend,
     required this.onDeleteFriend,
     required this.openRowNotifier,
-    this.groups = const [],
     required this.onGroupTap,
     required this.onCreateGroup,
     required this.onArchiveGroup,
     required this.onUnarchiveGroup,
     required this.onDeleteGroup,
-    this.introsCount = 0,
-    this.introsData,
-    this.introsWidget,
     this.onIntroBannerTap,
+    this.onHeaderBuild,
+    this.onListBuild,
   });
-
-  /// Builds a merged and sorted list of orbit items (friends + groups)
-  /// for the current tab and search state.
-  List<OrbitItem> _buildMergedItems() {
-    final items = <OrbitItem>[];
-
-    for (final friend in displayedFriends) {
-      items.add(OrbitFriendItem(friend));
-    }
-
-    // Show groups when not searching (groups list is pre-filtered by tab in OrbitWired)
-    if (!searchActive) {
-      for (final group in groups) {
-        items.add(OrbitGroupItem(group));
-      }
-    }
-
-    // Sort by most recent activity first
-    items.sort((a, b) => b.sortKey.compareTo(a.sortKey));
-    return items;
-  }
 
   @override
   Widget build(BuildContext context) {
-    final userPeerId = identity?.peerId;
-    final mergedItems = _buildMergedItems();
-
     return AmbientBackground(
       child: Scaffold(
         backgroundColor: Colors.transparent,
@@ -196,88 +194,103 @@ class OrbitScreen extends StatelessWidget {
               child: Column(
                 children: [
                   // Collapsible header + orbital
-                  AnimatedBuilder(
-                    animation: collapseAnimation,
-                    builder: (context, child) {
-                      final t = collapseAnimation.value;
-                      return Align(
-                        heightFactor: t,
-                        child: Opacity(
-                          opacity: t.clamp(0.0, 1.0),
-                          child: Transform.translate(
-                            offset: Offset(0, (1 - t) * -16),
-                            child: Transform.scale(
-                              scale: 0.985 + 0.015 * t,
-                              alignment: Alignment.topCenter,
-                              child: child,
+                  ValueListenableBuilder<OrbitHeaderProjection>(
+                    valueListenable: headerProjectionListenable,
+                    builder: (context, projection, child) {
+                      onHeaderBuild?.call();
+                      return AnimatedBuilder(
+                        animation: collapseAnimation,
+                        builder: (context, animatedChild) {
+                          final t = collapseAnimation.value;
+                          return Align(
+                            heightFactor: t,
+                            child: Opacity(
+                              opacity: t.clamp(0.0, 1.0),
+                              child: Transform.translate(
+                                offset: Offset(0, (1 - t) * -16),
+                                child: Transform.scale(
+                                  scale: 0.985 + 0.015 * t,
+                                  alignment: Alignment.topCenter,
+                                  child: animatedChild,
+                                ),
+                              ),
                             ),
-                          ),
+                          );
+                        },
+                        child: Column(
+                          children: [
+                            OrbitalVisualization(
+                              userPeerId: projection.userPeerId,
+                              userAvatarBytes: projection.userAvatarBytes,
+                              friends: projection.allFriends
+                                  .where((friend) => !friend.isBlocked)
+                                  .toList(),
+                            ),
+                            const Padding(
+                              padding: EdgeInsets.only(top: 20),
+                              child: Text(
+                                'Close Friends',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  color: Color(0x99FFFFFF),
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       );
                     },
-                    child: Column(
-                      children: [
-                        OrbitalVisualization(
-                          userPeerId: userPeerId,
-                          userAvatarBytes: userAvatarBytes,
-                          friends: allFriends
-                              .where((f) => !f.isBlocked)
-                              .toList(),
-                        ),
-                        const Padding(
-                          padding: EdgeInsets.only(top: 20),
-                          child: Text(
-                            'Close Friends',
-                            style: TextStyle(
-                              fontSize: 14,
-                              color: Color(0x99FFFFFF),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
                   ),
 
                   // Scrollable friends list
                   Expanded(
-                    child: CustomScrollView(
-                      controller: scrollController,
-                      physics: const BouncingScrollPhysics(),
-                      cacheExtent: 600,
-                      slivers: [
-                        SliverToBoxAdapter(
-                          child: Padding(
-                            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                FriendsListHeader(
-                                  onMyQR: onMyQR,
-                                  onScanQR: onScanQR,
-                                  searchActive: searchActive,
+                    child: ValueListenableBuilder<OrbitViewProjection>(
+                      valueListenable: listProjectionListenable,
+                      builder: (context, projection, child) {
+                        onListBuild?.call();
+                        return CustomScrollView(
+                          controller: scrollController,
+                          physics: const BouncingScrollPhysics(),
+                          cacheExtent: 600,
+                          slivers: [
+                            SliverToBoxAdapter(
+                              child: Padding(
+                                padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    FriendsListHeader(
+                                      onMyQR: onMyQR,
+                                      onScanQR: onScanQR,
+                                      searchActive: projection.searchActive,
+                                    ),
+                                    if (!projection.searchActive) ...[
+                                      const SizedBox(height: 8),
+                                      FriendsFilterToggle(
+                                        activeFilter: projection.filterTab,
+                                        activeCount: projection.activeCount,
+                                        archivedCount: projection.archivedCount,
+                                        introsCount: projection.introsCount,
+                                        onFilterChanged: onFilterChanged,
+                                      ),
+                                    ],
+                                    const SizedBox(height: 8),
+                                    if (projection.introsCount > 0 &&
+                                        projection.filterTab != 'intros')
+                                      _buildIntroBanner(projection),
+                                  ],
                                 ),
-                                if (!searchActive) ...[
-                                  const SizedBox(height: 8),
-                                  FriendsFilterToggle(
-                                    activeFilter: filterTab,
-                                    activeCount: activeCount,
-                                    archivedCount: archivedCount,
-                                    introsCount: introsCount,
-                                    onFilterChanged: onFilterChanged,
-                                  ),
-                                ],
-                                const SizedBox(height: 8),
-                                if (introsCount > 0 && filterTab != 'intros')
-                                  _buildIntroBanner(),
-                              ],
+                              ),
                             ),
-                          ),
-                        ),
-                        _buildContentSliver(mergedItems),
-                        SliverToBoxAdapter(
-                          child: SizedBox(height: searchActive ? 320 : 100),
-                        ),
-                      ],
+                            _buildContentSliver(projection),
+                            SliverToBoxAdapter(
+                              child: SizedBox(
+                                height: projection.searchActive ? 320 : 100,
+                              ),
+                            ),
+                          ],
+                        );
+                      },
                     ),
                   ),
                 ],
@@ -329,13 +342,16 @@ class OrbitScreen extends StatelessWidget {
                   ),
                 );
               },
-              child: OrbitSearchDock(
-                controller: searchController,
-                focusNode: searchFocusNode,
-                onChanged: onSearchChanged,
-                onClear: onSearchClear,
-                onClose: onSearchClose,
-                query: searchQuery,
+              child: ValueListenableBuilder<OrbitViewProjection>(
+                valueListenable: listProjectionListenable,
+                builder: (context, projection, child) => OrbitSearchDock(
+                  controller: searchController,
+                  focusNode: searchFocusNode,
+                  onChanged: onSearchChanged,
+                  onClear: onSearchClear,
+                  onClose: onSearchClose,
+                  query: projection.searchQuery,
+                ),
               ),
             ),
 
@@ -368,7 +384,7 @@ class OrbitScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildIntroBanner() {
+  Widget _buildIntroBanner(OrbitViewProjection projection) {
     return GestureDetector(
       onTap: onIntroBannerTap,
       child: Container(
@@ -392,7 +408,7 @@ class OrbitScreen extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    '$introsCount introduction${introsCount == 1 ? '' : 's'} pending',
+                    '${projection.introsCount} introduction${projection.introsCount == 1 ? '' : 's'} pending',
                     style: const TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w600,
@@ -413,24 +429,23 @@ class OrbitScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildContentSliver(List<OrbitItem> mergedItems) {
-    if (filterTab == 'intros') {
-      if (introsData != null) {
-        return _buildIntroSliver(introsData!);
-      }
-      if (introsWidget != null) {
-        return SliverToBoxAdapter(child: introsWidget!);
+  Widget _buildContentSliver(OrbitViewProjection projection) {
+    if (projection.filterTab == 'intros') {
+      if (projection.introsData != null) {
+        return _buildIntroSliver(projection.introsData!);
       }
     }
 
-    if (searchActive && searchQuery.isNotEmpty && displayedFriends.isEmpty) {
-      return SliverToBoxAdapter(child: _buildNoResults());
+    if (projection.searchActive &&
+        projection.searchQuery.isNotEmpty &&
+        projection.displayedFriends.isEmpty) {
+      return SliverToBoxAdapter(child: _buildNoResults(projection.searchQuery));
     }
 
-    if (filterTab == 'archived' &&
-        displayedFriends.isEmpty &&
-        groups.isEmpty &&
-        !searchActive) {
+    if (projection.filterTab == 'archived' &&
+        projection.displayedFriends.isEmpty &&
+        projection.groups.isEmpty &&
+        !projection.searchActive) {
       return const SliverFillRemaining(
         hasScrollBody: false,
         child: ArchivedEmptyState(),
@@ -441,12 +456,16 @@ class OrbitScreen extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 16),
       sliver: SliverList(
         delegate: SliverChildBuilderDelegate((context, index) {
-          final item = mergedItems[index];
+          final item = projection.mergedItems[index];
           return switch (item) {
-            OrbitFriendItem(:final friend) => _buildFriendRow(friend, index),
+            OrbitFriendItem(:final friend) => _buildFriendRow(
+              friend,
+              index,
+              projection,
+            ),
             OrbitGroupItem(:final group) => _buildGroupRow(group, index),
           };
-        }, childCount: mergedItems.length),
+        }, childCount: projection.mergedItems.length),
       ),
     );
   }
@@ -563,8 +582,12 @@ class OrbitScreen extends StatelessWidget {
     }
   }
 
-  Widget _buildFriendRow(OrbitFriend friend, int index) {
-    final isInnerCircle = allFriends.indexOf(friend) < 13;
+  Widget _buildFriendRow(
+    OrbitFriend friend,
+    int index,
+    OrbitViewProjection projection,
+  ) {
+    final isInnerCircle = projection.allFriends.indexOf(friend) < 13;
     final isArchived = friend.isArchived;
     final rowKey = ValueKey(friend.peerId);
     return Padding(
@@ -583,7 +606,7 @@ class OrbitScreen extends StatelessWidget {
           onDelete: () => onDeleteFriend(friend),
           child: FriendRow(
             friend: friend,
-            showInnerCircleBadge: searchActive && isInnerCircle,
+            showInnerCircleBadge: projection.searchActive && isInnerCircle,
             hideUnreadBadge: isArchived,
             onTap: () => onFriendTap(friend),
           ),
@@ -613,7 +636,7 @@ class OrbitScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildNoResults() {
+  Widget _buildNoResults(String searchQuery) {
     return Padding(
       padding: const EdgeInsets.only(top: 60),
       child: Center(

@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_group.dart';
+import 'package:flutter_app/features/orbit/domain/models/orbit_item.dart';
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_screen.dart';
 
 void main() {
@@ -52,13 +53,21 @@ void main() {
     List<OrbitGroup> groups = const [],
     OrbitIntrosViewData? introsData,
   }) {
+    final headerNotifier = ValueNotifier(const OrbitHeaderProjection());
+    final listNotifier = ValueNotifier(
+      OrbitViewProjection(
+        groups: groups,
+        mergedItems: groups.map(OrbitGroupItem.new).toList(),
+        introsData: introsData,
+        filterTab: filterTab,
+      ),
+    );
+    addTearDown(headerNotifier.dispose);
+    addTearDown(listNotifier.dispose);
     return MaterialApp(
       home: OrbitScreen(
-        identity: null,
-        allFriends: const [],
-        displayedFriends: const [],
-        searchActive: false,
-        searchQuery: '',
+        headerProjectionListenable: headerNotifier,
+        listProjectionListenable: listNotifier,
         scrollController: scrollController,
         searchController: searchController,
         searchFocusNode: searchFocusNode,
@@ -73,9 +82,6 @@ void main() {
         onSearchClose: () {},
         onSearchChanged: (_) {},
         onSearchClear: () {},
-        filterTab: filterTab,
-        activeCount: 0,
-        archivedCount: 0,
         onFilterChanged: (_) {},
         onArchiveFriend: (_) {},
         onUnarchiveFriend: (_) {},
@@ -83,13 +89,11 @@ void main() {
         onUnblockFriend: (_) {},
         onDeleteFriend: (_) {},
         openRowNotifier: openRowNotifier,
-        groups: groups,
         onGroupTap: (_) {},
         onCreateGroup: (_) {},
         onArchiveGroup: (_) {},
         onUnarchiveGroup: (_) {},
         onDeleteGroup: (_) {},
-        introsData: introsData,
       ),
     );
   }

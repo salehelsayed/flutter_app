@@ -118,6 +118,44 @@ void main() {
           ..sort((a, b) => (a['timestamp'] as String)
               .compareTo(b['timestamp'] as String));
       },
+      dbLoadConversationThreadSummaries: (contactPeerIds) async {
+        final summaries = <Map<String, Object?>>[];
+        for (final contactPeerId in contactPeerIds) {
+          final rows = store.values
+              .where((row) => row['contact_peer_id'] == contactPeerId)
+              .toList()
+            ..sort((a, b) {
+              final timestampOrder = (b['timestamp'] as String)
+                  .compareTo(a['timestamp'] as String);
+              if (timestampOrder != 0) return timestampOrder;
+              final createdAtA = a['created_at'] as String? ?? '';
+              final createdAtB = b['created_at'] as String? ?? '';
+              return createdAtB.compareTo(createdAtA);
+            });
+          final latest = rows.isEmpty ? null : rows.first;
+          summaries.add({
+            'contact_peer_id': contactPeerId,
+            'message_count': rows.length,
+            'unread_count': rows
+                .where((row) =>
+                    row['is_incoming'] == 1 && row['read_at'] == null)
+                .length,
+            'latest_id': latest?['id'],
+            'latest_contact_peer_id': latest?['contact_peer_id'],
+            'latest_sender_peer_id': latest?['sender_peer_id'],
+            'latest_text': latest?['text'],
+            'latest_timestamp': latest?['timestamp'],
+            'latest_status': latest?['status'],
+            'latest_is_incoming': latest?['is_incoming'],
+            'latest_created_at': latest?['created_at'],
+            'latest_read_at': latest?['read_at'],
+            'latest_quoted_message_id': latest?['quoted_message_id'],
+            'latest_transport': latest?['transport'],
+            'latest_wire_envelope': latest?['wire_envelope'],
+          });
+        }
+        return summaries;
+      },
     );
   });
 
@@ -208,6 +246,34 @@ void main() {
     test('getLatestMessageForContact returns null when none exist', () async {
       final latest = await repo.getLatestMessageForContact('nonexistent');
       expect(latest, isNull);
+    });
+
+    test('getConversationThreadSummaries returns counts and latest rows', () async {
+      await repo.saveMessage(makeMessage(
+        id: 'msg-1',
+        contactPeerId: 'peer-A',
+        text: 'older',
+        timestamp: '2026-02-09T10:00:00.000Z',
+        isIncoming: true,
+      ));
+      await repo.saveMessage(makeMessage(
+        id: 'msg-2',
+        contactPeerId: 'peer-A',
+        text: 'newer',
+        timestamp: '2026-02-09T11:00:00.000Z',
+        isIncoming: true,
+      ));
+
+      final summaries = await repo.getConversationThreadSummaries([
+        'peer-A',
+        'peer-B',
+      ]);
+
+      expect(summaries['peer-A']!.messageCount, 2);
+      expect(summaries['peer-A']!.unreadCount, 2);
+      expect(summaries['peer-A']!.latestMessage!.id, 'msg-2');
+      expect(summaries['peer-B']!.messageCount, 0);
+      expect(summaries['peer-B']!.latestMessage, isNull);
     });
 
     test('updateMessageStatus changes status', () async {

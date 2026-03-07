@@ -1,11 +1,19 @@
+import 'package:flutter/foundation.dart';
+
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
 
 class FeedStore {
   final Map<String, ConnectionFeedItem> _connectionsByContactId = {};
   final Map<String, ThreadFeedItem> _threadsByContactId = {};
   final Map<String, GroupThreadFeedItem> _groupThreadsById = {};
+  final ValueNotifier<List<FeedItem>> _itemsNotifier =
+      ValueNotifier<List<FeedItem>>(const <FeedItem>[]);
 
-  List<FeedItem> get items {
+  ValueListenable<List<FeedItem>> get itemsListenable => _itemsNotifier;
+
+  List<FeedItem> get items => _itemsNotifier.value;
+
+  List<FeedItem> _buildItems() {
     final merged = <FeedItem>[
       ..._connectionsByContactId.values,
       ..._threadsByContactId.values,
@@ -43,18 +51,21 @@ class FeedStore {
     _threadsByContactId.clear();
     _groupThreadsById.clear();
     _ingest(feedItems);
+    _publish();
   }
 
   void replaceContacts(Iterable<FeedItem> contactItems) {
     _connectionsByContactId.clear();
     _threadsByContactId.clear();
     _ingest(contactItems);
+    _publish();
   }
 
   void replaceGroups(Iterable<GroupThreadFeedItem> groupItems) {
     _groupThreadsById
       ..clear()
       ..addEntries(groupItems.map((item) => MapEntry(item.groupId, item)));
+    _publish();
   }
 
   void replaceContactSnapshot({
@@ -71,6 +82,7 @@ class FeedStore {
     if (threadItem != null) {
       _threadsByContactId[contactPeerId] = threadItem;
     }
+    _publish();
   }
 
   void replaceGroupSnapshot({
@@ -81,10 +93,16 @@ class FeedStore {
     if (threadItem != null) {
       _groupThreadsById[groupId] = threadItem;
     }
+    _publish();
   }
 
   void upsertConnection(ConnectionFeedItem item) {
     _connectionsByContactId[item.contactPeerId] = item;
+    _publish();
+  }
+
+  void dispose() {
+    _itemsNotifier.dispose();
   }
 
   void _ingest(Iterable<FeedItem> feedItems) {
@@ -97,5 +115,9 @@ class FeedStore {
         _groupThreadsById[item.groupId] = item;
       }
     }
+  }
+
+  void _publish() {
+    _itemsNotifier.value = List<FeedItem>.unmodifiable(_buildItems());
   }
 }

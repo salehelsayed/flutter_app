@@ -11,6 +11,7 @@ import 'package:flutter_app/features/groups/application/group_message_listener.d
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
+import 'package:flutter_app/features/feed/domain/models/feed_route_changes.dart';
 import 'package:flutter_app/features/groups/presentation/screens/create_group_picker_screen.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
@@ -136,6 +137,7 @@ class _CreateGroupPickerWiredState extends State<CreateGroupPickerWired> {
             groupConversationTracker: widget.groupConversationTracker,
           ),
         ),
+        result: FeedRouteChanges(changedGroupIds: {result.group.id}),
       );
     } catch (e) {
       emitFlowEvent(

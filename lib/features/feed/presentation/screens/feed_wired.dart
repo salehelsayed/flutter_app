@@ -3,8 +3,6 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:path/path.dart' as p;
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
@@ -25,7 +23,6 @@ import 'package:flutter_app/features/contact_request/presentation/widgets/contac
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
-import 'package:flutter_app/features/conversation/application/load_conversation_use_case.dart';
 import 'package:flutter_app/features/conversation/application/load_reactions_use_case.dart';
 import 'package:flutter_app/features/conversation/application/reaction_listener.dart';
 import 'package:flutter_app/features/conversation/application/remove_reaction_use_case.dart';
@@ -33,6 +30,7 @@ import 'package:flutter_app/features/conversation/application/send_reaction_use_
 import 'package:flutter_app/features/conversation/application/mark_conversation_read_use_case.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
@@ -48,6 +46,7 @@ import 'package:flutter_app/features/feed/application/load_group_feed_snapshot_u
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_route_changes.dart';
 import 'package:flutter_app/features/feed/domain/models/session_reply.dart';
+import 'package:flutter_app/features/feed/domain/utils/format_message_time.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
@@ -58,7 +57,9 @@ import 'package:flutter_app/features/groups/domain/repositories/group_message_re
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository.dart';
 import 'package:flutter_app/features/introduction/application/introduction_listener.dart';
+import 'package:flutter_app/features/home/application/identity_avatar_resolver.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_list_wired.dart';
 import 'package:flutter_app/features/orbit/presentation/navigation/orbit_route_transition.dart';
@@ -137,9 +138,9 @@ class _FeedWiredState extends State<FeedWired> {
   IdentityModel? _identity;
   String _activeTab = 'feed';
   final FeedStore _feedStore = FeedStore();
+  final ValueNotifier<int> _totalUnreadCountNotifier = ValueNotifier<int>(0);
   final FeedReactionStore _reactionStore = FeedReactionStore();
   bool _feedLoaded = false;
-  int _totalUnreadCount = 0;
   String? _expandedCardId;
   final Map<String, String> _draftTexts = {};
   final Map<String, String> _activeQuoteMessageIds = {};
@@ -157,6 +158,11 @@ class _FeedWiredState extends State<FeedWired> {
       ImageQualityPreference.compressed;
 
   List<FeedItem> get _feedItems => _feedStore.items;
+
+  void _markFeedLoaded() {
+    if (_feedLoaded || !mounted) return;
+    setState(() => _feedLoaded = true);
+  }
 
   @override
   void initState() {
@@ -184,19 +190,7 @@ class _FeedWiredState extends State<FeedWired> {
       final identity = await widget.repository.loadIdentity();
       if (identity == null || !mounted) return;
 
-      // Load file-based avatar if avatarVersion is set
-      Uint8List? avatarBytes = identity.avatarBlob;
-      if (identity.avatarVersion != null) {
-        try {
-          final appDir = await getApplicationDocumentsDirectory();
-          final avatarFile = File(
-            p.join(appDir.path, 'media', 'avatars', '${identity.peerId}.jpg'),
-          );
-          if (avatarFile.existsSync()) {
-            avatarBytes = await avatarFile.readAsBytes();
-          }
-        } catch (_) {}
-      }
+      final avatarBytes = await IdentityAvatarResolver.resolve(identity);
 
       if (!mounted) return;
 
@@ -245,10 +239,8 @@ class _FeedWiredState extends State<FeedWired> {
       );
       if (!mounted) return;
 
-      setState(() {
-        _feedStore.replaceAll(items);
-        _feedLoaded = true;
-      });
+      _feedStore.replaceAll(items);
+      _markFeedLoaded();
       _loadReactionsForFeed();
     } catch (e) {
       emitFlowEvent(
@@ -256,6 +248,7 @@ class _FeedWiredState extends State<FeedWired> {
         event: 'FEED_FL_DB_LOAD_ERROR',
         details: {'error': e.toString()},
       );
+      _markFeedLoaded();
     }
   }
 
@@ -264,7 +257,7 @@ class _FeedWiredState extends State<FeedWired> {
       final count = await widget.messageRepository
           .getTotalUnreadCountExcludingArchived();
       if (!mounted) return;
-      setState(() => _totalUnreadCount = count);
+      _totalUnreadCountNotifier.value = count;
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -323,14 +316,12 @@ class _FeedWiredState extends State<FeedWired> {
           ? <String>{}
           : snapshot.threadItem!.messages.map((message) => message.id).toSet();
 
-      setState(() {
-        _feedStore.replaceContactSnapshot(
-          contactPeerId: contactPeerId,
-          connectionItem: snapshot.connectionItem,
-          threadItem: snapshot.threadItem,
-        );
-        _feedLoaded = true;
-      });
+      _feedStore.replaceContactSnapshot(
+        contactPeerId: contactPeerId,
+        connectionItem: snapshot.connectionItem,
+        threadItem: snapshot.threadItem,
+      );
+      _markFeedLoaded();
       final removedMessageIds = previousMessageIds.difference(nextMessageIds);
       _reactionStore.clearMessageIds(removedMessageIds);
 
@@ -362,13 +353,8 @@ class _FeedWiredState extends State<FeedWired> {
       );
       if (!mounted) return;
 
-      setState(() {
-        _feedStore.replaceGroupSnapshot(
-          groupId: groupId,
-          threadItem: threadItem,
-        );
-        _feedLoaded = true;
-      });
+      _feedStore.replaceGroupSnapshot(groupId: groupId, threadItem: threadItem);
+      _markFeedLoaded();
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -403,10 +389,8 @@ class _FeedWiredState extends State<FeedWired> {
           .map((message) => message.id)
           .toSet();
 
-      setState(() {
-        _feedStore.replaceContacts(contactItems);
-        _feedLoaded = true;
-      });
+      _feedStore.replaceContacts(contactItems);
+      _markFeedLoaded();
       _reactionStore.clearMessageIds(
         previousContactMessageIds.difference(nextContactMessageIds),
       );
@@ -434,10 +418,8 @@ class _FeedWiredState extends State<FeedWired> {
       );
       if (!mounted) return;
 
-      setState(() {
-        _feedStore.replaceGroups(groupItems);
-        _feedLoaded = true;
-      });
+      _feedStore.replaceGroups(groupItems);
+      _markFeedLoaded();
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -445,6 +427,277 @@ class _FeedWiredState extends State<FeedWired> {
         details: {'error': e.toString()},
       );
       await _refreshFeed();
+    }
+  }
+
+  ThreadFeedItem? _threadForContact(String contactPeerId) {
+    for (final item in _feedItems) {
+      if (item is ThreadFeedItem && item.contactPeerId == contactPeerId) {
+        return item;
+      }
+    }
+    return null;
+  }
+
+  GroupThreadFeedItem? _threadForGroup(String groupId) {
+    for (final item in _feedItems) {
+      if (item is GroupThreadFeedItem && item.groupId == groupId) {
+        return item;
+      }
+    }
+    return null;
+  }
+
+  Future<List<MediaAttachment>> _loadResolvedAttachmentsForMessage(
+    String messageId,
+  ) async {
+    final attachments = await widget.mediaAttachmentRepository
+        .getAttachmentsForMessage(messageId);
+    if (attachments.isEmpty) return const <MediaAttachment>[];
+
+    final resolved = <MediaAttachment>[];
+    for (final attachment in attachments) {
+      if (attachment.localPath == null) {
+        resolved.add(attachment);
+        continue;
+      }
+
+      final absolutePath = await widget.mediaFileManager.resolveStoredPath(
+        attachment.localPath!,
+      );
+      resolved.add(attachment.copyWith(localPath: absolutePath));
+    }
+    return resolved;
+  }
+
+  ThreadMessage _toThreadMessage(ConversationMessage message) {
+    final timestamp = DateTime.tryParse(message.timestamp) ?? DateTime.now();
+    return ThreadMessage(
+      id: message.id,
+      text: message.text,
+      time: formatMessageTime(message.timestamp),
+      timestamp: timestamp,
+      isUnread: message.isIncoming && message.readAt == null,
+      isIncoming: message.isIncoming,
+      status: message.isIncoming ? null : message.status,
+      quotedMessageId: message.quotedMessageId,
+      media: message.media,
+      senderPeerId: message.senderPeerId,
+    );
+  }
+
+  ThreadMessage _toGroupThreadMessage(GroupMessage message) {
+    return ThreadMessage(
+      id: message.id,
+      text: message.text,
+      time: formatMessageTime(message.timestamp.toUtc().toIso8601String()),
+      timestamp: message.timestamp,
+      isUnread: message.isIncoming && message.readAt == null,
+      isIncoming: message.isIncoming,
+      status: message.isIncoming ? null : message.status,
+      senderPeerId: message.senderPeerId,
+      senderUsername: message.senderUsername,
+    );
+  }
+
+  List<ThreadMessage> _mergeThreadMessages(
+    List<ThreadMessage> current,
+    ThreadMessage next,
+  ) {
+    final updated = List<ThreadMessage>.from(current);
+    final index = updated.indexWhere((message) => message.id == next.id);
+    if (index >= 0) {
+      updated[index] = next;
+    } else {
+      updated.add(next);
+    }
+    updated.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+    return updated;
+  }
+
+  ConversationState _conversationStateForMessages(
+    List<ThreadMessage> messages,
+  ) {
+    final hasUnreadIncoming = messages.any(
+      (message) => message.isIncoming && message.isUnread,
+    );
+    final hasSentMessages = messages.any((message) => !message.isIncoming);
+    if (hasUnreadIncoming && hasSentMessages) {
+      return ConversationState.active;
+    }
+    if (hasUnreadIncoming) {
+      return ConversationState.unread;
+    }
+    if (hasSentMessages) {
+      return ConversationState.replied;
+    }
+    return ConversationState.read;
+  }
+
+  DateTime? _lastSentTimestamp(List<ThreadMessage> messages) {
+    for (var index = messages.length - 1; index >= 0; index--) {
+      final message = messages[index];
+      if (!message.isIncoming) {
+        return message.timestamp;
+      }
+    }
+    return null;
+  }
+
+  ThreadFeedItem _buildThreadFeedItem({
+    required ContactModel contact,
+    required List<ThreadMessage> messages,
+  }) {
+    final state = _conversationStateForMessages(messages);
+    return ThreadFeedItem(
+      id: 'thread_${contact.peerId}',
+      timestamp: messages.isEmpty ? DateTime.now() : messages.last.timestamp,
+      contactPeerId: contact.peerId,
+      contactUsername: contact.username,
+      messages: messages,
+      unreadCount: messages.where((message) => message.isUnread).length,
+      isUnreadCard:
+          state == ConversationState.unread ||
+          state == ConversationState.active,
+      conversationState: state,
+      lastRepliedAt: _lastSentTimestamp(messages),
+      isBlocked: contact.isBlocked,
+    );
+  }
+
+  GroupThreadFeedItem _buildGroupThreadFeedItem({
+    required GroupModel group,
+    required List<ThreadMessage> messages,
+  }) {
+    final state = _conversationStateForMessages(messages);
+    return GroupThreadFeedItem(
+      id: 'group_thread_${group.id}',
+      timestamp: messages.isEmpty ? group.createdAt : messages.last.timestamp,
+      groupId: group.id,
+      groupName: group.name,
+      groupType: group.type,
+      messages: messages,
+      unreadCount: messages.where((message) => message.isUnread).length,
+      conversationState: state,
+    );
+  }
+
+  Future<void> _applyIncomingContactMessageToFeed(
+    ConversationMessage message, {
+    bool refreshUnreadCount = true,
+  }) async {
+    try {
+      final contact = await widget.contactRepository.getContact(
+        message.contactPeerId,
+      );
+      if (contact == null || contact.isArchived) {
+        await _refreshContactFeedItem(
+          message.contactPeerId,
+          refreshUnreadCount: refreshUnreadCount,
+        );
+        return;
+      }
+
+      final displayMessage = message.copyWith(
+        media: await _loadResolvedAttachmentsForMessage(message.id),
+      );
+      final currentThread = _threadForContact(contact.peerId);
+      final nextMessages = _mergeThreadMessages(
+        currentThread?.messages ?? const <ThreadMessage>[],
+        _toThreadMessage(displayMessage),
+      );
+
+      _feedStore.replaceContactSnapshot(
+        contactPeerId: contact.peerId,
+        connectionItem: ConnectionFeedItem.fromContact(contact),
+        threadItem: _buildThreadFeedItem(
+          contact: contact,
+          messages: nextMessages,
+        ),
+      );
+      _markFeedLoaded();
+
+      if (refreshUnreadCount) {
+        await _loadTotalUnreadCount();
+      }
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'FEED_FL_CONTACT_INCREMENTAL_UPDATE_ERROR',
+        details: {
+          'contactPeerId': message.contactPeerId,
+          'error': e.toString(),
+        },
+      );
+      await _refreshContactFeedItem(
+        message.contactPeerId,
+        refreshUnreadCount: refreshUnreadCount,
+      );
+    }
+  }
+
+  Future<void> _applyContactUpdateToFeed(ContactModel contact) async {
+    if (contact.isArchived) {
+      await _refreshContactFeedItem(contact.peerId);
+      return;
+    }
+
+    final currentThread = _threadForContact(contact.peerId);
+    _feedStore.replaceContactSnapshot(
+      contactPeerId: contact.peerId,
+      connectionItem: ConnectionFeedItem.fromContact(contact),
+      threadItem: currentThread == null
+          ? null
+          : ThreadFeedItem(
+              id: currentThread.id,
+              timestamp: currentThread.timestamp,
+              contactPeerId: contact.peerId,
+              contactUsername: contact.username,
+              messages: currentThread.messages,
+              unreadCount: currentThread.unreadCount,
+              isUnreadCard: currentThread.isUnreadCard,
+              conversationState: currentThread.conversationState,
+              lastRepliedAt: currentThread.lastRepliedAt,
+              isBlocked: contact.isBlocked,
+            ),
+    );
+    _markFeedLoaded();
+  }
+
+  Future<void> _applyIncomingGroupMessageToFeed(GroupMessage message) async {
+    final groupRepo = widget.groupRepository;
+    if (groupRepo == null) {
+      return;
+    }
+
+    try {
+      final group = await groupRepo.getGroup(message.groupId);
+      if (group == null || group.isArchived) {
+        await _refreshGroupFeedItem(message.groupId);
+        return;
+      }
+
+      final currentThread = _threadForGroup(group.id);
+      final nextMessages = _mergeThreadMessages(
+        currentThread?.messages ?? const <ThreadMessage>[],
+        _toGroupThreadMessage(message),
+      );
+
+      _feedStore.replaceGroupSnapshot(
+        groupId: group.id,
+        threadItem: _buildGroupThreadFeedItem(
+          group: group,
+          messages: nextMessages,
+        ),
+      );
+      _markFeedLoaded();
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'FEED_FL_GROUP_INCREMENTAL_UPDATE_ERROR',
+        details: {'groupId': message.groupId, 'error': e.toString()},
+      );
+      await _refreshGroupFeedItem(message.groupId);
     }
   }
 
@@ -545,9 +798,7 @@ class _FeedWiredState extends State<FeedWired> {
       );
       if (!alreadyExists) {
         final item = ConnectionFeedItem.fromContact(contact);
-        setState(() {
-          _feedStore.upsertConnection(item);
-        });
+        _feedStore.upsertConnection(item);
       }
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -591,7 +842,7 @@ class _FeedWiredState extends State<FeedWired> {
   void _onIncomingChatMessage(ConversationMessage message) {
     if (!mounted) return;
     _sessionReplies.clear(message.contactPeerId);
-    unawaited(_refreshContactFeedItem(message.contactPeerId));
+    unawaited(_applyIncomingContactMessageToFeed(message));
   }
 
   void _startListeningForContactUpdates() {
@@ -617,7 +868,7 @@ class _FeedWiredState extends State<FeedWired> {
 
   void _onContactUpdated(ContactModel contact) {
     if (!mounted) return;
-    unawaited(_refreshContactFeedItem(contact.peerId));
+    unawaited(_applyContactUpdateToFeed(contact));
   }
 
   void _onSendMessage(ConnectionFeedItem item) async {
@@ -625,13 +876,6 @@ class _FeedWiredState extends State<FeedWired> {
       item.contactPeerId,
     );
     if (contact == null || !mounted) return;
-
-    await markConversationRead(
-      messageRepo: widget.messageRepository,
-      contactPeerId: item.contactPeerId,
-    );
-
-    if (!mounted) return;
 
     Navigator.of(context)
         .push(
@@ -664,18 +908,7 @@ class _FeedWiredState extends State<FeedWired> {
   }
 
   void _onReplyToMessage(String contactPeerId) async {
-    final results = await Future.wait([
-      widget.contactRepository.getContact(contactPeerId),
-      loadConversation(
-        messageRepo: widget.messageRepository,
-        contactPeerId: contactPeerId,
-        mediaAttachmentRepo: widget.mediaAttachmentRepository,
-        mediaFileManager: widget.mediaFileManager,
-      ),
-    ]);
-
-    final contact = results[0] as ContactModel?;
-    final messages = results[1] as List<ConversationMessage>;
+    final contact = await widget.contactRepository.getContact(contactPeerId);
     if (contact == null || !mounted) return;
 
     Navigator.of(context)
@@ -688,7 +921,6 @@ class _FeedWiredState extends State<FeedWired> {
               chatMessageListener: widget.chatMessageListener,
               p2pService: widget.p2pService,
               bridge: widget.bridge,
-              initialMessages: messages,
               contactRepo: widget.contactRepository,
               mediaAttachmentRepo: widget.mediaAttachmentRepository,
               mediaFileManager: widget.mediaFileManager,
@@ -718,7 +950,7 @@ class _FeedWiredState extends State<FeedWired> {
       if (contact == null || !mounted) return;
 
       final quotedMsgId = _activeQuoteMessageIds[contactPeerId];
-      final (result, _) = await sendChatMessage(
+      final (result, message) = await sendChatMessage(
         p2pService: widget.p2pService,
         messageRepo: widget.messageRepository,
         targetPeerId: contactPeerId,
@@ -741,7 +973,18 @@ class _FeedWiredState extends State<FeedWired> {
           messageRepo: widget.messageRepository,
           contactPeerId: contactPeerId,
         );
-        await _refreshContactFeedItem(contactPeerId);
+        if (message != null) {
+          await _applyIncomingContactMessageToFeed(
+            message,
+            refreshUnreadCount: false,
+          );
+        } else {
+          await _refreshContactFeedItem(
+            contactPeerId,
+            refreshUnreadCount: false,
+          );
+        }
+        await _loadTotalUnreadCount();
       } else {
         final errorText = result == SendChatMessageResult.encryptionRequired
             ? 'Cannot send: contact does not support encryption.'
@@ -887,13 +1130,6 @@ class _FeedWiredState extends State<FeedWired> {
       final contact = await widget.contactRepository.getContact(contactPeerId);
       if (contact == null || !mounted) return;
 
-      await markConversationRead(
-        messageRepo: widget.messageRepository,
-        contactPeerId: contactPeerId,
-      );
-
-      if (!mounted) return;
-
       Navigator.of(context)
           .push(
             buildConversationSlideUpRoute(
@@ -1006,7 +1242,7 @@ class _FeedWiredState extends State<FeedWired> {
     _groupMessageSubscription = listener.groupMessageStream.listen(
       (message) {
         if (!mounted) return;
-        unawaited(_refreshGroupFeedItem(message.groupId));
+        unawaited(_applyIncomingGroupMessageToFeed(message));
       },
       onError: (error) {
         emitFlowEvent(
@@ -1088,7 +1324,7 @@ class _FeedWiredState extends State<FeedWired> {
     if (identity == null || groupRepo == null || msgRepo == null) return;
 
     try {
-      final (result, _) = await sendGroupMessage(
+      final (result, message) = await sendGroupMessage(
         bridge: widget.bridge,
         groupRepo: groupRepo,
         msgRepo: msgRepo,
@@ -1103,7 +1339,11 @@ class _FeedWiredState extends State<FeedWired> {
       if (!mounted) return;
 
       if (result == SendGroupMessageResult.success) {
-        await _refreshGroupFeedItem(groupId);
+        if (message != null) {
+          await _applyIncomingGroupMessageToFeed(message);
+        } else {
+          await _refreshGroupFeedItem(groupId);
+        }
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -1455,7 +1695,9 @@ class _FeedWiredState extends State<FeedWired> {
     _groupMessageSubscription?.cancel();
     _introReceivedSubscription?.cancel();
     _introStatusSubscription?.cancel();
+    _totalUnreadCountNotifier.dispose();
     _reactionStore.dispose();
+    _feedStore.dispose();
     super.dispose();
   }
 
@@ -1467,6 +1709,7 @@ class _FeedWiredState extends State<FeedWired> {
         userAvatarBytes: _avatarBytes,
         userPeerId: _peerId,
         feedItems: _feedItems,
+        feedItemsListenable: _feedStore.itemsListenable,
         feedLoaded: _feedLoaded,
         onUsernameChanged: _onUsernameChanged,
         p2pService: widget.p2pService,
@@ -1474,7 +1717,7 @@ class _FeedWiredState extends State<FeedWired> {
         activeTab: _activeTab,
         onSendMessage: _onSendMessage,
         onReplyToMessage: _onReplyToMessage,
-        totalUnreadCount: _totalUnreadCount,
+        totalUnreadCountListenable: _totalUnreadCountNotifier,
         expandedCardId: _expandedCardId,
         onToggleExpand: _onToggleExpand,
         onInlineSend: _onInlineSend,

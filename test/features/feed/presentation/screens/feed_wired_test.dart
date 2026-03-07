@@ -1161,7 +1161,7 @@ void main() {
       expect(find.text('Beta Group'), findsOneWidget);
     });
 
-    testWidgets('incoming chat refreshes only the affected contact snapshot', (
+    testWidgets('incoming chat updates only the affected contact thread', (
       tester,
     ) async {
       final originalOnError = FlutterError.onError;
@@ -1274,40 +1274,23 @@ void main() {
       await pumpFeedFrames(tester);
 
       expect(find.byType(OpenModeCardBody), findsOneWidget);
+      expect(find.textContaining('New message from Bob'), findsWidgets);
       expect(spyContactRepo.getActiveContactsCallCount, 0);
       expect(spyContactRepo.getContactCallCountByPeerId.keys, <String>{
         testContact.peerId,
       });
       expect(spyContactRepo.getContactCallCountByPeerId[testContact.peerId], 1);
+      expect(spyMessageRepo.getMessagesForContactCallCountByPeerId, isEmpty);
+      expect(spyMessageRepo.getTotalUnreadCountExcludingArchivedCallCount, 1);
+      expect(spyMediaAttachmentRepo.requestedMessageIdBatches, isEmpty);
       expect(
-        spyMessageRepo.getMessagesForContactCallCountByPeerId.keys,
-        <String>{testContact.peerId},
+        spyMediaAttachmentRepo.getAttachmentsForMessageCallCountByMessageId,
+        <String, int>{'msg-a-2': 1},
       );
-      expect(
-        spyMessageRepo.getMessagesForContactCallCountByPeerId[testContact
-            .peerId],
-        1,
-      );
-      expect(spyMediaAttachmentRepo.requestedMessageIdBatches, hasLength(1));
-      expect(
-        spyMediaAttachmentRepo.requestedMessageIdBatches.single,
-        containsAll(<String>['msg-a-1', 'msg-a-2']),
-      );
-      expect(
-        spyMediaAttachmentRepo.requestedMessageIdBatches.single,
-        isNot(contains('msg-b-1')),
-      );
-      expect(
-        spyMediaFileManager.resolvedStoredPaths,
-        everyElement(startsWith('media/contact-peer-id/')),
-      );
-      expect(
-        spyMediaFileManager.resolvedStoredPaths,
-        isNot(contains('media/contact-peer-id-2/blob-b.jpg')),
-      );
+      expect(spyMediaFileManager.resolvedStoredPaths, isEmpty);
     });
 
-    testWidgets('contact update refreshes only the affected contact snapshot', (
+    testWidgets('contact update patches only the affected contact thread', (
       tester,
     ) async {
       final originalOnError = FlutterError.onError;
@@ -1380,23 +1363,12 @@ void main() {
 
       expect(find.textContaining('Bobby'), findsWidgets);
       expect(spyContactRepo.getActiveContactsCallCount, 0);
-      expect(spyContactRepo.getContactCallCountByPeerId.keys, <String>{
-        testContact.peerId,
-      });
-      expect(spyContactRepo.getContactCallCountByPeerId[testContact.peerId], 1);
-      expect(
-        spyMessageRepo.getMessagesForContactCallCountByPeerId.keys,
-        <String>{testContact.peerId},
-      );
-      expect(
-        spyMessageRepo.getMessagesForContactCallCountByPeerId[testContact
-            .peerId],
-        1,
-      );
+      expect(spyContactRepo.getContactCallCountByPeerId, isEmpty);
+      expect(spyMessageRepo.getMessagesForContactCallCountByPeerId, isEmpty);
     });
 
     testWidgets(
-      'incoming group message refreshes only the affected group snapshot',
+      'incoming group message updates only the affected group thread',
       (tester) async {
         final originalOnError = FlutterError.onError;
         FlutterError.onError = (details) {
@@ -1489,14 +1461,107 @@ void main() {
         await pumpFeedFrames(tester);
 
         expect(find.byType(OpenModeCardBody), findsOneWidget);
+        expect(find.textContaining('Fresh alpha update'), findsWidgets);
         expect(spyGroupRepo.getActiveGroupsCallCount, 0);
         expect(spyGroupRepo.getGroupCallCountById.keys, <String>{'g1'});
         expect(spyGroupRepo.getGroupCallCountById['g1'], 1);
-        expect(
-          spyGroupMessageRepo.getMessagesPageCallCountByGroupId.keys,
-          <String>{'g1'},
+        expect(spyGroupMessageRepo.getMessagesPageCallCountByGroupId, isEmpty);
+      },
+    );
+
+    testWidgets(
+      'send message pushes conversation route before read marking completes',
+      (tester) async {
+        identityRepo.seed(testIdentity);
+
+        final spyContactRepo = _SpyContactRepository()..seed([testContact]);
+        final delayedMessageRepo = _DelayedSpyMessageRepository()
+          ..markConversationAsReadGate = Completer<void>();
+        final observer = _RecordingNavigatorObserver();
+
+        await tester.pumpWidget(
+          buildFeedWired(
+            contactRepository: spyContactRepo,
+            messageRepository: delayedMessageRepo,
+            navigatorObservers: [observer],
+          ),
         );
-        expect(spyGroupMessageRepo.getMessagesPageCallCountByGroupId['g1'], 1);
+        await pumpFeedFrames(tester);
+
+        observer.reset();
+
+        await tester.tap(find.text('Send Message'));
+        await tester.pump();
+
+        expect(observer.pushCount, 1);
+        expect(observer.lastPushedRoute, isNotNull);
+
+        delayedMessageRepo.markConversationAsReadGate!.complete();
+        await pumpFeedFrames(tester, count: 6);
+      },
+    );
+
+    testWidgets(
+      'view earlier pushes conversation route before conversation preload resolves',
+      (tester) async {
+        final originalOnError = FlutterError.onError;
+        FlutterError.onError = (details) {
+          if (details.toString().contains('overflowed')) return;
+          originalOnError?.call(details);
+        };
+        addTearDown(() => FlutterError.onError = originalOnError);
+
+        identityRepo.seed(testIdentity);
+
+        final spyContactRepo = _SpyContactRepository()..seed([testContact]);
+        final delayedMessageRepo = _DelayedSpyMessageRepository();
+        final observer = _RecordingNavigatorObserver();
+
+        await delayedMessageRepo.saveMessage(
+          ConversationMessage(
+            id: 'msg-history-1',
+            contactPeerId: testContact.peerId,
+            text: 'Earlier read context',
+            senderPeerId: testContact.peerId,
+            timestamp: '2026-02-01T10:00:00.000Z',
+            isIncoming: true,
+            status: 'read',
+            readAt: '2026-02-01T10:10:00.000Z',
+            createdAt: '2026-02-01T10:00:00.000Z',
+          ),
+        );
+        await delayedMessageRepo.saveMessage(
+          ConversationMessage(
+            id: 'msg-history-2',
+            contactPeerId: testContact.peerId,
+            text: 'Unread latest message',
+            senderPeerId: testContact.peerId,
+            timestamp: '2026-02-01T11:00:00.000Z',
+            isIncoming: true,
+            status: 'delivered',
+            createdAt: '2026-02-01T11:00:00.000Z',
+          ),
+        );
+
+        await tester.pumpWidget(
+          buildFeedWired(
+            contactRepository: spyContactRepo,
+            messageRepository: delayedMessageRepo,
+            navigatorObservers: [observer],
+          ),
+        );
+        await pumpFeedFrames(tester);
+
+        expect(find.text('View earlier messages'), findsOneWidget);
+
+        delayedMessageRepo.getMessagesForContactGate = Completer<void>();
+        observer.reset();
+
+        await tester.tap(find.text('View earlier messages'));
+        await tester.pump();
+
+        expect(observer.pushCount, 1);
+        expect(observer.lastPushedRoute, isNotNull);
       },
     );
 
@@ -2225,11 +2290,18 @@ class _FakeIntroductionListener extends IntroductionListener {
 
 class _RecordingNavigatorObserver extends NavigatorObserver {
   Route<dynamic>? lastPushedRoute;
+  int pushCount = 0;
 
   @override
   void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
     super.didPush(route, previousRoute);
+    pushCount++;
     lastPushedRoute = route;
+  }
+
+  void reset() {
+    lastPushedRoute = null;
+    pushCount = 0;
   }
 }
 
@@ -2284,6 +2356,31 @@ class _SpyMessageRepository extends InMemoryMessageRepository {
   void resetTracking() {
     getMessagesForContactCallCountByPeerId.clear();
     getTotalUnreadCountExcludingArchivedCallCount = 0;
+  }
+}
+
+class _DelayedSpyMessageRepository extends _SpyMessageRepository {
+  Completer<void>? getMessagesForContactGate;
+  Completer<void>? markConversationAsReadGate;
+
+  @override
+  Future<List<ConversationMessage>> getMessagesForContact(
+    String contactPeerId,
+  ) async {
+    final gate = getMessagesForContactGate;
+    if (gate != null) {
+      await gate.future;
+    }
+    return super.getMessagesForContact(contactPeerId);
+  }
+
+  @override
+  Future<int> markConversationAsRead(String contactPeerId) async {
+    final gate = markConversationAsReadGate;
+    if (gate != null) {
+      await gate.future;
+    }
+    return super.markConversationAsRead(contactPeerId);
   }
 }
 

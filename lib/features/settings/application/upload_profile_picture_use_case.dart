@@ -7,6 +7,7 @@ import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
+import 'package:flutter_app/features/home/application/identity_avatar_resolver.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
@@ -68,6 +69,7 @@ Future<bool> uploadProfilePicture({
 
     // Evict Flutter image cache so UserAvatar picks up the new file
     FileImage(File(localPath)).evict();
+    IdentityAvatarResolver.invalidatePeer(identity.peerId);
     UserAvatar.invalidatePeer(identity.peerId);
 
     // 4. Update identity with new avatarVersion

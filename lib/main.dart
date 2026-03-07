@@ -309,6 +309,8 @@ void main() async {
     dbLoadFailedOutgoingMessages: () => dbLoadFailedOutgoingMessages(db),
     dbLoadUnackedOutgoingMessages: ({required olderThan, limit = 50}) =>
         dbLoadUnackedOutgoingMessages(db, olderThan: olderThan, limit: limit),
+    dbLoadConversationThreadSummaries: (contactPeerIds) =>
+        dbLoadConversationThreadSummaries(db, contactPeerIds),
   );
 
   // Create media attachment repository
@@ -393,6 +395,8 @@ void main() async {
             db, groupId, senderPeerId, text, timestamp),
     dbDeleteGroupMessagesForGroup: (groupId) =>
         dbDeleteGroupMessagesForGroup(db, groupId),
+    dbLoadGroupThreadSummaries: (groupIds) =>
+        dbLoadGroupThreadSummaries(db, groupIds),
   );
 
   // Create introduction repository

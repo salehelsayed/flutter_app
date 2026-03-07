@@ -1,10 +1,13 @@
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
 import '../models/conversation_message.dart';
+import '../models/conversation_thread_summary.dart';
+import 'conversation_thread_summary_repository.dart';
 import 'message_repository.dart';
 
 /// Implementation of MessageRepository using database helper functions.
-class MessageRepositoryImpl implements MessageRepository {
+class MessageRepositoryImpl
+    implements MessageRepository, ConversationThreadSummaryRepository {
   final Future<void> Function(Map<String, Object?> row) dbInsertMessage;
   final Future<List<Map<String, Object?>>> Function(String contactPeerId)
       dbLoadMessagesForContact;
@@ -29,6 +32,8 @@ class MessageRepositoryImpl implements MessageRepository {
     required DateTime olderThan,
     int limit,
   }) dbLoadUnackedOutgoingMessages;
+  final Future<List<Map<String, Object?>>> Function(List<String> contactPeerIds)
+      dbLoadConversationThreadSummaries;
 
   MessageRepositoryImpl({
     required this.dbInsertMessage,
@@ -45,6 +50,7 @@ class MessageRepositoryImpl implements MessageRepository {
     required this.dbLoadMessagesPage,
     required this.dbLoadFailedOutgoingMessages,
     required this.dbLoadUnackedOutgoingMessages,
+    required this.dbLoadConversationThreadSummaries,
   });
 
   @override
@@ -194,5 +200,56 @@ class MessageRepositoryImpl implements MessageRepository {
     final cutoff = DateTime.now().toUtc().subtract(olderThan);
     final rows = await dbLoadUnackedOutgoingMessages(olderThan: cutoff);
     return rows.map((row) => ConversationMessage.fromMap(row)).toList();
+  }
+
+  @override
+  Future<ConversationThreadSummary> getConversationThreadSummary(
+    String contactPeerId,
+  ) async {
+    final summaries = await getConversationThreadSummaries([contactPeerId]);
+    return summaries[contactPeerId] ??
+        ConversationThreadSummary(contactPeerId: contactPeerId);
+  }
+
+  @override
+  Future<Map<String, ConversationThreadSummary>> getConversationThreadSummaries(
+    Iterable<String> contactPeerIds,
+  ) async {
+    final ids = contactPeerIds.toSet().toList(growable: false);
+    if (ids.isEmpty) return const <String, ConversationThreadSummary>{};
+
+    final rows = await dbLoadConversationThreadSummaries(ids);
+    final summaries = <String, ConversationThreadSummary>{};
+    for (final row in rows) {
+      final contactPeerId = row['contact_peer_id'] as String;
+      summaries[contactPeerId] = ConversationThreadSummary(
+        contactPeerId: contactPeerId,
+        messageCount: row['message_count'] as int? ?? 0,
+        unreadCount: row['unread_count'] as int? ?? 0,
+        latestMessage: row['latest_id'] == null
+            ? null
+            : ConversationMessage.fromMap({
+                'id': row['latest_id'],
+                'contact_peer_id': row['latest_contact_peer_id'],
+                'sender_peer_id': row['latest_sender_peer_id'],
+                'text': row['latest_text'],
+                'timestamp': row['latest_timestamp'],
+                'status': row['latest_status'],
+                'is_incoming': row['latest_is_incoming'],
+                'created_at': row['latest_created_at'],
+                'read_at': row['latest_read_at'],
+                'quoted_message_id': row['latest_quoted_message_id'],
+                'transport': row['latest_transport'],
+                'wire_envelope': row['latest_wire_envelope'],
+              }),
+      );
+    }
+    for (final contactPeerId in ids) {
+      summaries.putIfAbsent(
+        contactPeerId,
+        () => ConversationThreadSummary(contactPeerId: contactPeerId),
+      );
+    }
+    return summaries;
   }
 }

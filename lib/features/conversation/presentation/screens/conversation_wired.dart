@@ -9,6 +9,7 @@ import 'package:flutter_app/core/media/amplitude_buffer.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/downsample_waveform.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
+import 'package:flutter_app/core/media/media_picker.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
@@ -95,6 +96,7 @@ class ConversationWired extends StatefulWidget {
   final MediaFileManager? mediaFileManager;
   final List<File>? initialAttachments;
   final ImageProcessor? imageProcessor;
+  final MediaPicker? mediaPicker;
   final ImageQualityPreference qualityPreference;
   final ImageQualityPreference videoQualityPreference;
   final ActiveConversationTracker? conversationTracker;
@@ -118,6 +120,7 @@ class ConversationWired extends StatefulWidget {
     this.mediaFileManager,
     this.initialAttachments,
     this.imageProcessor,
+    this.mediaPicker,
     this.qualityPreference = ImageQualityPreference.compressed,
     this.videoQualityPreference = ImageQualityPreference.compressed,
     this.conversationTracker,
@@ -134,6 +137,7 @@ class ConversationWired extends StatefulWidget {
 class _ConversationWiredState extends State<ConversationWired> {
   static const _uuid = Uuid();
   static const _pageSize = 50;
+  static final MediaPicker _defaultMediaPicker = SystemMediaPicker();
 
   IdentityModel? _identity;
   late ContactModel _contact;
@@ -164,6 +168,8 @@ class _ConversationWiredState extends State<ConversationWired> {
   bool _hasOtherFriends = false;
 
   ConversationComposerViewState get _composerViewState => _composerState.value;
+
+  MediaPicker get _mediaPicker => widget.mediaPicker ?? _defaultMediaPicker;
 
   bool get _isRecording => _composerViewState.isRecording;
 
@@ -348,6 +354,9 @@ class _ConversationWiredState extends State<ConversationWired> {
         });
       }
     } catch (e) {
+      if (mounted) {
+        setState(() => _initialLoadDone = true);
+      }
       emitFlowEvent(
         layer: 'FL',
         event: 'CONV_FL_LOAD_ERROR',
@@ -792,11 +801,10 @@ class _ConversationWiredState extends State<ConversationWired> {
 
   Future<void> _pickFromGallery() async {
     try {
-      final picker = ImagePicker();
       final remaining = _maxAttachments - _pendingAttachments.length;
       if (remaining <= 0) return;
 
-      final picked = await picker.pickMultipleMedia();
+      final picked = await _mediaPicker.pickMultipleMedia();
       if (picked.isEmpty || !mounted) return;
 
       final selectedFiles = picked.take(remaining).toList();
@@ -820,8 +828,7 @@ class _ConversationWiredState extends State<ConversationWired> {
 
   Future<void> _pickFromCamera() async {
     try {
-      final picker = ImagePicker();
-      final picked = await picker.pickImage(source: ImageSource.camera);
+      final picked = await _mediaPicker.pickImage(source: ImageSource.camera);
       if (picked == null || !mounted) return;
       if (_pendingAttachments.length >= _maxAttachments) return;
 
@@ -841,8 +848,7 @@ class _ConversationWiredState extends State<ConversationWired> {
 
   Future<void> _pickVideoFromCamera() async {
     try {
-      final picker = ImagePicker();
-      final picked = await picker.pickVideo(source: ImageSource.camera);
+      final picked = await _mediaPicker.pickVideo(source: ImageSource.camera);
       if (picked == null || !mounted) return;
       if (_pendingAttachments.length >= _maxAttachments) return;
 

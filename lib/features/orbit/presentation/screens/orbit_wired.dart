@@ -1,9 +1,6 @@
 import 'dart:async';
-import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:path/path.dart' as p;
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
@@ -34,6 +31,7 @@ import 'package:flutter_app/features/conversation/presentation/navigation/conver
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
+import 'package:flutter_app/features/home/application/identity_avatar_resolver.dart';
 import 'package:flutter_app/features/contacts/application/archive_contact_use_case.dart';
 import 'package:flutter_app/features/groups/application/archive_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/unarchive_group_use_case.dart';
@@ -58,6 +56,7 @@ import 'package:flutter_app/features/introduction/application/accept_introductio
 import 'package:flutter_app/features/introduction/application/pass_introduction_use_case.dart';
 import 'package:flutter_app/features/introduction/application/expire_old_introductions_use_case.dart';
 import 'package:flutter_app/features/introduction/application/load_introductions_use_case.dart';
+import 'package:flutter_app/features/orbit/domain/models/orbit_item.dart';
 import 'package:flutter_app/features/groups/presentation/screens/create_group_picker_wired.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
 import 'package:flutter_app/features/orbit/application/load_orbit_groups_use_case.dart';
@@ -95,6 +94,8 @@ class OrbitWired extends StatefulWidget {
   final IntroductionRepository? introductionRepository;
   final IntroductionListener? introductionListener;
   final String? initialFilterTab;
+  final VoidCallback? debugOnHeaderBuild;
+  final VoidCallback? debugOnListBuild;
 
   const OrbitWired({
     super.key,
@@ -122,6 +123,8 @@ class OrbitWired extends StatefulWidget {
     this.introductionRepository,
     this.introductionListener,
     this.initialFilterTab,
+    this.debugOnHeaderBuild,
+    this.debugOnListBuild,
   });
 
   @override
@@ -140,6 +143,10 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   String _searchQuery = '';
   bool _isSearchTriggerVisible = true;
   final ValueNotifier<Key?> _openRowNotifier = ValueNotifier(null);
+  final ValueNotifier<OrbitHeaderProjection> _headerProjectionNotifier =
+      ValueNotifier<OrbitHeaderProjection>(const OrbitHeaderProjection());
+  final ValueNotifier<OrbitViewProjection> _listProjectionNotifier =
+      ValueNotifier<OrbitViewProjection>(const OrbitViewProjection());
 
   final ScrollController _scrollController = ScrollController();
   final TextEditingController _searchController = TextEditingController();
@@ -165,15 +172,78 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   Set<String> _blockedPeerIds = {};
   final Set<String> _changedContactPeerIds = <String>{};
   final Set<String> _changedGroupIds = <String>{};
-  bool _reloadAllContactsOnExit = false;
-  bool _reloadAllGroupsOnExit = false;
 
   static const _animCurve = Cubic(0.22, 0.61, 0.36, 1);
+
+  OrbitHeaderProjection _buildHeaderProjection() {
+    return OrbitHeaderProjection(
+      userPeerId: _identity?.peerId,
+      userAvatarBytes: _avatarBytes,
+      allFriends: List<OrbitFriend>.unmodifiable(_activeFriends),
+    );
+  }
+
+  OrbitViewProjection _buildListProjection() {
+    final baseFriends = _filterTab == 'archived'
+        ? _archivedFriends
+        : _activeFriends;
+    final displayedFriends = _searchQuery.isEmpty
+        ? baseFriends
+        : baseFriends
+              .where(
+                (friend) => friend.username.toLowerCase().contains(
+                  _searchQuery.toLowerCase().trim(),
+                ),
+              )
+              .toList(growable: false);
+    final groups = _filterTab == 'archived' ? _archivedGroups : _activeGroups;
+
+    final mergedItems = <OrbitItem>[
+      ...displayedFriends.map(OrbitFriendItem.new),
+      if (!_searchActive) ...groups.map(OrbitGroupItem.new),
+    ]..sort((a, b) => b.sortKey.compareTo(a.sortKey));
+
+    return OrbitViewProjection(
+      allFriends: List<OrbitFriend>.unmodifiable(_activeFriends),
+      displayedFriends: List<OrbitFriend>.unmodifiable(displayedFriends),
+      groups: List<OrbitGroup>.unmodifiable(groups),
+      mergedItems: List<OrbitItem>.unmodifiable(mergedItems),
+      activeCount: _activeFriends.length,
+      archivedCount: _archivedFriends.length + _archivedGroups.length,
+      introsCount: _introsCount,
+      introsData: OrbitIntrosViewData(
+        groupedIntros: _groupedIntros,
+        introducerUsernames: _introducerUsernames,
+        ownPeerId: _identity?.peerId ?? '',
+        onAccept: _onAcceptIntro,
+        onPass: _onPassIntro,
+        onSendMessage: _onIntroSendMessage,
+        blockedPeerIds: _blockedPeerIds,
+      ),
+      searchActive: _searchActive,
+      searchQuery: _searchQuery,
+      filterTab: _filterTab,
+    );
+  }
+
+  void _publishHeaderProjection() {
+    _headerProjectionNotifier.value = _buildHeaderProjection();
+  }
+
+  void _publishListProjection() {
+    _listProjectionNotifier.value = _buildListProjection();
+  }
+
+  void _publishAllProjections() {
+    _publishHeaderProjection();
+    _publishListProjection();
+  }
 
   @override
   void initState() {
     super.initState();
     _filterTab = widget.initialFilterTab ?? 'all';
+    _publishAllProjections();
     emitFlowEvent(layer: 'FL', event: 'ORBIT_FL_SCREEN_INIT', details: {});
 
     _collapseController = AnimationController(
@@ -209,18 +279,14 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     final pref = await loadImageQualityPreference(
       secureKeyStore: widget.secureKeyStore,
     );
-    if (mounted) {
-      setState(() => _qualityPreference = pref);
-    }
+    _qualityPreference = pref;
   }
 
   Future<void> _loadVideoQualityPreference() async {
     final pref = await loadVideoQualityPreference(
       secureKeyStore: widget.secureKeyStore,
     );
-    if (mounted) {
-      setState(() => _videoQualityPreference = pref);
-    }
+    _videoQualityPreference = pref;
   }
 
   void _loadIdentity() async {
@@ -228,26 +294,13 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       final identity = await widget.identityRepo.loadIdentity();
       if (identity == null || !mounted) return;
 
-      // Load file-based avatar if avatarVersion is set
-      Uint8List? avatarBytes = identity.avatarBlob;
-      if (identity.avatarVersion != null) {
-        try {
-          final appDir = await getApplicationDocumentsDirectory();
-          final avatarFile = File(
-            p.join(appDir.path, 'media', 'avatars', '${identity.peerId}.jpg'),
-          );
-          if (avatarFile.existsSync()) {
-            avatarBytes = await avatarFile.readAsBytes();
-          }
-        } catch (_) {}
-      }
+      final avatarBytes = await IdentityAvatarResolver.resolve(identity);
 
       if (!mounted) return;
 
-      setState(() {
-        _identity = identity;
-        _avatarBytes = avatarBytes;
-      });
+      _identity = identity;
+      _avatarBytes = avatarBytes;
+      _publishAllProjections();
       // Now that identity is loaded, load introductions
       _loadIntroductions();
     } catch (e) {
@@ -278,11 +331,10 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       for (final f in archived) {
         if (f.isBlocked) blocked.add(f.peerId);
       }
-      setState(() {
-        _activeFriends = active;
-        _archivedFriends = archived;
-        _blockedPeerIds = blocked;
-      });
+      _activeFriends = active;
+      _archivedFriends = archived;
+      _blockedPeerIds = blocked;
+      _publishAllProjections();
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -308,10 +360,9 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         includeArchived: true,
       );
       if (!mounted) return;
-      setState(() {
-        _activeGroups = active;
-        _archivedGroups = archived;
-      });
+      _activeGroups = active;
+      _archivedGroups = archived;
+      _publishListProjection();
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -330,31 +381,29 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       );
       if (!mounted) return;
 
-      setState(() {
-        final activeFriends = List<OrbitFriend>.from(_activeFriends)
-          ..removeWhere((entry) => entry.peerId == peerId);
-        final archivedFriends = List<OrbitFriend>.from(_archivedFriends)
-          ..removeWhere((entry) => entry.peerId == peerId);
-        final blockedPeerIds = Set<String>.from(_blockedPeerIds)
-          ..remove(peerId);
+      final activeFriends = List<OrbitFriend>.from(_activeFriends)
+        ..removeWhere((entry) => entry.peerId == peerId);
+      final archivedFriends = List<OrbitFriend>.from(_archivedFriends)
+        ..removeWhere((entry) => entry.peerId == peerId);
+      final blockedPeerIds = Set<String>.from(_blockedPeerIds)..remove(peerId);
 
-        if (friend != null) {
-          if (friend.isArchived) {
-            archivedFriends.add(friend);
-          } else {
-            activeFriends.add(friend);
-          }
-          if (friend.isBlocked) {
-            blockedPeerIds.add(peerId);
-          }
+      if (friend != null) {
+        if (friend.isArchived) {
+          archivedFriends.add(friend);
+        } else {
+          activeFriends.add(friend);
         }
+        if (friend.isBlocked) {
+          blockedPeerIds.add(peerId);
+        }
+      }
 
-        _sortFriends(activeFriends);
-        _sortFriends(archivedFriends);
-        _activeFriends = activeFriends;
-        _archivedFriends = archivedFriends;
-        _blockedPeerIds = blockedPeerIds;
-      });
+      _sortFriends(activeFriends);
+      _sortFriends(archivedFriends);
+      _activeFriends = activeFriends;
+      _archivedFriends = archivedFriends;
+      _blockedPeerIds = blockedPeerIds;
+      _publishAllProjections();
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -378,25 +427,24 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       );
       if (!mounted) return;
 
-      setState(() {
-        final activeGroups = List<OrbitGroup>.from(_activeGroups)
-          ..removeWhere((entry) => entry.groupId == groupId);
-        final archivedGroups = List<OrbitGroup>.from(_archivedGroups)
-          ..removeWhere((entry) => entry.groupId == groupId);
+      final activeGroups = List<OrbitGroup>.from(_activeGroups)
+        ..removeWhere((entry) => entry.groupId == groupId);
+      final archivedGroups = List<OrbitGroup>.from(_archivedGroups)
+        ..removeWhere((entry) => entry.groupId == groupId);
 
-        if (group != null) {
-          if (group.group.isArchived) {
-            archivedGroups.add(group);
-          } else {
-            activeGroups.add(group);
-          }
+      if (group != null) {
+        if (group.group.isArchived) {
+          archivedGroups.add(group);
+        } else {
+          activeGroups.add(group);
         }
+      }
 
-        _sortGroups(activeGroups);
-        _sortGroups(archivedGroups);
-        _activeGroups = activeGroups;
-        _archivedGroups = archivedGroups;
-      });
+      _sortGroups(activeGroups);
+      _sortGroups(archivedGroups);
+      _activeGroups = activeGroups;
+      _archivedGroups = archivedGroups;
+      _publishListProjection();
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -443,11 +491,10 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         );
       }
       if (!mounted) return;
-      setState(() {
-        _introsCount = pending.length;
-        _groupedIntros = grouped;
-        _introducerUsernames = usernames;
-      });
+      _introsCount = pending.length;
+      _groupedIntros = grouped;
+      _introducerUsernames = usernames;
+      _publishListProjection();
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -465,20 +512,10 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     _changedGroupIds.add(groupId);
   }
 
-  void _markReloadAllContacts() {
-    _reloadAllContactsOnExit = true;
-  }
-
-  void _markReloadAllGroups() {
-    _reloadAllGroupsOnExit = true;
-  }
-
   FeedRouteChanges? _buildRouteChanges() {
     final changes = FeedRouteChanges(
       changedContactPeerIds: Set<String>.from(_changedContactPeerIds),
       changedGroupIds: Set<String>.from(_changedGroupIds),
-      reloadAllContacts: _reloadAllContactsOnExit,
-      reloadAllGroups: _reloadAllGroupsOnExit,
     );
     return changes.hasChanges ? changes : null;
   }
@@ -727,7 +764,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     if (!_searchActive) {
       final shouldShow = !goingDown || offset < 50;
       if (shouldShow != _isSearchTriggerVisible) {
-        setState(() => _isSearchTriggerVisible = shouldShow);
+        _isSearchTriggerVisible = shouldShow;
         if (shouldShow) {
           _searchTriggerController.forward();
         } else {
@@ -738,7 +775,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   }
 
   void _onSearchOpen() {
-    setState(() => _searchActive = true);
+    _searchActive = true;
+    _publishListProjection();
     _collapseController.animateTo(0, curve: _animCurve);
     _searchDockController.forward();
     _searchTriggerController.reverse();
@@ -748,38 +786,30 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   void _onSearchClose() {
     _searchFocusNode.unfocus();
     _searchController.clear();
-    setState(() {
-      _searchActive = false;
-      _searchQuery = '';
-    });
+    _searchActive = false;
+    _searchQuery = '';
+    _publishListProjection();
     _collapseController.animateTo(1.0, curve: _animCurve);
     _searchDockController.reverse();
     _searchTriggerController.forward();
   }
 
   void _onSearchChanged(String query) {
-    setState(() => _searchQuery = query);
+    _searchQuery = query;
+    _publishListProjection();
   }
 
   void _onSearchClear() {
     _searchController.clear();
-    setState(() => _searchQuery = '');
+    _searchQuery = '';
+    _publishListProjection();
     _searchFocusNode.requestFocus();
-  }
-
-  List<OrbitFriend> get _currentTabFriends =>
-      _filterTab == 'archived' ? _archivedFriends : _activeFriends;
-
-  List<OrbitFriend> get _displayedFriends {
-    final base = _currentTabFriends;
-    if (_searchQuery.isEmpty) return base;
-    final q = _searchQuery.toLowerCase().trim();
-    return base.where((f) => f.username.toLowerCase().contains(q)).toList();
   }
 
   void _onFilterChanged(String tab) {
     _openRowNotifier.value = null;
-    setState(() => _filterTab = tab);
+    _filterTab = tab;
+    _publishListProjection();
   }
 
   Future<void> _onArchiveFriend(OrbitFriend friend) async {
@@ -939,6 +969,25 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     );
   }
 
+  Future<void> _applyRouteChanges(Object? result) async {
+    final changes = result is FeedRouteChanges ? result : null;
+    if (changes == null) return;
+
+    if (changes.reloadAllContacts) {
+      await _loadOrbitData();
+    } else if (changes.changedContactPeerIds.isNotEmpty) {
+      await Future.wait(
+        changes.changedContactPeerIds.map(_refreshOrbitFriend),
+      );
+    }
+
+    if (changes.reloadAllGroups) {
+      await _loadGroupData();
+    } else if (changes.changedGroupIds.isNotEmpty) {
+      await Future.wait(changes.changedGroupIds.map(_refreshOrbitGroup));
+    }
+  }
+
   void _onScanQR() {
     Navigator.of(context)
         .push(
@@ -971,12 +1020,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
             ),
           ),
         )
-        .then((_) {
-          _markReloadAllContacts();
-          _markReloadAllGroups();
-          _loadOrbitData();
-          _loadGroupData();
-        });
+        .then((result) => unawaited(_applyRouteChanges(result)));
   }
 
   void _onClose() {
@@ -998,18 +1042,16 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     _searchController.dispose();
     _searchFocusNode.dispose();
     _openRowNotifier.dispose();
+    _headerProjectionNotifier.dispose();
+    _listProjectionNotifier.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return OrbitScreen(
-      identity: _identity,
-      userAvatarBytes: _avatarBytes,
-      allFriends: _activeFriends,
-      displayedFriends: _displayedFriends,
-      searchActive: _searchActive,
-      searchQuery: _searchQuery,
+      headerProjectionListenable: _headerProjectionNotifier,
+      listProjectionListenable: _listProjectionNotifier,
       scrollController: _scrollController,
       searchController: _searchController,
       searchFocusNode: _searchFocusNode,
@@ -1033,9 +1075,6 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       onSearchClose: _onSearchClose,
       onSearchChanged: _onSearchChanged,
       onSearchClear: _onSearchClear,
-      filterTab: _filterTab,
-      activeCount: _activeFriends.length,
-      archivedCount: _archivedFriends.length + _archivedGroups.length,
       onFilterChanged: _onFilterChanged,
       onArchiveFriend: _onArchiveFriend,
       onUnarchiveFriend: _onUnarchiveFriend,
@@ -1043,23 +1082,14 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       onUnblockFriend: _onUnblockFriend,
       onDeleteFriend: _onDeleteFriend,
       openRowNotifier: _openRowNotifier,
-      groups: _filterTab == 'archived' ? _archivedGroups : _activeGroups,
       onGroupTap: _onGroupTap,
       onCreateGroup: _onCreateGroup,
       onArchiveGroup: _onArchiveGroup,
       onUnarchiveGroup: _onUnarchiveGroup,
       onDeleteGroup: _onDeleteGroup,
-      introsCount: _introsCount,
-      introsData: OrbitIntrosViewData(
-        groupedIntros: _groupedIntros,
-        introducerUsernames: _introducerUsernames,
-        ownPeerId: _identity?.peerId ?? '',
-        onAccept: _onAcceptIntro,
-        onPass: _onPassIntro,
-        onSendMessage: _onIntroSendMessage,
-        blockedPeerIds: _blockedPeerIds,
-      ),
       onIntroBannerTap: () => _onFilterChanged('intros'),
+      onHeaderBuild: widget.debugOnHeaderBuild,
+      onListBuild: widget.debugOnListBuild,
     );
   }
 
@@ -1194,9 +1224,6 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
             ),
           ),
         )
-        .then((_) {
-          _markReloadAllGroups();
-          _loadGroupData();
-        });
+        .then((result) => unawaited(_applyRouteChanges(result)));
   }
 }

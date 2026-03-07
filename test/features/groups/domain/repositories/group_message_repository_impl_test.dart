@@ -39,6 +39,8 @@ void main() {
           dbExistsGroupMessageByContent(db, groupId, senderPeerId, text, timestamp),
       dbDeleteGroupMessagesForGroup: (groupId) =>
           dbDeleteGroupMessagesForGroup(db, groupId),
+      dbLoadGroupThreadSummaries: (groupIds) =>
+          dbLoadGroupThreadSummaries(db, groupIds),
     );
   });
 
@@ -148,6 +150,29 @@ void main() {
 
       final result = await repo.getLatestMessage('group-1');
       expect(result!.id, 'msg-new');
+    });
+
+    test('getGroupThreadSummaries returns latest rows and zero defaults', () async {
+      await repo.saveMessage(makeMessage(
+        id: 'msg-old',
+        groupId: 'group-1',
+        timestamp: DateTime.utc(2026, 1, 1),
+      ));
+      await repo.saveMessage(makeMessage(
+        id: 'msg-new',
+        groupId: 'group-1',
+        timestamp: DateTime.utc(2026, 1, 2),
+      ));
+
+      final summaries = await repo.getGroupThreadSummaries([
+        'group-1',
+        'group-2',
+      ]);
+
+      expect(summaries['group-1']!.latestMessage!.id, 'msg-new');
+      expect(summaries['group-1']!.unreadCount, 2);
+      expect(summaries['group-2']!.latestMessage, isNull);
+      expect(summaries['group-2']!.unreadCount, 0);
     });
   });
 

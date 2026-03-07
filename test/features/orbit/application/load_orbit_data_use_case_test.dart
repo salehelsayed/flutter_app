@@ -2,7 +2,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/models/conversation_thread_summary.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/conversation_thread_summary_repository.dart';
 import 'package:flutter_app/features/orbit/application/load_orbit_data_use_case.dart';
 
 // -- Fake Contact Repository --
@@ -49,10 +51,13 @@ class FakeContactRepository implements ContactRepository {
 }
 
 // -- Fake Message Repository --
-class FakeMessageRepository implements MessageRepository {
+class FakeMessageRepository
+    implements MessageRepository, ConversationThreadSummaryRepository {
   final Map<String, int> messageCounts;
   final Map<String, ConversationMessage?> latestMessages;
   final Map<String, int> unreadCounts;
+  int getConversationThreadSummariesCallCount = 0;
+  int getConversationThreadSummaryCallCount = 0;
 
   FakeMessageRepository({
     this.messageCounts = const {},
@@ -106,6 +111,35 @@ class FakeMessageRepository implements MessageRepository {
   Future<List<ConversationMessage>> getUnackedOutgoingMessages({
     required Duration olderThan,
   }) async => [];
+
+  @override
+  Future<ConversationThreadSummary> getConversationThreadSummary(
+    String contactPeerId,
+  ) async {
+    getConversationThreadSummaryCallCount++;
+    return ConversationThreadSummary(
+      contactPeerId: contactPeerId,
+      messageCount: messageCounts[contactPeerId] ?? 0,
+      unreadCount: unreadCounts[contactPeerId] ?? 0,
+      latestMessage: latestMessages[contactPeerId],
+    );
+  }
+
+  @override
+  Future<Map<String, ConversationThreadSummary>> getConversationThreadSummaries(
+    Iterable<String> contactPeerIds,
+  ) async {
+    getConversationThreadSummariesCallCount++;
+    return {
+      for (final contactPeerId in contactPeerIds)
+        contactPeerId: ConversationThreadSummary(
+          contactPeerId: contactPeerId,
+          messageCount: messageCounts[contactPeerId] ?? 0,
+          unreadCount: unreadCounts[contactPeerId] ?? 0,
+          latestMessage: latestMessages[contactPeerId],
+        ),
+    };
+  }
 }
 
 ContactModel _makeContact(String peerId, {bool isArchived = false}) {
@@ -130,13 +164,15 @@ void main() {
         _makeContact('peer-C', isArchived: true),
       ];
 
+      final repo = FakeMessageRepository();
       final result = await loadOrbitData(
         contactRepo: FakeContactRepository(contacts: contacts),
-        messageRepo: FakeMessageRepository(),
+        messageRepo: repo,
       );
 
       expect(result.length, 2);
       expect(result.any((f) => f.peerId == 'peer-C'), isFalse);
+      expect(repo.getConversationThreadSummariesCallCount, 1);
     });
 
     test('includeArchived=true returns only archived contacts', () async {
@@ -146,14 +182,16 @@ void main() {
         _makeContact('peer-C', isArchived: true),
       ];
 
+      final repo = FakeMessageRepository();
       final result = await loadOrbitData(
         contactRepo: FakeContactRepository(contacts: contacts),
-        messageRepo: FakeMessageRepository(),
+        messageRepo: repo,
         includeArchived: true,
       );
 
       expect(result.length, 1);
       expect(result[0].peerId, 'peer-C');
+      expect(repo.getConversationThreadSummariesCallCount, 1);
     });
 
     test('sorts by most recent message first', () async {
@@ -180,27 +218,31 @@ void main() {
         createdAt: '2026-02-01T00:00:00.000Z',
       );
 
+      final repo = FakeMessageRepository(
+        messageCounts: {'peer-A': 10, 'peer-B': 5},
+        latestMessages: {'peer-A': msgA, 'peer-B': msgB},
+      );
       final result = await loadOrbitData(
         contactRepo: FakeContactRepository(contacts: contacts),
-        messageRepo: FakeMessageRepository(
-          messageCounts: {'peer-A': 10, 'peer-B': 5},
-          latestMessages: {'peer-A': msgA, 'peer-B': msgB},
-        ),
+        messageRepo: repo,
       );
 
       // peer-B has the more recent message, so it comes first
       // even though peer-A has more total messages
       expect(result[0].peerId, 'peer-B');
       expect(result[1].peerId, 'peer-A');
+      expect(repo.getConversationThreadSummariesCallCount, 1);
     });
 
     test('returns empty list when no contacts', () async {
+      final repo = FakeMessageRepository();
       final result = await loadOrbitData(
         contactRepo: FakeContactRepository(),
-        messageRepo: FakeMessageRepository(),
+        messageRepo: repo,
       );
 
       expect(result, isEmpty);
+      expect(repo.getConversationThreadSummariesCallCount, 0);
     });
 
     test('loads a single friend snapshot by peer id', () async {
@@ -215,13 +257,14 @@ void main() {
         createdAt: '2026-03-01T00:00:00.000Z',
       );
 
+      final repo = FakeMessageRepository(
+        messageCounts: const {'peer-A': 3},
+        latestMessages: {'peer-A': msg},
+        unreadCounts: const {'peer-A': 2},
+      );
       final result = await loadOrbitFriendSnapshot(
         contactRepo: FakeContactRepository(contacts: [_makeContact('peer-A')]),
-        messageRepo: FakeMessageRepository(
-          messageCounts: const {'peer-A': 3},
-          latestMessages: {'peer-A': msg},
-          unreadCounts: const {'peer-A': 2},
-        ),
+        messageRepo: repo,
         contactPeerId: 'peer-A',
       );
 
@@ -230,6 +273,7 @@ void main() {
       expect(result.messageCount, 3);
       expect(result.lastActivity, 'Most recent');
       expect(result.unreadCount, 2);
+      expect(repo.getConversationThreadSummaryCallCount, 1);
     });
 
     test('returns null when a friend snapshot no longer exists', () async {

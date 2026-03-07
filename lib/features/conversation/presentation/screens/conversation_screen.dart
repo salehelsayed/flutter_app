@@ -205,37 +205,7 @@ class _ConversationScreenState extends State<ConversationScreen> {
             child: AnimatedSwitcher(
               duration: const Duration(milliseconds: 400),
               child: widget.messages.isEmpty
-                  ? widget.showIntroBanner && widget.onMakeIntroductions != null
-                        ? Column(
-                            key: const ValueKey('empty-with-banner'),
-                            children: [
-                              Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 16,
-                                  vertical: 8,
-                                ),
-                                child: IntroBanner(
-                                  contactUsername:
-                                      widget.bannerContactUsername ??
-                                      widget.contactUsername,
-                                  onMakeIntroductions:
-                                      widget.onMakeIntroductions!,
-                                  onMaybeLater: widget.onMaybeLater ?? () {},
-                                ),
-                              ),
-                              Expanded(
-                                child: EmptyConversationState(
-                                  contactPeerId: widget.contactPeerId,
-                                  connectionDate: widget.connectionDate,
-                                ),
-                              ),
-                            ],
-                          )
-                        : EmptyConversationState(
-                            key: const ValueKey('empty'),
-                            contactPeerId: widget.contactPeerId,
-                            connectionDate: widget.connectionDate,
-                          )
+                  ? _buildEmptyOrLoadingState()
                   : _buildMessageList(),
             ),
           ),
@@ -282,6 +252,39 @@ class _ConversationScreenState extends State<ConversationScreen> {
           amplitudeValues: composerState.amplitudeValues,
         ),
       ],
+    );
+  }
+
+  Widget _buildEmptyOrLoadingState() {
+    if (!widget.initialLoadDone) {
+      return const _ConversationLoadingShell();
+    }
+    if (widget.showIntroBanner && widget.onMakeIntroductions != null) {
+      return Column(
+        key: const ValueKey('empty-with-banner'),
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: IntroBanner(
+              contactUsername:
+                  widget.bannerContactUsername ?? widget.contactUsername,
+              onMakeIntroductions: widget.onMakeIntroductions!,
+              onMaybeLater: widget.onMaybeLater ?? () {},
+            ),
+          ),
+          Expanded(
+            child: EmptyConversationState(
+              contactPeerId: widget.contactPeerId,
+              connectionDate: widget.connectionDate,
+            ),
+          ),
+        ],
+      );
+    }
+    return EmptyConversationState(
+      key: const ValueKey('empty'),
+      contactPeerId: widget.contactPeerId,
+      connectionDate: widget.connectionDate,
     );
   }
 
@@ -646,4 +649,80 @@ class _DisplayItem {
     message: msg,
     isLastAndWasEmpty: isLastAndWasEmpty,
   );
+}
+
+class _ConversationLoadingShell extends StatelessWidget {
+  const _ConversationLoadingShell();
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      key: const ValueKey('conversation-loading-shell'),
+      physics: const NeverScrollableScrollPhysics(),
+      padding: const EdgeInsets.fromLTRB(16, 18, 16, 24),
+      children: const [
+        _ConversationLoadingBubble(index: 0, alignment: Alignment.centerLeft),
+        SizedBox(height: 14),
+        _ConversationLoadingBubble(index: 1, alignment: Alignment.centerRight),
+        SizedBox(height: 14),
+        _ConversationLoadingBubble(index: 2, alignment: Alignment.centerLeft),
+      ],
+    );
+  }
+}
+
+class _ConversationLoadingBubble extends StatelessWidget {
+  final int index;
+  final Alignment alignment;
+
+  const _ConversationLoadingBubble({
+    required this.index,
+    required this.alignment,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: alignment,
+      child: Container(
+        key: ValueKey('conversation-loading-bubble-$index'),
+        width: index == 1 ? 210 : 240,
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(22),
+          color: const Color.fromRGBO(255, 255, 255, 0.08),
+          border: Border.all(color: const Color.fromRGBO(255, 255, 255, 0.1)),
+        ),
+        child: const Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _ConversationLoadingBar(widthFactor: 0.78),
+            SizedBox(height: 10),
+            _ConversationLoadingBar(widthFactor: 0.52),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ConversationLoadingBar extends StatelessWidget {
+  final double widthFactor;
+
+  const _ConversationLoadingBar({required this.widthFactor});
+
+  @override
+  Widget build(BuildContext context) {
+    return FractionallySizedBox(
+      widthFactor: widthFactor,
+      alignment: Alignment.centerLeft,
+      child: Container(
+        height: 12,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(999),
+          color: const Color.fromRGBO(255, 255, 255, 0.12),
+        ),
+      ),
+    );
+  }
 }
