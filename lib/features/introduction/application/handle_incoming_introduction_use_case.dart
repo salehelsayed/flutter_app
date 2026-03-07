@@ -1,3 +1,4 @@
+import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
@@ -21,6 +22,7 @@ Future<(HandleIntroductionResult, IntroductionModel?)>
   required ContactRepository contactRepo,
   required String ownPeerId,
   MessageRepository? messageRepo,
+  Bridge? bridge,
 }) async {
   emitFlowEvent(
     layer: 'UC',
@@ -36,6 +38,7 @@ Future<(HandleIntroductionResult, IntroductionModel?)>
       return await _handleSend(
         payload: payload,
         introRepo: introRepo,
+        contactRepo: contactRepo,
         ownPeerId: ownPeerId,
       );
     } else if (payload.action == 'accept' || payload.action == 'pass') {
@@ -45,6 +48,7 @@ Future<(HandleIntroductionResult, IntroductionModel?)>
         contactRepo: contactRepo,
         ownPeerId: ownPeerId,
         messageRepo: messageRepo,
+        bridge: bridge,
       );
     }
 
@@ -70,6 +74,7 @@ Future<(HandleIntroductionResult, IntroductionModel?)>
 Future<(HandleIntroductionResult, IntroductionModel?)> _handleSend({
   required IntroductionPayload payload,
   required IntroductionRepository introRepo,
+  required ContactRepository contactRepo,
   required String ownPeerId,
 }) async {
   // Check if introduction already exists
@@ -100,6 +105,32 @@ Future<(HandleIntroductionResult, IntroductionModel?)> _handleSend({
 
   await introRepo.saveIntroduction(model);
 
+  // Check if the other party is already a contact
+  final isRecipient = ownPeerId == payload.recipientId;
+  final otherPeerId = isRecipient
+      ? (payload.introducedId ?? '')
+      : (payload.recipientId ?? '');
+
+  if (otherPeerId.isNotEmpty && await contactRepo.contactExists(otherPeerId)) {
+    await introRepo.updateOverallStatus(
+      model.id,
+      IntroductionOverallStatus.alreadyConnected,
+    );
+
+    final updated = await introRepo.getIntroduction(model.id);
+
+    emitFlowEvent(
+      layer: 'UC',
+      event: 'HANDLE_INCOMING_INTRO_ALREADY_CONNECTED',
+      details: {
+        'introductionId': payload.introductionId,
+        'otherPeerId': otherPeerId,
+      },
+    );
+
+    return (HandleIntroductionResult.success, updated ?? model);
+  }
+
   emitFlowEvent(
     layer: 'UC',
     event: 'HANDLE_INCOMING_INTRO_SAVED',
@@ -118,6 +149,7 @@ Future<(HandleIntroductionResult, IntroductionModel?)> _handleResponse({
   required ContactRepository contactRepo,
   required String ownPeerId,
   MessageRepository? messageRepo,
+  Bridge? bridge,
 }) async {
   final existing = await introRepo.getIntroduction(payload.introductionId);
   if (existing == null) {
@@ -180,6 +212,7 @@ Future<(HandleIntroductionResult, IntroductionModel?)> _handleResponse({
         contactRepo: contactRepo,
         ownPeerId: ownPeerId,
         messageRepo: messageRepo,
+        bridge: bridge,
       );
     }
   }

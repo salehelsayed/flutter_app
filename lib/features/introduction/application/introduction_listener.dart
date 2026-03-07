@@ -211,6 +211,7 @@ class IntroductionListener {
         contactRepo: contactRepo,
         ownPeerId: ownPeerId,
         messageRepo: messageRepo,
+        bridge: bridge,
       );
 
       if (result == HandleIntroductionResult.success && model != null) {
@@ -218,16 +219,22 @@ class IntroductionListener {
         if (payload.action == 'send') {
           _introReceivedController.add(model);
 
-          // Insert system message: "[introducer] introduced [introduced] to you"
+          final isAlreadyConnected =
+              model.status == IntroductionOverallStatus.alreadyConnected;
+
+          // Insert system message
           if (messageRepo != null) {
             final introducerName =
                 model.introducerUsername ?? 'Someone';
             final introducedName =
                 model.introducedUsername ?? 'someone';
+            final text = isAlreadyConnected
+                ? '$introducerName introduced $introducedName to you — you\'re already connected'
+                : '$introducerName introduced $introducedName to you';
             await insertIntroSystemMessage(
               messageRepo: messageRepo!,
               contactPeerId: model.introducerId,
-              text: '$introducerName introduced $introducedName to you',
+              text: text,
               ownPeerId: ownPeerId,
             );
           }
@@ -236,10 +243,14 @@ class IntroductionListener {
           if (notificationService != null) {
             final introducerName =
                 payload.introducerUsername ?? 'Someone';
+            final introducedName =
+                payload.introducedUsername ?? 'someone';
+            final body = isAlreadyConnected
+                ? '$introducerName introduced you to $introducedName — you\'re already connected'
+                : '$introducerName introduced you to $introducedName';
             await notificationService!.showNotification(
               title: 'New Introduction',
-              body:
-                  '$introducerName introduced you to ${payload.introducedUsername ?? "someone"}',
+              body: body,
               payload: 'intros',
             );
           }

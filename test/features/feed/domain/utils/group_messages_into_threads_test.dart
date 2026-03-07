@@ -12,6 +12,7 @@ ConversationMessage _msg({
   String? readAt,
   String status = 'delivered',
   String? quotedMessageId,
+  String? transport,
 }) {
   return ConversationMessage(
     id: id,
@@ -24,6 +25,7 @@ ConversationMessage _msg({
     createdAt: timestamp,
     readAt: readAt,
     quotedMessageId: quotedMessageId,
+    transport: transport,
   );
 }
 
@@ -453,6 +455,51 @@ void main() {
       expect(result[0].messages[0].quotedMessageId, isNull);
       expect(result[0].messages[1].quotedMessageId, 'msg-1');
       expect(result[0].messages[2].quotedMessageId, isNull);
+    });
+
+    test('system messages are excluded from feed threads', () {
+      final result = groupMessagesIntoThreads(
+        allMessages: [
+          _msg(
+            id: 'msg-1',
+            contactPeerId: 'peer-A',
+            text: 'Hello',
+            timestamp: '2026-02-09T12:00:00.000Z',
+            isIncoming: true,
+          ),
+          _msg(
+            id: 'msg-sys',
+            contactPeerId: 'peer-A',
+            text: 'Connected through Bob',
+            timestamp: '2026-02-09T12:01:00.000Z',
+            isIncoming: false,
+            transport: 'system',
+          ),
+        ],
+        contactUsernames: {'peer-A': 'Alice'},
+      );
+
+      expect(result.length, 1);
+      expect(result[0].messages.length, 1);
+      expect(result[0].messages[0].text, 'Hello');
+    });
+
+    test('only system messages produces empty result', () {
+      final result = groupMessagesIntoThreads(
+        allMessages: [
+          _msg(
+            id: 'msg-sys',
+            contactPeerId: 'peer-A',
+            text: 'Connected through Bob',
+            timestamp: '2026-02-09T12:00:00.000Z',
+            isIncoming: false,
+            transport: 'system',
+          ),
+        ],
+        contactUsernames: {'peer-A': 'Alice'},
+      );
+
+      expect(result, isEmpty);
     });
 
     test('burst within same contact stays in one thread', () {

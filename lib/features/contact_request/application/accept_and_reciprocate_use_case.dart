@@ -37,10 +37,25 @@ Future<AcceptContactRequestResult> acceptAndReciprocateContactRequest({
 
   // 2. On success, fire-and-forget reciprocal request
   if (result == AcceptContactRequestResult.success) {
-    // Speculatively download the contact's profile picture (fire and forget)
+    // Speculatively download the contact's profile picture (fire and forget).
+    // If the relay doesn't have it yet (peer hasn't uploaded), retry after a
+    // short delay — the most common failure is a timing race.
     () async {
       try {
-        final updated = await downloadProfilePictureFn(
+        var updated = await downloadProfilePictureFn(
+          bridge: bridge,
+          contactRepo: contactRepo,
+          ownerPeerId: peerId,
+          avatarVersion: 'initial',
+        );
+        if (updated != null) {
+          onProfileDownloaded?.call(updated);
+          return;
+        }
+
+        // Retry once after delay — relay may not have the profile yet
+        await Future<void>.delayed(const Duration(seconds: 5));
+        updated = await downloadProfilePictureFn(
           bridge: bridge,
           contactRepo: contactRepo,
           ownerPeerId: peerId,

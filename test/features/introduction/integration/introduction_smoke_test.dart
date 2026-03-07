@@ -1,8 +1,11 @@
+import 'dart:convert';
+
 import 'package:flutter_app/features/introduction/application/check_intro_banner_use_case.dart';
 import 'package:flutter_app/features/introduction/application/load_introductions_use_case.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/fake_p2p_network.dart';
 import '../../../shared/fakes/intro_test_user.dart';
 
@@ -344,6 +347,66 @@ void main() {
       expect(cFinal!.status, IntroductionOverallStatus.mutualAccepted);
       expect(bFinal.recipientStatus, IntroductionStatus.accepted);
       expect(bFinal.introducedStatus, IntroductionStatus.accepted);
+    });
+
+    test('accept happy path encrypts notification to stranger via v2', () async {
+      // A sends intros for C to B
+      final friendC = await userA.contactRepo.getContact('peer-C');
+      final intros = await userA.sendIntroductions(
+        recipientPeerId: 'peer-B',
+        friends: [friendC!],
+      );
+
+      await Future.delayed(const Duration(milliseconds: 100));
+
+      // Seed intros on B and C repos
+      final introBC = intros.first;
+      await userB.introRepo.saveIntroduction(introBC);
+      await userC.introRepo.saveIntroduction(introBC);
+
+      // B does NOT have C as a contact (stranger scenario)
+      // B only has A as a contact (the introducer)
+      // But intro record has C's ML-KEM key
+
+      // Clear bridge command log
+      final bridgeB = userB.bridge as PassthroughCryptoBridge;
+      bridgeB.commandLog.clear();
+
+      // B accepts
+      await userB.acceptIntro(introBC.id);
+
+      // B should have called message.encrypt twice:
+      // once for introducer (A, who is a contact) and
+      // once for stranger (C, using intro record key)
+      final encryptCalls =
+          bridgeB.commandLog.where((c) => c == 'message.encrypt').length;
+      expect(encryptCalls, 2,
+          reason: 'encrypt called for introducer + stranger');
+    });
+
+    test('pass notification to stranger uses v2 encryption', () async {
+      final friendC = await userA.contactRepo.getContact('peer-C');
+      final intros = await userA.sendIntroductions(
+        recipientPeerId: 'peer-B',
+        friends: [friendC!],
+      );
+
+      await Future.delayed(const Duration(milliseconds: 100));
+
+      final introBC = intros.first;
+      await userB.introRepo.saveIntroduction(introBC);
+
+      final bridgeB = userB.bridge as PassthroughCryptoBridge;
+      bridgeB.commandLog.clear();
+
+      // B passes
+      await userB.passIntro(introBC.id);
+
+      // Same encryption expectation
+      final encryptCalls =
+          bridgeB.commandLog.where((c) => c == 'message.encrypt').length;
+      expect(encryptCalls, 2,
+          reason: 'encrypt called for introducer + stranger');
     });
 
     test('full cross-step chain: send → accept → verify', () async {

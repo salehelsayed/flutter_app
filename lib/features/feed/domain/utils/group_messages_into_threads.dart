@@ -14,11 +14,14 @@ List<ThreadFeedItem> groupMessagesIntoThreads({
   required Map<String, String> contactUsernames,
   Map<String, bool> contactBlocked = const {},
 }) {
-  if (allMessages.isEmpty) return [];
+  // Filter out system messages (e.g. "Connected through X") from feed threads
+  final filteredMessages =
+      allMessages.where((m) => m.transport != 'system').toList();
+  if (filteredMessages.isEmpty) return [];
 
   // Group all messages by contact
   final Map<String, List<ConversationMessage>> byContact = {};
-  for (final msg in allMessages) {
+  for (final msg in filteredMessages) {
     byContact.putIfAbsent(msg.contactPeerId, () => []).add(msg);
   }
 

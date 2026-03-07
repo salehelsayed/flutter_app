@@ -6,7 +6,8 @@ import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart'
 /// Dialog shown when receiving a contact request.
 ///
 /// Displays the sender's avatar and username with Accept/Decline buttons.
-class ContactRequestDialog extends StatelessWidget {
+/// Buttons are disabled after the first tap to prevent double-tap issues.
+class ContactRequestDialog extends StatefulWidget {
   final ContactRequestModel request;
   final VoidCallback onAccept;
   final VoidCallback onDecline;
@@ -17,6 +18,25 @@ class ContactRequestDialog extends StatelessWidget {
     required this.onAccept,
     required this.onDecline,
   });
+
+  @override
+  State<ContactRequestDialog> createState() => _ContactRequestDialogState();
+}
+
+class _ContactRequestDialogState extends State<ContactRequestDialog> {
+  bool _isProcessing = false;
+
+  void _handleAccept() {
+    if (_isProcessing) return;
+    setState(() => _isProcessing = true);
+    widget.onAccept();
+  }
+
+  void _handleDecline() {
+    if (_isProcessing) return;
+    setState(() => _isProcessing = true);
+    widget.onDecline();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -33,11 +53,11 @@ class ContactRequestDialog extends StatelessWidget {
         children: [
           const SizedBox(height: 16),
           // Sender's ring avatar
-          UserAvatar(peerId: request.peerId, size: 80),
+          UserAvatar(peerId: widget.request.peerId, size: 80),
           const SizedBox(height: 16),
           // Username
           Text(
-            request.username,
+            widget.request.username,
             style: const TextStyle(
               color: Colors.white,
               fontSize: 20,
@@ -62,7 +82,7 @@ class ContactRequestDialog extends StatelessWidget {
               // Decline button
               Expanded(
                 child: OutlinedButton(
-                  onPressed: onDecline,
+                  onPressed: _isProcessing ? null : _handleDecline,
                   style: OutlinedButton.styleFrom(
                     foregroundColor: AppColors.textMuted,
                     side: BorderSide(
@@ -86,7 +106,7 @@ class ContactRequestDialog extends StatelessWidget {
               // Accept button
               Expanded(
                 child: ElevatedButton(
-                  onPressed: onAccept,
+                  onPressed: _isProcessing ? null : _handleAccept,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppColors.primaryAccent,
                     foregroundColor: Colors.white,

@@ -46,6 +46,7 @@ class ConnectionFeedItem extends FeedItem {
   final bool isBlocked;
   final String? connectedVia;
   final String? introducedBy;
+  final String? introducedByPeerId;
 
   const ConnectionFeedItem({
     required super.id,
@@ -56,6 +57,7 @@ class ConnectionFeedItem extends FeedItem {
     this.isBlocked = false,
     this.connectedVia,
     this.introducedBy,
+    this.introducedByPeerId,
   }) : super(type: FeedItemType.connection);
 
   /// Creates a ConnectionFeedItem from a ContactModel.
@@ -68,6 +70,7 @@ class ConnectionFeedItem extends FeedItem {
       contactAvatarPath: contact.avatarPath,
       isBlocked: contact.isBlocked,
       introducedBy: contact.introducedBy,
+      introducedByPeerId: contact.introducedByPeerId,
     );
   }
 }
