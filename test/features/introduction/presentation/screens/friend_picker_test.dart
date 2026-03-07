@@ -6,20 +6,20 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   late List<ContactModel> friends;
 
-  ContactModel _makeContact(String id, String name) => ContactModel(
-        peerId: id,
-        publicKey: 'pk-$id',
-        rendezvous: '/ip4/127.0.0.1/tcp/0',
-        username: name,
-        signature: 'sig-$id',
-        scannedAt: DateTime.now().toUtc().toIso8601String(),
-      );
+  ContactModel makeContact(String id, String name) => ContactModel(
+    peerId: id,
+    publicKey: 'pk-$id',
+    rendezvous: '/ip4/127.0.0.1/tcp/0',
+    username: name,
+    signature: 'sig-$id',
+    scannedAt: DateTime.now().toUtc().toIso8601String(),
+  );
 
   setUp(() {
     friends = [
-      _makeContact('peer-A', 'Alice'),
-      _makeContact('peer-B', 'Bob'),
-      _makeContact('peer-C', 'Charlie'),
+      makeContact('peer-A', 'Alice'),
+      makeContact('peer-B', 'Bob'),
+      makeContact('peer-C', 'Charlie'),
     ];
   });
 
@@ -62,6 +62,10 @@ void main() {
     expect(find.text('Alice'), findsOneWidget);
     expect(find.text('Bob'), findsOneWidget);
     expect(find.text('Charlie'), findsOneWidget);
+
+    final listView = tester.widget<ListView>(find.byType(ListView));
+    expect(listView.shrinkWrap, isFalse);
+    expect(listView.itemExtent, 60);
   });
 
   testWidgets('search filters list by name', (tester) async {
@@ -78,16 +82,11 @@ void main() {
 
   testWidgets('empty state when no available friends', (tester) async {
     await tester.pumpWidget(buildSubject(availableFriends: []));
-    expect(
-      find.text('No friends available to introduce'),
-      findsOneWidget,
-    );
+    expect(find.text('No friends available to introduce'), findsOneWidget);
   });
 
   testWidgets('selecting a friend shows check icon', (tester) async {
-    await tester.pumpWidget(
-      buildSubject(selectedPeerIds: {'peer-A'}),
-    );
+    await tester.pumpWidget(buildSubject(selectedPeerIds: {'peer-A'}));
     expect(find.byIcon(Icons.check), findsOneWidget);
   });
 
@@ -115,9 +114,7 @@ void main() {
   });
 
   testWidgets('button is enabled when friends selected', (tester) async {
-    await tester.pumpWidget(
-      buildSubject(selectedPeerIds: {'peer-A'}),
-    );
+    await tester.pumpWidget(buildSubject(selectedPeerIds: {'peer-A'}));
     final button = tester.widget<ElevatedButton>(find.byType(ElevatedButton));
     expect(button.onPressed, isNotNull);
   });
@@ -152,9 +149,7 @@ void main() {
 
   testWidgets('close button triggers onClose', (tester) async {
     var closeCalled = false;
-    await tester.pumpWidget(
-      buildSubject(onClose: () => closeCalled = true),
-    );
+    await tester.pumpWidget(buildSubject(onClose: () => closeCalled = true));
 
     await tester.tap(find.byIcon(Icons.close));
     await tester.pump();
@@ -162,8 +157,9 @@ void main() {
     expect(closeCalled, isTrue);
   });
 
-  testWidgets('multiple friends can be selected simultaneously',
-      (tester) async {
+  testWidgets('multiple friends can be selected simultaneously', (
+    tester,
+  ) async {
     await tester.pumpWidget(
       buildSubject(selectedPeerIds: {'peer-A', 'peer-B', 'peer-C'}),
     );

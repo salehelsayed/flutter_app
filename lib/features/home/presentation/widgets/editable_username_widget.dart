@@ -96,26 +96,29 @@ class _EditableUsernameWidgetState extends State<EditableUsernameWidget> {
               fontWeight: FontWeight.w600,
             ),
           ),
-          IntrinsicWidth(
-            child: TextField(
-              controller: _controller,
-              focusNode: _focusNode,
-              maxLength: 20,
-              inputFormatters: [
-                FilteringTextInputFormatter.allow(RegExp(r'[a-zA-Z0-9_\-.]')),
-              ],
-              style: const TextStyle(
-                color: AppColors.textPrimary,
-                fontSize: 15,
-                fontWeight: FontWeight.w600,
+          Flexible(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 180),
+              child: TextField(
+                controller: _controller,
+                focusNode: _focusNode,
+                maxLength: 20,
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(RegExp(r'[a-zA-Z0-9_\-.]')),
+                ],
+                style: const TextStyle(
+                  color: AppColors.textPrimary,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                ),
+                decoration: const InputDecoration(
+                  isDense: true,
+                  contentPadding: EdgeInsets.zero,
+                  border: InputBorder.none,
+                  counterText: '',
+                ),
+                onSubmitted: (_) => _finishEditing(),
               ),
-              decoration: const InputDecoration(
-                isDense: true,
-                contentPadding: EdgeInsets.zero,
-                border: InputBorder.none,
-                counterText: '',
-              ),
-              onSubmitted: (_) => _finishEditing(),
             ),
           ),
         ],
@@ -147,11 +150,7 @@ class _EditableUsernameWidgetState extends State<EditableUsernameWidget> {
             ),
           ),
           const SizedBox(width: 8),
-          Icon(
-            Icons.edit,
-            color: AppColors.textMuted,
-            size: 14,
-          ),
+          Icon(Icons.edit, color: AppColors.textMuted, size: 14),
         ],
       ),
     );

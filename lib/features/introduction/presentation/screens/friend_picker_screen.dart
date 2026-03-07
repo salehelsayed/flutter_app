@@ -31,8 +31,9 @@ class FriendPickerScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final filtered = availableFriends
-        .where((c) =>
-            c.username.toLowerCase().contains(searchQuery.toLowerCase()))
+        .where(
+          (c) => c.username.toLowerCase().contains(searchQuery.toLowerCase()),
+        )
         .toList();
 
     final selectionCount = selectedPeerIds.length;
@@ -96,10 +97,7 @@ class FriendPickerScreen extends StatelessWidget {
               ),
               child: TextField(
                 onChanged: onSearchChanged,
-                style: const TextStyle(
-                  fontSize: 14,
-                  color: Color(0xF2FFFFFF),
-                ),
+                style: const TextStyle(fontSize: 14, color: Color(0xF2FFFFFF)),
                 decoration: InputDecoration(
                   hintText: 'Search friends...',
                   hintStyle: TextStyle(
@@ -138,13 +136,14 @@ class FriendPickerScreen extends StatelessWidget {
                     ),
                   )
                 : ListView.builder(
-                    shrinkWrap: true,
                     padding: const EdgeInsets.symmetric(horizontal: 16),
+                    itemExtent: 60,
                     itemCount: filtered.length,
                     itemBuilder: (context, index) {
                       final friend = filtered[index];
-                      final isSelected =
-                          selectedPeerIds.contains(friend.peerId);
+                      final isSelected = selectedPeerIds.contains(
+                        friend.peerId,
+                      );
                       return _FriendPickerRow(
                         friend: friend,
                         isSelected: isSelected,
@@ -163,9 +162,7 @@ class FriendPickerScreen extends StatelessWidget {
               12 + MediaQuery.of(context).padding.bottom,
             ),
             decoration: const BoxDecoration(
-              border: Border(
-                top: BorderSide(color: Color(0x14FFFFFF)),
-              ),
+              border: Border(top: BorderSide(color: Color(0x14FFFFFF))),
             ),
             child: SizedBox(
               width: double.infinity,

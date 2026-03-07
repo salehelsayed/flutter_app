@@ -6,7 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   final now = DateTime.now().toUtc().toIso8601String();
 
-  IntroductionModel _makeIntro({
+  IntroductionModel makeIntro({
     required String id,
     String introducerId = 'peer-A',
     String recipientId = 'peer-B',
@@ -52,107 +52,122 @@ void main() {
 
   group('IntrosTab', () {
     testWidgets('shows empty state when no introductions', (tester) async {
-      await tester.pumpWidget(buildWidget(
-        groupedIntros: {},
-        introducerUsernames: {},
-      ));
+      await tester.pumpWidget(
+        buildWidget(groupedIntros: {}, introducerUsernames: {}),
+      );
 
       expect(find.text('No introductions yet'), findsOneWidget);
     });
 
-    testWidgets('shows pending introductions grouped by sender',
-        (tester) async {
-      final intro1 = _makeIntro(id: 'i1', introducedUsername: 'Charlie');
-      final intro2 = _makeIntro(id: 'i2', introducedUsername: 'Dana');
+    testWidgets('shows pending introductions grouped by sender', (
+      tester,
+    ) async {
+      final intro1 = makeIntro(id: 'i1', introducedUsername: 'Charlie');
+      final intro2 = makeIntro(id: 'i2', introducedUsername: 'Dana');
 
-      await tester.pumpWidget(buildWidget(
-        groupedIntros: {
-          'peer-A': [intro1, intro2],
-        },
-        introducerUsernames: {'peer-A': 'Alice'},
-      ));
+      await tester.pumpWidget(
+        buildWidget(
+          groupedIntros: {
+            'peer-A': [intro1, intro2],
+          },
+          introducerUsernames: {'peer-A': 'Alice'},
+        ),
+      );
 
       expect(find.text('From Alice'), findsOneWidget);
       expect(find.text('Charlie'), findsOneWidget);
       expect(find.text('Dana'), findsOneWidget);
+      expect(find.byType(ListView), findsNothing);
     });
 
     testWidgets('group header shows "From [username]"', (tester) async {
-      final intro = _makeIntro(id: 'i1');
+      final intro = makeIntro(id: 'i1');
 
-      await tester.pumpWidget(buildWidget(
-        groupedIntros: {
-          'peer-A': [intro],
-        },
-        introducerUsernames: {'peer-A': 'Alice'},
-      ));
+      await tester.pumpWidget(
+        buildWidget(
+          groupedIntros: {
+            'peer-A': [intro],
+          },
+          introducerUsernames: {'peer-A': 'Alice'},
+        ),
+      );
 
       expect(find.text('From Alice'), findsOneWidget);
     });
 
     testWidgets('each intro row shows introduced username', (tester) async {
-      final intro = _makeIntro(id: 'i1', introducedUsername: 'Charlie');
+      final intro = makeIntro(id: 'i1', introducedUsername: 'Charlie');
 
-      await tester.pumpWidget(buildWidget(
-        groupedIntros: {
-          'peer-A': [intro],
-        },
-        introducerUsernames: {'peer-A': 'Alice'},
-      ));
+      await tester.pumpWidget(
+        buildWidget(
+          groupedIntros: {
+            'peer-A': [intro],
+          },
+          introducerUsernames: {'peer-A': 'Alice'},
+        ),
+      );
 
       expect(find.text('Charlie'), findsOneWidget);
     });
 
     testWidgets('each intro row shows introducer attribution', (tester) async {
-      final intro = _makeIntro(id: 'i1', introducerUsername: 'Alice');
+      final intro = makeIntro(id: 'i1', introducerUsername: 'Alice');
 
-      await tester.pumpWidget(buildWidget(
-        groupedIntros: {
-          'peer-A': [intro],
-        },
-        introducerUsernames: {'peer-A': 'Alice'},
-      ));
+      await tester.pumpWidget(
+        buildWidget(
+          groupedIntros: {
+            'peer-A': [intro],
+          },
+          introducerUsernames: {'peer-A': 'Alice'},
+        ),
+      );
 
       expect(find.text('Introduced by Alice'), findsOneWidget);
     });
 
     testWidgets('accept button visible for pending intros', (tester) async {
-      final intro = _makeIntro(id: 'i1');
+      final intro = makeIntro(id: 'i1');
 
-      await tester.pumpWidget(buildWidget(
-        groupedIntros: {
-          'peer-A': [intro],
-        },
-        introducerUsernames: {'peer-A': 'Alice'},
-      ));
+      await tester.pumpWidget(
+        buildWidget(
+          groupedIntros: {
+            'peer-A': [intro],
+          },
+          introducerUsernames: {'peer-A': 'Alice'},
+        ),
+      );
 
       expect(find.text('Accept'), findsOneWidget);
     });
 
     testWidgets('pass button visible for pending intros', (tester) async {
-      final intro = _makeIntro(id: 'i1');
+      final intro = makeIntro(id: 'i1');
 
-      await tester.pumpWidget(buildWidget(
-        groupedIntros: {
-          'peer-A': [intro],
-        },
-        introducerUsernames: {'peer-A': 'Alice'},
-      ));
+      await tester.pumpWidget(
+        buildWidget(
+          groupedIntros: {
+            'peer-A': [intro],
+          },
+          introducerUsernames: {'peer-A': 'Alice'},
+        ),
+      );
 
       expect(find.text('Pass'), findsOneWidget);
     });
 
     testWidgets('accept callback triggered on tap', (tester) async {
       String? acceptedId;
-      final intro = _makeIntro(id: 'i1');
+      final intro = makeIntro(id: 'i1');
 
-      await tester.pumpWidget(buildWidget(
-        groupedIntros: {
-          'peer-A': [intro],
-        },
-        introducerUsernames: {'peer-A': 'Alice'},
-        onAccept: (id) => acceptedId = id,
-      ));
+      await tester.pumpWidget(
+        buildWidget(
+          groupedIntros: {
+            'peer-A': [intro],
+          },
+          introducerUsernames: {'peer-A': 'Alice'},
+          onAccept: (id) => acceptedId = id,
+        ),
+      );
 
       await tester.tap(find.text('Accept'));
       await tester.pumpAndSettle();
@@ -162,15 +177,17 @@ void main() {
 
     testWidgets('pass callback triggered on tap', (tester) async {
       String? passedId;
-      final intro = _makeIntro(id: 'i1');
+      final intro = makeIntro(id: 'i1');
 
-      await tester.pumpWidget(buildWidget(
-        groupedIntros: {
-          'peer-A': [intro],
-        },
-        introducerUsernames: {'peer-A': 'Alice'},
-        onPass: (id) => passedId = id,
-      ));
+      await tester.pumpWidget(
+        buildWidget(
+          groupedIntros: {
+            'peer-A': [intro],
+          },
+          introducerUsernames: {'peer-A': 'Alice'},
+          onPass: (id) => passedId = id,
+        ),
+      );
 
       await tester.tap(find.text('Pass'));
       await tester.pumpAndSettle();
@@ -179,22 +196,24 @@ void main() {
     });
 
     testWidgets('status label shown for responded intros', (tester) async {
-      final connected = _makeIntro(
+      final connected = makeIntro(
         id: 'i1',
         status: IntroductionOverallStatus.mutualAccepted,
       );
-      final passed = _makeIntro(
+      final passed = makeIntro(
         id: 'i2',
         status: IntroductionOverallStatus.passed,
         introducedUsername: 'Dana',
       );
 
-      await tester.pumpWidget(buildWidget(
-        groupedIntros: {
-          'peer-A': [connected, passed],
-        },
-        introducerUsernames: {'peer-A': 'Alice'},
-      ));
+      await tester.pumpWidget(
+        buildWidget(
+          groupedIntros: {
+            'peer-A': [connected, passed],
+          },
+          introducerUsernames: {'peer-A': 'Alice'},
+        ),
+      );
 
       expect(find.text('Connected'), findsOneWidget);
       expect(find.text('Passed'), findsOneWidget);
