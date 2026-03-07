@@ -67,6 +67,7 @@ class OrbitViewProjection {
   final bool searchActive;
   final String searchQuery;
   final String filterTab;
+  final bool showLoadingPlaceholders;
 
   const OrbitViewProjection({
     this.allFriends = const [],
@@ -80,6 +81,7 @@ class OrbitViewProjection {
     this.searchActive = false,
     this.searchQuery = '',
     this.filterTab = 'all',
+    this.showLoadingPlaceholders = false,
   });
 }
 
@@ -255,7 +257,12 @@ class OrbitScreen extends StatelessWidget {
                           slivers: [
                             SliverToBoxAdapter(
                               child: Padding(
-                                padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                                padding: const EdgeInsets.fromLTRB(
+                                  16,
+                                  8,
+                                  16,
+                                  0,
+                                ),
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
@@ -436,6 +443,12 @@ class OrbitScreen extends StatelessWidget {
       }
     }
 
+    if (projection.filterTab != 'intros' &&
+        projection.showLoadingPlaceholders &&
+        projection.mergedItems.isEmpty) {
+      return _buildLoadingSliver();
+    }
+
     if (projection.searchActive &&
         projection.searchQuery.isNotEmpty &&
         projection.displayedFriends.isEmpty) {
@@ -466,6 +479,21 @@ class OrbitScreen extends StatelessWidget {
             OrbitGroupItem(:final group) => _buildGroupRow(group, index),
           };
         }, childCount: projection.mergedItems.length),
+      ),
+    );
+  }
+
+  Widget _buildLoadingSliver() {
+    return SliverPadding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      sliver: SliverList(
+        delegate: SliverChildListDelegate.fixed([
+          const _OrbitLoadingRow(index: 0),
+          const SizedBox(height: 8),
+          const _OrbitLoadingRow(index: 1),
+          const SizedBox(height: 8),
+          const _OrbitLoadingRow(index: 2),
+        ]),
       ),
     );
   }
@@ -656,6 +684,106 @@ class OrbitScreen extends StatelessWidget {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _OrbitLoadingRow extends StatelessWidget {
+  final int index;
+
+  const _OrbitLoadingRow({required this.index});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      key: ValueKey('orbit-loading-row-$index'),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      decoration: BoxDecoration(
+        color: const Color(0x14FFFFFF),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0x1FFFFFFF)),
+      ),
+      child: Row(
+        children: const [
+          _OrbitLoadingAvatar(),
+          SizedBox(width: 14),
+          Expanded(child: _OrbitLoadingTextBlock()),
+          SizedBox(width: 16),
+          _OrbitLoadingChevron(),
+        ],
+      ),
+    );
+  }
+}
+
+class _OrbitLoadingAvatar extends StatelessWidget {
+  const _OrbitLoadingAvatar();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 48,
+      height: 48,
+      decoration: BoxDecoration(
+        color: const Color(0x12FFFFFF),
+        borderRadius: BorderRadius.circular(14),
+      ),
+    );
+  }
+}
+
+class _OrbitLoadingTextBlock extends StatelessWidget {
+  const _OrbitLoadingTextBlock();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _OrbitLoadingBar(widthFactor: 0.44, height: 14),
+        SizedBox(height: 8),
+        _OrbitLoadingBar(widthFactor: 0.62),
+        SizedBox(height: 8),
+        _OrbitLoadingBar(widthFactor: 0.34, height: 10),
+      ],
+    );
+  }
+}
+
+class _OrbitLoadingChevron extends StatelessWidget {
+  const _OrbitLoadingChevron();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 18,
+      height: 18,
+      decoration: BoxDecoration(
+        color: const Color(0x14FFFFFF),
+        borderRadius: BorderRadius.circular(999),
+      ),
+    );
+  }
+}
+
+class _OrbitLoadingBar extends StatelessWidget {
+  final double widthFactor;
+  final double height;
+
+  const _OrbitLoadingBar({required this.widthFactor, this.height = 12});
+
+  @override
+  Widget build(BuildContext context) {
+    return FractionallySizedBox(
+      widthFactor: widthFactor,
+      alignment: Alignment.centerLeft,
+      child: Container(
+        height: height,
+        decoration: BoxDecoration(
+          color: const Color(0x12FFFFFF),
+          borderRadius: BorderRadius.circular(height / 2),
         ),
       ),
     );

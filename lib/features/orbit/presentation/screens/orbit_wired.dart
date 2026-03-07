@@ -138,6 +138,10 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   List<OrbitFriend> _archivedFriends = [];
   List<OrbitGroup> _activeGroups = [];
   List<OrbitGroup> _archivedGroups = [];
+  bool _activeFriendsLoaded = false;
+  bool _archivedFriendsLoaded = false;
+  bool _activeGroupsLoaded = false;
+  bool _archivedGroupsLoaded = false;
   late String _filterTab;
   bool _searchActive = false;
   String _searchQuery = '';
@@ -203,6 +207,12 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       if (!_searchActive) ...groups.map(OrbitGroupItem.new),
     ]..sort((a, b) => b.sortKey.compareTo(a.sortKey));
 
+    final showLoadingPlaceholders = switch (_filterTab) {
+      'archived' => !_archivedFriendsLoaded || !_archivedGroupsLoaded,
+      'intros' => false,
+      _ => !_activeFriendsLoaded || !_activeGroupsLoaded,
+    };
+
     return OrbitViewProjection(
       allFriends: List<OrbitFriend>.unmodifiable(_activeFriends),
       displayedFriends: List<OrbitFriend>.unmodifiable(displayedFriends),
@@ -223,6 +233,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       searchActive: _searchActive,
       searchQuery: _searchQuery,
       filterTab: _filterTab,
+      showLoadingPlaceholders: showLoadingPlaceholders,
     );
   }
 
@@ -243,6 +254,10 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   void initState() {
     super.initState();
     _filterTab = widget.initialFilterTab ?? 'all';
+    final hasGroupSurfaces =
+        widget.groupRepository != null && widget.groupMessageRepository != null;
+    _activeGroupsLoaded = !hasGroupSurfaces;
+    _archivedGroupsLoaded = !hasGroupSurfaces;
     _publishAllProjections();
     emitFlowEvent(layer: 'FL', event: 'ORBIT_FL_SCREEN_INIT', details: {});
 
@@ -318,28 +333,51 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         contactRepo: widget.contactRepo,
         messageRepo: widget.messageRepo,
       );
+      if (!mounted) return;
+
+      _activeFriends = active;
+      _activeFriendsLoaded = true;
+      _blockedPeerIds = _collectBlockedPeerIds(
+        activeFriends: _activeFriends,
+        archivedFriends: _archivedFriends,
+      );
+      _publishAllProjections();
+    } catch (e) {
+      if (mounted) {
+        _activeFriendsLoaded = true;
+        _publishAllProjections();
+      }
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'ORBIT_FL_LOAD_DATA_ERROR',
+        details: {'error': e.toString(), 'segment': 'active'},
+      );
+    }
+
+    try {
       final archived = await loadOrbitData(
         contactRepo: widget.contactRepo,
         messageRepo: widget.messageRepo,
         includeArchived: true,
       );
       if (!mounted) return;
-      final blocked = <String>{};
-      for (final f in active) {
-        if (f.isBlocked) blocked.add(f.peerId);
-      }
-      for (final f in archived) {
-        if (f.isBlocked) blocked.add(f.peerId);
-      }
-      _activeFriends = active;
+
       _archivedFriends = archived;
-      _blockedPeerIds = blocked;
+      _archivedFriendsLoaded = true;
+      _blockedPeerIds = _collectBlockedPeerIds(
+        activeFriends: _activeFriends,
+        archivedFriends: _archivedFriends,
+      );
       _publishAllProjections();
     } catch (e) {
+      if (mounted) {
+        _archivedFriendsLoaded = true;
+        _publishAllProjections();
+      }
       emitFlowEvent(
         layer: 'FL',
         event: 'ORBIT_FL_LOAD_DATA_ERROR',
-        details: {'error': e.toString()},
+        details: {'error': e.toString(), 'segment': 'archived'},
       );
     }
   }
@@ -347,29 +385,70 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   Future<void> _loadGroupData() async {
     final groupRepository = widget.groupRepository;
     final groupMessageRepository = widget.groupMessageRepository;
-    if (groupRepository == null || groupMessageRepository == null) return;
+    if (groupRepository == null || groupMessageRepository == null) {
+      _activeGroupsLoaded = true;
+      _archivedGroupsLoaded = true;
+      _publishListProjection();
+      return;
+    }
 
     try {
       final active = await loadOrbitGroups(
         groupRepo: groupRepository,
         msgRepo: groupMessageRepository,
       );
+      if (!mounted) return;
+
+      _activeGroups = active;
+      _activeGroupsLoaded = true;
+      _publishListProjection();
+    } catch (e) {
+      if (mounted) {
+        _activeGroupsLoaded = true;
+        _publishListProjection();
+      }
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'ORBIT_FL_LOAD_GROUP_DATA_ERROR',
+        details: {'error': e.toString(), 'segment': 'active'},
+      );
+    }
+
+    try {
       final archived = await loadOrbitGroups(
         groupRepo: groupRepository,
         msgRepo: groupMessageRepository,
         includeArchived: true,
       );
       if (!mounted) return;
-      _activeGroups = active;
       _archivedGroups = archived;
+      _archivedGroupsLoaded = true;
       _publishListProjection();
     } catch (e) {
+      if (mounted) {
+        _archivedGroupsLoaded = true;
+        _publishListProjection();
+      }
       emitFlowEvent(
         layer: 'FL',
         event: 'ORBIT_FL_LOAD_GROUP_DATA_ERROR',
-        details: {'error': e.toString()},
+        details: {'error': e.toString(), 'segment': 'archived'},
       );
     }
+  }
+
+  Set<String> _collectBlockedPeerIds({
+    required List<OrbitFriend> activeFriends,
+    required List<OrbitFriend> archivedFriends,
+  }) {
+    final blocked = <String>{};
+    for (final friend in activeFriends) {
+      if (friend.isBlocked) blocked.add(friend.peerId);
+    }
+    for (final friend in archivedFriends) {
+      if (friend.isBlocked) blocked.add(friend.peerId);
+    }
+    return blocked;
   }
 
   Future<void> _refreshOrbitFriend(String peerId) async {
@@ -918,12 +997,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     }
   }
 
-  void _onFriendTap(OrbitFriend friend) async {
-    await markConversationRead(
-      messageRepo: widget.messageRepo,
-      contactPeerId: friend.peerId,
-    );
-
+  void _onFriendTap(OrbitFriend friend) {
     if (!mounted) return;
 
     Navigator.of(context)
@@ -954,6 +1028,25 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           _markContactChanged(friend.peerId);
           unawaited(_refreshOrbitFriend(friend.peerId));
         });
+
+    // Push first, then let the conversation route perform its own initial
+    // read-marking without blocking the transition.
+    unawaited(_markConversationReadInBackground(friend.peerId));
+  }
+
+  Future<void> _markConversationReadInBackground(String peerId) async {
+    try {
+      await markConversationRead(
+        messageRepo: widget.messageRepo,
+        contactPeerId: peerId,
+      );
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'ORBIT_FL_MARK_READ_ERROR',
+        details: {'peerId': peerId, 'error': e.toString()},
+      );
+    }
   }
 
   void _onMyQR() {
@@ -976,9 +1069,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     if (changes.reloadAllContacts) {
       await _loadOrbitData();
     } else if (changes.changedContactPeerIds.isNotEmpty) {
-      await Future.wait(
-        changes.changedContactPeerIds.map(_refreshOrbitFriend),
-      );
+      await Future.wait(changes.changedContactPeerIds.map(_refreshOrbitFriend));
     }
 
     if (changes.reloadAllGroups) {
