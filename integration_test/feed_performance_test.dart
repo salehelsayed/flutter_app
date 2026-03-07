@@ -7,9 +7,9 @@ import 'package:integration_test/integration_test.dart';
 
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
 import 'package:flutter_app/features/feed/presentation/screens/feed_screen.dart';
-import 'package:flutter_app/features/feed/presentation/widgets/expanded_compose_input.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bubble.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/feed_card.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/inline_reply_input.dart';
 
 final binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
@@ -363,10 +363,13 @@ void main() {
     });
 
     testWidgets('4. Compose input performance', (tester) async {
-      // Pre-expand thread_0 so ExpandedComposeInput is rendered
+      // Pre-expand thread_0 so the inline reply input is rendered
       await _pumpFeedScreen(tester, items, expandedCardId: 'thread_0');
 
-      final composeFinder = find.byType(ExpandedComposeInput);
+      final composeFinder = find.descendant(
+        of: find.byKey(const ValueKey('thread_0')),
+        matching: find.byType(InlineReplyInput),
+      );
       expect(composeFinder, findsOneWidget);
 
       final textField = find.descendant(
