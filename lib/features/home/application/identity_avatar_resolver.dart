@@ -11,6 +11,7 @@ class IdentityAvatarResolver {
   static final Map<String, Uint8List?> _cache = <String, Uint8List?>{};
   static final Map<String, Future<Uint8List?>> _inFlight =
       <String, Future<Uint8List?>>{};
+  static int _generation = 0;
 
   static Future<Uint8List?> resolve(
     IdentityModel identity, {
@@ -49,6 +50,7 @@ class IdentityAvatarResolver {
   }
 
   static void invalidatePeer(String peerId) {
+    _generation++;
     _cache.removeWhere((key, _) => key == peerId || key.startsWith('$peerId|'));
     _inFlight.removeWhere(
       (key, _) => key == peerId || key.startsWith('$peerId|'),
@@ -59,35 +61,34 @@ class IdentityAvatarResolver {
     IdentityModel identity, {
     IdentityAvatarDocumentsDirLoader? documentsDirLoader,
   }) async {
+    final genAtStart = _generation;
     final loadDocumentsDir =
         documentsDirLoader ??
         () async => (await getApplicationDocumentsDirectory()).path;
     final documentsDir = await loadDocumentsDir();
     final avatarPath = '$documentsDir/media/avatars/${identity.peerId}.jpg';
+    final cacheKey = _cacheKey(
+      peerId: identity.peerId,
+      avatarVersion: identity.avatarVersion,
+    );
     try {
       final file = File(avatarPath);
       if (!await file.exists()) {
-        _cache[_cacheKey(
-              peerId: identity.peerId,
-              avatarVersion: identity.avatarVersion,
-            )] =
-            null;
+        if (_generation == genAtStart) {
+          _cache[cacheKey] = null;
+        }
         return null;
       }
 
       final bytes = await file.readAsBytes();
-      _cache[_cacheKey(
-            peerId: identity.peerId,
-            avatarVersion: identity.avatarVersion,
-          )] =
-          bytes;
+      if (_generation == genAtStart) {
+        _cache[cacheKey] = bytes;
+      }
       return bytes;
     } catch (_) {
-      _cache[_cacheKey(
-            peerId: identity.peerId,
-            avatarVersion: identity.avatarVersion,
-          )] =
-          null;
+      if (_generation == genAtStart) {
+        _cache[cacheKey] = null;
+      }
       return null;
     }
   }
