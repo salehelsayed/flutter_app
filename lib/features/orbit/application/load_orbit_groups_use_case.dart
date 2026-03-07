@@ -33,26 +33,17 @@ Future<List<OrbitGroup>> loadOrbitGroups({
     final orbitGroups = <OrbitGroup>[];
 
     for (final group in groups) {
-      final latestMessage = await msgRepo.getLatestMessage(group.id);
-      final unreadCount = await msgRepo.getUnreadCount(group.id);
-
-      orbitGroups.add(OrbitGroup(
-        group: group,
-        latestMessage: latestMessage != null
-            ? '${latestMessage.senderUsername ?? 'Unknown'}: ${latestMessage.text}'
-            : null,
-        unreadCount: unreadCount,
-        lastActivityTimestamp: latestMessage?.timestamp ?? group.createdAt,
-      ));
+      orbitGroups.add(
+        await _buildOrbitGroup(
+          groupId: group.id,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupOverride: group,
+        ),
+      );
     }
 
-    orbitGroups.sort((a, b) {
-      final aTime =
-          a.lastActivityTimestamp?.toUtc().toIso8601String() ?? '';
-      final bTime =
-          b.lastActivityTimestamp?.toUtc().toIso8601String() ?? '';
-      return bTime.compareTo(aTime);
-    });
+    _sortOrbitGroups(orbitGroups);
 
     emitFlowEvent(
       layer: 'UC',
@@ -69,4 +60,81 @@ Future<List<OrbitGroup>> loadOrbitGroups({
     );
     rethrow;
   }
+}
+
+Future<OrbitGroup?> loadOrbitGroupSnapshot({
+  required GroupRepository groupRepo,
+  required GroupMessageRepository msgRepo,
+  required String groupId,
+}) async {
+  emitFlowEvent(
+    layer: 'UC',
+    event: 'LOAD_ORBIT_GROUP_SNAPSHOT_START',
+    details: {'groupId': groupId},
+  );
+
+  try {
+    final group = await groupRepo.getGroup(groupId);
+    if (group == null) {
+      emitFlowEvent(
+        layer: 'UC',
+        event: 'LOAD_ORBIT_GROUP_SNAPSHOT_SUCCESS',
+        details: {'groupId': groupId, 'found': false},
+      );
+      return null;
+    }
+
+    final orbitGroup = await _buildOrbitGroup(
+      groupId: groupId,
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      groupOverride: group,
+    );
+
+    emitFlowEvent(
+      layer: 'UC',
+      event: 'LOAD_ORBIT_GROUP_SNAPSHOT_SUCCESS',
+      details: {'groupId': groupId, 'found': true},
+    );
+    return orbitGroup;
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'UC',
+      event: 'LOAD_ORBIT_GROUP_SNAPSHOT_ERROR',
+      details: {'groupId': groupId, 'error': e.toString()},
+    );
+    rethrow;
+  }
+}
+
+Future<OrbitGroup> _buildOrbitGroup({
+  required String groupId,
+  required GroupRepository groupRepo,
+  required GroupMessageRepository msgRepo,
+  GroupModel? groupOverride,
+}) async {
+  final group = groupOverride ?? await groupRepo.getGroup(groupId);
+  if (group == null) {
+    throw StateError('Group not found for Orbit snapshot: $groupId');
+  }
+
+  final latestMessage = await msgRepo.getLatestMessage(groupId);
+  final unreadCount = await msgRepo.getUnreadCount(groupId);
+
+  return OrbitGroup(
+    group: group,
+    latestMessage: latestMessage != null
+        ? '${latestMessage.senderUsername ?? 'Unknown'}: ${latestMessage.text}'
+        : null,
+    unreadCount: unreadCount,
+    lastActivityTimestamp: latestMessage?.timestamp ?? group.createdAt,
+  );
+}
+
+void _sortOrbitGroups(List<OrbitGroup> groups) {
+  groups.sort((a, b) {
+    final aTime = a.lastActivityTimestamp?.toUtc().toIso8601String() ?? '';
+    final bTime = b.lastActivityTimestamp?.toUtc().toIso8601String() ?? '';
+    return bTime.compareTo(aTime);
+  });
 }

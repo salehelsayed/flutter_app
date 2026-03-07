@@ -52,10 +52,12 @@ class FakeContactRepository implements ContactRepository {
 class FakeMessageRepository implements MessageRepository {
   final Map<String, int> messageCounts;
   final Map<String, ConversationMessage?> latestMessages;
+  final Map<String, int> unreadCounts;
 
   FakeMessageRepository({
     this.messageCounts = const {},
     this.latestMessages = const {},
+    this.unreadCounts = const {},
   });
 
   @override
@@ -64,16 +66,19 @@ class FakeMessageRepository implements MessageRepository {
 
   @override
   Future<ConversationMessage?> getLatestMessageForContact(
-      String contactPeerId) async => latestMessages[contactPeerId];
+    String contactPeerId,
+  ) async => latestMessages[contactPeerId];
 
   @override
-  Future<int> getUnreadCountForContact(String contactPeerId) async => 0;
+  Future<int> getUnreadCountForContact(String contactPeerId) async =>
+      unreadCounts[contactPeerId] ?? 0;
 
   @override
   Future<void> saveMessage(ConversationMessage message) async {}
   @override
   Future<List<ConversationMessage>> getMessagesForContact(
-      String contactPeerId) async => [];
+    String contactPeerId,
+  ) async => [];
   @override
   Future<void> updateMessageStatus(String id, String status) async {}
   @override
@@ -152,21 +157,26 @@ void main() {
     });
 
     test('sorts by most recent message first', () async {
-      final contacts = [
-        _makeContact('peer-A'),
-        _makeContact('peer-B'),
-      ];
+      final contacts = [_makeContact('peer-A'), _makeContact('peer-B')];
 
       final msgA = ConversationMessage(
-        id: 'msg-a', contactPeerId: 'peer-A', senderPeerId: 'peer-A',
-        text: 'older', timestamp: '2026-01-01T00:00:00.000Z',
-        isIncoming: true, status: 'delivered',
+        id: 'msg-a',
+        contactPeerId: 'peer-A',
+        senderPeerId: 'peer-A',
+        text: 'older',
+        timestamp: '2026-01-01T00:00:00.000Z',
+        isIncoming: true,
+        status: 'delivered',
         createdAt: '2026-01-01T00:00:00.000Z',
       );
       final msgB = ConversationMessage(
-        id: 'msg-b', contactPeerId: 'peer-B', senderPeerId: 'peer-B',
-        text: 'newer', timestamp: '2026-02-01T00:00:00.000Z',
-        isIncoming: true, status: 'delivered',
+        id: 'msg-b',
+        contactPeerId: 'peer-B',
+        senderPeerId: 'peer-B',
+        text: 'newer',
+        timestamp: '2026-02-01T00:00:00.000Z',
+        isIncoming: true,
+        status: 'delivered',
         createdAt: '2026-02-01T00:00:00.000Z',
       );
 
@@ -191,6 +201,45 @@ void main() {
       );
 
       expect(result, isEmpty);
+    });
+
+    test('loads a single friend snapshot by peer id', () async {
+      final msg = ConversationMessage(
+        id: 'msg-a',
+        contactPeerId: 'peer-A',
+        senderPeerId: 'peer-A',
+        text: 'Most recent',
+        timestamp: '2026-03-01T00:00:00.000Z',
+        isIncoming: true,
+        status: 'delivered',
+        createdAt: '2026-03-01T00:00:00.000Z',
+      );
+
+      final result = await loadOrbitFriendSnapshot(
+        contactRepo: FakeContactRepository(contacts: [_makeContact('peer-A')]),
+        messageRepo: FakeMessageRepository(
+          messageCounts: const {'peer-A': 3},
+          latestMessages: {'peer-A': msg},
+          unreadCounts: const {'peer-A': 2},
+        ),
+        contactPeerId: 'peer-A',
+      );
+
+      expect(result, isNotNull);
+      expect(result!.peerId, 'peer-A');
+      expect(result.messageCount, 3);
+      expect(result.lastActivity, 'Most recent');
+      expect(result.unreadCount, 2);
+    });
+
+    test('returns null when a friend snapshot no longer exists', () async {
+      final result = await loadOrbitFriendSnapshot(
+        contactRepo: FakeContactRepository(),
+        messageRepo: FakeMessageRepository(),
+        contactPeerId: 'missing-peer',
+      );
+
+      expect(result, isNull);
     });
   });
 }

@@ -1,4 +1,5 @@
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_friend.dart';
@@ -11,11 +12,7 @@ Future<List<OrbitFriend>> loadOrbitData({
   required MessageRepository messageRepo,
   bool includeArchived = false,
 }) async {
-  emitFlowEvent(
-    layer: 'UC',
-    event: 'LOAD_ORBIT_DATA_START',
-    details: {},
-  );
+  emitFlowEvent(layer: 'UC', event: 'LOAD_ORBIT_DATA_START', details: {});
 
   try {
     final contacts = includeArchived
@@ -24,30 +21,17 @@ Future<List<OrbitFriend>> loadOrbitData({
     final friends = <OrbitFriend>[];
 
     for (final contact in contacts) {
-      final messageCount = await messageRepo.getMessageCountForContact(
-        contact.peerId,
+      friends.add(
+        await _buildOrbitFriend(
+          contactPeerId: contact.peerId,
+          contactRepo: contactRepo,
+          messageRepo: messageRepo,
+          contactOverride: contact,
+        ),
       );
-      final latestMessage = await messageRepo.getLatestMessageForContact(
-        contact.peerId,
-      );
-      final unreadCount = await messageRepo.getUnreadCountForContact(
-        contact.peerId,
-      );
-
-      friends.add(OrbitFriend(
-        contact: contact,
-        messageCount: messageCount,
-        lastActivity: latestMessage?.text,
-        lastMessageTimestamp: latestMessage?.timestamp,
-        unreadCount: unreadCount,
-      ));
     }
 
-    friends.sort((a, b) {
-      final aTime = a.lastMessageTimestamp ?? '';
-      final bTime = b.lastMessageTimestamp ?? '';
-      return bTime.compareTo(aTime);
-    });
+    _sortOrbitFriends(friends);
 
     emitFlowEvent(
       layer: 'UC',
@@ -64,4 +48,86 @@ Future<List<OrbitFriend>> loadOrbitData({
     );
     rethrow;
   }
+}
+
+Future<OrbitFriend?> loadOrbitFriendSnapshot({
+  required ContactRepository contactRepo,
+  required MessageRepository messageRepo,
+  required String contactPeerId,
+}) async {
+  emitFlowEvent(
+    layer: 'UC',
+    event: 'LOAD_ORBIT_FRIEND_SNAPSHOT_START',
+    details: {'peerId': contactPeerId},
+  );
+
+  try {
+    final contact = await contactRepo.getContact(contactPeerId);
+    if (contact == null) {
+      emitFlowEvent(
+        layer: 'UC',
+        event: 'LOAD_ORBIT_FRIEND_SNAPSHOT_SUCCESS',
+        details: {'peerId': contactPeerId, 'found': false},
+      );
+      return null;
+    }
+
+    final friend = await _buildOrbitFriend(
+      contactPeerId: contactPeerId,
+      contactRepo: contactRepo,
+      messageRepo: messageRepo,
+      contactOverride: contact,
+    );
+
+    emitFlowEvent(
+      layer: 'UC',
+      event: 'LOAD_ORBIT_FRIEND_SNAPSHOT_SUCCESS',
+      details: {'peerId': contactPeerId, 'found': true},
+    );
+    return friend;
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'UC',
+      event: 'LOAD_ORBIT_FRIEND_SNAPSHOT_ERROR',
+      details: {'peerId': contactPeerId, 'error': e.toString()},
+    );
+    rethrow;
+  }
+}
+
+Future<OrbitFriend> _buildOrbitFriend({
+  required String contactPeerId,
+  required ContactRepository contactRepo,
+  required MessageRepository messageRepo,
+  ContactModel? contactOverride,
+}) async {
+  final contact =
+      contactOverride ?? await contactRepo.getContact(contactPeerId);
+  if (contact == null) {
+    throw StateError('Contact not found for Orbit snapshot: $contactPeerId');
+  }
+
+  final messageCount = await messageRepo.getMessageCountForContact(
+    contactPeerId,
+  );
+  final latestMessage = await messageRepo.getLatestMessageForContact(
+    contactPeerId,
+  );
+  final unreadCount = await messageRepo.getUnreadCountForContact(contactPeerId);
+
+  return OrbitFriend(
+    contact: contact,
+    messageCount: messageCount,
+    lastActivity: latestMessage?.text,
+    lastMessageTimestamp: latestMessage?.timestamp,
+    unreadCount: unreadCount,
+  );
+}
+
+void _sortOrbitFriends(List<OrbitFriend> friends) {
+  friends.sort((a, b) {
+    final aTime = a.lastMessageTimestamp ?? '';
+    final bTime = b.lastMessageTimestamp ?? '';
+    return bTime.compareTo(aTime);
+  });
 }
