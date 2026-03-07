@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/utils/ring_avatar_generator.dart';
 import 'package:flutter_app/features/home/presentation/widgets/ring_avatar.dart';
 
 /// Unified avatar widget used across all screens.
@@ -98,13 +99,15 @@ class UserAvatar extends StatelessWidget {
   Widget build(BuildContext context) {
     // Priority 1: In-memory bytes (user's own avatar, pre-loaded by wired layer)
     if (avatarBytes != null) {
-      return _buildPhotoAvatar(
-        Image.memory(
-          avatarBytes!,
-          fit: BoxFit.cover,
-          width: size,
-          height: size,
-          errorBuilder: _errorBuilder,
+      return _wrapWithGlow(
+        _buildPhotoAvatar(
+          Image.memory(
+            avatarBytes!,
+            fit: BoxFit.cover,
+            width: size,
+            height: size,
+            errorBuilder: _errorBuilder,
+          ),
         ),
       );
     }
@@ -118,28 +121,53 @@ class UserAvatar extends StatelessWidget {
           if (avatarPath == null) {
             return child!;
           }
-          return _buildPhotoAvatar(
-            Image.file(
-              File(avatarPath),
-              fit: BoxFit.cover,
-              width: size,
-              height: size,
-              gaplessPlayback: true,
-              errorBuilder: _errorBuilder,
+          return _wrapWithGlow(
+            _buildPhotoAvatar(
+              Image.file(
+                File(avatarPath),
+                fit: BoxFit.cover,
+                width: size,
+                height: size,
+                gaplessPlayback: true,
+                errorBuilder: _errorBuilder,
+              ),
             ),
           );
         },
-        child: RingAvatar(peerId: resolvedPeerId, size: size),
+        child: _wrapWithGlow(RingAvatar(peerId: resolvedPeerId, size: size)),
       );
     }
 
     // Priority 3: Deterministic ring avatar
     if (resolvedPeerId != null) {
-      return RingAvatar(peerId: resolvedPeerId, size: size);
+      return _wrapWithGlow(RingAvatar(peerId: resolvedPeerId, size: size));
     }
 
     // Priority 4: Generic fallback
     return _buildFallbackIcon();
+  }
+
+  Widget _wrapWithGlow(Widget child) {
+    final resolvedPeerId = peerId;
+    if (resolvedPeerId == null) return child;
+
+    final glowColor = RingAvatarGenerator.glowColorForPeerId(resolvedPeerId);
+
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        boxShadow: [
+          BoxShadow(
+            color: glowColor.withValues(alpha: 0.35),
+            blurRadius: size * 0.35,
+            spreadRadius: size * 0.05,
+          ),
+        ],
+      ),
+      child: child,
+    );
   }
 
   Widget _buildPhotoAvatar(Widget imageWidget) {
