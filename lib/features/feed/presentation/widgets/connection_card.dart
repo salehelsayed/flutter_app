@@ -107,8 +107,8 @@ class _ConnectionCardState extends State<ConnectionCard>
                               center: const Alignment(0, -0.15),
                               radius: 0.96,
                               colors: [
-                                const Color(0x331DB954),
-                                const Color(0x141DB954),
+                                const Color(0x201DB954),
+                                const Color(0x0C1DB954),
                                 Colors.transparent,
                               ],
                               stops: const [0.0, 0.46, 1.0],
@@ -215,7 +215,7 @@ class _ConnectionCardState extends State<ConnectionCard>
   }
 
   Widget _buildAvatarSection(double avatarSize) {
-    final outerSize = avatarSize + 24;
+    final outerSize = avatarSize + 32;
 
     return SizedBox(
       width: outerSize,
@@ -230,11 +230,11 @@ class _ConnectionCardState extends State<ConnectionCard>
               shape: BoxShape.circle,
               gradient: RadialGradient(
                 colors: [
-                  Color(0x402DB65F),
-                  Color(0x1F2DB65F),
+                  Color(0x501DB954),
+                  Color(0x281DB954),
                   Colors.transparent,
                 ],
-                stops: [0.0, 0.55, 1.0],
+                stops: [0.0, 0.50, 1.0],
               ),
             ),
           ),
@@ -244,13 +244,14 @@ class _ConnectionCardState extends State<ConnectionCard>
               shape: BoxShape.circle,
               color: const Color.fromRGBO(11, 13, 17, 0.78),
               border: Border.all(
-                color: const Color.fromRGBO(255, 255, 255, 0.15),
+                color: const Color(0xFF1DB954),
+                width: 1.5,
               ),
               boxShadow: const [
                 BoxShadow(
-                  color: Color.fromRGBO(0, 0, 0, 0.45),
+                  color: Color(0x991DB954),
                   blurRadius: 16,
-                  offset: Offset(0, 8),
+                  spreadRadius: 2,
                 ),
               ],
             ),

@@ -84,14 +84,6 @@ class FriendRow extends StatelessWidget {
                       ],
                     ],
                   ),
-                  const SizedBox(height: 2),
-                  Text(
-                    '@${friend.username}',
-                    style: const TextStyle(
-                      fontSize: 13,
-                      color: Color(0x66FFFFFF), // rgba(255,255,255,0.4)
-                    ),
-                  ),
                   if (friend.lastActivity != null) ...[
                     const SizedBox(height: 2),
                     Text(
