@@ -83,42 +83,38 @@ void main() {
     groupMsgRepo = InMemoryGroupMessageRepository();
     groupMessageStreamController = StreamController<GroupMessage>.broadcast();
     imageProcessor = ImageProcessor(
-      compressFile: ({
-        required path,
-        required quality,
-        required keepExif,
-        minWidth = 1920,
-        minHeight = 1080,
-      }) async =>
-          null,
-      compressVideo: ({
-        required path,
-        required compress,
-        onProgress,
-      }) async =>
+      compressFile:
+          ({
+            required path,
+            required quality,
+            required keepExif,
+            minWidth = 1920,
+            minHeight = 1080,
+          }) async => null,
+      compressVideo: ({required path, required compress, onProgress}) async =>
           null,
     );
 
     // Mock path_provider for getApplicationDocumentsDirectory()
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
-      const MethodChannel('plugins.flutter.io/path_provider'),
-      (MethodCall methodCall) async {
-        if (methodCall.method == 'getApplicationDocumentsDirectory') {
-          return '/tmp/test_docs';
-        }
-        return null;
-      },
-    );
+          const MethodChannel('plugins.flutter.io/path_provider'),
+          (MethodCall methodCall) async {
+            if (methodCall.method == 'getApplicationDocumentsDirectory') {
+              return '/tmp/test_docs';
+            }
+            return null;
+          },
+        );
   });
 
   tearDown(() {
     groupMessageStreamController.close();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
-      const MethodChannel('plugins.flutter.io/path_provider'),
-      null,
-    );
+          const MethodChannel('plugins.flutter.io/path_provider'),
+          null,
+        );
   });
 
   /// Sets the test surface to iPhone 14 Pro Max size to avoid overflow errors.
@@ -151,33 +147,45 @@ void main() {
     ContactRequestListener? contactRequestListener,
     ChatMessageListener? chatMessageListener,
     _FakeGroupMessageListener? groupMessageListener,
+    FakeContactRepository? contactRepository,
+    InMemoryMessageRepository? messageRepository,
+    InMemoryGroupRepository? groupRepository,
+    InMemoryGroupMessageRepository? groupMessageRepository,
     bool wrapInNavigator = false,
   }) {
-    final crListener = contactRequestListener ??
+    final effectiveContactRepo = contactRepository ?? contactRepo;
+    final effectiveMessageRepo = messageRepository ?? messageRepo;
+    final effectiveGroupRepo = groupRepository ?? groupRepo;
+    final effectiveGroupMessageRepo = groupMessageRepository ?? groupMsgRepo;
+
+    final crListener =
+        contactRequestListener ??
         ContactRequestListener(
           contactRequestStream: const Stream<ChatMessage>.empty(),
           requestRepo: contactRequestRepo,
-          contactRepo: contactRepo,
+          contactRepo: effectiveContactRepo,
           bridge: bridge,
           getOwnPeerId: () => '',
         );
 
-    final cmListener = chatMessageListener ??
+    final cmListener =
+        chatMessageListener ??
         ChatMessageListener(
           chatMessageStream: const Stream<ChatMessage>.empty(),
-          messageRepo: messageRepo,
-          contactRepo: contactRepo,
+          messageRepo: effectiveMessageRepo,
+          contactRepo: effectiveContactRepo,
         );
 
-    final gmListener = groupMessageListener ??
+    final gmListener =
+        groupMessageListener ??
         _FakeGroupMessageListener(groupMessageStreamController.stream);
 
     final orbitWidget = OrbitWired(
       identityRepo: identityRepo,
-      contactRepo: contactRepo,
+      contactRepo: effectiveContactRepo,
       contactRequestRepo: contactRequestRepo,
       contactRequestListener: crListener,
-      messageRepo: messageRepo,
+      messageRepo: effectiveMessageRepo,
       mediaAttachmentRepo: mediaAttachmentRepo,
       chatMessageListener: cmListener,
       bridge: bridge,
@@ -185,8 +193,8 @@ void main() {
       mediaFileManager: mediaFileManager,
       secureKeyStore: secureKeyStore,
       imageProcessor: imageProcessor,
-      groupRepository: groupRepo,
-      groupMessageRepository: groupMsgRepo,
+      groupRepository: effectiveGroupRepo,
+      groupMessageRepository: effectiveGroupMessageRepo,
       groupMessageListener: gmListener,
     );
 
@@ -197,9 +205,9 @@ void main() {
             body: Center(
               child: ElevatedButton(
                 onPressed: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => orbitWidget),
-                  );
+                  Navigator.of(
+                    context,
+                  ).push(MaterialPageRoute(builder: (_) => orbitWidget));
                 },
                 child: const Text('Open Orbit'),
               ),
@@ -236,16 +244,18 @@ void main() {
       identityRepo.seed(testIdentity);
       contactRepo.seed([testContact]);
 
-      await messageRepo.saveMessage(ConversationMessage(
-        id: 'msg-1',
-        contactPeerId: 'contact-peer-id',
-        text: 'Hello from Bob',
-        senderPeerId: 'contact-peer-id',
-        timestamp: DateTime.now().toUtc().toIso8601String(),
-        isIncoming: true,
-        status: 'delivered',
-        createdAt: DateTime.now().toUtc().toIso8601String(),
-      ));
+      await messageRepo.saveMessage(
+        ConversationMessage(
+          id: 'msg-1',
+          contactPeerId: 'contact-peer-id',
+          text: 'Hello from Bob',
+          senderPeerId: 'contact-peer-id',
+          timestamp: DateTime.now().toUtc().toIso8601String(),
+          isIncoming: true,
+          status: 'delivered',
+          createdAt: DateTime.now().toUtc().toIso8601String(),
+        ),
+      );
 
       await tester.pumpWidget(buildOrbitWired());
       await tester.pump(const Duration(milliseconds: 100));
@@ -344,20 +354,31 @@ void main() {
       expect(find.text('Open Orbit'), findsOneWidget);
     });
 
-    testWidgets('refreshes orbit data on incoming message', (tester) async {
+    testWidgets('refreshes only the affected friend on incoming message', (
+      tester,
+    ) async {
       setLargeTestSurface(tester);
       suppressOverflowErrors();
       identityRepo.seed(testIdentity);
-      contactRepo.seed([testContact]);
+      final spyContactRepo = _SpyContactRepository();
+      final spyMessageRepo = _SpyMessageRepository();
+      spyContactRepo.seed([
+        testContact,
+        testContact.copyWith(peerId: 'contact-peer-id-2', username: 'Cara'),
+      ]);
 
       final fakeChatListener = _FakeChatMessageListener(
-        messageRepo: messageRepo,
-        contactRepo: contactRepo,
+        messageRepo: spyMessageRepo,
+        contactRepo: spyContactRepo,
       );
 
-      await tester.pumpWidget(buildOrbitWired(
-        chatMessageListener: fakeChatListener,
-      ));
+      await tester.pumpWidget(
+        buildOrbitWired(
+          chatMessageListener: fakeChatListener,
+          contactRepository: spyContactRepo,
+          messageRepository: spyMessageRepo,
+        ),
+      );
       await tester.pump(const Duration(milliseconds: 100));
       await tester.pump(const Duration(milliseconds: 100));
       await tester.pump(const Duration(milliseconds: 100));
@@ -365,28 +386,36 @@ void main() {
       // Initially Bob exists as a friend but has no last activity text
       expect(find.text('Bob'), findsWidgets);
 
-      // Seed a message and emit an incoming chat event to trigger _loadOrbitData
-      await messageRepo.saveMessage(ConversationMessage(
-        id: 'msg-refresh-1',
-        contactPeerId: 'contact-peer-id',
-        text: 'New hello from Bob',
-        senderPeerId: 'contact-peer-id',
-        timestamp: DateTime.now().toUtc().toIso8601String(),
-        isIncoming: true,
-        status: 'delivered',
-        createdAt: DateTime.now().toUtc().toIso8601String(),
-      ));
+      spyContactRepo.resetTracking();
+      spyMessageRepo.resetTracking();
 
-      fakeChatListener.emitIncomingMessage(ConversationMessage(
-        id: 'msg-refresh-1',
-        contactPeerId: 'contact-peer-id',
-        text: 'New hello from Bob',
-        senderPeerId: 'contact-peer-id',
-        timestamp: DateTime.now().toUtc().toIso8601String(),
-        isIncoming: true,
-        status: 'delivered',
-        createdAt: DateTime.now().toUtc().toIso8601String(),
-      ));
+      // Seed a message and emit an incoming chat event to trigger a
+      // single-friend refresh, not a full Orbit reload.
+      await spyMessageRepo.saveMessage(
+        ConversationMessage(
+          id: 'msg-refresh-1',
+          contactPeerId: 'contact-peer-id',
+          text: 'New hello from Bob',
+          senderPeerId: 'contact-peer-id',
+          timestamp: DateTime.now().toUtc().toIso8601String(),
+          isIncoming: true,
+          status: 'delivered',
+          createdAt: DateTime.now().toUtc().toIso8601String(),
+        ),
+      );
+
+      fakeChatListener.emitIncomingMessage(
+        ConversationMessage(
+          id: 'msg-refresh-1',
+          contactPeerId: 'contact-peer-id',
+          text: 'New hello from Bob',
+          senderPeerId: 'contact-peer-id',
+          timestamp: DateTime.now().toUtc().toIso8601String(),
+          isIncoming: true,
+          status: 'delivered',
+          createdAt: DateTime.now().toUtc().toIso8601String(),
+        ),
+      );
 
       await tester.pump(const Duration(milliseconds: 100));
       await tester.pump(const Duration(milliseconds: 100));
@@ -394,10 +423,101 @@ void main() {
 
       // After refresh, the FriendRow should show the last activity text
       expect(find.text('New hello from Bob'), findsOneWidget);
+      expect(spyContactRepo.getActiveContactsCallCount, 0);
+      expect(spyContactRepo.getArchivedContactsCallCount, 0);
+      expect(spyContactRepo.getContactCallCountByPeerId, {
+        'contact-peer-id': 1,
+      });
+      expect(spyMessageRepo.getMessageCountForContactCallCountByPeerId, {
+        'contact-peer-id': 1,
+      });
+      expect(spyMessageRepo.getLatestMessageForContactCallCountByPeerId, {
+        'contact-peer-id': 1,
+      });
+      expect(spyMessageRepo.getUnreadCountForContactCallCountByPeerId, {
+        'contact-peer-id': 1,
+      });
     });
 
-    testWidgets('shows contact request dialog on incoming request',
-        (tester) async {
+    testWidgets(
+      'search context is preserved while unrelated friend updates arrive',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+
+        final spyContactRepo = _SpyContactRepository();
+        final spyMessageRepo = _SpyMessageRepository();
+        spyContactRepo.seed([
+          testContact,
+          testContact.copyWith(peerId: 'contact-peer-id-2', username: 'Cara'),
+        ]);
+
+        final fakeChatListener = _FakeChatMessageListener(
+          messageRepo: spyMessageRepo,
+          contactRepo: spyContactRepo,
+        );
+
+        await tester.pumpWidget(
+          buildOrbitWired(
+            chatMessageListener: fakeChatListener,
+            contactRepository: spyContactRepo,
+            messageRepository: spyMessageRepo,
+          ),
+        );
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
+
+        await tester.tap(find.byType(OrbitSearchTrigger));
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
+
+        await tester.enterText(find.byType(TextField), 'Bo');
+        await tester.pump(const Duration(milliseconds: 100));
+
+        expect(find.text('Bob'), findsWidgets);
+        expect(find.text('Cara'), findsNothing);
+
+        await spyMessageRepo.saveMessage(
+          ConversationMessage(
+            id: 'msg-refresh-cara',
+            contactPeerId: 'contact-peer-id-2',
+            text: 'Cara says hi',
+            senderPeerId: 'contact-peer-id-2',
+            timestamp: DateTime.now().toUtc().toIso8601String(),
+            isIncoming: true,
+            status: 'delivered',
+            createdAt: DateTime.now().toUtc().toIso8601String(),
+          ),
+        );
+
+        fakeChatListener.emitIncomingMessage(
+          ConversationMessage(
+            id: 'msg-refresh-cara',
+            contactPeerId: 'contact-peer-id-2',
+            text: 'Cara says hi',
+            senderPeerId: 'contact-peer-id-2',
+            timestamp: DateTime.now().toUtc().toIso8601String(),
+            isIncoming: true,
+            status: 'delivered',
+            createdAt: DateTime.now().toUtc().toIso8601String(),
+          ),
+        );
+
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
+
+        expect(find.text('Bob'), findsWidgets);
+        expect(find.text('Cara'), findsNothing);
+        final searchField = tester.widget<TextField>(find.byType(TextField));
+        expect(searchField.controller!.text, 'Bo');
+      },
+    );
+
+    testWidgets('shows contact request dialog on incoming request', (
+      tester,
+    ) async {
       setLargeTestSurface(tester);
       suppressOverflowErrors();
       identityRepo.seed(testIdentity);
@@ -408,22 +528,24 @@ void main() {
         bridge: bridge,
       );
 
-      await tester.pumpWidget(buildOrbitWired(
-        contactRequestListener: fakeRequestListener,
-      ));
+      await tester.pumpWidget(
+        buildOrbitWired(contactRequestListener: fakeRequestListener),
+      );
       await tester.pump(const Duration(milliseconds: 100));
       await tester.pump(const Duration(milliseconds: 100));
 
       // Emit a contact request
-      fakeRequestListener.emitRequest(ContactRequestModel(
-        peerId: 'requester-peer-id',
-        publicKey: 'requester-pk',
-        rendezvous: '/dns4/relay',
-        username: 'Charlie',
-        signature: 'req-sig',
-        receivedAt: DateTime.now().toUtc().toIso8601String(),
-        status: ContactRequestStatus.pending,
-      ));
+      fakeRequestListener.emitRequest(
+        ContactRequestModel(
+          peerId: 'requester-peer-id',
+          publicKey: 'requester-pk',
+          rendezvous: '/dns4/relay',
+          username: 'Charlie',
+          signature: 'req-sig',
+          receivedAt: DateTime.now().toUtc().toIso8601String(),
+          status: ContactRequestStatus.pending,
+        ),
+      );
 
       await tester.pump(const Duration(milliseconds: 100));
       await tester.pump(const Duration(milliseconds: 100));
@@ -435,8 +557,7 @@ void main() {
       expect(find.text('Decline'), findsOneWidget);
     });
 
-    testWidgets('disposes stream subscriptions without errors',
-        (tester) async {
+    testWidgets('disposes stream subscriptions without errors', (tester) async {
       setLargeTestSurface(tester);
       suppressOverflowErrors();
       identityRepo.seed(testIdentity);
@@ -452,17 +573,19 @@ void main() {
         bridge: bridge,
       );
 
-      await tester.pumpWidget(buildOrbitWired(
-        chatMessageListener: fakeChatListener,
-        contactRequestListener: fakeRequestListener,
-      ));
+      await tester.pumpWidget(
+        buildOrbitWired(
+          chatMessageListener: fakeChatListener,
+          contactRequestListener: fakeRequestListener,
+        ),
+      );
       await tester.pump(const Duration(milliseconds: 100));
       await tester.pump(const Duration(milliseconds: 100));
 
       // Replace the widget tree with something else to trigger dispose
-      await tester.pumpWidget(const MaterialApp(
-        home: Scaffold(body: Text('Replaced')),
-      ));
+      await tester.pumpWidget(
+        const MaterialApp(home: Scaffold(body: Text('Replaced'))),
+      );
       await tester.pump(const Duration(milliseconds: 100));
 
       // No crash or error means subscriptions and animation controllers
@@ -485,39 +608,43 @@ void main() {
       expect(find.byIcon(Icons.add), findsOneWidget);
     });
 
-    testWidgets('tapping FAB opens menu with New Group, New Announce, New Q&A',
-        (tester) async {
-      setLargeTestSurface(tester);
-      suppressOverflowErrors();
-      identityRepo.seed(testIdentity);
+    testWidgets(
+      'tapping FAB opens menu with New Group, New Announce, New Q&A',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
 
-      await tester.pumpWidget(buildOrbitWired());
-      await tester.pump(const Duration(milliseconds: 100));
-      await tester.pump(const Duration(milliseconds: 100));
-      await tester.pump(const Duration(milliseconds: 100));
+        await tester.pumpWidget(buildOrbitWired());
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
 
-      await tester.tap(find.byIcon(Icons.add));
-      await tester.pump(const Duration(milliseconds: 300));
+        await tester.tap(find.byIcon(Icons.add));
+        await tester.pump(const Duration(milliseconds: 300));
 
-      expect(find.text('New Group'), findsOneWidget);
-      expect(find.text('New Announce'), findsOneWidget);
-      expect(find.text('New Q&A'), findsOneWidget);
-    });
+        expect(find.text('New Group'), findsOneWidget);
+        expect(find.text('New Announce'), findsOneWidget);
+        expect(find.text('New Q&A'), findsOneWidget);
+      },
+    );
 
     testWidgets('displays group rows when groups exist', (tester) async {
       setLargeTestSurface(tester);
       suppressOverflowErrors();
       identityRepo.seed(testIdentity);
 
-      await groupRepo.saveGroup(GroupModel(
-        id: 'g-1',
-        name: 'Alpha Group',
-        type: GroupType.chat,
-        topicName: 'topic-g-1',
-        createdAt: DateTime.utc(2026, 3, 1),
-        createdBy: 'peer-admin',
-        myRole: GroupRole.admin,
-      ));
+      await groupRepo.saveGroup(
+        GroupModel(
+          id: 'g-1',
+          name: 'Alpha Group',
+          type: GroupType.chat,
+          topicName: 'topic-g-1',
+          createdAt: DateTime.utc(2026, 3, 1),
+          createdBy: 'peer-admin',
+          myRole: GroupRole.admin,
+        ),
+      );
 
       await tester.pumpWidget(buildOrbitWired());
       await tester.pump(const Duration(milliseconds: 100));
@@ -528,32 +655,37 @@ void main() {
       expect(find.text('Alpha Group'), findsOneWidget);
     });
 
-    testWidgets('displays group rows with latest message preview',
-        (tester) async {
+    testWidgets('displays group rows with latest message preview', (
+      tester,
+    ) async {
       setLargeTestSurface(tester);
       suppressOverflowErrors();
       identityRepo.seed(testIdentity);
 
-      await groupRepo.saveGroup(GroupModel(
-        id: 'g-1',
-        name: 'Alpha Group',
-        type: GroupType.chat,
-        topicName: 'topic-g-1',
-        createdAt: DateTime.utc(2026, 3, 1),
-        createdBy: 'peer-admin',
-        myRole: GroupRole.admin,
-      ));
+      await groupRepo.saveGroup(
+        GroupModel(
+          id: 'g-1',
+          name: 'Alpha Group',
+          type: GroupType.chat,
+          topicName: 'topic-g-1',
+          createdAt: DateTime.utc(2026, 3, 1),
+          createdBy: 'peer-admin',
+          myRole: GroupRole.admin,
+        ),
+      );
 
-      await groupMsgRepo.saveMessage(GroupMessage(
-        id: 'gm-1',
-        groupId: 'g-1',
-        senderPeerId: 'peer-alice',
-        senderUsername: 'Alice',
-        text: 'Hello group!',
-        timestamp: DateTime.utc(2026, 3, 1),
-        isIncoming: true,
-        createdAt: DateTime.utc(2026, 3, 1),
-      ));
+      await groupMsgRepo.saveMessage(
+        GroupMessage(
+          id: 'gm-1',
+          groupId: 'g-1',
+          senderPeerId: 'peer-alice',
+          senderUsername: 'Alice',
+          text: 'Hello group!',
+          timestamp: DateTime.utc(2026, 3, 1),
+          isIncoming: true,
+          createdAt: DateTime.utc(2026, 3, 1),
+        ),
+      );
 
       await tester.pumpWidget(buildOrbitWired());
       await tester.pump(const Duration(milliseconds: 100));
@@ -564,23 +696,37 @@ void main() {
       expect(find.text('Alice: Hello group!'), findsOneWidget);
     });
 
-    testWidgets('refreshes orbit data on incoming group message',
-        (tester) async {
+    testWidgets('refreshes only the affected group on incoming group message', (
+      tester,
+    ) async {
       setLargeTestSurface(tester);
       suppressOverflowErrors();
       identityRepo.seed(testIdentity);
+      final spyContactRepo = _SpyContactRepository();
+      final spyMessageRepo = _SpyMessageRepository();
+      final spyGroupRepo = _SpyGroupRepository();
+      final spyGroupMsgRepo = _SpyGroupMessageRepository();
 
-      await groupRepo.saveGroup(GroupModel(
-        id: 'g-1',
-        name: 'Alpha Group',
-        type: GroupType.chat,
-        topicName: 'topic-g-1',
-        createdAt: DateTime.utc(2026, 3, 1),
-        createdBy: 'peer-admin',
-        myRole: GroupRole.admin,
-      ));
+      await spyGroupRepo.saveGroup(
+        GroupModel(
+          id: 'g-1',
+          name: 'Alpha Group',
+          type: GroupType.chat,
+          topicName: 'topic-g-1',
+          createdAt: DateTime.utc(2026, 3, 1),
+          createdBy: 'peer-admin',
+          myRole: GroupRole.admin,
+        ),
+      );
 
-      await tester.pumpWidget(buildOrbitWired());
+      await tester.pumpWidget(
+        buildOrbitWired(
+          contactRepository: spyContactRepo,
+          messageRepository: spyMessageRepo,
+          groupRepository: spyGroupRepo,
+          groupMessageRepository: spyGroupMsgRepo,
+        ),
+      );
       await tester.pump(const Duration(milliseconds: 100));
       await tester.pump(const Duration(milliseconds: 100));
       await tester.pump(const Duration(milliseconds: 100));
@@ -588,6 +734,11 @@ void main() {
       // Initially group shows with no message preview
       expect(find.text('Alpha Group'), findsOneWidget);
       expect(find.text('Bob: New group msg'), findsNothing);
+
+      spyContactRepo.resetTracking();
+      spyMessageRepo.resetTracking();
+      spyGroupRepo.resetTracking();
+      spyGroupMsgRepo.resetTracking();
 
       // Seed a group message and emit on the group message stream
       final newMsg = GroupMessage(
@@ -600,7 +751,7 @@ void main() {
         isIncoming: true,
         createdAt: DateTime.utc(2026, 3, 2),
       );
-      await groupMsgRepo.saveMessage(newMsg);
+      await spyGroupMsgRepo.saveMessage(newMsg);
       groupMessageStreamController.add(newMsg);
 
       await tester.pump(const Duration(milliseconds: 100));
@@ -608,47 +759,61 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
 
       expect(find.text('Bob: New group msg'), findsOneWidget);
+      expect(spyContactRepo.getActiveContactsCallCount, 0);
+      expect(spyContactRepo.getArchivedContactsCallCount, 0);
+      expect(spyGroupRepo.getActiveGroupsCallCount, 0);
+      expect(spyGroupRepo.getAllGroupsCallCount, 0);
+      expect(spyGroupRepo.getGroupCallCountById, {'g-1': 1});
+      expect(spyGroupMsgRepo.getLatestMessageCallCountByGroupId, {'g-1': 1});
+      expect(spyGroupMsgRepo.getUnreadCountCallCountByGroupId, {'g-1': 1});
     });
 
-    testWidgets('interleaves groups and friends sorted by last activity',
-        (tester) async {
+    testWidgets('interleaves groups and friends sorted by last activity', (
+      tester,
+    ) async {
       setLargeTestSurface(tester);
       suppressOverflowErrors();
       identityRepo.seed(testIdentity);
 
       // Add a friend with an older message
       contactRepo.seed([testContact]);
-      await messageRepo.saveMessage(ConversationMessage(
-        id: 'msg-old',
-        contactPeerId: 'contact-peer-id',
-        text: 'Old message from Bob',
-        senderPeerId: 'contact-peer-id',
-        timestamp: '2026-01-01T00:00:00.000Z',
-        isIncoming: true,
-        status: 'delivered',
-        createdAt: '2026-01-01T00:00:00.000Z',
-      ));
+      await messageRepo.saveMessage(
+        ConversationMessage(
+          id: 'msg-old',
+          contactPeerId: 'contact-peer-id',
+          text: 'Old message from Bob',
+          senderPeerId: 'contact-peer-id',
+          timestamp: '2026-01-01T00:00:00.000Z',
+          isIncoming: true,
+          status: 'delivered',
+          createdAt: '2026-01-01T00:00:00.000Z',
+        ),
+      );
 
       // Add a group with a newer message
-      await groupRepo.saveGroup(GroupModel(
-        id: 'g-1',
-        name: 'Newer Group',
-        type: GroupType.chat,
-        topicName: 'topic-g-1',
-        createdAt: DateTime.utc(2026, 3, 1),
-        createdBy: 'peer-admin',
-        myRole: GroupRole.admin,
-      ));
-      await groupMsgRepo.saveMessage(GroupMessage(
-        id: 'gm-1',
-        groupId: 'g-1',
-        senderPeerId: 'peer-alice',
-        senderUsername: 'Alice',
-        text: 'Recent group msg',
-        timestamp: DateTime.utc(2026, 3, 1),
-        isIncoming: true,
-        createdAt: DateTime.utc(2026, 3, 1),
-      ));
+      await groupRepo.saveGroup(
+        GroupModel(
+          id: 'g-1',
+          name: 'Newer Group',
+          type: GroupType.chat,
+          topicName: 'topic-g-1',
+          createdAt: DateTime.utc(2026, 3, 1),
+          createdBy: 'peer-admin',
+          myRole: GroupRole.admin,
+        ),
+      );
+      await groupMsgRepo.saveMessage(
+        GroupMessage(
+          id: 'gm-1',
+          groupId: 'g-1',
+          senderPeerId: 'peer-alice',
+          senderUsername: 'Alice',
+          text: 'Recent group msg',
+          timestamp: DateTime.utc(2026, 3, 1),
+          isIncoming: true,
+          createdAt: DateTime.utc(2026, 3, 1),
+        ),
+      );
 
       await tester.pumpWidget(buildOrbitWired());
       await tester.pump(const Duration(milliseconds: 100));
@@ -660,6 +825,144 @@ void main() {
       expect(find.text('Bob'), findsWidgets);
     });
   });
+}
+
+class _SpyContactRepository extends FakeContactRepository {
+  int getActiveContactsCallCount = 0;
+  int getArchivedContactsCallCount = 0;
+  final Map<String, int> getContactCallCountByPeerId = {};
+
+  @override
+  Future<ContactModel?> getContact(String peerId) async {
+    getContactCallCountByPeerId.update(
+      peerId,
+      (count) => count + 1,
+      ifAbsent: () => 1,
+    );
+    return super.getContact(peerId);
+  }
+
+  @override
+  Future<List<ContactModel>> getActiveContacts() async {
+    getActiveContactsCallCount++;
+    return super.getActiveContacts();
+  }
+
+  @override
+  Future<List<ContactModel>> getArchivedContacts() async {
+    getArchivedContactsCallCount++;
+    return super.getArchivedContacts();
+  }
+
+  void resetTracking() {
+    getActiveContactsCallCount = 0;
+    getArchivedContactsCallCount = 0;
+    getContactCallCountByPeerId.clear();
+  }
+}
+
+class _SpyMessageRepository extends InMemoryMessageRepository {
+  final Map<String, int> getMessageCountForContactCallCountByPeerId = {};
+  final Map<String, int> getLatestMessageForContactCallCountByPeerId = {};
+  final Map<String, int> getUnreadCountForContactCallCountByPeerId = {};
+
+  @override
+  Future<int> getMessageCountForContact(String contactPeerId) async {
+    getMessageCountForContactCallCountByPeerId.update(
+      contactPeerId,
+      (count) => count + 1,
+      ifAbsent: () => 1,
+    );
+    return super.getMessageCountForContact(contactPeerId);
+  }
+
+  @override
+  Future<ConversationMessage?> getLatestMessageForContact(
+    String contactPeerId,
+  ) async {
+    getLatestMessageForContactCallCountByPeerId.update(
+      contactPeerId,
+      (count) => count + 1,
+      ifAbsent: () => 1,
+    );
+    return super.getLatestMessageForContact(contactPeerId);
+  }
+
+  @override
+  Future<int> getUnreadCountForContact(String contactPeerId) async {
+    getUnreadCountForContactCallCountByPeerId.update(
+      contactPeerId,
+      (count) => count + 1,
+      ifAbsent: () => 1,
+    );
+    return super.getUnreadCountForContact(contactPeerId);
+  }
+
+  void resetTracking() {
+    getMessageCountForContactCallCountByPeerId.clear();
+    getLatestMessageForContactCallCountByPeerId.clear();
+    getUnreadCountForContactCallCountByPeerId.clear();
+  }
+}
+
+class _SpyGroupRepository extends InMemoryGroupRepository {
+  int getActiveGroupsCallCount = 0;
+  int getAllGroupsCallCount = 0;
+  final Map<String, int> getGroupCallCountById = {};
+
+  @override
+  Future<List<GroupModel>> getActiveGroups() async {
+    getActiveGroupsCallCount++;
+    return super.getActiveGroups();
+  }
+
+  @override
+  Future<List<GroupModel>> getAllGroups() async {
+    getAllGroupsCallCount++;
+    return super.getAllGroups();
+  }
+
+  @override
+  Future<GroupModel?> getGroup(String id) async {
+    getGroupCallCountById.update(id, (count) => count + 1, ifAbsent: () => 1);
+    return super.getGroup(id);
+  }
+
+  void resetTracking() {
+    getActiveGroupsCallCount = 0;
+    getAllGroupsCallCount = 0;
+    getGroupCallCountById.clear();
+  }
+}
+
+class _SpyGroupMessageRepository extends InMemoryGroupMessageRepository {
+  final Map<String, int> getLatestMessageCallCountByGroupId = {};
+  final Map<String, int> getUnreadCountCallCountByGroupId = {};
+
+  @override
+  Future<GroupMessage?> getLatestMessage(String groupId) async {
+    getLatestMessageCallCountByGroupId.update(
+      groupId,
+      (count) => count + 1,
+      ifAbsent: () => 1,
+    );
+    return super.getLatestMessage(groupId);
+  }
+
+  @override
+  Future<int> getUnreadCount(String groupId) async {
+    getUnreadCountCallCountByGroupId.update(
+      groupId,
+      (count) => count + 1,
+      ifAbsent: () => 1,
+    );
+    return super.getUnreadCount(groupId);
+  }
+
+  void resetTracking() {
+    getLatestMessageCallCountByGroupId.clear();
+    getUnreadCountCallCountByGroupId.clear();
+  }
 }
 
 /// Fake [ChatMessageListener] with controllable streams for testing.
@@ -675,9 +978,7 @@ class _FakeChatMessageListener extends ChatMessageListener {
   _FakeChatMessageListener({
     required super.messageRepo,
     required super.contactRepo,
-  }) : super(
-          chatMessageStream: const Stream.empty(),
-        );
+  }) : super(chatMessageStream: const Stream.empty());
 
   @override
   Stream<ConversationMessage> get incomingMessageStream =>
@@ -707,9 +1008,9 @@ class _FakeContactRequestListener extends ContactRequestListener {
     required super.contactRepo,
     required super.bridge,
   }) : super(
-          contactRequestStream: const Stream.empty(),
-          getOwnPeerId: () => '',
-        );
+         contactRequestStream: const Stream.empty(),
+         getOwnPeerId: () => '',
+       );
 
   @override
   Stream<ContactRequestModel> get requestStream => _controller.stream;
@@ -722,10 +1023,7 @@ class _FakeGroupMessageListener extends GroupMessageListener {
   final Stream<GroupMessage> _externalStream;
 
   _FakeGroupMessageListener(this._externalStream)
-      : super(
-          groupRepo: _NoOpGroupRepo(),
-          msgRepo: _NoOpMsgRepo(),
-        );
+    : super(groupRepo: _NoOpGroupRepo(), msgRepo: _NoOpMsgRepo());
 
   @override
   Stream<GroupMessage> get groupMessageStream => _externalStream;

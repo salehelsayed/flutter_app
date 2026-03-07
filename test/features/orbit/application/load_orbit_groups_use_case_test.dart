@@ -83,13 +83,15 @@ void main() {
 
     test('includes latest message preview', () async {
       await groupRepo.saveGroup(_makeGroup(id: 'g-1', name: 'Alpha'));
-      await msgRepo.saveMessage(_makeMessage(
-        id: 'msg-1',
-        groupId: 'g-1',
-        text: 'Hello group',
-        timestamp: DateTime.utc(2026, 3, 1),
-        senderUsername: 'Bob',
-      ));
+      await msgRepo.saveMessage(
+        _makeMessage(
+          id: 'msg-1',
+          groupId: 'g-1',
+          text: 'Hello group',
+          timestamp: DateTime.utc(2026, 3, 1),
+          senderUsername: 'Bob',
+        ),
+      );
 
       final result = await loadOrbitGroups(
         groupRepo: groupRepo,
@@ -102,18 +104,22 @@ void main() {
 
     test('includes unread count', () async {
       await groupRepo.saveGroup(_makeGroup(id: 'g-1', name: 'Alpha'));
-      await msgRepo.saveMessage(_makeMessage(
-        id: 'msg-1',
-        groupId: 'g-1',
-        text: 'Hello 1',
-        timestamp: DateTime.utc(2026, 3, 1),
-      ));
-      await msgRepo.saveMessage(_makeMessage(
-        id: 'msg-2',
-        groupId: 'g-1',
-        text: 'Hello 2',
-        timestamp: DateTime.utc(2026, 3, 1, 0, 1),
-      ));
+      await msgRepo.saveMessage(
+        _makeMessage(
+          id: 'msg-1',
+          groupId: 'g-1',
+          text: 'Hello 1',
+          timestamp: DateTime.utc(2026, 3, 1),
+        ),
+      );
+      await msgRepo.saveMessage(
+        _makeMessage(
+          id: 'msg-2',
+          groupId: 'g-1',
+          text: 'Hello 2',
+          timestamp: DateTime.utc(2026, 3, 1, 0, 1),
+        ),
+      );
 
       final result = await loadOrbitGroups(
         groupRepo: groupRepo,
@@ -124,29 +130,37 @@ void main() {
     });
 
     test('sorts by most recent activity first', () async {
-      await groupRepo.saveGroup(_makeGroup(
-        id: 'g-old',
-        name: 'Old Group',
-        createdAt: DateTime.utc(2026, 1, 1),
-      ));
-      await groupRepo.saveGroup(_makeGroup(
-        id: 'g-new',
-        name: 'New Group',
-        createdAt: DateTime.utc(2026, 1, 2),
-      ));
+      await groupRepo.saveGroup(
+        _makeGroup(
+          id: 'g-old',
+          name: 'Old Group',
+          createdAt: DateTime.utc(2026, 1, 1),
+        ),
+      );
+      await groupRepo.saveGroup(
+        _makeGroup(
+          id: 'g-new',
+          name: 'New Group',
+          createdAt: DateTime.utc(2026, 1, 2),
+        ),
+      );
 
-      await msgRepo.saveMessage(_makeMessage(
-        id: 'msg-old',
-        groupId: 'g-old',
-        text: 'Old message',
-        timestamp: DateTime.utc(2026, 2, 1),
-      ));
-      await msgRepo.saveMessage(_makeMessage(
-        id: 'msg-new',
-        groupId: 'g-new',
-        text: 'New message',
-        timestamp: DateTime.utc(2026, 3, 1),
-      ));
+      await msgRepo.saveMessage(
+        _makeMessage(
+          id: 'msg-old',
+          groupId: 'g-old',
+          text: 'Old message',
+          timestamp: DateTime.utc(2026, 2, 1),
+        ),
+      );
+      await msgRepo.saveMessage(
+        _makeMessage(
+          id: 'msg-new',
+          groupId: 'g-new',
+          text: 'New message',
+          timestamp: DateTime.utc(2026, 3, 1),
+        ),
+      );
 
       final result = await loadOrbitGroups(
         groupRepo: groupRepo,
@@ -158,16 +172,20 @@ void main() {
     });
 
     test('uses createdAt as fallback when no messages', () async {
-      await groupRepo.saveGroup(_makeGroup(
-        id: 'g-newer',
-        name: 'Newer Group',
-        createdAt: DateTime.utc(2026, 2, 1),
-      ));
-      await groupRepo.saveGroup(_makeGroup(
-        id: 'g-older',
-        name: 'Older Group',
-        createdAt: DateTime.utc(2026, 1, 1),
-      ));
+      await groupRepo.saveGroup(
+        _makeGroup(
+          id: 'g-newer',
+          name: 'Newer Group',
+          createdAt: DateTime.utc(2026, 2, 1),
+        ),
+      );
+      await groupRepo.saveGroup(
+        _makeGroup(
+          id: 'g-older',
+          name: 'Older Group',
+          createdAt: DateTime.utc(2026, 1, 1),
+        ),
+      );
 
       final result = await loadOrbitGroups(
         groupRepo: groupRepo,
@@ -188,6 +206,40 @@ void main() {
 
       expect(result[0].latestMessage, isNull);
       expect(result[0].unreadCount, 0);
+    });
+
+    test('loads a single group snapshot by group id', () async {
+      await groupRepo.saveGroup(_makeGroup(id: 'g-1', name: 'Alpha'));
+      await msgRepo.saveMessage(
+        _makeMessage(
+          id: 'msg-1',
+          groupId: 'g-1',
+          text: 'Hello group',
+          timestamp: DateTime.utc(2026, 3, 1),
+          senderUsername: 'Bob',
+        ),
+      );
+
+      final result = await loadOrbitGroupSnapshot(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'g-1',
+      );
+
+      expect(result, isNotNull);
+      expect(result!.groupId, 'g-1');
+      expect(result.latestMessage, 'Bob: Hello group');
+      expect(result.unreadCount, 1);
+    });
+
+    test('returns null when a group snapshot no longer exists', () async {
+      final result = await loadOrbitGroupSnapshot(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'missing-group',
+      );
+
+      expect(result, isNull);
     });
   });
 }

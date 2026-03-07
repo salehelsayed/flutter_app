@@ -321,6 +321,108 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     }
   }
 
+  Future<void> _refreshOrbitFriend(String peerId) async {
+    try {
+      final friend = await loadOrbitFriendSnapshot(
+        contactRepo: widget.contactRepo,
+        messageRepo: widget.messageRepo,
+        contactPeerId: peerId,
+      );
+      if (!mounted) return;
+
+      setState(() {
+        final activeFriends = List<OrbitFriend>.from(_activeFriends)
+          ..removeWhere((entry) => entry.peerId == peerId);
+        final archivedFriends = List<OrbitFriend>.from(_archivedFriends)
+          ..removeWhere((entry) => entry.peerId == peerId);
+        final blockedPeerIds = Set<String>.from(_blockedPeerIds)
+          ..remove(peerId);
+
+        if (friend != null) {
+          if (friend.isArchived) {
+            archivedFriends.add(friend);
+          } else {
+            activeFriends.add(friend);
+          }
+          if (friend.isBlocked) {
+            blockedPeerIds.add(peerId);
+          }
+        }
+
+        _sortFriends(activeFriends);
+        _sortFriends(archivedFriends);
+        _activeFriends = activeFriends;
+        _archivedFriends = archivedFriends;
+        _blockedPeerIds = blockedPeerIds;
+      });
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'ORBIT_FL_FRIEND_REFRESH_ERROR',
+        details: {'peerId': peerId, 'error': e.toString()},
+      );
+      await _loadOrbitData();
+    }
+  }
+
+  Future<void> _refreshOrbitGroup(String groupId) async {
+    final groupRepository = widget.groupRepository;
+    final groupMessageRepository = widget.groupMessageRepository;
+    if (groupRepository == null || groupMessageRepository == null) return;
+
+    try {
+      final group = await loadOrbitGroupSnapshot(
+        groupRepo: groupRepository,
+        msgRepo: groupMessageRepository,
+        groupId: groupId,
+      );
+      if (!mounted) return;
+
+      setState(() {
+        final activeGroups = List<OrbitGroup>.from(_activeGroups)
+          ..removeWhere((entry) => entry.groupId == groupId);
+        final archivedGroups = List<OrbitGroup>.from(_archivedGroups)
+          ..removeWhere((entry) => entry.groupId == groupId);
+
+        if (group != null) {
+          if (group.group.isArchived) {
+            archivedGroups.add(group);
+          } else {
+            activeGroups.add(group);
+          }
+        }
+
+        _sortGroups(activeGroups);
+        _sortGroups(archivedGroups);
+        _activeGroups = activeGroups;
+        _archivedGroups = archivedGroups;
+      });
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'ORBIT_FL_GROUP_REFRESH_ERROR',
+        details: {'groupId': groupId, 'error': e.toString()},
+      );
+      await _loadGroupData();
+    }
+  }
+
+  void _sortFriends(List<OrbitFriend> friends) {
+    friends.sort((a, b) {
+      final aTime = a.lastMessageTimestamp ?? '';
+      final bTime = b.lastMessageTimestamp ?? '';
+      return bTime.compareTo(aTime);
+    });
+  }
+
+  void _sortGroups(List<OrbitGroup> groups) {
+    groups.sort((a, b) {
+      final aTime = a.lastActivityTimestamp?.toUtc().toIso8601String() ?? '';
+      final bTime = b.lastActivityTimestamp?.toUtc().toIso8601String() ?? '';
+      return bTime.compareTo(aTime);
+    });
+  }
+
   Future<void> _loadIntroductions() async {
     final introRepo = widget.introductionRepository;
     if (introRepo == null || _identity == null) return;
@@ -397,7 +499,20 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     );
 
     _introStatusSubscription = listener.introStatusChangedStream.listen(
-      (_) => _loadIntroductions(),
+      (intro) {
+        _loadIntroductions();
+        final identity = _identity;
+        if (identity == null ||
+            intro.status != IntroductionOverallStatus.mutualAccepted) {
+          return;
+        }
+        final otherPeerId = intro.recipientId == identity.peerId
+            ? intro.introducedId
+            : intro.recipientId;
+        if (otherPeerId.isNotEmpty) {
+          unawaited(_refreshOrbitFriend(otherPeerId));
+        }
+      },
       onError: (error) {
         emitFlowEvent(
           layer: 'FL',
@@ -428,10 +543,10 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           : updated.recipientId;
       if (otherPeerId.isNotEmpty) {
         _markContactChanged(otherPeerId);
+        await _refreshOrbitFriend(otherPeerId);
       }
     }
     _loadIntroductions();
-    _loadOrbitData();
   }
 
   Future<void> _onPassIntro(String introductionId) async {
@@ -465,9 +580,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     if (listener == null) return;
 
     _groupMessageSubscription = listener.groupMessageStream.listen(
-      (_) {
-        _loadOrbitData();
-        _loadGroupData();
+      (message) {
+        unawaited(_refreshOrbitGroup(message.groupId));
       },
       onError: (error) {
         emitFlowEvent(
@@ -488,8 +602,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
 
   void _startListeningForChatMessages() {
     _chatSubscription = widget.chatMessageListener.incomingMessageStream.listen(
-      (_) {
-        _loadOrbitData();
+      (message) {
+        unawaited(_refreshOrbitFriend(message.contactPeerId));
       },
       onError: (error) {
         emitFlowEvent(
@@ -511,8 +625,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   void _startListeningForContactUpdates() {
     _contactUpdateSubscription = widget.chatMessageListener.contactUpdatedStream
         .listen(
-          (_) {
-            _loadOrbitData();
+          (contact) {
+            unawaited(_refreshOrbitFriend(contact.peerId));
           },
           onError: (error) {
             emitFlowEvent(
@@ -590,7 +704,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     if (result == AcceptContactRequestResult.success ||
         result == AcceptContactRequestResult.notPending) {
       _markContactChanged(request.peerId);
-      _loadOrbitData();
+      await _refreshOrbitFriend(request.peerId);
     }
   }
 
@@ -675,7 +789,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         peerId: friend.peerId,
       );
       _markContactChanged(friend.peerId);
-      _loadOrbitData();
+      await _refreshOrbitFriend(friend.peerId);
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -692,7 +806,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         peerId: friend.peerId,
       );
       _markContactChanged(friend.peerId);
-      _loadOrbitData();
+      await _refreshOrbitFriend(friend.peerId);
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -719,7 +833,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       );
       _openRowNotifier.value = null;
       _markContactChanged(friend.peerId);
-      _loadOrbitData();
+      await _refreshOrbitFriend(friend.peerId);
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -736,7 +850,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         peerId: friend.peerId,
       );
       _markContactChanged(friend.peerId);
-      _loadOrbitData();
+      await _refreshOrbitFriend(friend.peerId);
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -764,7 +878,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       );
       _openRowNotifier.value = null;
       _markContactChanged(friend.peerId);
-      _loadOrbitData();
+      await _refreshOrbitFriend(friend.peerId);
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -808,7 +922,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         )
         .then((_) {
           _markContactChanged(friend.peerId);
-          _loadOrbitData();
+          unawaited(_refreshOrbitFriend(friend.peerId));
         });
   }
 
@@ -956,7 +1070,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     try {
       await archiveGroup(groupRepo: groupRepository, groupId: group.group.id);
       _markGroupChanged(group.group.id);
-      _loadGroupData();
+      await _refreshOrbitGroup(group.group.id);
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -973,7 +1087,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     try {
       await unarchiveGroup(groupRepo: groupRepository, groupId: group.group.id);
       _markGroupChanged(group.group.id);
-      _loadGroupData();
+      await _refreshOrbitGroup(group.group.id);
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -1006,7 +1120,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       );
       _openRowNotifier.value = null;
       _markGroupChanged(group.group.id);
-      _loadGroupData();
+      await _refreshOrbitGroup(group.group.id);
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -1050,8 +1164,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         )
         .then((_) {
           _markGroupChanged(group.group.id);
-          _loadOrbitData();
-          _loadGroupData();
+          unawaited(_refreshOrbitGroup(group.group.id));
         });
   }
 
@@ -1083,7 +1196,6 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         )
         .then((_) {
           _markReloadAllGroups();
-          _loadOrbitData();
           _loadGroupData();
         });
   }
