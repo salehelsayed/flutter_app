@@ -46,15 +46,12 @@ class IntrosTab extends StatelessWidget {
 
     final introducerIds = groupedIntros.keys.toList();
 
-    return ListView.builder(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
+    return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      itemCount: introducerIds.length + 1,
-      itemBuilder: (context, index) {
-        // First item: context text
-        if (index == 0) {
-          return Padding(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
             padding: const EdgeInsets.only(bottom: 16),
             child: Text(
               'These are people your friends know well. Once you both accept, you can start chatting.',
@@ -64,67 +61,64 @@ class IntrosTab extends StatelessWidget {
               ),
               textAlign: TextAlign.center,
             ),
-          );
-        }
-
-        final groupIndex = index - 1;
-        final introducerId = introducerIds[groupIndex];
-        final intros = groupedIntros[introducerId]!;
-        final introducerName =
-            introducerUsernames[introducerId] ?? 'Unknown';
-
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
+          ),
+          for (
+            var groupIndex = 0;
+            groupIndex < introducerIds.length;
+            groupIndex++
+          ) ...[
             if (groupIndex > 0) const SizedBox(height: 16),
-            IntroGroupHeader(introducerUsername: introducerName),
+            IntroGroupHeader(
+              introducerUsername:
+                  introducerUsernames[introducerIds[groupIndex]] ?? 'Unknown',
+            ),
             const SizedBox(height: 8),
-            ...intros.map((intro) {
-              // Determine direction: am I the recipient or the introduced party?
-              final amRecipient = intro.recipientId == ownPeerId;
-              final displayUsername = amRecipient
-                  ? (intro.introducedUsername ?? 'Unknown')
-                  : (intro.recipientUsername ?? 'Unknown');
-              final displayPeerId = amRecipient
-                  ? intro.introducedId
-                  : intro.recipientId;
-
-              final ownPartyStatus = amRecipient
-                  ? intro.recipientStatus
-                  : intro.introducedStatus;
-              final waitingForUsername = amRecipient
-                  ? (intro.introducedUsername ?? 'Unknown')
-                  : (intro.recipientUsername ?? 'Unknown');
-
-              final showActions =
-                  ownPartyStatus == IntroductionStatus.pending &&
-                  intro.status == IntroductionOverallStatus.pending;
-
-              final isOtherBlocked = blockedPeerIds.contains(displayPeerId);
-
-              return Padding(
+            for (final intro in groupedIntros[introducerIds[groupIndex]]!) ...[
+              Padding(
                 padding: const EdgeInsets.only(bottom: 8),
-                child: IntroRow(
-                  introduction: intro,
-                  displayUsername: displayUsername,
-                  displayPeerId: displayPeerId,
-                  showActions: showActions,
-                  onAccept: showActions ? () => onAccept(intro.id) : null,
-                  onPass: showActions ? () => onPass(intro.id) : null,
-                  ownPartyStatus: ownPartyStatus,
-                  waitingForUsername: waitingForUsername,
-                  onSendMessage: intro.status ==
-                              IntroductionOverallStatus.mutualAccepted &&
-                          onSendMessage != null
-                      ? () => onSendMessage!(displayPeerId)
-                      : null,
-                  isOtherBlocked: isOtherBlocked,
+                child: Builder(
+                  builder: (context) {
+                    final amRecipient = intro.recipientId == ownPeerId;
+                    final displayUsername = amRecipient
+                        ? (intro.introducedUsername ?? 'Unknown')
+                        : (intro.recipientUsername ?? 'Unknown');
+                    final displayPeerId = amRecipient
+                        ? intro.introducedId
+                        : intro.recipientId;
+                    final ownPartyStatus = amRecipient
+                        ? intro.recipientStatus
+                        : intro.introducedStatus;
+                    final waitingForUsername = amRecipient
+                        ? (intro.introducedUsername ?? 'Unknown')
+                        : (intro.recipientUsername ?? 'Unknown');
+                    final showActions =
+                        ownPartyStatus == IntroductionStatus.pending &&
+                        intro.status == IntroductionOverallStatus.pending;
+
+                    return IntroRow(
+                      introduction: intro,
+                      displayUsername: displayUsername,
+                      displayPeerId: displayPeerId,
+                      showActions: showActions,
+                      onAccept: showActions ? () => onAccept(intro.id) : null,
+                      onPass: showActions ? () => onPass(intro.id) : null,
+                      ownPartyStatus: ownPartyStatus,
+                      waitingForUsername: waitingForUsername,
+                      onSendMessage:
+                          intro.status ==
+                                  IntroductionOverallStatus.mutualAccepted &&
+                              onSendMessage != null
+                          ? () => onSendMessage!(displayPeerId)
+                          : null,
+                      isOtherBlocked: blockedPeerIds.contains(displayPeerId),
+                    );
+                  },
                 ),
-              );
-            }),
+              ),
+            ],
           ],
-        );
-      },
+        ],
+      ),
     );
   }
 }
