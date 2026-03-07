@@ -71,7 +71,7 @@ Dirty files captured before checkpoint:
   - `PERF-01`: Done
   - `PERF-03`: Done
   - `PERF-06`: Done
-  - `PERF-08`: Pending
+  - `PERF-08`: Done
   - `PERF-07`: Pending
 - Wave 2
   - `PERF-10`: Pending
@@ -252,3 +252,32 @@ Follow-up pattern:
 Residual notes:
 - no automated route-level harness exists for the `impl-backlog.md` observation flow `Group conversation while messages arrive`; the wired/widget tests above are the best available fallback and real multi-user device QA remains outstanding
 - group recording / processing composer state still follows the older broad route-state pattern; this lane intentionally focused on incremental message/media updates and did not change the recording overlay path
+
+### PERF-08 Virtualize Orbit With Slivers Or Builders
+
+Lane:
+- `perf-exec/lane-f-orbit`
+
+Implementation:
+- replaced the eager Orbit `SingleChildScrollView` + `Column` list surface with a `CustomScrollView` using slivers and a bounded cache extent
+- kept the orbital hero section outside the virtualized list body so the list path owns only the list/filter/banner content
+- replaced the embedded Orbit intros tab path with sliver-native intro rows so Orbit no longer depends on a nested `ListView` for intros rendering
+- kept the existing `introsWidget` fallback for non-migrated callers, but moved `OrbitWired` to the new `OrbitIntrosViewData` sliver path
+
+Follow-up pattern:
+1. local implementation checks
+   - `flutter analyze lib/features/orbit/presentation/screens/orbit_screen.dart lib/features/orbit/presentation/screens/orbit_wired.dart test/features/orbit/presentation/screens/orbit_screen_archived_groups_test.dart test/features/orbit/presentation/screens/orbit_wired_test.dart`
+   - result: passed, no issues
+2. follow-up diff review
+   - confirmed Orbit now renders through `CustomScrollView` + `SliverList`
+   - confirmed the orbital hero remains separate from the list sliver path
+   - confirmed the Orbit-managed intros path no longer embeds a nested `ListView`
+3. targeted QA / regression surface
+   - `flutter test test/features/orbit/presentation/screens/orbit_screen_archived_groups_test.dart test/features/orbit/presentation/screens/orbit_wired_test.dart test/features/orbit/presentation/widgets/orbit_search_trigger_test.dart`
+   - result: all tests passed
+4. visible UX delta
+   - minor structural scroll behavior change only, as expected for virtualization; no intentional redesign
+
+Residual notes:
+- no existing automated route harness was found for the exact `impl-backlog.md` observation flow `Orbit open -> scroll -> search`; the lane used the targeted screen and wired/widget suite above as the best available fallback and leaves real route-level device QA as an outstanding follow-up gap
+- the non-sliver `introsWidget` fallback remains in `OrbitScreen` for compatibility, but `OrbitWired` now uses the sliver-native path that satisfies the scoped `PERF-08` requirement
