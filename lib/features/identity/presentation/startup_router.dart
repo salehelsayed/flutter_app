@@ -23,7 +23,9 @@ import 'package:flutter_app/features/feed/presentation/screens/feed_wired.dart';
 import 'package:flutter_app/features/identity/application/startup_decision.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
+import 'package:flutter_app/features/identity/presentation/navigation/startup_route_transition.dart';
 import 'package:flutter_app/features/identity/presentation/screens/identity_choice_wired.dart';
+import 'package:flutter_app/features/identity/presentation/widgets/startup_loading_gate.dart';
 import 'package:flutter_app/features/home/presentation/screens/first_time_experience_wired.dart';
 import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -151,6 +153,7 @@ class StartupRouter extends StatefulWidget {
 class _StartupRouterState extends State<StartupRouter> {
   bool _hasError = false;
   String _errorMessage = '';
+  String _startupStage = startupStageCheckingIdentity;
 
   @override
   void initState() {
@@ -162,6 +165,8 @@ class _StartupRouterState extends State<StartupRouter> {
     emitFlowEvent(layer: 'FL', event: 'ID_STARTUP_FLOW_BEGIN', details: {});
 
     try {
+      _setStartupStage(startupStageCheckingIdentity);
+
       final decision = await decideStartupRoute(
         identityRepo: widget.repository,
         contactRepo: widget.contactRepository,
@@ -182,6 +187,7 @@ class _StartupRouterState extends State<StartupRouter> {
 
       switch (decision) {
         case StartupDecision.hasIdentityWithContacts:
+          _setStartupStage(startupStageOpeningFeed);
           await _ensureMlKemKeys();
           final contactCount = await contactRepository.getContactCount();
           if (!mounted) return;
@@ -191,49 +197,47 @@ class _StartupRouterState extends State<StartupRouter> {
             event: 'ID_STARTUP_ROUTE_FEED',
             details: {'contactCount': contactCount},
           );
-          Navigator.of(context).pushReplacement(
-            MaterialPageRoute(
-              builder: (_) => FeedWired(
-                repository: repository,
-                contactRepository: contactRepository,
-                contactRequestRepository: contactRequestRepository,
-                contactRequestListener: contactRequestListener,
-                messageRepository: messageRepository,
-                mediaAttachmentRepository: mediaAttachmentRepository,
-                chatMessageListener: chatMessageListener,
-                bridge: bridge,
-                p2pService: p2pService,
-                mediaFileManager: widget.mediaFileManager,
-                secureKeyStore: widget.secureKeyStore,
-                imageProcessor: widget.imageProcessor,
-                conversationTracker: widget.conversationTracker,
-                audioRecorderService: widget.audioRecorderService,
-                reactionRepository: widget.reactionRepository,
-                reactionListener: widget.reactionListener,
-                groupRepository: widget.groupRepository,
-                groupMessageRepository: widget.groupMessageRepository,
-                groupMessageListener: widget.groupMessageListener,
-                groupInviteListener: widget.groupInviteListener,
-                groupConversationTracker: widget.groupConversationTracker,
-                introductionRepository: widget.introductionRepository,
-                introductionListener: widget.introductionListener,
-              ),
+          await _pushStartupReplacement(
+            builder: (_) => FeedWired(
+              repository: repository,
+              contactRepository: contactRepository,
+              contactRequestRepository: contactRequestRepository,
+              contactRequestListener: contactRequestListener,
+              messageRepository: messageRepository,
+              mediaAttachmentRepository: mediaAttachmentRepository,
+              chatMessageListener: chatMessageListener,
+              bridge: bridge,
+              p2pService: p2pService,
+              mediaFileManager: widget.mediaFileManager,
+              secureKeyStore: widget.secureKeyStore,
+              imageProcessor: widget.imageProcessor,
+              conversationTracker: widget.conversationTracker,
+              audioRecorderService: widget.audioRecorderService,
+              reactionRepository: widget.reactionRepository,
+              reactionListener: widget.reactionListener,
+              groupRepository: widget.groupRepository,
+              groupMessageRepository: widget.groupMessageRepository,
+              groupMessageListener: widget.groupMessageListener,
+              groupInviteListener: widget.groupInviteListener,
+              groupConversationTracker: widget.groupConversationTracker,
+              introductionRepository: widget.introductionRepository,
+              introductionListener: widget.introductionListener,
             ),
           );
-          StartupTiming.instance.mark('route_pushed');
 
           // Start P2P node in background after navigation
           _startP2PInBackground();
           break;
 
         case StartupDecision.hasIdentityNoContacts:
+          _setStartupStage(startupStageOpeningSetup);
           await _ensureMlKemKeys();
           emitFlowEvent(
             layer: 'FL',
             event: 'ID_STARTUP_ROUTE_MAIN_NO_CONTACTS',
             details: {},
           );
-          _navigateToFirstTime(
+          await _navigateToFirstTime(
             repository: repository,
             contactRepository: contactRepository,
             contactRequestRepository: contactRequestRepository,
@@ -258,64 +262,59 @@ class _StartupRouterState extends State<StartupRouter> {
             introductionRepository: widget.introductionRepository,
             introductionListener: widget.introductionListener,
           );
-          StartupTiming.instance.mark('route_pushed');
-
-          // Start P2P node in background after navigation
-          _startP2PInBackground();
           break;
 
         case StartupDecision.needsIdentity:
+          _setStartupStage(startupStageOpeningOnboarding);
           emitFlowEvent(
             layer: 'FL',
             event: 'ID_STARTUP_ROUTE_ONBOARDING',
             details: {},
           );
-          Navigator.of(context).pushReplacement(
-            MaterialPageRoute(
-              builder: (routeContext) => IdentityChoiceWired(
-                repository: repository,
-                callIdentityGenerate: () => callIdentityGenerate(bridge),
-                callIdentityRestore: (mnemonic) =>
-                    callIdentityRestore(bridge, mnemonic),
-                callMlKemKeygen: () => callMlKemKeygen(bridge),
-                onNavigateToMain: () {
-                  // Navigate and start P2P
-                  Navigator.of(routeContext).pushReplacement(
-                    MaterialPageRoute(
-                      builder: (_) => FirstTimeExperienceWired(
-                        repository: repository,
-                        contactRepository: contactRepository,
-                        contactRequestRepository: contactRequestRepository,
-                        contactRequestListener: contactRequestListener,
-                        messageRepository: messageRepository,
-                        mediaAttachmentRepository: mediaAttachmentRepository,
-                        chatMessageListener: chatMessageListener,
-                        bridge: bridge,
-                        p2pService: p2pService,
-                        mediaFileManager: widget.mediaFileManager,
-                        secureKeyStore: widget.secureKeyStore,
-                        imageProcessor: widget.imageProcessor,
-                        conversationTracker: widget.conversationTracker,
-                        audioRecorderService: widget.audioRecorderService,
-                        reactionRepository: widget.reactionRepository,
-                        reactionListener: widget.reactionListener,
-                        groupRepository: widget.groupRepository,
-                        groupMessageRepository: widget.groupMessageRepository,
-                        groupMessageListener: widget.groupMessageListener,
-                        groupInviteListener: widget.groupInviteListener,
-                        groupConversationTracker: widget.groupConversationTracker,
-                        introductionRepository: widget.introductionRepository,
-                        introductionListener: widget.introductionListener,
-                      ),
+          await _pushStartupReplacement(
+            builder: (routeContext) => IdentityChoiceWired(
+              repository: repository,
+              callIdentityGenerate: () => callIdentityGenerate(bridge),
+              callIdentityRestore: (mnemonic) =>
+                  callIdentityRestore(bridge, mnemonic),
+              callMlKemKeygen: () => callMlKemKeygen(bridge),
+              onNavigateToMain: () {
+                // Navigate and start P2P
+                Navigator.of(routeContext).pushReplacement(
+                  MaterialPageRoute(
+                    builder: (_) => FirstTimeExperienceWired(
+                      repository: repository,
+                      contactRepository: contactRepository,
+                      contactRequestRepository: contactRequestRepository,
+                      contactRequestListener: contactRequestListener,
+                      messageRepository: messageRepository,
+                      mediaAttachmentRepository: mediaAttachmentRepository,
+                      chatMessageListener: chatMessageListener,
+                      bridge: bridge,
+                      p2pService: p2pService,
+                      mediaFileManager: widget.mediaFileManager,
+                      secureKeyStore: widget.secureKeyStore,
+                      imageProcessor: widget.imageProcessor,
+                      conversationTracker: widget.conversationTracker,
+                      audioRecorderService: widget.audioRecorderService,
+                      reactionRepository: widget.reactionRepository,
+                      reactionListener: widget.reactionListener,
+                      groupRepository: widget.groupRepository,
+                      groupMessageRepository: widget.groupMessageRepository,
+                      groupMessageListener: widget.groupMessageListener,
+                      groupInviteListener: widget.groupInviteListener,
+                      groupConversationTracker: widget.groupConversationTracker,
+                      introductionRepository: widget.introductionRepository,
+                      introductionListener: widget.introductionListener,
                     ),
-                  );
+                  ),
+                );
 
-                  StartupTiming.instance.mark('route_pushed');
+                StartupTiming.instance.mark('route_pushed');
 
-                  // Start P2P node in background after identity creation
-                  _startP2PInBackground();
-                },
-              ),
+                // Start P2P node in background after identity creation
+                _startP2PInBackground();
+              },
             ),
           );
           break;
@@ -377,10 +376,7 @@ class _StartupRouterState extends State<StartupRouter> {
       final groupRepo = widget.groupRepository;
       final groupMsgRepo = widget.groupMessageRepository;
       if (groupRepo != null) {
-        rejoinGroupTopics(
-          bridge: widget.bridge,
-          groupRepo: groupRepo,
-        );
+        rejoinGroupTopics(bridge: widget.bridge, groupRepo: groupRepo);
         if (groupMsgRepo != null) {
           drainGroupOfflineInbox(
             bridge: widget.bridge,
@@ -403,11 +399,7 @@ class _StartupRouterState extends State<StartupRouter> {
       final identity = await widget.repository.loadIdentity();
       if (identity == null || identity.mlKemPublicKey != null) return;
 
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'MLKEM_MIGRATION_START',
-        details: {},
-      );
+      emitFlowEvent(layer: 'FL', event: 'MLKEM_MIGRATION_START', details: {});
 
       final mlKemResponse = await callMlKemKeygen(widget.bridge);
       if (mlKemResponse['ok'] != true) {
@@ -434,11 +426,7 @@ class _StartupRouterState extends State<StartupRouter> {
 
       await widget.repository.saveIdentity(enriched);
 
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'MLKEM_MIGRATION_OK',
-        details: {},
-      );
+      emitFlowEvent(layer: 'FL', event: 'MLKEM_MIGRATION_OK', details: {});
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -477,11 +465,12 @@ class _StartupRouterState extends State<StartupRouter> {
     setState(() {
       _hasError = false;
       _errorMessage = '';
+      _startupStage = startupStageCheckingIdentity;
     });
     await _routeBasedOnIdentity();
   }
 
-  void _navigateToFirstTime({
+  Future<void> _navigateToFirstTime({
     required IdentityRepository repository,
     required ContactRepository contactRepository,
     required ContactRequestRepository contactRequestRepository,
@@ -505,36 +494,54 @@ class _StartupRouterState extends State<StartupRouter> {
     ActiveConversationTracker? groupConversationTracker,
     IntroductionRepository? introductionRepository,
     IntroductionListener? introductionListener,
-  }) {
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(
-        builder: (_) => FirstTimeExperienceWired(
-          repository: repository,
-          contactRepository: contactRepository,
-          contactRequestRepository: contactRequestRepository,
-          contactRequestListener: contactRequestListener,
-          messageRepository: messageRepository,
-          mediaAttachmentRepository: mediaAttachmentRepository,
-          chatMessageListener: chatMessageListener,
-          bridge: bridge,
-          p2pService: p2pService,
-          mediaFileManager: mediaFileManager,
-          secureKeyStore: secureKeyStore,
-          imageProcessor: imageProcessor,
-          conversationTracker: conversationTracker,
-          audioRecorderService: audioRecorderService,
-          reactionRepository: reactionRepository,
-          reactionListener: reactionListener,
-          groupRepository: groupRepository,
-          groupMessageRepository: groupMessageRepository,
-          groupMessageListener: groupMessageListener,
-          groupInviteListener: groupInviteListener,
-          groupConversationTracker: groupConversationTracker,
-          introductionRepository: introductionRepository,
-          introductionListener: introductionListener,
-        ),
+  }) async {
+    await _pushStartupReplacement(
+      builder: (_) => FirstTimeExperienceWired(
+        repository: repository,
+        contactRepository: contactRepository,
+        contactRequestRepository: contactRequestRepository,
+        contactRequestListener: contactRequestListener,
+        messageRepository: messageRepository,
+        mediaAttachmentRepository: mediaAttachmentRepository,
+        chatMessageListener: chatMessageListener,
+        bridge: bridge,
+        p2pService: p2pService,
+        mediaFileManager: mediaFileManager,
+        secureKeyStore: secureKeyStore,
+        imageProcessor: imageProcessor,
+        conversationTracker: conversationTracker,
+        audioRecorderService: audioRecorderService,
+        reactionRepository: reactionRepository,
+        reactionListener: reactionListener,
+        groupRepository: groupRepository,
+        groupMessageRepository: groupMessageRepository,
+        groupMessageListener: groupMessageListener,
+        groupInviteListener: groupInviteListener,
+        groupConversationTracker: groupConversationTracker,
+        introductionRepository: introductionRepository,
+        introductionListener: introductionListener,
       ),
     );
+
+    // Start P2P in background after navigation
+    _startP2PInBackground();
+  }
+
+  void _setStartupStage(String stage) {
+    if (!mounted || _startupStage == stage) return;
+    setState(() => _startupStage = stage);
+  }
+
+  Future<void> _pushStartupReplacement({required WidgetBuilder builder}) async {
+    if (!mounted) return;
+
+    await WidgetsBinding.instance.endOfFrame;
+    if (!mounted) return;
+
+    Navigator.of(
+      context,
+    ).pushReplacement(buildStartupReplacementRoute(builder: builder));
+    StartupTiming.instance.mark('route_pushed');
   }
 
   @override
@@ -568,19 +575,6 @@ class _StartupRouterState extends State<StartupRouter> {
       );
     }
 
-    return Scaffold(
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: const [
-            Icon(Icons.lock, size: 64),
-            SizedBox(height: 24),
-            CircularProgressIndicator(),
-            SizedBox(height: 16),
-            Text('Loading...'),
-          ],
-        ),
-      ),
-    );
+    return StartupLoadingGate(stage: _startupStage);
   }
 }

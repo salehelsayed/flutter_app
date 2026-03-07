@@ -82,6 +82,9 @@ void main() {
     expect(find.byKey(const ValueKey('feed-loading-card-0')), findsOneWidget);
     expect(find.byKey(const ValueKey('feed-loading-card-1')), findsOneWidget);
     expect(find.byKey(const ValueKey('feed-loading-card-2')), findsOneWidget);
+    expect(find.byKey(const ValueKey('feed-loading-status')), findsOneWidget);
+    expect(find.text('Loading Feed...'), findsOneWidget);
+    expect(find.text('Your recent threads are still syncing.'), findsOneWidget);
     expect(find.textContaining('Your feed is ready'), findsNothing);
     expect(find.text('Feed'), findsOneWidget);
     expect(find.text('Orbit'), findsOneWidget);
@@ -120,6 +123,7 @@ void main() {
       await tester.pump();
 
       expect(find.byKey(const ValueKey('feed-loading-card-0')), findsOneWidget);
+      expect(find.byKey(const ValueKey('feed-loading-status')), findsOneWidget);
 
       itemsNotifier.value = [
         buildThreadItem(
@@ -131,6 +135,7 @@ void main() {
       await tester.pump();
 
       expect(find.byKey(const ValueKey('feed-loading-card-0')), findsNothing);
+      expect(find.byKey(const ValueKey('feed-loading-status')), findsNothing);
       expect(find.byKey(const ValueKey<String>('thread_bob')), findsOneWidget);
       expect(find.text('Bob'), findsOneWidget);
     },
