@@ -11,6 +11,7 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_thread_summary.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/conversation_header.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_route_changes.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
@@ -155,8 +156,10 @@ void main() {
     InMemoryGroupRepository? groupRepository,
     InMemoryGroupMessageRepository? groupMessageRepository,
     bool wrapInNavigator = false,
+    String? initialFilterTab,
     VoidCallback? onHeaderBuild,
     VoidCallback? onListBuild,
+    List<NavigatorObserver>? navigatorObservers,
   }) {
     final effectiveContactRepo = contactRepository ?? contactRepo;
     final effectiveMessageRepo = messageRepository ?? messageRepo;
@@ -201,12 +204,14 @@ void main() {
       groupRepository: effectiveGroupRepo,
       groupMessageRepository: effectiveGroupMessageRepo,
       groupMessageListener: gmListener,
+      initialFilterTab: initialFilterTab,
       debugOnHeaderBuild: onHeaderBuild,
       debugOnListBuild: onListBuild,
     );
 
     if (wrapInNavigator) {
       return MaterialApp(
+        navigatorObservers: navigatorObservers ?? const <NavigatorObserver>[],
         home: Builder(
           builder: (context) => Scaffold(
             body: Center(
@@ -224,7 +229,16 @@ void main() {
       );
     }
 
-    return MaterialApp(home: orbitWidget);
+    return MaterialApp(
+      navigatorObservers: navigatorObservers ?? const <NavigatorObserver>[],
+      home: orbitWidget,
+    );
+  }
+
+  Future<void> pumpOrbitFrames(WidgetTester tester, {int count = 3}) async {
+    for (var i = 0; i < count; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
   }
 
   group('OrbitWired', () {
@@ -299,8 +313,14 @@ void main() {
       expect(spyContactRepo.getActiveContactsCallCount, 1);
       expect(spyContactRepo.getArchivedContactsCallCount, 1);
       expect(spyMessageRepo.getConversationThreadSummariesCallCount, 1);
-      expect(spyMessageRepo.getConversationThreadSummaryCallCountByPeerId, isEmpty);
-      expect(spyMessageRepo.getMessageCountForContactCallCountByPeerId, isEmpty);
+      expect(
+        spyMessageRepo.getConversationThreadSummaryCallCountByPeerId,
+        isEmpty,
+      );
+      expect(
+        spyMessageRepo.getMessageCountForContactCallCountByPeerId,
+        isEmpty,
+      );
       expect(
         spyMessageRepo.getLatestMessageForContactCallCountByPeerId,
         isEmpty,
@@ -473,7 +493,10 @@ void main() {
         'contact-peer-id': 1,
       });
       expect(spyMessageRepo.getConversationThreadSummariesCallCount, 0);
-      expect(spyMessageRepo.getMessageCountForContactCallCountByPeerId, isEmpty);
+      expect(
+        spyMessageRepo.getMessageCountForContactCallCountByPeerId,
+        isEmpty,
+      );
       expect(
         spyMessageRepo.getLatestMessageForContactCallCountByPeerId,
         isEmpty,
@@ -557,45 +580,46 @@ void main() {
       },
     );
 
-    testWidgets('typing search updates the list without rebuilding the header', (
-      tester,
-    ) async {
-      setLargeTestSurface(tester);
-      suppressOverflowErrors();
-      identityRepo.seed(testIdentity);
-      contactRepo.seed([
-        testContact,
-        testContact.copyWith(peerId: 'contact-peer-id-2', username: 'Cara'),
-      ]);
+    testWidgets(
+      'typing search updates the list without rebuilding the header',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([
+          testContact,
+          testContact.copyWith(peerId: 'contact-peer-id-2', username: 'Cara'),
+        ]);
 
-      var headerBuildCount = 0;
-      var listBuildCount = 0;
+        var headerBuildCount = 0;
+        var listBuildCount = 0;
 
-      await tester.pumpWidget(
-        buildOrbitWired(
-          onHeaderBuild: () => headerBuildCount++,
-          onListBuild: () => listBuildCount++,
-        ),
-      );
-      await tester.pump(const Duration(milliseconds: 100));
-      await tester.pump(const Duration(milliseconds: 100));
-      await tester.pump(const Duration(milliseconds: 100));
+        await tester.pumpWidget(
+          buildOrbitWired(
+            onHeaderBuild: () => headerBuildCount++,
+            onListBuild: () => listBuildCount++,
+          ),
+        );
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
 
-      await tester.tap(find.byType(OrbitSearchTrigger));
-      await tester.pump(const Duration(milliseconds: 100));
-      await tester.pump(const Duration(milliseconds: 100));
+        await tester.tap(find.byType(OrbitSearchTrigger));
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
 
-      final headerBuildsBeforeTyping = headerBuildCount;
-      final listBuildsBeforeTyping = listBuildCount;
+        final headerBuildsBeforeTyping = headerBuildCount;
+        final listBuildsBeforeTyping = listBuildCount;
 
-      await tester.enterText(find.byType(TextField), 'Bo');
-      await tester.pump(const Duration(milliseconds: 100));
+        await tester.enterText(find.byType(TextField), 'Bo');
+        await tester.pump(const Duration(milliseconds: 100));
 
-      expect(headerBuildCount, headerBuildsBeforeTyping);
-      expect(listBuildCount, greaterThan(listBuildsBeforeTyping));
-      expect(find.text('Bob'), findsWidgets);
-      expect(find.text('Cara'), findsNothing);
-    });
+        expect(headerBuildCount, headerBuildsBeforeTyping);
+        expect(listBuildCount, greaterThan(listBuildsBeforeTyping));
+        expect(find.text('Bob'), findsWidgets);
+        expect(find.text('Cara'), findsNothing);
+      },
+    );
 
     testWidgets('shows contact request dialog on incoming request', (
       tester,
@@ -963,7 +987,264 @@ void main() {
       expect(find.text('Newer Group'), findsOneWidget);
       expect(find.text('Bob'), findsWidgets);
     });
+
+    testWidgets(
+      'friend tap pushes conversation route before read marking completes',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+
+        final delayedContactRepo = _DelayedSpyContactRepository()
+          ..seed([testContact]);
+        final delayedMessageRepo = _DelayedSpyMessageRepository()
+          ..markConversationAsReadGate = Completer<void>();
+        final observer = _RecordingNavigatorObserver();
+
+        await tester.pumpWidget(
+          buildOrbitWired(
+            contactRepository: delayedContactRepo,
+            messageRepository: delayedMessageRepo,
+            navigatorObservers: [observer],
+          ),
+        );
+        await pumpOrbitFrames(tester);
+
+        observer.reset();
+
+        await tester.tap(find.text('Bob').first);
+        await tester.pump();
+
+        expect(observer.pushCount, 1);
+        expect(observer.lastPushedRoute, isNotNull);
+
+        delayedMessageRepo.markConversationAsReadGate!.complete();
+        await pumpOrbitFrames(tester);
+      },
+    );
+
+    testWidgets(
+      'pushed conversation route shows loading shell before delayed initial page resolves',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+
+        final delayedContactRepo = _DelayedSpyContactRepository()
+          ..seed([testContact]);
+        final delayedMessageRepo = _DelayedSpyMessageRepository()
+          ..markConversationAsReadGate = Completer<void>()
+          ..getMessagesPageGate = Completer<void>();
+        final observer = _RecordingNavigatorObserver();
+
+        await tester.pumpWidget(
+          buildOrbitWired(
+            contactRepository: delayedContactRepo,
+            messageRepository: delayedMessageRepo,
+            navigatorObservers: [observer],
+          ),
+        );
+        await pumpOrbitFrames(tester);
+
+        observer.reset();
+
+        await tester.tap(find.text('Bob').first);
+        await tester.pump();
+        await pumpOrbitFrames(tester, count: 2);
+
+        expect(observer.pushCount, 1);
+        expect(
+          find.byKey(const ValueKey('conversation-loading-shell')),
+          findsOneWidget,
+        );
+        expect(find.byType(ConversationHeader), findsOneWidget);
+        expect(find.text('Write something...'), findsOneWidget);
+
+        delayedMessageRepo.markConversationAsReadGate!.complete();
+        delayedMessageRepo.getMessagesPageGate!.complete();
+        await pumpOrbitFrames(tester, count: 6);
+      },
+    );
+
+    testWidgets(
+      'all tab renders active friends before archived hydration completes',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+
+        final delayedContactRepo = _DelayedSpyContactRepository()
+          ..seed([testContact]);
+        delayedContactRepo.archivedContactsGate = Completer<void>();
+
+        await tester.pumpWidget(
+          buildOrbitWired(contactRepository: delayedContactRepo),
+        );
+        await pumpOrbitFrames(tester);
+
+        expect(find.text('Bob'), findsWidgets);
+
+        delayedContactRepo.archivedContactsGate!.complete();
+        await pumpOrbitFrames(tester);
+      },
+    );
+
+    testWidgets(
+      'all tab renders active groups before archived hydration completes',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+
+        final delayedGroupRepo = _DelayedSpyGroupRepository()
+          ..allGroupsGate = Completer<void>();
+        await delayedGroupRepo.saveGroup(
+          GroupModel(
+            id: 'g-active',
+            name: 'Alpha Group',
+            type: GroupType.chat,
+            topicName: 'topic-g-active',
+            createdAt: DateTime.utc(2026, 3, 1),
+            createdBy: 'peer-admin',
+            myRole: GroupRole.admin,
+          ),
+        );
+
+        await tester.pumpWidget(
+          buildOrbitWired(groupRepository: delayedGroupRepo),
+        );
+        await pumpOrbitFrames(tester);
+
+        expect(find.text('Alpha Group'), findsOneWidget);
+
+        delayedGroupRepo.allGroupsGate!.complete();
+        await pumpOrbitFrames(tester);
+      },
+    );
+
+    testWidgets(
+      'archived tab shows loading placeholders before archived data resolves',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+
+        final delayedContactRepo = _DelayedSpyContactRepository()
+          ..seed([
+            testContact.copyWith(
+              isArchived: true,
+              archivedAt: DateTime.utc(2026, 3, 1).toIso8601String(),
+            ),
+          ])
+          ..archivedContactsGate = Completer<void>();
+        final delayedGroupRepo = _DelayedSpyGroupRepository()
+          ..allGroupsGate = Completer<void>();
+
+        await tester.pumpWidget(
+          buildOrbitWired(
+            contactRepository: delayedContactRepo,
+            groupRepository: delayedGroupRepo,
+            initialFilterTab: 'archived',
+          ),
+        );
+        await pumpOrbitFrames(tester);
+
+        expect(
+          find.byKey(const ValueKey('orbit-loading-row-0')),
+          findsOneWidget,
+        );
+        expect(find.text('No archived friends yet'), findsNothing);
+
+        delayedContactRepo.archivedContactsGate!.complete();
+        delayedGroupRepo.allGroupsGate!.complete();
+        await pumpOrbitFrames(tester);
+      },
+    );
+
+    testWidgets(
+      'archived tab swaps placeholders for archived rows when archived hydration completes',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+
+        final delayedContactRepo = _DelayedSpyContactRepository()
+          ..seed([
+            testContact.copyWith(
+              isArchived: true,
+              archivedAt: DateTime.utc(2026, 3, 1).toIso8601String(),
+            ),
+          ])
+          ..archivedContactsGate = Completer<void>();
+
+        await tester.pumpWidget(
+          buildOrbitWired(
+            contactRepository: delayedContactRepo,
+            initialFilterTab: 'archived',
+          ),
+        );
+        await pumpOrbitFrames(tester);
+
+        expect(
+          find.byKey(const ValueKey('orbit-loading-row-0')),
+          findsOneWidget,
+        );
+
+        delayedContactRepo.archivedContactsGate!.complete();
+        await pumpOrbitFrames(tester, count: 6);
+
+        expect(find.byKey(const ValueKey('orbit-loading-row-0')), findsNothing);
+        expect(find.text('Bob'), findsWidgets);
+      },
+    );
+
+    testWidgets(
+      'background archived hydration does not replace visible all-tab rows with placeholders',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+
+        final delayedContactRepo = _DelayedSpyContactRepository()
+          ..seed([testContact])
+          ..archivedContactsGate = Completer<void>();
+        final delayedGroupRepo = _DelayedSpyGroupRepository()
+          ..allGroupsGate = Completer<void>();
+
+        await tester.pumpWidget(
+          buildOrbitWired(
+            contactRepository: delayedContactRepo,
+            groupRepository: delayedGroupRepo,
+          ),
+        );
+        await pumpOrbitFrames(tester);
+
+        expect(find.text('Bob'), findsWidgets);
+        expect(find.byKey(const ValueKey('orbit-loading-row-0')), findsNothing);
+
+        delayedContactRepo.archivedContactsGate!.complete();
+        delayedGroupRepo.allGroupsGate!.complete();
+        await pumpOrbitFrames(tester);
+      },
+    );
   });
+}
+
+class _RecordingNavigatorObserver extends NavigatorObserver {
+  Route<dynamic>? lastPushedRoute;
+  int pushCount = 0;
+
+  @override
+  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    super.didPush(route, previousRoute);
+    pushCount++;
+    lastPushedRoute = route;
+  }
+
+  void reset() {
+    lastPushedRoute = null;
+    pushCount = 0;
+  }
 }
 
 class _SpyContactRepository extends FakeContactRepository {
@@ -1052,8 +1333,9 @@ class _SpyMessageRepository extends InMemoryMessageRepository {
   }
 
   @override
-  Future<Map<String, ConversationThreadSummary>>
-      getConversationThreadSummaries(Iterable<String> contactPeerIds) {
+  Future<Map<String, ConversationThreadSummary>> getConversationThreadSummaries(
+    Iterable<String> contactPeerIds,
+  ) {
     getConversationThreadSummariesCallCount++;
     return super.getConversationThreadSummaries(contactPeerIds);
   }
@@ -1146,6 +1428,63 @@ class _SpyGroupMessageRepository extends InMemoryGroupMessageRepository {
     getUnreadCountCallCountByGroupId.clear();
     getGroupThreadSummariesCallCount = 0;
     getGroupThreadSummaryCallCountByGroupId.clear();
+  }
+}
+
+class _DelayedSpyContactRepository extends _SpyContactRepository {
+  Completer<void>? archivedContactsGate;
+
+  @override
+  Future<List<ContactModel>> getArchivedContacts() async {
+    final gate = archivedContactsGate;
+    if (gate != null) {
+      await gate.future;
+    }
+    return super.getArchivedContacts();
+  }
+}
+
+class _DelayedSpyMessageRepository extends _SpyMessageRepository {
+  Completer<void>? markConversationAsReadGate;
+  Completer<void>? getMessagesPageGate;
+
+  @override
+  Future<int> markConversationAsRead(String contactPeerId) async {
+    final gate = markConversationAsReadGate;
+    if (gate != null) {
+      await gate.future;
+    }
+    return super.markConversationAsRead(contactPeerId);
+  }
+
+  @override
+  Future<List<ConversationMessage>> getMessagesPage(
+    String contactPeerId, {
+    int limit = 50,
+    String? beforeTimestamp,
+  }) async {
+    final gate = getMessagesPageGate;
+    if (gate != null) {
+      await gate.future;
+    }
+    return super.getMessagesPage(
+      contactPeerId,
+      limit: limit,
+      beforeTimestamp: beforeTimestamp,
+    );
+  }
+}
+
+class _DelayedSpyGroupRepository extends _SpyGroupRepository {
+  Completer<void>? allGroupsGate;
+
+  @override
+  Future<List<GroupModel>> getAllGroups() async {
+    final gate = allGroupsGate;
+    if (gate != null) {
+      await gate.future;
+    }
+    return super.getAllGroups();
   }
 }
 
