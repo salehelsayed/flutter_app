@@ -3,7 +3,6 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:uuid/uuid.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/amplitude_buffer.dart';
@@ -88,7 +87,6 @@ class GroupConversationWired extends StatefulWidget {
 }
 
 class _GroupConversationWiredState extends State<GroupConversationWired> {
-  static const _uuid = Uuid();
   static const _maxAttachments = 10;
 
   List<GroupMessage> _messages = [];
@@ -139,7 +137,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
       if (identity != null && mounted) {
         setState(() {
           _ownPeerId = identity.peerId;
-          _senderUsername = identity.username ?? '';
+          _senderUsername = identity.username;
           _senderPublicKey = identity.publicKey;
           _senderPrivateKey = identity.privateKey;
         });
@@ -158,38 +156,15 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
       final messages = await widget.msgRepo.getMessagesPage(widget.group.id);
       if (!mounted) return;
 
-      // Load media for all messages and resolve relative paths to absolute
-      Map<String, List<MediaAttachment>> mediaMap = {};
-      if (widget.mediaAttachmentRepo != null && messages.isNotEmpty) {
-        final ids = messages.map((m) => m.id).toList();
-        final rawMap =
-            await widget.mediaAttachmentRepo!.getAttachmentsForMessages(ids);
-
-        // Resolve relative paths to absolute for display
-        for (final entry in rawMap.entries) {
-          final resolved = <MediaAttachment>[];
-          for (final attachment in entry.value) {
-            if (attachment.localPath != null &&
-                widget.mediaFileManager != null) {
-              final absolutePath = await widget.mediaFileManager!
-                  .resolveStoredPath(attachment.localPath!);
-              resolved.add(attachment.copyWith(localPath: absolutePath));
-            } else {
-              resolved.add(attachment);
-            }
-          }
-          mediaMap[entry.key] = resolved;
-        }
-
-        // Download pending media
-        _downloadPendingMedia(mediaMap);
-      }
+      final mediaMap = await _loadResolvedMediaMap(messages);
+      if (!mounted) return;
 
       setState(() {
         _messages = messages;
         _mediaMap = mediaMap;
       });
 
+      unawaited(_downloadPendingMedia(mediaMap));
       await widget.msgRepo.markAsRead(widget.group.id);
     } catch (e) {
       emitFlowEvent(
@@ -201,7 +176,8 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
   }
 
   Future<void> _downloadPendingMedia(
-      Map<String, List<MediaAttachment>> mediaMap) async {
+    Map<String, List<MediaAttachment>> mediaMap,
+  ) async {
     if (widget.mediaFileManager == null || widget.mediaAttachmentRepo == null) {
       return;
     }
@@ -217,12 +193,14 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
           );
           if (mounted) {
             setState(() {
-              final list = _mediaMap[entry.key] ?? [];
+              final list = List<MediaAttachment>.from(
+                _mediaMap[entry.key] ?? entry.value,
+              );
               final idx = list.indexWhere((a) => a.id == attachment.id);
               if (idx >= 0) {
-                list[idx] = downloaded ??
-                    attachment.copyWith(downloadStatus: 'failed');
-                _mediaMap[entry.key] = list;
+                list[idx] =
+                    downloaded ?? attachment.copyWith(downloadStatus: 'failed');
+                _updateMediaForMessage(entry.key, list);
               }
             });
           }
@@ -232,21 +210,21 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
   }
 
   void _startListening() {
-    _messageSubscription =
-        widget.groupMessageListener.groupMessageStream.listen(
-      (message) {
-        if (message.groupId == widget.group.id) {
-          _loadMessages();
-        }
-      },
-      onError: (error) {
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'GROUP_CONV_FL_STREAM_ERROR',
-          details: {'error': error.toString()},
+    _messageSubscription = widget.groupMessageListener.groupMessageStream
+        .listen(
+          (message) {
+            if (message.groupId == widget.group.id) {
+              unawaited(_applyMessageUpdate(message));
+            }
+          },
+          onError: (error) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'GROUP_CONV_FL_STREAM_ERROR',
+              details: {'error': error.toString()},
+            );
+          },
         );
-      },
-    );
   }
 
   Future<void> _onSend(String text) async {
@@ -315,7 +293,75 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
     );
 
     if (result == SendGroupMessageResult.success && message != null) {
-      _loadMessages();
+      await _applyMessageUpdate(message, markAsRead: false);
+    }
+  }
+
+  Future<Map<String, List<MediaAttachment>>> _loadResolvedMediaMap(
+    List<GroupMessage> messages,
+  ) async {
+    final mediaRepo = widget.mediaAttachmentRepo;
+    if (mediaRepo == null || messages.isEmpty) {
+      return {};
+    }
+
+    final rawMap = await mediaRepo.getAttachmentsForMessages(
+      messages.map((m) => m.id).toList(),
+    );
+    final mediaMap = <String, List<MediaAttachment>>{};
+    for (final entry in rawMap.entries) {
+      mediaMap[entry.key] = await _resolveAttachmentsForDisplay(entry.value);
+    }
+    return mediaMap;
+  }
+
+  Future<List<MediaAttachment>> _loadResolvedAttachmentsForMessage(
+    String messageId,
+  ) async {
+    final mediaRepo = widget.mediaAttachmentRepo;
+    if (mediaRepo == null) return const [];
+    final attachments = await mediaRepo.getAttachmentsForMessage(messageId);
+    return _resolveAttachmentsForDisplay(attachments);
+  }
+
+  Future<List<MediaAttachment>> _resolveAttachmentsForDisplay(
+    List<MediaAttachment> attachments,
+  ) async {
+    final mediaFileManager = widget.mediaFileManager;
+    if (mediaFileManager == null) {
+      return attachments;
+    }
+
+    final resolved = <MediaAttachment>[];
+    for (final attachment in attachments) {
+      if (attachment.localPath == null) {
+        resolved.add(attachment);
+        continue;
+      }
+      final absolutePath = await mediaFileManager.resolveStoredPath(
+        attachment.localPath!,
+      );
+      resolved.add(attachment.copyWith(localPath: absolutePath));
+    }
+    return resolved;
+  }
+
+  Future<void> _applyMessageUpdate(
+    GroupMessage message, {
+    bool markAsRead = true,
+  }) async {
+    final latestMessage =
+        await widget.msgRepo.getMessage(message.id) ?? message;
+    final media = await _loadResolvedAttachmentsForMessage(latestMessage.id);
+    if (!mounted) return;
+
+    setState(() {
+      _upsertMessage(latestMessage);
+      _updateMediaForMessage(latestMessage.id, media);
+    });
+
+    if (markAsRead) {
+      await widget.msgRepo.markAsRead(widget.group.id);
     }
   }
 
@@ -346,8 +392,10 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
             const SizedBox(height: 16),
             ListTile(
               leading: const Icon(Icons.photo_library, color: Colors.white),
-              title: const Text('Media Library',
-                  style: TextStyle(color: Colors.white)),
+              title: const Text(
+                'Media Library',
+                style: TextStyle(color: Colors.white),
+              ),
               onTap: () {
                 Navigator.pop(ctx);
                 _pickFromGallery();
@@ -355,8 +403,10 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
             ),
             ListTile(
               leading: const Icon(Icons.camera_alt, color: Colors.white),
-              title: const Text('Take Photo',
-                  style: TextStyle(color: Colors.white)),
+              title: const Text(
+                'Take Photo',
+                style: TextStyle(color: Colors.white),
+              ),
               onTap: () {
                 Navigator.pop(ctx);
                 _pickFromCamera();
@@ -364,8 +414,10 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
             ),
             ListTile(
               leading: const Icon(Icons.videocam, color: Colors.white),
-              title: const Text('Record Video',
-                  style: TextStyle(color: Colors.white)),
+              title: const Text(
+                'Record Video',
+                style: TextStyle(color: Colors.white),
+              ),
               onTap: () {
                 Navigator.pop(ctx);
                 _pickVideoFromCamera();
@@ -489,6 +541,31 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
     });
   }
 
+  void _upsertMessage(GroupMessage message) {
+    final updated = List<GroupMessage>.from(_messages);
+    final index = updated.indexWhere((existing) => existing.id == message.id);
+    if (index >= 0) {
+      updated[index] = message;
+    } else {
+      updated.add(message);
+    }
+    updated.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+    _messages = updated;
+  }
+
+  void _updateMediaForMessage(
+    String messageId,
+    List<MediaAttachment> attachments,
+  ) {
+    final next = Map<String, List<MediaAttachment>>.from(_mediaMap);
+    if (attachments.isEmpty) {
+      next.remove(messageId);
+    } else {
+      next[messageId] = attachments;
+    }
+    _mediaMap = next;
+  }
+
   // -------------------------------------------------------------------------
   // Voice recording
   // -------------------------------------------------------------------------
@@ -503,7 +580,8 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: const Text(
-                'Microphone permission is required to record voice messages.'),
+              'Microphone permission is required to record voice messages.',
+            ),
             backgroundColor: Colors.red[700],
             behavior: SnackBarBehavior.floating,
           ),
@@ -595,7 +673,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
 
     if (mounted) setState(() => _isUploading = false);
 
-    await sendGroupMessage(
+    final (result, message) = await sendGroupMessage(
       bridge: widget.bridge,
       groupRepo: widget.groupRepo,
       msgRepo: widget.msgRepo,
@@ -609,7 +687,9 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
       mediaAttachmentRepo: widget.mediaAttachmentRepo,
     );
 
-    _loadMessages();
+    if (result == SendGroupMessageResult.success && message != null) {
+      await _applyMessageUpdate(message, markAsRead: false);
+    }
   }
 
   Future<void> _onRecordCancel() async {
@@ -652,8 +732,9 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
           .toList();
       if (allPaths.isEmpty) return;
       final tappedPath = visual[index].localPath!;
-      final startIndex =
-          allPaths.indexOf(tappedPath).clamp(0, allPaths.length - 1);
+      final startIndex = allPaths
+          .indexOf(tappedPath)
+          .clamp(0, allPaths.length - 1);
 
       Navigator.of(context).push(
         MaterialPageRoute(
@@ -749,12 +830,13 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
       processingProgress: _processingProgress,
       onRemoveAttachment: _removeAttachment,
       onAttach: _canWrite ? _onAttach : null,
-      onRecordStart:
-          _canWrite && widget.audioRecorderService != null ? _onRecordStart : null,
-      onRecordStop:
-          widget.audioRecorderService != null ? _onRecordStop : null,
-      onRecordCancel:
-          widget.audioRecorderService != null ? _onRecordCancel : null,
+      onRecordStart: _canWrite && widget.audioRecorderService != null
+          ? _onRecordStart
+          : null,
+      onRecordStop: widget.audioRecorderService != null ? _onRecordStop : null,
+      onRecordCancel: widget.audioRecorderService != null
+          ? _onRecordCancel
+          : null,
       isRecording: _isRecording,
       recordingDuration: _recordingDuration,
       amplitudeValues: _amplitudeValues,
@@ -762,4 +844,3 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
     );
   }
 }
-
