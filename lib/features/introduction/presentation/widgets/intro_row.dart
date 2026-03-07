@@ -204,6 +204,9 @@ class _StatusLabel extends StatelessWidget {
       case IntroductionOverallStatus.pending:
         label = 'Pending';
         color = const Color(0x99FFFFFF);
+      case IntroductionOverallStatus.alreadyConnected:
+        label = 'Already connected';
+        color = const Color(0xFF1DB954);
     }
 
     return Container(

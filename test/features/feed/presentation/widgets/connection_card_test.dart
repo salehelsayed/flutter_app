@@ -116,6 +116,23 @@ void main() {
       expect(find.byIcon(Icons.block), findsOneWidget);
     });
 
+    testWidgets('renders "Introduced by X" when introducedBy provided', (tester) async {
+      final oldHandler = FlutterError.onError;
+      FlutterError.onError = (details) {
+        if (details.exceptionAsString().contains('overflowed')) return;
+        oldHandler?.call(details);
+      };
+      addTearDown(() => FlutterError.onError = oldHandler);
+
+      await tester.pumpWidget(wrap(const ConnectionCard(
+        contactPeerId: 'peer-abc-123',
+        contactUsername: 'alice',
+        introducedBy: 'bob',
+      )));
+      await tester.pumpAndSettle();
+      expect(find.text('Introduced by bob'), findsOneWidget);
+    });
+
     testWidgets('disables Send Message button when blocked', (tester) async {
       final oldHandler = FlutterError.onError;
       FlutterError.onError = (details) {

@@ -524,7 +524,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       onProfileDownloaded: widget.chatMessageListener.emitContactUpdate,
     );
     if (!mounted) return;
-    if (result == AcceptContactRequestResult.success) {
+    if (result == AcceptContactRequestResult.success ||
+        result == AcceptContactRequestResult.notPending) {
       _loadOrbitData();
     }
   }

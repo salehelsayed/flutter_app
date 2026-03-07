@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/introduction/application/accept_introduction_use_case.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
@@ -199,5 +201,177 @@ void main() {
 
     // Should send to both introducer (peer-A) and other party (peer-C)
     expect(network.deliverCallCount, 2);
+  });
+
+  group('v2 encryption to stranger', () {
+    test('v2 encryption used for stranger when intro has ML-KEM key', () async {
+      // Remove peer-C from contacts so it's a "stranger"
+      await contactRepo.deleteContact('peer-C');
+
+      // Seed intro with ML-KEM keys
+      introRepo.clear();
+      await introRepo.saveIntroduction(IntroductionModel(
+        id: 'intro-1',
+        introducerId: 'peer-A',
+        recipientId: 'peer-B',
+        introducedId: 'peer-C',
+        introducerUsername: 'Alice',
+        recipientUsername: 'Bob',
+        introducedUsername: 'Charlie',
+        introducedMlKemPublicKey: 'mlkem-pk-charlie',
+        recipientMlKemPublicKey: 'mlkem-pk-bob',
+        createdAt: now,
+      ));
+
+      bridge.commandLog.clear();
+
+      // B (recipient) accepts → sends to A (contact) and C (stranger)
+      await acceptIntroduction(
+        introRepo: introRepo,
+        contactRepo: contactRepo,
+        p2pService: p2pServiceB,
+        bridge: bridge,
+        introductionId: 'intro-1',
+        ownPeerId: 'peer-B',
+        ownUsername: 'Bob',
+      );
+
+      // Should have called message.encrypt for both sends
+      final encryptCalls =
+          bridge.commandLog.where((c) => c == 'message.encrypt').length;
+      expect(encryptCalls, 2, reason: 'encrypt called for introducer + stranger');
+
+      // Verify the message delivered to peer-C is v2 envelope
+      final cInbox = network.retrieveInbox('peer-C');
+      // Messages went via deliver (not inbox) since peer-C is registered
+      // Check network deliverCallCount instead
+      expect(network.deliverCallCount, 2);
+    });
+
+    test('v2 encryption used for stranger from introduced side', () async {
+      // Remove peer-B from contacts so it's a "stranger" for C
+      final contactRepoC = InMemoryContactRepository();
+      final introRepoC = InMemoryIntroductionRepository();
+
+      // C only knows A (the introducer)
+      contactRepoC.addTestContact(ContactModel(
+        peerId: 'peer-A',
+        publicKey: 'pk-peer-A',
+        rendezvous: '/dns4/relay/tcp/443/p2p/relay',
+        username: 'Alice',
+        signature: 'sig-peer-A',
+        scannedAt: now,
+        mlKemPublicKey: 'test-mlkem-pk-peer-A',
+      ));
+
+      // Seed intro with ML-KEM keys
+      await introRepoC.saveIntroduction(IntroductionModel(
+        id: 'intro-1',
+        introducerId: 'peer-A',
+        recipientId: 'peer-B',
+        introducedId: 'peer-C',
+        introducerUsername: 'Alice',
+        recipientUsername: 'Bob',
+        introducedUsername: 'Charlie',
+        introducedMlKemPublicKey: 'mlkem-pk-charlie',
+        recipientMlKemPublicKey: 'mlkem-pk-bob',
+        createdAt: now,
+      ));
+
+      final bridgeC = PassthroughCryptoBridge();
+
+      // C (introduced) accepts → sends to A (contact) and B (stranger)
+      await acceptIntroduction(
+        introRepo: introRepoC,
+        contactRepo: contactRepoC,
+        p2pService: p2pServiceC,
+        bridge: bridgeC,
+        introductionId: 'intro-1',
+        ownPeerId: 'peer-C',
+        ownUsername: 'Charlie',
+      );
+
+      // Should encrypt for both: A (from contact lookup) and B (from intro record)
+      final encryptCalls =
+          bridgeC.commandLog.where((c) => c == 'message.encrypt').length;
+      expect(encryptCalls, 2);
+    });
+
+    test('v1 fallback when intro record has null ML-KEM key for stranger',
+        () async {
+      // Remove peer-C from contacts
+      await contactRepo.deleteContact('peer-C');
+
+      // Seed intro WITHOUT ML-KEM keys
+      introRepo.clear();
+      await introRepo.saveIntroduction(IntroductionModel(
+        id: 'intro-1',
+        introducerId: 'peer-A',
+        recipientId: 'peer-B',
+        introducedId: 'peer-C',
+        introducerUsername: 'Alice',
+        recipientUsername: 'Bob',
+        introducedUsername: 'Charlie',
+        // No ML-KEM keys
+        createdAt: now,
+      ));
+
+      bridge.commandLog.clear();
+
+      await acceptIntroduction(
+        introRepo: introRepo,
+        contactRepo: contactRepo,
+        p2pService: p2pServiceB,
+        bridge: bridge,
+        introductionId: 'intro-1',
+        ownPeerId: 'peer-B',
+        ownUsername: 'Bob',
+      );
+
+      // Only 1 encrypt call (for the introducer who IS a contact with ML-KEM key)
+      // The stranger send should be v1 (no encrypt call)
+      final encryptCalls =
+          bridge.commandLog.where((c) => c == 'message.encrypt').length;
+      expect(encryptCalls, 1,
+          reason: 'only introducer encrypted, stranger gets v1');
+    });
+
+    test('v1 fallback when encryption fails for stranger', () async {
+      // Remove peer-C from contacts
+      await contactRepo.deleteContact('peer-C');
+
+      // Seed intro with ML-KEM keys
+      introRepo.clear();
+      await introRepo.saveIntroduction(IntroductionModel(
+        id: 'intro-1',
+        introducerId: 'peer-A',
+        recipientId: 'peer-B',
+        introducedId: 'peer-C',
+        introducerUsername: 'Alice',
+        recipientUsername: 'Bob',
+        introducedUsername: 'Charlie',
+        introducedMlKemPublicKey: 'mlkem-pk-charlie',
+        recipientMlKemPublicKey: 'mlkem-pk-bob',
+        createdAt: now,
+      ));
+
+      // Use a bridge that fails encryption
+      final failBridge = FakeBridge(
+        initialResponses: {'message.encrypt': {'ok': false}},
+      );
+
+      await acceptIntroduction(
+        introRepo: introRepo,
+        contactRepo: contactRepo,
+        p2pService: p2pServiceB,
+        bridge: failBridge,
+        introductionId: 'intro-1',
+        ownPeerId: 'peer-B',
+        ownUsername: 'Bob',
+      );
+
+      // Both sends should still succeed (v1 fallback)
+      expect(network.deliverCallCount, greaterThanOrEqualTo(2));
+    });
   });
 }

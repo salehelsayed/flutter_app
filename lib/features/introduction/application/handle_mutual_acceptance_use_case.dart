@@ -1,9 +1,11 @@
+import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/introduction/application/insert_intro_system_message.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
+import 'package:flutter_app/features/settings/application/download_profile_picture_use_case.dart';
 
 /// Creates a contact for the other party when an introduction reaches
 /// mutual acceptance.
@@ -18,6 +20,8 @@ Future<ContactModel?> handleMutualAcceptance({
   required ContactRepository contactRepo,
   required String ownPeerId,
   MessageRepository? messageRepo,
+  Bridge? bridge,
+  DownloadProfilePictureFn? downloadProfilePictureFn,
 }) async {
   if (introduction.status != IntroductionOverallStatus.mutualAccepted) {
     return null;
@@ -58,8 +62,41 @@ Future<ContactModel?> handleMutualAcceptance({
     scannedAt: DateTime.now().toUtc().toIso8601String(),
     mlKemPublicKey: otherMlKemPublicKey,
     introducedBy: introduction.introducerUsername,
+    introducedByPeerId: introduction.introducerId,
   );
   await contactRepo.addContact(newContact);
+
+  // Download avatar for the new contact (fire and forget).
+  // If the relay doesn't have it yet, retry after a short delay.
+  if (bridge != null) {
+    final dlFn = downloadProfilePictureFn ?? downloadProfilePicture;
+    () async {
+      try {
+        var result = await dlFn(
+          bridge: bridge,
+          contactRepo: contactRepo,
+          ownerPeerId: otherPeerId,
+          avatarVersion: 'initial',
+        );
+        if (result != null) return;
+
+        // Retry once after delay — relay may not have the profile yet
+        await Future<void>.delayed(const Duration(seconds: 5));
+        await dlFn(
+          bridge: bridge,
+          contactRepo: contactRepo,
+          ownerPeerId: otherPeerId,
+          avatarVersion: 'initial',
+        );
+      } catch (e) {
+        emitFlowEvent(
+          layer: 'UC',
+          event: 'INTRO_AVATAR_DOWNLOAD_ERROR',
+          details: {'peerId': otherPeerId, 'error': e.toString()},
+        );
+      }
+    }();
+  }
 
   // Insert "Connected through [introducer]" system message
   if (messageRepo != null) {

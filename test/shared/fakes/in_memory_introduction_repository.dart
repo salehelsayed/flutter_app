@@ -80,12 +80,22 @@ class InMemoryIntroductionRepository implements IntroductionRepository {
     return _store.values
         .where((i) =>
             (i.recipientId == peerId || i.introducedId == peerId) &&
-            i.status == IntroductionOverallStatus.pending)
+            (i.status == IntroductionOverallStatus.pending ||
+             i.status == IntroductionOverallStatus.alreadyConnected))
         .toList();
   }
 
   @override
   Future<int> countPendingIntroductions(String peerId) async {
-    return (await getPendingIntroductionsForUser(peerId)).length;
+    return _store.values
+        .where((i) =>
+            (i.recipientId == peerId || i.introducedId == peerId) &&
+            i.status == IntroductionOverallStatus.pending)
+        .length;
+  }
+
+  /// Clears all stored introductions. Test helper only.
+  void clear() {
+    _store.clear();
   }
 }

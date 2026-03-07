@@ -14,6 +14,9 @@ class UserAvatar extends StatelessWidget {
   /// Set once at app startup via [setDocumentsDir].
   static String? _documentsDir;
 
+  /// Exposes the documents directory for avatar file checks.
+  static String? get documentsDir => _documentsDir;
+
   /// Call once from main() with `getApplicationDocumentsDirectory().path`.
   static void setDocumentsDir(String path) => _documentsDir = path;
 

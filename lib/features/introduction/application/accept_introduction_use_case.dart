@@ -80,9 +80,13 @@ Future<IntroductionModel?> acceptIntroduction({
     payload: acceptPayload,
   );
 
-  // Send to other party
+  // Send to other party — pass ML-KEM key from intro record since
+  // the other party isn't a contact yet (contact lookup would miss them).
   final otherPeerId =
       isRecipient ? intro.introducedId : intro.recipientId;
+  final otherMlKemKey = isRecipient
+      ? intro.introducedMlKemPublicKey
+      : intro.recipientMlKemPublicKey;
   await _sendPayloadToContact(
     p2pService: p2pService,
     bridge: bridge,
@@ -90,6 +94,7 @@ Future<IntroductionModel?> acceptIntroduction({
     ownPeerId: ownPeerId,
     targetPeerId: otherPeerId,
     payload: acceptPayload,
+    mlKemPublicKey: otherMlKemKey,
   );
 
   if (newOverall == IntroductionOverallStatus.mutualAccepted) {
@@ -106,6 +111,7 @@ Future<IntroductionModel?> acceptIntroduction({
         contactRepo: contactRepo,
         ownPeerId: ownPeerId,
         messageRepo: messageRepo,
+        bridge: bridge,
       );
     }
   }
@@ -135,12 +141,19 @@ Future<void> _sendPayloadToContact({
   required String ownPeerId,
   required String targetPeerId,
   required IntroductionPayload payload,
+  String? mlKemPublicKey,
 }) async {
-  final contact = await contactRepo.getContact(targetPeerId);
-  if (contact != null && contact.mlKemPublicKey != null) {
+  // Use provided key first (from intro record), then fall back to contact lookup.
+  String? effectiveMlKemKey = mlKemPublicKey;
+  if (effectiveMlKemKey == null) {
+    final contact = await contactRepo.getContact(targetPeerId);
+    effectiveMlKemKey = contact?.mlKemPublicKey;
+  }
+
+  if (effectiveMlKemKey != null) {
     final encrypted = await callEncryptMessage(
       bridge: bridge,
-      recipientMlKemPublicKey: contact.mlKemPublicKey!,
+      recipientMlKemPublicKey: effectiveMlKemKey,
       plaintext: payload.toInnerJson(),
     );
     if (encrypted['ok'] == true) {

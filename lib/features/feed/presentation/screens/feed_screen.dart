@@ -8,6 +8,7 @@ import 'package:flutter_app/features/conversation/presentation/widgets/reaction_
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
 import 'package:flutter_app/features/feed/domain/models/session_reply.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/connection_card.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/introduction_connection_card.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/feed_card.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/feed_header.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/feed_navigation_bar.dart';
@@ -303,17 +304,35 @@ class FeedScreen extends StatelessWidget {
         ),
       );
     } else if (item is ConnectionFeedItem) {
-      widgets.add(
-        ConnectionCard(
-          contactPeerId: item.contactPeerId,
-          contactUsername: item.contactUsername,
-          contactAvatarPath: item.contactAvatarPath,
-          onSendMessage: onSendMessage != null
-              ? () => onSendMessage!(item)
-              : null,
-          isBlocked: item.isBlocked,
-        ),
-      );
+      if (item.introducedBy != null && userPeerId != null) {
+        widgets.add(
+          IntroductionConnectionCard(
+            ownPeerId: userPeerId!,
+            ownUsername: username,
+            contactPeerId: item.contactPeerId,
+            contactUsername: item.contactUsername,
+            introducedBy: item.introducedBy!,
+            introducedByPeerId: item.introducedByPeerId,
+            onSendMessage: onSendMessage != null
+                ? () => onSendMessage!(item)
+                : null,
+            isBlocked: item.isBlocked,
+          ),
+        );
+      } else {
+        widgets.add(
+          ConnectionCard(
+            contactPeerId: item.contactPeerId,
+            contactUsername: item.contactUsername,
+            contactAvatarPath: item.contactAvatarPath,
+            introducedBy: item.introducedBy,
+            onSendMessage: onSendMessage != null
+                ? () => onSendMessage!(item)
+                : null,
+            isBlocked: item.isBlocked,
+          ),
+        );
+      }
     } else if (item is ThreadFeedItem) {
       widgets.add(
         FeedCard(

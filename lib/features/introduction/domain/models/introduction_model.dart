@@ -2,7 +2,7 @@
 enum IntroductionStatus { pending, accepted, passed }
 
 /// Overall status of the introduction derived from both parties' responses.
-enum IntroductionOverallStatus { pending, mutualAccepted, passed, expired }
+enum IntroductionOverallStatus { pending, mutualAccepted, passed, expired, alreadyConnected }
 
 /// Model representing an introduction between two peers, facilitated by an introducer.
 class IntroductionModel {
@@ -198,6 +198,8 @@ IntroductionOverallStatus _parseOverallStatus(String value) {
       return IntroductionOverallStatus.passed;
     case 'expired':
       return IntroductionOverallStatus.expired;
+    case 'already_connected':
+      return IntroductionOverallStatus.alreadyConnected;
     case 'pending':
     default:
       return IntroductionOverallStatus.pending;
@@ -230,6 +232,8 @@ extension IntroductionOverallStatusExt on IntroductionOverallStatus {
         return 'passed';
       case IntroductionOverallStatus.expired:
         return 'expired';
+      case IntroductionOverallStatus.alreadyConnected:
+        return 'already_connected';
     }
   }
 }

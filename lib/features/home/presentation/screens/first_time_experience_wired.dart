@@ -12,6 +12,7 @@ import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contact_request/application/accept_and_reciprocate_use_case.dart';
+import 'package:flutter_app/features/settings/application/upload_profile_picture_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/accept_contact_request_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
 import 'package:flutter_app/features/contact_request/application/decline_contact_request_use_case.dart';
@@ -169,7 +170,10 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
 
     if (!mounted) return;
 
-    if (result == AcceptContactRequestResult.success) {
+    // success or notPending (already accepted from a prior tap) both mean
+    // the contact exists — navigate to feed.
+    if (result == AcceptContactRequestResult.success ||
+        result == AcceptContactRequestResult.notPending) {
       Navigator.of(context).pushReplacement(
         buildFeedSlideUpRoute(
           builder: (_) => FeedWired(
@@ -404,6 +408,16 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
 
       await widget.repository.saveIdentity(updatedIdentity);
       _identity = updatedIdentity;
+
+      // Upload to relay so contacts can download it after connecting
+      uploadProfilePicture(
+        bridge: widget.bridge,
+        identityRepo: widget.repository,
+        contactRepo: widget.contactRepository,
+        p2pService: widget.p2pService,
+        filePath: processedPath,
+        mime: 'image/jpeg',
+      );
 
       if (mounted) {
         setState(() {

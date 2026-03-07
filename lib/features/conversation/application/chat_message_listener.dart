@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/widgets.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
@@ -14,8 +15,10 @@ import 'package:flutter_app/features/conversation/domain/models/conversation_mes
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
+import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/push/application/show_notification_use_case.dart';
+import 'package:flutter_app/features/settings/application/download_profile_picture_use_case.dart';
 
 /// Listener service that monitors P2P messages for chat messages.
 ///
@@ -33,6 +36,7 @@ class ChatMessageListener {
   final NotificationService? notificationService;
   final ActiveConversationTracker? conversationTracker;
   final AppLifecycleState Function()? getAppLifecycleState;
+  final DownloadProfilePictureFn? downloadProfilePictureFn;
 
   StreamSubscription<ChatMessage>? _subscription;
   final _messageController = StreamController<ConversationMessage>.broadcast();
@@ -49,6 +53,7 @@ class ChatMessageListener {
     this.notificationService,
     this.conversationTracker,
     this.getAppLifecycleState,
+    this.downloadProfilePictureFn,
   });
 
   /// Stream of new incoming chat messages for the UI to listen to.
@@ -160,6 +165,40 @@ class ChatMessageListener {
     }
   }
 
+  /// Checks if a contact's avatar file exists on disk. If not, triggers
+  /// a fire-and-forget download from the relay. Naturally retries on each
+  /// incoming message until the avatar is successfully downloaded.
+  void _ensureAvatarDownloaded(ContactModel contact) {
+    if (bridge == null) return;
+
+    final docsDir = UserAvatar.documentsDir;
+    if (docsDir != null) {
+      final file = File('$docsDir/media/avatars/${contact.peerId}.jpg');
+      if (file.existsSync()) return;
+    }
+
+    () async {
+      try {
+        final dlFn = downloadProfilePictureFn ?? downloadProfilePicture;
+        final updated = await dlFn(
+          bridge: bridge!,
+          contactRepo: contactRepo,
+          ownerPeerId: contact.peerId,
+          avatarVersion: 'initial',
+        );
+        if (updated != null) {
+          emitContactUpdate(updated);
+        }
+      } catch (e) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'CHAT_LISTENER_AVATAR_RETRY_ERROR',
+          details: {'peerId': contact.peerId, 'error': e.toString()},
+        );
+      }
+    }();
+  }
+
   Future<void> _onMessage(ChatMessage message) async {
     try {
       // Check if sender is blocked — reject message entirely (don't persist)
@@ -176,6 +215,11 @@ class ChatMessageListener {
           },
         );
         return; // Message never persisted, never broadcast
+      }
+
+      // Opportunistically download avatar if missing
+      if (senderContact != null) {
+        _ensureAvatarDownloaded(senderContact);
       }
 
       final ownSecretKey = getOwnMlKemSecretKey != null

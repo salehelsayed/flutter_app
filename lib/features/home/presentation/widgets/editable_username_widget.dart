@@ -96,7 +96,7 @@ class _EditableUsernameWidgetState extends State<EditableUsernameWidget> {
               fontWeight: FontWeight.w600,
             ),
           ),
-          Flexible(
+          IntrinsicWidth(
             child: TextField(
               controller: _controller,
               focusNode: _focusNode,

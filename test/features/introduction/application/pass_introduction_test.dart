@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/introduction/application/pass_introduction_use_case.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
@@ -134,5 +136,81 @@ void main() {
 
     // Should send to introducer (peer-A) and other party (peer-C)
     expect(network.deliverCallCount, 2);
+  });
+
+  group('v2 encryption to stranger', () {
+    test('v2 encryption used for stranger on pass', () async {
+      // Remove peer-C from contacts so it's a "stranger"
+      await contactRepo.deleteContact('peer-C');
+
+      // Seed intro with ML-KEM keys
+      introRepo.clear();
+      await introRepo.saveIntroduction(IntroductionModel(
+        id: 'intro-1',
+        introducerId: 'peer-A',
+        recipientId: 'peer-B',
+        introducedId: 'peer-C',
+        introducerUsername: 'Alice',
+        recipientUsername: 'Bob',
+        introducedUsername: 'Charlie',
+        introducedMlKemPublicKey: 'mlkem-pk-charlie',
+        recipientMlKemPublicKey: 'mlkem-pk-bob',
+        createdAt: now,
+      ));
+
+      bridge.commandLog.clear();
+
+      await passIntroduction(
+        introRepo: introRepo,
+        contactRepo: contactRepo,
+        p2pService: p2pServiceB,
+        bridge: bridge,
+        introductionId: 'intro-1',
+        ownPeerId: 'peer-B',
+        ownUsername: 'Bob',
+      );
+
+      // Should have called message.encrypt for both sends
+      final encryptCalls =
+          bridge.commandLog.where((c) => c == 'message.encrypt').length;
+      expect(encryptCalls, 2, reason: 'encrypt called for introducer + stranger');
+    });
+
+    test('v1 fallback on pass when no ML-KEM key', () async {
+      // Remove peer-C from contacts
+      await contactRepo.deleteContact('peer-C');
+
+      // Seed intro WITHOUT ML-KEM keys for the stranger
+      introRepo.clear();
+      await introRepo.saveIntroduction(IntroductionModel(
+        id: 'intro-1',
+        introducerId: 'peer-A',
+        recipientId: 'peer-B',
+        introducedId: 'peer-C',
+        introducerUsername: 'Alice',
+        recipientUsername: 'Bob',
+        introducedUsername: 'Charlie',
+        // No ML-KEM keys
+        createdAt: now,
+      ));
+
+      bridge.commandLog.clear();
+
+      await passIntroduction(
+        introRepo: introRepo,
+        contactRepo: contactRepo,
+        p2pService: p2pServiceB,
+        bridge: bridge,
+        introductionId: 'intro-1',
+        ownPeerId: 'peer-B',
+        ownUsername: 'Bob',
+      );
+
+      // Only 1 encrypt call (for the introducer who IS a contact)
+      final encryptCalls =
+          bridge.commandLog.where((c) => c == 'message.encrypt').length;
+      expect(encryptCalls, 1,
+          reason: 'only introducer encrypted, stranger gets v1');
+    });
   });
 }

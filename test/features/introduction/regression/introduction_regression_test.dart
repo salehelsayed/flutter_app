@@ -660,6 +660,44 @@ void main() {
   });
 
   // ═══════════════════════════════════════════════════════════════════
+  // Area 13: v1 fallback when intro record lacks ML-KEM key
+  // ═══════════════════════════════════════════════════════════════════
+  group('Area 13: v1 fallback preserved for pre-ML-KEM introductions', () {
+    test('v1 fallback when intro record lacks ML-KEM key', () async {
+      // Create intro WITHOUT any ML-KEM keys (pre-ML-KEM introduction)
+      final introId = 'intro-no-mlkem';
+      await bob.introRepo.saveIntroduction(IntroductionModel(
+        id: introId,
+        introducerId: alice.peerId,
+        recipientId: bob.peerId,
+        introducedId: carol.peerId,
+        introducerUsername: 'Alice',
+        recipientUsername: 'Bob',
+        introducedUsername: 'Carol',
+        // No ML-KEM keys on intro record
+        recipientMlKemPublicKey: null,
+        introducedMlKemPublicKey: null,
+        createdAt: DateTime.now().toUtc().toIso8601String(),
+      ));
+
+      // Bob knows Alice (the introducer) but NOT Carol
+      bob.addContact(alice);
+
+      final bridgeBob = bob.bridge as PassthroughCryptoBridge;
+      bridgeBob.commandLog.clear();
+
+      await bob.acceptIntro(introId);
+
+      // Should have 1 encrypt call (for Alice, who is a contact with ML-KEM key)
+      // Carol's send should be v1 (no encrypt) because intro has no ML-KEM key for her
+      final encryptCalls =
+          bridgeBob.commandLog.where((c) => c == 'message.encrypt').length;
+      expect(encryptCalls, 1,
+          reason: 'only introducer encrypted, stranger gets v1 (no ML-KEM key on intro)');
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════
   // Area 12: Listener resilience
   // ═══════════════════════════════════════════════════════════════════
   group('Area 12: Listener resilience', () {

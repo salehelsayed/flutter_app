@@ -49,6 +49,7 @@ import 'package:flutter_app/features/groups/application/group_invite_listener.da
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
+import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository.dart';
 import 'package:flutter_app/features/introduction/application/introduction_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -142,6 +143,8 @@ class _FeedWiredState extends State<FeedWired> {
   StreamSubscription<ContactModel>? _contactUpdateSubscription;
   StreamSubscription<MessageReaction>? _reactionSubscription;
   StreamSubscription<dynamic>? _groupMessageSubscription;
+  StreamSubscription<IntroductionModel>? _introReceivedSubscription;
+  StreamSubscription<IntroductionModel>? _introStatusSubscription;
   Map<String, List<MessageReaction>> _reactions = {};
   ImageQualityPreference _qualityPreference = ImageQualityPreference.compressed;
   ImageQualityPreference _videoQualityPreference = ImageQualityPreference.compressed;
@@ -162,6 +165,7 @@ class _FeedWiredState extends State<FeedWired> {
     _startListeningForContactUpdates();
     _startListeningForReactions();
     _startListeningForGroupMessages();
+    _startListeningForIntroductions();
   }
 
   void _loadIdentity() async {
@@ -315,7 +319,8 @@ class _FeedWiredState extends State<FeedWired> {
 
     if (!mounted) return;
 
-    if (result == AcceptContactRequestResult.success) {
+    if (result == AcceptContactRequestResult.success ||
+        result == AcceptContactRequestResult.notPending) {
       final contact = request.toContactModel();
       final alreadyExists = _feedItems.any(
         (item) =>
@@ -776,6 +781,23 @@ class _FeedWiredState extends State<FeedWired> {
     );
   }
 
+  void _startListeningForIntroductions() {
+    final listener = widget.introductionListener;
+    if (listener == null) return;
+
+    _introReceivedSubscription = listener.introReceivedStream.listen(
+      (_) {
+        if (mounted) _refreshFeed();
+      },
+    );
+
+    _introStatusSubscription = listener.introStatusChangedStream.listen(
+      (_) {
+        if (mounted) _refreshFeed();
+      },
+    );
+  }
+
   void _onGroupTap(GroupThreadFeedItem groupThread) {
     final groupRepo = widget.groupRepository;
     final msgRepo = widget.groupMessageRepository;
@@ -1175,6 +1197,8 @@ class _FeedWiredState extends State<FeedWired> {
     _contactUpdateSubscription?.cancel();
     _reactionSubscription?.cancel();
     _groupMessageSubscription?.cancel();
+    _introReceivedSubscription?.cancel();
+    _introStatusSubscription?.cancel();
     super.dispose();
   }
 

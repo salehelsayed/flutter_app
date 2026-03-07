@@ -4,6 +4,7 @@ import 'package:flutter_app/features/introduction/application/check_intro_banner
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/fake_p2p_network.dart';
 import '../../../shared/fakes/intro_test_user.dart';
 
@@ -411,6 +412,65 @@ void main() {
       expect(cFinal!.status, IntroductionOverallStatus.mutualAccepted);
     });
 
+    test('mutual acceptance with v2 encrypted notifications end-to-end',
+        () async {
+      final friendC = await userA.contactRepo.getContact('peer-C');
+      final intros = await userA.sendIntroductions(
+        recipientPeerId: 'peer-B',
+        friends: [friendC!],
+      );
+      final introId = intros.first.id;
+
+      await Future.delayed(const Duration(milliseconds: 100));
+      await userB.introRepo.saveIntroduction(intros.first);
+      await userC.introRepo.saveIntroduction(intros.first);
+
+      // Track encrypt calls on both B and C
+      final bridgeB = userB.bridge as PassthroughCryptoBridge;
+      final bridgeC = userC.bridge as PassthroughCryptoBridge;
+      bridgeB.commandLog.clear();
+      bridgeC.commandLog.clear();
+
+      // B accepts (v2 to A + v2 to C)
+      await userB.acceptIntro(introId);
+      final bEncryptCalls =
+          bridgeB.commandLog.where((c) => c == 'message.encrypt').length;
+      expect(bEncryptCalls, 2, reason: 'B encrypts to A (contact) + C (stranger)');
+
+      // Notify C of B's acceptance
+      await userC.receiveAcceptNotification(
+        introId: introId,
+        responderId: 'peer-B',
+        responderUsername: 'Lina',
+      );
+
+      // C accepts (v2 to A + v2 to B)
+      await userC.acceptIntro(introId);
+      final cEncryptCalls =
+          bridgeC.commandLog.where((c) => c == 'message.encrypt').length;
+      expect(cEncryptCalls, 2, reason: 'C encrypts to A (contact) + B (stranger)');
+
+      // Notify B of C's acceptance
+      await userB.receiveAcceptNotification(
+        introId: introId,
+        responderId: 'peer-C',
+        responderUsername: 'Sarah',
+      );
+
+      // Both reach mutual_accepted
+      final bFinal = await userB.introRepo.getIntroduction(introId);
+      final cFinal = await userC.introRepo.getIntroduction(introId);
+      expect(bFinal!.status, IntroductionOverallStatus.mutualAccepted);
+      expect(cFinal!.status, IntroductionOverallStatus.mutualAccepted);
+
+      // Contacts created
+      expect(await userB.contactRepo.contactExists('peer-C'), isTrue);
+      expect(await userC.contactRepo.contactExists('peer-B'), isTrue);
+
+      // Total: 4 cross-party encrypt calls (2 from B + 2 from C)
+      expect(bEncryptCalls + cEncryptCalls, 4);
+    });
+
     test('A has correct intro record locally', () async {
       final friendC = await userA.contactRepo.getContact('peer-C');
       final intros = await userA.sendIntroductions(
@@ -451,6 +511,40 @@ void main() {
         messageCount: 0,
       );
       expect(after, isFalse);
+    });
+
+    test('intro between existing contacts gets alreadyConnected status',
+        () async {
+      // Make B and C already contacts
+      userB.addContact(userC);
+      userC.addContact(userB);
+
+      // A introduces B to C
+      final friendC = await userA.contactRepo.getContact('peer-C');
+      final intros = await userA.sendIntroductions(
+        recipientPeerId: 'peer-B',
+        friends: [friendC!],
+      );
+      final introId = intros.first.id;
+
+      // Wait for listeners to process
+      await Future.delayed(const Duration(milliseconds: 200));
+
+      // B should have received it with alreadyConnected status
+      final bIntro = await userB.introRepo.getIntroduction(introId);
+      expect(bIntro, isNotNull);
+      expect(bIntro!.status, IntroductionOverallStatus.alreadyConnected);
+
+      // C should also have received it with alreadyConnected status
+      final cIntro = await userC.introRepo.getIntroduction(introId);
+      expect(cIntro, isNotNull);
+      expect(cIntro!.status, IntroductionOverallStatus.alreadyConnected);
+
+      // No duplicate contacts created — B and C already knew each other
+      final allBContacts = await userB.contactRepo.getAllContacts();
+      final cContactsOfB =
+          allBContacts.where((c) => c.peerId == 'peer-C').toList();
+      expect(cContactsOfB, hasLength(1));
     });
 
     test('expired intro filtered from pending', () async {

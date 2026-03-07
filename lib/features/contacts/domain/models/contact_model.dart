@@ -50,6 +50,9 @@ class ContactModel {
   /// Username of the introducer who facilitated this connection, if any.
   final String? introducedBy;
 
+  /// PeerId of the introducer who facilitated this connection, if any.
+  final String? introducedByPeerId;
+
   const ContactModel({
     required this.peerId,
     required this.publicKey,
@@ -67,6 +70,7 @@ class ContactModel {
     this.introsBannerDismissed = false,
     this.introsSentAt,
     this.introducedBy,
+    this.introducedByPeerId,
   });
 
   /// Creates a ContactModel from a QR payload JSON map.
@@ -103,6 +107,7 @@ class ContactModel {
       introsBannerDismissed: (map['intros_banner_dismissed'] as int? ?? 0) == 1,
       introsSentAt: map['intros_sent_at'] as String?,
       introducedBy: map['introduced_by'] as String?,
+      introducedByPeerId: map['introduced_by_peer_id'] as String?,
     );
   }
 
@@ -125,6 +130,7 @@ class ContactModel {
       'intros_banner_dismissed': introsBannerDismissed ? 1 : 0,
       'intros_sent_at': introsSentAt,
       'introduced_by': introducedBy,
+      'introduced_by_peer_id': introducedByPeerId,
     };
   }
 
@@ -149,6 +155,7 @@ class ContactModel {
     String? introsSentAt,
     bool clearIntrosSentAt = false,
     String? introducedBy,
+    String? introducedByPeerId,
   }) {
     return ContactModel(
       peerId: peerId ?? this.peerId,
@@ -167,6 +174,7 @@ class ContactModel {
       introsBannerDismissed: introsBannerDismissed ?? this.introsBannerDismissed,
       introsSentAt: clearIntrosSentAt ? null : (introsSentAt ?? this.introsSentAt),
       introducedBy: introducedBy ?? this.introducedBy,
+      introducedByPeerId: introducedByPeerId ?? this.introducedByPeerId,
     );
   }
 

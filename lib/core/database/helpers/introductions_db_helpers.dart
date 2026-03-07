@@ -337,7 +337,7 @@ Future<List<Map<String, Object?>>> dbLoadPendingIntroductionsForUser(
 
   try {
     final results = await db.rawQuery(
-      "SELECT * FROM introductions WHERE (recipient_id = ? OR introduced_id = ?) AND status = 'pending' ORDER BY created_at DESC",
+      "SELECT * FROM introductions WHERE (recipient_id = ? OR introduced_id = ?) AND status IN ('pending', 'already_connected') ORDER BY created_at DESC",
       [peerId, peerId],
     );
 
