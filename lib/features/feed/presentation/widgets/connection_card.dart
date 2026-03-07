@@ -87,44 +87,17 @@ class _ConnectionCardState extends State<ConnectionCard>
 
         return SizedBox(
           height: height,
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(34),
-            child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(34),
-                  color: FeedColors.cardBg,
-                  border: Border.all(color: FeedColors.cardBorder),
-                ),
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    Positioned.fill(
-                      child: IgnorePointer(
-                        child: Builder(
-                          builder: (context) {
-                            final bgGlow = RingAvatarGenerator
-                                .glowColorForPeerId(widget.contactPeerId);
-                            return DecoratedBox(
-                              decoration: BoxDecoration(
-                                gradient: RadialGradient(
-                                  center: const Alignment(0, -0.15),
-                                  radius: 0.96,
-                                  colors: [
-                                    bgGlow.withValues(alpha: 0.12),
-                                    bgGlow.withValues(alpha: 0.05),
-                                    Colors.transparent,
-                                  ],
-                                  stops: const [0.0, 0.46, 1.0],
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-                    ),
-                    Padding(
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(34),
+              border: Border.all(color: FeedColors.cardBorder),
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(34),
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  Padding(
                       padding: const EdgeInsets.fromLTRB(22, 22, 22, 2),
                       child: LayoutBuilder(
                         builder: (context, constraints) {
@@ -211,8 +184,7 @@ class _ConnectionCardState extends State<ConnectionCard>
                           ),
                         ),
                       ),
-                  ],
-                ),
+                ],
               ),
             ),
           ),
