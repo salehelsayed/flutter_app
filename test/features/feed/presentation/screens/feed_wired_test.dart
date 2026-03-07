@@ -22,6 +22,7 @@ import 'package:flutter_app/features/conversation/presentation/widgets/reaction_
 import 'package:flutter_app/features/feed/domain/models/feed_route_changes.dart';
 import 'package:flutter_app/features/feed/presentation/screens/feed_wired.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/feed_card.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/inline_reply_input.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -771,6 +772,78 @@ void main() {
       // After fix: ScrollableMessagePreview should appear
       expect(find.byType(ScrollableMessagePreview), findsOneWidget);
     });
+
+    testWidgets(
+      'focused inline reply draft survives targeted contact refresh',
+      (tester) async {
+        final originalOnError = FlutterError.onError;
+        FlutterError.onError = (details) {
+          if (details.toString().contains('overflowed')) return;
+          originalOnError?.call(details);
+        };
+        addTearDown(() => FlutterError.onError = originalOnError);
+
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+
+        final fakeChatListener = _FakeChatMessageListener(
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+        );
+
+        await messageRepo.saveMessage(
+          ConversationMessage(
+            id: 'msg-focus-1',
+            contactPeerId: testContact.peerId,
+            text: 'Earlier reply thread',
+            senderPeerId: testContact.peerId,
+            timestamp: DateTime.utc(2026, 2, 1, 10).toIso8601String(),
+            isIncoming: true,
+            status: 'read',
+            readAt: DateTime.utc(2026, 2, 1, 10, 15).toIso8601String(),
+            createdAt: DateTime.utc(2026, 2, 1, 10).toIso8601String(),
+          ),
+        );
+
+        await tester.pumpWidget(
+          buildFeedWired(chatMessageListener: fakeChatListener),
+        );
+        await pumpFeedFrames(tester);
+
+        final inlineReplyFinder = find.byType(InlineReplyInput);
+        final textFieldFinder = find.descendant(
+          of: inlineReplyFinder,
+          matching: find.byType(TextField),
+        );
+        final editableFinder = find.descendant(
+          of: inlineReplyFinder,
+          matching: find.byType(EditableText),
+        );
+
+        await tester.ensureVisible(textFieldFinder);
+        await tester.pump();
+        await tester.tap(textFieldFinder);
+        await tester.pump();
+        await tester.enterText(textFieldFinder, 'Draft that should stay');
+        await tester.pump();
+
+        final editableBefore = tester.widget<EditableText>(editableFinder);
+        expect(editableBefore.controller.text, 'Draft that should stay');
+        expect(editableBefore.focusNode.hasFocus, isTrue);
+
+        final updatedContact = testContact.copyWith(username: 'Bobby');
+        await contactRepo.addContact(updatedContact);
+        fakeChatListener.emitContactUpdate(updatedContact);
+
+        await pumpFeedFrames(tester);
+
+        final editableAfter = tester.widget<EditableText>(editableFinder);
+        expect(find.textContaining('Bobby'), findsWidgets);
+        expect(editableAfter.controller.text, 'Draft that should stay');
+        expect(editableAfter.focusNode.hasFocus, isTrue);
+        expect(find.byType(CollapsedModeCardBody), findsOneWidget);
+      },
+    );
 
     testWidgets('loads reactions for feed messages on init', (tester) async {
       // Suppress RenderFlex overflow errors from card layouts in test surface
@@ -1607,6 +1680,104 @@ void main() {
     );
 
     testWidgets(
+      'orbit route result with reloadAllContacts refreshes the full contacts section',
+      (tester) async {
+        final originalOnError = FlutterError.onError;
+        FlutterError.onError = (details) {
+          if (details.toString().contains('overflowed')) return;
+          originalOnError?.call(details);
+        };
+        addTearDown(() => FlutterError.onError = originalOnError);
+
+        identityRepo.seed(testIdentity);
+
+        final otherContact = testContact.copyWith(
+          peerId: 'contact-peer-id-2',
+          publicKey: 'contact-pk-2',
+          username: 'Bea',
+          signature: 'sig-2',
+          scannedAt: '2026-02-01T09:30:00.000Z',
+        );
+        final spyContactRepo = _SpyContactRepository()
+          ..seed([testContact, otherContact]);
+        final spyMessageRepo = _SpyMessageRepository();
+        final observer = _RecordingNavigatorObserver();
+
+        await spyMessageRepo.saveMessage(
+          ConversationMessage(
+            id: 'msg-reload-1',
+            contactPeerId: testContact.peerId,
+            text: 'Reload message for Bob',
+            senderPeerId: testContact.peerId,
+            timestamp: '2026-02-01T10:00:00.000Z',
+            isIncoming: true,
+            status: 'delivered',
+            createdAt: '2026-02-01T10:00:00.000Z',
+          ),
+        );
+        await spyMessageRepo.saveMessage(
+          ConversationMessage(
+            id: 'msg-reload-2',
+            contactPeerId: otherContact.peerId,
+            text: 'Reload message for Bea',
+            senderPeerId: otherContact.peerId,
+            timestamp: '2026-02-01T10:05:00.000Z',
+            isIncoming: true,
+            status: 'delivered',
+            createdAt: '2026-02-01T10:05:00.000Z',
+          ),
+        );
+
+        await tester.pumpWidget(
+          buildFeedWired(
+            contactRepository: spyContactRepo,
+            messageRepository: spyMessageRepo,
+            navigatorObservers: [observer],
+          ),
+        );
+        await pumpFeedFrames(tester);
+
+        await tester.tap(find.text('Orbit'));
+        await pumpFeedFrames(tester);
+
+        spyContactRepo.resetTracking();
+        spyMessageRepo.resetTracking();
+
+        await spyContactRepo.addContact(
+          testContact.copyWith(username: 'Bobby'),
+        );
+        await spyContactRepo.addContact(
+          otherContact.copyWith(username: 'Beatrice'),
+        );
+        observer.lastPushedRoute!.navigator!.pop(
+          const FeedRouteChanges(reloadAllContacts: true),
+        );
+
+        await pumpFeedFrames(tester, count: 8);
+
+        expect(find.textContaining('Bobby'), findsWidgets);
+        expect(find.textContaining('Beatrice'), findsWidgets);
+        expect(spyContactRepo.getActiveContactsCallCount, 1);
+        expect(spyContactRepo.getContactCallCountByPeerId, isEmpty);
+        expect(
+          spyMessageRepo.getMessagesForContactCallCountByPeerId.keys,
+          <String>{testContact.peerId, otherContact.peerId},
+        );
+        expect(
+          spyMessageRepo.getMessagesForContactCallCountByPeerId[testContact
+              .peerId],
+          1,
+        );
+        expect(
+          spyMessageRepo.getMessagesForContactCallCountByPeerId[otherContact
+              .peerId],
+          1,
+        );
+        expect(spyMessageRepo.getTotalUnreadCountExcludingArchivedCallCount, 1);
+      },
+    );
+
+    testWidgets(
       'group route result refreshes only the changed group snapshot',
       (tester) async {
         final originalOnError = FlutterError.onError;
@@ -1716,6 +1887,131 @@ void main() {
           <String>{'g1'},
         );
         expect(spyGroupMessageRepo.getMessagesPageCallCountByGroupId['g1'], 1);
+      },
+    );
+
+    testWidgets(
+      'group route result with reloadAllGroups refreshes the full groups section',
+      (tester) async {
+        final originalOnError = FlutterError.onError;
+        FlutterError.onError = (details) {
+          if (details.toString().contains('overflowed')) return;
+          originalOnError?.call(details);
+        };
+        addTearDown(() => FlutterError.onError = originalOnError);
+
+        identityRepo.seed(testIdentity);
+
+        final spyGroupRepo = _SpyGroupRepository();
+        final spyGroupMessageRepo = _SpyGroupMessageRepository();
+        final observer = _RecordingNavigatorObserver();
+
+        await spyGroupRepo.saveGroup(
+          GroupModel(
+            id: 'g1',
+            name: 'Route Group',
+            type: GroupType.chat,
+            topicName: '/mknoon/group/g1',
+            createdAt: DateTime(2026, 2, 1),
+            createdBy: 'admin',
+            myRole: GroupRole.member,
+          ),
+        );
+        await spyGroupRepo.saveGroup(
+          GroupModel(
+            id: 'g2',
+            name: 'Other Group',
+            type: GroupType.chat,
+            topicName: '/mknoon/group/g2',
+            createdAt: DateTime(2026, 2, 2),
+            createdBy: 'admin',
+            myRole: GroupRole.member,
+          ),
+        );
+        await spyGroupMessageRepo.saveMessage(
+          GroupMessage(
+            id: 'gm-reload-1',
+            groupId: 'g1',
+            senderPeerId: 'peer-a',
+            senderUsername: 'Peer A',
+            text: 'Route group message',
+            timestamp: DateTime.utc(2026, 2, 1, 10),
+            readAt: DateTime.utc(2026, 2, 1, 10, 30),
+            createdAt: DateTime.utc(2026, 2, 1, 10),
+          ),
+        );
+        await spyGroupMessageRepo.saveMessage(
+          GroupMessage(
+            id: 'gm-reload-2',
+            groupId: 'g2',
+            senderPeerId: 'peer-b',
+            senderUsername: 'Peer B',
+            text: 'Other group message',
+            timestamp: DateTime.utc(2026, 2, 1, 10, 5),
+            readAt: DateTime.utc(2026, 2, 1, 10, 35),
+            createdAt: DateTime.utc(2026, 2, 1, 10, 5),
+          ),
+        );
+
+        final fakeGroupListener = _FakeGroupMessageListener(
+          groupRepo: spyGroupRepo,
+          msgRepo: spyGroupMessageRepo,
+        );
+
+        await tester.pumpWidget(
+          buildFeedWired(
+            groupRepository: spyGroupRepo,
+            groupMessageRepository: spyGroupMessageRepo,
+            groupMessageListener: fakeGroupListener,
+            navigatorObservers: [observer],
+          ),
+        );
+        await pumpFeedFrames(tester);
+
+        await tester.tap(find.text('Groups'));
+        await pumpFeedFrames(tester);
+
+        spyGroupRepo.resetTracking();
+        spyGroupMessageRepo.resetTracking();
+
+        await spyGroupRepo.saveGroup(
+          GroupModel(
+            id: 'g1',
+            name: 'Route Group Reloaded',
+            type: GroupType.chat,
+            topicName: '/mknoon/group/g1',
+            createdAt: DateTime(2026, 2, 1),
+            createdBy: 'admin',
+            myRole: GroupRole.member,
+          ),
+        );
+        await spyGroupRepo.saveGroup(
+          GroupModel(
+            id: 'g2',
+            name: 'Other Group Reloaded',
+            type: GroupType.chat,
+            topicName: '/mknoon/group/g2',
+            createdAt: DateTime(2026, 2, 2),
+            createdBy: 'admin',
+            myRole: GroupRole.member,
+          ),
+        );
+        observer.lastPushedRoute!.navigator!.pop(
+          const FeedRouteChanges(reloadAllGroups: true),
+        );
+
+        await pumpFeedFrames(tester, count: 8);
+
+        expect(find.textContaining('Route Group Reloaded'), findsWidgets);
+        expect(find.textContaining('Other Group Reloaded'), findsWidgets);
+        expect(spyGroupRepo.getActiveGroupsCallCount, 1);
+        expect(spyGroupRepo.getGroupCallCountById, isEmpty);
+        expect(
+          spyGroupMessageRepo.getMessagesPageCallCountByGroupId.keys,
+          <String>{'g1', 'g2'},
+        );
+        expect(spyGroupMessageRepo.getMessagesPageCallCountByGroupId['g1'], 1);
+        expect(spyGroupMessageRepo.getMessagesPageCallCountByGroupId['g2'], 1);
       },
     );
 
