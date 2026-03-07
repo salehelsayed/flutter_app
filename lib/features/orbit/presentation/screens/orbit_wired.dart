@@ -58,7 +58,6 @@ import 'package:flutter_app/features/introduction/application/accept_introductio
 import 'package:flutter_app/features/introduction/application/pass_introduction_use_case.dart';
 import 'package:flutter_app/features/introduction/application/expire_old_introductions_use_case.dart';
 import 'package:flutter_app/features/introduction/application/load_introductions_use_case.dart';
-import 'package:flutter_app/features/introduction/presentation/widgets/intros_tab.dart';
 import 'package:flutter_app/features/groups/presentation/screens/create_group_picker_wired.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
 import 'package:flutter_app/features/orbit/application/load_orbit_groups_use_case.dart';
@@ -937,12 +936,12 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       onUnarchiveGroup: _onUnarchiveGroup,
       onDeleteGroup: _onDeleteGroup,
       introsCount: _introsCount,
-      introsWidget: IntrosTab(
+      introsData: OrbitIntrosViewData(
         groupedIntros: _groupedIntros,
         introducerUsernames: _introducerUsernames,
+        ownPeerId: _identity?.peerId ?? '',
         onAccept: _onAcceptIntro,
         onPass: _onPassIntro,
-        ownPeerId: _identity?.peerId ?? '',
         onSendMessage: _onIntroSendMessage,
         blockedPeerIds: _blockedPeerIds,
       ),

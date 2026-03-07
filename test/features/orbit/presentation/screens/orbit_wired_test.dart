@@ -4,16 +4,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
 import 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart';
-import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
-import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
-import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -275,11 +271,11 @@ void main() {
       expect(find.byType(OrbitSearchTrigger), findsOneWidget);
       // It contains the search icon
       expect(find.byIcon(Icons.search), findsWidgets);
-      // The trigger widget contains 'Search friends...' text
+      // The trigger itself is icon-only; the placeholder lives in the dock.
       expect(
         find.descendant(
           of: find.byType(OrbitSearchTrigger),
-          matching: find.text('Search friends...'),
+          matching: find.byIcon(Icons.search),
         ),
         findsOneWidget,
       );
@@ -677,12 +673,10 @@ class _FakeChatMessageListener extends ChatMessageListener {
       StreamController.broadcast();
 
   _FakeChatMessageListener({
-    required MessageRepository messageRepo,
-    required ContactRepository contactRepo,
+    required super.messageRepo,
+    required super.contactRepo,
   }) : super(
           chatMessageStream: const Stream.empty(),
-          messageRepo: messageRepo,
-          contactRepo: contactRepo,
         );
 
   @override
@@ -696,6 +690,7 @@ class _FakeChatMessageListener extends ChatMessageListener {
   void emitIncomingMessage(ConversationMessage msg) =>
       _incomingController.add(msg);
 
+  @override
   void emitContactUpdate(ContactModel contact) =>
       _contactUpdateController.add(contact);
 }
@@ -708,14 +703,11 @@ class _FakeContactRequestListener extends ContactRequestListener {
   final _controller = StreamController<ContactRequestModel>.broadcast();
 
   _FakeContactRequestListener({
-    required ContactRequestRepository requestRepo,
-    required ContactRepository contactRepo,
-    required Bridge bridge,
+    required super.requestRepo,
+    required super.contactRepo,
+    required super.bridge,
   }) : super(
           contactRequestStream: const Stream.empty(),
-          requestRepo: requestRepo,
-          contactRepo: contactRepo,
-          bridge: bridge,
           getOwnPeerId: () => '',
         );
 

@@ -2,6 +2,9 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
+import 'package:flutter_app/features/introduction/presentation/widgets/intro_group_header.dart';
+import 'package:flutter_app/features/introduction/presentation/widgets/intro_row.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/expandable_fab.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
@@ -18,6 +21,54 @@ import 'package:flutter_app/features/orbit/presentation/widgets/orbit_search_doc
 import 'package:flutter_app/features/orbit/presentation/widgets/friends_filter_toggle.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/swipeable_friend_row.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/archived_empty_state.dart';
+
+@immutable
+class OrbitIntrosViewData {
+  final Map<String, List<IntroductionModel>> groupedIntros;
+  final Map<String, String> introducerUsernames;
+  final String ownPeerId;
+  final void Function(String introductionId) onAccept;
+  final void Function(String introductionId) onPass;
+  final void Function(String peerId)? onSendMessage;
+  final Set<String> blockedPeerIds;
+
+  const OrbitIntrosViewData({
+    required this.groupedIntros,
+    required this.introducerUsernames,
+    required this.ownPeerId,
+    required this.onAccept,
+    required this.onPass,
+    this.onSendMessage,
+    this.blockedPeerIds = const {},
+  });
+}
+
+enum _OrbitIntroEntryType { context, header, row, spacer }
+
+class _OrbitIntroEntry {
+  final _OrbitIntroEntryType type;
+  final String? introducerUsername;
+  final IntroductionModel? introduction;
+
+  const _OrbitIntroEntry._(
+    this.type, {
+    this.introducerUsername,
+    this.introduction,
+  });
+
+  const _OrbitIntroEntry.context() : this._(_OrbitIntroEntryType.context);
+
+  const _OrbitIntroEntry.header(String introducerUsername)
+    : this._(
+        _OrbitIntroEntryType.header,
+        introducerUsername: introducerUsername,
+      );
+
+  const _OrbitIntroEntry.row(IntroductionModel introduction)
+    : this._(_OrbitIntroEntryType.row, introduction: introduction);
+
+  const _OrbitIntroEntry.spacer() : this._(_OrbitIntroEntryType.spacer);
+}
 
 /// Pure UI layout for the Orbit screen.
 ///
@@ -60,6 +111,7 @@ class OrbitScreen extends StatelessWidget {
   final void Function(OrbitGroup) onUnarchiveGroup;
   final void Function(OrbitGroup) onDeleteGroup;
   final int introsCount;
+  final OrbitIntrosViewData? introsData;
   final Widget? introsWidget;
   final VoidCallback? onIntroBannerTap;
 
@@ -102,6 +154,7 @@ class OrbitScreen extends StatelessWidget {
     required this.onUnarchiveGroup,
     required this.onDeleteGroup,
     this.introsCount = 0,
+    this.introsData,
     this.introsWidget,
     this.onIntroBannerTap,
   });
@@ -187,106 +240,44 @@ class OrbitScreen extends StatelessWidget {
 
                   // Scrollable friends list
                   Expanded(
-                    child: SingleChildScrollView(
+                    child: CustomScrollView(
                       controller: scrollController,
-                      padding: EdgeInsets.only(
-                        left: 16,
-                        right: 16,
-                        top: 8,
-                        bottom: searchActive ? 320 : 100,
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          FriendsListHeader(
-                            onMyQR: onMyQR,
-                            onScanQR: onScanQR,
-                            searchActive: searchActive,
+                      physics: const BouncingScrollPhysics(),
+                      cacheExtent: 600,
+                      slivers: [
+                        SliverToBoxAdapter(
+                          child: Padding(
+                            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                FriendsListHeader(
+                                  onMyQR: onMyQR,
+                                  onScanQR: onScanQR,
+                                  searchActive: searchActive,
+                                ),
+                                if (!searchActive) ...[
+                                  const SizedBox(height: 8),
+                                  FriendsFilterToggle(
+                                    activeFilter: filterTab,
+                                    activeCount: activeCount,
+                                    archivedCount: archivedCount,
+                                    introsCount: introsCount,
+                                    onFilterChanged: onFilterChanged,
+                                  ),
+                                ],
+                                const SizedBox(height: 8),
+                                if (introsCount > 0 && filterTab != 'intros')
+                                  _buildIntroBanner(),
+                              ],
+                            ),
                           ),
-
-                          // Filter toggle (hidden during search)
-                          if (!searchActive) ...[
-                            const SizedBox(height: 8),
-                            FriendsFilterToggle(
-                              activeFilter: filterTab,
-                              activeCount: activeCount,
-                              archivedCount: archivedCount,
-                              introsCount: introsCount,
-                              onFilterChanged: onFilterChanged,
-                            ),
-                          ],
-
-                          const SizedBox(height: 8),
-
-                          // Intro banner (shown when pending intros exist and not on intros tab)
-                          if (introsCount > 0 && filterTab != 'intros')
-                            GestureDetector(
-                              onTap: onIntroBannerTap,
-                              child: Container(
-                                margin: const EdgeInsets.only(bottom: 8),
-                                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                                decoration: BoxDecoration(
-                                  color: const Color(0x141DB954),
-                                  borderRadius: BorderRadius.circular(12),
-                                  border: Border.all(color: const Color(0x331DB954)),
-                                ),
-                                child: Row(
-                                  children: [
-                                    const Icon(Icons.people_outline, size: 18, color: Color(0xFF1DB954)),
-                                    const SizedBox(width: 10),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            '$introsCount introduction${introsCount == 1 ? '' : 's'} pending',
-                                            style: const TextStyle(
-                                              fontSize: 13,
-                                              fontWeight: FontWeight.w600,
-                                              color: Color(0xF2FFFFFF),
-                                            ),
-                                          ),
-                                          const Text(
-                                            'Review and accept to start chatting',
-                                            style: TextStyle(
-                                              fontSize: 11,
-                                              color: Color(0x66FFFFFF),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                    const Icon(Icons.chevron_right, size: 18, color: Color(0x66FFFFFF)),
-                                  ],
-                                ),
-                              ),
-                            ),
-
-                          // Merged orbit items (friends + groups)
-                          if (filterTab == 'intros' && introsWidget != null)
-                            introsWidget!
-                          else if (searchActive &&
-                              searchQuery.isNotEmpty &&
-                              displayedFriends.isEmpty)
-                            _buildNoResults()
-                          else if (filterTab == 'archived' &&
-                              displayedFriends.isEmpty &&
-                              groups.isEmpty &&
-                              !searchActive)
-                            const ArchivedEmptyState()
-                          else
-                            ...List.generate(mergedItems.length, (index) {
-                              final item = mergedItems[index];
-                              return switch (item) {
-                                OrbitFriendItem(:final friend) =>
-                                    _buildFriendRow(friend, index),
-                                OrbitGroupItem(:final group) =>
-                                    _buildGroupRow(group, index),
-                              };
-                            }),
-
-                        ],
-                      ),
+                        ),
+                        _buildContentSliver(mergedItems),
+                        SliverToBoxAdapter(
+                          child: SizedBox(height: searchActive ? 320 : 100),
+                        ),
+                      ],
                     ),
                   ),
                 ],
@@ -314,18 +305,13 @@ class OrbitScreen extends StatelessWidget {
                       scale: 0.985 + 0.015 * t,
                       child: Transform.translate(
                         offset: Offset(0, (1 - t) * 14),
-                        child: IgnorePointer(
-                          ignoring: t < 0.5,
-                          child: child,
-                        ),
+                        child: IgnorePointer(ignoring: t < 0.5, child: child),
                       ),
                     ),
                   ),
                 );
               },
-              child: OrbitSearchTrigger(
-                onSearchTap: onSearchOpen,
-              ),
+              child: OrbitSearchTrigger(onSearchTap: onSearchOpen),
             ),
 
             // Layer 4: Search dock (slides up from bottom)
@@ -339,10 +325,7 @@ class OrbitScreen extends StatelessWidget {
                   right: 0,
                   child: Transform.translate(
                     offset: Offset(0, (1 - t) * 300),
-                    child: IgnorePointer(
-                      ignoring: t < 0.1,
-                      child: child,
-                    ),
+                    child: IgnorePointer(ignoring: t < 0.1, child: child),
                   ),
                 );
               },
@@ -383,6 +366,201 @@ class OrbitScreen extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  Widget _buildIntroBanner() {
+    return GestureDetector(
+      onTap: onIntroBannerTap,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: const Color(0x141DB954),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: const Color(0x331DB954)),
+        ),
+        child: Row(
+          children: [
+            const Icon(
+              Icons.people_outline,
+              size: 18,
+              color: Color(0xFF1DB954),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '$introsCount introduction${introsCount == 1 ? '' : 's'} pending',
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xF2FFFFFF),
+                    ),
+                  ),
+                  const Text(
+                    'Review and accept to start chatting',
+                    style: TextStyle(fontSize: 11, color: Color(0x66FFFFFF)),
+                  ),
+                ],
+              ),
+            ),
+            const Icon(Icons.chevron_right, size: 18, color: Color(0x66FFFFFF)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildContentSliver(List<OrbitItem> mergedItems) {
+    if (filterTab == 'intros') {
+      if (introsData != null) {
+        return _buildIntroSliver(introsData!);
+      }
+      if (introsWidget != null) {
+        return SliverToBoxAdapter(child: introsWidget!);
+      }
+    }
+
+    if (searchActive && searchQuery.isNotEmpty && displayedFriends.isEmpty) {
+      return SliverToBoxAdapter(child: _buildNoResults());
+    }
+
+    if (filterTab == 'archived' &&
+        displayedFriends.isEmpty &&
+        groups.isEmpty &&
+        !searchActive) {
+      return const SliverFillRemaining(
+        hasScrollBody: false,
+        child: ArchivedEmptyState(),
+      );
+    }
+
+    return SliverPadding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      sliver: SliverList(
+        delegate: SliverChildBuilderDelegate((context, index) {
+          final item = mergedItems[index];
+          return switch (item) {
+            OrbitFriendItem(:final friend) => _buildFriendRow(friend, index),
+            OrbitGroupItem(:final group) => _buildGroupRow(group, index),
+          };
+        }, childCount: mergedItems.length),
+      ),
+    );
+  }
+
+  Widget _buildIntroSliver(OrbitIntrosViewData data) {
+    final introEntries = _buildIntroEntries(data);
+    return SliverPadding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      sliver: SliverList(
+        delegate: SliverChildBuilderDelegate(
+          (context, index) => _buildIntroEntry(data, introEntries[index]),
+          childCount: introEntries.length,
+        ),
+      ),
+    );
+  }
+
+  List<_OrbitIntroEntry> _buildIntroEntries(OrbitIntrosViewData data) {
+    if (data.groupedIntros.isEmpty) {
+      return const [_OrbitIntroEntry.context()];
+    }
+
+    final entries = <_OrbitIntroEntry>[const _OrbitIntroEntry.context()];
+    final introducerIds = data.groupedIntros.keys.toList();
+    for (var groupIndex = 0; groupIndex < introducerIds.length; groupIndex++) {
+      final introducerId = introducerIds[groupIndex];
+      final intros = data.groupedIntros[introducerId]!;
+      final introducerName =
+          data.introducerUsernames[introducerId] ?? 'Unknown';
+
+      if (groupIndex > 0) {
+        entries.add(const _OrbitIntroEntry.spacer());
+      }
+      entries.add(_OrbitIntroEntry.header(introducerName));
+      entries.addAll(intros.map(_OrbitIntroEntry.row));
+    }
+    return entries;
+  }
+
+  Widget _buildIntroEntry(OrbitIntrosViewData data, _OrbitIntroEntry entry) {
+    switch (entry.type) {
+      case _OrbitIntroEntryType.context:
+        if (data.groupedIntros.isEmpty) {
+          return const Padding(
+            padding: EdgeInsets.all(32),
+            child: Center(
+              child: Text(
+                'No introductions yet',
+                style: TextStyle(fontSize: 14, color: Color(0x66FFFFFF)),
+              ),
+            ),
+          );
+        }
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 16),
+          child: Text(
+            'These are people your friends know well. Once you both accept, you can start chatting.',
+            style: TextStyle(
+              fontSize: 13,
+              color: Colors.white.withValues(alpha: 0.4),
+            ),
+            textAlign: TextAlign.center,
+          ),
+        );
+      case _OrbitIntroEntryType.header:
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            IntroGroupHeader(introducerUsername: entry.introducerUsername!),
+            const SizedBox(height: 8),
+          ],
+        );
+      case _OrbitIntroEntryType.row:
+        final intro = entry.introduction!;
+        final amRecipient = intro.recipientId == data.ownPeerId;
+        final displayUsername = amRecipient
+            ? (intro.introducedUsername ?? 'Unknown')
+            : (intro.recipientUsername ?? 'Unknown');
+        final displayPeerId = amRecipient
+            ? intro.introducedId
+            : intro.recipientId;
+        final ownPartyStatus = amRecipient
+            ? intro.recipientStatus
+            : intro.introducedStatus;
+        final waitingForUsername = amRecipient
+            ? (intro.introducedUsername ?? 'Unknown')
+            : (intro.recipientUsername ?? 'Unknown');
+        final showActions =
+            ownPartyStatus == IntroductionStatus.pending &&
+            intro.status == IntroductionOverallStatus.pending;
+        final isOtherBlocked = data.blockedPeerIds.contains(displayPeerId);
+
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: IntroRow(
+            introduction: intro,
+            displayUsername: displayUsername,
+            displayPeerId: displayPeerId,
+            showActions: showActions,
+            onAccept: showActions ? () => data.onAccept(intro.id) : null,
+            onPass: showActions ? () => data.onPass(intro.id) : null,
+            ownPartyStatus: ownPartyStatus,
+            waitingForUsername: waitingForUsername,
+            onSendMessage:
+                intro.status == IntroductionOverallStatus.mutualAccepted &&
+                    data.onSendMessage != null
+                ? () => data.onSendMessage!(displayPeerId)
+                : null,
+            isOtherBlocked: isOtherBlocked,
+          ),
+        );
+      case _OrbitIntroEntryType.spacer:
+        return const SizedBox(height: 16);
+    }
   }
 
   Widget _buildFriendRow(OrbitFriend friend, int index) {
@@ -429,10 +607,7 @@ class OrbitScreen extends StatelessWidget {
           onArchive: () => onArchiveGroup(group),
           onUnarchive: () => onUnarchiveGroup(group),
           onDelete: () => onDeleteGroup(group),
-          child: GroupRow(
-            group: group,
-            onTap: () => onGroupTap(group),
-          ),
+          child: GroupRow(group: group, onTap: () => onGroupTap(group)),
         ),
       ),
     );
