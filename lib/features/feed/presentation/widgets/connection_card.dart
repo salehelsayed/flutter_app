@@ -1,6 +1,7 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/feed_colors.dart';
+import 'package:flutter_app/core/utils/ring_avatar_generator.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 
 /// A feed card representing a successful new connection.
@@ -101,19 +102,25 @@ class _ConnectionCardState extends State<ConnectionCard>
                   children: [
                     Positioned.fill(
                       child: IgnorePointer(
-                        child: DecoratedBox(
-                          decoration: BoxDecoration(
-                            gradient: RadialGradient(
-                              center: const Alignment(0, -0.15),
-                              radius: 0.96,
-                              colors: [
-                                const Color(0x201DB954),
-                                const Color(0x0C1DB954),
-                                Colors.transparent,
-                              ],
-                              stops: const [0.0, 0.46, 1.0],
-                            ),
-                          ),
+                        child: Builder(
+                          builder: (context) {
+                            final bgGlow = RingAvatarGenerator
+                                .glowColorForPeerId(widget.contactPeerId);
+                            return DecoratedBox(
+                              decoration: BoxDecoration(
+                                gradient: RadialGradient(
+                                  center: const Alignment(0, -0.15),
+                                  radius: 0.96,
+                                  colors: [
+                                    bgGlow.withValues(alpha: 0.12),
+                                    bgGlow.withValues(alpha: 0.05),
+                                    Colors.transparent,
+                                  ],
+                                  stops: const [0.0, 0.46, 1.0],
+                                ),
+                              ),
+                            );
+                          },
                         ),
                       ),
                     ),
@@ -216,6 +223,8 @@ class _ConnectionCardState extends State<ConnectionCard>
 
   Widget _buildAvatarSection(double avatarSize) {
     final outerSize = avatarSize + 32;
+    final glowColor =
+        RingAvatarGenerator.glowColorForPeerId(widget.contactPeerId);
 
     return SizedBox(
       width: outerSize,
@@ -226,15 +235,15 @@ class _ConnectionCardState extends State<ConnectionCard>
           Container(
             width: outerSize,
             height: outerSize,
-            decoration: const BoxDecoration(
+            decoration: BoxDecoration(
               shape: BoxShape.circle,
               gradient: RadialGradient(
                 colors: [
-                  Color(0x501DB954),
-                  Color(0x281DB954),
+                  glowColor.withValues(alpha: 0.30),
+                  glowColor.withValues(alpha: 0.15),
                   Colors.transparent,
                 ],
-                stops: [0.0, 0.50, 1.0],
+                stops: const [0.0, 0.50, 1.0],
               ),
             ),
           ),
@@ -244,12 +253,12 @@ class _ConnectionCardState extends State<ConnectionCard>
               shape: BoxShape.circle,
               color: const Color.fromRGBO(11, 13, 17, 0.78),
               border: Border.all(
-                color: const Color(0xFF1DB954),
+                color: glowColor.withValues(alpha: 0.7),
                 width: 1.5,
               ),
-              boxShadow: const [
+              boxShadow: [
                 BoxShadow(
-                  color: Color(0x991DB954),
+                  color: glowColor.withValues(alpha: 0.6),
                   blurRadius: 16,
                   spreadRadius: 2,
                 ),
