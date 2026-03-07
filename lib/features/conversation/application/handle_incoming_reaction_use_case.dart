@@ -1,7 +1,7 @@
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
-import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
+import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
 import 'package:flutter_app/features/conversation/domain/models/reaction_payload.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
@@ -24,9 +24,8 @@ enum HandleReactionResult {
 /// Parses an incoming P2P ChatMessage for message_reaction type,
 /// decrypts (v2 only), validates the sender, and persists.
 ///
-/// Returns (result, MessageReaction?) — reaction is non-null on success
-/// for 'add' actions; null for 'remove' actions.
-Future<(HandleReactionResult, MessageReaction?)> handleIncomingReaction({
+/// Returns (result, ReactionChange?) — change is non-null on success.
+Future<(HandleReactionResult, ReactionChange?)> handleIncomingReaction({
   required ChatMessage message,
   required ReactionRepository reactionRepo,
   required ContactRepository contactRepo,
@@ -44,8 +43,7 @@ Future<(HandleReactionResult, MessageReaction?)> handleIncomingReaction({
   );
 
   // 1. Try v2 encrypted envelope (v1 reactions are rejected — encryption required)
-  final v2Envelope =
-      ReactionPayload.parseEncryptedEnvelope(message.content);
+  final v2Envelope = ReactionPayload.parseEncryptedEnvelope(message.content);
   if (v2Envelope == null) {
     // Could be v1 or not a reaction at all
     final v1Payload = ReactionPayload.fromJson(message.content);
@@ -68,11 +66,7 @@ Future<(HandleReactionResult, MessageReaction?)> handleIncomingReaction({
 
   // 2. Decrypt
   if (ownMlKemSecretKey == null) {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'REACTION_RECEIVE_NO_KEY',
-      details: {},
-    );
+    emitFlowEvent(layer: 'FL', event: 'REACTION_RECEIVE_NO_KEY', details: {});
     return (HandleReactionResult.decryptionFailed, null);
   }
 
@@ -134,8 +128,7 @@ Future<(HandleReactionResult, MessageReaction?)> handleIncomingReaction({
 
   // 4. Process action
   if (payload.action == 'remove') {
-    await reactionRepo.removeReaction(
-        payload.messageId, payload.senderPeerId);
+    await reactionRepo.removeReaction(payload.messageId, payload.senderPeerId);
     emitFlowEvent(
       layer: 'FL',
       event: 'REACTION_RECEIVE_REMOVED',
@@ -146,7 +139,13 @@ Future<(HandleReactionResult, MessageReaction?)> handleIncomingReaction({
         'emoji': payload.emoji,
       },
     );
-    return (HandleReactionResult.success, null);
+    return (
+      HandleReactionResult.success,
+      ReactionChange.removed(
+        messageId: payload.messageId,
+        senderPeerId: payload.senderPeerId,
+      ),
+    );
   }
 
   // action == 'add'
@@ -162,5 +161,5 @@ Future<(HandleReactionResult, MessageReaction?)> handleIncomingReaction({
     },
   );
 
-  return (HandleReactionResult.success, reaction);
+  return (HandleReactionResult.success, ReactionChange.upsert(reaction));
 }

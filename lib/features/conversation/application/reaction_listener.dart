@@ -4,6 +4,7 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/handle_incoming_reaction_use_case.dart';
+import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
@@ -22,6 +23,8 @@ class ReactionListener {
 
   StreamSubscription<ChatMessage>? _subscription;
   final _reactionController = StreamController<MessageReaction>.broadcast();
+  final _reactionChangeController =
+      StreamController<ReactionChange>.broadcast();
 
   ReactionListener({
     required this.reactionStream,
@@ -35,12 +38,15 @@ class ReactionListener {
   Stream<MessageReaction> get incomingReactionStream =>
       _reactionController.stream;
 
+  /// Stream of incoming reaction changes, including removals.
+  Stream<ReactionChange> get incomingReactionChangeStream =>
+      _reactionChangeController.stream;
+
   /// Starts listening for incoming reactions.
   void start() {
     if (_subscription != null) return;
 
-    emitFlowEvent(
-        layer: 'FL', event: 'REACTION_LISTENER_START', details: {});
+    emitFlowEvent(layer: 'FL', event: 'REACTION_LISTENER_START', details: {});
 
     _subscription = reactionStream.listen(
       _onMessage,
@@ -63,8 +69,7 @@ class ReactionListener {
 
   /// Stops listening.
   void stop() {
-    emitFlowEvent(
-        layer: 'FL', event: 'REACTION_LISTENER_STOP', details: {});
+    emitFlowEvent(layer: 'FL', event: 'REACTION_LISTENER_STOP', details: {});
 
     _subscription?.cancel();
     _subscription = null;
@@ -74,6 +79,7 @@ class ReactionListener {
   void dispose() {
     stop();
     _reactionController.close();
+    _reactionChangeController.close();
   }
 
   Future<void> _onMessage(ChatMessage message) async {
@@ -96,7 +102,7 @@ class ReactionListener {
 
       final ownSecretKey = await getOwnMlKemSecretKey();
 
-      final (result, reaction) = await handleIncomingReaction(
+      final (result, change) = await handleIncomingReaction(
         message: message,
         reactionRepo: reactionRepo,
         contactRepo: contactRepo,
@@ -104,18 +110,23 @@ class ReactionListener {
         ownMlKemSecretKey: ownSecretKey,
       );
 
-      if (result == HandleReactionResult.success && reaction != null) {
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'REACTION_LISTENER_NEW_REACTION',
-          details: {
-            'id': reaction.id.length > 8
-                ? reaction.id.substring(0, 8)
-                : reaction.id,
-            'emoji': reaction.emoji,
-          },
-        );
-        _reactionController.add(reaction);
+      if (result == HandleReactionResult.success && change != null) {
+        if (change.type == ReactionChangeType.upserted &&
+            change.reaction != null) {
+          final reaction = change.reaction!;
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'REACTION_LISTENER_NEW_REACTION',
+            details: {
+              'id': reaction.id.length > 8
+                  ? reaction.id.substring(0, 8)
+                  : reaction.id,
+              'emoji': reaction.emoji,
+            },
+          );
+          _reactionController.add(reaction);
+        }
+        _reactionChangeController.add(change);
       }
     } catch (e) {
       emitFlowEvent(

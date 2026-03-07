@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/handle_incoming_reaction_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/reaction_payload.dart';
+import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 
@@ -29,19 +30,21 @@ void main() {
   late FakeReactionRepository reactionRepo;
 
   setUp(() {
-    bridge = FakeBridge(initialResponses: {
-      'message.decrypt': {
-        'ok': true,
-        'plaintext': jsonEncode({
-          'id': 'r1',
-          'messageId': 'msg-1',
-          'emoji': '👍',
-          'action': 'add',
-          'senderPeerId': _senderPeerId,
-          'timestamp': '2026-02-27T10:00:00.000Z',
-        }),
+    bridge = FakeBridge(
+      initialResponses: {
+        'message.decrypt': {
+          'ok': true,
+          'plaintext': jsonEncode({
+            'id': 'r1',
+            'messageId': 'msg-1',
+            'emoji': '👍',
+            'action': 'add',
+            'senderPeerId': _senderPeerId,
+            'timestamp': '2026-02-27T10:00:00.000Z',
+          }),
+        },
       },
-    });
+    );
     contactRepo = FakeContactRepository();
     contactRepo.seed([
       ContactModel(
@@ -59,11 +62,9 @@ void main() {
   group('handleIncomingReaction', () {
     test('rejects non-reaction envelope', () async {
       final (result, _) = await handleIncomingReaction(
-        message: _makeReactionMessage(jsonEncode({
-          'type': 'chat_message',
-          'version': '1',
-          'payload': {},
-        })),
+        message: _makeReactionMessage(
+          jsonEncode({'type': 'chat_message', 'version': '1', 'payload': {}}),
+        ),
         reactionRepo: reactionRepo,
         contactRepo: contactRepo,
         bridge: bridge,
@@ -174,7 +175,7 @@ void main() {
         nonce: 'n',
       );
 
-      final (result, reaction) = await handleIncomingReaction(
+      final (result, change) = await handleIncomingReaction(
         message: _makeReactionMessage(v2),
         reactionRepo: reactionRepo,
         contactRepo: contactRepo,
@@ -183,22 +184,25 @@ void main() {
       );
 
       expect(result, HandleReactionResult.success);
-      expect(reaction, isNotNull);
-      expect(reaction!.emoji, '👍');
-      expect(reaction.messageId, 'msg-1');
+      expect(change, isNotNull);
+      expect(change!.type, ReactionChangeType.upserted);
+      expect(change.reaction!.emoji, '👍');
+      expect(change.messageId, 'msg-1');
       expect(reactionRepo.saveReactionCallCount, 1);
     });
 
     test('remove action — decrypts and deletes reaction', () async {
       // Pre-populate
-      await reactionRepo.saveReaction(const MessageReaction(
-        id: 'r1',
-        messageId: 'msg-1',
-        emoji: '👍',
-        senderPeerId: _senderPeerId,
-        timestamp: '2026-02-27T10:00:00.000Z',
-        createdAt: '2026-02-27T10:00:01.000Z',
-      ));
+      await reactionRepo.saveReaction(
+        const MessageReaction(
+          id: 'r1',
+          messageId: 'msg-1',
+          emoji: '👍',
+          senderPeerId: _senderPeerId,
+          timestamp: '2026-02-27T10:00:00.000Z',
+          createdAt: '2026-02-27T10:00:01.000Z',
+        ),
+      );
 
       bridge.responses['message.decrypt'] = {
         'ok': true,
@@ -219,7 +223,7 @@ void main() {
         nonce: 'n',
       );
 
-      final (result, reaction) = await handleIncomingReaction(
+      final (result, change) = await handleIncomingReaction(
         message: _makeReactionMessage(v2),
         reactionRepo: reactionRepo,
         contactRepo: contactRepo,
@@ -228,7 +232,11 @@ void main() {
       );
 
       expect(result, HandleReactionResult.success);
-      expect(reaction, isNull); // remove action returns null
+      expect(change, isNotNull);
+      expect(change!.type, ReactionChangeType.removed);
+      expect(change.messageId, 'msg-1');
+      expect(change.senderPeerId, _senderPeerId);
+      expect(change.reaction, isNull);
       expect(reactionRepo.removeReactionCallCount, 1);
 
       final remaining = await reactionRepo.getReactionsForMessage('msg-1');

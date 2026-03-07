@@ -20,6 +20,7 @@ import 'package:flutter_app/features/groups/domain/repositories/group_repository
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_list_screen.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
+import 'package:flutter_app/features/feed/domain/models/feed_route_changes.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 
 /// Wired widget connecting GroupListScreen to business logic.
@@ -69,15 +70,19 @@ class _GroupListWiredState extends State<GroupListWired> {
   Map<String, int> _unreadCounts = {};
   StreamSubscription<GroupMessage>? _messageSubscription;
   StreamSubscription<GroupModel>? _inviteSubscription;
+  final Set<String> _changedGroupIds = <String>{};
+
+  FeedRouteChanges? _buildRouteChanges() {
+    final changes = FeedRouteChanges(
+      changedGroupIds: Set<String>.from(_changedGroupIds),
+    );
+    return changes.hasChanges ? changes : null;
+  }
 
   @override
   void initState() {
     super.initState();
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'GROUP_LIST_FL_SCREEN_INIT',
-      details: {},
-    );
+    emitFlowEvent(layer: 'FL', event: 'GROUP_LIST_FL_SCREEN_INIT', details: {});
     _loadGroups();
     _startListening();
   }
@@ -89,10 +94,10 @@ class _GroupListWiredState extends State<GroupListWired> {
       final unreadCounts = <String, int>{};
 
       for (final group in groups) {
-        latestMessages[group.id] =
-            await widget.msgRepo.getLatestMessage(group.id);
-        unreadCounts[group.id] =
-            await widget.msgRepo.getUnreadCount(group.id);
+        latestMessages[group.id] = await widget.msgRepo.getLatestMessage(
+          group.id,
+        );
+        unreadCounts[group.id] = await widget.msgRepo.getUnreadCount(group.id);
       }
 
       if (!mounted) return;
@@ -111,17 +116,17 @@ class _GroupListWiredState extends State<GroupListWired> {
   }
 
   void _startListening() {
-    _messageSubscription =
-        widget.groupMessageListener.groupMessageStream.listen(
-      (_) => _loadGroups(),
-      onError: (error) {
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'GROUP_LIST_FL_STREAM_ERROR',
-          details: {'error': error.toString()},
+    _messageSubscription = widget.groupMessageListener.groupMessageStream
+        .listen(
+          (_) => _loadGroups(),
+          onError: (error) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'GROUP_LIST_FL_STREAM_ERROR',
+              details: {'error': error.toString()},
+            );
+          },
         );
-      },
-    );
 
     _inviteSubscription = widget.groupInviteListener?.groupJoinedStream.listen(
       (_) => _loadGroups(),
@@ -136,31 +141,36 @@ class _GroupListWiredState extends State<GroupListWired> {
   }
 
   void _onGroupTap(GroupModel group) {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => GroupConversationWired(
-          group: group,
-          groupRepo: widget.groupRepo,
-          msgRepo: widget.msgRepo,
-          groupMessageListener: widget.groupMessageListener,
-          bridge: widget.bridge,
-          identityRepo: widget.identityRepo,
-          contactRepo: widget.contactRepo,
-          p2pService: widget.p2pService,
-          mediaAttachmentRepo: widget.mediaAttachmentRepo,
-          mediaFileManager: widget.mediaFileManager,
-          imageProcessor: widget.imageProcessor,
-          qualityPreference: widget.qualityPreference,
-          videoQualityPreference: widget.videoQualityPreference,
-          audioRecorderService: widget.audioRecorderService,
-          groupConversationTracker: widget.groupConversationTracker,
-        ),
-      ),
-    ).then((_) => _loadGroups());
+    Navigator.of(context)
+        .push(
+          MaterialPageRoute(
+            builder: (_) => GroupConversationWired(
+              group: group,
+              groupRepo: widget.groupRepo,
+              msgRepo: widget.msgRepo,
+              groupMessageListener: widget.groupMessageListener,
+              bridge: widget.bridge,
+              identityRepo: widget.identityRepo,
+              contactRepo: widget.contactRepo,
+              p2pService: widget.p2pService,
+              mediaAttachmentRepo: widget.mediaAttachmentRepo,
+              mediaFileManager: widget.mediaFileManager,
+              imageProcessor: widget.imageProcessor,
+              qualityPreference: widget.qualityPreference,
+              videoQualityPreference: widget.videoQualityPreference,
+              audioRecorderService: widget.audioRecorderService,
+              groupConversationTracker: widget.groupConversationTracker,
+            ),
+          ),
+        )
+        .then((_) {
+          _changedGroupIds.add(group.id);
+          _loadGroups();
+        });
   }
 
   void _onBack() {
-    Navigator.of(context).pop();
+    Navigator.of(context).pop(_buildRouteChanges());
   }
 
   @override

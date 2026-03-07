@@ -35,6 +35,7 @@ import 'package:flutter_app/features/conversation/application/load_reactions_use
 import 'package:flutter_app/features/conversation/application/reaction_listener.dart';
 import 'package:flutter_app/features/conversation/application/send_reaction_use_case.dart';
 import 'package:flutter_app/features/conversation/application/remove_reaction_use_case.dart';
+import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/introduction/application/check_intro_banner_use_case.dart';
@@ -161,7 +162,7 @@ class _ConversationWiredState extends State<ConversationWired> {
 
   // Reaction state
   Map<String, List<MessageReaction>> _reactions = {};
-  StreamSubscription<MessageReaction>? _reactionSubscription;
+  StreamSubscription<ReactionChange>? _reactionSubscription;
 
   // Introduction banner state
   bool _showIntroBanner = false;
@@ -548,10 +549,8 @@ class _ConversationWiredState extends State<ConversationWired> {
 
     // Upload attachments if any
     List<MediaAttachment>? uploadedAttachments;
-    bool allMediaLocal = false;
     if (mediaToUpload.isNotEmpty && widget.bridge != null) {
       uploadedAttachments = [];
-      allMediaLocal = true;
       for (final media in mediaToUpload) {
         final mime = _mimeFromPath(media.file.path);
         final mediaId = _uuid.v4();
@@ -570,21 +569,22 @@ class _ConversationWiredState extends State<ConversationWired> {
         }
 
         if (localSuccess) {
-          uploadedAttachments.add(MediaAttachment(
-            id: mediaId,
-            messageId: '',
-            mime: mime,
-            size: await File(media.file.path).length(),
-            mediaType: MediaAttachment.mediaTypeFromMime(mime),
-            localPath: media.file.path,
-            downloadStatus: 'done',
-            createdAt: DateTime.now().toUtc().toIso8601String(),
-            width: media.width,
-            height: media.height,
-            durationMs: media.durationMs,
-          ));
+          uploadedAttachments.add(
+            MediaAttachment(
+              id: mediaId,
+              messageId: '',
+              mime: mime,
+              size: await File(media.file.path).length(),
+              mediaType: MediaAttachment.mediaTypeFromMime(mime),
+              localPath: media.file.path,
+              downloadStatus: 'done',
+              createdAt: DateTime.now().toUtc().toIso8601String(),
+              width: media.width,
+              height: media.height,
+              durationMs: media.durationMs,
+            ),
+          );
         } else {
-          allMediaLocal = false;
           // Fall back to relay upload.
           final result = await uploadMedia(
             bridge: widget.bridge!,
@@ -1220,13 +1220,13 @@ class _ConversationWiredState extends State<ConversationWired> {
     final listener = widget.reactionListener;
     if (listener == null) return;
 
-    _reactionSubscription = listener.incomingReactionStream
-        .where((r) {
+    _reactionSubscription = listener.incomingReactionChangeStream
+        .where((change) {
           // Only process reactions for messages in this conversation
-          return _messages.any((m) => m.id == r.messageId);
+          return _messages.any((m) => m.id == change.messageId);
         })
         .listen(
-          _onIncomingReaction,
+          _onIncomingReactionChange,
           onError: (error) {
             emitFlowEvent(
               layer: 'FL',
@@ -1237,22 +1237,28 @@ class _ConversationWiredState extends State<ConversationWired> {
         );
   }
 
-  void _onIncomingReaction(MessageReaction reaction) {
+  void _onIncomingReactionChange(ReactionChange change) {
     if (!mounted) return;
     setState(() {
       final messageReactions = List<MessageReaction>.from(
-        _reactions[reaction.messageId] ?? [],
+        _reactions[change.messageId] ?? [],
       );
-      // Upsert: replace existing for same sender
-      final idx = messageReactions.indexWhere(
-        (r) => r.senderPeerId == reaction.senderPeerId,
-      );
-      if (idx >= 0) {
-        messageReactions[idx] = reaction;
-      } else {
-        messageReactions.add(reaction);
+
+      if (change.type == ReactionChangeType.removed) {
+        messageReactions.removeWhere(
+          (reaction) => reaction.senderPeerId == change.senderPeerId,
+        );
+      } else if (change.reaction != null) {
+        final idx = messageReactions.indexWhere(
+          (reaction) => reaction.senderPeerId == change.senderPeerId,
+        );
+        if (idx >= 0) {
+          messageReactions[idx] = change.reaction!;
+        } else {
+          messageReactions.add(change.reaction!);
+        }
       }
-      _reactions = {..._reactions, reaction.messageId: messageReactions};
+      _reactions = {..._reactions, change.messageId: messageReactions};
     });
   }
 
@@ -1327,9 +1333,7 @@ class _ConversationWiredState extends State<ConversationWired> {
 
     setState(() {
       final updated = List<MessageReaction>.from(existingReactions);
-      final idx = updated.indexWhere(
-        (r) => r.senderPeerId == identity.peerId,
-      );
+      final idx = updated.indexWhere((r) => r.senderPeerId == identity.peerId);
       if (idx >= 0) {
         updated[idx] = optimisticReaction;
       } else {
@@ -1352,9 +1356,7 @@ class _ConversationWiredState extends State<ConversationWired> {
     // Update with real reaction on success
     if (result == SendReactionResult.success && reaction != null && mounted) {
       setState(() {
-        final updated = List<MessageReaction>.from(
-          _reactions[messageId] ?? [],
-        );
+        final updated = List<MessageReaction>.from(_reactions[messageId] ?? []);
         final idx = updated.indexWhere(
           (r) => r.senderPeerId == identity.peerId,
         );
@@ -1439,11 +1441,7 @@ class _ConversationWiredState extends State<ConversationWired> {
             value: 'introduce',
             child: Row(
               children: [
-                Icon(
-                  Icons.people_outline,
-                  size: 18,
-                  color: Color(0xFF10B981),
-                ),
+                Icon(Icons.people_outline, size: 18, color: Color(0xFF10B981)),
                 SizedBox(width: 10),
                 Text(
                   'Introduce to your circle',

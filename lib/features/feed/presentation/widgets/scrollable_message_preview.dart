@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/feed_colors.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
@@ -27,6 +28,8 @@ class ScrollableMessagePreview extends StatefulWidget {
   final ValueChanged<String>? onQuoteReply;
   final int maxVisible;
   final Map<String, List<MessageReaction>> reactions;
+  final ValueListenable<List<MessageReaction>>? Function(String messageId)?
+  reactionListenableForMessage;
   final String? ownPeerId;
   final void Function(String messageId)? onMessageLongPress;
   final void Function(String messageId, String emoji)? onReactionTap;
@@ -42,6 +45,7 @@ class ScrollableMessagePreview extends StatefulWidget {
     this.onQuoteReply,
     this.maxVisible = 3,
     this.reactions = const {},
+    this.reactionListenableForMessage,
     this.ownPeerId,
     this.onMessageLongPress,
     this.onReactionTap,
@@ -193,7 +197,9 @@ class _ScrollableMessagePreviewState extends State<ScrollableMessagePreview> {
         .map((a) => a.localPath!)
         .toList();
 
-    final startIndex = allPaths.indexOf(tapped.localPath!).clamp(0, allPaths.length - 1);
+    final startIndex = allPaths
+        .indexOf(tapped.localPath!)
+        .clamp(0, allPaths.length - 1);
 
     Navigator.of(context).push(
       MaterialPageRoute<void>(
@@ -239,31 +245,50 @@ class _ScrollableMessagePreviewState extends State<ScrollableMessagePreview> {
       }
 
       final msg = messages[i];
-      final (quotedText, isQuoteUnavailable) = _resolveQuotedText(msg, messages);
-
-      Widget bubble = MessageBubble(
-        text: msg.text,
-        time: msg.time,
-        isUnread: msg.isUnread,
-        isIncoming: msg.isIncoming,
-        status: msg.status,
-        senderPeerId: msg.isIncoming ? (msg.senderPeerId ?? widget.contactPeerId) : null,
-        senderLabel: msg.isIncoming ? (msg.senderUsername ?? widget.contactUsername) : 'You',
-        media: msg.media,
-        onMediaTap: msg.media.isNotEmpty
-            ? (index) => _openMediaViewer(context, msg.media, index)
-            : null,
-        quotedText: quotedText,
-        isQuoteUnavailable: isQuoteUnavailable,
-        reactions: widget.reactions[msg.id] ?? const [],
-        ownPeerId: widget.ownPeerId,
-        onLongPress: widget.onMessageLongPress != null
-            ? () => widget.onMessageLongPress!(msg.id)
-            : null,
-        onReactionTap: widget.onReactionTap != null
-            ? (emoji) => widget.onReactionTap!(msg.id, emoji)
-            : null,
+      final (quotedText, isQuoteUnavailable) = _resolveQuotedText(
+        msg,
+        messages,
       );
+      final reactionsListenable = widget.reactionListenableForMessage?.call(
+        msg.id,
+      );
+
+      Widget buildBubble(List<MessageReaction> reactions) {
+        return MessageBubble(
+          text: msg.text,
+          time: msg.time,
+          isUnread: msg.isUnread,
+          isIncoming: msg.isIncoming,
+          status: msg.status,
+          senderPeerId: msg.isIncoming
+              ? (msg.senderPeerId ?? widget.contactPeerId)
+              : null,
+          senderLabel: msg.isIncoming
+              ? (msg.senderUsername ?? widget.contactUsername)
+              : 'You',
+          media: msg.media,
+          onMediaTap: msg.media.isNotEmpty
+              ? (index) => _openMediaViewer(context, msg.media, index)
+              : null,
+          quotedText: quotedText,
+          isQuoteUnavailable: isQuoteUnavailable,
+          reactions: reactions,
+          ownPeerId: widget.ownPeerId,
+          onLongPress: widget.onMessageLongPress != null
+              ? () => widget.onMessageLongPress!(msg.id)
+              : null,
+          onReactionTap: widget.onReactionTap != null
+              ? (emoji) => widget.onReactionTap!(msg.id, emoji)
+              : null,
+        );
+      }
+
+      Widget bubble = reactionsListenable != null
+          ? ValueListenableBuilder<List<MessageReaction>>(
+              valueListenable: reactionsListenable,
+              builder: (context, reactions, child) => buildBubble(reactions),
+            )
+          : buildBubble(widget.reactions[msg.id] ?? const []);
 
       if (msg.isIncoming && widget.onQuoteReply != null) {
         bubble = SwipeToQuoteBubble(
@@ -284,6 +309,5 @@ class _NoScrollbarBehavior extends ScrollBehavior {
     BuildContext context,
     Widget child,
     ScrollableDetails details,
-  ) =>
-      child;
+  ) => child;
 }

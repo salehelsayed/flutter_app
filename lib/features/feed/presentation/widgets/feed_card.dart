@@ -1,4 +1,5 @@
 import 'dart:ui';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/feed_colors.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
@@ -25,6 +26,8 @@ class FeedCard extends StatefulWidget {
   final ValueChanged<String>? onQuoteReply;
   final VoidCallback? onAttach;
   final Map<String, List<MessageReaction>> reactions;
+  final ValueListenable<List<MessageReaction>>? Function(String messageId)?
+  reactionListenableForMessage;
   final String? ownPeerId;
   final void Function(String messageId)? onMessageLongPress;
   final void Function(String messageId, String emoji)? onReactionTap;
@@ -44,6 +47,7 @@ class FeedCard extends StatefulWidget {
     this.onQuoteReply,
     this.onAttach,
     this.reactions = const {},
+    this.reactionListenableForMessage,
     this.ownPeerId,
     this.onMessageLongPress,
     this.onReactionTap,
@@ -53,8 +57,7 @@ class FeedCard extends StatefulWidget {
   State<FeedCard> createState() => _FeedCardState();
 }
 
-class _FeedCardState extends State<FeedCard>
-    with TickerProviderStateMixin {
+class _FeedCardState extends State<FeedCard> with TickerProviderStateMixin {
   late final AnimationController _entryController;
   late final Animation<double> _entryOpacity;
   late final Animation<double> _entryTranslateY;
@@ -86,8 +89,7 @@ class _FeedCardState extends State<FeedCard>
     super.dispose();
   }
 
-  bool get _showOpen =>
-      widget.thread.isOpenMode && widget.sessionReply == null;
+  bool get _showOpen => widget.thread.isOpenMode && widget.sessionReply == null;
 
   @override
   Widget build(BuildContext context) {
@@ -150,19 +152,14 @@ class _FeedCardState extends State<FeedCard>
     if (state == ConversationState.unread ||
         state == ConversationState.active) {
       return [
-        BoxShadow(
-          color: FeedColors.cardBg,
-          blurRadius: 12,
-          spreadRadius: 0,
-        ),
+        BoxShadow(color: FeedColors.cardBg, blurRadius: 12, spreadRadius: 0),
       ];
     }
     return null;
   }
 
   Widget _buildOpenBody() {
-    final enabled =
-        widget.onInlineSend != null && !widget.thread.isBlocked;
+    final enabled = widget.onInlineSend != null && !widget.thread.isBlocked;
     return OpenModeCardBody(
       thread: widget.thread,
       onViewEarlier: widget.onViewFullConversation,
@@ -176,6 +173,7 @@ class _FeedCardState extends State<FeedCard>
       onInputFocusChanged: widget.onInputFocusChanged,
       onAttach: widget.onAttach,
       reactions: widget.reactions,
+      reactionListenableForMessage: widget.reactionListenableForMessage,
       ownPeerId: widget.ownPeerId,
       onMessageLongPress: widget.onMessageLongPress,
       onReactionTap: widget.onReactionTap,
@@ -183,8 +181,7 @@ class _FeedCardState extends State<FeedCard>
   }
 
   Widget _buildCollapsedBody() {
-    final enabled =
-        widget.onInlineSend != null && !widget.thread.isBlocked;
+    final enabled = widget.onInlineSend != null && !widget.thread.isBlocked;
     return CollapsedModeCardBody(
       thread: widget.thread,
       sessionReply: widget.sessionReply,
@@ -201,6 +198,7 @@ class _FeedCardState extends State<FeedCard>
       onInputFocusChanged: widget.onInputFocusChanged,
       onAttach: widget.onAttach,
       reactions: widget.reactions,
+      reactionListenableForMessage: widget.reactionListenableForMessage,
       ownPeerId: widget.ownPeerId,
       onMessageLongPress: widget.onMessageLongPress,
       onReactionTap: widget.onReactionTap,

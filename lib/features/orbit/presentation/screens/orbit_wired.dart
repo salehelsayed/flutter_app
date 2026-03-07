@@ -65,6 +65,7 @@ import 'package:flutter_app/features/orbit/application/load_orbit_groups_use_cas
 import 'package:flutter_app/features/orbit/domain/models/orbit_group.dart';
 import 'package:flutter_app/features/qr_code/presentation/screens/qr_display_wired.dart';
 import 'package:flutter_app/features/qr_code/presentation/screens/qr_scanner_wired.dart';
+import 'package:flutter_app/features/feed/domain/models/feed_route_changes.dart';
 import 'orbit_screen.dart';
 
 /// Wired widget connecting OrbitScreen to business logic.
@@ -157,11 +158,16 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   StreamSubscription<IntroductionModel>? _introReceivedSubscription;
   StreamSubscription<IntroductionModel>? _introStatusSubscription;
   ImageQualityPreference _qualityPreference = ImageQualityPreference.compressed;
-  ImageQualityPreference _videoQualityPreference = ImageQualityPreference.compressed;
+  ImageQualityPreference _videoQualityPreference =
+      ImageQualityPreference.compressed;
   int _introsCount = 0;
   Map<String, List<IntroductionModel>> _groupedIntros = {};
   Map<String, String> _introducerUsernames = {};
   Set<String> _blockedPeerIds = {};
+  final Set<String> _changedContactPeerIds = <String>{};
+  final Set<String> _changedGroupIds = <String>{};
+  bool _reloadAllContactsOnExit = false;
+  bool _reloadAllGroupsOnExit = false;
 
   static const _animCurve = Cubic(0.22, 0.61, 0.36, 1);
 
@@ -322,10 +328,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
 
     try {
       final ownPeerId = _identity!.peerId;
-      await expireOldIntroductions(
-        introRepo: introRepo,
-        peerId: ownPeerId,
-      );
+      await expireOldIntroductions(introRepo: introRepo, peerId: ownPeerId);
       final pending = await loadIntroductionsForUser(
         introRepo: introRepo,
         peerId: ownPeerId,
@@ -351,6 +354,32 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         details: {'error': e.toString()},
       );
     }
+  }
+
+  void _markContactChanged(String peerId) {
+    _changedContactPeerIds.add(peerId);
+  }
+
+  void _markGroupChanged(String groupId) {
+    _changedGroupIds.add(groupId);
+  }
+
+  void _markReloadAllContacts() {
+    _reloadAllContactsOnExit = true;
+  }
+
+  void _markReloadAllGroups() {
+    _reloadAllGroupsOnExit = true;
+  }
+
+  FeedRouteChanges? _buildRouteChanges() {
+    final changes = FeedRouteChanges(
+      changedContactPeerIds: Set<String>.from(_changedContactPeerIds),
+      changedGroupIds: Set<String>.from(_changedGroupIds),
+      reloadAllContacts: _reloadAllContactsOnExit,
+      reloadAllGroups: _reloadAllGroupsOnExit,
+    );
+    return changes.hasChanges ? changes : null;
   }
 
   void _startListeningForIntroductions() {
@@ -383,7 +412,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   Future<void> _onAcceptIntro(String introductionId) async {
     if (_identity == null) return;
 
-    await acceptIntroduction(
+    final updated = await acceptIntroduction(
       introRepo: widget.introductionRepository!,
       contactRepo: widget.contactRepo,
       p2pService: widget.p2pService,
@@ -393,6 +422,15 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       ownUsername: _identity!.username,
       messageRepo: widget.messageRepo,
     );
+    if (updated != null &&
+        updated.status == IntroductionOverallStatus.mutualAccepted) {
+      final otherPeerId = updated.recipientId == _identity!.peerId
+          ? updated.introducedId
+          : updated.recipientId;
+      if (otherPeerId.isNotEmpty) {
+        _markContactChanged(otherPeerId);
+      }
+    }
     _loadIntroductions();
     _loadOrbitData();
   }
@@ -450,40 +488,66 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   }
 
   void _startListeningForChatMessages() {
-    _chatSubscription =
-        widget.chatMessageListener.incomingMessageStream.listen(
-      (_) { _loadOrbitData(); },
+    _chatSubscription = widget.chatMessageListener.incomingMessageStream.listen(
+      (_) {
+        _loadOrbitData();
+      },
       onError: (error) {
-        emitFlowEvent(layer: 'FL', event: 'ORBIT_CHAT_STREAM_ERROR', details: {'error': error.toString()});
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'ORBIT_CHAT_STREAM_ERROR',
+          details: {'error': error.toString()},
+        );
       },
       onDone: () {
-        emitFlowEvent(layer: 'FL', event: 'ORBIT_CHAT_STREAM_DONE', details: {});
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'ORBIT_CHAT_STREAM_DONE',
+          details: {},
+        );
       },
     );
   }
 
   void _startListeningForContactUpdates() {
-    _contactUpdateSubscription =
-        widget.chatMessageListener.contactUpdatedStream.listen(
-      (_) { _loadOrbitData(); },
-      onError: (error) {
-        emitFlowEvent(layer: 'FL', event: 'ORBIT_CONTACT_UPDATE_STREAM_ERROR', details: {'error': error.toString()});
-      },
-      onDone: () {
-        emitFlowEvent(layer: 'FL', event: 'ORBIT_CONTACT_UPDATE_STREAM_DONE', details: {});
-      },
-    );
+    _contactUpdateSubscription = widget.chatMessageListener.contactUpdatedStream
+        .listen(
+          (_) {
+            _loadOrbitData();
+          },
+          onError: (error) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'ORBIT_CONTACT_UPDATE_STREAM_ERROR',
+              details: {'error': error.toString()},
+            );
+          },
+          onDone: () {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'ORBIT_CONTACT_UPDATE_STREAM_DONE',
+              details: {},
+            );
+          },
+        );
   }
 
   void _startListeningForContactRequests() {
-    _requestSubscription =
-        widget.contactRequestListener.requestStream.listen(
+    _requestSubscription = widget.contactRequestListener.requestStream.listen(
       _onContactRequest,
       onError: (error) {
-        emitFlowEvent(layer: 'FL', event: 'ORBIT_REQUEST_STREAM_ERROR', details: {'error': error.toString()});
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'ORBIT_REQUEST_STREAM_ERROR',
+          details: {'error': error.toString()},
+        );
       },
       onDone: () {
-        emitFlowEvent(layer: 'FL', event: 'ORBIT_REQUEST_STREAM_DONE', details: {});
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'ORBIT_REQUEST_STREAM_DONE',
+          details: {},
+        );
       },
     );
   }
@@ -526,6 +590,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     if (!mounted) return;
     if (result == AcceptContactRequestResult.success ||
         result == AcceptContactRequestResult.notPending) {
+      _markContactChanged(request.peerId);
       _loadOrbitData();
     }
   }
@@ -596,11 +661,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     final base = _currentTabFriends;
     if (_searchQuery.isEmpty) return base;
     final q = _searchQuery.toLowerCase().trim();
-    return base
-        .where(
-          (f) => f.username.toLowerCase().contains(q),
-        )
-        .toList();
+    return base.where((f) => f.username.toLowerCase().contains(q)).toList();
   }
 
   void _onFilterChanged(String tab) {
@@ -614,6 +675,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         contactRepo: widget.contactRepo,
         peerId: friend.peerId,
       );
+      _markContactChanged(friend.peerId);
       _loadOrbitData();
     } catch (e) {
       emitFlowEvent(
@@ -630,6 +692,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         contactRepo: widget.contactRepo,
         peerId: friend.peerId,
       );
+      _markContactChanged(friend.peerId);
       _loadOrbitData();
     } catch (e) {
       emitFlowEvent(
@@ -656,6 +719,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         peerId: friend.peerId,
       );
       _openRowNotifier.value = null;
+      _markContactChanged(friend.peerId);
       _loadOrbitData();
     } catch (e) {
       emitFlowEvent(
@@ -672,6 +736,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         contactRepo: widget.contactRepo,
         peerId: friend.peerId,
       );
+      _markContactChanged(friend.peerId);
       _loadOrbitData();
     } catch (e) {
       emitFlowEvent(
@@ -699,6 +764,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         peerId: friend.peerId,
       );
       _openRowNotifier.value = null;
+      _markContactChanged(friend.peerId);
       _loadOrbitData();
     } catch (e) {
       emitFlowEvent(
@@ -717,29 +783,34 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
 
     if (!mounted) return;
 
-    Navigator.of(context).push(
-      buildConversationSlideUpRoute(
-        builder: (_) => ConversationWired(
-          contact: friend.contact,
-          identityRepo: widget.identityRepo,
-          messageRepo: widget.messageRepo,
-          chatMessageListener: widget.chatMessageListener,
-          p2pService: widget.p2pService,
-          bridge: widget.bridge,
-          contactRepo: widget.contactRepo,
-          mediaAttachmentRepo: widget.mediaAttachmentRepo,
-          mediaFileManager: widget.mediaFileManager,
-          imageProcessor: widget.imageProcessor,
-          qualityPreference: _qualityPreference,
-          videoQualityPreference: _videoQualityPreference,
-          conversationTracker: widget.conversationTracker,
-          audioRecorderService: widget.audioRecorderService,
-          reactionRepo: widget.reactionRepository,
-          reactionListener: widget.reactionListener,
-          introductionRepository: widget.introductionRepository,
-        ),
-      ),
-    ).then((_) => _loadOrbitData());
+    Navigator.of(context)
+        .push(
+          buildConversationSlideUpRoute(
+            builder: (_) => ConversationWired(
+              contact: friend.contact,
+              identityRepo: widget.identityRepo,
+              messageRepo: widget.messageRepo,
+              chatMessageListener: widget.chatMessageListener,
+              p2pService: widget.p2pService,
+              bridge: widget.bridge,
+              contactRepo: widget.contactRepo,
+              mediaAttachmentRepo: widget.mediaAttachmentRepo,
+              mediaFileManager: widget.mediaFileManager,
+              imageProcessor: widget.imageProcessor,
+              qualityPreference: _qualityPreference,
+              videoQualityPreference: _videoQualityPreference,
+              conversationTracker: widget.conversationTracker,
+              audioRecorderService: widget.audioRecorderService,
+              reactionRepo: widget.reactionRepository,
+              reactionListener: widget.reactionListener,
+              introductionRepository: widget.introductionRepository,
+            ),
+          ),
+        )
+        .then((_) {
+          _markContactChanged(friend.peerId);
+          _loadOrbitData();
+        });
   }
 
   void _onMyQR() {
@@ -756,40 +827,47 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   }
 
   void _onScanQR() {
-    Navigator.of(context).push(
-      buildConversationSlideUpRoute(
-        builder: (_) => QRScannerWired(
-          bridge: widget.bridge,
-          contactRepository: widget.contactRepo,
-          contactRequestRepository: widget.contactRequestRepo,
-          contactRequestListener: widget.contactRequestListener,
-          messageRepository: widget.messageRepo,
-          mediaAttachmentRepository: widget.mediaAttachmentRepo,
-          chatMessageListener: widget.chatMessageListener,
-          identityRepository: widget.identityRepo,
-          p2pService: widget.p2pService,
-          mediaFileManager: widget.mediaFileManager,
-          secureKeyStore: widget.secureKeyStore,
-          imageProcessor: widget.imageProcessor,
-          ownPeerId: _identity?.peerId ?? '',
-          conversationTracker: widget.conversationTracker,
-          audioRecorderService: widget.audioRecorderService,
-          reactionRepository: widget.reactionRepository,
-          reactionListener: widget.reactionListener,
-          groupRepository: widget.groupRepository,
-          groupMessageRepository: widget.groupMessageRepository,
-          groupMessageListener: widget.groupMessageListener,
-          groupInviteListener: widget.groupInviteListener,
-          groupConversationTracker: widget.groupConversationTracker,
-          introductionRepository: widget.introductionRepository,
-          introductionListener: widget.introductionListener,
-        ),
-      ),
-    );
+    Navigator.of(context)
+        .push(
+          buildConversationSlideUpRoute(
+            builder: (_) => QRScannerWired(
+              bridge: widget.bridge,
+              contactRepository: widget.contactRepo,
+              contactRequestRepository: widget.contactRequestRepo,
+              contactRequestListener: widget.contactRequestListener,
+              messageRepository: widget.messageRepo,
+              mediaAttachmentRepository: widget.mediaAttachmentRepo,
+              chatMessageListener: widget.chatMessageListener,
+              identityRepository: widget.identityRepo,
+              p2pService: widget.p2pService,
+              mediaFileManager: widget.mediaFileManager,
+              secureKeyStore: widget.secureKeyStore,
+              imageProcessor: widget.imageProcessor,
+              ownPeerId: _identity?.peerId ?? '',
+              conversationTracker: widget.conversationTracker,
+              audioRecorderService: widget.audioRecorderService,
+              reactionRepository: widget.reactionRepository,
+              reactionListener: widget.reactionListener,
+              groupRepository: widget.groupRepository,
+              groupMessageRepository: widget.groupMessageRepository,
+              groupMessageListener: widget.groupMessageListener,
+              groupInviteListener: widget.groupInviteListener,
+              groupConversationTracker: widget.groupConversationTracker,
+              introductionRepository: widget.introductionRepository,
+              introductionListener: widget.introductionListener,
+            ),
+          ),
+        )
+        .then((_) {
+          _markReloadAllContacts();
+          _markReloadAllGroups();
+          _loadOrbitData();
+          _loadGroupData();
+        });
   }
 
   void _onClose() {
-    Navigator.of(context).pop();
+    Navigator.of(context).pop(_buildRouteChanges());
   }
 
   @override
@@ -877,10 +955,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     if (groupRepository == null) return;
 
     try {
-      await archiveGroup(
-        groupRepo: groupRepository,
-        groupId: group.group.id,
-      );
+      await archiveGroup(groupRepo: groupRepository, groupId: group.group.id);
+      _markGroupChanged(group.group.id);
       _loadGroupData();
     } catch (e) {
       emitFlowEvent(
@@ -896,10 +972,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     if (groupRepository == null) return;
 
     try {
-      await unarchiveGroup(
-        groupRepo: groupRepository,
-        groupId: group.group.id,
-      );
+      await unarchiveGroup(groupRepo: groupRepository, groupId: group.group.id);
+      _markGroupChanged(group.group.id);
       _loadGroupData();
     } catch (e) {
       emitFlowEvent(
@@ -932,6 +1006,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         groupId: group.group.id,
       );
       _openRowNotifier.value = null;
+      _markGroupChanged(group.group.id);
       _loadGroupData();
     } catch (e) {
       emitFlowEvent(
@@ -952,30 +1027,33 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       return;
     }
 
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => GroupConversationWired(
-          group: group.group,
-          groupRepo: groupRepository,
-          msgRepo: groupMessageRepository,
-          groupMessageListener: groupMessageListener,
-          bridge: widget.bridge,
-          identityRepo: widget.identityRepo,
-          contactRepo: widget.contactRepo,
-          p2pService: widget.p2pService,
-          mediaAttachmentRepo: widget.mediaAttachmentRepo,
-          mediaFileManager: widget.mediaFileManager,
-          imageProcessor: widget.imageProcessor,
-          qualityPreference: _qualityPreference,
-          videoQualityPreference: _videoQualityPreference,
-          audioRecorderService: widget.audioRecorderService,
-          groupConversationTracker: widget.groupConversationTracker,
-        ),
-      ),
-    ).then((_) {
-      _loadOrbitData();
-      _loadGroupData();
-    });
+    Navigator.of(context)
+        .push(
+          MaterialPageRoute(
+            builder: (_) => GroupConversationWired(
+              group: group.group,
+              groupRepo: groupRepository,
+              msgRepo: groupMessageRepository,
+              groupMessageListener: groupMessageListener,
+              bridge: widget.bridge,
+              identityRepo: widget.identityRepo,
+              contactRepo: widget.contactRepo,
+              p2pService: widget.p2pService,
+              mediaAttachmentRepo: widget.mediaAttachmentRepo,
+              mediaFileManager: widget.mediaFileManager,
+              imageProcessor: widget.imageProcessor,
+              qualityPreference: _qualityPreference,
+              videoQualityPreference: _videoQualityPreference,
+              audioRecorderService: widget.audioRecorderService,
+              groupConversationTracker: widget.groupConversationTracker,
+            ),
+          ),
+        )
+        .then((_) {
+          _markGroupChanged(group.group.id);
+          _loadOrbitData();
+          _loadGroupData();
+        });
   }
 
   void _onCreateGroup(GroupType type) {
@@ -988,23 +1066,26 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       return;
     }
 
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => CreateGroupPickerWired(
-          groupType: type,
-          groupRepo: groupRepository,
-          msgRepo: groupMessageRepository,
-          groupMessageListener: groupMessageListener,
-          contactRepo: widget.contactRepo,
-          bridge: widget.bridge,
-          identityRepo: widget.identityRepo,
-          p2pService: widget.p2pService,
-          groupConversationTracker: widget.groupConversationTracker,
-        ),
-      ),
-    ).then((_) {
-      _loadOrbitData();
-      _loadGroupData();
-    });
+    Navigator.of(context)
+        .push(
+          MaterialPageRoute(
+            builder: (_) => CreateGroupPickerWired(
+              groupType: type,
+              groupRepo: groupRepository,
+              msgRepo: groupMessageRepository,
+              groupMessageListener: groupMessageListener,
+              contactRepo: widget.contactRepo,
+              bridge: widget.bridge,
+              identityRepo: widget.identityRepo,
+              p2pService: widget.p2pService,
+              groupConversationTracker: widget.groupConversationTracker,
+            ),
+          ),
+        )
+        .then((_) {
+          _markReloadAllGroups();
+          _loadOrbitData();
+          _loadGroupData();
+        });
   }
 }
