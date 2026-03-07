@@ -70,7 +70,7 @@ Dirty files captured before checkpoint:
 - Wave 1
   - `PERF-01`: Done
   - `PERF-03`: Done
-  - `PERF-06`: Pending
+  - `PERF-06`: Done
   - `PERF-08`: Pending
   - `PERF-07`: Pending
 - Wave 2
@@ -223,4 +223,32 @@ Follow-up pattern:
 
 Residual notes:
 - no existing automated route harness was found for the exact `impl-backlog.md` observation flows `Conversation open -> record voice` and `Conversation open -> attach video`; the lane used the targeted widget/wired suite above as the best available fallback and leaves real route-level device QA as an outstanding follow-up gap
-- group conversation still uses the older broad recording / processing state path and remains intentionally deferred to `PERF-06`
+- group conversation incoming message/media churn is handled separately in `PERF-06`, but the group recording / processing overlay path still uses broader route state and remains an unresolved risk outside the scoped `PERF-03` lane
+
+### PERF-06 Make Group Conversation Updates Incremental
+
+Lane:
+- `perf-exec/lane-d-perf06`
+
+Implementation:
+- kept the initial group snapshot load, but replaced incoming stream updates and successful local send completions with `_applyMessageUpdate` per-message upserts
+- stopped rebuilding the full message page and full media map on incoming group activity; only the changed message plus its media entry are refreshed
+- limited initial pending-media download updates to the affected message entry instead of rebuilding the entire media map
+- added test instrumentation proving the wired screen no longer calls `getMessagesPage()` or bulk `getAttachmentsForMessages()` on a single incoming message event
+
+Follow-up pattern:
+1. local implementation checks
+   - `flutter analyze lib/features/groups/presentation/screens/group_conversation_wired.dart test/features/groups/presentation/group_conversation_wired_test.dart`
+   - result: passed, no issues
+2. follow-up diff review
+   - confirmed `_loadMessages()` remains only for initial route hydration, not for incoming message events or successful send completions
+   - confirmed stream-driven updates now reload only the changed message and its media attachments
+3. targeted QA / regression surface
+   - `flutter test test/features/groups/presentation/group_conversation_wired_test.dart test/features/groups/presentation/group_conversation_screen_test.dart`
+   - result: all tests passed
+4. visible UX delta
+   - none intended; goal is reduced list churn, reduced attachment refresh fan-out, and better scroll stability during active group traffic
+
+Residual notes:
+- no automated route-level harness exists for the `impl-backlog.md` observation flow `Group conversation while messages arrive`; the wired/widget tests above are the best available fallback and real multi-user device QA remains outstanding
+- group recording / processing composer state still follows the older broad route-state pattern; this lane intentionally focused on incremental message/media updates and did not change the recording overlay path
