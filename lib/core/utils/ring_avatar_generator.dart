@@ -195,6 +195,21 @@ class RingAvatarGenerator {
     return rings;
   }
 
+  /// Returns the deterministic glow color for a given peerId.
+  ///
+  /// This is the same hue used for the center glow of the ring avatar,
+  /// useful for adding a matching outer glow behind the avatar widget.
+  static Color glowColorForPeerId(String peerId) {
+    final hash = djb2Hash(peerId);
+    final hue = ((hash >> 16) % 360).toDouble();
+    return HSLColor.fromAHSL(
+      1.0,
+      hue,
+      RingAvatarConstants.glowSaturation / 100.0,
+      RingAvatarConstants.glowLuminance / 100.0,
+    ).toColor();
+  }
+
   static GlowData _generateGlow(int hash, double size) {
     // Hue from full spectrum (0-359)
     final hue = ((hash >> 16) % 360).toDouble();
