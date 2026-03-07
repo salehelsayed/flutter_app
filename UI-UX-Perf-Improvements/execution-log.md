@@ -77,13 +77,13 @@ Dirty files captured before checkpoint:
   - `PERF-10`: Done
   - `PERF-09 reconciliation`: Done
 - Wave 3
-  - `PERF-11`: Pending
+  - `PERF-11`: Done
 - Wave 4
-  - Final verification: Pending
+  - Final verification: Done
 
 ## Notes
 
-- No stop condition has been hit yet.
+- No stop condition was hit during this run.
 
 ## Worktree Isolation
 
@@ -382,3 +382,93 @@ Follow-up pattern:
 Residual notes:
 - no existing automated route harness was found for the exact `impl-backlog.md` observation flows `Orbit open -> scroll -> search` and `Orbit idle while new message arrives`; the lane used targeted application, screen, and widget tests as the best available fallback and leaves real device-route QA as an outstanding follow-up gap
 - explicit reload-all paths after QR scan and group-creation return were left intact on purpose because those routes can legitimately mutate multiple Orbit entities outside the safe single-row scope
+
+## Wave 3
+
+### PERF-11 Remove Remaining Nested Layout Hotspots
+
+Lane:
+- `perf-exec/lane-g-perf11`
+
+Implementation:
+- replaced edit-mode `IntrinsicWidth` in `EditableUsernameWidget` with a bounded `Flexible` + `ConstrainedBox` layout so username entry no longer forces intrinsic measurement
+- replaced the fallback `IntrosTab` nested `ListView.builder(shrinkWrap: true)` surface with a padded grouped `Column` so the standalone intros fallback no longer embeds a nested scrollable list
+- removed `shrinkWrap` from `FriendPickerScreen` and added `itemExtent: 60` under the existing constrained `Flexible` parent to reduce layout work in the picker list
+- left `lib/features/feed/presentation/widgets/scrollable_message_preview.dart` unchanged because `plan.md` only allows preview-fade simplification if it is still a measured hotspot, and the Feed route remained inside its perf gate after the earlier waves
+- added regression coverage for the no-`IntrinsicWidth` edit path, the non-`ListView` intros fallback path, and the bounded friend-picker list configuration
+
+Follow-up pattern:
+1. local implementation checks
+   - `flutter analyze lib/features/home/presentation/widgets/editable_username_widget.dart lib/features/introduction/presentation/widgets/intros_tab.dart lib/features/introduction/presentation/screens/friend_picker_screen.dart test/features/home/presentation/widgets/editable_username_widget_test.dart test/features/introduction/presentation/widgets/intros_tab_test.dart test/features/introduction/presentation/screens/friend_picker_test.dart test/features/settings/presentation/widgets/settings_profile_section_test.dart test/features/home/presentation/screens/first_time_experience_wired_test.dart test/features/introduction/presentation/widgets/intros_tab_extended_test.dart test/features/orbit/presentation/screens/orbit_intros_wiring_test.dart`
+   - result: passed, no issues
+   - one broader ad hoc analyze run that included untouched `test/features/feed/presentation/widgets/scrollable_message_preview_test.dart` surfaced pre-existing lint infos there; that file was outside the lane diff and was not expanded into this scope
+2. follow-up diff review
+   - confirmed no `IntrinsicWidth` remains in `editable_username_widget.dart`
+   - confirmed no nested `shrinkWrap: true` list remains in `IntrosTab` or `FriendPickerScreen`
+   - confirmed an adjacent `home` / `introduction` / `settings` search found no additional low-risk `IntrinsicWidth` or nested shrink-wrap cleanup that this lane should have handled
+   - confirmed `scrollable_message_preview.dart` still contains `ShaderMask`, but left intentionally because the plan only authorizes changing it if it remains a measured hotspot and the current Feed performance gates already pass
+3. targeted QA / regression surface
+   - `flutter test test/features/home/presentation/widgets/editable_username_widget_test.dart test/features/settings/presentation/widgets/settings_profile_section_test.dart test/features/home/presentation/screens/first_time_experience_wired_test.dart test/features/introduction/presentation/widgets/intros_tab_test.dart test/features/introduction/presentation/widgets/intros_tab_extended_test.dart test/features/introduction/presentation/screens/friend_picker_test.dart test/features/orbit/presentation/screens/orbit_intros_wiring_test.dart test/features/introduction/integration/intro_wiring_smoke_test.dart test/features/feed/presentation/widgets/scrollable_message_preview_test.dart`
+   - result: all tests passed
+4. visible UX delta
+   - subtle only: username edit mode now uses a bounded field width and the fallback intro / picker surfaces render through simpler constrained layout primitives
+   - no screenshot set was captured because no existing screenshot or golden harness exists for these Flutter desktop/widget surfaces and the lane targeted layout preservation, not a visual redesign
+
+Residual notes:
+- `scrollable_message_preview.dart` still uses `ShaderMask`; this remains a conscious defer within `PERF-11` because the current measured Feed route is under its gate and the plan explicitly limits preview-fade work to measured hotspots
+- automated screenshot capture for username edit, intro fallback, and picker surfaces still does not exist; widget and route-smoke tests were used as the best available fallback
+
+## Wave 4
+
+### Final Verification
+
+Final route-by-route QA result:
+- `Launch app into Feed`: passed through `flutter test integration_test/feed_performance_test.dart -d macos`; this remains the best available automated proxy for first paint, first load, and first scroll, but it is still not a production-data launch harness
+- `Feed -> expand thread card`: passed through the same macOS perf route plus `test/features/feed/presentation/screens/feed_screen_test.dart`, `test/features/feed/integration/expanded_collapsed_card_test.dart`, and `test/features/feed/integration/feed_card_flow_test.dart`
+- `Feed idle while new message arrives`: fallback passed through `test/features/feed/presentation/screens/feed_wired_test.dart`; real device-route automation is still missing
+- `Orbit open -> scroll -> search`: fallback passed through `test/features/orbit/presentation/screens/orbit_wired_test.dart`, `test/features/orbit/presentation/screens/orbit_screen_archived_groups_test.dart`, `test/features/orbit/presentation/screens/orbit_intros_wiring_test.dart`, and `test/features/orbit/presentation/widgets/orbit_search_trigger_test.dart`; real route-level device automation is still missing
+- `Orbit idle while new message arrives`: fallback passed through `test/features/orbit/presentation/screens/orbit_wired_test.dart`; real route-level device automation is still missing
+- `Conversation open -> record voice`: fallback passed through `test/features/conversation/presentation/screens/conversation_wired_test.dart` and `test/features/conversation/presentation/screens/conversation_screen_test.dart`; no exact record-voice route harness exists
+- `Conversation open -> attach video`: fallback passed through `test/features/conversation/presentation/screens/conversation_wired_test.dart` and `test/features/conversation/presentation/screens/conversation_screen_test.dart`; no exact attach-video route harness exists
+- `Group conversation while messages arrive`: fallback passed through `test/features/groups/presentation/group_conversation_wired_test.dart` and `test/features/groups/presentation/group_conversation_screen_test.dart`; no live multi-user route harness exists
+- `Settings open`: fallback passed through `test/features/settings/presentation/widgets/settings_profile_section_test.dart`; no route-level screenshot harness exists
+
+Final regression test result:
+- `flutter test -r compact test/features/settings/presentation/widgets/settings_profile_section_test.dart test/features/home/presentation/widgets/editable_username_widget_test.dart test/features/home/presentation/screens/first_time_experience_wired_test.dart test/features/conversation/application/handle_incoming_reaction_use_case_test.dart test/features/conversation/application/reaction_listener_test.dart test/features/conversation/presentation/screens/conversation_wired_test.dart test/features/conversation/presentation/screens/conversation_screen_test.dart test/features/groups/presentation/group_conversation_wired_test.dart test/features/groups/presentation/group_conversation_screen_test.dart test/features/introduction/presentation/widgets/intros_tab_test.dart test/features/introduction/presentation/widgets/intros_tab_extended_test.dart test/features/introduction/presentation/screens/friend_picker_test.dart test/features/introduction/integration/intro_wiring_smoke_test.dart`
+  - result: all tests passed
+- `flutter test -r compact test/features/orbit/application/load_orbit_data_use_case_test.dart test/features/orbit/application/load_orbit_groups_use_case_test.dart test/features/orbit/presentation/screens/orbit_wired_test.dart test/features/orbit/presentation/screens/orbit_screen_archived_groups_test.dart test/features/orbit/presentation/screens/orbit_intros_wiring_test.dart test/features/orbit/presentation/widgets/orbit_search_trigger_test.dart`
+  - result: all tests passed
+- `flutter test -r compact test/features/feed/presentation/screens/feed_screen_test.dart test/features/feed/presentation/screens/feed_wired_test.dart test/features/feed/presentation/widgets/feed_card_test.dart test/features/feed/presentation/widgets/collapsed_mode_card_body_test.dart test/features/feed/presentation/widgets/open_mode_card_body_test.dart test/features/feed/presentation/widgets/scrollable_message_preview_test.dart test/features/feed/presentation/widgets/connection_card_test.dart test/features/feed/presentation/widgets/introduction_connection_card_test.dart test/features/feed/integration/expanded_collapsed_card_test.dart test/features/feed/integration/feed_card_flow_test.dart`
+  - result: all tests passed
+- `flutter test integration_test/feed_performance_test.dart -d macos`
+  - result: passed
+  - final metrics:
+    - `Scroll`: avg `2.71ms`, p99 `14.13ms`, worst `16.11ms`
+    - `Expand/Collapse`: avg `2.23ms`, p99 `22.95ms`, worst `30.07ms`
+    - `Swipe-to-quote`: avg `1.15ms`, p99 `2.15ms`, worst `2.15ms`
+    - `Compose input`: avg `7.71ms`, p99 `23.62ms`, worst `23.62ms`
+
+Intentional visible changes:
+- Feed and Orbit now scroll through virtualized list surfaces instead of eager full-column layouts; the intended user-visible effect is steadier scroll behavior under larger datasets, not a redesign
+- conversation, group, Feed, and Orbit live updates now refresh targeted entities more often instead of forcing full-surface reloads; the intended visible effect is reduced churn and better state retention during live activity
+- username edit mode now uses a bounded width instead of intrinsic measurement, and the fallback intro / picker layouts now use simpler constrained list building
+
+Unresolved issues:
+- exact route-level automation is still missing for `Feed idle while new message arrives`, `Orbit open -> scroll -> search`, `Orbit idle while new message arrives`, `Conversation open -> record voice`, `Conversation open -> attach video`, and `Group conversation while messages arrive`
+- `scrollable_message_preview.dart` still uses `ShaderMask`; it remains intentionally deferred because the measured Feed route is already within its current gate
+- screenshot and golden harness coverage is still absent for the subtle `PERF-07` / `PERF-11` layout-preservation deltas, so screenshot-based before/after capture remains a repo gap
+
+Follow-up confirmation:
+- `PERF-00`: baseline and follow-up gate established, then reused after every implemented lane
+- `PERF-01`: follow-up pass completed before mark-done
+- `PERF-03`: follow-up pass completed before mark-done
+- `PERF-06`: follow-up pass completed before mark-done
+- `PERF-07`: follow-up pass completed before mark-done
+- `PERF-08`: follow-up pass completed before mark-done
+- `PERF-09`: audit completed first, then reconciliation follow-up completed after `PERF-07`
+- `PERF-10`: follow-up pass completed before mark-done
+- `PERF-11`: follow-up pass completed before mark-done
+
+Final status:
+- implemented in this run: `PERF-00`, `PERF-01`, `PERF-03`, `PERF-06`, `PERF-07`, `PERF-08`, `PERF-09` audit and reconciliation, `PERF-10`, `PERF-11`
+- intentionally excluded and not implemented in this run: `PERF-02`, `PERF-04`
