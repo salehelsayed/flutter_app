@@ -33,14 +33,20 @@ import 'package:flutter_app/features/conversation/application/send_reaction_use_
 import 'package:flutter_app/features/conversation/application/mark_conversation_read_use_case.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/conversation/presentation/navigation/conversation_route_transition.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
+import 'package:flutter_app/features/feed/application/feed_reaction_store.dart';
+import 'package:flutter_app/features/feed/application/feed_store.dart';
+import 'package:flutter_app/features/feed/application/load_contact_feed_snapshot_use_case.dart';
 import 'package:flutter_app/features/feed/application/load_feed_use_case.dart';
+import 'package:flutter_app/features/feed/application/load_group_feed_snapshot_use_case.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
+import 'package:flutter_app/features/feed/domain/models/feed_route_changes.dart';
 import 'package:flutter_app/features/feed/domain/models/session_reply.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
@@ -130,7 +136,8 @@ class _FeedWiredState extends State<FeedWired> {
   String? _peerId;
   IdentityModel? _identity;
   String _activeTab = 'feed';
-  final List<FeedItem> _feedItems = [];
+  final FeedStore _feedStore = FeedStore();
+  final FeedReactionStore _reactionStore = FeedReactionStore();
   bool _feedLoaded = false;
   int _totalUnreadCount = 0;
   String? _expandedCardId;
@@ -141,20 +148,24 @@ class _FeedWiredState extends State<FeedWired> {
   StreamSubscription<ContactRequestModel>? _requestSubscription;
   StreamSubscription<ConversationMessage>? _chatSubscription;
   StreamSubscription<ContactModel>? _contactUpdateSubscription;
-  StreamSubscription<MessageReaction>? _reactionSubscription;
+  StreamSubscription<ReactionChange>? _reactionSubscription;
   StreamSubscription<dynamic>? _groupMessageSubscription;
   StreamSubscription<IntroductionModel>? _introReceivedSubscription;
   StreamSubscription<IntroductionModel>? _introStatusSubscription;
-  Map<String, List<MessageReaction>> _reactions = {};
   ImageQualityPreference _qualityPreference = ImageQualityPreference.compressed;
-  ImageQualityPreference _videoQualityPreference = ImageQualityPreference.compressed;
+  ImageQualityPreference _videoQualityPreference =
+      ImageQualityPreference.compressed;
+
+  List<FeedItem> get _feedItems => _feedStore.items;
 
   @override
   void initState() {
     super.initState();
-    emitFlowEvent(layer: 'FL', event: 'FEED_FL_SCREEN_INIT', details: {
-      'introRepoNull': widget.introductionRepository == null,
-    });
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'FEED_FL_SCREEN_INIT',
+      details: {'introRepoNull': widget.introductionRepository == null},
+    );
     _loadIdentity();
     _loadQualityPreference();
     _loadVideoQualityPreference();
@@ -235,8 +246,7 @@ class _FeedWiredState extends State<FeedWired> {
       if (!mounted) return;
 
       setState(() {
-        _feedItems.clear();
-        _feedItems.addAll(items);
+        _feedStore.replaceAll(items);
         _feedLoaded = true;
       });
       _loadReactionsForFeed();
@@ -251,7 +261,8 @@ class _FeedWiredState extends State<FeedWired> {
 
   Future<void> _loadTotalUnreadCount() async {
     try {
-      final count = await widget.messageRepository.getTotalUnreadCountExcludingArchived();
+      final count = await widget.messageRepository
+          .getTotalUnreadCountExcludingArchived();
       if (!mounted) return;
       setState(() => _totalUnreadCount = count);
     } catch (e) {
@@ -268,14 +279,220 @@ class _FeedWiredState extends State<FeedWired> {
     await _loadFeedFromDatabase();
   }
 
+  Set<String> _messageIdsForContact(String contactPeerId) {
+    return _feedStore.messageIdsForContact(contactPeerId);
+  }
+
+  Future<void> _refreshReactionsForMessageIds(List<String> messageIds) async {
+    if (widget.reactionRepository == null || messageIds.isEmpty) {
+      return;
+    }
+
+    try {
+      final reactions = await loadReactionsForConversation(
+        reactionRepo: widget.reactionRepository!,
+        messageIds: messageIds,
+      );
+      _reactionStore.replaceForMessageIds(messageIds, reactions);
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'FEED_FL_LOAD_REACTIONS_ERROR',
+        details: {'error': e.toString()},
+      );
+    }
+  }
+
+  Future<void> _refreshContactFeedItem(
+    String contactPeerId, {
+    bool refreshUnreadCount = true,
+  }) async {
+    final previousMessageIds = _messageIdsForContact(contactPeerId);
+
+    try {
+      final snapshot = await loadContactFeedSnapshot(
+        contactRepo: widget.contactRepository,
+        messageRepo: widget.messageRepository,
+        contactPeerId: contactPeerId,
+        mediaAttachmentRepo: widget.mediaAttachmentRepository,
+        mediaFileManager: widget.mediaFileManager,
+      );
+      if (!mounted) return;
+
+      final nextMessageIds = snapshot.threadItem == null
+          ? <String>{}
+          : snapshot.threadItem!.messages.map((message) => message.id).toSet();
+
+      setState(() {
+        _feedStore.replaceContactSnapshot(
+          contactPeerId: contactPeerId,
+          connectionItem: snapshot.connectionItem,
+          threadItem: snapshot.threadItem,
+        );
+        _feedLoaded = true;
+      });
+      final removedMessageIds = previousMessageIds.difference(nextMessageIds);
+      _reactionStore.clearMessageIds(removedMessageIds);
+
+      await _refreshReactionsForMessageIds(nextMessageIds.toList());
+
+      if (refreshUnreadCount) {
+        await _loadTotalUnreadCount();
+      }
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'FEED_FL_CONTACT_REFRESH_ERROR',
+        details: {'contactPeerId': contactPeerId, 'error': e.toString()},
+      );
+      await _refreshFeed();
+    }
+  }
+
+  Future<void> _refreshGroupFeedItem(String groupId) async {
+    final groupRepo = widget.groupRepository;
+    final groupMsgRepo = widget.groupMessageRepository;
+    if (groupRepo == null || groupMsgRepo == null) return;
+
+    try {
+      final threadItem = await loadGroupFeedSnapshot(
+        groupRepo: groupRepo,
+        groupMsgRepo: groupMsgRepo,
+        groupId: groupId,
+      );
+      if (!mounted) return;
+
+      setState(() {
+        _feedStore.replaceGroupSnapshot(
+          groupId: groupId,
+          threadItem: threadItem,
+        );
+        _feedLoaded = true;
+      });
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'FEED_FL_GROUP_REFRESH_ERROR',
+        details: {'groupId': groupId, 'error': e.toString()},
+      );
+      await _refreshFeed();
+    }
+  }
+
+  Future<void> _refreshAllContactsSection({
+    bool refreshUnreadCount = true,
+  }) async {
+    final previousContactMessageIds = _feedItems
+        .whereType<ThreadFeedItem>()
+        .expand((item) => item.messages)
+        .map((message) => message.id)
+        .toSet();
+
+    try {
+      final contactItems = await loadContactFeedItems(
+        contactRepo: widget.contactRepository,
+        messageRepo: widget.messageRepository,
+        mediaAttachmentRepo: widget.mediaAttachmentRepository,
+        mediaFileManager: widget.mediaFileManager,
+      );
+      if (!mounted) return;
+
+      final nextContactMessageIds = contactItems
+          .whereType<ThreadFeedItem>()
+          .expand((item) => item.messages)
+          .map((message) => message.id)
+          .toSet();
+
+      setState(() {
+        _feedStore.replaceContacts(contactItems);
+        _feedLoaded = true;
+      });
+      _reactionStore.clearMessageIds(
+        previousContactMessageIds.difference(nextContactMessageIds),
+      );
+
+      await _refreshReactionsForMessageIds(nextContactMessageIds.toList());
+
+      if (refreshUnreadCount) {
+        await _loadTotalUnreadCount();
+      }
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'FEED_FL_CONTACT_SECTION_REFRESH_ERROR',
+        details: {'error': e.toString()},
+      );
+      await _refreshFeed();
+    }
+  }
+
+  Future<void> _refreshAllGroupsSection() async {
+    try {
+      final groupItems = await loadGroupFeedItems(
+        groupRepo: widget.groupRepository,
+        groupMsgRepo: widget.groupMessageRepository,
+      );
+      if (!mounted) return;
+
+      setState(() {
+        _feedStore.replaceGroups(groupItems);
+        _feedLoaded = true;
+      });
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'FEED_FL_GROUP_SECTION_REFRESH_ERROR',
+        details: {'error': e.toString()},
+      );
+      await _refreshFeed();
+    }
+  }
+
+  Future<void> _applyRouteChanges(FeedRouteChanges? changes) async {
+    if (changes == null || !changes.hasChanges) return;
+
+    var shouldReloadUnreadCount = false;
+
+    if (changes.reloadAllContacts) {
+      await _refreshAllContactsSection(refreshUnreadCount: false);
+      shouldReloadUnreadCount = true;
+    } else if (changes.changedContactPeerIds.isNotEmpty) {
+      for (final peerId in changes.changedContactPeerIds) {
+        _sessionReplies.clear(peerId);
+        await _refreshContactFeedItem(peerId, refreshUnreadCount: false);
+      }
+      shouldReloadUnreadCount = true;
+    }
+
+    if (changes.reloadAllGroups) {
+      await _refreshAllGroupsSection();
+    } else if (changes.changedGroupIds.isNotEmpty) {
+      for (final groupId in changes.changedGroupIds) {
+        await _refreshGroupFeedItem(groupId);
+      }
+    }
+
+    if (shouldReloadUnreadCount) {
+      await _loadTotalUnreadCount();
+    }
+  }
+
   void _startListeningForContactRequests() {
     _requestSubscription = widget.contactRequestListener.requestStream.listen(
       _onContactRequest,
       onError: (error) {
-        emitFlowEvent(layer: 'FL', event: 'FEED_REQUEST_STREAM_ERROR', details: {'error': error.toString()});
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'FEED_REQUEST_STREAM_ERROR',
+          details: {'error': error.toString()},
+        );
       },
       onDone: () {
-        emitFlowEvent(layer: 'FL', event: 'FEED_REQUEST_STREAM_DONE', details: {});
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'FEED_REQUEST_STREAM_DONE',
+          details: {},
+        );
       },
     );
   }
@@ -324,13 +541,12 @@ class _FeedWiredState extends State<FeedWired> {
       final contact = request.toContactModel();
       final alreadyExists = _feedItems.any(
         (item) =>
-            item is ConnectionFeedItem &&
-            item.contactPeerId == contact.peerId,
+            item is ConnectionFeedItem && item.contactPeerId == contact.peerId,
       );
       if (!alreadyExists) {
         final item = ConnectionFeedItem.fromContact(contact);
         setState(() {
-          _feedItems.insert(0, item);
+          _feedStore.upsertConnection(item);
         });
       }
     } else {
@@ -357,11 +573,14 @@ class _FeedWiredState extends State<FeedWired> {
   }
 
   void _startListeningForChatMessages() {
-    _chatSubscription =
-        widget.chatMessageListener.incomingMessageStream.listen(
+    _chatSubscription = widget.chatMessageListener.incomingMessageStream.listen(
       _onIncomingChatMessage,
       onError: (error) {
-        emitFlowEvent(layer: 'FL', event: 'FEED_CHAT_STREAM_ERROR', details: {'error': error.toString()});
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'FEED_CHAT_STREAM_ERROR',
+          details: {'error': error.toString()},
+        );
       },
       onDone: () {
         emitFlowEvent(layer: 'FL', event: 'FEED_CHAT_STREAM_DONE', details: {});
@@ -372,29 +591,39 @@ class _FeedWiredState extends State<FeedWired> {
   void _onIncomingChatMessage(ConversationMessage message) {
     if (!mounted) return;
     _sessionReplies.clear(message.contactPeerId);
-    _refreshFeed();
+    unawaited(_refreshContactFeedItem(message.contactPeerId));
   }
 
   void _startListeningForContactUpdates() {
-    _contactUpdateSubscription =
-        widget.chatMessageListener.contactUpdatedStream.listen(
-      _onContactUpdated,
-      onError: (error) {
-        emitFlowEvent(layer: 'FL', event: 'FEED_CONTACT_UPDATE_STREAM_ERROR', details: {'error': error.toString()});
-      },
-      onDone: () {
-        emitFlowEvent(layer: 'FL', event: 'FEED_CONTACT_UPDATE_STREAM_DONE', details: {});
-      },
-    );
+    _contactUpdateSubscription = widget.chatMessageListener.contactUpdatedStream
+        .listen(
+          _onContactUpdated,
+          onError: (error) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'FEED_CONTACT_UPDATE_STREAM_ERROR',
+              details: {'error': error.toString()},
+            );
+          },
+          onDone: () {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'FEED_CONTACT_UPDATE_STREAM_DONE',
+              details: {},
+            );
+          },
+        );
   }
 
   void _onContactUpdated(ContactModel contact) {
     if (!mounted) return;
-    _refreshFeed();
+    unawaited(_refreshContactFeedItem(contact.peerId));
   }
 
   void _onSendMessage(ConnectionFeedItem item) async {
-    final contact = await widget.contactRepository.getContact(item.contactPeerId);
+    final contact = await widget.contactRepository.getContact(
+      item.contactPeerId,
+    );
     if (contact == null || !mounted) return;
 
     await markConversationRead(
@@ -404,29 +633,34 @@ class _FeedWiredState extends State<FeedWired> {
 
     if (!mounted) return;
 
-    Navigator.of(context).push(
-      buildConversationSlideUpRoute(
-        builder: (_) => ConversationWired(
-          contact: contact,
-          identityRepo: widget.repository,
-          messageRepo: widget.messageRepository,
-          chatMessageListener: widget.chatMessageListener,
-          p2pService: widget.p2pService,
-          bridge: widget.bridge,
-          contactRepo: widget.contactRepository,
-          mediaAttachmentRepo: widget.mediaAttachmentRepository,
-          mediaFileManager: widget.mediaFileManager,
-          imageProcessor: widget.imageProcessor,
-          qualityPreference: _qualityPreference,
-          videoQualityPreference: _videoQualityPreference,
-          conversationTracker: widget.conversationTracker,
-          audioRecorderService: widget.audioRecorderService,
-          reactionRepo: widget.reactionRepository,
-          reactionListener: widget.reactionListener,
-          introductionRepository: widget.introductionRepository,
-        ),
-      ),
-    ).then((_) => _refreshFeed());
+    Navigator.of(context)
+        .push(
+          buildConversationSlideUpRoute(
+            builder: (_) => ConversationWired(
+              contact: contact,
+              identityRepo: widget.repository,
+              messageRepo: widget.messageRepository,
+              chatMessageListener: widget.chatMessageListener,
+              p2pService: widget.p2pService,
+              bridge: widget.bridge,
+              contactRepo: widget.contactRepository,
+              mediaAttachmentRepo: widget.mediaAttachmentRepository,
+              mediaFileManager: widget.mediaFileManager,
+              imageProcessor: widget.imageProcessor,
+              qualityPreference: _qualityPreference,
+              videoQualityPreference: _videoQualityPreference,
+              conversationTracker: widget.conversationTracker,
+              audioRecorderService: widget.audioRecorderService,
+              reactionRepo: widget.reactionRepository,
+              reactionListener: widget.reactionListener,
+              introductionRepository: widget.introductionRepository,
+            ),
+          ),
+        )
+        .then((_) {
+          _sessionReplies.clear(item.contactPeerId);
+          unawaited(_refreshContactFeedItem(item.contactPeerId));
+        });
   }
 
   void _onReplyToMessage(String contactPeerId) async {
@@ -444,30 +678,35 @@ class _FeedWiredState extends State<FeedWired> {
     final messages = results[1] as List<ConversationMessage>;
     if (contact == null || !mounted) return;
 
-    Navigator.of(context).push(
-      buildConversationSlideUpRoute(
-        builder: (_) => ConversationWired(
-          contact: contact,
-          identityRepo: widget.repository,
-          messageRepo: widget.messageRepository,
-          chatMessageListener: widget.chatMessageListener,
-          p2pService: widget.p2pService,
-          bridge: widget.bridge,
-          initialMessages: messages,
-          contactRepo: widget.contactRepository,
-          mediaAttachmentRepo: widget.mediaAttachmentRepository,
-          mediaFileManager: widget.mediaFileManager,
-          imageProcessor: widget.imageProcessor,
-          qualityPreference: _qualityPreference,
-          videoQualityPreference: _videoQualityPreference,
-          conversationTracker: widget.conversationTracker,
-          audioRecorderService: widget.audioRecorderService,
-          reactionRepo: widget.reactionRepository,
-          reactionListener: widget.reactionListener,
-          introductionRepository: widget.introductionRepository,
-        ),
-      ),
-    ).then((_) => _refreshFeed());
+    Navigator.of(context)
+        .push(
+          buildConversationSlideUpRoute(
+            builder: (_) => ConversationWired(
+              contact: contact,
+              identityRepo: widget.repository,
+              messageRepo: widget.messageRepository,
+              chatMessageListener: widget.chatMessageListener,
+              p2pService: widget.p2pService,
+              bridge: widget.bridge,
+              initialMessages: messages,
+              contactRepo: widget.contactRepository,
+              mediaAttachmentRepo: widget.mediaAttachmentRepository,
+              mediaFileManager: widget.mediaFileManager,
+              imageProcessor: widget.imageProcessor,
+              qualityPreference: _qualityPreference,
+              videoQualityPreference: _videoQualityPreference,
+              conversationTracker: widget.conversationTracker,
+              audioRecorderService: widget.audioRecorderService,
+              reactionRepo: widget.reactionRepository,
+              reactionListener: widget.reactionListener,
+              introductionRepository: widget.introductionRepository,
+            ),
+          ),
+        )
+        .then((_) {
+          _sessionReplies.clear(contactPeerId);
+          unawaited(_refreshContactFeedItem(contactPeerId));
+        });
   }
 
   Future<void> _onInlineSend(String contactPeerId, String text) async {
@@ -475,8 +714,7 @@ class _FeedWiredState extends State<FeedWired> {
     if (identity == null) return;
 
     try {
-      final contact =
-          await widget.contactRepository.getContact(contactPeerId);
+      final contact = await widget.contactRepository.getContact(contactPeerId);
       if (contact == null || !mounted) return;
 
       final quotedMsgId = _activeQuoteMessageIds[contactPeerId];
@@ -497,16 +735,13 @@ class _FeedWiredState extends State<FeedWired> {
       if (result == SendChatMessageResult.success) {
         _draftTexts.remove(contactPeerId);
         _activeQuoteMessageIds.remove(contactPeerId);
-        _sessionReplies.track(
-          contactPeerId,
-          SessionReply.justNow(text),
-        );
+        _sessionReplies.track(contactPeerId, SessionReply.justNow(text));
         // Mark as read on successful inline reply
         await markConversationRead(
           messageRepo: widget.messageRepository,
           contactPeerId: contactPeerId,
         );
-        await _refreshFeed();
+        await _refreshContactFeedItem(contactPeerId);
       } else {
         final errorText = result == SendChatMessageResult.encryptionRequired
             ? 'Cannot send: contact does not support encryption.'
@@ -569,7 +804,10 @@ class _FeedWiredState extends State<FeedWired> {
               ),
               onTap: () {
                 Navigator.pop(ctx);
-                _pickAndOpenConversation(contactPeerId, source: _MediaSource.gallery);
+                _pickAndOpenConversation(
+                  contactPeerId,
+                  source: _MediaSource.gallery,
+                );
               },
             ),
             ListTile(
@@ -580,7 +818,10 @@ class _FeedWiredState extends State<FeedWired> {
               ),
               onTap: () {
                 Navigator.pop(ctx);
-                _pickAndOpenConversation(contactPeerId, source: _MediaSource.camera);
+                _pickAndOpenConversation(
+                  contactPeerId,
+                  source: _MediaSource.camera,
+                );
               },
             ),
             ListTile(
@@ -591,7 +832,10 @@ class _FeedWiredState extends State<FeedWired> {
               ),
               onTap: () {
                 Navigator.pop(ctx);
-                _pickAndOpenConversation(contactPeerId, source: _MediaSource.videoCamera);
+                _pickAndOpenConversation(
+                  contactPeerId,
+                  source: _MediaSource.videoCamera,
+                );
               },
             ),
             const SizedBox(height: 16),
@@ -611,16 +855,12 @@ class _FeedWiredState extends State<FeedWired> {
 
       switch (source) {
         case _MediaSource.camera:
-          final picked = await picker.pickImage(
-            source: ImageSource.camera,
-          );
+          final picked = await picker.pickImage(source: ImageSource.camera);
           if (picked == null || !mounted) return;
           final path = await _processMediaPath(picked.path);
           files = [File(path)];
         case _MediaSource.videoCamera:
-          final picked = await picker.pickVideo(
-            source: ImageSource.camera,
-          );
+          final picked = await picker.pickVideo(source: ImageSource.camera);
           if (picked == null || !mounted) return;
           _showProcessingSnackBar();
           final path = await _processMediaPath(picked.path);
@@ -644,8 +884,7 @@ class _FeedWiredState extends State<FeedWired> {
           files = processedFiles;
       }
 
-      final contact =
-          await widget.contactRepository.getContact(contactPeerId);
+      final contact = await widget.contactRepository.getContact(contactPeerId);
       if (contact == null || !mounted) return;
 
       await markConversationRead(
@@ -655,30 +894,35 @@ class _FeedWiredState extends State<FeedWired> {
 
       if (!mounted) return;
 
-      Navigator.of(context).push(
-        buildConversationSlideUpRoute(
-          builder: (_) => ConversationWired(
-            contact: contact,
-            identityRepo: widget.repository,
-            messageRepo: widget.messageRepository,
-            chatMessageListener: widget.chatMessageListener,
-            p2pService: widget.p2pService,
-            bridge: widget.bridge,
-            contactRepo: widget.contactRepository,
-            mediaAttachmentRepo: widget.mediaAttachmentRepository,
-            mediaFileManager: widget.mediaFileManager,
-            initialAttachments: files,
-            imageProcessor: widget.imageProcessor,
-            qualityPreference: _qualityPreference,
-            videoQualityPreference: _videoQualityPreference,
-            conversationTracker: widget.conversationTracker,
-            audioRecorderService: widget.audioRecorderService,
-            reactionRepo: widget.reactionRepository,
-            reactionListener: widget.reactionListener,
-            introductionRepository: widget.introductionRepository,
-          ),
-        ),
-      ).then((_) => _refreshFeed());
+      Navigator.of(context)
+          .push(
+            buildConversationSlideUpRoute(
+              builder: (_) => ConversationWired(
+                contact: contact,
+                identityRepo: widget.repository,
+                messageRepo: widget.messageRepository,
+                chatMessageListener: widget.chatMessageListener,
+                p2pService: widget.p2pService,
+                bridge: widget.bridge,
+                contactRepo: widget.contactRepository,
+                mediaAttachmentRepo: widget.mediaAttachmentRepository,
+                mediaFileManager: widget.mediaFileManager,
+                initialAttachments: files,
+                imageProcessor: widget.imageProcessor,
+                qualityPreference: _qualityPreference,
+                videoQualityPreference: _videoQualityPreference,
+                conversationTracker: widget.conversationTracker,
+                audioRecorderService: widget.audioRecorderService,
+                reactionRepo: widget.reactionRepository,
+                reactionListener: widget.reactionListener,
+                introductionRepository: widget.introductionRepository,
+              ),
+            ),
+          )
+          .then((_) {
+            _sessionReplies.clear(contactPeerId);
+            unawaited(_refreshContactFeedItem(contactPeerId));
+          });
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -708,26 +952,22 @@ class _FeedWiredState extends State<FeedWired> {
       );
       return result.path;
     }
-    return processor.processImage(
-      inputPath: path,
-      quality: _qualityPreference,
-    );
+    return processor.processImage(inputPath: path, quality: _qualityPreference);
   }
 
   Future<void> _loadReactionsForFeed() async {
     if (widget.reactionRepository == null) return;
-    final messageIds = _feedItems
-        .whereType<ThreadFeedItem>()
-        .expand((t) => t.messages)
-        .map((m) => m.id)
-        .toList();
-    if (messageIds.isEmpty) return;
+    final messageIds = _feedStore.contactMessageIds.toList();
+    if (messageIds.isEmpty) {
+      _reactionStore.replaceAll(const {});
+      return;
+    }
     try {
       final reactions = await loadReactionsForConversation(
         reactionRepo: widget.reactionRepository!,
         messageIds: messageIds,
       );
-      if (mounted) setState(() => _reactions = reactions);
+      _reactionStore.replaceAll(reactions);
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -739,37 +979,34 @@ class _FeedWiredState extends State<FeedWired> {
 
   void _startListeningForReactions() {
     if (widget.reactionListener == null) return;
-    _reactionSubscription =
-        widget.reactionListener!.incomingReactionStream.listen(
-      _onIncomingReaction,
-      onError: (error) {
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'FEED_REACTION_STREAM_ERROR',
-          details: {'error': error.toString()},
+    _reactionSubscription = widget
+        .reactionListener!
+        .incomingReactionChangeStream
+        .listen(
+          _onIncomingReactionChange,
+          onError: (error) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'FEED_REACTION_STREAM_ERROR',
+              details: {'error': error.toString()},
+            );
+          },
         );
-      },
-    );
   }
 
-  void _onIncomingReaction(MessageReaction reaction) {
+  void _onIncomingReactionChange(ReactionChange change) {
     if (!mounted) return;
-    setState(() {
-      final list =
-          List<MessageReaction>.from(_reactions[reaction.messageId] ?? []);
-      list.removeWhere((r) => r.senderPeerId == reaction.senderPeerId);
-      list.add(reaction);
-      _reactions = {..._reactions, reaction.messageId: list};
-    });
+    if (!_feedStore.containsMessageId(change.messageId)) return;
+    _reactionStore.applyChange(change);
   }
 
   void _startListeningForGroupMessages() {
     final listener = widget.groupMessageListener;
     if (listener == null) return;
     _groupMessageSubscription = listener.groupMessageStream.listen(
-      (_) {
+      (message) {
         if (!mounted) return;
-        _refreshFeed();
+        unawaited(_refreshGroupFeedItem(message.groupId));
       },
       onError: (error) {
         emitFlowEvent(
@@ -785,17 +1022,22 @@ class _FeedWiredState extends State<FeedWired> {
     final listener = widget.introductionListener;
     if (listener == null) return;
 
-    _introReceivedSubscription = listener.introReceivedStream.listen(
-      (_) {
-        if (mounted) _refreshFeed();
-      },
-    );
+    _introReceivedSubscription = listener.introReceivedStream.listen((_) {});
 
-    _introStatusSubscription = listener.introStatusChangedStream.listen(
-      (_) {
-        if (mounted) _refreshFeed();
-      },
-    );
+    _introStatusSubscription = listener.introStatusChangedStream.listen((
+      intro,
+    ) {
+      final ownPeerId = _peerId;
+      if (!mounted || ownPeerId == null) return;
+      if (intro.status != IntroductionOverallStatus.mutualAccepted) return;
+
+      final otherPeerId = intro.recipientId == ownPeerId
+          ? intro.introducedId
+          : intro.recipientId;
+      if (otherPeerId.isEmpty) return;
+
+      unawaited(_refreshContactFeedItem(otherPeerId));
+    });
   }
 
   void _onGroupTap(GroupThreadFeedItem groupThread) {
@@ -814,27 +1056,29 @@ class _FeedWiredState extends State<FeedWired> {
       myRole: GroupRole.member,
     );
 
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => GroupConversationWired(
-          group: group,
-          groupRepo: groupRepo,
-          msgRepo: msgRepo,
-          groupMessageListener: listener,
-          bridge: widget.bridge,
-          identityRepo: widget.repository,
-          contactRepo: widget.contactRepository,
-          p2pService: widget.p2pService,
-          mediaAttachmentRepo: widget.mediaAttachmentRepository,
-          mediaFileManager: widget.mediaFileManager,
-          imageProcessor: widget.imageProcessor,
-          qualityPreference: _qualityPreference,
-          videoQualityPreference: _videoQualityPreference,
-          audioRecorderService: widget.audioRecorderService,
-          groupConversationTracker: widget.groupConversationTracker,
-        ),
-      ),
-    ).then((_) => _refreshFeed());
+    Navigator.of(context)
+        .push(
+          MaterialPageRoute(
+            builder: (_) => GroupConversationWired(
+              group: group,
+              groupRepo: groupRepo,
+              msgRepo: msgRepo,
+              groupMessageListener: listener,
+              bridge: widget.bridge,
+              identityRepo: widget.repository,
+              contactRepo: widget.contactRepository,
+              p2pService: widget.p2pService,
+              mediaAttachmentRepo: widget.mediaAttachmentRepository,
+              mediaFileManager: widget.mediaFileManager,
+              imageProcessor: widget.imageProcessor,
+              qualityPreference: _qualityPreference,
+              videoQualityPreference: _videoQualityPreference,
+              audioRecorderService: widget.audioRecorderService,
+              groupConversationTracker: widget.groupConversationTracker,
+            ),
+          ),
+        )
+        .then((_) => unawaited(_refreshGroupFeedItem(groupThread.groupId)));
   }
 
   Future<void> _onGroupInlineSend(String groupId, String text) async {
@@ -852,14 +1096,14 @@ class _FeedWiredState extends State<FeedWired> {
         text: text,
         senderPeerId: identity.peerId,
         senderPublicKey: identity.publicKey,
-        senderPrivateKey: identity.privateKey ?? '',
+        senderPrivateKey: identity.privateKey,
         senderUsername: identity.username,
       );
 
       if (!mounted) return;
 
       if (result == SendGroupMessageResult.success) {
-        await _refreshFeed();
+        await _refreshGroupFeedItem(groupId);
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -894,29 +1138,29 @@ class _FeedWiredState extends State<FeedWired> {
     if (reactionRepo == null) return;
 
     // Find which contact this message belongs to
-    final thread = _feedItems.whereType<ThreadFeedItem>().where(
-      (t) => t.messages.any((m) => m.id == messageId),
-    ).firstOrNull;
+    final thread = _feedItems
+        .whereType<ThreadFeedItem>()
+        .where((t) => t.messages.any((m) => m.id == messageId))
+        .firstOrNull;
     if (thread == null) return;
 
-    final contact =
-        await widget.contactRepository.getContact(thread.contactPeerId);
+    final contact = await widget.contactRepository.getContact(
+      thread.contactPeerId,
+    );
     if (contact == null || !mounted) return;
 
     // Check if toggling (same emoji from same user)
-    final existingReactions = _reactions[messageId] ?? [];
-    final ownReaction = existingReactions
+    final currentReactions = _reactionStore.reactionsForMessage(messageId);
+    final ownReaction = currentReactions
         .where((r) => r.senderPeerId == identity.peerId)
         .firstOrNull;
 
     if (ownReaction != null && ownReaction.emoji == emoji) {
       // Toggle off: remove reaction optimistically
-      setState(() {
-        final updated = existingReactions
-            .where((r) => r.senderPeerId != identity.peerId)
-            .toList();
-        _reactions = {..._reactions, messageId: updated};
-      });
+      final updated = currentReactions
+          .where((r) => r.senderPeerId != identity.peerId)
+          .toList();
+      _reactionStore.setMessageReactions(messageId, updated);
 
       await removeReaction(
         p2pService: widget.p2pService,
@@ -942,17 +1186,14 @@ class _FeedWiredState extends State<FeedWired> {
       createdAt: now,
     );
 
-    setState(() {
-      final updated = List<MessageReaction>.from(existingReactions);
-      final idx =
-          updated.indexWhere((r) => r.senderPeerId == identity.peerId);
-      if (idx >= 0) {
-        updated[idx] = optimisticReaction;
-      } else {
-        updated.add(optimisticReaction);
-      }
-      _reactions = {..._reactions, messageId: updated};
-    });
+    final updated = List<MessageReaction>.from(currentReactions);
+    final idx = updated.indexWhere((r) => r.senderPeerId == identity.peerId);
+    if (idx >= 0) {
+      updated[idx] = optimisticReaction;
+    } else {
+      updated.add(optimisticReaction);
+    }
+    _reactionStore.setMessageReactions(messageId, updated);
 
     final (result, reaction) = await sendReaction(
       p2pService: widget.p2pService,
@@ -967,69 +1208,74 @@ class _FeedWiredState extends State<FeedWired> {
 
     // Update with real reaction on success
     if (result == SendReactionResult.success && reaction != null && mounted) {
-      setState(() {
-        final updated =
-            List<MessageReaction>.from(_reactions[messageId] ?? []);
-        final idx =
-            updated.indexWhere((r) => r.senderPeerId == identity.peerId);
-        if (idx >= 0) {
-          updated[idx] = reaction;
-        }
-        _reactions = {..._reactions, messageId: updated};
-      });
+      final updated = List<MessageReaction>.from(
+        _reactionStore.reactionsForMessage(messageId),
+      );
+      final idx = updated.indexWhere((r) => r.senderPeerId == identity.peerId);
+      if (idx >= 0) {
+        updated[idx] = reaction;
+      }
+      _reactionStore.setMessageReactions(messageId, updated);
     }
   }
 
   void _onAvatarTap() {
-    Navigator.of(context).push(
-      buildSettingsSlideUpRoute(
-        builder: (_) => SettingsWired(
-          identityRepo: widget.repository,
-          bridge: widget.bridge,
-          contactRepo: widget.contactRepository,
-          p2pService: widget.p2pService,
-          secureKeyStore: widget.secureKeyStore,
-          imageProcessor: widget.imageProcessor,
-        ),
-      ),
-    ).then((_) {
-      _loadIdentity();
-      _loadQualityPreference();
-      _loadVideoQualityPreference();
-    });
+    Navigator.of(context)
+        .push(
+          buildSettingsSlideUpRoute(
+            builder: (_) => SettingsWired(
+              identityRepo: widget.repository,
+              bridge: widget.bridge,
+              contactRepo: widget.contactRepository,
+              p2pService: widget.p2pService,
+              secureKeyStore: widget.secureKeyStore,
+              imageProcessor: widget.imageProcessor,
+            ),
+          ),
+        )
+        .then((_) {
+          _loadIdentity();
+          _loadQualityPreference();
+          _loadVideoQualityPreference();
+        });
   }
 
   void _onSwitchView(String tab) {
     if (tab == 'orbit') {
-      Navigator.of(context).push(
-        buildOrbitSlideUpRoute(
-          builder: (_) => OrbitWired(
-            identityRepo: widget.repository,
-            contactRepo: widget.contactRepository,
-            contactRequestRepo: widget.contactRequestRepository,
-            contactRequestListener: widget.contactRequestListener,
-            messageRepo: widget.messageRepository,
-            mediaAttachmentRepo: widget.mediaAttachmentRepository,
-            chatMessageListener: widget.chatMessageListener,
-            bridge: widget.bridge,
-            p2pService: widget.p2pService,
-            mediaFileManager: widget.mediaFileManager,
-            secureKeyStore: widget.secureKeyStore,
-            imageProcessor: widget.imageProcessor,
-            conversationTracker: widget.conversationTracker,
-            audioRecorderService: widget.audioRecorderService,
-            reactionRepository: widget.reactionRepository,
-            reactionListener: widget.reactionListener,
-            groupRepository: widget.groupRepository,
-            groupMessageRepository: widget.groupMessageRepository,
-            groupMessageListener: widget.groupMessageListener,
-            groupInviteListener: widget.groupInviteListener,
-            groupConversationTracker: widget.groupConversationTracker,
-            introductionRepository: widget.introductionRepository,
-            introductionListener: widget.introductionListener,
-          ),
-        ),
-      ).then((_) => _refreshFeed());
+      Navigator.of(context)
+          .push(
+            buildOrbitSlideUpRoute(
+              builder: (_) => OrbitWired(
+                identityRepo: widget.repository,
+                contactRepo: widget.contactRepository,
+                contactRequestRepo: widget.contactRequestRepository,
+                contactRequestListener: widget.contactRequestListener,
+                messageRepo: widget.messageRepository,
+                mediaAttachmentRepo: widget.mediaAttachmentRepository,
+                chatMessageListener: widget.chatMessageListener,
+                bridge: widget.bridge,
+                p2pService: widget.p2pService,
+                mediaFileManager: widget.mediaFileManager,
+                secureKeyStore: widget.secureKeyStore,
+                imageProcessor: widget.imageProcessor,
+                conversationTracker: widget.conversationTracker,
+                audioRecorderService: widget.audioRecorderService,
+                reactionRepository: widget.reactionRepository,
+                reactionListener: widget.reactionListener,
+                groupRepository: widget.groupRepository,
+                groupMessageRepository: widget.groupMessageRepository,
+                groupMessageListener: widget.groupMessageListener,
+                groupInviteListener: widget.groupInviteListener,
+                groupConversationTracker: widget.groupConversationTracker,
+                introductionRepository: widget.introductionRepository,
+                introductionListener: widget.introductionListener,
+              ),
+            ),
+          )
+          .then((result) {
+            final changes = result is FeedRouteChanges ? result : null;
+            unawaited(_applyRouteChanges(changes));
+          });
       return;
     }
     if (tab == 'groups') {
@@ -1047,26 +1293,31 @@ class _FeedWiredState extends State<FeedWired> {
     final listener = widget.groupMessageListener;
     if (groupRepo == null || msgRepo == null || listener == null) return;
 
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => GroupListWired(
-          groupRepo: groupRepo,
-          msgRepo: msgRepo,
-          groupMessageListener: listener,
-          bridge: widget.bridge,
-          identityRepo: widget.repository,
-          contactRepo: widget.contactRepository,
-          p2pService: widget.p2pService,
-          mediaAttachmentRepo: widget.mediaAttachmentRepository,
-          mediaFileManager: widget.mediaFileManager,
-          imageProcessor: widget.imageProcessor,
-          qualityPreference: _qualityPreference,
-          videoQualityPreference: _videoQualityPreference,
-          audioRecorderService: widget.audioRecorderService,
-          groupConversationTracker: widget.groupConversationTracker,
-        ),
-      ),
-    ).then((_) => _refreshFeed());
+    Navigator.of(context)
+        .push(
+          MaterialPageRoute(
+            builder: (_) => GroupListWired(
+              groupRepo: groupRepo,
+              msgRepo: msgRepo,
+              groupMessageListener: listener,
+              bridge: widget.bridge,
+              identityRepo: widget.repository,
+              contactRepo: widget.contactRepository,
+              p2pService: widget.p2pService,
+              mediaAttachmentRepo: widget.mediaAttachmentRepository,
+              mediaFileManager: widget.mediaFileManager,
+              imageProcessor: widget.imageProcessor,
+              qualityPreference: _qualityPreference,
+              videoQualityPreference: _videoQualityPreference,
+              audioRecorderService: widget.audioRecorderService,
+              groupConversationTracker: widget.groupConversationTracker,
+            ),
+          ),
+        )
+        .then((result) {
+          final changes = result is FeedRouteChanges ? result : null;
+          unawaited(_applyRouteChanges(changes));
+        });
   }
 
   Future<void> _onUsernameChanged(String newUsername) async {
@@ -1121,9 +1372,10 @@ class _FeedWiredState extends State<FeedWired> {
 
   void _onToggleExpand(String cardId) {
     // Find the card — could be 1:1 or group
-    final cardItem = _feedItems.whereType<CardThreadFeedItem>().where(
-      (t) => t.id == cardId,
-    ).firstOrNull;
+    final cardItem = _feedItems
+        .whereType<CardThreadFeedItem>()
+        .where((t) => t.id == cardId)
+        .firstOrNull;
 
     // Mark as read when collapsing an unread/active card
     if (cardItem != null &&
@@ -1135,11 +1387,15 @@ class _FeedWiredState extends State<FeedWired> {
           messageRepo: widget.messageRepository,
           contactPeerId: cardItem.contactPeerId,
         ).then((_) {
-          if (mounted) _refreshFeed();
+          if (mounted) {
+            unawaited(_refreshContactFeedItem(cardItem.contactPeerId));
+          }
         });
       } else if (cardItem is GroupThreadFeedItem) {
         widget.groupMessageRepository?.markAsRead(cardItem.groupId).then((_) {
-          if (mounted) _refreshFeed();
+          if (mounted) {
+            unawaited(_refreshGroupFeedItem(cardItem.groupId));
+          }
         });
       }
       // Ensure the resulting collapsed card is NOT expanded
@@ -1199,6 +1455,7 @@ class _FeedWiredState extends State<FeedWired> {
     _groupMessageSubscription?.cancel();
     _introReceivedSubscription?.cancel();
     _introStatusSubscription?.cancel();
+    _reactionStore.dispose();
     super.dispose();
   }
 
@@ -1232,7 +1489,7 @@ class _FeedWiredState extends State<FeedWired> {
         onAttach: _onAttach,
         onAvatarTap: _onAvatarTap,
         sessionReplies: _sessionReplies,
-        reactions: _reactions,
+        reactionListenableForMessage: _reactionStore.listenableForMessage,
         onReactionSelected: _onReactionSelected,
         onGroupTap: _onGroupTap,
         onGroupInlineSend: _onGroupInlineSend,

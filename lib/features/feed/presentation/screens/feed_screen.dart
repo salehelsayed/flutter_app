@@ -1,5 +1,4 @@
-import 'dart:typed_data';
-
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
@@ -47,6 +46,8 @@ class FeedScreen extends StatelessWidget {
   final VoidCallback? onAvatarTap;
   final SessionReplyTracker? sessionReplies;
   final Map<String, List<MessageReaction>> reactions;
+  final ValueListenable<List<MessageReaction>> Function(String messageId)?
+  reactionListenableForMessage;
   final void Function(String messageId, String emoji)? onReactionSelected;
   final void Function(GroupThreadFeedItem)? onGroupTap;
   final void Function(String groupId, String text)? onGroupInlineSend;
@@ -80,6 +81,7 @@ class FeedScreen extends StatelessWidget {
     this.onAvatarTap,
     this.sessionReplies,
     this.reactions = const {},
+    this.reactionListenableForMessage,
     this.onReactionSelected,
     this.onGroupTap,
     this.onGroupInlineSend,
@@ -128,10 +130,10 @@ class FeedScreen extends StatelessWidget {
                           builder: (context, contentConstraints) {
                             final maxFeedWidth =
                                 contentConstraints.maxWidth >= 900
-                                    ? 640.0
-                                    : contentConstraints.maxWidth >= 600
-                                    ? 560.0
-                                    : 460.0;
+                                ? 640.0
+                                : contentConstraints.maxWidth >= 600
+                                ? 560.0
+                                : 460.0;
 
                             return SingleChildScrollView(
                               physics: const BouncingScrollPhysics(),
@@ -254,11 +256,12 @@ class FeedScreen extends StatelessWidget {
   }
 
   void _showReactionBar(BuildContext context, String messageId) {
-    final allReactions = reactions[messageId] ?? [];
+    final allReactions =
+        reactionListenableForMessage?.call(messageId).value ??
+        reactions[messageId] ??
+        const [];
     final ownReaction = userPeerId != null
-        ? allReactions
-            .where((r) => r.senderPeerId == userPeerId)
-            .firstOrNull
+        ? allReactions.where((r) => r.senderPeerId == userPeerId).firstOrNull
         : null;
 
     showDialog(
@@ -286,10 +289,15 @@ class FeedScreen extends StatelessWidget {
     }
   }
 
-  void _addCardWidget(BuildContext context, List<Widget> widgets, FeedItem item) {
+  void _addCardWidget(
+    BuildContext context,
+    List<Widget> widgets,
+    FeedItem item,
+  ) {
     if (item is GroupThreadFeedItem) {
       widgets.add(
         FeedCard(
+          key: ValueKey(item.id),
           thread: item,
           isExpanded: expandedCardId == item.id,
           onToggleExpand: onToggleExpand != null
@@ -307,6 +315,7 @@ class FeedScreen extends StatelessWidget {
       if (item.introducedBy != null && userPeerId != null) {
         widgets.add(
           IntroductionConnectionCard(
+            key: ValueKey(item.id),
             ownPeerId: userPeerId!,
             ownUsername: username,
             contactPeerId: item.contactPeerId,
@@ -322,6 +331,7 @@ class FeedScreen extends StatelessWidget {
       } else {
         widgets.add(
           ConnectionCard(
+            key: ValueKey(item.id),
             contactPeerId: item.contactPeerId,
             contactUsername: item.contactUsername,
             contactAvatarPath: item.contactAvatarPath,
@@ -336,6 +346,7 @@ class FeedScreen extends StatelessWidget {
     } else if (item is ThreadFeedItem) {
       widgets.add(
         FeedCard(
+          key: ValueKey(item.id),
           thread: item,
           sessionReply: sessionReplies?.get(item.contactPeerId),
           isExpanded: expandedCardId == item.id,
@@ -354,8 +365,7 @@ class FeedScreen extends StatelessWidget {
               ? (text) => onDraftChanged!(item.contactPeerId, text)
               : null,
           onInputFocusChanged: onInputFocusChanged != null
-              ? (hasFocus) =>
-                    onInputFocusChanged!(item.contactPeerId, hasFocus)
+              ? (hasFocus) => onInputFocusChanged!(item.contactPeerId, hasFocus)
               : null,
           onQuoteReply: onQuoteReply != null
               ? (msgId) => onQuoteReply!(item.contactPeerId, msgId)
@@ -364,6 +374,7 @@ class FeedScreen extends StatelessWidget {
               ? () => onAttach!(item.contactPeerId)
               : null,
           reactions: reactions,
+          reactionListenableForMessage: reactionListenableForMessage,
           ownPeerId: userPeerId,
           onMessageLongPress: onReactionSelected != null
               ? (msgId) => _showReactionBar(context, msgId)

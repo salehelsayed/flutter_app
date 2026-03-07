@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/feed_colors.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
@@ -29,6 +30,8 @@ class CollapsedModeCardBody extends StatelessWidget {
   final ValueChanged<bool>? onInputFocusChanged;
   final VoidCallback? onAttach;
   final Map<String, List<MessageReaction>> reactions;
+  final ValueListenable<List<MessageReaction>>? Function(String messageId)?
+  reactionListenableForMessage;
   final String? ownPeerId;
   final void Function(String messageId)? onMessageLongPress;
   final void Function(String messageId, String emoji)? onReactionTap;
@@ -50,6 +53,7 @@ class CollapsedModeCardBody extends StatelessWidget {
     this.onInputFocusChanged,
     this.onAttach,
     this.reactions = const {},
+    this.reactionListenableForMessage,
     this.ownPeerId,
     this.onMessageLongPress,
     this.onReactionTap,
@@ -61,8 +65,7 @@ class CollapsedModeCardBody extends StatelessWidget {
 
   /// True when expanded state should show ScrollableMessagePreview
   /// (not during session reply collapse).
-  bool get _showExpandedMessages =>
-      isExpanded && sessionReply == null;
+  bool get _showExpandedMessages => isExpanded && sessionReply == null;
 
   @override
   Widget build(BuildContext context) {
@@ -86,10 +89,7 @@ class CollapsedModeCardBody extends StatelessWidget {
                   onTap: onTapExpand,
                   behavior: HitTestBehavior.opaque,
                   child: Column(
-                    children: [
-                      _buildPreviewContent(),
-                      _buildExpandHint(),
-                    ],
+                    children: [_buildPreviewContent(), _buildExpandHint()],
                   ),
                 ),
         ),
@@ -205,9 +205,7 @@ class CollapsedModeCardBody extends StatelessWidget {
     } else {
       label = thread.displayName;
     }
-    final labelColor = isSent
-        ? FeedColors.accentTeal
-        : Colors.white;
+    final labelColor = isSent ? FeedColors.accentTeal : Colors.white;
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
@@ -259,6 +257,7 @@ class CollapsedModeCardBody extends StatelessWidget {
       onCollapse: onCollapse,
       onQuoteReply: onQuoteReply,
       reactions: reactions,
+      reactionListenableForMessage: reactionListenableForMessage,
       ownPeerId: ownPeerId,
       onMessageLongPress: onMessageLongPress,
       onReactionTap: onReactionTap,

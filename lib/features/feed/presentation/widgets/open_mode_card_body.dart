@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/feed_colors.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
@@ -24,6 +25,8 @@ class OpenModeCardBody extends StatelessWidget {
   final ValueChanged<bool>? onInputFocusChanged;
   final VoidCallback? onAttach;
   final Map<String, List<MessageReaction>> reactions;
+  final ValueListenable<List<MessageReaction>>? Function(String messageId)?
+  reactionListenableForMessage;
   final String? ownPeerId;
   final void Function(String messageId)? onMessageLongPress;
   final void Function(String messageId, String emoji)? onReactionTap;
@@ -42,6 +45,7 @@ class OpenModeCardBody extends StatelessWidget {
     this.onInputFocusChanged,
     this.onAttach,
     this.reactions = const {},
+    this.reactionListenableForMessage,
     this.ownPeerId,
     this.onMessageLongPress,
     this.onReactionTap,
@@ -66,6 +70,7 @@ class OpenModeCardBody extends StatelessWidget {
             onCollapse: onCollapse,
             onQuoteReply: onQuoteReply,
             reactions: reactions,
+            reactionListenableForMessage: reactionListenableForMessage,
             ownPeerId: ownPeerId,
             onMessageLongPress: onMessageLongPress,
             onReactionTap: onReactionTap,

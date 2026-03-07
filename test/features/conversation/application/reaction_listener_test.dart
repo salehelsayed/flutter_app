@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/reaction_listener.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
+import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
 import 'package:flutter_app/features/conversation/domain/models/reaction_payload.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 
@@ -14,7 +15,6 @@ import '../domain/repositories/fake_reaction_repository.dart';
 const _senderPeerId = '12D3KooWSender';
 
 ChatMessage _makeV2ReactionMessage({
-  String emoji = '👍',
   String action = 'add',
   String senderPeerId = _senderPeerId,
 }) {
@@ -41,19 +41,21 @@ void main() {
 
   setUp(() {
     reactionStreamController = StreamController<ChatMessage>.broadcast();
-    bridge = FakeBridge(initialResponses: {
-      'message.decrypt': {
-        'ok': true,
-        'plaintext': jsonEncode({
-          'id': 'r1',
-          'messageId': 'msg-1',
-          'emoji': '👍',
-          'action': 'add',
-          'senderPeerId': _senderPeerId,
-          'timestamp': '2026-02-27T10:00:00.000Z',
-        }),
+    bridge = FakeBridge(
+      initialResponses: {
+        'message.decrypt': {
+          'ok': true,
+          'plaintext': jsonEncode({
+            'id': 'r1',
+            'messageId': 'msg-1',
+            'emoji': '👍',
+            'action': 'add',
+            'senderPeerId': _senderPeerId,
+            'timestamp': '2026-02-27T10:00:00.000Z',
+          }),
+        },
       },
-    });
+    );
     contactRepo = FakeContactRepository();
     contactRepo.seed([
       ContactModel(
@@ -82,32 +84,76 @@ void main() {
   });
 
   group('ReactionListener', () {
-    test('processes add reaction and broadcasts to incomingReactionStream',
-        () async {
-      final received = <MessageReaction>[];
-      listener.incomingReactionStream.listen(received.add);
-      listener.start();
+    test(
+      'processes add reaction and broadcasts to incomingReactionStream',
+      () async {
+        final received = <MessageReaction>[];
+        listener.incomingReactionStream.listen(received.add);
+        listener.start();
 
-      reactionStreamController.add(_makeV2ReactionMessage());
-      await Future.delayed(const Duration(milliseconds: 100));
+        reactionStreamController.add(_makeV2ReactionMessage());
+        await Future.delayed(const Duration(milliseconds: 100));
 
-      expect(received.length, 1);
-      expect(received[0].emoji, '👍');
-      expect(received[0].messageId, 'msg-1');
-      expect(reactionRepo.saveReactionCallCount, 1);
-    });
+        expect(received.length, 1);
+        expect(received[0].emoji, '👍');
+        expect(received[0].messageId, 'msg-1');
+        expect(reactionRepo.saveReactionCallCount, 1);
+      },
+    );
 
-    test('processes remove reaction — does NOT broadcast (reaction is null)',
-        () async {
-      // Pre-populate
-      await reactionRepo.saveReaction(const MessageReaction(
-        id: 'r1',
-        messageId: 'msg-1',
-        emoji: '👍',
-        senderPeerId: _senderPeerId,
-        timestamp: '2026-02-27T10:00:00.000Z',
-        createdAt: '2026-02-27T10:00:01.000Z',
-      ));
+    test(
+      'processes remove reaction and broadcasts a removal change event',
+      () async {
+        // Pre-populate
+        await reactionRepo.saveReaction(
+          const MessageReaction(
+            id: 'r1',
+            messageId: 'msg-1',
+            emoji: '👍',
+            senderPeerId: _senderPeerId,
+            timestamp: '2026-02-27T10:00:00.000Z',
+            createdAt: '2026-02-27T10:00:01.000Z',
+          ),
+        );
+
+        bridge.responses['message.decrypt'] = {
+          'ok': true,
+          'plaintext': jsonEncode({
+            'id': 'r2',
+            'messageId': 'msg-1',
+            'emoji': '👍',
+            'action': 'remove',
+            'senderPeerId': _senderPeerId,
+            'timestamp': '2026-02-27T10:01:00.000Z',
+          }),
+        };
+
+        final received = <ReactionChange>[];
+        listener.incomingReactionChangeStream.listen(received.add);
+        listener.start();
+
+        reactionStreamController.add(_makeV2ReactionMessage(action: 'remove'));
+        await Future.delayed(const Duration(milliseconds: 100));
+
+        expect(received, hasLength(1));
+        expect(received.single.type, ReactionChangeType.removed);
+        expect(received.single.messageId, 'msg-1');
+        expect(received.single.senderPeerId, _senderPeerId);
+        expect(reactionRepo.removeReactionCallCount, 1);
+      },
+    );
+
+    test('remove action does not emit to incomingReactionStream', () async {
+      await reactionRepo.saveReaction(
+        const MessageReaction(
+          id: 'r1',
+          messageId: 'msg-1',
+          emoji: '👍',
+          senderPeerId: _senderPeerId,
+          timestamp: '2026-02-27T10:00:00.000Z',
+          createdAt: '2026-02-27T10:00:01.000Z',
+        ),
+      );
 
       bridge.responses['message.decrypt'] = {
         'ok': true,
@@ -128,9 +174,7 @@ void main() {
       reactionStreamController.add(_makeV2ReactionMessage(action: 'remove'));
       await Future.delayed(const Duration(milliseconds: 100));
 
-      // remove action returns null → not broadcast
       expect(received, isEmpty);
-      expect(reactionRepo.removeReactionCallCount, 1);
     });
 
     test('rejects blocked senders', () async {
@@ -178,18 +222,20 @@ void main() {
       listener.incomingReactionStream.listen(received.add);
       listener.start();
 
-      reactionStreamController.add(ChatMessage(
-        from: 'unknown-peer',
-        to: 'my-peer',
-        content: ReactionPayload.buildEncryptedEnvelope(
-          senderPeerId: 'unknown-peer',
-          kem: 'k',
-          ciphertext: 'c',
-          nonce: 'n',
+      reactionStreamController.add(
+        ChatMessage(
+          from: 'unknown-peer',
+          to: 'my-peer',
+          content: ReactionPayload.buildEncryptedEnvelope(
+            senderPeerId: 'unknown-peer',
+            kem: 'k',
+            ciphertext: 'c',
+            nonce: 'n',
+          ),
+          timestamp: DateTime.now().toUtc().toIso8601String(),
+          isIncoming: true,
         ),
-        timestamp: DateTime.now().toUtc().toIso8601String(),
-        isIncoming: true,
-      ));
+      );
       await Future.delayed(const Duration(milliseconds: 100));
 
       expect(received, isEmpty);
