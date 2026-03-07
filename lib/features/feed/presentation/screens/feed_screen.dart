@@ -256,6 +256,8 @@ class FeedScreen extends StatelessWidget {
     return SliverList(
       delegate: SliverChildListDelegate.fixed([
         const SizedBox(height: 16),
+        const _FeedLoadingStatusCard(),
+        const SizedBox(height: 16),
         const _FeedLoadingCard(index: 0),
         const SizedBox(height: 16),
         const _FeedLoadingCard(index: 1),
@@ -567,6 +569,61 @@ class _FeedLoadingCard extends StatelessWidget {
           _FeedLoadingBar(widthFactor: 0.66),
           SizedBox(height: 18),
           _FeedLoadingBar(widthFactor: 0.48, height: 38),
+        ],
+      ),
+    );
+  }
+}
+
+class _FeedLoadingStatusCard extends StatelessWidget {
+  const _FeedLoadingStatusCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      key: const ValueKey('feed-loading-status'),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(20),
+        color: const Color.fromRGBO(16, 18, 24, 0.78),
+        border: Border.all(color: const Color.fromRGBO(255, 255, 255, 0.12)),
+      ),
+      child: const Row(
+        children: [
+          SizedBox(
+            width: 18,
+            height: 18,
+            child: CircularProgressIndicator(
+              strokeWidth: 2.2,
+              color: Color.fromRGBO(255, 255, 255, 0.78),
+            ),
+          ),
+          SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Loading Feed...',
+                  style: TextStyle(
+                    color: Color.fromRGBO(255, 255, 255, 0.92),
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 0.2,
+                  ),
+                ),
+                SizedBox(height: 4),
+                Text(
+                  'Your recent threads are still syncing.',
+                  style: TextStyle(
+                    color: Color.fromRGBO(255, 255, 255, 0.62),
+                    fontSize: 12,
+                    height: 1.3,
+                  ),
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );

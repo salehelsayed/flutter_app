@@ -4,8 +4,10 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/core/media/image_processor.dart';
+import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/feed/presentation/screens/feed_wired.dart';
 import 'package:flutter_app/features/home/presentation/screens/first_time_experience_wired.dart';
@@ -13,6 +15,7 @@ import 'package:flutter_app/features/identity/domain/models/identity_model.dart'
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/identity/presentation/screens/identity_choice_wired.dart';
 import 'package:flutter_app/features/identity/presentation/startup_router.dart';
+import 'package:flutter_app/features/identity/presentation/widgets/startup_loading_gate.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 
 import '../../../../core/bridge/fake_bridge.dart';
@@ -98,14 +101,14 @@ void main() {
 
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
-      const MethodChannel('plugins.flutter.io/path_provider'),
-      (MethodCall methodCall) async {
-        if (methodCall.method == 'getApplicationDocumentsDirectory') {
-          return '/tmp/test_docs';
-        }
-        return null;
-      },
-    );
+          const MethodChannel('plugins.flutter.io/path_provider'),
+          (MethodCall methodCall) async {
+            if (methodCall.method == 'getApplicationDocumentsDirectory') {
+              return '/tmp/test_docs';
+            }
+            return null;
+          },
+        );
   });
 
   tearDown(() {
@@ -113,31 +116,42 @@ void main() {
     chatMessageListener.dispose();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
-      const MethodChannel('plugins.flutter.io/path_provider'),
-      null,
-    );
+          const MethodChannel('plugins.flutter.io/path_provider'),
+          null,
+        );
   });
 
   ImageProcessor noOpImageProcessor() => ImageProcessor(
-        compressFile: ({required path, required quality, required keepExif,
-            minWidth = 1920, minHeight = 1080}) async =>
-            null,
-        compressVideo: ({required path, required compress, onProgress}) async =>
-            null,
-      );
+    compressFile:
+        ({
+          required path,
+          required quality,
+          required keepExif,
+          minWidth = 1920,
+          minHeight = 1080,
+        }) async => null,
+    compressVideo: ({required path, required compress, onProgress}) async =>
+        null,
+  );
 
-  Widget buildStartupRouter({IdentityRepository? repoOverride}) {
+  Widget buildStartupRouter({
+    IdentityRepository? repoOverride,
+    ContactRepository? contactRepoOverride,
+    P2PService? p2pServiceOverride,
+    List<NavigatorObserver> navigatorObservers = const [],
+  }) {
     return MaterialApp(
+      navigatorObservers: navigatorObservers,
       home: StartupRouter(
         repository: repoOverride ?? identityRepo,
-        contactRepository: contactRepo,
+        contactRepository: contactRepoOverride ?? contactRepo,
         contactRequestRepository: contactRequestRepo,
         contactRequestListener: contactRequestListener,
         messageRepository: messageRepo,
         mediaAttachmentRepository: mediaAttachmentRepo,
         chatMessageListener: chatMessageListener,
         bridge: bridge,
-        p2pService: p2pService,
+        p2pService: p2pServiceOverride ?? p2pService,
         mediaFileManager: mediaFileManager,
         secureKeyStore: secureKeyStore,
         imageProcessor: noOpImageProcessor(),
@@ -170,18 +184,116 @@ void main() {
   }
 
   group('StartupRouter', () {
-    testWidgets('shows loading UI initially', (tester) async {
-      identityRepo.seed(testIdentityWithMlKem);
-      contactRepo.seed([testContact]);
+    testWidgets(
+      'shows bootstrap loading gate while startup decision is pending',
+      (tester) async {
+        final delayedRepo = _DelayedIdentityRepository(testIdentityWithMlKem);
 
-      await tester.pumpWidget(buildStartupRouter());
-      // Single pump — async routing hasn't completed yet
-      expect(find.byType(CircularProgressIndicator), findsOneWidget);
-      expect(find.text('Loading...'), findsOneWidget);
+        await tester.pumpWidget(buildStartupRouter(repoOverride: delayedRepo));
+        await tester.pump();
+
+        expect(find.byType(StartupLoadingGate), findsOneWidget);
+        expect(find.text('Preparing your space...'), findsOneWidget);
+        expect(find.text('Loading...'), findsNothing);
+        expect(find.byIcon(Icons.lock), findsNothing);
+        expect(find.byType(FeedWired), findsNothing);
+        expect(find.text('Feed'), findsNothing);
+        expect(find.text('Remember'), findsNothing);
+
+        delayedRepo.complete();
+        await pumpRouting(tester);
+      },
+    );
+
+    testWidgets(
+      'keeps bootstrap gate visible until startup route is committed',
+      (tester) async {
+        identityRepo.seed(testIdentityWithMlKem);
+        final delayedContactRepo = _DelayedContactCountRepository();
+        delayedContactRepo.seed([testContact]);
+
+        await tester.pumpWidget(
+          buildStartupRouter(contactRepoOverride: delayedContactRepo),
+        );
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 150));
+
+        expect(find.byType(StartupLoadingGate), findsOneWidget);
+        expect(find.byType(FeedWired), findsNothing);
+        expect(find.text('Feed'), findsNothing);
+
+        delayedContactRepo.complete();
+        await pumpRouting(tester);
+
+        expect(find.byType(FeedWired), findsOneWidget);
+      },
+    );
+
+    testWidgets('routes to feed after showing opening feed stage', (
+      tester,
+    ) async {
+      identityRepo.seed(testIdentityWithMlKem);
+      final delayedContactRepo = _DelayedContactCountRepository();
+      delayedContactRepo.seed([testContact]);
+
+      await tester.pumpWidget(
+        buildStartupRouter(contactRepoOverride: delayedContactRepo),
+      );
+      await tester.pump();
+
+      delayedContactRepo.complete();
+      await tester.pump();
+
+      expect(find.text('Opening Feed...'), findsOneWidget);
+
+      await pumpRouting(tester);
+
+      expect(find.byType(FeedWired), findsOneWidget);
     });
 
-    testWidgets('navigates to FeedWired when identity exists with contacts',
-        (tester) async {
+    testWidgets(
+      'routes to first time experience after showing opening setup stage',
+      (tester) async {
+        identityRepo.seed(testIdentityWithMlKem);
+        final delayedContactRepo = _DelayedContactCountRepository();
+
+        await tester.pumpWidget(
+          buildStartupRouter(contactRepoOverride: delayedContactRepo),
+        );
+        await tester.pump();
+
+        delayedContactRepo.complete();
+        await tester.pump();
+
+        expect(find.text('Opening setup...'), findsOneWidget);
+
+        await pumpRouting(tester);
+
+        expect(find.byType(FirstTimeExperienceWired), findsOneWidget);
+      },
+    );
+
+    testWidgets('routes to onboarding after showing opening onboarding stage', (
+      tester,
+    ) async {
+      final delayedRepo = _DelayedIdentityRepository(null);
+
+      await tester.pumpWidget(buildStartupRouter(repoOverride: delayedRepo));
+      await tester.pump();
+
+      delayedRepo.complete();
+      await tester.pump();
+
+      expect(find.text('Opening onboarding...'), findsOneWidget);
+
+      await pumpRouting(tester);
+
+      expect(find.byType(IdentityChoiceWired), findsOneWidget);
+    });
+
+    testWidgets('navigates to FeedWired when identity exists with contacts', (
+      tester,
+    ) async {
       identityRepo.seed(testIdentityWithMlKem);
       contactRepo.seed([testContact]);
 
@@ -191,17 +303,19 @@ void main() {
     });
 
     testWidgets(
-        'navigates to FirstTimeExperienceWired when identity exists no contacts',
-        (tester) async {
-      identityRepo.seed(testIdentityWithMlKem);
+      'navigates to FirstTimeExperienceWired when identity exists no contacts',
+      (tester) async {
+        identityRepo.seed(testIdentityWithMlKem);
 
-      await pumpAndRoute(tester, buildStartupRouter());
+        await pumpAndRoute(tester, buildStartupRouter());
 
-      expect(find.byType(FirstTimeExperienceWired), findsOneWidget);
-    });
+        expect(find.byType(FirstTimeExperienceWired), findsOneWidget);
+      },
+    );
 
-    testWidgets('navigates to IdentityChoiceWired when no identity',
-        (tester) async {
+    testWidgets('navigates to IdentityChoiceWired when no identity', (
+      tester,
+    ) async {
       await pumpAndRoute(tester, buildStartupRouter());
 
       expect(find.byType(IdentityChoiceWired), findsOneWidget);
@@ -247,14 +361,35 @@ void main() {
       expect(identityRepo.lastSavedIdentity?.mlKemPublicKey, 'gen-pk');
     });
 
-    testWidgets('starts P2P node after navigating to FeedWired',
-        (tester) async {
+    testWidgets('starts P2P node after navigating to FeedWired', (
+      tester,
+    ) async {
       identityRepo.seed(testIdentityWithMlKem);
       contactRepo.seed([testContact]);
 
       await pumpAndRoute(tester, buildStartupRouter());
 
       expect(p2pService.startNodeCallCount, 1);
+    });
+
+    testWidgets('does not wait for p2p startup before route replacement', (
+      tester,
+    ) async {
+      identityRepo.seed(testIdentityWithMlKem);
+      contactRepo.seed([testContact]);
+      final delayedP2PService = _DelayedStartP2PService();
+
+      await pumpAndRoute(
+        tester,
+        buildStartupRouter(p2pServiceOverride: delayedP2PService),
+      );
+
+      expect(find.byType(FeedWired), findsOneWidget);
+      expect(delayedP2PService.startNodeEntered, isTrue);
+      expect(delayedP2PService.startNodePending, isTrue);
+
+      delayedP2PService.completeStart();
+      await tester.pump();
     });
 
     testWidgets('starts P2P node after navigating to FTE', (tester) async {
@@ -267,7 +402,9 @@ void main() {
 
     testWidgets('shows error UI when repository throws', (tester) async {
       await pumpAndRoute(
-          tester, buildStartupRouter(repoOverride: _ThrowingIdentityRepository()));
+        tester,
+        buildStartupRouter(repoOverride: _ThrowingIdentityRepository()),
+      );
 
       expect(find.byIcon(Icons.error_outline), findsOneWidget);
       expect(find.text('Failed to initialize'), findsOneWidget);
@@ -288,8 +425,27 @@ void main() {
       expect(find.byType(IdentityChoiceWired), findsOneWidget);
     });
 
-    testWidgets('ML-KEM failure is non-fatal (still navigates)',
-        (tester) async {
+    testWidgets('preserves retry flow after startup failure', (tester) async {
+      final toggleRepo = _ToggleIdentityRepository();
+
+      await pumpAndRoute(tester, buildStartupRouter(repoOverride: toggleRepo));
+
+      expect(find.text('Failed to initialize'), findsOneWidget);
+
+      toggleRepo.shouldThrow = false;
+      await tester.tap(find.text('Retry'));
+      await tester.pump();
+
+      expect(find.byType(StartupLoadingGate), findsOneWidget);
+
+      await pumpRouting(tester);
+
+      expect(find.byType(IdentityChoiceWired), findsOneWidget);
+    });
+
+    testWidgets('ML-KEM failure is non-fatal (still navigates)', (
+      tester,
+    ) async {
       identityRepo.seed(testIdentity);
       contactRepo.seed([testContact]);
       bridge.responses['mlkem.keygen'] = {'ok': false, 'errorCode': 'FAIL'};
@@ -309,6 +465,95 @@ void main() {
       expect(find.byType(FeedWired), findsOneWidget);
       expect(find.text('Failed to initialize'), findsNothing);
     });
+
+    testWidgets(
+      'cold launch shows only bootstrap gate before feed route appears',
+      (tester) async {
+        identityRepo.seed(testIdentityWithMlKem);
+        final delayedContactRepo = _DelayedContactCountRepository();
+        delayedContactRepo.seed([testContact]);
+
+        await tester.pumpWidget(
+          buildStartupRouter(contactRepoOverride: delayedContactRepo),
+        );
+        await tester.pump();
+
+        expect(find.byType(StartupLoadingGate), findsOneWidget);
+        expect(find.byType(FeedWired), findsNothing);
+        expect(find.text('Feed'), findsNothing);
+        expect(find.text('Remember'), findsNothing);
+
+        delayedContactRepo.complete();
+        await pumpRouting(tester);
+      },
+    );
+
+    testWidgets(
+      'hot restart style delayed startup does not expose feed chrome before handoff',
+      (tester) async {
+        identityRepo.seed(testIdentityWithMlKem);
+        final delayedContactRepo = _DelayedContactCountRepository();
+        delayedContactRepo.seed([testContact]);
+
+        await tester.pumpWidget(
+          buildStartupRouter(contactRepoOverride: delayedContactRepo),
+        );
+        await tester.pump();
+
+        for (var i = 0; i < 6; i++) {
+          await tester.pump(const Duration(milliseconds: 32));
+        }
+
+        expect(find.byType(StartupLoadingGate), findsOneWidget);
+        expect(find.text('Feed'), findsNothing);
+        expect(find.text('Orbit'), findsNothing);
+        expect(find.text('Remember'), findsNothing);
+
+        delayedContactRepo.complete();
+        await pumpRouting(tester);
+      },
+    );
+
+    testWidgets('bootstrap gate disappears once feed route is visible', (
+      tester,
+    ) async {
+      identityRepo.seed(testIdentityWithMlKem);
+      contactRepo.seed([testContact]);
+
+      await pumpAndRoute(tester, buildStartupRouter());
+
+      expect(find.byType(FeedWired), findsOneWidget);
+      expect(find.byType(StartupLoadingGate), findsNothing);
+    });
+
+    testWidgets(
+      'bootstrap gate does not block existing feed loading placeholders after handoff',
+      (tester) async {
+        identityRepo.seed(testIdentityWithMlKem);
+        final feedLoadingContactRepo = _DelayedFeedLoadContactRepository();
+        feedLoadingContactRepo.seed([testContact]);
+
+        await pumpAndRoute(
+          tester,
+          buildStartupRouter(contactRepoOverride: feedLoadingContactRepo),
+        );
+
+        expect(find.byType(FeedWired), findsOneWidget);
+        expect(find.byType(StartupLoadingGate), findsNothing);
+        expect(
+          find.byKey(const ValueKey('feed-loading-status')),
+          findsOneWidget,
+        );
+        expect(find.text('Loading Feed...'), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('feed-loading-card-0')),
+          findsOneWidget,
+        );
+
+        feedLoadingContactRepo.completeFeedLoad();
+        await pumpRouting(tester);
+      },
+    );
   });
 }
 
@@ -335,5 +580,76 @@ class _ToggleIdentityRepository implements IdentityRepository {
   @override
   Future<void> saveIdentity(IdentityModel identity) async {
     this.identity = identity;
+  }
+}
+
+class _DelayedIdentityRepository extends FakeIdentityRepository {
+  final Completer<void> _completer = Completer<void>();
+
+  _DelayedIdentityRepository(IdentityModel? identity) {
+    seed(identity);
+  }
+
+  void complete() {
+    if (_completer.isCompleted) return;
+    _completer.complete();
+  }
+
+  @override
+  Future<IdentityModel?> loadIdentity() async {
+    await _completer.future;
+    return super.loadIdentity();
+  }
+}
+
+class _DelayedContactCountRepository extends FakeContactRepository {
+  final Completer<void> _completer = Completer<void>();
+
+  void complete() {
+    if (_completer.isCompleted) return;
+    _completer.complete();
+  }
+
+  @override
+  Future<int> getContactCount() async {
+    await _completer.future;
+    return super.getContactCount();
+  }
+}
+
+class _DelayedFeedLoadContactRepository extends FakeContactRepository {
+  final Completer<void> _feedLoadCompleter = Completer<void>();
+
+  void completeFeedLoad() {
+    if (_feedLoadCompleter.isCompleted) return;
+    _feedLoadCompleter.complete();
+  }
+
+  @override
+  Future<List<ContactModel>> getActiveContacts() async {
+    await _feedLoadCompleter.future;
+    return super.getActiveContacts();
+  }
+}
+
+class _DelayedStartP2PService extends FakeP2PService {
+  final Completer<void> _startCompleter = Completer<void>();
+  bool startNodeEntered = false;
+
+  bool get startNodePending => startNodeEntered && !_startCompleter.isCompleted;
+
+  void completeStart() {
+    if (_startCompleter.isCompleted) return;
+    _startCompleter.complete();
+  }
+
+  @override
+  Future<bool> startNode(String privateKeyBase64, String peerId) async {
+    startNodeEntered = true;
+    startNodeCallCount++;
+    lastStartNodePrivateKey = privateKeyBase64;
+    lastStartNodePeerId = peerId;
+    await _startCompleter.future;
+    return startNodeResult;
   }
 }
