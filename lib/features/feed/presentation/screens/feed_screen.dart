@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
@@ -134,32 +136,25 @@ class FeedScreen extends StatelessWidget {
                                 : contentConstraints.maxWidth >= 600
                                 ? 560.0
                                 : 460.0;
+                            final centeredHorizontalPadding = math.max(
+                              horizontalPadding,
+                              (contentConstraints.maxWidth - maxFeedWidth) / 2,
+                            );
 
-                            return SingleChildScrollView(
+                            return CustomScrollView(
+                              key: const PageStorageKey<String>('feed-scroll'),
                               physics: const BouncingScrollPhysics(),
-                              padding: EdgeInsets.only(
-                                left: horizontalPadding,
-                                right: horizontalPadding,
-                                bottom: 60 + bottomInset,
-                              ),
-                              child: ConstrainedBox(
-                                constraints: BoxConstraints(
-                                  minHeight: contentConstraints.maxHeight,
-                                ),
-                                child: Align(
-                                  alignment: Alignment.topCenter,
-                                  child: ConstrainedBox(
-                                    constraints: BoxConstraints(
-                                      maxWidth: maxFeedWidth,
-                                    ),
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.stretch,
-                                      children: _buildFeedCards(context),
-                                    ),
+                              cacheExtent: 1200,
+                              slivers: [
+                                SliverPadding(
+                                  padding: EdgeInsets.only(
+                                    left: centeredHorizontalPadding,
+                                    right: centeredHorizontalPadding,
+                                    bottom: 60 + bottomInset,
                                   ),
+                                  sliver: _buildFeedSliver(context),
                                 ),
-                              ),
+                              ],
                             );
                           },
                         ),
@@ -189,12 +184,27 @@ class FeedScreen extends StatelessWidget {
     );
   }
 
-  List<Widget> _buildFeedCards(BuildContext context) {
+  Widget _buildFeedSliver(BuildContext context) {
+    final entries = _buildFeedEntries();
+    if (entries.isEmpty) {
+      return const SliverToBoxAdapter(child: SizedBox.shrink());
+    }
+
+    return SliverList(
+      delegate: SliverChildBuilderDelegate(
+        (context, index) => _buildFeedEntry(context, entries[index]),
+        childCount: entries.length,
+        findChildIndexCallback: (key) => _findFeedEntryIndex(entries, key),
+      ),
+    );
+  }
+
+  List<_FeedEntry> _buildFeedEntries() {
     if (feedItems.isEmpty) {
-      if (!feedLoaded) return [];
+      if (!feedLoaded) return const [];
       return [
-        const SizedBox(height: 12),
-        _EmptyFeedStateCard(username: username),
+        const _FeedEntry.spacer(height: 12),
+        _FeedEntry.emptyState(username: username),
       ];
     }
 
@@ -224,35 +234,62 @@ class FeedScreen extends StatelessWidget {
       }
     }
 
-    final widgets = <Widget>[const SizedBox(height: 16)];
+    final entries = <_FeedEntry>[const _FeedEntry.spacer(height: 16)];
 
     // Build above-divider cards (unread/active threads)
     final aboveItems = [...aboveDivider];
     aboveItems.sort((a, b) => b.timestamp.compareTo(a.timestamp));
 
     for (var i = 0; i < aboveItems.length; i++) {
-      _addCardWidget(context, widgets, aboveItems[i]);
+      entries.add(_FeedEntry.item(aboveItems[i]));
       if (i != aboveItems.length - 1 || belowDivider.isNotEmpty) {
-        widgets.add(const SizedBox(height: 16));
+        entries.add(const _FeedEntry.spacer(height: 16));
       }
     }
 
     // Insert session divider when both sections have content
     if (aboveItems.isNotEmpty && belowDivider.isNotEmpty) {
-      widgets.add(const SessionDivider());
+      entries.add(const _FeedEntry.sessionDivider());
     }
 
     // Build below-divider cards (connections + read/replied threads)
     belowDivider.sort((a, b) => b.timestamp.compareTo(a.timestamp));
     for (var i = 0; i < belowDivider.length; i++) {
-      _addCardWidget(context, widgets, belowDivider[i]);
+      entries.add(_FeedEntry.item(belowDivider[i]));
       if (i != belowDivider.length - 1) {
-        widgets.add(const SizedBox(height: 16));
+        entries.add(const _FeedEntry.spacer(height: 16));
       }
     }
 
-    widgets.add(const SizedBox(height: 20));
-    return widgets;
+    entries.add(const _FeedEntry.spacer(height: 20));
+    return entries;
+  }
+
+  Widget _buildFeedEntry(BuildContext context, _FeedEntry entry) {
+    switch (entry.type) {
+      case _FeedEntryType.item:
+        return _buildFeedItemWidget(context, entry.item!);
+      case _FeedEntryType.sessionDivider:
+        return const SessionDivider();
+      case _FeedEntryType.spacer:
+        return SizedBox(height: entry.height);
+      case _FeedEntryType.emptyState:
+        return _EmptyFeedStateCard(username: entry.username!);
+    }
+  }
+
+  int? _findFeedEntryIndex(List<_FeedEntry> entries, Key key) {
+    if (key is! ValueKey<String>) {
+      return null;
+    }
+
+    for (var index = 0; index < entries.length; index++) {
+      final entry = entries[index];
+      if (entry.item?.id == key.value) {
+        return index;
+      }
+    }
+    return null;
   }
 
   void _showReactionBar(BuildContext context, String messageId) {
@@ -289,103 +326,125 @@ class FeedScreen extends StatelessWidget {
     }
   }
 
-  void _addCardWidget(
-    BuildContext context,
-    List<Widget> widgets,
-    FeedItem item,
-  ) {
+  Widget _buildFeedItemWidget(BuildContext context, FeedItem item) {
     if (item is GroupThreadFeedItem) {
-      widgets.add(
-        FeedCard(
-          key: ValueKey(item.id),
-          thread: item,
-          isExpanded: expandedCardId == item.id,
-          onToggleExpand: onToggleExpand != null
-              ? () => onToggleExpand!(item.id)
-              : null,
-          onInlineSend: onGroupInlineSend != null
-              ? (text) => onGroupInlineSend!(item.groupId, text)
-              : null,
-          onViewFullConversation: onGroupTap != null
-              ? () => onGroupTap!(item)
-              : null,
-        ),
-      );
-    } else if (item is ConnectionFeedItem) {
-      if (item.introducedBy != null && userPeerId != null) {
-        widgets.add(
-          IntroductionConnectionCard(
-            key: ValueKey(item.id),
-            ownPeerId: userPeerId!,
-            ownUsername: username,
-            contactPeerId: item.contactPeerId,
-            contactUsername: item.contactUsername,
-            introducedBy: item.introducedBy!,
-            introducedByPeerId: item.introducedByPeerId,
-            onSendMessage: onSendMessage != null
-                ? () => onSendMessage!(item)
-                : null,
-            isBlocked: item.isBlocked,
-          ),
-        );
-      } else {
-        widgets.add(
-          ConnectionCard(
-            key: ValueKey(item.id),
-            contactPeerId: item.contactPeerId,
-            contactUsername: item.contactUsername,
-            contactAvatarPath: item.contactAvatarPath,
-            introducedBy: item.introducedBy,
-            onSendMessage: onSendMessage != null
-                ? () => onSendMessage!(item)
-                : null,
-            isBlocked: item.isBlocked,
-          ),
-        );
-      }
-    } else if (item is ThreadFeedItem) {
-      widgets.add(
-        FeedCard(
-          key: ValueKey(item.id),
-          thread: item,
-          sessionReply: sessionReplies?.get(item.contactPeerId),
-          isExpanded: expandedCardId == item.id,
-          onToggleExpand: onToggleExpand != null
-              ? () => onToggleExpand!(item.id)
-              : null,
-          onInlineSend: onInlineSend != null
-              ? (text) => onInlineSend!(item.contactPeerId, text)
-              : null,
-          onViewFullConversation: onViewFullConversation != null
-              ? () => onViewFullConversation!(item.contactPeerId)
-              : null,
-          initialText: draftTexts?[item.contactPeerId] ?? '',
-          shouldRequestFocus: activeFocusPeerId == item.contactPeerId,
-          onDraftChanged: onDraftChanged != null
-              ? (text) => onDraftChanged!(item.contactPeerId, text)
-              : null,
-          onInputFocusChanged: onInputFocusChanged != null
-              ? (hasFocus) => onInputFocusChanged!(item.contactPeerId, hasFocus)
-              : null,
-          onQuoteReply: onQuoteReply != null
-              ? (msgId) => onQuoteReply!(item.contactPeerId, msgId)
-              : null,
-          onAttach: onAttach != null
-              ? () => onAttach!(item.contactPeerId)
-              : null,
-          reactions: reactions,
-          reactionListenableForMessage: reactionListenableForMessage,
-          ownPeerId: userPeerId,
-          onMessageLongPress: onReactionSelected != null
-              ? (msgId) => _showReactionBar(context, msgId)
-              : null,
-          onReactionTap: onReactionSelected != null
-              ? (msgId, emoji) => onReactionSelected!(msgId, emoji)
-              : null,
-        ),
+      return FeedCard(
+        key: ValueKey(item.id),
+        thread: item,
+        isExpanded: expandedCardId == item.id,
+        onToggleExpand: onToggleExpand != null
+            ? () => onToggleExpand!(item.id)
+            : null,
+        onInlineSend: onGroupInlineSend != null
+            ? (text) => onGroupInlineSend!(item.groupId, text)
+            : null,
+        onViewFullConversation: onGroupTap != null
+            ? () => onGroupTap!(item)
+            : null,
       );
     }
+    if (item is ConnectionFeedItem) {
+      if (item.introducedBy != null && userPeerId != null) {
+        return IntroductionConnectionCard(
+          key: ValueKey(item.id),
+          ownPeerId: userPeerId!,
+          ownUsername: username,
+          contactPeerId: item.contactPeerId,
+          contactUsername: item.contactUsername,
+          introducedBy: item.introducedBy!,
+          introducedByPeerId: item.introducedByPeerId,
+          onSendMessage: onSendMessage != null
+              ? () => onSendMessage!(item)
+              : null,
+          isBlocked: item.isBlocked,
+        );
+      }
+      return ConnectionCard(
+        key: ValueKey(item.id),
+        contactPeerId: item.contactPeerId,
+        contactUsername: item.contactUsername,
+        contactAvatarPath: item.contactAvatarPath,
+        introducedBy: item.introducedBy,
+        onSendMessage: onSendMessage != null
+            ? () => onSendMessage!(item)
+            : null,
+        isBlocked: item.isBlocked,
+      );
+    }
+    if (item is ThreadFeedItem) {
+      return FeedCard(
+        key: ValueKey(item.id),
+        thread: item,
+        sessionReply: sessionReplies?.get(item.contactPeerId),
+        isExpanded: expandedCardId == item.id,
+        onToggleExpand: onToggleExpand != null
+            ? () => onToggleExpand!(item.id)
+            : null,
+        onInlineSend: onInlineSend != null
+            ? (text) => onInlineSend!(item.contactPeerId, text)
+            : null,
+        onViewFullConversation: onViewFullConversation != null
+            ? () => onViewFullConversation!(item.contactPeerId)
+            : null,
+        initialText: draftTexts?[item.contactPeerId] ?? '',
+        shouldRequestFocus: activeFocusPeerId == item.contactPeerId,
+        onDraftChanged: onDraftChanged != null
+            ? (text) => onDraftChanged!(item.contactPeerId, text)
+            : null,
+        onInputFocusChanged: onInputFocusChanged != null
+            ? (hasFocus) => onInputFocusChanged!(item.contactPeerId, hasFocus)
+            : null,
+        onQuoteReply: onQuoteReply != null
+            ? (msgId) => onQuoteReply!(item.contactPeerId, msgId)
+            : null,
+        onAttach: onAttach != null ? () => onAttach!(item.contactPeerId) : null,
+        reactions: reactions,
+        reactionListenableForMessage: reactionListenableForMessage,
+        ownPeerId: userPeerId,
+        onMessageLongPress: onReactionSelected != null
+            ? (msgId) => _showReactionBar(context, msgId)
+            : null,
+        onReactionTap: onReactionSelected != null
+            ? (msgId, emoji) => onReactionSelected!(msgId, emoji)
+            : null,
+      );
+    }
+
+    throw ArgumentError.value(
+      item,
+      'item',
+      'Unsupported feed item type ${item.runtimeType}',
+    );
   }
+}
+
+enum _FeedEntryType { item, sessionDivider, spacer, emptyState }
+
+@immutable
+class _FeedEntry {
+  final _FeedEntryType type;
+  final FeedItem? item;
+  final double? height;
+  final String? username;
+
+  const _FeedEntry._({
+    required this.type,
+    this.item,
+    this.height,
+    this.username,
+  });
+
+  const _FeedEntry.item(FeedItem item)
+    : this._(type: _FeedEntryType.item, item: item);
+
+  const _FeedEntry.sessionDivider()
+    : this._(type: _FeedEntryType.sessionDivider);
+
+  const _FeedEntry.spacer({required double height})
+    : this._(type: _FeedEntryType.spacer, height: height);
+
+  const _FeedEntry.emptyState({required String username})
+    : this._(type: _FeedEntryType.emptyState, username: username);
 }
 
 class _EmptyFeedStateCard extends StatelessWidget {
