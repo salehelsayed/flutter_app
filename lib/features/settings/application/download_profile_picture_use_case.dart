@@ -6,16 +6,18 @@ import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
+import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 
 /// Signature of [downloadProfilePicture] for dependency injection.
-typedef DownloadProfilePictureFn = Future<ContactModel?> Function({
-  required Bridge bridge,
-  required ContactRepository contactRepo,
-  required String ownerPeerId,
-  required String avatarVersion,
-});
+typedef DownloadProfilePictureFn =
+    Future<ContactModel?> Function({
+      required Bridge bridge,
+      required ContactRepository contactRepo,
+      required String ownerPeerId,
+      required String avatarVersion,
+    });
 
 /// Downloads a peer's profile picture from the relay and updates the contact.
 ///
@@ -64,6 +66,7 @@ Future<ContactModel?> downloadProfilePicture({
 
     // 3. Evict Flutter image cache so UserAvatar picks up the new file
     FileImage(File(outputPath)).evict();
+    UserAvatar.invalidatePeer(ownerPeerId);
 
     // 4. Update contact
     final contact = await contactRepo.getContact(ownerPeerId);
