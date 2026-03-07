@@ -17,6 +17,8 @@ class UserAvatar extends StatelessWidget {
   static final Map<String, ValueNotifier<String?>> _avatarPathNotifiers = {};
   static final Set<String> _resolvingPeerIds = <String>{};
   static final Set<String> _knownMissingPeerIds = <String>{};
+  /// Monotonic counter appended to path to bust image cache on invalidation.
+  static int _generation = 0;
 
   /// Exposes the documents directory for avatar file checks.
   static String? get documentsDir => _documentsDir;
@@ -36,6 +38,7 @@ class UserAvatar extends StatelessWidget {
   static void invalidatePeer(String peerId) {
     _knownMissingPeerIds.remove(peerId);
     _resolvingPeerIds.remove(peerId);
+    _generation++;
     final notifier = _avatarPathNotifiers.putIfAbsent(
       peerId,
       () => ValueNotifier<String?>(null),
@@ -70,8 +73,10 @@ class UserAvatar extends StatelessWidget {
       final exists = await File(filePath).exists();
       if (exists) {
         _knownMissingPeerIds.remove(peerId);
-        if (notifier.value != filePath) {
-          notifier.value = filePath;
+        // Append generation to bust cache when file content changed at same path
+        final taggedPath = '$filePath?v=$_generation';
+        if (force || notifier.value != taggedPath) {
+          notifier.value = taggedPath;
         }
       } else {
         _knownMissingPeerIds.add(peerId);
@@ -103,6 +108,7 @@ class UserAvatar extends StatelessWidget {
         _buildPhotoAvatar(
           Image.memory(
             avatarBytes!,
+            key: ValueKey(avatarBytes.hashCode),
             fit: BoxFit.cover,
             width: size,
             height: size,
@@ -121,14 +127,17 @@ class UserAvatar extends StatelessWidget {
           if (avatarPath == null) {
             return child!;
           }
+          // Strip cache-bust suffix to get the real file path
+          final realPath = avatarPath.split('?').first;
           return _wrapWithGlow(
             _buildPhotoAvatar(
               Image.file(
-                File(avatarPath),
+                File(realPath),
+                key: ValueKey(avatarPath), // unique key forces reload
                 fit: BoxFit.cover,
                 width: size,
                 height: size,
-                gaplessPlayback: true,
+                gaplessPlayback: false,
                 errorBuilder: _errorBuilder,
               ),
             ),

@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -25,6 +26,30 @@ void main() {
     }
   });
 
+  testWidgets('Image.memory gets unique key when avatarBytes changes', (
+    tester,
+  ) async {
+    final bytesA = Uint8List.fromList(<int>[1, 2, 3]);
+    final bytesB = Uint8List.fromList(<int>[4, 5, 6]);
+
+    await tester.pumpWidget(
+      _wrap(UserAvatar(peerId: 'abc', avatarBytes: bytesA, size: 42)),
+    );
+
+    final imageA = tester.widget<Image>(find.byType(Image));
+    final keyA = imageA.key as ValueKey;
+
+    await tester.pumpWidget(
+      _wrap(UserAvatar(peerId: 'abc', avatarBytes: bytesB, size: 42)),
+    );
+
+    final imageB = tester.widget<Image>(find.byType(Image));
+    final keyB = imageB.key as ValueKey;
+
+    expect(keyA, isNot(equals(keyB)),
+        reason: 'Different bytes must produce different Image keys');
+  });
+
   testWidgets('renders ring avatar when no file exists', (tester) async {
     await tester.pumpWidget(_wrap(const UserAvatar(peerId: 'missing-peer')));
     await tester.pumpAndSettle();
@@ -49,7 +74,7 @@ void main() {
     });
     await tester.pump();
 
-    expect(listenable.value, endsWith('$peerId.jpg'));
+    expect(listenable.value, contains('$peerId.jpg'));
   });
 
   testWidgets('invalidatePeer reloads a newly written avatar path', (
@@ -75,6 +100,6 @@ void main() {
     });
     await tester.pump();
 
-    expect(listenable.value, endsWith('$peerId.jpg'));
+    expect(listenable.value, contains('$peerId.jpg'));
   });
 }

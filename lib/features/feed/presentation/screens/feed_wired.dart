@@ -185,7 +185,7 @@ class _FeedWiredState extends State<FeedWired> {
     _startListeningForIntroductions();
   }
 
-  void _loadIdentity() async {
+  Future<void> _loadIdentity() async {
     try {
       final identity = await widget.repository.loadIdentity();
       if (identity == null || !mounted) return;
