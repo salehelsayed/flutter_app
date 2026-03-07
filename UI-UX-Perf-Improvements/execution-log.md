@@ -74,7 +74,7 @@ Dirty files captured before checkpoint:
   - `PERF-08`: Done
   - `PERF-07`: Pending
 - Wave 2
-  - `PERF-10`: Pending
+  - `PERF-10`: Done
   - `PERF-09 reconciliation`: Pending
 - Wave 3
   - `PERF-11`: Pending
@@ -281,3 +281,34 @@ Follow-up pattern:
 Residual notes:
 - no existing automated route harness was found for the exact `impl-backlog.md` observation flow `Orbit open -> scroll -> search`; the lane used the targeted screen and wired/widget suite above as the best available fallback and leaves real route-level device QA as an outstanding follow-up gap
 - the non-sliver `introsWidget` fallback remains in `OrbitScreen` for compatibility, but `OrbitWired` now uses the sliver-native path that satisfies the scoped `PERF-08` requirement
+
+## Wave 2
+
+### PERF-10 Replace Full Orbit Reloads With Incremental State Updates
+
+Lane:
+- `perf-exec/lane-f-orbit`
+
+Implementation:
+- added single-entity Orbit snapshot loaders for contacts and groups so `OrbitWired` can refresh one friend or one group without calling the full active/archived loaders
+- replaced incoming chat, contact-update, and group-message stream handlers with targeted `_refreshOrbitFriend(...)` and `_refreshOrbitGroup(...)` paths
+- converted friend and group archive, unblock, delete, and route-return updates to the same per-entity refresh pattern, leaving full Orbit reloads only for cold start, explicit reload-all route returns, and error fallback
+- kept search and filter as derived projections over the in-memory source lists so query context survives targeted updates
+
+Follow-up pattern:
+1. local implementation checks
+   - `flutter analyze lib/features/orbit/application/load_orbit_data_use_case.dart lib/features/orbit/application/load_orbit_groups_use_case.dart lib/features/orbit/presentation/screens/orbit_wired.dart test/features/orbit/application/load_orbit_data_use_case_test.dart test/features/orbit/application/load_orbit_groups_use_case_test.dart test/features/orbit/presentation/screens/orbit_wired_test.dart`
+   - result: passed, no issues
+2. follow-up diff review
+   - confirmed broad `_loadOrbitData()` and `_loadGroupData()` calls were removed from isolated chat/contact/group event paths
+   - confirmed full Orbit reloads remain only for cold start, explicit reload-all route returns, and integrity fallback after targeted refresh errors
+   - confirmed targeted refresh preserves the canonical active/archived lists and recomputes search/filter projections from in-memory state instead of requerying all rows
+3. targeted QA / regression surface
+   - `flutter test test/features/orbit/application/load_orbit_data_use_case_test.dart test/features/orbit/application/load_orbit_groups_use_case_test.dart test/features/orbit/presentation/screens/orbit_screen_archived_groups_test.dart test/features/orbit/presentation/screens/orbit_wired_test.dart test/features/orbit/presentation/widgets/orbit_search_trigger_test.dart`
+   - result: all tests passed
+4. visible UX delta
+   - none intended; goal is reduced Orbit reload churn while preserving the existing layout and interactions from `PERF-08`
+
+Residual notes:
+- no existing automated route harness was found for the exact `impl-backlog.md` observation flows `Orbit open -> scroll -> search` and `Orbit idle while new message arrives`; the lane used targeted application, screen, and widget tests as the best available fallback and leaves real device-route QA as an outstanding follow-up gap
+- explicit reload-all paths after QR scan and group-creation return were left intact on purpose because those routes can legitimately mutate multiple Orbit entities outside the safe single-row scope
