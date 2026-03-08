@@ -55,6 +55,7 @@ class FeedScreen extends StatelessWidget {
   final void Function(String messageId, String emoji)? onReactionSelected;
   final void Function(GroupThreadFeedItem)? onGroupTap;
   final void Function(String groupId, String text)? onGroupInlineSend;
+  final void Function(GroupThreadFeedItem)? onGroupAttach;
 
   const FeedScreen({
     super.key,
@@ -91,6 +92,7 @@ class FeedScreen extends StatelessWidget {
     this.onReactionSelected,
     this.onGroupTap,
     this.onGroupInlineSend,
+    this.onGroupAttach,
   });
 
   @override
@@ -400,6 +402,7 @@ class FeedScreen extends StatelessWidget {
       return FeedCard(
         key: ValueKey(item.id),
         thread: item,
+        sessionReply: sessionReplies?.get('group:${item.groupId}'),
         isExpanded: expandedCardId == item.id,
         onToggleExpand: onToggleExpand != null
             ? () => onToggleExpand!(item.id)
@@ -409,6 +412,9 @@ class FeedScreen extends StatelessWidget {
             : null,
         onViewFullConversation: onGroupTap != null
             ? () => onGroupTap!(item)
+            : null,
+        onAttach: onGroupAttach != null
+            ? () => onGroupAttach!(item)
             : null,
       );
     }

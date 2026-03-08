@@ -1,13 +1,12 @@
 import 'dart:math';
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/feed_colors.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 
 /// A feed card shown when two users connect through an introduction.
 ///
-/// Displays two avatars side by side with a dashed line, "Connected!" title,
-/// "Introduced by X" subtitle with a small introducer avatar, and a
+/// Displays "Introduced by X" with a small introducer avatar at the top,
+/// two user avatars side by side with a dashed line, and a
 /// "Send Message" button.
 class IntroductionConnectionCard extends StatefulWidget {
   final String ownPeerId;
@@ -88,52 +87,40 @@ class _IntroductionConnectionCardState
   }
 
   Widget _buildCard() {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final width =
-            constraints.hasBoundedWidth ? constraints.maxWidth : 360.0;
-        final height = clampDouble(width / 1.0, 340, 400);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(34),
+        border: Border.all(color: FeedColors.cardBorder),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(34),
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(22, 24, 22, 20),
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final compact = constraints.maxWidth < 340;
 
-        return SizedBox(
-          height: height,
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(34),
-              border: Border.all(color: FeedColors.cardBorder),
-            ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(34),
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  Padding(
-                      padding: const EdgeInsets.fromLTRB(22, 24, 22, 12),
-                      child: LayoutBuilder(
-                        builder: (context, constraints) {
-                          final compact = constraints.maxWidth < 340;
-
-                          return Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              _buildDualAvatarSection(compact),
-                              SizedBox(height: compact ? 14 : 18),
-                              _buildConnectedTitle(compact),
-                              const SizedBox(height: 6),
-                              _buildIntroducedByRow(compact),
-                              SizedBox(height: compact ? 14 : 18),
-                              _buildSendMessageButton(compact),
-                            ],
-                          );
-                        },
-                      ),
-                    ),
-                    if (widget.isBlocked) _buildBlockedOverlay(),
-                ],
+                  return Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      _buildIntroducedByRow(compact),
+                      SizedBox(height: compact ? 14 : 18),
+                      _buildDualAvatarSection(compact),
+                      SizedBox(height: compact ? 14 : 18),
+                      _buildSendMessageButton(compact),
+                    ],
+                  );
+                },
               ),
             ),
-          ),
-        );
-      },
+            if (widget.isBlocked) _buildBlockedOverlay(),
+          ],
+        ),
+      ),
     );
   }
 
@@ -259,61 +246,15 @@ class _IntroductionConnectionCardState
     );
   }
 
-  Widget _buildConnectedTitle(bool compact) {
-    final badgeSize = compact ? 23.0 : 25.0;
-    final iconSize = compact ? 14.0 : 16.0;
-
+  Widget _buildIntroducedByRow(bool compact) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
+      mainAxisSize: MainAxisSize.min,
       children: [
-        Container(
-          width: badgeSize,
-          height: badgeSize,
-          decoration: const BoxDecoration(
-            color: Color(0xFF49C462),
-            shape: BoxShape.circle,
-            boxShadow: [
-              BoxShadow(
-                color: Color(0x703FC75F),
-                blurRadius: 12,
-                spreadRadius: 1,
-              ),
-            ],
-          ),
-          child: Icon(
-            Icons.check_rounded,
-            size: iconSize,
-            color: const Color.fromRGBO(10, 34, 18, 0.95),
-          ),
-        ),
-        SizedBox(width: compact ? 8 : 10),
-        Text(
-          'Connected!',
-          style: TextStyle(
-            color: const Color(0xFF39D65F),
-            fontSize: compact ? 24 : 28,
-            fontWeight: FontWeight.w900,
-            letterSpacing: -0.3,
-            shadows: const [
-              Shadow(
-                color: Color(0xA0103A1E),
-                offset: Offset(0, 2),
-                blurRadius: 2,
-              ),
-              Shadow(
-                color: Color(0x6B2BE658),
-                blurRadius: 8,
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildIntroducedByRow(bool compact) {
-    return Column(
-      children: [
+        if (widget.introducedByPeerId != null) ...[
+          UserAvatar(peerId: widget.introducedByPeerId!, size: 20),
+          const SizedBox(width: 6),
+        ],
         Text(
           'Introduced by ${widget.introducedBy}',
           style: TextStyle(
@@ -322,10 +263,6 @@ class _IntroductionConnectionCardState
             fontWeight: FontWeight.w500,
           ),
         ),
-        if (widget.introducedByPeerId != null) ...[
-          const SizedBox(height: 6),
-          UserAvatar(peerId: widget.introducedByPeerId!, size: 28),
-        ],
       ],
     );
   }

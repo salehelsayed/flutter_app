@@ -114,7 +114,7 @@ class _ConnectionCardState extends State<ConnectionCard>
                                 style: TextStyle(
                                   color: const Color(0xFF39D65F),
                                   fontSize: compact ? 28 : 32,
-                                  fontWeight: FontWeight.w900,
+                                  fontWeight: FontWeight.w400,
                                   letterSpacing: -0.3,
                                   shadows: const [
                                     Shadow(
