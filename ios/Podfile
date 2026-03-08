@@ -41,6 +41,10 @@ target 'Runner' do
   end
 end
 
+target 'Share Extension' do
+  inherit! :search_paths
+end
+
 post_install do |installer|
   installer.pods_project.targets.each do |target|
     flutter_additional_ios_build_settings(target)
