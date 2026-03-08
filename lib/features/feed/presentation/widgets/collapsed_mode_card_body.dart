@@ -268,13 +268,24 @@ class CollapsedModeCardBody extends StatelessWidget {
     return const Center(
       child: Padding(
         padding: EdgeInsets.only(bottom: 8),
-        child: Text(
-          'Tap to expand',
-          style: TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.w500,
-            color: FeedColors.viewEarlierText,
-          ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.keyboard_arrow_down_rounded,
+              size: 16,
+              color: FeedColors.viewEarlierText,
+            ),
+            SizedBox(width: 2),
+            Text(
+              'Tap to expand',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+                color: FeedColors.viewEarlierText,
+              ),
+            ),
+          ],
         ),
       ),
     );

@@ -1,4 +1,3 @@
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/feed_colors.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
@@ -60,17 +59,11 @@ class MessageBubble extends StatelessWidget {
   Widget build(BuildContext context) {
     return GestureDetector(
       onLongPress: onLongPress,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(14),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-          child: Container(
+      child: Container(
           width: double.infinity,
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(14),
-            color: _backgroundColor,
             border: Border.all(color: _borderColor),
-            boxShadow: null,
           ),
           child: Stack(
             children: [
@@ -180,8 +173,6 @@ class MessageBubble extends StatelessWidget {
               ),
             ],
           ),
-        ),
-      ),
       ),
     );
   }
@@ -201,12 +192,10 @@ class MessageBubble extends StatelessWidget {
 
   Widget _buildInlineContent() {
     final name = senderLabel ?? (isIncoming ? '' : 'You');
-    final nameStyle = TextStyle(
+    const nameStyle = TextStyle(
       fontSize: 14,
       fontWeight: FontWeight.w600,
-      color: isIncoming
-          ? const Color.fromRGBO(255, 255, 255, 0.9)
-          : const Color.fromRGBO(255, 255, 255, 0.6),
+      color: Color.fromRGBO(255, 255, 255, 0.9),
       height: 1.5,
     );
     final bodyStyle = TextStyle(
@@ -332,10 +321,6 @@ class MessageBubble extends StatelessWidget {
         ),
       );
     }).toList();
-  }
-
-  Color get _backgroundColor {
-    return isIncoming ? FeedColors.messageReceivedBg : FeedColors.messageSentBg;
   }
 
   Color get _borderColor {

@@ -166,13 +166,24 @@ class _ScrollableMessagePreviewState extends State<ScrollableMessagePreview> {
       child: const Center(
         child: Padding(
           padding: EdgeInsets.symmetric(vertical: 6),
-          child: Text(
-            'Collapse',
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w500,
-              color: FeedColors.viewEarlierText,
-            ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.keyboard_arrow_up_rounded,
+                size: 16,
+                color: FeedColors.viewEarlierText,
+              ),
+              SizedBox(width: 2),
+              Text(
+                'Collapse',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                  color: FeedColors.viewEarlierText,
+                ),
+              ),
+            ],
           ),
         ),
       ),
