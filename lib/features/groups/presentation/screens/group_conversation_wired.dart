@@ -66,6 +66,7 @@ class GroupConversationWired extends StatefulWidget {
   final ImageQualityPreference videoQualityPreference;
   final AudioRecorderService? audioRecorderService;
   final ActiveConversationTracker? groupConversationTracker;
+  final List<File>? initialAttachments;
 
   const GroupConversationWired({
     super.key,
@@ -85,6 +86,7 @@ class GroupConversationWired extends StatefulWidget {
     this.videoQualityPreference = ImageQualityPreference.compressed,
     this.audioRecorderService,
     this.groupConversationTracker,
+    this.initialAttachments,
   });
 
   @override
@@ -126,6 +128,13 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
   void initState() {
     super.initState();
     widget.groupConversationTracker?.setActive('group:${widget.group.id}');
+    if (widget.initialAttachments != null &&
+        widget.initialAttachments!.isNotEmpty) {
+      _pendingAttachments = widget.initialAttachments!
+          .map((f) => _PendingMedia(file: f))
+          .toList();
+      _updateComposerState(pendingAttachments: _pendingAttachmentFiles());
+    }
     emitFlowEvent(
       layer: 'FL',
       event: 'GROUP_CONV_FL_SCREEN_INIT',

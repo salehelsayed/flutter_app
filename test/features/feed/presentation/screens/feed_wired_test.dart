@@ -1917,6 +1917,76 @@ void main() {
       // No crash or error means subscriptions were disposed cleanly
       expect(find.text('Replaced'), findsOneWidget);
     });
+
+    testWidgets(
+      'group card + button shows media picker bottom sheet',
+      (tester) async {
+        final originalOnError = FlutterError.onError;
+        FlutterError.onError = (details) {
+          if (details.toString().contains('overflowed')) return;
+          originalOnError?.call(details);
+        };
+        addTearDown(() => FlutterError.onError = originalOnError);
+
+        identityRepo.seed(testIdentity);
+
+        final groupRepo = InMemoryGroupRepository();
+        final groupMsgRepo = InMemoryGroupMessageRepository();
+
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: 'g-attach',
+            name: 'Attach Group',
+            type: GroupType.chat,
+            topicName: '/mknoon/group/g-attach',
+            createdAt: DateTime(2026, 2, 1),
+            createdBy: 'admin',
+            myRole: GroupRole.member,
+          ),
+        );
+
+        // Seed a read message so card is in collapsed mode (shows + button)
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: 'gm-read-1',
+            groupId: 'g-attach',
+            senderPeerId: 'other-peer',
+            senderUsername: 'OtherUser',
+            text: 'Hello group',
+            timestamp: DateTime.now().toUtc(),
+            createdAt: DateTime.now().toUtc(),
+            readAt: DateTime.now().toUtc(),
+          ),
+        );
+
+        final fakeGroupListener = _FakeGroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: groupMsgRepo,
+        );
+
+        await tester.pumpWidget(
+          buildFeedWired(
+            groupRepository: groupRepo,
+            groupMessageRepository: groupMsgRepo,
+            groupMessageListener: fakeGroupListener,
+          ),
+        );
+        await pumpFeedFrames(tester, count: 6);
+
+        // The group card should be in collapsed mode with a + button
+        expect(find.byType(CollapsedModeCardBody), findsOneWidget);
+        expect(find.byIcon(Icons.add_rounded), findsOneWidget);
+
+        // Tap the + button
+        await tester.tap(find.byIcon(Icons.add_rounded));
+        await tester.pump(const Duration(milliseconds: 500));
+
+        // Should show bottom sheet with media options
+        expect(find.text('Media Library'), findsOneWidget);
+        expect(find.text('Take Photo'), findsOneWidget);
+        expect(find.text('Record Video'), findsOneWidget);
+      },
+    );
   });
 }
 

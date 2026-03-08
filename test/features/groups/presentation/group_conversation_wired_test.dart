@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -228,6 +229,7 @@ void main() {
       ImageProcessor? imageProcessor,
       FakeAudioRecorderService? audioRecorderService,
       MediaPicker? mediaPicker,
+      List<File>? initialAttachments,
     }) {
       final g = group ?? makeChatGroup();
       return MaterialApp(
@@ -246,6 +248,7 @@ void main() {
           imageProcessor: imageProcessor,
           audioRecorderService: audioRecorderService,
           mediaPicker: mediaPicker,
+          initialAttachments: initialAttachments,
         ),
       );
     }
@@ -723,6 +726,23 @@ void main() {
       await pumpFrames(tester);
 
       expect(tracker.isViewing('group:${group.id}'), isFalse);
+    });
+
+    testWidgets('accepts empty initialAttachments without error',
+        (tester) async {
+      final group = makeChatGroup();
+      await groupRepo.saveGroup(group);
+
+      await tester.pumpWidget(buildWidget(
+        group: group,
+        mediaRepo: CountingMediaAttachmentRepository(),
+        initialAttachments: [],
+      ));
+      await pumpFrames(tester);
+
+      expect(find.byType(GroupConversationWired), findsOneWidget);
+      // No AttachmentPreviewStrip when list is empty
+      expect(find.byType(AttachmentPreviewStrip), findsNothing);
     });
   });
 }

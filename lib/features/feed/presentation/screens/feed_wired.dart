@@ -1316,6 +1316,165 @@ class _FeedWiredState extends State<FeedWired> {
         .then((_) => unawaited(_refreshGroupFeedItem(groupThread.groupId)));
   }
 
+  void _onGroupAttach(GroupThreadFeedItem groupThread) {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.grey[900],
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 8),
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey[600],
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 16),
+            ListTile(
+              leading: const Icon(Icons.photo_library, color: Colors.white),
+              title: const Text(
+                'Media Library',
+                style: TextStyle(color: Colors.white),
+              ),
+              onTap: () {
+                Navigator.pop(ctx);
+                _pickAndOpenGroupConversation(
+                  groupThread,
+                  source: _MediaSource.gallery,
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.camera_alt, color: Colors.white),
+              title: const Text(
+                'Take Photo',
+                style: TextStyle(color: Colors.white),
+              ),
+              onTap: () {
+                Navigator.pop(ctx);
+                _pickAndOpenGroupConversation(
+                  groupThread,
+                  source: _MediaSource.camera,
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.videocam, color: Colors.white),
+              title: const Text(
+                'Record Video',
+                style: TextStyle(color: Colors.white),
+              ),
+              onTap: () {
+                Navigator.pop(ctx);
+                _pickAndOpenGroupConversation(
+                  groupThread,
+                  source: _MediaSource.videoCamera,
+                );
+              },
+            ),
+            const SizedBox(height: 16),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _pickAndOpenGroupConversation(
+    GroupThreadFeedItem groupThread, {
+    required _MediaSource source,
+  }) async {
+    final groupRepo = widget.groupRepository;
+    final msgRepo = widget.groupMessageRepository;
+    final listener = widget.groupMessageListener;
+    if (groupRepo == null || msgRepo == null || listener == null) return;
+
+    try {
+      final picker = ImagePicker();
+      List<File> files;
+
+      switch (source) {
+        case _MediaSource.camera:
+          final picked = await picker.pickImage(source: ImageSource.camera);
+          if (picked == null || !mounted) return;
+          final path = await _processMediaPath(picked.path);
+          files = [File(path)];
+        case _MediaSource.videoCamera:
+          final picked = await picker.pickVideo(source: ImageSource.camera);
+          if (picked == null || !mounted) return;
+          _showProcessingSnackBar();
+          final path = await _processMediaPath(picked.path);
+          if (mounted) ScaffoldMessenger.of(context).hideCurrentSnackBar();
+          files = [File(path)];
+        case _MediaSource.gallery:
+          final picked = await picker.pickMultipleMedia();
+          if (picked.isEmpty || !mounted) return;
+          final hasVideo = picked.any(
+            (xf) => widget.imageProcessor.isProcessableVideo(xf.path),
+          );
+          if (hasVideo) _showProcessingSnackBar();
+          final processedFiles = <File>[];
+          for (final xf in picked) {
+            final path = await _processMediaPath(xf.path);
+            processedFiles.add(File(path));
+          }
+          if (hasVideo && mounted) {
+            ScaffoldMessenger.of(context).hideCurrentSnackBar();
+          }
+          files = processedFiles;
+      }
+
+      if (!mounted) return;
+
+      final group = GroupModel(
+        id: groupThread.groupId,
+        name: groupThread.groupName,
+        type: groupThread.groupType,
+        topicName: '/mknoon/group/${groupThread.groupId}',
+        createdAt: DateTime.now(),
+        createdBy: '',
+        myRole: GroupRole.member,
+      );
+
+      Navigator.of(context)
+          .push(
+            MaterialPageRoute(
+              builder: (_) => GroupConversationWired(
+                group: group,
+                groupRepo: groupRepo,
+                msgRepo: msgRepo,
+                groupMessageListener: listener,
+                bridge: widget.bridge,
+                identityRepo: widget.repository,
+                contactRepo: widget.contactRepository,
+                p2pService: widget.p2pService,
+                mediaAttachmentRepo: widget.mediaAttachmentRepository,
+                mediaFileManager: widget.mediaFileManager,
+                imageProcessor: widget.imageProcessor,
+                qualityPreference: _qualityPreference,
+                videoQualityPreference: _videoQualityPreference,
+                audioRecorderService: widget.audioRecorderService,
+                groupConversationTracker: widget.groupConversationTracker,
+                initialAttachments: files,
+              ),
+            ),
+          )
+          .then((_) => unawaited(_refreshGroupFeedItem(groupThread.groupId)));
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'FEED_FL_GROUP_PICK_ATTACH_ERROR',
+        details: {'error': e.toString()},
+      );
+    }
+  }
+
   Future<void> _onGroupInlineSend(String groupId, String text) async {
     final identity = _identity;
     final groupRepo = widget.groupRepository;
@@ -1666,6 +1825,7 @@ class _FeedWiredState extends State<FeedWired> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      resizeToAvoidBottomInset: false,
       body: FeedScreen(
         username: _username,
         userAvatarBytes: _avatarBytes,
@@ -1698,6 +1858,7 @@ class _FeedWiredState extends State<FeedWired> {
         onReactionSelected: _onReactionSelected,
         onGroupTap: _onGroupTap,
         onGroupInlineSend: _onGroupInlineSend,
+        onGroupAttach: _onGroupAttach,
       ),
     );
   }
