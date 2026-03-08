@@ -1,4 +1,3 @@
-import 'dart:ui';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/feed_colors.dart';
@@ -114,22 +113,18 @@ class _FeedCardState extends State<FeedCard> with TickerProviderStateMixin {
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(24),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
-        child: Stack(
-          children: [
-            Container(
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(24),
-                color: FeedColors.cardBg,
-                border: Border.all(color: _borderColor(state)),
-                boxShadow: _boxShadow(state),
-              ),
-              child: _showOpen ? _buildOpenBody() : _buildCollapsedBody(),
+      child: Stack(
+        children: [
+          Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(color: _borderColor(state)),
+              boxShadow: _boxShadow(state),
             ),
-            if (isBlocked) _buildBlockedOverlay(),
-          ],
-        ),
+            child: _showOpen ? _buildOpenBody() : _buildCollapsedBody(),
+          ),
+          if (isBlocked) _buildBlockedOverlay(),
+        ],
       ),
     );
   }

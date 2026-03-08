@@ -317,7 +317,7 @@ void main() {
   });
 
   group('MessageBubble inline reactions', () {
-    testWidgets('inline reactions and timestamp share a Row',
+    testWidgets('inline reactions render below text, timestamp overlays text',
         (tester) async {
       final reactions = [
         MessageReaction(
@@ -338,35 +338,26 @@ void main() {
         ownPeerId: 'my-peer',
       )));
 
-      // Emoji chips in Wrap on left, timestamp pinned right — both in same Row
-      final emojiElement = find.text('👍').evaluate().first;
+      // Reactions in a Wrap below text
+      expect(find.text('👍'), findsOneWidget);
+      expect(find.byType(Wrap), findsOneWidget);
+      // Timestamp overlaid on text via Stack
+      expect(find.text('3:00 PM'), findsOneWidget);
+
       final timeElement = find.text('3:00 PM').evaluate().first;
-
-      Row? emojiRow;
-      emojiElement.visitAncestorElements((element) {
-        if (element.widget is Row) {
-          emojiRow = element.widget as Row;
-          return false;
-        }
-        return true;
-      });
-
-      Row? timeRow;
+      Stack? timeStack;
       timeElement.visitAncestorElements((element) {
-        if (element.widget is Row) {
-          timeRow = element.widget as Row;
+        if (element.widget is Stack) {
+          timeStack = element.widget as Stack;
           return false;
         }
         return true;
       });
-
-      expect(emojiRow, isNotNull, reason: 'Emoji should have a Row ancestor');
-      expect(timeRow, isNotNull, reason: 'Time should have a Row ancestor');
-      expect(emojiRow, same(timeRow),
-          reason: 'Emoji and time should share the same Row');
+      expect(timeStack, isNotNull,
+          reason: 'Timestamp should be inside a Stack');
     });
 
-    testWidgets('no reactions still right-aligns timestamp in Row',
+    testWidgets('no reactions still right-aligns timestamp in Stack',
         (tester) async {
       await tester.pumpWidget(wrap(const MessageBubble(
         text: 'Hello',
@@ -376,17 +367,18 @@ void main() {
         ownPeerId: 'my-peer',
       )));
 
-      // Timestamp should be inside a Row with an Expanded SizedBox.shrink
+      // Timestamp should be inside a Stack (overlaid on text)
       final timeElement = find.text('3:00 PM').evaluate().first;
-      Row? timeRow;
+      Stack? timeStack;
       timeElement.visitAncestorElements((element) {
-        if (element.widget is Row) {
-          timeRow = element.widget as Row;
+        if (element.widget is Stack) {
+          timeStack = element.widget as Stack;
           return false;
         }
         return true;
       });
-      expect(timeRow, isNotNull, reason: 'Timestamp should be inside a Row');
+      expect(timeStack, isNotNull,
+          reason: 'Timestamp should be inside a Stack');
     });
 
     testWidgets('multiple reaction emojis render inline with counts',
