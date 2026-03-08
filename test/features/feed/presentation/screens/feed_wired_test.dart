@@ -23,6 +23,7 @@ import 'package:flutter_app/features/feed/domain/models/feed_route_changes.dart'
 import 'package:flutter_app/features/feed/presentation/screens/feed_wired.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/feed_card.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/inline_reply_input.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/message_bubble.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -1160,6 +1161,98 @@ void main() {
       expect(find.byType(FeedCard), findsOneWidget);
       expect(find.text('Beta Group'), findsOneWidget);
     });
+
+    testWidgets(
+      'incremental group message carries media attachments to feed card',
+      (tester) async {
+        final originalOnError = FlutterError.onError;
+        FlutterError.onError = (details) {
+          if (details.toString().contains('overflowed')) return;
+          originalOnError?.call(details);
+        };
+        addTearDown(() => FlutterError.onError = originalOnError);
+
+        identityRepo.seed(testIdentity);
+
+        final groupRepo = InMemoryGroupRepository();
+        final groupMsgRepo = InMemoryGroupMessageRepository();
+
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: 'g1',
+            name: 'Media Group',
+            type: GroupType.chat,
+            topicName: '/mknoon/group/g1',
+            createdAt: DateTime(2026, 2, 1),
+            createdBy: 'admin',
+            myRole: GroupRole.member,
+          ),
+        );
+
+        final fakeGroupListener = _FakeGroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: groupMsgRepo,
+        );
+
+        await tester.pumpWidget(
+          buildFeedWired(
+            groupRepository: groupRepo,
+            groupMessageRepository: groupMsgRepo,
+            groupMessageListener: fakeGroupListener,
+          ),
+        );
+        await pumpFeedFrames(tester);
+
+        // Seed a group message + media attachment in DB, then emit the stream
+        // event. This simulates what GroupMessageListener does: save to DB
+        // first, then broadcast the bare GroupMessage (without media field).
+        final newMsg = GroupMessage(
+          id: 'gm-media-1',
+          groupId: 'g1',
+          senderPeerId: 'other-peer',
+          senderUsername: 'Hisam',
+          text: 'Check this',
+          timestamp: DateTime.now().toUtc(),
+          createdAt: DateTime.now().toUtc(),
+        );
+        await groupMsgRepo.saveMessage(newMsg);
+        await mediaAttachmentRepo.saveAttachment(
+          MediaAttachment(
+            id: 'att-gm-1',
+            messageId: 'gm-media-1',
+            mime: 'image/jpeg',
+            size: 2048,
+            mediaType: 'image',
+            localPath: 'media/groups/img.jpg',
+            downloadStatus: 'done',
+            createdAt: DateTime.now().toUtc().toIso8601String(),
+          ),
+        );
+
+        // Emit bare GroupMessage (no media field) — mimics real listener
+        fakeGroupListener.emitGroupMessage(newMsg);
+        await pumpFeedFrames(tester);
+
+        // The card should appear
+        expect(find.byType(FeedCard), findsOneWidget);
+        expect(find.text('Media Group'), findsOneWidget);
+
+        // The open-mode card renders via ScrollableMessagePreview which uses
+        // MessageBubble. If media was loaded, MessageBubble receives non-empty
+        // media list. We verify by finding the Image.file widget that renders
+        // the thumbnail (20×20 in collapsed, or MediaGrid in open).
+        final messageBubbles = tester.widgetList<MessageBubble>(
+          find.byType(MessageBubble),
+        );
+        expect(messageBubbles, isNotEmpty);
+
+        // The first MessageBubble should have media
+        final bubble = messageBubbles.first;
+        expect(bubble.media, isNotEmpty);
+        expect(bubble.media.first.id, 'att-gm-1');
+        expect(bubble.media.first.localPath, contains('media/groups/img.jpg'));
+      },
+    );
 
     testWidgets('incoming chat updates only the affected contact thread', (
       tester,
