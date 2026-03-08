@@ -1,8 +1,16 @@
-# Uncomment this line to define a global platform for your project
-# platform :ios, '13.0'
+platform :ios, '13.0'
 
 # CocoaPods analytics sends network stats synchronously affecting flutter build latency.
 ENV['COCOAPODS_DISABLE_STATS'] = 'true'
+
+# Workaround: xcodeproj gem doesn't yet support Xcode 26 object version 70
+require 'xcodeproj'
+unless Xcodeproj::Constants::COMPATIBILITY_VERSION_BY_OBJECT_VERSION.key?(70)
+  patched = Xcodeproj::Constants::COMPATIBILITY_VERSION_BY_OBJECT_VERSION.dup
+  patched[70] = 'Xcode 16.0'
+  Xcodeproj::Constants.send(:remove_const, :COMPATIBILITY_VERSION_BY_OBJECT_VERSION)
+  Xcodeproj::Constants.const_set(:COMPATIBILITY_VERSION_BY_OBJECT_VERSION, patched.freeze)
+end
 
 project 'Runner', {
   'Debug' => :debug,
@@ -42,7 +50,7 @@ target 'Runner' do
 end
 
 target 'Share Extension' do
-  inherit! :search_paths
+  use_frameworks!
 end
 
 post_install do |installer|
