@@ -17,6 +17,7 @@ class LinkableText extends StatefulWidget {
   final int? maxLines;
   final TextOverflow? overflow;
   final List<InlineSpan>? prefixSpans;
+  final List<InlineSpan>? suffixSpans;
 
   const LinkableText({
     super.key,
@@ -27,6 +28,7 @@ class LinkableText extends StatefulWidget {
     this.maxLines,
     this.overflow,
     this.prefixSpans,
+    this.suffixSpans,
   });
 
   @override
@@ -119,6 +121,7 @@ class _LinkableTextState extends State<LinkableText> {
     final allSpans = <InlineSpan>[
       if (widget.prefixSpans != null) ...widget.prefixSpans!,
       ..._spans,
+      if (widget.suffixSpans != null) ...widget.suffixSpans!,
     ];
 
     return Text.rich(
