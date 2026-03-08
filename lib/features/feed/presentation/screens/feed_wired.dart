@@ -500,6 +500,7 @@ class _FeedWiredState extends State<FeedWired> {
       status: message.isIncoming ? null : message.status,
       senderPeerId: message.senderPeerId,
       senderUsername: message.senderUsername,
+      media: message.media,
     );
   }
 
@@ -680,10 +681,13 @@ class _FeedWiredState extends State<FeedWired> {
         return;
       }
 
+      final displayMessage = message.copyWith(
+        media: await _loadResolvedAttachmentsForMessage(message.id),
+      );
       final currentThread = _threadForGroup(group.id);
       final nextMessages = _mergeThreadMessages(
         currentThread?.messages ?? const <ThreadMessage>[],
-        _toGroupThreadMessage(message),
+        _toGroupThreadMessage(displayMessage),
       );
 
       _feedStore.replaceGroupSnapshot(
