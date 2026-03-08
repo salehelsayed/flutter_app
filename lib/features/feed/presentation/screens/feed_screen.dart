@@ -56,6 +56,8 @@ class FeedScreen extends StatelessWidget {
   final void Function(GroupThreadFeedItem)? onGroupTap;
   final void Function(String groupId, String text)? onGroupInlineSend;
   final void Function(GroupThreadFeedItem)? onGroupAttach;
+  final void Function(String groupId, String messageId, String emoji)?
+      onGroupReactionSelected;
 
   const FeedScreen({
     super.key,
@@ -93,6 +95,7 @@ class FeedScreen extends StatelessWidget {
     this.onGroupTap,
     this.onGroupInlineSend,
     this.onGroupAttach,
+    this.onGroupReactionSelected,
   });
 
   @override
@@ -397,6 +400,44 @@ class FeedScreen extends StatelessWidget {
     }
   }
 
+  void _showGroupReactionBar(
+      BuildContext context, String groupId, String messageId) {
+    final allReactions =
+        reactionListenableForMessage?.call(messageId).value ??
+            reactions[messageId] ??
+            const [];
+    final ownReaction = userPeerId != null
+        ? allReactions
+            .where((r) => r.senderPeerId == userPeerId)
+            .firstOrNull
+        : null;
+
+    showDialog(
+      context: context,
+      barrierColor: Colors.transparent,
+      builder: (dialogContext) => ReactionBar(
+        currentEmoji: ownReaction?.emoji,
+        onReactionSelected: (emoji) {
+          Navigator.of(dialogContext).pop();
+          onGroupReactionSelected?.call(groupId, messageId, emoji);
+        },
+        onPlusTap: () {
+          Navigator.of(dialogContext).pop();
+          _showGroupFullPicker(context, groupId, messageId);
+        },
+        onDismiss: () => Navigator.of(dialogContext).pop(),
+      ),
+    );
+  }
+
+  void _showGroupFullPicker(
+      BuildContext context, String groupId, String messageId) async {
+    final emoji = await showFullEmojiPicker(context);
+    if (emoji != null) {
+      onGroupReactionSelected?.call(groupId, messageId, emoji);
+    }
+  }
+
   Widget _buildFeedItemWidget(BuildContext context, FeedItem item) {
     if (item is GroupThreadFeedItem) {
       return FeedCard(
@@ -415,6 +456,16 @@ class FeedScreen extends StatelessWidget {
             : null,
         onAttach: onGroupAttach != null
             ? () => onGroupAttach!(item)
+            : null,
+        reactions: reactions,
+        reactionListenableForMessage: reactionListenableForMessage,
+        ownPeerId: userPeerId,
+        onMessageLongPress: onGroupReactionSelected != null
+            ? (msgId) => _showGroupReactionBar(context, item.groupId, msgId)
+            : null,
+        onReactionTap: onGroupReactionSelected != null
+            ? (msgId, emoji) =>
+                onGroupReactionSelected!(item.groupId, msgId, emoji)
             : null,
       );
     }

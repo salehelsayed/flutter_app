@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:uuid/uuid.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/amplitude_buffer.dart';
@@ -22,7 +23,13 @@ import 'package:flutter_app/features/conversation/domain/models/media_attachment
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_screen.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/conversation/application/load_reactions_use_case.dart';
+import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
+import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
+import 'package:flutter_app/features/groups/application/remove_group_reaction_use_case.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
+import 'package:flutter_app/features/groups/application/send_group_reaction_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
@@ -67,6 +74,7 @@ class GroupConversationWired extends StatefulWidget {
   final AudioRecorderService? audioRecorderService;
   final ActiveConversationTracker? groupConversationTracker;
   final List<File>? initialAttachments;
+  final ReactionRepository? reactionRepo;
 
   const GroupConversationWired({
     super.key,
@@ -87,6 +95,7 @@ class GroupConversationWired extends StatefulWidget {
     this.audioRecorderService,
     this.groupConversationTracker,
     this.initialAttachments,
+    this.reactionRepo,
   });
 
   @override
@@ -111,6 +120,10 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
   List<_PendingMedia> _pendingAttachments = [];
   final _composerState = ValueNotifier(const ConversationComposerViewState());
   Map<String, List<MediaAttachment>> _mediaMap = {};
+
+  // Reaction state
+  Map<String, List<MessageReaction>> _reactions = {};
+  StreamSubscription<ReactionChange>? _reactionSubscription;
 
   // Voice recording state
   StreamSubscription<Duration>? _durationSub;
@@ -147,6 +160,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
     _loadIdentity();
     _loadMessages();
     _startListening();
+    _startListeningForReactions();
   }
 
   Future<void> _loadIdentity() async {
@@ -183,6 +197,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
         _initialLoadDone = true;
       });
 
+      unawaited(_loadReactions(messages));
       unawaited(_downloadPendingMedia(mediaMap));
       await widget.msgRepo.markAsRead(widget.group.id);
     } catch (e) {
@@ -249,23 +264,84 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
         );
   }
 
+  static const _uuid = Uuid();
+
   Future<void> _onSend(String text) async {
     if (_ownPeerId == null) return;
 
     final hasAttachments = _pendingAttachments.isNotEmpty;
     if (text.isEmpty && !hasAttachments) return;
 
-    // Upload attachments first (if any)
-    List<MediaAttachment>? uploadedAttachments;
-    if (_pendingAttachments.isNotEmpty) {
-      final mediaToUpload = List<_PendingMedia>.from(_pendingAttachments);
-      _pendingAttachments = [];
-      _updateComposerState(
-        pendingAttachments: _pendingAttachmentFiles(),
-        isUploading: true,
-      );
+    // 1. Generate IDs upfront for optimistic display
+    final messageId = _uuid.v4();
+    final now = DateTime.now().toUtc();
 
-      // Get group members for allowedPeers (relay access control)
+    // 2. Capture and clear pending attachments
+    final mediaToUpload = List<_PendingMedia>.from(_pendingAttachments);
+    List<MediaAttachment>? optimisticMedia;
+
+    if (mediaToUpload.isNotEmpty) {
+      final createdAt = now.toIso8601String();
+      optimisticMedia = mediaToUpload.map((m) {
+        final mime = _mimeFromPath(m.file.path);
+        return MediaAttachment(
+          id: _uuid.v4(),
+          messageId: messageId,
+          mime: mime,
+          size: 0,
+          mediaType: MediaAttachment.mediaTypeFromMime(mime),
+          width: m.width,
+          height: m.height,
+          durationMs: m.durationMs,
+          localPath: m.file.path,
+          downloadStatus: 'done',
+          createdAt: createdAt,
+        );
+      }).toList();
+    }
+
+    _pendingAttachments = [];
+    _updateComposerState(
+      pendingAttachments: const [],
+      isUploading: mediaToUpload.isNotEmpty,
+    );
+
+    // 3. Create optimistic message and display immediately
+    final optimisticMessage = GroupMessage(
+      id: messageId,
+      groupId: widget.group.id,
+      senderPeerId: _ownPeerId!,
+      senderUsername: _senderUsername,
+      text: text,
+      timestamp: now,
+      status: 'sending',
+      isIncoming: false,
+      createdAt: now,
+    );
+
+    if (mounted) {
+      setState(() {
+        _upsertMessage(optimisticMessage);
+        if (optimisticMedia != null && optimisticMedia.isNotEmpty) {
+          _updateMediaForMessage(messageId, optimisticMedia);
+        }
+      });
+    }
+
+    // 4. Persist optimistic message to DB
+    try {
+      await widget.msgRepo.saveMessage(optimisticMessage);
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_CONV_FL_OPTIMISTIC_SAVE_ERROR',
+        details: {'error': e.toString()},
+      );
+    }
+
+    // 5. Upload attachments (if any)
+    List<MediaAttachment>? uploadedAttachments;
+    if (mediaToUpload.isNotEmpty) {
       final members = await widget.groupRepo.getMembers(widget.group.id);
       final allowedPeers = members.map((m) => m.peerId).toList();
 
@@ -286,13 +362,15 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
         if (result != null) {
           uploadedAttachments.add(result);
         } else {
-          // Upload failed — restore attachments and abort
+          // Upload failed — restore attachments and mark failed
           if (mounted) {
             _pendingAttachments = mediaToUpload;
             _updateComposerState(
               pendingAttachments: _pendingAttachmentFiles(),
               isUploading: false,
             );
+            _updateLocalMessageStatus(messageId, 'failed');
+            await _persistMessageStatus(messageId, 'failed');
           }
           return;
         }
@@ -302,6 +380,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
       }
     }
 
+    // 6. Publish via use case (network operations)
     final (result, message) = await sendGroupMessage(
       bridge: widget.bridge,
       groupRepo: widget.groupRepo,
@@ -312,12 +391,42 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
       senderPublicKey: _senderPublicKey,
       senderPrivateKey: _senderPrivateKey,
       senderUsername: _senderUsername,
+      messageId: messageId,
+      timestamp: now,
       mediaAttachments: uploadedAttachments,
       mediaAttachmentRepo: widget.mediaAttachmentRepo,
     );
 
+    if (!mounted) return;
+
+    // 7. Update status based on result
     if (result == SendGroupMessageResult.success && message != null) {
-      await _applyMessageUpdate(message, markAsRead: false);
+      // Resolve uploaded media paths for display
+      List<MediaAttachment>? displayMedia;
+      if (uploadedAttachments != null && widget.mediaFileManager != null) {
+        displayMedia = [];
+        for (final a in uploadedAttachments) {
+          if (a.localPath != null) {
+            final absPath = await widget.mediaFileManager!.resolveStoredPath(
+              a.localPath!,
+            );
+            displayMedia.add(a.copyWith(localPath: absPath));
+          } else {
+            displayMedia.add(a);
+          }
+        }
+      }
+      if (mounted) {
+        setState(() {
+          _upsertMessage(message);
+          if (displayMedia != null && displayMedia.isNotEmpty) {
+            _updateMediaForMessage(messageId, displayMedia);
+          }
+        });
+      }
+    } else {
+      _updateLocalMessageStatus(messageId, 'failed');
+      await _persistMessageStatus(messageId, 'failed');
     }
   }
 
@@ -593,6 +702,29 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
     _mediaMap = next;
   }
 
+  void _updateLocalMessageStatus(String messageId, String status) {
+    setState(() {
+      final idx = _messages.indexWhere((m) => m.id == messageId);
+      if (idx >= 0) {
+        final updated = List<GroupMessage>.from(_messages);
+        updated[idx] = updated[idx].copyWith(status: status);
+        _messages = updated;
+      }
+    });
+  }
+
+  Future<void> _persistMessageStatus(String messageId, String status) async {
+    try {
+      await widget.msgRepo.updateMessageStatus(messageId, status);
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_CONV_FL_STATUS_UPDATE_ERROR',
+        details: {'error': e.toString()},
+      );
+    }
+  }
+
   List<File> _pendingAttachmentFiles() => _pendingAttachments
       .map((attachment) => attachment.file)
       .toList(growable: false);
@@ -748,10 +880,60 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
 
     if (recording == null || _ownPeerId == null) return;
 
-    // Upload the voice recording
+    // 1. Generate IDs upfront for optimistic display
+    final messageId = _uuid.v4();
+    final now = DateTime.now().toUtc();
+
+    // 2. Create optimistic message and media
+    final optimisticMedia = [
+      MediaAttachment(
+        id: _uuid.v4(),
+        messageId: messageId,
+        mime: recording.mime,
+        size: recording.sizeBytes,
+        mediaType: 'audio',
+        durationMs: recording.durationMs,
+        localPath: recording.filePath,
+        waveform: waveform,
+        downloadStatus: 'done',
+        createdAt: now.toIso8601String(),
+      ),
+    ];
+
+    final optimisticMessage = GroupMessage(
+      id: messageId,
+      groupId: widget.group.id,
+      senderPeerId: _ownPeerId!,
+      senderUsername: _senderUsername,
+      text: '',
+      timestamp: now,
+      status: 'sending',
+      isIncoming: false,
+      createdAt: now,
+    );
+
+    // 3. Display optimistic message immediately
+    if (mounted) {
+      setState(() {
+        _upsertMessage(optimisticMessage);
+        _updateMediaForMessage(messageId, optimisticMedia);
+      });
+    }
+
+    // 4. Persist optimistic message to DB
+    try {
+      await widget.msgRepo.saveMessage(optimisticMessage);
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_CONV_FL_OPTIMISTIC_SAVE_ERROR',
+        details: {'error': e.toString()},
+      );
+    }
+
+    // 5. Upload the voice recording
     _updateComposerState(isUploading: true);
 
-    // Get group members for allowedPeers (relay access control)
     final members = await widget.groupRepo.getMembers(widget.group.id);
     final allowedPeers = members.map((m) => m.peerId).toList();
 
@@ -769,6 +951,8 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
     if (voiceAttachment == null) {
       if (mounted) {
         _updateComposerState(isUploading: false);
+        _updateLocalMessageStatus(messageId, 'failed');
+        await _persistMessageStatus(messageId, 'failed');
       }
       return;
     }
@@ -777,6 +961,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
       _updateComposerState(isUploading: false);
     }
 
+    // 6. Publish via use case
     final (result, message) = await sendGroupMessage(
       bridge: widget.bridge,
       groupRepo: widget.groupRepo,
@@ -787,12 +972,41 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
       senderPublicKey: _senderPublicKey,
       senderPrivateKey: _senderPrivateKey,
       senderUsername: _senderUsername,
+      messageId: messageId,
+      timestamp: now,
       mediaAttachments: [voiceAttachment],
       mediaAttachmentRepo: widget.mediaAttachmentRepo,
     );
 
+    if (!mounted) return;
+
+    // 7. Update status based on result
     if (result == SendGroupMessageResult.success && message != null) {
-      await _applyMessageUpdate(message, markAsRead: false);
+      List<MediaAttachment>? displayMedia;
+      if (widget.mediaFileManager != null) {
+        displayMedia = [];
+        for (final a in [voiceAttachment]) {
+          if (a.localPath != null) {
+            final absPath = await widget.mediaFileManager!.resolveStoredPath(
+              a.localPath!,
+            );
+            displayMedia.add(a.copyWith(localPath: absPath));
+          } else {
+            displayMedia.add(a);
+          }
+        }
+      }
+      if (mounted) {
+        setState(() {
+          _upsertMessage(message);
+          if (displayMedia != null && displayMedia.isNotEmpty) {
+            _updateMediaForMessage(messageId, displayMedia);
+          }
+        });
+      }
+    } else {
+      _updateLocalMessageStatus(messageId, 'failed');
+      await _persistMessageStatus(messageId, 'failed');
     }
   }
 
@@ -903,10 +1117,123 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
     return map[ext] ?? 'application/octet-stream';
   }
 
+  Future<void> _loadReactions(List<GroupMessage> messages) async {
+    if (widget.reactionRepo == null) return;
+    final messageIds = messages.map((m) => m.id).toList();
+    if (messageIds.isEmpty) return;
+
+    final reactionsByMessage = await loadReactionsForConversation(
+      reactionRepo: widget.reactionRepo!,
+      messageIds: messageIds,
+    );
+    if (!mounted) return;
+
+    setState(() {
+      _reactions = {..._reactions, ...reactionsByMessage};
+    });
+  }
+
+  void _startListeningForReactions() {
+    _reactionSubscription = widget.groupMessageListener
+        .groupReactionChangeStream
+        .listen(_onIncomingReactionChange);
+  }
+
+  void _onIncomingReactionChange(ReactionChange change) {
+    if (!mounted) return;
+    setState(() {
+      final list = List<MessageReaction>.from(
+        _reactions[change.messageId] ?? [],
+      );
+
+      if (change.type == ReactionChangeType.removed) {
+        list.removeWhere((r) => r.senderPeerId == change.senderPeerId);
+      } else if (change.reaction != null) {
+        // Replace existing from same sender or add
+        list.removeWhere((r) => r.senderPeerId == change.senderPeerId);
+        list.add(change.reaction!);
+      }
+
+      _reactions = {..._reactions, change.messageId: list};
+    });
+  }
+
+  Future<void> _onReactionSelected(String messageId, String emoji) async {
+    if (widget.reactionRepo == null) return;
+    if (_ownPeerId == null) return;
+
+    // Check if we already have a reaction with this emoji — toggle off
+    final existing = (_reactions[messageId] ?? []).where(
+      (r) => r.senderPeerId == _ownPeerId && r.emoji == emoji,
+    );
+
+    if (existing.isNotEmpty) {
+      // Optimistic remove
+      setState(() {
+        final list = List<MessageReaction>.from(_reactions[messageId] ?? []);
+        list.removeWhere((r) => r.senderPeerId == _ownPeerId);
+        _reactions = {..._reactions, messageId: list};
+      });
+
+      await removeGroupReaction(
+        bridge: widget.bridge,
+        groupRepo: widget.groupRepo,
+        reactionRepo: widget.reactionRepo!,
+        groupId: widget.group.id,
+        messageId: messageId,
+        emoji: emoji,
+        senderPeerId: _ownPeerId!,
+        senderPublicKey: _senderPublicKey,
+        senderPrivateKey: _senderPrivateKey,
+      );
+      return;
+    }
+
+    // Optimistic add
+    final tempReaction = MessageReaction(
+      id: '',
+      messageId: messageId,
+      emoji: emoji,
+      senderPeerId: _ownPeerId!,
+      timestamp: DateTime.now().toUtc().toIso8601String(),
+      createdAt: DateTime.now().toUtc().toIso8601String(),
+    );
+    setState(() {
+      final list = List<MessageReaction>.from(_reactions[messageId] ?? []);
+      list.removeWhere((r) => r.senderPeerId == _ownPeerId);
+      list.add(tempReaction);
+      _reactions = {..._reactions, messageId: list};
+    });
+
+    final (result, reaction) = await sendGroupReaction(
+      bridge: widget.bridge,
+      groupRepo: widget.groupRepo,
+      msgRepo: widget.msgRepo,
+      reactionRepo: widget.reactionRepo!,
+      groupId: widget.group.id,
+      messageId: messageId,
+      emoji: emoji,
+      senderPeerId: _ownPeerId!,
+      senderPublicKey: _senderPublicKey,
+      senderPrivateKey: _senderPrivateKey,
+    );
+
+    if (result == SendGroupReactionResult.success && reaction != null) {
+      if (!mounted) return;
+      setState(() {
+        final list = List<MessageReaction>.from(_reactions[messageId] ?? []);
+        list.removeWhere((r) => r.id == '' && r.senderPeerId == _ownPeerId);
+        list.add(reaction);
+        _reactions = {..._reactions, messageId: list};
+      });
+    }
+  }
+
   @override
   void dispose() {
     widget.groupConversationTracker?.clear();
     _messageSubscription?.cancel();
+    _reactionSubscription?.cancel();
     _durationSub?.cancel();
     _amplitudeSub?.cancel();
     if (_isRecording) {
@@ -941,6 +1268,10 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
           ? _onRecordCancel
           : null,
       onMediaTap: _onMediaTap,
+      reactions: _reactions,
+      onReactionSelected: widget.reactionRepo != null
+          ? _onReactionSelected
+          : null,
     );
   }
 }

@@ -223,6 +223,8 @@ class _FakeBridge implements Bridge {
   onAddressesUpdated;
   @override
   void Function(Map<String, dynamic>)? onGroupMessageReceived;
+  @override
+  void Function(Map<String, dynamic>)? onGroupReactionReceived;
 }
 
 class _FakeMediaFileManager extends MediaFileManager {
@@ -268,6 +270,8 @@ class _ThrowingBridge implements Bridge {
   onAddressesUpdated;
   @override
   void Function(Map<String, dynamic>)? onGroupMessageReceived;
+  @override
+  void Function(Map<String, dynamic>)? onGroupReactionReceived;
 }
 
 // -- Helpers --

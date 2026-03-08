@@ -103,6 +103,7 @@ class GoBridge(flutterEngine: FlutterEngine) : MethodChannel.MethodCallHandler,
             "groupJoinTopic" -> runOnBackground({ GoMknoon.groupJoinTopic(args ?: "") }, result)
             "groupLeaveTopic" -> runOnBackground({ GoMknoon.groupLeaveTopic(args ?: "") }, result)
             "groupPublish" -> runOnBackground({ GoMknoon.groupPublish(args ?: "") }, result)
+            "groupPublishReaction" -> runOnBackground({ GoMknoon.groupPublishReaction(args ?: "") }, result)
             "groupUpdateConfig" -> runOnBackground({ GoMknoon.groupUpdateConfig(args ?: "") }, result)
             "groupRotateKey" -> runOnBackground({ GoMknoon.groupRotateKey(args ?: "") }, result)
             "groupUpdateKey" -> runOnBackground({ GoMknoon.groupUpdateKey(args ?: "") }, result)

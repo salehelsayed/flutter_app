@@ -203,6 +203,8 @@ class _FakeBridge implements Bridge {
   @override
   void Function(Map<String, dynamic>)? onGroupMessageReceived;
   @override
+  void Function(Map<String, dynamic>)? onGroupReactionReceived;
+  @override
   void Function(p2p.ConnectionState)? onPeerConnected;
   @override
   void Function(p2p.ConnectionState)? onPeerDisconnected;

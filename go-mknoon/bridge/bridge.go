@@ -1320,15 +1320,19 @@ func GroupPublish(paramsJSON string) (result string) {
 		SenderPublicKey  string                   `json:"senderPublicKey"`
 		SenderPrivateKey string                   `json:"senderPrivateKey"`
 		SenderUsername   string                   `json:"senderUsername"`
+		MessageId        string                   `json:"messageId,omitempty"`
 		Media            []map[string]interface{} `json:"media,omitempty"`
 	}
 	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
 		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
 	}
 
-	if params.GroupId == "" || params.Text == "" || params.SenderPeerId == "" ||
+	if params.GroupId == "" || params.SenderPeerId == "" ||
 		params.SenderPublicKey == "" || params.SenderPrivateKey == "" {
-		return errJSON("INVALID_INPUT", "missing groupId, text, senderPeerId, senderPublicKey, or senderPrivateKey")
+		return errJSON("INVALID_INPUT", "missing groupId, senderPeerId, senderPublicKey, or senderPrivateKey")
+	}
+	if params.Text == "" && len(params.Media) == 0 {
+		return errJSON("INVALID_INPUT", "either text or media is required")
 	}
 
 	var opts map[string]interface{}
@@ -1345,6 +1349,7 @@ func GroupPublish(paramsJSON string) (result string) {
 		params.SenderPublicKey,
 		params.SenderUsername,
 		params.Text,
+		params.MessageId,
 		opts,
 	)
 	if err != nil {
@@ -1354,6 +1359,58 @@ func GroupPublish(paramsJSON string) (result string) {
 	return okJSON(map[string]interface{}{
 		"ok":        true,
 		"messageId": msgId,
+	})
+}
+
+// GroupPublishReaction encrypts, signs, and publishes a reaction to a group topic.
+// Input JSON: { "groupId": "...", "senderPeerId": "...", "senderPublicKey": "...", "senderPrivateKey": "...", "reactionPayload": "..." }
+// The reactionPayload is a JSON string that gets encrypted inside the v3 group_reaction envelope.
+// Returns JSON: { "ok": true }
+func GroupPublishReaction(paramsJSON string) (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+		}
+	}()
+
+	nodeMu.Lock()
+	n := singletonNode
+	nodeMu.Unlock()
+
+	if n == nil {
+		return errJSON("NOT_INITIALIZED", "call Initialize first")
+	}
+
+	var params struct {
+		GroupId          string `json:"groupId"`
+		SenderPeerId     string `json:"senderPeerId"`
+		SenderPublicKey  string `json:"senderPublicKey"`
+		SenderPrivateKey string `json:"senderPrivateKey"`
+		ReactionPayload  string `json:"reactionPayload"`
+	}
+	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
+		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
+	}
+
+	if params.GroupId == "" || params.SenderPeerId == "" ||
+		params.SenderPublicKey == "" || params.SenderPrivateKey == "" ||
+		params.ReactionPayload == "" {
+		return errJSON("INVALID_INPUT", "missing required fields")
+	}
+
+	err := n.PublishGroupReaction(
+		params.GroupId,
+		params.SenderPrivateKey,
+		params.SenderPeerId,
+		params.SenderPublicKey,
+		params.ReactionPayload,
+	)
+	if err != nil {
+		return errJSON("GROUP_ERROR", err.Error())
+	}
+
+	return okJSON(map[string]interface{}{
+		"ok": true,
 	})
 }
 

@@ -4,10 +4,13 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_screen.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/attachment_preview_strip.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/full_emoji_picker.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/letter_card.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/reaction_bar.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_type_badge.dart';
@@ -42,6 +45,8 @@ class GroupConversationScreen extends StatelessWidget {
   final List<double> amplitudeValues;
   final ValueListenable<ConversationComposerViewState>? composerStateListenable;
   final void Function(String messageId, int index)? onMediaTap;
+  final Map<String, List<MessageReaction>> reactions;
+  final void Function(String messageId, String emoji)? onReactionSelected;
 
   const GroupConversationScreen({
     super.key,
@@ -69,6 +74,8 @@ class GroupConversationScreen extends StatelessWidget {
     this.amplitudeValues = const [],
     this.composerStateListenable,
     this.onMediaTap,
+    this.reactions = const {},
+    this.onReactionSelected,
   });
 
   ConversationComposerViewState get _legacyComposerState =>
@@ -269,6 +276,14 @@ class GroupConversationScreen extends StatelessWidget {
             onMediaTap: onMediaTap != null
                 ? (index) => onMediaTap!(message.id, index)
                 : null,
+            reactions: reactions[message.id] ?? const [],
+            ownPeerId: ownPeerId,
+            onReactionTap: onReactionSelected != null
+                ? (emoji) => onReactionSelected!(message.id, emoji)
+                : null,
+            onLongPress: onReactionSelected != null
+                ? () => _showReactionBar(context, message.id)
+                : null,
           ),
         );
       },
@@ -289,6 +304,39 @@ class GroupConversationScreen extends StatelessWidget {
         style: TextStyle(fontSize: 13, color: Colors.white.withOpacity(0.35)),
       ),
     );
+  }
+
+  void _showReactionBar(BuildContext context, String messageId) {
+    final messageReactions = reactions[messageId] ?? [];
+    final ownReaction = ownPeerId != null
+        ? messageReactions
+            .where((r) => r.senderPeerId == ownPeerId)
+            .firstOrNull
+        : null;
+
+    showDialog(
+      context: context,
+      barrierColor: Colors.transparent,
+      builder: (dialogContext) => ReactionBar(
+        currentEmoji: ownReaction?.emoji,
+        onReactionSelected: (emoji) {
+          Navigator.of(dialogContext).pop();
+          onReactionSelected?.call(messageId, emoji);
+        },
+        onPlusTap: () {
+          Navigator.of(dialogContext).pop();
+          _showFullPicker(context, messageId);
+        },
+        onDismiss: () => Navigator.of(dialogContext).pop(),
+      ),
+    );
+  }
+
+  void _showFullPicker(BuildContext context, String messageId) async {
+    final emoji = await showFullEmojiPicker(context);
+    if (emoji != null) {
+      onReactionSelected?.call(messageId, emoji);
+    }
   }
 
   static String _formatTime(DateTime timestamp) {

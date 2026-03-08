@@ -1205,6 +1205,43 @@ func TestGroupPublish_MissingFields(t *testing.T) {
 	assertNotOk(t, m, "INVALID_INPUT")
 }
 
+func TestGroupPublish_EmptyTextAndNoMedia_Fails(t *testing.T) {
+	withSingletonNode(t)
+	result := GroupPublish(`{
+		"groupId": "g1",
+		"text": "",
+		"senderPeerId": "peer1",
+		"senderPublicKey": "pk1",
+		"senderPrivateKey": "sk1",
+		"senderUsername": "Alice"
+	}`)
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "INVALID_INPUT")
+}
+
+func TestGroupPublish_MediaOnly_AcceptsEmptyText(t *testing.T) {
+	withSingletonNode(t)
+	// GroupPublish will fail at PublishGroupMessage (no real group), but it
+	// must pass input validation when text is empty but media is present.
+	result := GroupPublish(`{
+		"groupId": "g1",
+		"text": "",
+		"senderPeerId": "peer1",
+		"senderPublicKey": "pk1",
+		"senderPrivateKey": "sk1",
+		"senderUsername": "Alice",
+		"media": [{"id": "m1", "mime": "audio/mp4", "size": 48000}]
+	}`)
+	m := parseJSON(t, result)
+	// Should NOT be INVALID_INPUT — the validation passed. It will fail
+	// with GROUP_ERROR because the group doesn't actually exist.
+	if code, ok := m["errorCode"].(string); ok {
+		if code == "INVALID_INPUT" {
+			t.Fatalf("expected media-only publish to pass validation, got INVALID_INPUT")
+		}
+	}
+}
+
 func TestGroupUpdateConfig_InvalidJSON(t *testing.T) {
 	withSingletonNode(t)
 	result := GroupUpdateConfig("not valid json")

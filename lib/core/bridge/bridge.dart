@@ -39,6 +39,9 @@ abstract class Bridge {
 
   /// Event callback for incoming group messages.
   void Function(Map<String, dynamic>)? onGroupMessageReceived;
+
+  /// Event callback for incoming group reactions.
+  void Function(Map<String, dynamic>)? onGroupReactionReceived;
 }
 
 /// Calls the bridge to generate a new identity.

@@ -60,6 +60,8 @@ class _FakeBridge implements Bridge {
       onAddressesUpdated;
   @override
   void Function(Map<String, dynamic>)? onGroupMessageReceived;
+  @override
+  void Function(Map<String, dynamic>)? onGroupReactionReceived;
 }
 
 class _FakeContactRepo implements ContactRepository {

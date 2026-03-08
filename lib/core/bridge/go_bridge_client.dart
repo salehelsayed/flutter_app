@@ -78,6 +78,7 @@ class GoBridgeClient extends Bridge {
     'group:join': _CmdSpec('groupJoinTopic', true),
     'group:leave': _CmdSpec('groupLeaveTopic', true),
     'group:publish': _CmdSpec('groupPublish', true),
+    'group:publishReaction': _CmdSpec('groupPublishReaction', true),
     'group:updateConfig': _CmdSpec('groupUpdateConfig', true),
     'group:rotateKey': _CmdSpec('groupRotateKey', true),
     'group:updateKey': _CmdSpec('groupUpdateKey', true),
@@ -204,6 +205,7 @@ class GoBridgeClient extends Bridge {
     onPeerDisconnected = null;
     onAddressesUpdated = null;
     onGroupMessageReceived = null;
+    onGroupReactionReceived = null;
   }
 
   /// Handle push events from the Go layer.
@@ -278,6 +280,17 @@ class GoBridgeClient extends Bridge {
             } catch (e) {
               debugPrint(
                   '[GoBridgeClient] Error handling group message: $e');
+            }
+          }
+          break;
+
+        case 'group_reaction:received':
+          if (onGroupReactionReceived != null) {
+            try {
+              onGroupReactionReceived!(eventData);
+            } catch (e) {
+              debugPrint(
+                  '[GoBridgeClient] Error handling group reaction: $e');
             }
           }
           break;

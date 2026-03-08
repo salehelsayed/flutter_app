@@ -1,0 +1,171 @@
+import 'dart:convert';
+
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
+import 'package:flutter_app/features/groups/application/handle_incoming_group_reaction_use_case.dart';
+import 'package:flutter_app/features/groups/domain/models/group_member.dart';
+import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+
+import '../../../shared/fakes/in_memory_group_repository.dart';
+import '../../../../test/features/conversation/domain/repositories/fake_reaction_repository.dart';
+
+void main() {
+  late InMemoryGroupRepository groupRepo;
+  late FakeReactionRepository reactionRepo;
+
+  setUp(() async {
+    groupRepo = InMemoryGroupRepository();
+    reactionRepo = FakeReactionRepository();
+
+    final testGroup = GroupModel(
+      id: 'group-1',
+      name: 'Test Group',
+      type: GroupType.chat,
+      topicName: 'group-topic-1',
+      createdAt: DateTime.now().toUtc(),
+      createdBy: 'peer-1',
+      myRole: GroupRole.admin,
+    );
+    await groupRepo.saveGroup(testGroup);
+
+    final member = GroupMember(
+      groupId: 'group-1',
+      peerId: 'peer-sender',
+      username: 'Bob',
+      role: MemberRole.writer,
+      joinedAt: DateTime.now().toUtc(),
+    );
+    await groupRepo.saveMember(member);
+  });
+
+  String makeReactionJson({
+    String id = 'r-1',
+    String messageId = 'msg-1',
+    String emoji = '👍',
+    String action = 'add',
+    String senderPeerId = 'peer-sender',
+    String timestamp = '2026-03-08T00:00:00.000Z',
+  }) {
+    return jsonEncode({
+      'id': id,
+      'messageId': messageId,
+      'emoji': emoji,
+      'action': action,
+      'senderPeerId': senderPeerId,
+      'timestamp': timestamp,
+    });
+  }
+
+  test('upserts reaction', () async {
+    final (result, change) = await handleIncomingGroupReaction(
+      groupRepo: groupRepo,
+      reactionRepo: reactionRepo,
+      groupId: 'group-1',
+      senderId: 'peer-sender',
+      reactionJson: makeReactionJson(),
+    );
+
+    expect(result, HandleGroupReactionResult.success);
+    expect(change, isNotNull);
+    expect(change!.type, ReactionChangeType.upserted);
+    expect(change.reaction!.emoji, '👍');
+
+    final stored = await reactionRepo.getReactionsForMessage('msg-1');
+    expect(stored, hasLength(1));
+  });
+
+  test('replaces prior emoji from same sender', () async {
+    // First reaction: 👍
+    await handleIncomingGroupReaction(
+      groupRepo: groupRepo,
+      reactionRepo: reactionRepo,
+      groupId: 'group-1',
+      senderId: 'peer-sender',
+      reactionJson: makeReactionJson(emoji: '👍'),
+    );
+
+    // Second reaction: ❤️ (same sender, should replace)
+    final (result, change) = await handleIncomingGroupReaction(
+      groupRepo: groupRepo,
+      reactionRepo: reactionRepo,
+      groupId: 'group-1',
+      senderId: 'peer-sender',
+      reactionJson: makeReactionJson(id: 'r-2', emoji: '❤️'),
+    );
+
+    expect(result, HandleGroupReactionResult.success);
+    expect(change!.reaction!.emoji, '❤️');
+
+    final stored = await reactionRepo.getReactionsForMessage('msg-1');
+    expect(stored, hasLength(1));
+    expect(stored.first.emoji, '❤️');
+  });
+
+  test('removes reaction on remove action', () async {
+    // Add first
+    await handleIncomingGroupReaction(
+      groupRepo: groupRepo,
+      reactionRepo: reactionRepo,
+      groupId: 'group-1',
+      senderId: 'peer-sender',
+      reactionJson: makeReactionJson(),
+    );
+
+    // Remove
+    final (result, change) = await handleIncomingGroupReaction(
+      groupRepo: groupRepo,
+      reactionRepo: reactionRepo,
+      groupId: 'group-1',
+      senderId: 'peer-sender',
+      reactionJson: makeReactionJson(id: 'r-remove', action: 'remove'),
+    );
+
+    expect(result, HandleGroupReactionResult.success);
+    expect(change!.type, ReactionChangeType.removed);
+
+    final stored = await reactionRepo.getReactionsForMessage('msg-1');
+    expect(stored, isEmpty);
+  });
+
+  test('returns unknownGroup for nonexistent group', () async {
+    final (result, change) = await handleIncomingGroupReaction(
+      groupRepo: groupRepo,
+      reactionRepo: reactionRepo,
+      groupId: 'nonexistent',
+      senderId: 'peer-sender',
+      reactionJson: makeReactionJson(),
+    );
+
+    expect(result, HandleGroupReactionResult.unknownGroup);
+    expect(change, isNull);
+  });
+
+  test('returns parseError for invalid JSON', () async {
+    final (result, change) = await handleIncomingGroupReaction(
+      groupRepo: groupRepo,
+      reactionRepo: reactionRepo,
+      groupId: 'group-1',
+      senderId: 'peer-sender',
+      reactionJson: 'not valid json',
+    );
+
+    expect(result, HandleGroupReactionResult.parseError);
+    expect(change, isNull);
+  });
+
+  test('still processes reaction from unknown sender (stale member list)',
+      () async {
+    final (result, change) = await handleIncomingGroupReaction(
+      groupRepo: groupRepo,
+      reactionRepo: reactionRepo,
+      groupId: 'group-1',
+      senderId: 'unknown-peer',
+      reactionJson: makeReactionJson(senderPeerId: 'unknown-peer'),
+    );
+
+    // Should succeed — unknown sender is logged but not rejected
+    expect(result, HandleGroupReactionResult.success);
+    expect(change, isNotNull);
+  });
+}

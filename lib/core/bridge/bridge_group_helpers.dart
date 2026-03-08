@@ -251,6 +251,7 @@ Future<Map<String, dynamic>> callGroupPublish(
   required String senderPublicKey,
   required String senderPrivateKey,
   String senderUsername = '',
+  String? messageId,
   List<Map<String, dynamic>>? media,
   Duration timeout = const Duration(seconds: 10),
 }) async {
@@ -271,6 +272,9 @@ Future<Map<String, dynamic>> callGroupPublish(
     'senderPrivateKey': senderPrivateKey,
     'senderUsername': senderUsername,
   };
+  if (messageId != null && messageId.isNotEmpty) {
+    payload['messageId'] = messageId;
+  }
   if (media != null && media.isNotEmpty) {
     payload['media'] = media;
   }
@@ -296,6 +300,66 @@ Future<Map<String, dynamic>> callGroupPublish(
     emitFlowEvent(
       layer: 'FL',
       event: 'GROUP_FL_BRIDGE_PUBLISH_RESPONSE',
+      details: {'ok': false, 'errorCode': 'BRIDGE_TIMEOUT'},
+    );
+
+    return {
+      'ok': false,
+      'errorCode': 'BRIDGE_TIMEOUT',
+      'errorMessage': 'Bridge call timed out after ${timeout.inSeconds}s',
+    };
+  }
+}
+
+/// Calls the bridge to publish a reaction to a group topic.
+///
+/// The reaction payload is encrypted and signed inside a v3 group_reaction
+/// envelope by Go. All group members can react, including non-admins in
+/// announcement groups.
+Future<Map<String, dynamic>> callGroupPublishReaction(
+  Bridge bridge, {
+  required String groupId,
+  required String senderPeerId,
+  required String senderPublicKey,
+  required String senderPrivateKey,
+  required String reactionPayload,
+  Duration timeout = const Duration(seconds: 10),
+}) async {
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'GROUP_FL_BRIDGE_PUBLISH_REACTION_REQUEST',
+    details: {
+      'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+    },
+  );
+
+  final request = {
+    'cmd': 'group:publishReaction',
+    'payload': {
+      'groupId': groupId,
+      'senderPeerId': senderPeerId,
+      'senderPublicKey': senderPublicKey,
+      'senderPrivateKey': senderPrivateKey,
+      'reactionPayload': reactionPayload,
+    },
+  };
+
+  try {
+    final responseJson =
+        await bridge.send(jsonEncode(request)).timeout(timeout);
+    final response = jsonDecode(responseJson) as Map<String, dynamic>;
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_FL_BRIDGE_PUBLISH_REACTION_RESPONSE',
+      details: {'ok': response['ok']},
+    );
+
+    return response;
+  } on TimeoutException {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_FL_BRIDGE_PUBLISH_REACTION_RESPONSE',
       details: {'ok': false, 'errorCode': 'BRIDGE_TIMEOUT'},
     );
 
