@@ -39,6 +39,9 @@ import 'package:flutter_app/features/groups/application/rejoin_group_topics_use_
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
 import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository.dart';
 import 'package:flutter_app/features/introduction/application/introduction_listener.dart';
+import 'package:flutter_app/core/services/share_intent_service.dart';
+import 'package:flutter_app/features/share/presentation/screens/share_target_picker_wired.dart';
+import 'package:flutter_app/main.dart';
 
 /// Router widget that handles app startup navigation.
 ///
@@ -119,6 +122,9 @@ class StartupRouter extends StatefulWidget {
   /// The introduction listener for incoming introductions.
   final IntroductionListener? introductionListener;
 
+  /// The share intent service for handling shared content from external apps.
+  final ShareIntentService? shareIntentService;
+
   const StartupRouter({
     super.key,
     required this.repository,
@@ -144,6 +150,7 @@ class StartupRouter extends StatefulWidget {
     this.groupConversationTracker,
     this.introductionRepository,
     this.introductionListener,
+    this.shareIntentService,
   });
 
   @override
@@ -227,6 +234,10 @@ class _StartupRouterState extends State<StartupRouter> {
 
           // Start P2P node in background after navigation
           _startP2PInBackground();
+
+          // Mark settled and consume any buffered share intent
+          widget.shareIntentService?.isSettled = true;
+          _consumePendingShareIntent();
           break;
 
         case StartupDecision.hasIdentityNoContacts:
@@ -531,6 +542,42 @@ class _StartupRouterState extends State<StartupRouter> {
   void _setStartupStage(String stage) {
     if (!mounted || _startupStage == stage) return;
     setState(() => _startupStage = stage);
+  }
+
+  void _consumePendingShareIntent() {
+    final shareService = widget.shareIntentService;
+    if (shareService == null) return;
+    final intent = shareService.consumePendingIntent();
+    if (intent == null) return;
+    shareService.reset();
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final navigator = MyApp.navigatorKey.currentState;
+      if (navigator == null) return;
+      navigator.push(MaterialPageRoute(
+        builder: (_) => ShareTargetPickerWired(
+          shareIntent: intent,
+          identityRepo: widget.repository,
+          contactRepository: widget.contactRepository,
+          messageRepository: widget.messageRepository,
+          mediaAttachmentRepository: widget.mediaAttachmentRepository,
+          chatMessageListener: widget.chatMessageListener,
+          bridge: widget.bridge,
+          p2pService: widget.p2pService,
+          mediaFileManager: widget.mediaFileManager,
+          imageProcessor: widget.imageProcessor,
+          conversationTracker: widget.conversationTracker,
+          audioRecorderService: widget.audioRecorderService,
+          reactionRepository: widget.reactionRepository,
+          reactionListener: widget.reactionListener,
+          groupRepository: widget.groupRepository,
+          groupMessageRepository: widget.groupMessageRepository,
+          groupMessageListener: widget.groupMessageListener,
+          groupConversationTracker: widget.groupConversationTracker,
+          introductionRepository: widget.introductionRepository,
+        ),
+      ));
+    });
   }
 
   Future<void> _pushStartupReplacement({required WidgetBuilder builder}) async {
