@@ -1319,6 +1319,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
               qualityPreference: _qualityPreference,
               videoQualityPreference: _videoQualityPreference,
               audioRecorderService: widget.audioRecorderService,
+              reactionRepo: widget.reactionRepository,
             ),
           ),
         )

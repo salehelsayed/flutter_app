@@ -11,6 +11,7 @@ import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
@@ -40,6 +41,7 @@ class GroupListWired extends StatefulWidget {
   final ImageQualityPreference videoQualityPreference;
   final AudioRecorderService? audioRecorderService;
   final ActiveConversationTracker? groupConversationTracker;
+  final ReactionRepository? reactionRepo;
 
   const GroupListWired({
     super.key,
@@ -58,6 +60,7 @@ class GroupListWired extends StatefulWidget {
     this.videoQualityPreference = ImageQualityPreference.compressed,
     this.audioRecorderService,
     this.groupConversationTracker,
+    this.reactionRepo,
   });
 
   @override
@@ -160,6 +163,7 @@ class _GroupListWiredState extends State<GroupListWired> {
               videoQualityPreference: widget.videoQualityPreference,
               audioRecorderService: widget.audioRecorderService,
               groupConversationTracker: widget.groupConversationTracker,
+              reactionRepo: widget.reactionRepo,
             ),
           ),
         )

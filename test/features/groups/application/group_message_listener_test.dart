@@ -5,6 +5,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
+import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
@@ -15,6 +16,7 @@ import '../../../shared/fakes/fake_notification_service.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../shared/fakes/in_memory_media_attachment_repository.dart';
+import '../../conversation/domain/repositories/fake_reaction_repository.dart';
 
 void main() {
   late InMemoryGroupRepository groupRepo;
@@ -832,6 +834,182 @@ void main() {
       expect(notifService.shown, hasLength(1));
 
       notifListener.dispose();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Group reactions
+  // ---------------------------------------------------------------------------
+  group('group reactions', () {
+    late FakeReactionRepository reactionRepo;
+    late StreamController<Map<String, dynamic>> reactionSource;
+
+    setUp(() {
+      reactionRepo = FakeReactionRepository();
+      reactionSource = StreamController<Map<String, dynamic>>.broadcast();
+    });
+
+    tearDown(() {
+      reactionSource.close();
+    });
+
+    test(
+        'emits ReactionChange on groupReactionChangeStream for incoming add reaction',
+        () async {
+      final rxnListener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+        reactionRepo: reactionRepo,
+      );
+
+      rxnListener.start(
+        sourceController.stream,
+        incomingGroupReactions: reactionSource.stream,
+      );
+
+      final changes = <ReactionChange>[];
+      final sub = rxnListener.groupReactionChangeStream.listen(changes.add);
+
+      reactionSource.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-sender',
+        'reaction': jsonEncode({
+          'id': 'rxn-1',
+          'messageId': 'msg-1',
+          'emoji': '\u{1F44D}',
+          'action': 'add',
+          'senderPeerId': 'peer-sender',
+          'timestamp': '2026-01-01T00:00:00.000Z',
+        }),
+      });
+
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      expect(changes.length, 1);
+      expect(changes.first.type, ReactionChangeType.upserted);
+      expect(changes.first.messageId, 'msg-1');
+      expect(changes.first.reaction?.emoji, '\u{1F44D}');
+      expect(reactionRepo.saveReactionCallCount, 1);
+
+      await sub.cancel();
+      rxnListener.dispose();
+    });
+
+    test('emits removal ReactionChange when action is remove', () async {
+      final rxnListener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+        reactionRepo: reactionRepo,
+      );
+
+      rxnListener.start(
+        sourceController.stream,
+        incomingGroupReactions: reactionSource.stream,
+      );
+
+      final changes = <ReactionChange>[];
+      final sub = rxnListener.groupReactionChangeStream.listen(changes.add);
+
+      reactionSource.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-sender',
+        'reaction': jsonEncode({
+          'id': 'rxn-1',
+          'messageId': 'msg-1',
+          'emoji': '\u{1F44D}',
+          'action': 'remove',
+          'senderPeerId': 'peer-sender',
+          'timestamp': '2026-01-01T00:00:00.000Z',
+        }),
+      });
+
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      expect(changes.length, 1);
+      expect(changes.first.type, ReactionChangeType.removed);
+      expect(changes.first.messageId, 'msg-1');
+      expect(changes.first.senderPeerId, 'peer-sender');
+
+      await sub.cancel();
+      rxnListener.dispose();
+    });
+
+    test('ignores reaction when reactionRepo is null', () async {
+      final noRepoListener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+        // No reactionRepo
+      );
+
+      noRepoListener.start(
+        sourceController.stream,
+        incomingGroupReactions: reactionSource.stream,
+      );
+
+      final changes = <ReactionChange>[];
+      final sub =
+          noRepoListener.groupReactionChangeStream.listen(changes.add);
+
+      reactionSource.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-sender',
+        'reaction': jsonEncode({
+          'id': 'rxn-1',
+          'messageId': 'msg-1',
+          'emoji': '\u{1F44D}',
+          'action': 'add',
+          'senderPeerId': 'peer-sender',
+          'timestamp': '2026-01-01T00:00:00.000Z',
+        }),
+      });
+
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      expect(changes, isEmpty);
+
+      await sub.cancel();
+      noRepoListener.dispose();
+    });
+
+    test('ignores malformed reaction data', () async {
+      final rxnListener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+        reactionRepo: reactionRepo,
+      );
+
+      rxnListener.start(
+        sourceController.stream,
+        incomingGroupReactions: reactionSource.stream,
+      );
+
+      final changes = <ReactionChange>[];
+      final sub = rxnListener.groupReactionChangeStream.listen(changes.add);
+
+      // Empty groupId and senderId → malformed, should be ignored
+      reactionSource.add({
+        'groupId': '',
+        'senderId': '',
+        'reaction': jsonEncode({
+          'id': 'rxn-1',
+          'messageId': 'msg-1',
+          'emoji': '\u{1F44D}',
+          'action': 'add',
+          'senderPeerId': 'peer-sender',
+          'timestamp': '2026-01-01T00:00:00.000Z',
+        }),
+      });
+
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      expect(changes, isEmpty);
+
+      await sub.cancel();
+      rxnListener.dispose();
     });
   });
 }

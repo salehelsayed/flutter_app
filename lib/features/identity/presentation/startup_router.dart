@@ -383,6 +383,7 @@ class _StartupRouterState extends State<StartupRouter> {
             groupRepo: groupRepo,
             msgRepo: groupMsgRepo,
             mediaAttachmentRepo: widget.mediaAttachmentRepository,
+            reactionRepo: widget.reactionRepository,
           );
         }
       }
