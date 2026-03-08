@@ -1,11 +1,13 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/feed/application/feed_projection.dart';
 import 'package:flutter_app/features/feed/application/load_contact_feed_snapshot_use_case.dart';
 import 'package:flutter_app/features/feed/application/load_feed_use_case.dart';
 import 'package:flutter_app/features/feed/application/load_group_feed_snapshot_use_case.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
+import 'package:flutter_app/features/feed/domain/utils/group_group_messages_into_threads.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 
@@ -543,6 +545,47 @@ void main() {
         incrementallyUpdated.whereType<GroupThreadFeedItem>().single.groupId,
         'group-1',
       );
+    });
+
+    test('group message with media flows through to ThreadMessage', () async {
+      final attachment = MediaAttachment(
+        id: 'att-g1',
+        messageId: 'gm-1',
+        mime: 'image/jpeg',
+        size: 2048,
+        mediaType: 'image',
+        downloadStatus: 'done',
+        localPath: '/tmp/group-img.jpg',
+        createdAt: '2026-02-01T11:00:00.000Z',
+      );
+      final groupMsg = GroupMessage(
+        id: 'gm-1',
+        groupId: 'group-1',
+        senderPeerId: 'peer-B',
+        senderUsername: 'Bob',
+        text: 'Check this out',
+        timestamp: DateTime.utc(2026, 2, 1, 11, 0),
+        createdAt: DateTime.utc(2026, 2, 1, 11, 0),
+        media: [attachment],
+      );
+      final group = GroupModel(
+        id: 'group-1',
+        name: 'Alpha',
+        type: GroupType.chat,
+        topicName: '/mknoon/group/group-1',
+        createdAt: DateTime.utc(2026, 2, 1),
+        createdBy: 'admin',
+        myRole: GroupRole.member,
+      );
+
+      final items = groupGroupMessagesIntoThreads(
+        allGroupMessages: [groupMsg],
+        groups: [group],
+      );
+
+      expect(items, hasLength(1));
+      expect(items.first.messages.first.media, hasLength(1));
+      expect(items.first.messages.first.media.first.id, 'att-g1');
     });
 
     test('archived group removal matches cold load', () async {

@@ -349,6 +349,8 @@ class _FeedWiredState extends State<FeedWired> {
         groupRepo: groupRepo,
         groupMsgRepo: groupMsgRepo,
         groupId: groupId,
+        mediaAttachmentRepo: widget.mediaAttachmentRepository,
+        mediaFileManager: widget.mediaFileManager,
       );
       if (!mounted) return;
 
@@ -414,6 +416,8 @@ class _FeedWiredState extends State<FeedWired> {
       final groupItems = await loadGroupFeedItems(
         groupRepo: widget.groupRepository,
         groupMsgRepo: widget.groupMessageRepository,
+        mediaAttachmentRepo: widget.mediaAttachmentRepository,
+        mediaFileManager: widget.mediaFileManager,
       );
       if (!mounted) return;
 
