@@ -20,6 +20,7 @@ class ComposeArea extends StatefulWidget {
   final bool isRecording;
   final Duration recordingDuration;
   final List<double> amplitudeValues;
+  final String? initialText;
 
   const ComposeArea({
     super.key,
@@ -33,6 +34,7 @@ class ComposeArea extends StatefulWidget {
     this.isRecording = false,
     this.recordingDuration = Duration.zero,
     this.amplitudeValues = const [],
+    this.initialText,
   });
 
   @override
@@ -69,7 +71,14 @@ class _ComposeAreaState extends State<ComposeArea>
     _controller.addListener(_onTextChanged);
     _focusNode.addListener(_onFocusChanged);
 
-    if (widget.hasAttachments) {
+    if (widget.initialText != null && widget.initialText!.isNotEmpty) {
+      _controller.text = widget.initialText!;
+      _controller.selection = TextSelection.collapsed(
+        offset: _controller.text.length,
+      );
+    }
+
+    if (widget.hasAttachments || _controller.text.trim().isNotEmpty) {
       _sendButtonController.value = 1.0;
     }
   }

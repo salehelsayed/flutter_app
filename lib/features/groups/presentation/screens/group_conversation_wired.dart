@@ -74,6 +74,7 @@ class GroupConversationWired extends StatefulWidget {
   final AudioRecorderService? audioRecorderService;
   final ActiveConversationTracker? groupConversationTracker;
   final List<File>? initialAttachments;
+  final String? initialText;
   final ReactionRepository? reactionRepo;
 
   const GroupConversationWired({
@@ -95,6 +96,7 @@ class GroupConversationWired extends StatefulWidget {
     this.audioRecorderService,
     this.groupConversationTracker,
     this.initialAttachments,
+    this.initialText,
     this.reactionRepo,
   });
 
@@ -1272,6 +1274,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
       onReactionSelected: widget.reactionRepo != null
           ? _onReactionSelected
           : null,
+      initialText: widget.initialText,
     );
   }
 }

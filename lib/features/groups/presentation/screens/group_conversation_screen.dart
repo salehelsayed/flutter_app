@@ -47,6 +47,7 @@ class GroupConversationScreen extends StatelessWidget {
   final void Function(String messageId, int index)? onMediaTap;
   final Map<String, List<MessageReaction>> reactions;
   final void Function(String messageId, String emoji)? onReactionSelected;
+  final String? initialText;
 
   const GroupConversationScreen({
     super.key,
@@ -76,6 +77,7 @@ class GroupConversationScreen extends StatelessWidget {
     this.onMediaTap,
     this.reactions = const {},
     this.onReactionSelected,
+    this.initialText,
   });
 
   ConversationComposerViewState get _legacyComposerState =>
@@ -142,6 +144,7 @@ class GroupConversationScreen extends StatelessWidget {
             isRecording: composerState.isRecording,
             recordingDuration: composerState.recordingDuration,
             amplitudeValues: composerState.amplitudeValues,
+            initialText: initialText,
           ),
       ],
     );

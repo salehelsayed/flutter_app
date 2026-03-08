@@ -99,6 +99,7 @@ class ConversationScreen extends StatefulWidget {
   final String? bannerContactUsername;
   final VoidCallback? onMakeIntroductions;
   final VoidCallback? onMaybeLater;
+  final String? initialText;
 
   const ConversationScreen({
     super.key,
@@ -136,6 +137,7 @@ class ConversationScreen extends StatefulWidget {
     this.bannerContactUsername,
     this.onMakeIntroductions,
     this.onMaybeLater,
+    this.initialText,
   });
 
   @override
@@ -250,6 +252,7 @@ class _ConversationScreenState extends State<ConversationScreen> {
           isRecording: composerState.isRecording,
           recordingDuration: composerState.recordingDuration,
           amplitudeValues: composerState.amplitudeValues,
+          initialText: widget.initialText,
         ),
       ],
     );
