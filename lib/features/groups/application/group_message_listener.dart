@@ -11,7 +11,10 @@ import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/application/download_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
+import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_message_use_case.dart';
+import 'package:flutter_app/features/groups/application/handle_incoming_group_reaction_use_case.dart';
 import 'package:flutter_app/features/groups/application/leave_group_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
@@ -42,10 +45,13 @@ class GroupMessageListener {
   final NotificationService? _notificationService;
   final ActiveConversationTracker? _groupConversationTracker;
   final AppLifecycleState Function()? _getAppLifecycleState;
+  final ReactionRepository? _reactionRepo;
 
   StreamSubscription<Map<String, dynamic>>? _subscription;
+  StreamSubscription<Map<String, dynamic>>? _reactionSubscription;
   final _messageController = StreamController<GroupMessage>.broadcast();
   final _removedController = StreamController<String>.broadcast();
+  final _reactionChangeController = StreamController<ReactionChange>.broadcast();
 
   GroupMessageListener({
     required GroupRepository groupRepo,
@@ -57,6 +63,7 @@ class GroupMessageListener {
     NotificationService? notificationService,
     ActiveConversationTracker? groupConversationTracker,
     AppLifecycleState Function()? getAppLifecycleState,
+    ReactionRepository? reactionRepo,
   })  : _groupRepo = groupRepo,
         _msgRepo = msgRepo,
         _bridge = bridge,
@@ -65,7 +72,8 @@ class GroupMessageListener {
         _mediaFileManager = mediaFileManager,
         _notificationService = notificationService,
         _groupConversationTracker = groupConversationTracker,
-        _getAppLifecycleState = getAppLifecycleState;
+        _getAppLifecycleState = getAppLifecycleState,
+        _reactionRepo = reactionRepo;
 
   /// Stream of new incoming group messages for the UI to listen to.
   Stream<GroupMessage> get groupMessageStream => _messageController.stream;
@@ -73,8 +81,15 @@ class GroupMessageListener {
   /// Stream of group IDs that the local user was removed from.
   Stream<String> get groupRemovedStream => _removedController.stream;
 
-  /// Starts listening for incoming group messages.
-  void start(Stream<Map<String, dynamic>> incomingGroupMessages) {
+  /// Stream of incoming group reaction changes for the UI to listen to.
+  Stream<ReactionChange> get groupReactionChangeStream =>
+      _reactionChangeController.stream;
+
+  /// Starts listening for incoming group messages and optionally reactions.
+  void start(
+    Stream<Map<String, dynamic>> incomingGroupMessages, {
+    Stream<Map<String, dynamic>>? incomingGroupReactions,
+  }) {
     if (_subscription != null) return;
 
     emitFlowEvent(
@@ -100,6 +115,19 @@ class GroupMessageListener {
         );
       },
     );
+
+    if (incomingGroupReactions != null) {
+      _reactionSubscription = incomingGroupReactions.listen(
+        _handleReaction,
+        onError: (error) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'GROUP_REACTION_LISTENER_STREAM_ERROR',
+            details: {'error': error.toString()},
+          );
+        },
+      );
+    }
   }
 
   Future<void> _handleMessage(Map<String, dynamic> data) async {
@@ -129,6 +157,7 @@ class GroupMessageListener {
 
       final mediaRaw = data['media'] as List<dynamic>?;
       final media = mediaRaw?.cast<Map<String, dynamic>>();
+      final wireMessageId = data['messageId'] as String?;
 
       final result = await handleIncomingGroupMessage(
         groupRepo: _groupRepo,
@@ -139,6 +168,7 @@ class GroupMessageListener {
         keyEpoch: keyEpoch,
         text: text,
         timestamp: timestamp,
+        messageId: wireMessageId,
         media: media,
         mediaAttachmentRepo: _mediaAttachmentRepo,
       );
@@ -430,6 +460,44 @@ class GroupMessageListener {
     );
   }
 
+  /// Handles an incoming group reaction event from the bridge.
+  Future<void> _handleReaction(Map<String, dynamic> data) async {
+    try {
+      final groupId = data['groupId'] as String? ?? '';
+      final senderId = data['senderId'] as String? ?? '';
+      final reactionJson = data['reaction'] as String? ?? '';
+
+      if (groupId.isEmpty || senderId.isEmpty || reactionJson.isEmpty) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_REACTION_LISTENER_MALFORMED',
+          details: {'groupId': groupId, 'senderId': senderId},
+        );
+        return;
+      }
+
+      if (_reactionRepo == null) return;
+
+      final (result, change) = await handleIncomingGroupReaction(
+        groupRepo: _groupRepo,
+        reactionRepo: _reactionRepo!,
+        groupId: groupId,
+        senderId: senderId,
+        reactionJson: reactionJson,
+      );
+
+      if (result == HandleGroupReactionResult.success && change != null) {
+        _reactionChangeController.add(change);
+      }
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_REACTION_LISTENER_ERROR',
+        details: {'error': e.toString()},
+      );
+    }
+  }
+
   /// Stops listening for messages.
   void stop() {
     emitFlowEvent(
@@ -440,6 +508,8 @@ class GroupMessageListener {
 
     _subscription?.cancel();
     _subscription = null;
+    _reactionSubscription?.cancel();
+    _reactionSubscription = null;
   }
 
   /// Disposes of the listener and closes streams.
@@ -447,5 +517,6 @@ class GroupMessageListener {
     stop();
     _messageController.close();
     _removedController.close();
+    _reactionChangeController.close();
   }
 }

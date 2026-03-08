@@ -51,7 +51,9 @@ import 'package:flutter_app/features/identity/domain/models/identity_model.dart'
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
+import 'package:flutter_app/features/groups/application/remove_group_reaction_use_case.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
+import 'package:flutter_app/features/groups/application/send_group_reaction_use_case.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
@@ -150,6 +152,7 @@ class _FeedWiredState extends State<FeedWired> {
   StreamSubscription<ContactModel>? _contactUpdateSubscription;
   StreamSubscription<ReactionChange>? _reactionSubscription;
   StreamSubscription<dynamic>? _groupMessageSubscription;
+  StreamSubscription<ReactionChange>? _groupReactionSubscription;
   StreamSubscription<IntroductionModel>? _introReceivedSubscription;
   StreamSubscription<IntroductionModel>? _introStatusSubscription;
   ImageQualityPreference _qualityPreference = ImageQualityPreference.compressed;
@@ -180,6 +183,7 @@ class _FeedWiredState extends State<FeedWired> {
     _startListeningForChatMessages();
     _startListeningForContactUpdates();
     _startListeningForReactions();
+    _startListeningForGroupReactions();
     _startListeningForGroupMessages();
     _startListeningForIntroductions();
   }
@@ -1244,6 +1248,24 @@ class _FeedWiredState extends State<FeedWired> {
     _reactionStore.applyChange(change);
   }
 
+  void _startListeningForGroupReactions() {
+    final listener = widget.groupMessageListener;
+    if (listener == null) return;
+    _groupReactionSubscription = listener.groupReactionChangeStream.listen(
+      (change) {
+        if (!mounted) return;
+        _reactionStore.applyChange(change);
+      },
+      onError: (error) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'FEED_GROUP_REACTION_STREAM_ERROR',
+          details: {'error': error.toString()},
+        );
+      },
+    );
+  }
+
   void _startListeningForGroupMessages() {
     final listener = widget.groupMessageListener;
     if (listener == null) return;
@@ -1320,6 +1342,7 @@ class _FeedWiredState extends State<FeedWired> {
               videoQualityPreference: _videoQualityPreference,
               audioRecorderService: widget.audioRecorderService,
               groupConversationTracker: widget.groupConversationTracker,
+              reactionRepo: widget.reactionRepository,
             ),
           ),
         )
@@ -1474,6 +1497,7 @@ class _FeedWiredState extends State<FeedWired> {
                 videoQualityPreference: _videoQualityPreference,
                 audioRecorderService: widget.audioRecorderService,
                 groupConversationTracker: widget.groupConversationTracker,
+                reactionRepo: widget.reactionRepository,
                 initialAttachments: files,
               ),
             ),
@@ -1621,6 +1645,91 @@ class _FeedWiredState extends State<FeedWired> {
 
     // Update with real reaction on success
     if (result == SendReactionResult.success && reaction != null && mounted) {
+      final updated = List<MessageReaction>.from(
+        _reactionStore.reactionsForMessage(messageId),
+      );
+      final idx = updated.indexWhere((r) => r.senderPeerId == identity.peerId);
+      if (idx >= 0) {
+        updated[idx] = reaction;
+      }
+      _reactionStore.setMessageReactions(messageId, updated);
+    }
+  }
+
+  Future<void> _onGroupReactionSelected(
+      String groupId, String messageId, String emoji) async {
+    final identity = _identity;
+    if (identity == null) return;
+
+    final reactionRepo = widget.reactionRepository;
+    final groupRepo = widget.groupRepository;
+    final msgRepo = widget.groupMessageRepository;
+    if (reactionRepo == null || groupRepo == null || msgRepo == null) return;
+
+    // Check if toggling (same emoji from same user)
+    final currentReactions = _reactionStore.reactionsForMessage(messageId);
+    final ownReaction = currentReactions
+        .where((r) => r.senderPeerId == identity.peerId)
+        .firstOrNull;
+
+    if (ownReaction != null && ownReaction.emoji == emoji) {
+      // Toggle off: remove reaction optimistically
+      final updated = currentReactions
+          .where((r) => r.senderPeerId != identity.peerId)
+          .toList();
+      _reactionStore.setMessageReactions(messageId, updated);
+
+      await removeGroupReaction(
+        bridge: widget.bridge,
+        groupRepo: groupRepo,
+        reactionRepo: reactionRepo,
+        groupId: groupId,
+        messageId: messageId,
+        emoji: emoji,
+        senderPeerId: identity.peerId,
+        senderPublicKey: identity.publicKey,
+        senderPrivateKey: identity.privateKey,
+      );
+      return;
+    }
+
+    // Add/replace reaction optimistically
+    final now = DateTime.now().toUtc().toIso8601String();
+    final optimisticReaction = MessageReaction(
+      id: '',
+      messageId: messageId,
+      emoji: emoji,
+      senderPeerId: identity.peerId,
+      timestamp: now,
+      createdAt: now,
+    );
+
+    final updated = List<MessageReaction>.from(currentReactions);
+    final idx = updated.indexWhere((r) => r.senderPeerId == identity.peerId);
+    if (idx >= 0) {
+      updated[idx] = optimisticReaction;
+    } else {
+      updated.add(optimisticReaction);
+    }
+    _reactionStore.setMessageReactions(messageId, updated);
+
+    final (result, reaction) = await sendGroupReaction(
+      bridge: widget.bridge,
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      reactionRepo: reactionRepo,
+      groupId: groupId,
+      messageId: messageId,
+      emoji: emoji,
+      senderPeerId: identity.peerId,
+      senderPublicKey: identity.publicKey,
+      senderPrivateKey: identity.privateKey,
+    );
+
+    // Update with real reaction on success
+    if (result == SendGroupReactionResult.success &&
+        reaction != null &&
+        mounted) {
       final updated = List<MessageReaction>.from(
         _reactionStore.reactionsForMessage(messageId),
       );
@@ -1832,6 +1941,7 @@ class _FeedWiredState extends State<FeedWired> {
     _chatSubscription?.cancel();
     _contactUpdateSubscription?.cancel();
     _reactionSubscription?.cancel();
+    _groupReactionSubscription?.cancel();
     _groupMessageSubscription?.cancel();
     _introReceivedSubscription?.cancel();
     _introStatusSubscription?.cancel();
@@ -1878,6 +1988,7 @@ class _FeedWiredState extends State<FeedWired> {
         onGroupTap: _onGroupTap,
         onGroupInlineSend: _onGroupInlineSend,
         onGroupAttach: _onGroupAttach,
+        onGroupReactionSelected: _onGroupReactionSelected,
       ),
     );
   }

@@ -48,6 +48,8 @@ class _FakeDecryptBridge implements Bridge {
   void Function(List<String>, List<String>)? onAddressesUpdated;
   @override
   void Function(Map<String, dynamic>)? onGroupMessageReceived;
+  @override
+  void Function(Map<String, dynamic>)? onGroupReactionReceived;
 }
 
 void main() {

@@ -114,6 +114,9 @@ class FakeBridge implements Bridge {
 
   @override
   void Function(Map<String, dynamic>)? onGroupMessageReceived;
+
+  @override
+  void Function(Map<String, dynamic>)? onGroupReactionReceived;
 }
 
 /// A [FakeBridge] that passes plaintext through encrypt/decrypt transparently.

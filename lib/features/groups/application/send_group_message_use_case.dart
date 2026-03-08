@@ -37,6 +37,8 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
   required String senderPublicKey,
   required String senderPrivateKey,
   required String senderUsername,
+  String? messageId,
+  DateTime? timestamp,
   List<MediaAttachment>? mediaAttachments,
   MediaAttachmentRepository? mediaAttachmentRepo,
 }) async {
@@ -70,9 +72,21 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     return (SendGroupMessageResult.unauthorized, null);
   }
 
+  // 2b. Reject empty messages (no text and no media)
+  final hasMedia = mediaAttachments != null && mediaAttachments.isNotEmpty;
+  if (text.trim().isEmpty && !hasMedia) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_SEND_MSG_USE_CASE_EMPTY',
+      details: {},
+    );
+    return (SendGroupMessageResult.error, null);
+  }
+
   // 3. Publish + inbox store run concurrently (independent operations)
-  final now = DateTime.now().toUtc();
+  final now = timestamp ?? DateTime.now().toUtc();
   final latestKey = await groupRepo.getLatestKey(groupId);
+  final resolvedMessageId = messageId ?? const Uuid().v4();
 
   final mediaJson = mediaAttachments?.map((a) => a.toJson()).toList();
 
@@ -85,6 +99,7 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     senderPublicKey: senderPublicKey,
     senderPrivateKey: senderPrivateKey,
     senderUsername: senderUsername,
+    messageId: resolvedMessageId,
     media: mediaJson,
   );
   final inboxFuture = _safeInboxStore(
@@ -95,6 +110,7 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     keyEpoch: latestKey?.keyGeneration ?? 0,
     text: text,
     timestamp: now,
+    messageId: resolvedMessageId,
     media: mediaJson,
   );
 
@@ -125,10 +141,8 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
   await inboxFuture;
 
   // 5. Create GroupMessage (isIncoming: false, status: 'sent')
-  final messageId = const Uuid().v4();
-
   final message = GroupMessage(
-    id: messageId,
+    id: resolvedMessageId,
     groupId: groupId,
     senderPeerId: senderPeerId,
     senderUsername: senderUsername,
@@ -147,7 +161,7 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
   if (mediaAttachments != null && mediaAttachmentRepo != null) {
     for (final a in mediaAttachments) {
       await mediaAttachmentRepo.saveAttachment(
-        a.copyWith(messageId: messageId),
+        a.copyWith(messageId: resolvedMessageId),
       );
     }
   }
@@ -156,7 +170,9 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     layer: 'FL',
     event: 'GROUP_SEND_MSG_USE_CASE_SUCCESS',
     details: {
-      'messageId': messageId.length > 8 ? messageId.substring(0, 8) : messageId,
+      'messageId': resolvedMessageId.length > 8
+          ? resolvedMessageId.substring(0, 8)
+          : resolvedMessageId,
     },
   );
 
@@ -172,6 +188,7 @@ Future<void> _safeInboxStore({
   required int keyEpoch,
   required String text,
   required DateTime timestamp,
+  required String messageId,
   List<Map<String, dynamic>>? media,
 }) async {
   try {
@@ -182,6 +199,7 @@ Future<void> _safeInboxStore({
       'keyEpoch': keyEpoch,
       'text': text,
       'timestamp': timestamp.toIso8601String(),
+      'messageId': messageId,
       if (media != null && media.isNotEmpty) 'media': media,
     });
     await callGroupInboxStore(bridge, groupId, inboxPayload);

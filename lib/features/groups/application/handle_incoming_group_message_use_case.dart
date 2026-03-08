@@ -21,6 +21,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
   required int keyEpoch,
   required String text,
   required String timestamp,
+  String? messageId,
   List<Map<String, dynamic>>? media,
   MediaAttachmentRepository? mediaAttachmentRepo,
 }) async {
@@ -82,12 +83,14 @@ Future<GroupMessage?> handleIncomingGroupMessage({
     return null;
   }
 
-  // 4. Generate message ID
-  final messageId = const Uuid().v4();
+  // 4. Use wire messageId if provided, otherwise generate one
+  final resolvedMessageId = (messageId != null && messageId.isNotEmpty)
+      ? messageId
+      : const Uuid().v4();
 
   // 5. Create GroupMessage (isIncoming: true)
   final message = GroupMessage(
-    id: messageId,
+    id: resolvedMessageId,
     groupId: groupId,
     senderPeerId: senderId,
     senderUsername: senderUsername,
@@ -106,7 +109,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
   if (media != null && mediaAttachmentRepo != null) {
     for (final m in media) {
       final attachment = MediaAttachment.fromJson(m)
-          .copyWith(messageId: messageId);
+          .copyWith(messageId: resolvedMessageId);
       await mediaAttachmentRepo.saveAttachment(attachment);
     }
   }
@@ -115,7 +118,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
     layer: 'FL',
     event: 'GROUP_HANDLE_INCOMING_MSG_SUCCESS',
     details: {
-      'messageId': messageId.length > 8 ? messageId.substring(0, 8) : messageId,
+      'messageId': resolvedMessageId.length > 8 ? resolvedMessageId.substring(0, 8) : resolvedMessageId,
     },
   );
 

@@ -135,8 +135,9 @@ func (n *Node) LeaveGroupTopic(groupId string) error {
 }
 
 // PublishGroupMessage encrypts, signs, and publishes a message to a group topic.
-// Returns the message ID (UUID).
-func (n *Node) PublishGroupMessage(groupId, privateKeyB64, senderPeerId, senderPublicKeyB64, senderUsername, text string, opts map[string]interface{}) (string, error) {
+// Returns the message ID (UUID). If messageId is non-empty, it is used instead
+// of generating a new one — this allows the sender to reference the same ID locally.
+func (n *Node) PublishGroupMessage(groupId, privateKeyB64, senderPeerId, senderPublicKeyB64, senderUsername, text, messageId string, opts map[string]interface{}) (string, error) {
 	n.mu.RLock()
 	topic, topicOk := n.groupTopics[groupId]
 	config, configOk := n.groupConfigs[groupId]
@@ -153,14 +154,24 @@ func (n *Node) PublishGroupMessage(groupId, privateKeyB64, senderPeerId, senderP
 	}
 
 	// 1. Build GroupMessagePayload.
-	msgId := uuid.New().String()
+	msgId := messageId
+	if msgId == "" {
+		msgId = uuid.New().String()
+	}
 	timestamp := time.Now().UTC().Format(time.RFC3339Nano)
+
+	// Inject messageId into extras so the receiver gets the same ID.
+	extra := opts
+	if extra == nil {
+		extra = make(map[string]interface{})
+	}
+	extra["messageId"] = msgId
 
 	payload := &internal.GroupMessagePayload{
 		Text:      text,
 		Timestamp: timestamp,
 		Username:  senderUsername,
-		Extra:     opts,
+		Extra:     extra,
 	}
 
 	payloadJSON, err := internal.MarshalGroupPayload(payload)
@@ -222,6 +233,70 @@ func (n *Node) PublishGroupMessage(groupId, privateKeyB64, senderPeerId, senderP
 	return msgId, nil
 }
 
+// PublishGroupReaction encrypts, signs, and publishes a reaction to a group topic.
+// The reactionJSON is the raw JSON payload (id, messageId, emoji, action, etc.)
+// that gets encrypted inside the v3 group_reaction envelope.
+// All members can publish reactions, including non-admins in announcement groups.
+func (n *Node) PublishGroupReaction(groupId, privateKeyB64, senderPeerId, senderPublicKeyB64, reactionJSON string) error {
+	n.mu.RLock()
+	topic, topicOk := n.groupTopics[groupId]
+	config, configOk := n.groupConfigs[groupId]
+	keyInfo, keyOk := n.groupKeys[groupId]
+	n.mu.RUnlock()
+
+	if !topicOk || !configOk || !keyOk {
+		return fmt.Errorf("group not joined: %s", groupId)
+	}
+
+	// Check membership (any member can react, regardless of group type).
+	member := findMember(config, senderPeerId)
+	if member == nil {
+		return fmt.Errorf("sender %s not a member of group %s", senderPeerId, groupId)
+	}
+
+	// Encrypt reaction payload with group key.
+	ctB64, nonceB64, err := mcrypto.EncryptGroupMessage(keyInfo.Key, reactionJSON)
+	if err != nil {
+		return fmt.Errorf("encrypt group reaction: %w", err)
+	}
+
+	// Build signature and sign.
+	sigData := mcrypto.BuildGroupSignatureData(groupId, keyInfo.KeyEpoch, ctB64)
+	signature, err := mcrypto.SignPayload(privateKeyB64, sigData)
+	if err != nil {
+		return fmt.Errorf("sign group reaction: %w", err)
+	}
+
+	// Build GroupEnvelope with type "group_reaction".
+	envelope := &internal.GroupEnvelope{
+		Version:         "3",
+		Type:            "group_reaction",
+		GroupId:         groupId,
+		SenderId:        senderPeerId,
+		SenderPublicKey: senderPublicKeyB64,
+		Signature:       signature,
+		KeyEpoch:        keyInfo.KeyEpoch,
+		Encrypted: internal.GroupEncryptedPayload{
+			Ciphertext: ctB64,
+			Nonce:      nonceB64,
+		},
+	}
+
+	envelopeJSON, err := internal.MarshalGroupEnvelope(envelope)
+	if err != nil {
+		return fmt.Errorf("marshal reaction envelope: %w", err)
+	}
+
+	ctx, cancel := context.WithTimeout(n.ctx, PubSubTimeout)
+	defer cancel()
+
+	if err := topic.Publish(ctx, []byte(envelopeJSON)); err != nil {
+		return fmt.Errorf("publish reaction to topic: %w", err)
+	}
+
+	return nil
+}
+
 // UpdateGroupConfig updates the stored group configuration.
 func (n *Node) UpdateGroupConfig(groupId string, config *GroupConfig) {
 	n.mu.Lock()
@@ -255,7 +330,7 @@ func (n *Node) groupTopicValidator(groupId string) func(context.Context, peer.ID
 	return func(ctx context.Context, pid peer.ID, msg *pubsub.Message) pubsub.ValidationResult {
 		data := string(msg.Data)
 
-		// 1. Must be a v3 group envelope.
+		// 1. Must be a v3 group envelope (message or reaction).
 		if !internal.IsGroupEnvelope(data) {
 			log.Printf("[PUBSUB] Validator: rejecting non-v3 message on group %s", groupId)
 			return pubsub.ValidationReject
@@ -290,8 +365,9 @@ func (n *Node) groupTopicValidator(groupId string) func(context.Context, peer.ID
 			return pubsub.ValidationReject
 		}
 
-		// 6. For announcement groups: only admin can publish.
-		if !isAllowedWriter(config, env.SenderId) {
+		// 6. For announcement groups: only admin can publish messages.
+		//    Reactions are allowed from any member (all members can react).
+		if env.Type == "group_message" && !isAllowedWriter(config, env.SenderId) {
 			log.Printf("[PUBSUB] Validator: rejecting message from non-admin %s in announcement group %s", env.SenderId, groupId)
 			return pubsub.ValidationReject
 		}
@@ -361,14 +437,26 @@ func (n *Node) handleGroupSubscription(ctx context.Context, groupId string, sub 
 			continue
 		}
 
-		// Parse inner payload.
+		// Route by envelope type BEFORE parsing inner payload — reactions
+		// have a different inner schema and must not go through ParseGroupPayload.
+		if env.Type == "group_reaction" {
+			reactionEvent := map[string]interface{}{
+				"groupId":  groupId,
+				"senderId": env.SenderId,
+				"reaction": plaintext,
+			}
+			n.emitEvent("group_reaction:received", reactionEvent)
+			continue
+		}
+
+		// Parse inner payload (group_message only).
 		payload, err := internal.ParseGroupPayload(plaintext)
 		if err != nil {
 			log.Printf("[PUBSUB] Failed to parse payload in group %s: %v", groupId, err)
 			continue
 		}
 
-		// Emit event to Flutter.
+		// Emit message event to Flutter.
 		event := map[string]interface{}{
 			"groupId":        groupId,
 			"senderId":       env.SenderId,
@@ -379,6 +467,9 @@ func (n *Node) handleGroupSubscription(ctx context.Context, groupId string, sub 
 		}
 		if media, ok := payload.Extra["media"]; ok {
 			event["media"] = media
+		}
+		if msgId, ok := payload.Extra["messageId"]; ok {
+			event["messageId"] = msgId
 		}
 		n.emitEvent("group_message:received", event)
 	}

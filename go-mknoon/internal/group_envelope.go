@@ -63,8 +63,8 @@ func ParseGroupEnvelope(data string) (*GroupEnvelope, error) {
 	return &env, nil
 }
 
-// IsGroupEnvelope checks whether a JSON string is a v3 group message envelope
-// by inspecting the version and type fields.
+// IsGroupEnvelope checks whether a JSON string is a v3 group envelope
+// (either group_message or group_reaction) by inspecting version and type.
 func IsGroupEnvelope(data string) bool {
 	var peek struct {
 		Version string `json:"version"`
@@ -73,7 +73,7 @@ func IsGroupEnvelope(data string) bool {
 	if err := json.Unmarshal([]byte(data), &peek); err != nil {
 		return false
 	}
-	return peek.Version == "3" && peek.Type == "group_message"
+	return peek.Version == "3" && (peek.Type == "group_message" || peek.Type == "group_reaction")
 }
 
 // MarshalGroupPayload serializes a GroupMessagePayload to a JSON string.

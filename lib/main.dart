@@ -515,11 +515,17 @@ void main() async {
     groupConversationTracker: groupConversationTracker,
     getAppLifecycleState: () =>
         WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.resumed,
+    reactionRepo: reactionRepository,
   );
   final groupMessageStreamController =
       StreamController<Map<String, dynamic>>.broadcast();
   bridge.onGroupMessageReceived = (data) {
     groupMessageStreamController.add(data);
+  };
+  final groupReactionStreamController =
+      StreamController<Map<String, dynamic>>.broadcast();
+  bridge.onGroupReactionReceived = (data) {
+    groupReactionStreamController.add(data);
   };
 
   // Create group invite listener
@@ -587,7 +593,10 @@ void main() async {
   chatMessageListener.start();
   reactionListener.start();
   profileUpdateListener.start();
-  groupMessageListener.start(groupMessageStreamController.stream);
+  groupMessageListener.start(
+    groupMessageStreamController.stream,
+    incomingGroupReactions: groupReactionStreamController.stream,
+  );
   groupInviteListener.start();
   groupKeyUpdateListener.start();
 
@@ -802,6 +811,11 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
               contactRepo: widget.contactRepository,
               p2pService: widget.p2pService,
               groupConversationTracker: widget.groupConversationTracker,
+              mediaAttachmentRepo: widget.mediaAttachmentRepository,
+              mediaFileManager: widget.mediaFileManager,
+              imageProcessor: widget.imageProcessor,
+              audioRecorderService: widget.audioRecorderService,
+              reactionRepo: widget.reactionRepository,
             ),
           ),
         );
