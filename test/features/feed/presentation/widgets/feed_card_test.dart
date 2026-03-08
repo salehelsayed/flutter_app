@@ -210,6 +210,52 @@ void main() {
       expect(find.byType(CollapsedModeCardBody), findsOneWidget);
       expect(find.byType(OpenModeCardBody), findsNothing);
     });
+
+    testWidgets(
+        'session reply forces CollapsedModeCardBody for unread group card',
+        (tester) async {
+      final groupThread = GroupThreadFeedItem(
+        id: 'g1',
+        timestamp: DateTime(2026, 2, 9),
+        groupId: 'group-abc',
+        groupName: 'Test Group',
+        groupType: GroupType.chat,
+        messages: [_msg('gm1', isUnread: true)],
+        unreadCount: 1,
+        conversationState: ConversationState.unread,
+      );
+
+      final sessionReply = SessionReply.justNow('My reply');
+
+      await tester.pumpWidget(wrap(FeedCard(
+        thread: groupThread,
+        sessionReply: sessionReply,
+      )));
+      expect(find.byType(CollapsedModeCardBody), findsOneWidget);
+      expect(find.byType(OpenModeCardBody), findsNothing);
+    });
+
+    testWidgets(
+        'active group card without session reply stays in open mode',
+        (tester) async {
+      final groupThread = GroupThreadFeedItem(
+        id: 'g1',
+        timestamp: DateTime(2026, 2, 9),
+        groupId: 'group-abc',
+        groupName: 'Test Group',
+        groupType: GroupType.chat,
+        messages: [
+          _msg('gm1', isUnread: true),
+          _msg('gm2', isIncoming: false),
+        ],
+        unreadCount: 1,
+        conversationState: ConversationState.active,
+      );
+
+      await tester.pumpWidget(wrap(FeedCard(thread: groupThread)));
+      expect(find.byType(OpenModeCardBody), findsOneWidget);
+      expect(find.byType(CollapsedModeCardBody), findsNothing);
+    });
   });
 
   group('FeedCard expanded collapsed card', () {

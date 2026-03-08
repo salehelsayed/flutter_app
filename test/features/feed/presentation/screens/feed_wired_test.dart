@@ -1254,6 +1254,86 @@ void main() {
       },
     );
 
+    testWidgets(
+      'incoming group message clears session reply so card shows open mode',
+      (tester) async {
+        final originalOnError = FlutterError.onError;
+        FlutterError.onError = (details) {
+          if (details.toString().contains('overflowed')) return;
+          originalOnError?.call(details);
+        };
+        addTearDown(() => FlutterError.onError = originalOnError);
+
+        identityRepo.seed(testIdentity);
+
+        final groupRepo = InMemoryGroupRepository();
+        final groupMsgRepo = InMemoryGroupMessageRepository();
+
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: 'g1',
+            name: 'Reply Group',
+            type: GroupType.chat,
+            topicName: '/mknoon/group/g1',
+            createdAt: DateTime(2026, 2, 1),
+            createdBy: 'admin',
+            myRole: GroupRole.member,
+          ),
+        );
+
+        // Seed a read message so the card starts in collapsed mode
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: 'gm-read-1',
+            groupId: 'g1',
+            senderPeerId: 'other-peer',
+            senderUsername: 'OtherUser',
+            text: 'Old message',
+            timestamp: DateTime.now().subtract(const Duration(hours: 1)).toUtc(),
+            createdAt: DateTime.now().subtract(const Duration(hours: 1)).toUtc(),
+            readAt: DateTime.now().subtract(const Duration(hours: 1)).toUtc(),
+          ),
+        );
+
+        final fakeGroupListener = _FakeGroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: groupMsgRepo,
+        );
+
+        await tester.pumpWidget(
+          buildFeedWired(
+            groupRepository: groupRepo,
+            groupMessageRepository: groupMsgRepo,
+            groupMessageListener: fakeGroupListener,
+          ),
+        );
+        await pumpFeedFrames(tester);
+
+        // Card should start in collapsed mode (all messages read)
+        expect(find.byType(CollapsedModeCardBody), findsOneWidget);
+
+        // Now seed an unread incoming message and emit it
+        final newMsg = GroupMessage(
+          id: 'gm-unread-1',
+          groupId: 'g1',
+          senderPeerId: 'other-peer',
+          senderUsername: 'OtherUser',
+          text: 'New unread group msg!',
+          timestamp: DateTime.now().toUtc(),
+          createdAt: DateTime.now().toUtc(),
+        );
+        await groupMsgRepo.saveMessage(newMsg);
+        fakeGroupListener.emitGroupMessage(newMsg);
+
+        await pumpFeedFrames(tester);
+
+        // Card should switch to open mode (unread message arrived,
+        // session reply cleared if any)
+        expect(find.byType(OpenModeCardBody), findsOneWidget);
+        expect(find.byType(CollapsedModeCardBody), findsNothing);
+      },
+    );
+
     testWidgets('incoming chat updates only the affected contact thread', (
       tester,
     ) async {

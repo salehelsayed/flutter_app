@@ -728,6 +728,7 @@ class _FeedWiredState extends State<FeedWired> {
       await _refreshAllGroupsSection();
     } else if (changes.changedGroupIds.isNotEmpty) {
       for (final groupId in changes.changedGroupIds) {
+        _sessionReplies.clear('group:$groupId');
         await _refreshGroupFeedItem(groupId);
       }
     }
@@ -1249,6 +1250,7 @@ class _FeedWiredState extends State<FeedWired> {
     _groupMessageSubscription = listener.groupMessageStream.listen(
       (message) {
         if (!mounted) return;
+        _sessionReplies.clear('group:${message.groupId}');
         unawaited(_applyIncomingGroupMessageToFeed(message));
       },
       onError: (error) {
@@ -1321,7 +1323,10 @@ class _FeedWiredState extends State<FeedWired> {
             ),
           ),
         )
-        .then((_) => unawaited(_refreshGroupFeedItem(groupThread.groupId)));
+        .then((_) {
+          _sessionReplies.clear('group:${groupThread.groupId}');
+          unawaited(_refreshGroupFeedItem(groupThread.groupId));
+        });
   }
 
   void _onGroupAttach(GroupThreadFeedItem groupThread) {
@@ -1473,7 +1478,10 @@ class _FeedWiredState extends State<FeedWired> {
               ),
             ),
           )
-          .then((_) => unawaited(_refreshGroupFeedItem(groupThread.groupId)));
+          .then((_) {
+          _sessionReplies.clear('group:${groupThread.groupId}');
+          unawaited(_refreshGroupFeedItem(groupThread.groupId));
+        });
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -1505,11 +1513,10 @@ class _FeedWiredState extends State<FeedWired> {
       if (!mounted) return;
 
       if (result == SendGroupMessageResult.success) {
-        if (message != null) {
-          await _applyIncomingGroupMessageToFeed(message);
-        } else {
-          await _refreshGroupFeedItem(groupId);
-        }
+        _sessionReplies.track('group:$groupId', SessionReply.justNow(text));
+        await widget.groupMessageRepository?.markAsRead(groupId);
+        await _refreshGroupFeedItem(groupId);
+        await _loadTotalUnreadCount();
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -1779,9 +1786,13 @@ class _FeedWiredState extends State<FeedWired> {
       _activeQuoteMessageIds.remove(cardItem.contactPeerId);
     }
 
-    // Clear session reply when expanding so expanded messages become visible (1:1 only)
-    if (_expandedCardId != cardId && cardItem is ThreadFeedItem) {
-      _sessionReplies.clear(cardItem.contactPeerId);
+    // Clear session reply when expanding so expanded messages become visible
+    if (_expandedCardId != cardId) {
+      if (cardItem is ThreadFeedItem) {
+        _sessionReplies.clear(cardItem.contactPeerId);
+      } else if (cardItem is GroupThreadFeedItem) {
+        _sessionReplies.clear('group:${cardItem.groupId}');
+      }
     }
 
     setState(() {

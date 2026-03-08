@@ -614,5 +614,136 @@ void main() {
       // "Photo" label should show
       expect(find.text('Photo'), findsOneWidget);
     });
+
+    testWidgets(
+        'group card shows thumbnail when message has downloaded image',
+        (tester) async {
+      final groupThread = GroupThreadFeedItem(
+        id: 'g1',
+        timestamp: DateTime(2026, 2, 9, 15, 0),
+        groupId: 'group-abc',
+        groupName: 'Test Group',
+        groupType: GroupType.chat,
+        messages: [
+          ThreadMessage(
+            id: 'gm1',
+            text: 'photo here',
+            time: '3:00 PM',
+            timestamp: DateTime(2026, 2, 9, 15, 0),
+            isIncoming: true,
+            senderUsername: 'Hisam',
+            senderPeerId: 'peer-hisam',
+            media: [
+              MediaAttachment(
+                id: 'a1',
+                messageId: 'gm1',
+                mime: 'image/jpeg',
+                size: 1000,
+                mediaType: 'image',
+                localPath: imagePath,
+                downloadStatus: 'done',
+                createdAt: '2026-02-09T15:00:00Z',
+              ),
+            ],
+          ),
+        ],
+        conversationState: ConversationState.read,
+      );
+
+      await tester
+          .pumpWidget(wrap(CollapsedModeCardBody(thread: groupThread)));
+
+      // Thumbnail Image.file should be present
+      expect(find.byType(Image), findsOneWidget);
+      // Sender label should show
+      expect(find.textContaining('Hisam'), findsOneWidget);
+      // Text preview should still show
+      expect(find.text('photo here'), findsOneWidget);
+    });
+
+    testWidgets(
+        'group card shows icon fallback when media not yet downloaded',
+        (tester) async {
+      final groupThread = GroupThreadFeedItem(
+        id: 'g1',
+        timestamp: DateTime(2026, 2, 9, 15, 0),
+        groupId: 'group-abc',
+        groupName: 'Test Group',
+        groupType: GroupType.chat,
+        messages: [
+          ThreadMessage(
+            id: 'gm1',
+            text: 'image coming',
+            time: '3:00 PM',
+            timestamp: DateTime(2026, 2, 9, 15, 0),
+            isIncoming: true,
+            senderUsername: 'Hisam',
+            senderPeerId: 'peer-hisam',
+            media: [
+              MediaAttachment(
+                id: 'a1',
+                messageId: 'gm1',
+                mime: 'image/jpeg',
+                size: 1000,
+                mediaType: 'image',
+                downloadStatus: 'pending',
+                createdAt: '2026-02-09T15:00:00Z',
+              ),
+            ],
+          ),
+        ],
+        conversationState: ConversationState.read,
+      );
+
+      await tester
+          .pumpWidget(wrap(CollapsedModeCardBody(thread: groupThread)));
+
+      // Icon fallback instead of thumbnail
+      expect(find.byIcon(Icons.camera_alt_outlined), findsOneWidget);
+      expect(find.byType(Image), findsNothing);
+    });
+
+    testWidgets('group card media-only message shows thumbnail + Photo label',
+        (tester) async {
+      final groupThread = GroupThreadFeedItem(
+        id: 'g1',
+        timestamp: DateTime(2026, 2, 9, 15, 0),
+        groupId: 'group-abc',
+        groupName: 'Test Group',
+        groupType: GroupType.chat,
+        messages: [
+          ThreadMessage(
+            id: 'gm1',
+            text: '',
+            time: '3:00 PM',
+            timestamp: DateTime(2026, 2, 9, 15, 0),
+            isIncoming: true,
+            senderUsername: 'Hisam',
+            senderPeerId: 'peer-hisam',
+            media: [
+              MediaAttachment(
+                id: 'a1',
+                messageId: 'gm1',
+                mime: 'image/jpeg',
+                size: 1000,
+                mediaType: 'image',
+                localPath: imagePath,
+                downloadStatus: 'done',
+                createdAt: '2026-02-09T15:00:00Z',
+              ),
+            ],
+          ),
+        ],
+        conversationState: ConversationState.read,
+      );
+
+      await tester
+          .pumpWidget(wrap(CollapsedModeCardBody(thread: groupThread)));
+
+      // Thumbnail should render
+      expect(find.byType(Image), findsOneWidget);
+      // "Photo" label should show
+      expect(find.text('Photo'), findsOneWidget);
+    });
   });
 }

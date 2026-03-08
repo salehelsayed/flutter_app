@@ -24,19 +24,6 @@ void main() {
   }
 
   group('IntroductionConnectionCard', () {
-    testWidgets('renders "Connected!" text', (tester) async {
-      suppressOverflow();
-      await tester.pumpWidget(wrap(const IntroductionConnectionCard(
-        ownPeerId: 'own-peer-123',
-        ownUsername: 'me',
-        contactPeerId: 'peer-abc-123',
-        contactUsername: 'alice',
-        introducedBy: 'bob',
-      )));
-      await tester.pumpAndSettle();
-      expect(find.text('Connected!'), findsOneWidget);
-    });
-
     testWidgets('renders both usernames', (tester) async {
       suppressOverflow();
       await tester.pumpWidget(wrap(const IntroductionConnectionCard(
@@ -126,7 +113,8 @@ void main() {
       expect(button.onPressed, isNull);
     });
 
-    testWidgets('renders green check icon', (tester) async {
+    testWidgets('does not render Connected text or green check icon',
+        (tester) async {
       suppressOverflow();
       await tester.pumpWidget(wrap(const IntroductionConnectionCard(
         ownPeerId: 'own-peer-123',
@@ -136,7 +124,8 @@ void main() {
         introducedBy: 'bob',
       )));
       await tester.pumpAndSettle();
-      expect(find.byIcon(Icons.check_rounded), findsOneWidget);
+      expect(find.text('Connected!'), findsNothing);
+      expect(find.byIcon(Icons.check_rounded), findsNothing);
     });
   });
 }

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/message_bubble.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/open_mode_card_body.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/scrollable_message_preview.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -113,6 +115,54 @@ void main() {
       expect(find.byIcon(Icons.group_rounded), findsOneWidget);
       // Group name should be shown
       expect(find.text('Test Group'), findsOneWidget);
+    });
+
+    testWidgets(
+        'group message with media passes media to MessageBubble in open mode',
+        (tester) async {
+      final attachment = MediaAttachment(
+        id: 'att-1',
+        messageId: 'gm1',
+        mime: 'image/jpeg',
+        size: 2048,
+        mediaType: 'image',
+        downloadStatus: 'done',
+        localPath: '/tmp/photo.jpg',
+        createdAt: '2026-02-09T15:00:00Z',
+      );
+
+      final groupThread = GroupThreadFeedItem(
+        id: 'g1',
+        timestamp: DateTime(2026, 2, 9, 15, 5),
+        groupId: 'group-abc',
+        groupName: 'Photo Group',
+        groupType: GroupType.chat,
+        messages: [
+          ThreadMessage(
+            id: 'gm1',
+            text: 'check this',
+            time: '3:00 PM',
+            timestamp: DateTime(2026, 2, 9, 15, 0),
+            isUnread: true,
+            isIncoming: true,
+            senderUsername: 'Hisam',
+            senderPeerId: 'peer-hisam',
+            media: [attachment],
+          ),
+        ],
+        unreadCount: 1,
+        conversationState: ConversationState.unread,
+      );
+
+      await tester.pumpWidget(wrap(OpenModeCardBody(thread: groupThread)));
+
+      // MessageBubble should receive media
+      final bubbles = tester.widgetList<MessageBubble>(
+        find.byType(MessageBubble),
+      );
+      expect(bubbles, isNotEmpty);
+      expect(bubbles.first.media, isNotEmpty);
+      expect(bubbles.first.media.first.id, 'att-1');
     });
   });
 }

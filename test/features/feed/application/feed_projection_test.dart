@@ -626,5 +626,81 @@ void main() {
       expect(_summaries(incrementallyUpdated), _summaries(fullReload));
       expect(incrementallyUpdated.whereType<GroupThreadFeedItem>(), isEmpty);
     });
+
+    test('loadGroupFeedSnapshot includes media attachments', () async {
+      await groupRepo.saveGroup(
+        _group(
+          id: 'group-1',
+          name: 'Alpha',
+          createdAt: DateTime.utc(2026, 2, 1),
+        ),
+      );
+      await groupMessageRepo.saveMessage(
+        _groupMessage(
+          id: 'gm-1',
+          groupId: 'group-1',
+          senderPeerId: 'peer-B',
+          text: 'Photo',
+          timestamp: DateTime.utc(2026, 2, 1, 11, 0),
+        ),
+      );
+      await mediaAttachmentRepo.saveAttachment(
+        MediaAttachment(
+          id: 'att-snap-1',
+          messageId: 'gm-1',
+          mime: 'image/jpeg',
+          size: 2048,
+          mediaType: 'image',
+          localPath: 'media/groups/snap.jpg',
+          downloadStatus: 'done',
+          createdAt: '2026-02-01T11:00:00Z',
+        ),
+      );
+
+      final snapshot = await loadGroupFeedSnapshot(
+        groupRepo: groupRepo,
+        groupMsgRepo: groupMessageRepo,
+        groupId: 'group-1',
+        mediaAttachmentRepo: mediaAttachmentRepo,
+        mediaFileManager: mediaFileManager,
+      );
+
+      expect(snapshot, isNotNull);
+      expect(snapshot!.messages.first.media, hasLength(1));
+      expect(snapshot.messages.first.media.first.id, 'att-snap-1');
+      expect(
+        snapshot.messages.first.media.first.localPath,
+        contains('media/groups/snap.jpg'),
+      );
+    });
+
+    test('loadGroupFeedSnapshot without media repos returns empty media',
+        () async {
+      await groupRepo.saveGroup(
+        _group(
+          id: 'group-1',
+          name: 'Alpha',
+          createdAt: DateTime.utc(2026, 2, 1),
+        ),
+      );
+      await groupMessageRepo.saveMessage(
+        _groupMessage(
+          id: 'gm-1',
+          groupId: 'group-1',
+          senderPeerId: 'peer-B',
+          text: 'No media loaded',
+          timestamp: DateTime.utc(2026, 2, 1, 11, 0),
+        ),
+      );
+
+      final snapshot = await loadGroupFeedSnapshot(
+        groupRepo: groupRepo,
+        groupMsgRepo: groupMessageRepo,
+        groupId: 'group-1',
+      );
+
+      expect(snapshot, isNotNull);
+      expect(snapshot!.messages.first.media, isEmpty);
+    });
   });
 }

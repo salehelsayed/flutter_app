@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
+import 'package:flutter_app/features/feed/domain/models/session_reply.dart';
 import 'package:flutter_app/features/feed/presentation/screens/feed_screen.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/collapsed_mode_card_body.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/feed_card.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/open_mode_card_body.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/scrollable_message_preview.dart';
+import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 
 void main() {
   void setPhoneViewport(WidgetTester tester) {
@@ -52,6 +56,7 @@ void main() {
     ValueNotifier<List<FeedItem>>? feedItemsListenable,
     bool feedLoaded = true,
     String? expandedCardId,
+    SessionReplyTracker? sessionReplies,
   }) {
     return MaterialApp(
       home: Scaffold(
@@ -64,6 +69,7 @@ void main() {
           onSwitchView: (_) {},
           expandedCardId: expandedCardId,
           onToggleExpand: (_) {},
+          sessionReplies: sessionReplies,
         ),
       ),
     );
@@ -228,6 +234,62 @@ void main() {
       final afterElement = tester.element(bobFinder);
       expect(identical(beforeElement, afterElement), isTrue);
       expect(find.byType(ScrollableMessagePreview), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'group card with session reply shows collapsed mode instead of open mode',
+    (tester) async {
+      // Suppress RenderFlex overflow errors from card layouts in test surface
+      final originalOnError = FlutterError.onError;
+      FlutterError.onError = (details) {
+        if (details.toString().contains('overflowed')) return;
+        originalOnError?.call(details);
+      };
+      addTearDown(() => FlutterError.onError = originalOnError);
+
+      setPhoneViewport(tester);
+
+      // Group card in unread state (open mode)
+      final groupItem = GroupThreadFeedItem(
+        id: 'group_thread_g1',
+        timestamp: DateTime.now(),
+        groupId: 'g1',
+        groupName: 'Test Group',
+        groupType: GroupType.chat,
+        messages: [
+          ThreadMessage(
+            id: 'gm-1',
+            text: 'Hello group',
+            time: '3:33 AM',
+            timestamp: DateTime.now(),
+            isIncoming: true,
+            isUnread: true,
+            senderUsername: 'Hisam',
+            senderPeerId: 'peer-hisam',
+          ),
+        ],
+        unreadCount: 1,
+        conversationState: ConversationState.unread,
+      );
+
+      // Without session reply — should be in open mode
+      await tester.pumpWidget(
+        buildFeedScreen(feedItems: [groupItem]),
+      );
+      await tester.pump();
+      expect(find.byType(OpenModeCardBody), findsOneWidget);
+
+      // With session reply — should collapse to show sent message
+      final tracker = SessionReplyTracker();
+      tracker.track('group:g1', SessionReply.justNow('My reply'));
+
+      await tester.pumpWidget(
+        buildFeedScreen(feedItems: [groupItem], sessionReplies: tracker),
+      );
+      await tester.pump();
+      expect(find.byType(CollapsedModeCardBody), findsOneWidget);
+      expect(find.byType(OpenModeCardBody), findsNothing);
     },
   );
 }
