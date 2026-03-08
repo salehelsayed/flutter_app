@@ -95,6 +95,7 @@ class ConversationWired extends StatefulWidget {
   final MediaAttachmentRepository? mediaAttachmentRepo;
   final MediaFileManager? mediaFileManager;
   final List<File>? initialAttachments;
+  final String? initialText;
   final ImageProcessor? imageProcessor;
   final MediaPicker? mediaPicker;
   final ImageQualityPreference qualityPreference;
@@ -119,6 +120,7 @@ class ConversationWired extends StatefulWidget {
     this.mediaAttachmentRepo,
     this.mediaFileManager,
     this.initialAttachments,
+    this.initialText,
     this.imageProcessor,
     this.mediaPicker,
     this.qualityPreference = ImageQualityPreference.compressed,
@@ -1729,6 +1731,7 @@ class _ConversationWiredState extends State<ConversationWired> {
             ? _onRecordCancel
             : null,
         composerStateListenable: _composerState,
+        initialText: widget.initialText,
         reactions: _reactions,
         onReactionSelected: widget.reactionRepo != null
             ? _onReactionSelected
