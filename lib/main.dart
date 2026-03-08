@@ -1,5 +1,8 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/services/share_intent_model.dart';
+import 'package:flutter_app/core/services/share_intent_service.dart';
+import 'package:flutter_app/features/share/presentation/screens/share_target_picker_wired.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:flutter_app/core/database/migrations/001_identity_table.dart';
 import 'package:flutter_app/core/database/migrations/002_messages_table.dart';
@@ -620,6 +623,8 @@ void main() async {
     chatMessageListener.emitContactUpdate(contact);
   });
 
+  final shareIntentService = ShareIntentService();
+
   runApp(
     MyApp(
       repository: repository,
@@ -652,6 +657,7 @@ void main() async {
       groupConversationTracker: groupConversationTracker,
       introductionRepository: introductionRepository,
       introductionListener: introductionListener,
+      shareIntentService: shareIntentService,
     ),
   );
   StartupTiming.instance.mark('run_app_called');
@@ -688,6 +694,7 @@ class MyApp extends StatefulWidget {
   final ActiveConversationTracker groupConversationTracker;
   final IntroductionRepositoryImpl introductionRepository;
   final IntroductionListener introductionListener;
+  final ShareIntentService shareIntentService;
 
   static final navigatorKey = GlobalKey<NavigatorState>();
 
@@ -723,6 +730,7 @@ class MyApp extends StatefulWidget {
     required this.groupConversationTracker,
     required this.introductionRepository,
     required this.introductionListener,
+    required this.shareIntentService,
   }) : super(key: key);
 
   @override
@@ -738,6 +746,60 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     _setupForegroundPushListener();
     _setupNotificationTapHandler();
+    _setupShareIntentHandling();
+  }
+
+  void _setupShareIntentHandling() {
+    // Warm-start: share arrives while app is running
+    widget.shareIntentService.intentStream.listen((intent) {
+      if (!widget.shareIntentService.isSettled) {
+        // Still onboarding — buffer for later
+        widget.shareIntentService.bufferIntent(intent);
+        return;
+      }
+      _navigateToSharePicker(intent);
+      widget.shareIntentService.reset();
+    });
+
+    // Cold-start: buffer initial intent for StartupRouter to consume
+    _bufferInitialShareIntent();
+  }
+
+  Future<void> _bufferInitialShareIntent() async {
+    final intent = await widget.shareIntentService.getInitialIntent();
+    if (intent != null) {
+      await widget.shareIntentService.bufferIntent(intent);
+    }
+  }
+
+  void _navigateToSharePicker(ShareIntent intent) {
+    final navigator = MyApp.navigatorKey.currentState;
+    if (navigator == null) return;
+    navigator.push(
+      MaterialPageRoute(
+        builder: (_) => ShareTargetPickerWired(
+          shareIntent: intent,
+          identityRepo: widget.repository,
+          contactRepository: widget.contactRepository,
+          messageRepository: widget.messageRepository,
+          mediaAttachmentRepository: widget.mediaAttachmentRepository,
+          chatMessageListener: widget.chatMessageListener,
+          bridge: widget.bridge,
+          p2pService: widget.p2pService,
+          mediaFileManager: widget.mediaFileManager,
+          imageProcessor: widget.imageProcessor,
+          conversationTracker: widget.conversationTracker,
+          audioRecorderService: widget.audioRecorderService,
+          reactionRepository: widget.reactionRepository,
+          reactionListener: widget.reactionListener,
+          groupRepository: widget.groupRepository,
+          groupMessageRepository: widget.groupMessageRepository,
+          groupMessageListener: widget.groupMessageListener,
+          groupConversationTracker: widget.groupConversationTracker,
+          introductionRepository: widget.introductionRepository,
+        ),
+      ),
+    );
   }
 
   void _setupNotificationTapHandler() {
@@ -978,6 +1040,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         groupConversationTracker: widget.groupConversationTracker,
         introductionRepository: widget.introductionRepository,
         introductionListener: widget.introductionListener,
+        shareIntentService: widget.shareIntentService,
       ),
       debugShowCheckedModeBanner: false,
     );
