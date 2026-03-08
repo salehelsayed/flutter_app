@@ -13,6 +13,7 @@ class ReactionBar extends StatefulWidget {
   final void Function(String emoji) onReactionSelected;
   final VoidCallback onPlusTap;
   final VoidCallback onDismiss;
+  final double? anchorY;
 
   const ReactionBar({
     super.key,
@@ -20,6 +21,7 @@ class ReactionBar extends StatefulWidget {
     required this.onReactionSelected,
     required this.onPlusTap,
     required this.onDismiss,
+    this.anchorY,
   });
 
   @override
@@ -52,40 +54,58 @@ class _ReactionBarState extends State<ReactionBar>
 
   @override
   Widget build(BuildContext context) {
+    final barContent = ScaleTransition(
+      scale: _scaleAnimation,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(28),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: const Color.fromRGBO(18, 20, 28, 0.95),
+              borderRadius: BorderRadius.circular(28),
+              border: Border.all(
+                color: const Color.fromRGBO(255, 255, 255, 0.10),
+              ),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ...kPresetEmojis.map((emoji) => _emojiButton(emoji)),
+                _plusButton(),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    // Bar height ~60px (44 emoji + 8+8 padding). Place it above the card
+    // with an 8px gap. Clamp to keep it on-screen.
+    const barHeight = 60.0;
+    const gap = 8.0;
+
+    final Widget positioned;
+    if (widget.anchorY != null) {
+      final topOffset = (widget.anchorY! - barHeight - gap).clamp(8.0, double.infinity);
+      positioned = Padding(
+        padding: EdgeInsets.only(top: topOffset),
+        child: Align(
+          alignment: Alignment.topCenter,
+          child: barContent,
+        ),
+      );
+    } else {
+      positioned = Center(child: barContent);
+    }
+
     return GestureDetector(
       onTap: widget.onDismiss,
       behavior: HitTestBehavior.opaque,
       child: Container(
         color: Colors.transparent,
-        child: Center(
-          child: ScaleTransition(
-            scale: _scaleAnimation,
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(28),
-              child: BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: const Color.fromRGBO(18, 20, 28, 0.95),
-                    borderRadius: BorderRadius.circular(28),
-                    border: Border.all(
-                      color: const Color.fromRGBO(255, 255, 255, 0.10),
-                    ),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      ...kPresetEmojis.map((emoji) => _emojiButton(emoji)),
-                      _plusButton(),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
+        child: positioned,
       ),
     );
   }

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/gestures.dart';
@@ -11,6 +12,9 @@ import 'package:flutter_app/core/media/media_picker.dart';
 import 'package:flutter_app/core/media/video_process_result.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/attachment_preview_strip.dart';
+import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
+import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -30,6 +34,7 @@ import '../../../shared/fakes/in_memory_contact_repository.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../shared/fakes/in_memory_media_attachment_repository.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
+import '../../conversation/domain/repositories/fake_reaction_repository.dart';
 
 // --- FakeIdentityRepository ---
 
@@ -52,12 +57,20 @@ class FakeIdentityRepository implements IdentityRepository {
 /// by an external StreamController.
 class FakeGroupMessageListener extends GroupMessageListener {
   final Stream<GroupMessage> _externalStream;
+  final Stream<ReactionChange>? _externalReactionStream;
 
-  FakeGroupMessageListener(this._externalStream)
-    : super(groupRepo: _NoOpGroupRepo(), msgRepo: _NoOpMsgRepo());
+  FakeGroupMessageListener(
+    this._externalStream, {
+    Stream<ReactionChange>? reactionStream,
+  }) : _externalReactionStream = reactionStream,
+       super(groupRepo: _NoOpGroupRepo(), msgRepo: _NoOpMsgRepo());
 
   @override
   Stream<GroupMessage> get groupMessageStream => _externalStream;
+
+  @override
+  Stream<ReactionChange> get groupReactionChangeStream =>
+      _externalReactionStream ?? super.groupReactionChangeStream;
 }
 
 class _NoOpGroupRepo implements GroupRepository {
@@ -68,6 +81,28 @@ class _NoOpGroupRepo implements GroupRepository {
 class _NoOpMsgRepo implements GroupMessageRepository {
   @override
   dynamic noSuchMethod(Invocation invocation) => null;
+}
+
+/// A bridge that gates group:publish behind a [Completer] so tests can
+/// verify optimistic display before the network responds.
+class _GatedPublishBridge extends FakeBridge {
+  final Completer<void> publishGate = Completer<void>();
+
+  _GatedPublishBridge() {
+    responses['group:publish'] = {'ok': true, 'messageId': 'msg-published'};
+  }
+
+  @override
+  Future<String> send(String message) async {
+    final parsed = jsonDecode(message) as Map<String, dynamic>;
+    final cmd = parsed['cmd'] as String?;
+
+    if (cmd == 'group:publish') {
+      await publishGate.future;
+    }
+
+    return super.send(message);
+  }
 }
 
 class CountingGroupMessageRepository extends InMemoryGroupMessageRepository {
@@ -230,6 +265,8 @@ void main() {
       FakeAudioRecorderService? audioRecorderService,
       MediaPicker? mediaPicker,
       List<File>? initialAttachments,
+      ReactionRepository? reactionRepo,
+      StreamController<ReactionChange>? reactionStreamController,
     }) {
       final g = group ?? makeChatGroup();
       return MaterialApp(
@@ -239,6 +276,7 @@ void main() {
           msgRepo: msgRepo,
           groupMessageListener: FakeGroupMessageListener(
             messageStreamController.stream,
+            reactionStream: reactionStreamController?.stream,
           ),
           bridge: bridge,
           identityRepo: identityRepo,
@@ -249,6 +287,7 @@ void main() {
           audioRecorderService: audioRecorderService,
           mediaPicker: mediaPicker,
           initialAttachments: initialAttachments,
+          reactionRepo: reactionRepo,
         ),
       );
     }
@@ -744,5 +783,310 @@ void main() {
       // No AttachmentPreviewStrip when list is empty
       expect(find.byType(AttachmentPreviewStrip), findsNothing);
     });
+
+    testWidgets(
+      'sent text message appears immediately before bridge responds',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+
+        // Use a gated bridge that blocks group:publish until we release it
+        final gatedBridge = _GatedPublishBridge();
+        bridge = gatedBridge;
+
+        await tester.pumpWidget(buildWidget(group: group));
+        await pumpFrames(tester);
+
+        // Type and send
+        await tester.enterText(find.byType(TextField), 'Optimistic hello');
+        await pumpFrames(tester);
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        // Pump a few frames — bridge is still gated
+        await pumpFrames(tester, count: 5);
+
+        // Message should be visible optimistically
+        expect(find.text('Optimistic hello'), findsOneWidget);
+
+        // Status should be 'sending' (single check icon)
+        expect(find.byIcon(Icons.done_rounded), findsOneWidget);
+        expect(find.byIcon(Icons.done_all_rounded), findsNothing);
+
+        // Release the bridge
+        gatedBridge.publishGate.complete();
+        await pumpFrames(tester, count: 20);
+
+        // Message still visible, status updated to 'sent'
+        expect(find.text('Optimistic hello'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'optimistic message is saved to DB before network ops',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+
+        final gatedBridge = _GatedPublishBridge();
+        bridge = gatedBridge;
+
+        await tester.pumpWidget(buildWidget(group: group));
+        await pumpFrames(tester);
+
+        await tester.enterText(find.byType(TextField), 'DB before net');
+        await pumpFrames(tester);
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await pumpFrames(tester, count: 5);
+
+        // Message should be in the DB with status 'sending'
+        final messages = await msgRepo.getMessagesPage(group.id);
+        expect(messages.length, 1);
+        expect(messages.first.text, 'DB before net');
+        expect(messages.first.status, 'sending');
+
+        // Bridge hasn't been called for publish yet? Actually it was called
+        // but is blocked on the completer. The key point: DB was saved first.
+
+        gatedBridge.publishGate.complete();
+        await pumpFrames(tester, count: 20);
+
+        // After publish completes, status should be 'sent'
+        final updated = await msgRepo.getMessagesPage(group.id);
+        expect(updated.first.status, 'sent');
+      },
+    );
+
+    testWidgets(
+      'failed publish shows message with failed status',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+
+        // Bridge returns failure for publish
+        bridge = FakeBridge(
+          initialResponses: {
+            'group:publish': {
+              'ok': false,
+              'errorCode': 'PUBLISH_FAILED',
+            },
+          },
+        );
+
+        await tester.pumpWidget(buildWidget(group: group));
+        await pumpFrames(tester);
+
+        await tester.enterText(find.byType(TextField), 'Will fail');
+        await pumpFrames(tester);
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await pumpFrames(tester, count: 20);
+
+        // Message should still be visible
+        expect(find.text('Will fail'), findsOneWidget);
+
+        // Status should be 'failed' (error icon)
+        expect(find.byIcon(Icons.error_outline_rounded), findsOneWidget);
+      },
+    );
+
+    // -----------------------------------------------------------------------
+    // Voice message tests
+    //
+    // NOTE: uploadMedia() uses real File I/O (File.length()) which does not
+    // complete inside Flutter's FakeAsync zone. Full upload→publish flow is
+    // tested at the use case level in send_group_message_use_case_test.dart.
+    // These tests verify the optimistic UI pattern added in _onRecordStop.
+    // -----------------------------------------------------------------------
+
+    testWidgets(
+      'voice record stop creates optimistic message with sending status',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        final recorder = FakeAudioRecorderService()
+          ..fakeDurationMs = 3000
+          ..fakeSizeBytes = 48000;
+
+        final gatedBridge = _GatedPublishBridge();
+        bridge = gatedBridge;
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            audioRecorderService: recorder,
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        // Long-press mic to start recording, single pump for _onRecordStart
+        final gesture = await tester.startGesture(
+          tester.getCenter(find.byIcon(Icons.mic_rounded)),
+        );
+        await tester.pump(kLongPressTimeout + const Duration(milliseconds: 50));
+        await tester.pump();
+
+        // Release to stop recording
+        await gesture.up();
+        // _onRecordStop has several awaits (cancel subs, recorder.stop) that
+        // need the real event loop to resolve. Use runAsync to let them settle.
+        await tester.runAsync(() async {
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+        });
+        await pumpFrames(tester, count: 10);
+
+        // Optimistic message should be persisted to DB with 'sending' status
+        // and empty text (voice-only message).
+        final messages = await msgRepo.getMessagesPage(group.id);
+        expect(messages.length, 1);
+        expect(messages.first.status, 'sending');
+        expect(messages.first.text, '');
+        expect(messages.first.isIncoming, false);
+        expect(messages.first.senderPeerId, testIdentity.peerId);
+
+        gatedBridge.publishGate.complete();
+        await pumpFrames(tester, count: 20);
+      },
+    );
+
+    // Full upload→publish e2e is tested at the use case level:
+    // - send_group_message_use_case_test: 'sends message with empty text and media'
+    // - Go bridge_test: TestGroupPublish_MediaOnly_AcceptsEmptyText
+    // (The wired-level e2e test is not feasible because uploadMedia's File I/O
+    // does not resolve in Flutter's FakeAsync zone.)
+
+    testWidgets(
+      'announcement admin sees mic button for voice recording',
+      (tester) async {
+        final group = makeAnnouncementGroup(role: GroupRole.admin);
+        await groupRepo.saveGroup(group);
+        final recorder = FakeAudioRecorderService()
+          ..fakeDurationMs = 3000
+          ..fakeSizeBytes = 48000;
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            audioRecorderService: recorder,
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        // Mic button should be visible for admin in announcement group
+        expect(find.byIcon(Icons.mic_rounded), findsOneWidget);
+
+        // Start recording to verify the long press callback works
+        final gesture = await tester.startGesture(
+          tester.getCenter(find.byIcon(Icons.mic_rounded)),
+        );
+        await tester.pump(kLongPressTimeout + const Duration(milliseconds: 50));
+        await tester.pump();
+
+        // Recording overlay should appear
+        expect(find.text('Slide to cancel'), findsOneWidget);
+
+        await gesture.up();
+        await tester.runAsync(() async {
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+        });
+        await pumpFrames(tester, count: 10);
+
+        // Optimistic message saved to DB
+        final messages = await msgRepo.getMessagesPage(group.id);
+        expect(messages.length, 1);
+        expect(messages.first.text, '');
+        expect(messages.first.senderPeerId, testIdentity.peerId);
+      },
+    );
+
+    // -----------------------------------------------------------------------
+    // Reaction integration tests
+    // -----------------------------------------------------------------------
+
+    testWidgets(
+      'loads persisted reactions on init when reactionRepo is provided',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await msgRepo.saveMessage(makeMessage(id: 'msg-1', text: 'Hello'));
+
+        final reactionRepo = FakeReactionRepository();
+        await reactionRepo.saveReaction(MessageReaction(
+          id: 'rxn-1',
+          messageId: 'msg-1',
+          emoji: '\u{1F44D}',
+          senderPeerId: 'peer-alice',
+          timestamp: DateTime.now().toUtc().toIso8601String(),
+          createdAt: DateTime.now().toUtc().toIso8601String(),
+        ));
+
+        await tester.pumpWidget(buildWidget(
+          group: group,
+          reactionRepo: reactionRepo,
+        ));
+        await pumpFrames(tester);
+
+        // The reaction emoji should be visible in the UI
+        expect(find.text('\u{1F44D}'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'reaction UI is disabled when reactionRepo is null',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await msgRepo.saveMessage(makeMessage(id: 'msg-1', text: 'Hello'));
+
+        await tester.pumpWidget(buildWidget(group: group));
+        await pumpFrames(tester);
+
+        // Long-press a message — should NOT show reaction bar
+        await tester.longPress(find.text('Hello'));
+        await pumpFrames(tester);
+
+        // No reaction bar emojis visible (the preset emojis like thumbs up etc.)
+        expect(find.text('\u{1F44D}'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'incoming reaction change stream updates UI state',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await msgRepo.saveMessage(makeMessage(id: 'msg-1', text: 'Hello'));
+
+        final reactionRepo = FakeReactionRepository();
+        final reactionStreamController =
+            StreamController<ReactionChange>.broadcast();
+
+        await tester.pumpWidget(buildWidget(
+          group: group,
+          reactionRepo: reactionRepo,
+          reactionStreamController: reactionStreamController,
+        ));
+        await pumpFrames(tester);
+
+        // No reactions initially
+        expect(find.text('\u{1F44D}'), findsNothing);
+
+        // Emit an incoming reaction change
+        reactionStreamController.add(ReactionChange.upsert(MessageReaction(
+          id: 'rxn-incoming',
+          messageId: 'msg-1',
+          emoji: '\u{1F44D}',
+          senderPeerId: 'peer-bob',
+          timestamp: DateTime.now().toUtc().toIso8601String(),
+          createdAt: DateTime.now().toUtc().toIso8601String(),
+        )));
+        await pumpFrames(tester);
+
+        // Reaction should now be visible
+        expect(find.text('\u{1F44D}'), findsOneWidget);
+
+        // Clean up
+        await reactionStreamController.close();
+      },
+    );
   });
 }

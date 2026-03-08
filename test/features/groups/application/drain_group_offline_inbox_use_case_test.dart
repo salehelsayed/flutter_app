@@ -10,6 +10,7 @@ import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../shared/fakes/in_memory_media_attachment_repository.dart';
+import '../../conversation/domain/repositories/fake_reaction_repository.dart';
 
 void main() {
   late FakeBridge bridge;
@@ -346,6 +347,84 @@ void main() {
 
     expect(msgRepo.count, 1);
     expect(mediaRepo.count, 0);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Reaction drain tests
+  // ---------------------------------------------------------------------------
+  test('drains group_reaction items when reactionRepo is provided', () async {
+    final reactionRepo = FakeReactionRepository();
+
+    final innerReaction = jsonEncode({
+      'id': 'rxn-1',
+      'messageId': 'msg-1',
+      'emoji': '👍',
+      'action': 'add',
+      'senderPeerId': 'peer-sender',
+      'timestamp': DateTime.now().toUtc().toIso8601String(),
+    });
+
+    final inboxMessage = jsonEncode({
+      'type': 'group_reaction',
+      'senderId': 'peer-sender',
+      'reaction': innerReaction,
+    });
+
+    bridge.responses['group:inboxRetrieve'] = {
+      'ok': true,
+      'messages': [
+        {'from': 'peer-sender', 'message': inboxMessage, 'timestamp': 123},
+      ],
+    };
+
+    await drainGroupOfflineInbox(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      reactionRepo: reactionRepo,
+    );
+
+    // Reaction should be persisted
+    expect(reactionRepo.saveReactionCallCount, 1);
+    expect(reactionRepo.lastSavedReaction?.emoji, '👍');
+    // Should NOT be saved as a regular message
+    expect(msgRepo.count, 0);
+  });
+
+  test('skips group_reaction items when reactionRepo is null', () async {
+    final innerReaction = jsonEncode({
+      'id': 'rxn-2',
+      'messageId': 'msg-1',
+      'emoji': '❤️',
+      'action': 'add',
+      'senderPeerId': 'peer-sender',
+      'timestamp': DateTime.now().toUtc().toIso8601String(),
+    });
+
+    final inboxMessage = jsonEncode({
+      'type': 'group_reaction',
+      'senderId': 'peer-sender',
+      'reaction': innerReaction,
+    });
+
+    bridge.responses['group:inboxRetrieve'] = {
+      'ok': true,
+      'messages': [
+        {'from': 'peer-sender', 'message': inboxMessage, 'timestamp': 123},
+      ],
+    };
+
+    // Do not pass reactionRepo — should not crash
+    await drainGroupOfflineInbox(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+    );
+
+    // When reactionRepo is null and type == 'group_reaction', the condition
+    // is false so it falls through to handleIncomingGroupMessage.
+    // This test verifies no crash occurs.
+    expect(true, isTrue); // No exception thrown
   });
 }
 

@@ -265,25 +265,27 @@ class GroupConversationScreen extends StatelessWidget {
         return Padding(
           key: ValueKey('grp-msg-${message.id}'),
           padding: const EdgeInsets.only(bottom: 12),
-          child: LetterCard(
-            senderPeerId: message.senderPeerId,
-            senderName: isSent ? 'You' : (message.senderUsername ?? 'Unknown'),
-            text: message.text,
-            time: _formatTime(message.timestamp),
-            isIncoming: !isSent,
-            status: isSent ? message.status : null,
-            media: mediaMap[message.id] ?? const [],
-            onMediaTap: onMediaTap != null
-                ? (index) => onMediaTap!(message.id, index)
-                : null,
-            reactions: reactions[message.id] ?? const [],
-            ownPeerId: ownPeerId,
-            onReactionTap: onReactionSelected != null
-                ? (emoji) => onReactionSelected!(message.id, emoji)
-                : null,
-            onLongPress: onReactionSelected != null
-                ? () => _showReactionBar(context, message.id)
-                : null,
+          child: Builder(
+            builder: (cardContext) => LetterCard(
+              senderPeerId: message.senderPeerId,
+              senderName: isSent ? 'You' : (message.senderUsername ?? 'Unknown'),
+              text: message.text,
+              time: _formatTime(message.timestamp),
+              isIncoming: !isSent,
+              status: isSent ? message.status : null,
+              media: mediaMap[message.id] ?? const [],
+              onMediaTap: onMediaTap != null
+                  ? (index) => onMediaTap!(message.id, index)
+                  : null,
+              reactions: reactions[message.id] ?? const [],
+              ownPeerId: ownPeerId,
+              onReactionTap: onReactionSelected != null
+                  ? (emoji) => onReactionSelected!(message.id, emoji)
+                  : null,
+              onLongPress: onReactionSelected != null
+                  ? () => _showReactionBar(cardContext, message.id)
+                  : null,
+            ),
           ),
         );
       },
@@ -306,7 +308,14 @@ class GroupConversationScreen extends StatelessWidget {
     );
   }
 
-  void _showReactionBar(BuildContext context, String messageId) {
+  void _showReactionBar(BuildContext cardContext, String messageId) {
+    // Calculate card position for anchored reaction bar
+    double? anchorY;
+    final renderObject = cardContext.findRenderObject();
+    if (renderObject is RenderBox && renderObject.hasSize) {
+      anchorY = renderObject.localToGlobal(Offset.zero).dy;
+    }
+
     final messageReactions = reactions[messageId] ?? [];
     final ownReaction = ownPeerId != null
         ? messageReactions
@@ -315,17 +324,18 @@ class GroupConversationScreen extends StatelessWidget {
         : null;
 
     showDialog(
-      context: context,
+      context: cardContext,
       barrierColor: Colors.transparent,
       builder: (dialogContext) => ReactionBar(
         currentEmoji: ownReaction?.emoji,
+        anchorY: anchorY,
         onReactionSelected: (emoji) {
           Navigator.of(dialogContext).pop();
           onReactionSelected?.call(messageId, emoji);
         },
         onPlusTap: () {
           Navigator.of(dialogContext).pop();
-          _showFullPicker(context, messageId);
+          _showFullPicker(cardContext, messageId);
         },
         onDismiss: () => Navigator.of(dialogContext).pop(),
       ),

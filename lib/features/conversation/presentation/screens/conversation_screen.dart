@@ -355,52 +355,54 @@ class _ConversationScreenState extends State<ConversationScreen> {
 
             final messageReactions = widget.reactions[message.id] ?? const [];
 
-            final letterCard = LetterCard(
-              senderPeerId: message.senderPeerId,
-              senderName: message.isIncoming ? widget.contactUsername : 'You',
-              text: message.text,
-              time: _formatTime(message.timestamp),
-              isIncoming: message.isIncoming,
-              status: message.isIncoming ? null : message.status,
-              transport: message.transport,
-              quotedText: quotedText,
-              isQuoteUnavailable: isQuoteUnavailable,
-              media: message.media,
-              reactions: messageReactions,
-              ownPeerId: widget.ownPeerId,
-              onLongPress: () => _showReactionBar(message.id),
-              onReactionTap: widget.onReactionSelected != null
-                  ? (emoji) => widget.onReactionSelected!(message.id, emoji)
-                  : null,
-              onMediaTap: (index) {
-                final visual = message.media
-                    .where(
-                      (a) => a.mediaType == 'image' || a.mediaType == 'video',
-                    )
-                    .toList();
-                if (index < visual.length && visual[index].localPath != null) {
-                  final allPaths = visual
+            final letterCard = Builder(
+              builder: (cardContext) => LetterCard(
+                senderPeerId: message.senderPeerId,
+                senderName: message.isIncoming ? widget.contactUsername : 'You',
+                text: message.text,
+                time: _formatTime(message.timestamp),
+                isIncoming: message.isIncoming,
+                status: message.isIncoming ? null : message.status,
+                transport: message.transport,
+                quotedText: quotedText,
+                isQuoteUnavailable: isQuoteUnavailable,
+                media: message.media,
+                reactions: messageReactions,
+                ownPeerId: widget.ownPeerId,
+                onLongPress: () => _showReactionBar(message.id, cardContext: cardContext),
+                onReactionTap: widget.onReactionSelected != null
+                    ? (emoji) => widget.onReactionSelected!(message.id, emoji)
+                    : null,
+                onMediaTap: (index) {
+                  final visual = message.media
                       .where(
-                        (a) =>
-                            a.localPath != null && a.downloadStatus == 'done',
+                        (a) => a.mediaType == 'image' || a.mediaType == 'video',
                       )
-                      .map((a) => a.localPath!)
                       .toList();
-                  final tappedPath = visual[index].localPath!;
-                  final startIndex = allPaths
-                      .indexOf(tappedPath)
-                      .clamp(0, allPaths.length - 1);
-                  Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => FullScreenImageViewer(
-                        localPath: tappedPath,
-                        allPaths: allPaths,
-                        initialIndex: startIndex,
+                  if (index < visual.length && visual[index].localPath != null) {
+                    final allPaths = visual
+                        .where(
+                          (a) =>
+                              a.localPath != null && a.downloadStatus == 'done',
+                        )
+                        .map((a) => a.localPath!)
+                        .toList();
+                    final tappedPath = visual[index].localPath!;
+                    final startIndex = allPaths
+                        .indexOf(tappedPath)
+                        .clamp(0, allPaths.length - 1);
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => FullScreenImageViewer(
+                          localPath: tappedPath,
+                          allPaths: allPaths,
+                          initialIndex: startIndex,
+                        ),
                       ),
-                    ),
-                  );
-                }
-              },
+                    );
+                  }
+                },
+              ),
             );
 
             final shouldAnimate = !widget.initialLoadDone || isNew;
@@ -460,18 +462,26 @@ class _ConversationScreenState extends State<ConversationScreen> {
     return items.reversed.toList();
   }
 
-  void _showReactionBar(String messageId) {
-    // Find current reaction for this message by own user
+  void _showReactionBar(String messageId, {BuildContext? cardContext}) {
+    double? anchorY;
+    if (cardContext != null) {
+      final renderObject = cardContext.findRenderObject();
+      if (renderObject is RenderBox && renderObject.hasSize) {
+        anchorY = renderObject.localToGlobal(Offset.zero).dy;
+      }
+    }
+
     final reactions = widget.reactions[messageId] ?? [];
     final ownReaction = widget.ownPeerId != null
         ? reactions.where((r) => r.senderPeerId == widget.ownPeerId).firstOrNull
         : null;
 
     showDialog(
-      context: context,
+      context: cardContext ?? context,
       barrierColor: Colors.transparent,
       builder: (dialogContext) => ReactionBar(
         currentEmoji: ownReaction?.emoji,
+        anchorY: anchorY,
         onReactionSelected: (emoji) {
           Navigator.of(dialogContext).pop();
           widget.onReactionSelected?.call(messageId, emoji);

@@ -1,11 +1,16 @@
 import 'package:flutter/material.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/media/audio_recorder_service.dart';
+import 'package:flutter_app/core/media/image_processor.dart';
+import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/groups/application/create_group_with_members_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -15,6 +20,7 @@ import 'package:flutter_app/features/feed/domain/models/feed_route_changes.dart'
 import 'package:flutter_app/features/groups/presentation/screens/create_group_picker_screen.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
+import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 
 /// Wired widget for the new group creation flow.
 ///
@@ -31,6 +37,13 @@ class CreateGroupPickerWired extends StatefulWidget {
   final IdentityRepository identityRepo;
   final P2PService p2pService;
   final ActiveConversationTracker? groupConversationTracker;
+  final MediaAttachmentRepository? mediaAttachmentRepo;
+  final MediaFileManager? mediaFileManager;
+  final ImageProcessor? imageProcessor;
+  final ImageQualityPreference qualityPreference;
+  final ImageQualityPreference videoQualityPreference;
+  final AudioRecorderService? audioRecorderService;
+  final ReactionRepository? reactionRepo;
 
   const CreateGroupPickerWired({
     super.key,
@@ -43,6 +56,13 @@ class CreateGroupPickerWired extends StatefulWidget {
     required this.identityRepo,
     required this.p2pService,
     this.groupConversationTracker,
+    this.mediaAttachmentRepo,
+    this.mediaFileManager,
+    this.imageProcessor,
+    this.qualityPreference = ImageQualityPreference.compressed,
+    this.videoQualityPreference = ImageQualityPreference.compressed,
+    this.audioRecorderService,
+    this.reactionRepo,
   });
 
   @override
@@ -135,6 +155,13 @@ class _CreateGroupPickerWiredState extends State<CreateGroupPickerWired> {
             contactRepo: widget.contactRepo,
             p2pService: widget.p2pService,
             groupConversationTracker: widget.groupConversationTracker,
+            mediaAttachmentRepo: widget.mediaAttachmentRepo,
+            mediaFileManager: widget.mediaFileManager,
+            imageProcessor: widget.imageProcessor,
+            qualityPreference: widget.qualityPreference,
+            videoQualityPreference: widget.videoQualityPreference,
+            audioRecorderService: widget.audioRecorderService,
+            reactionRepo: widget.reactionRepo,
           ),
         ),
         result: FeedRouteChanges(changedGroupIds: {result.group.id}),
