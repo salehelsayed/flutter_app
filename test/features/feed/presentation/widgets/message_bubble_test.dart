@@ -14,7 +14,7 @@ void main() {
       );
 
   group('MessageBubble colors', () {
-    testWidgets('received message uses FeedColors.messageReceivedBg',
+    testWidgets('received message has transparent background',
         (tester) async {
       await tester.pumpWidget(wrap(const MessageBubble(
         text: 'Hello',
@@ -23,13 +23,13 @@ void main() {
         isUnread: false,
       )));
 
-      // Find the Container with BoxDecoration
+      // Find the Container with BoxDecoration — no background color
       final container = tester.widget<Container>(
         find.byType(Container).first,
       );
       final decoration = container.decoration as BoxDecoration?;
       if (decoration != null) {
-        expect(decoration.color, FeedColors.messageReceivedBg);
+        expect(decoration.color, isNull);
       }
     });
 
