@@ -1,6 +1,9 @@
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/feed_colors.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
 import 'package:flutter_app/features/feed/domain/models/session_reply.dart';
@@ -183,17 +186,14 @@ class CollapsedModeCardBody extends StatelessWidget {
   Widget _buildPreviewContent() {
     final ThreadMessage previewMsg;
     final String? displayText;
-    final bool isMediaOnly;
 
     if (sessionReply != null) {
       // Show the session reply text
       displayText = sessionReply!.text;
       previewMsg = thread.latestMessage; // for label logic
-      isMediaOnly = false;
     } else {
       previewMsg = thread.collapsedPreviewMessage;
       displayText = _previewText(previewMsg);
-      isMediaOnly = previewMsg.text.isEmpty && previewMsg.media.isNotEmpty;
     }
 
     final isSent = sessionReply != null || !previewMsg.isIncoming;
@@ -207,11 +207,20 @@ class CollapsedModeCardBody extends StatelessWidget {
     }
     final labelColor = isSent ? FeedColors.accentTeal : Colors.white;
 
+    // Find a downloadable thumbnail from media attachments
+    final hasMedia = sessionReply == null && previewMsg.media.isNotEmpty;
+    final thumbAttachment = hasMedia
+        ? _firstThumbnailAttachment(previewMsg.media)
+        : null;
+    final thumbPath = (thumbAttachment != null &&
+            thumbAttachment.downloadStatus == 'done')
+        ? thumbAttachment.localPath
+        : null;
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.baseline,
-        textBaseline: TextBaseline.alphabetic,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           Text(
             '$label: ',
@@ -221,7 +230,19 @@ class CollapsedModeCardBody extends StatelessWidget {
               color: labelColor,
             ),
           ),
-          if (isMediaOnly)
+          if (thumbPath != null) ...[
+            ClipRRect(
+              borderRadius: BorderRadius.circular(6),
+              child: Image.file(
+                File(thumbPath),
+                width: 20,
+                height: 20,
+                fit: BoxFit.cover,
+                cacheWidth: 40,
+              ),
+            ),
+            const SizedBox(width: 6),
+          ] else if (hasMedia) ...[
             Padding(
               padding: const EdgeInsets.only(right: 4),
               child: Icon(
@@ -230,6 +251,7 @@ class CollapsedModeCardBody extends StatelessWidget {
                 color: const Color.fromRGBO(255, 255, 255, 0.55),
               ),
             ),
+          ],
           Expanded(
             child: Text(
               displayText ?? '',
@@ -289,6 +311,14 @@ class CollapsedModeCardBody extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  /// Returns the first image/video attachment suitable for a thumbnail, or null.
+  MediaAttachment? _firstThumbnailAttachment(List<MediaAttachment> media) {
+    for (final a in media) {
+      if (a.mediaType == 'image' || a.mediaType == 'video') return a;
+    }
+    return null;
   }
 
   String? _previewText(ThreadMessage msg) {
