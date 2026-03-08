@@ -35,10 +35,9 @@ void main() {
       )));
       await tester.pump();
 
-      expect(find.byType(NavBarButton), findsNWidgets(4));
+      expect(find.byType(NavBarButton), findsNWidgets(3));
       expect(find.text('Feed'), findsOneWidget);
       expect(find.text('Remember'), findsOneWidget);
-      expect(find.text('Groups'), findsOneWidget);
       expect(find.text('Orbit'), findsOneWidget);
     });
 
@@ -55,8 +54,7 @@ void main() {
           tester.widgetList<NavBarButton>(find.byType(NavBarButton)).toList();
       expect(buttons[0].badgeCount, 5); // Feed
       expect(buttons[1].badgeCount, 0); // Remember
-      expect(buttons[2].badgeCount, 0); // Groups
-      expect(buttons[3].badgeCount, 0); // Orbit
+      expect(buttons[2].badgeCount, 0); // Orbit
     });
 
     testWidgets('maxWidth matches NavBarTheme.barMaxWidth', (tester) async {
@@ -152,8 +150,8 @@ void main() {
           .widgetList<SizedBox>(find.byType(SizedBox))
           .where((s) => s.width == NavBarTheme.buttonSpacing)
           .toList();
-      // 3 spacers between 4 buttons
-      expect(spacers.length, 3);
+      // 2 spacers between 3 buttons
+      expect(spacers.length, 2);
     });
 
     testWidgets('tap callbacks fire correctly', (tester) async {

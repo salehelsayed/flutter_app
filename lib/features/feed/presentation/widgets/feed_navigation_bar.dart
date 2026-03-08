@@ -64,13 +64,6 @@ class FeedNavigationBar extends StatelessWidget {
                 ),
                 const SizedBox(width: NavBarTheme.buttonSpacing),
                 NavBarButton(
-                  label: 'Groups',
-                  svgAsset: 'assets/icons/nav_groups.svg',
-                  isActive: activeTab == 'groups',
-                  onTap: () => onSwitchView('groups'),
-                ),
-                const SizedBox(width: NavBarTheme.buttonSpacing),
-                NavBarButton(
                   label: 'Orbit',
                   svgAsset: 'assets/icons/nav_orbit.svg',
                   isActive: activeTab == 'orbit',
