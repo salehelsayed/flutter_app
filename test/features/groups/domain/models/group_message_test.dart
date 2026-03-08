@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 
 void main() {
@@ -63,6 +64,55 @@ void main() {
 
       expect(incoming.toMap()['is_incoming'], 1);
       expect(outgoing.toMap()['is_incoming'], 0);
+    });
+
+    test('media defaults to empty list', () {
+      final msg = GroupMessage.fromMap(makeMap());
+      expect(msg.media, isEmpty);
+    });
+
+    test('can be constructed with media attachments', () {
+      final attachment = MediaAttachment(
+        id: 'att-1',
+        messageId: 'msg-001',
+        mime: 'image/jpeg',
+        size: 1024,
+        mediaType: 'image',
+        downloadStatus: 'done',
+        localPath: '/tmp/img.jpg',
+        createdAt: '2026-01-15T12:00:00.000Z',
+      );
+      final msg = GroupMessage(
+        id: 'msg-001',
+        groupId: 'group-1',
+        senderPeerId: 'peer-sender',
+        text: 'Hello',
+        timestamp: DateTime.utc(2026, 1, 15, 12),
+        createdAt: DateTime.utc(2026, 1, 15, 12),
+        media: [attachment],
+      );
+      expect(msg.media, hasLength(1));
+      expect(msg.media.first.id, 'att-1');
+    });
+
+    test('copyWith preserves and replaces media', () {
+      final attachment = MediaAttachment(
+        id: 'att-1',
+        messageId: 'msg-001',
+        mime: 'image/jpeg',
+        size: 1024,
+        mediaType: 'image',
+        downloadStatus: 'done',
+        createdAt: '2026-01-15T12:00:00.000Z',
+      );
+      final msg = GroupMessage.fromMap(makeMap());
+      expect(msg.media, isEmpty);
+
+      final withMedia = msg.copyWith(media: [attachment]);
+      expect(withMedia.media, hasLength(1));
+      expect(withMedia.media.first.id, 'att-1');
+      // Original unchanged
+      expect(msg.media, isEmpty);
     });
   });
 }

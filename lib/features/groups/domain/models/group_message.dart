@@ -1,3 +1,5 @@
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+
 /// Model representing a single message in a group conversation.
 ///
 /// Maps to the `group_messages` database table.
@@ -35,6 +37,9 @@ class GroupMessage {
   /// When the row was created locally.
   final DateTime createdAt;
 
+  /// Media attachments (loaded from media_attachments table, not from this row).
+  final List<MediaAttachment> media;
+
   const GroupMessage({
     required this.id,
     required this.groupId,
@@ -47,6 +52,7 @@ class GroupMessage {
     this.isIncoming = true,
     this.readAt,
     required this.createdAt,
+    this.media = const [],
   });
 
   /// Creates a GroupMessage from a database row map.
@@ -98,6 +104,7 @@ class GroupMessage {
     bool? isIncoming,
     Object? readAt = _sentinel,
     DateTime? createdAt,
+    List<MediaAttachment>? media,
   }) {
     return GroupMessage(
       id: id ?? this.id,
@@ -111,6 +118,7 @@ class GroupMessage {
       isIncoming: isIncoming ?? this.isIncoming,
       readAt: readAt == _sentinel ? this.readAt : readAt as DateTime?,
       createdAt: createdAt ?? this.createdAt,
+      media: media ?? this.media,
     );
   }
 

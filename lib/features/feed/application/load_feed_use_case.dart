@@ -84,6 +84,8 @@ Future<List<FeedItem>> loadContactFeedItems({
 Future<List<GroupThreadFeedItem>> loadGroupFeedItems({
   GroupRepository? groupRepo,
   GroupMessageRepository? groupMsgRepo,
+  MediaAttachmentRepository? mediaAttachmentRepo,
+  MediaFileManager? mediaFileManager,
 }) async {
   if (groupRepo == null || groupMsgRepo == null) return [];
 
@@ -94,6 +96,36 @@ Future<List<GroupThreadFeedItem>> loadGroupFeedItems({
   for (final group in groups) {
     final msgs = await groupMsgRepo.getMessagesPage(group.id, limit: 200);
     allGroupMessages.addAll(msgs);
+  }
+
+  // Batch-attach media to group messages, resolving relative paths
+  if (mediaAttachmentRepo != null && allGroupMessages.isNotEmpty) {
+    final ids = allGroupMessages.map((m) => m.id).toList();
+    final mediaMap = await mediaAttachmentRepo.getAttachmentsForMessages(ids);
+    if (mediaMap.isNotEmpty) {
+      final resolvedMap = <String, List<MediaAttachment>>{};
+      if (mediaFileManager != null) {
+        for (final entry in mediaMap.entries) {
+          final resolved = <MediaAttachment>[];
+          for (final a in entry.value) {
+            if (a.localPath != null) {
+              final absPath = await mediaFileManager.resolveStoredPath(
+                a.localPath!,
+              );
+              resolved.add(a.copyWith(localPath: absPath));
+            } else {
+              resolved.add(a);
+            }
+          }
+          resolvedMap[entry.key] = resolved;
+        }
+      }
+
+      final effectiveMap = mediaFileManager != null ? resolvedMap : mediaMap;
+      allGroupMessages = allGroupMessages
+          .map((m) => m.copyWith(media: effectiveMap[m.id] ?? const []))
+          .toList();
+    }
   }
 
   return groupGroupMessagesIntoThreads(
@@ -126,6 +158,8 @@ Future<List<FeedItem>> loadFeed({
     final groupThreadItems = await loadGroupFeedItems(
       groupRepo: groupRepo,
       groupMsgRepo: groupMsgRepo,
+      mediaAttachmentRepo: mediaAttachmentRepo,
+      mediaFileManager: mediaFileManager,
     );
 
     // Merge: connection items sorted by timestamp among thread items

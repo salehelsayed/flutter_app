@@ -70,6 +70,7 @@ List<GroupThreadFeedItem> groupGroupMessagesIntoThreads({
               status: m.isIncoming ? null : m.status,
               senderUsername: m.senderUsername,
               senderPeerId: m.senderPeerId,
+              media: m.media,
             ))
         .toList();
 

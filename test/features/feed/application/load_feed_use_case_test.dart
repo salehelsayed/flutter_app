@@ -2,13 +2,16 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/feed/application/load_feed_use_case.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import '../../../shared/fakes/fake_media_file_manager.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
+import '../../../shared/fakes/in_memory_media_attachment_repository.dart';
 
 // -- Fake Contact Repository --
 class FakeContactRepository implements ContactRepository {
@@ -504,6 +507,108 @@ void main() {
 
       final groupItems = result.whereType<GroupThreadFeedItem>().toList();
       expect(groupItems, isEmpty);
+    });
+
+    test('loadGroupFeedItems batch-loads media attachments', () async {
+      final groupRepo = InMemoryGroupRepository();
+      final groupMsgRepo = InMemoryGroupMessageRepository();
+      final mediaAttachmentRepo = InMemoryMediaAttachmentRepository();
+      final mediaFileManager = FakeMediaFileManager();
+
+      await groupRepo.saveGroup(GroupModel(
+        id: 'g1',
+        name: 'Media Group',
+        type: GroupType.chat,
+        topicName: '/mknoon/group/g1',
+        createdAt: DateTime(2026, 2, 1),
+        createdBy: 'admin',
+        myRole: GroupRole.member,
+      ));
+      await groupMsgRepo.saveMessage(GroupMessage(
+        id: 'gm-1',
+        groupId: 'g1',
+        senderPeerId: 'p1',
+        senderUsername: 'User1',
+        text: 'Photo',
+        timestamp: DateTime.utc(2026, 2, 9, 12, 0),
+        createdAt: DateTime.utc(2026, 2, 9, 12, 0),
+      ));
+      await mediaAttachmentRepo.saveAttachment(MediaAttachment(
+        id: 'att-g1',
+        messageId: 'gm-1',
+        mime: 'image/jpeg',
+        size: 2048,
+        mediaType: 'image',
+        localPath: 'media/groups/img.jpg',
+        downloadStatus: 'done',
+        createdAt: '2026-02-09T12:00:00.000Z',
+      ));
+
+      final items = await loadGroupFeedItems(
+        groupRepo: groupRepo,
+        groupMsgRepo: groupMsgRepo,
+        mediaAttachmentRepo: mediaAttachmentRepo,
+        mediaFileManager: mediaFileManager,
+      );
+
+      expect(items, hasLength(1));
+      expect(items.first.messages.first.media, hasLength(1));
+      expect(items.first.messages.first.media.first.id, 'att-g1');
+      // Path should be resolved
+      expect(
+        items.first.messages.first.media.first.localPath,
+        '/tmp/test_docs/media/groups/img.jpg',
+      );
+    });
+
+    test('loadFeed includes group media attachments', () async {
+      final groupRepo = InMemoryGroupRepository();
+      final groupMsgRepo = InMemoryGroupMessageRepository();
+      final mediaAttachmentRepo = InMemoryMediaAttachmentRepository();
+      final mediaFileManager = FakeMediaFileManager();
+
+      await groupRepo.saveGroup(GroupModel(
+        id: 'g1',
+        name: 'Media Group',
+        type: GroupType.chat,
+        topicName: '/mknoon/group/g1',
+        createdAt: DateTime(2026, 2, 1),
+        createdBy: 'admin',
+        myRole: GroupRole.member,
+      ));
+      await groupMsgRepo.saveMessage(GroupMessage(
+        id: 'gm-1',
+        groupId: 'g1',
+        senderPeerId: 'p1',
+        senderUsername: 'User1',
+        text: 'Image message',
+        timestamp: DateTime.utc(2026, 2, 9, 12, 0),
+        createdAt: DateTime.utc(2026, 2, 9, 12, 0),
+      ));
+      await mediaAttachmentRepo.saveAttachment(MediaAttachment(
+        id: 'att-g1',
+        messageId: 'gm-1',
+        mime: 'image/jpeg',
+        size: 2048,
+        mediaType: 'image',
+        localPath: 'media/groups/img.jpg',
+        downloadStatus: 'done',
+        createdAt: '2026-02-09T12:00:00.000Z',
+      ));
+
+      final result = await loadFeed(
+        contactRepo: FakeContactRepository(),
+        messageRepo: FakeMessageRepository(),
+        groupRepo: groupRepo,
+        groupMsgRepo: groupMsgRepo,
+        mediaAttachmentRepo: mediaAttachmentRepo,
+        mediaFileManager: mediaFileManager,
+      );
+
+      final groupItems = result.whereType<GroupThreadFeedItem>().toList();
+      expect(groupItems, hasLength(1));
+      expect(groupItems.first.messages.first.media, hasLength(1));
+      expect(groupItems.first.messages.first.media.first.id, 'att-g1');
     });
   });
 }
