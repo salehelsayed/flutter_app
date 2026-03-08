@@ -1,10 +1,27 @@
+import 'dart:io';
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
 import 'package:flutter_app/features/feed/domain/models/session_reply.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/collapsed_mode_card_body.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/scrollable_message_preview.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+
+/// Minimal valid 1x1 red PNG (67 bytes).
+final Uint8List _tinyPng = Uint8List.fromList([
+  0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, // PNG signature
+  0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52, // IHDR chunk
+  0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, // 1x1
+  0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53, 0xDE, // 8-bit RGB
+  0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41, 0x54, // IDAT chunk
+  0x08, 0xD7, 0x63, 0xF8, 0xCF, 0xC0, 0x00, 0x00, // compressed data
+  0x00, 0x02, 0x00, 0x01, 0xE2, 0x21, 0xBC, 0x33, // ...
+  0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, // IEND chunk
+  0xAE, 0x42, 0x60, 0x82,
+]);
 
 void main() {
   Widget wrap(Widget child) => MaterialApp(
@@ -463,6 +480,139 @@ void main() {
       // Session reply overrides expanded — shows single-line preview, not ScrollableMessagePreview
       expect(find.byType(ScrollableMessagePreview), findsNothing);
       expect(find.text('My reply'), findsOneWidget);
+    });
+  });
+
+  group('CollapsedModeCardBody media thumbnail', () {
+    late Directory tmpDir;
+    late String imagePath;
+
+    setUp(() {
+      tmpDir = Directory.systemTemp.createTempSync('thumb_test_');
+      imagePath = '${tmpDir.path}/photo.png';
+      File(imagePath).writeAsBytesSync(_tinyPng);
+    });
+
+    tearDown(() {
+      tmpDir.deleteSync(recursive: true);
+    });
+
+    testWidgets('shows thumbnail when message has downloaded image + text',
+        (tester) async {
+      final thread = ThreadFeedItem(
+        id: 'thread_1',
+        timestamp: DateTime(2026, 2, 9, 15, 0),
+        contactPeerId: 'peer1',
+        contactUsername: 'Solz',
+        messages: [
+          ThreadMessage(
+            id: 'm1',
+            text: 'again',
+            time: '3:00 PM',
+            timestamp: DateTime(2026, 2, 9, 15, 0),
+            isIncoming: true,
+            media: [
+              MediaAttachment(
+                id: 'a1',
+                messageId: 'm1',
+                mime: 'image/jpeg',
+                size: 1000,
+                mediaType: 'image',
+                localPath: imagePath,
+                downloadStatus: 'done',
+                createdAt: '2026-02-09T15:00:00Z',
+              ),
+            ],
+          ),
+        ],
+        conversationState: ConversationState.read,
+      );
+
+      await tester.pumpWidget(wrap(CollapsedModeCardBody(thread: thread)));
+
+      // Thumbnail Image.file should be present
+      expect(find.byType(Image), findsOneWidget);
+      // Text preview should still show
+      expect(find.text('again'), findsOneWidget);
+    });
+
+    testWidgets('shows icon fallback when media not yet downloaded',
+        (tester) async {
+      final thread = ThreadFeedItem(
+        id: 'thread_1',
+        timestamp: DateTime(2026, 2, 9, 15, 0),
+        contactPeerId: 'peer1',
+        contactUsername: 'Solz',
+        messages: [
+          ThreadMessage(
+            id: 'm1',
+            text: 'again',
+            time: '3:00 PM',
+            timestamp: DateTime(2026, 2, 9, 15, 0),
+            isIncoming: true,
+            media: [
+              MediaAttachment(
+                id: 'a1',
+                messageId: 'm1',
+                mime: 'image/jpeg',
+                size: 1000,
+                mediaType: 'image',
+                downloadStatus: 'pending',
+                createdAt: '2026-02-09T15:00:00Z',
+              ),
+            ],
+          ),
+        ],
+        conversationState: ConversationState.read,
+      );
+
+      await tester.pumpWidget(wrap(CollapsedModeCardBody(thread: thread)));
+
+      // Icon fallback instead of thumbnail
+      expect(find.byIcon(Icons.camera_alt_outlined), findsOneWidget);
+      // No Image widget
+      expect(find.byType(Image), findsNothing);
+      // Text preview should still show
+      expect(find.text('again'), findsOneWidget);
+    });
+
+    testWidgets('media-only message shows thumbnail + Photo label',
+        (tester) async {
+      final thread = ThreadFeedItem(
+        id: 'thread_1',
+        timestamp: DateTime(2026, 2, 9, 15, 0),
+        contactPeerId: 'peer1',
+        contactUsername: 'Solz',
+        messages: [
+          ThreadMessage(
+            id: 'm1',
+            text: '',
+            time: '3:00 PM',
+            timestamp: DateTime(2026, 2, 9, 15, 0),
+            isIncoming: true,
+            media: [
+              MediaAttachment(
+                id: 'a1',
+                messageId: 'm1',
+                mime: 'image/jpeg',
+                size: 1000,
+                mediaType: 'image',
+                localPath: imagePath,
+                downloadStatus: 'done',
+                createdAt: '2026-02-09T15:00:00Z',
+              ),
+            ],
+          ),
+        ],
+        conversationState: ConversationState.read,
+      );
+
+      await tester.pumpWidget(wrap(CollapsedModeCardBody(thread: thread)));
+
+      // Thumbnail should render
+      expect(find.byType(Image), findsOneWidget);
+      // "Photo" label should show
+      expect(find.text('Photo'), findsOneWidget);
     });
   });
 }
