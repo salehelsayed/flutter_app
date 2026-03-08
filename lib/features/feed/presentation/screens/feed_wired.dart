@@ -61,7 +61,6 @@ import 'package:flutter_app/features/home/application/identity_avatar_resolver.d
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
-import 'package:flutter_app/features/groups/presentation/screens/group_list_wired.dart';
 import 'package:flutter_app/features/orbit/presentation/navigation/orbit_route_transition.dart';
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_wired.dart';
 import 'package:flutter_app/features/settings/presentation/navigation/settings_route_transition.dart';
@@ -1518,46 +1517,9 @@ class _FeedWiredState extends State<FeedWired> {
           });
       return;
     }
-    if (tab == 'groups') {
-      _navigateToGroups();
-      return;
-    }
     setState(() {
       _activeTab = tab;
     });
-  }
-
-  void _navigateToGroups() {
-    final groupRepo = widget.groupRepository;
-    final msgRepo = widget.groupMessageRepository;
-    final listener = widget.groupMessageListener;
-    if (groupRepo == null || msgRepo == null || listener == null) return;
-
-    Navigator.of(context)
-        .push(
-          MaterialPageRoute(
-            builder: (_) => GroupListWired(
-              groupRepo: groupRepo,
-              msgRepo: msgRepo,
-              groupMessageListener: listener,
-              bridge: widget.bridge,
-              identityRepo: widget.repository,
-              contactRepo: widget.contactRepository,
-              p2pService: widget.p2pService,
-              mediaAttachmentRepo: widget.mediaAttachmentRepository,
-              mediaFileManager: widget.mediaFileManager,
-              imageProcessor: widget.imageProcessor,
-              qualityPreference: _qualityPreference,
-              videoQualityPreference: _videoQualityPreference,
-              audioRecorderService: widget.audioRecorderService,
-              groupConversationTracker: widget.groupConversationTracker,
-            ),
-          ),
-        )
-        .then((result) {
-          final changes = result is FeedRouteChanges ? result : null;
-          unawaited(_applyRouteChanges(changes));
-        });
   }
 
   Future<void> _onUsernameChanged(String newUsername) async {
