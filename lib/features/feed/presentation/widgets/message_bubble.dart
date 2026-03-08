@@ -57,14 +57,19 @@ class MessageBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onLongPress: onLongPress,
-      child: Container(
-          width: double.infinity,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: _borderColor),
+    return Align(
+      alignment: isIncoming ? Alignment.centerLeft : Alignment.centerRight,
+      child: GestureDetector(
+        onLongPress: onLongPress,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxWidth: MediaQuery.of(context).size.width * 0.78,
           ),
+          child: Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: _borderColor),
+            ),
           child: Stack(
             children: [
               // Accent edge glow
@@ -173,6 +178,8 @@ class MessageBubble extends StatelessWidget {
               ),
             ],
           ),
+        ),
+      ),
       ),
     );
   }
@@ -262,18 +269,15 @@ class MessageBubble extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        SizedBox(
-          width: double.infinity,
-          child: Stack(
-            children: [
-              textWidget,
-              Positioned(
-                right: 0,
-                bottom: 0,
-                child: trailingWidget,
-              ),
-            ],
-          ),
+        Stack(
+          children: [
+            textWidget,
+            Positioned(
+              right: 0,
+              bottom: 0,
+              child: trailingWidget,
+            ),
+          ],
         ),
         if (hasReactions) ...[
           const SizedBox(height: 4),
