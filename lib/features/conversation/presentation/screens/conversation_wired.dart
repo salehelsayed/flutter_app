@@ -59,6 +59,7 @@ typedef SendChatMessageFn =
       String? timestamp,
       Bridge? bridge,
       String? recipientMlKemPublicKey,
+      String? quotedMessageId,
       List<MediaAttachment>? mediaAttachments,
       MediaAttachmentRepository? mediaAttachmentRepo,
     });

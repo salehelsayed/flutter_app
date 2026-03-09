@@ -7,7 +7,9 @@ import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/chat_console_logger.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_payload.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 
 /// Interactive send budget for local WiFi attempts.
@@ -21,6 +23,7 @@ enum SendChatMessageResult {
   success,
   nodeNotRunning,
   invalidMessage,
+  encryptionRequired,
   peerNotFound,
   dialFailed,
   sendFailed,
@@ -49,11 +52,16 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   String? timestamp,
   Bridge? bridge,
   String? recipientMlKemPublicKey,
+  String? quotedMessageId,
+  List<MediaAttachment>? mediaAttachments,
+  MediaAttachmentRepository? mediaAttachmentRepo,
 }) async {
   final targetPrefix = targetPeerId.length > 10
       ? targetPeerId.substring(0, 10)
       : targetPeerId;
   final textPreview = buildTextPreview(text);
+  final hasAttachments =
+      mediaAttachments != null && mediaAttachments.isNotEmpty;
 
   emitFlowEvent(
     layer: 'FL',
@@ -62,7 +70,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   );
 
   // 1. Validate
-  if (text.trim().isEmpty) {
+  if (text.trim().isEmpty && !hasAttachments) {
     emitFlowEvent(
       layer: 'FL',
       event: 'CHAT_MSG_SEND_INVALID',
@@ -85,6 +93,16 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   final resolvedMessageId = messageId ?? _uuid.v4();
   final resolvedTimestamp =
       timestamp ?? DateTime.now().toUtc().toIso8601String();
+  final normalizedAttachments = mediaAttachments
+      ?.map(
+        (attachment) => attachment.copyWith(
+          messageId: resolvedMessageId,
+          createdAt: attachment.createdAt.isEmpty
+              ? resolvedTimestamp
+              : attachment.createdAt,
+        ),
+      )
+      .toList();
 
   final payload = MessagePayload(
     id: resolvedMessageId,
@@ -92,6 +110,10 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     senderPeerId: senderPeerId,
     senderUsername: senderUsername,
     timestamp: resolvedTimestamp,
+    quotedMessageId: quotedMessageId,
+    media: normalizedAttachments
+        ?.map((attachment) => attachment.toJson())
+        .toList(),
   );
   logChatOutgoing(
     messageId: resolvedMessageId,
@@ -148,8 +170,9 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   // 4.5. Check for existing connected peer first (connection reuse).
   // If the peer is already connected, try to send directly without
   // rediscovering — this is the fastest interactive path.
-  final isAlreadyConnected = p2pService.currentState.connections
-      .any((c) => c.peerId == targetPeerId);
+  final isAlreadyConnected = p2pService.currentState.connections.any(
+    (c) => c.peerId == targetPeerId,
+  );
 
   if (isAlreadyConnected) {
     emitFlowEvent(
@@ -169,8 +192,13 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
           contactPeerId: targetPeerId,
           isIncoming: false,
           status: status,
+          transport: 'reuse',
         );
         await messageRepo.saveMessage(message);
+        await _persistOutgoingMedia(
+          mediaAttachmentRepo: mediaAttachmentRepo,
+          attachments: normalizedAttachments,
+        );
         emitFlowEvent(
           layer: 'FL',
           event: 'CHAT_MSG_SEND_SUCCESS',
@@ -187,7 +215,10 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
           status: status,
           text: text,
         );
-        return (SendChatMessageResult.success, message);
+        return (
+          SendChatMessageResult.success,
+          message.copyWith(media: normalizedAttachments ?? const []),
+        );
       }
     } catch (_) {
       // Connection reuse failed — fall through to race
@@ -204,15 +235,19 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   // Local WiFi path (bounded by interactiveLocalBudget)
   if (isLocalPeer) {
     raceFutures.add(
-      _tryLocalSend(p2pService, targetPeerId, jsonString, senderPeerId)
-          .timeout(interactiveLocalBudget, onTimeout: () => _RaceResult.failed('local_timeout')),
+      _tryLocalSend(p2pService, targetPeerId, jsonString, senderPeerId).timeout(
+        interactiveLocalBudget,
+        onTimeout: () => _RaceResult.failed('local_timeout'),
+      ),
     );
   }
 
   // Direct discover/dial/send path (bounded by interactiveDirectBudget)
   raceFutures.add(
-    _tryDirectSend(p2pService, targetPeerId, jsonString)
-        .timeout(interactiveDirectBudget, onTimeout: () => _RaceResult.failed('direct_timeout')),
+    _tryDirectSend(p2pService, targetPeerId, jsonString).timeout(
+      interactiveDirectBudget,
+      onTimeout: () => _RaceResult.failed('direct_timeout'),
+    ),
   );
 
   // Race: first successful result wins.
@@ -222,24 +257,26 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   final failures = <String>[];
 
   for (final future in raceFutures) {
-    future.then((result) {
-      if (result.success && !completer.isCompleted) {
-        completer.complete(result);
-      } else {
-        failures.add(result.reason ?? 'unknown');
-        pendingCount--;
-        if (pendingCount <= 0 && !completer.isCompleted) {
-          // All paths failed
-          completer.complete(_RaceResult.failed(failures.join(', ')));
-        }
-      }
-    }).catchError((Object e) {
-      failures.add(e.toString());
-      pendingCount--;
-      if (pendingCount <= 0 && !completer.isCompleted) {
-        completer.complete(_RaceResult.failed(failures.join(', ')));
-      }
-    });
+    future
+        .then((result) {
+          if (result.success && !completer.isCompleted) {
+            completer.complete(result);
+          } else {
+            failures.add(result.reason ?? 'unknown');
+            pendingCount--;
+            if (pendingCount <= 0 && !completer.isCompleted) {
+              // All paths failed
+              completer.complete(_RaceResult.failed(failures.join(', ')));
+            }
+          }
+        })
+        .catchError((Object e) {
+          failures.add(e.toString());
+          pendingCount--;
+          if (pendingCount <= 0 && !completer.isCompleted) {
+            completer.complete(_RaceResult.failed(failures.join(', ')));
+          }
+        });
   }
 
   final raceResult = await completer.future;
@@ -250,11 +287,13 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       contactPeerId: targetPeerId,
       isIncoming: false,
       status: status,
+      transport: raceResult.via,
     );
-    // Persist only once for this messageId
-    if (!await messageRepo.messageExists(resolvedMessageId)) {
-      await messageRepo.saveMessage(message);
-    }
+    await messageRepo.saveMessage(message);
+    await _persistOutgoingMedia(
+      mediaAttachmentRepo: mediaAttachmentRepo,
+      attachments: normalizedAttachments,
+    );
     emitFlowEvent(
       layer: 'FL',
       event: 'CHAT_MSG_SEND_SUCCESS',
@@ -271,7 +310,10 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       status: status,
       text: text,
     );
-    return (SendChatMessageResult.success, message);
+    return (
+      SendChatMessageResult.success,
+      message.copyWith(media: normalizedAttachments ?? const []),
+    );
   }
 
   // All active paths failed — try offline inbox fallback once.
@@ -291,10 +333,13 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
         contactPeerId: targetPeerId,
         isIncoming: false,
         status: 'delivered',
+        transport: 'inbox',
       );
-      if (!await messageRepo.messageExists(resolvedMessageId)) {
-        await messageRepo.saveMessage(deliveredMessage);
-      }
+      await messageRepo.saveMessage(deliveredMessage);
+      await _persistOutgoingMedia(
+        mediaAttachmentRepo: mediaAttachmentRepo,
+        attachments: normalizedAttachments,
+      );
       emitFlowEvent(
         layer: 'FL',
         event: 'CHAT_MSG_SEND_SUCCESS',
@@ -311,7 +356,10 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
         status: 'delivered',
         text: text,
       );
-      return (SendChatMessageResult.success, deliveredMessage);
+      return (
+        SendChatMessageResult.success,
+        deliveredMessage.copyWith(media: normalizedAttachments ?? const []),
+      );
     }
   } catch (e) {
     emitFlowEvent(
@@ -326,10 +374,13 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     contactPeerId: targetPeerId,
     isIncoming: false,
     status: 'failed',
+    wireEnvelope: jsonString,
   );
-  if (!await messageRepo.messageExists(resolvedMessageId)) {
-    await messageRepo.saveMessage(failedMessage);
-  }
+  await messageRepo.saveMessage(failedMessage);
+  await _persistOutgoingMedia(
+    mediaAttachmentRepo: mediaAttachmentRepo,
+    attachments: normalizedAttachments,
+  );
 
   emitFlowEvent(
     layer: 'FL',
@@ -346,7 +397,10 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     status: 'failed',
     text: text,
   );
-  return (SendChatMessageResult.sendFailed, failedMessage);
+  return (
+    _resultForFailureReason(raceResult.reason),
+    failedMessage.copyWith(media: normalizedAttachments ?? const []),
+  );
 }
 
 /// Internal result of a single send path in the race.
@@ -363,8 +417,10 @@ class _RaceResult {
     this.reason,
   });
 
-  factory _RaceResult.succeeded({required String via, bool acknowledged = false}) =>
-      _RaceResult._(success: true, acknowledged: acknowledged, via: via);
+  factory _RaceResult.succeeded({
+    required String via,
+    bool acknowledged = false,
+  }) => _RaceResult._(success: true, acknowledged: acknowledged, via: via);
 
   factory _RaceResult.failed(String reason) =>
       _RaceResult._(success: false, reason: reason);
@@ -378,7 +434,10 @@ Future<_RaceResult> _tryLocalSend(
   String senderPeerId,
 ) async {
   final localSent = await p2pService.sendLocalMessage(
-    targetPeerId, jsonString, senderPeerId);
+    targetPeerId,
+    jsonString,
+    senderPeerId,
+  );
   if (localSent) {
     return _RaceResult.succeeded(via: 'local', acknowledged: true);
   }
@@ -394,10 +453,7 @@ Future<_RaceResult> _tryDirectSend(
   final budgetMs = interactiveDirectBudget.inMilliseconds;
 
   // Discover
-  final peer = await p2pService.discoverPeer(
-    targetPeerId,
-    timeoutMs: budgetMs,
-  );
+  final peer = await p2pService.discoverPeer(targetPeerId, timeoutMs: budgetMs);
   if (peer == null) {
     return _RaceResult.failed('peer_not_found');
   }
@@ -426,4 +482,27 @@ Future<_RaceResult> _tryDirectSend(
     via: 'direct',
     acknowledged: sendResult.acknowledged,
   );
+}
+
+Future<void> _persistOutgoingMedia({
+  required MediaAttachmentRepository? mediaAttachmentRepo,
+  required List<MediaAttachment>? attachments,
+}) async {
+  if (mediaAttachmentRepo == null ||
+      attachments == null ||
+      attachments.isEmpty) {
+    return;
+  }
+
+  for (final attachment in attachments) {
+    await mediaAttachmentRepo.saveAttachment(attachment);
+  }
+}
+
+SendChatMessageResult _resultForFailureReason(String? reason) {
+  return switch (reason) {
+    'peer_not_found' => SendChatMessageResult.peerNotFound,
+    'dial_failed' => SendChatMessageResult.dialFailed,
+    _ => SendChatMessageResult.sendFailed,
+  };
 }
