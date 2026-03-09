@@ -335,3 +335,85 @@ func TestConcurrent_RegisterAndDiscover(t *testing.T) {
 		t.Fatalf("expected 1 result after concurrent ops, got %d", len(results))
 	}
 }
+
+// =============================================================================
+// Phase 2: Shared Relay Control State — Rendezvous Store tests
+// =============================================================================
+
+// TestRendezvousStore_RegisterRefreshesTTL proves that re-registering
+// the same peer in the same namespace refreshes the TTL instead of
+// creating a duplicate entry.
+func TestRendezvousStore_RegisterRefreshesTTL(t *testing.T) {
+	backend := newMemoryRendezvousBackend()
+	storeA := NewRendezvousStoreWithBackend(backend)
+
+	// Register with a 1-second TTL.
+	storeA.Register("ns1", "peer-1", []byte("record-v1"), 1)
+
+	// Wait 500ms (half of TTL), then refresh with a 2-second TTL.
+	time.Sleep(500 * time.Millisecond)
+	storeA.Register("ns1", "peer-1", []byte("record-v2"), 2)
+
+	// Wait another 600ms — the original 1s TTL would have expired,
+	// but the refreshed 2s TTL should keep the entry alive.
+	time.Sleep(600 * time.Millisecond)
+
+	results := storeA.Discover("ns1", "other-peer", 10)
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result (TTL should have been refreshed), got %d", len(results))
+	}
+	if string(results[0].SignedPeerRecord) != "record-v2" {
+		t.Fatalf("expected record-v2, got %s", results[0].SignedPeerRecord)
+	}
+}
+
+// TestRendezvousStore_DiscoverExcludesExpiredEntries proves that
+// Discover on a shared backend does not return entries whose TTL
+// has elapsed.
+func TestRendezvousStore_DiscoverExcludesExpiredEntries(t *testing.T) {
+	backend := newMemoryRendezvousBackend()
+	store := NewRendezvousStoreWithBackend(backend)
+
+	store.Register("ns1", "peer-short-ttl-pad!!", []byte("short-lived"), 1)
+	store.Register("ns1", "peer-long-ttl-padd!!", []byte("long-lived"), 3600)
+
+	// Wait for the short TTL to expire.
+	time.Sleep(1100 * time.Millisecond)
+
+	results := store.Discover("ns1", "requester", 10)
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result (expired excluded), got %d", len(results))
+	}
+	if string(results[0].SignedPeerRecord) != "long-lived" {
+		t.Fatalf("expected long-lived, got %s", results[0].SignedPeerRecord)
+	}
+}
+
+// TestRendezvousStore_DiscoverSeesEntriesWrittenByAnotherStoreInstance
+// proves that two RendezvousStore instances backed by the same backend
+// share state: store A writes, store B reads.
+func TestRendezvousStore_DiscoverSeesEntriesWrittenByAnotherStoreInstance(t *testing.T) {
+	backend := newMemoryRendezvousBackend()
+	storeA := NewRendezvousStoreWithBackend(backend)
+	storeB := NewRendezvousStoreWithBackend(backend)
+
+	// Register through store A.
+	storeA.Register("ns1", "peer-1", []byte("record-from-A"), 3600)
+
+	// Discover through store B.
+	results := storeB.Discover("ns1", "other-peer", 10)
+	if len(results) != 1 {
+		t.Fatalf("expected store B to see 1 result written by store A, got %d", len(results))
+	}
+	if string(results[0].SignedPeerRecord) != "record-from-A" {
+		t.Fatalf("expected record-from-A, got %s", results[0].SignedPeerRecord)
+	}
+
+	// Verify stats are consistent from both instances.
+	nsA, peersA := storeA.Stats()
+	nsB, peersB := storeB.Stats()
+	if nsA != nsB || peersA != peersB {
+		t.Fatalf("stats should match across instances: A(%d/%d) vs B(%d/%d)",
+			nsA, peersA, nsB, peersB)
+	}
+}

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"sync"
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/network"
@@ -31,8 +30,8 @@ const (
 // --- Push service ---
 
 type PushService struct {
-	client *messaging.Client
-	tokens sync.Map // peerId → tokenEntry
+	client       *messaging.Client
+	tokenBackend PushTokenBackend
 }
 
 type tokenEntry struct {
@@ -42,7 +41,9 @@ type tokenEntry struct {
 }
 
 func NewPushService(ctx context.Context, serviceAccountPath string) *PushService {
-	ps := &PushService{}
+	ps := &PushService{
+		tokenBackend: newMemoryPushTokenStore(),
+	}
 
 	opt := option.WithCredentialsFile(serviceAccountPath)
 	app, err := firebase.NewApp(ctx, nil, opt)
@@ -62,6 +63,13 @@ func NewPushService(ctx context.Context, serviceAccountPath string) *PushService
 	return ps
 }
 
+// NewPushServiceWithBackend creates a PushService with a custom token backend.
+func NewPushServiceWithBackend(tokenBackend PushTokenBackend) *PushService {
+	return &PushService{
+		tokenBackend: tokenBackend,
+	}
+}
+
 func (ps *PushService) Status() string {
 	if ps.client != nil {
 		return "enabled"
@@ -70,16 +78,12 @@ func (ps *PushService) Status() string {
 }
 
 func (ps *PushService) RegisterToken(peerId, token, platform string) {
-	ps.tokens.Store(peerId, tokenEntry{
-		Token:     token,
-		Platform:  platform,
-		UpdatedAt: time.Now(),
-	})
+	ps.tokenBackend.RegisterToken(peerId, token, platform)
 	log.Printf("[PUSH] Token registered for %s (%s)", peerId[:min(20, len(peerId))], platform)
 }
 
 func (ps *PushService) UnregisterToken(peerId string) {
-	ps.tokens.Delete(peerId)
+	ps.tokenBackend.UnregisterToken(peerId)
 	log.Printf("[PUSH] Token unregistered for %s", peerId[:min(20, len(peerId))])
 }
 
@@ -88,11 +92,10 @@ func (ps *PushService) SendNotification(ctx context.Context, toPeerId, fromPeerI
 		return
 	}
 
-	val, ok := ps.tokens.Load(toPeerId)
-	if !ok {
+	entry := ps.tokenBackend.LookupToken(toPeerId)
+	if entry == nil {
 		return
 	}
-	entry := val.(tokenEntry)
 
 	msg := &messaging.Message{
 		Token: entry.Token,
@@ -125,7 +128,7 @@ func (ps *PushService) SendNotification(ctx context.Context, toPeerId, fromPeerI
 		log.Printf("[PUSH] Failed to send to %s: %v", toPeerId[:min(20, len(toPeerId))], err)
 		// Remove invalid tokens
 		if isInvalidTokenError(err) {
-			ps.tokens.Delete(toPeerId)
+			ps.tokenBackend.UnregisterToken(toPeerId)
 			pushSentCounter.WithLabelValues("invalid_token").Inc()
 			log.Printf("[PUSH] Removed invalid token for %s", toPeerId[:min(20, len(toPeerId))])
 		} else {
@@ -138,12 +141,7 @@ func (ps *PushService) SendNotification(ctx context.Context, toPeerId, fromPeerI
 }
 
 func (ps *PushService) TokenCount() int {
-	count := 0
-	ps.tokens.Range(func(_, _ interface{}) bool {
-		count++
-		return true
-	})
-	return count
+	return ps.tokenBackend.TokenCount()
 }
 
 func isInvalidTokenError(err error) bool {
@@ -175,113 +173,73 @@ type inboxMessage struct {
 	Metadata  map[string]interface{} `json:"metadata,omitempty"`
 }
 
+// InboxStore wraps an InboxBackend and a PushService.
 type InboxStore struct {
-	mu    sync.Mutex
-	store map[string][]inboxMessage // peerId → messages
-	push  *PushService
+	backend InboxBackend
+	push    *PushService
 }
 
+// NewInboxStore creates an InboxStore with an in-memory backend.
 func NewInboxStore(push *PushService) *InboxStore {
 	return &InboxStore{
-		store: make(map[string][]inboxMessage),
-		push:  push,
+		backend: newMemoryInboxBackend(),
+		push:    push,
+	}
+}
+
+// NewInboxStoreWithBackend creates an InboxStore with a custom backend.
+func NewInboxStoreWithBackend(backend InboxBackend, push *PushService) *InboxStore {
+	return &InboxStore{
+		backend: backend,
+		push:    push,
 	}
 }
 
 func (is *InboxStore) Store(toPeerId string, entry inboxMessage) {
-	is.mu.Lock()
-	defer is.mu.Unlock()
-
-	before := is.store[toPeerId]
-	messages := is.pruneExpired(before)
-	expired := len(before) - len(messages)
-	if expired > 0 {
-		inboxExpiredCounter.Add(float64(expired))
-	}
-
-	// Cap at max
-	if len(messages) >= maxMessagesPerPeer {
-		overflow := len(messages) - maxMessagesPerPeer + 1
-		inboxCappedCounter.Add(float64(overflow))
-		messages = messages[len(messages)-maxMessagesPerPeer+1:]
-	}
-
-	messages = append(messages, entry)
-	is.store[toPeerId] = messages
+	is.backend.Store(toPeerId, entry)
 	inboxStoredCounter.Inc()
 
-	log.Printf("[INBOX] Stored message for %s from %s (total: %d)",
+	log.Printf("[INBOX] Stored message for %s from %s",
 		toPeerId[:min(20, len(toPeerId))],
-		entry.From[:min(20, len(entry.From))],
-		len(messages))
+		entry.From[:min(20, len(entry.From))])
 }
 
 func (is *InboxStore) Retrieve(peerId string, limit int) []inboxMessage {
-	is.mu.Lock()
-	defer is.mu.Unlock()
-
-	before := is.store[peerId]
-	messages := is.pruneExpired(before)
-	expired := len(before) - len(messages)
-	if expired > 0 {
-		inboxExpiredCounter.Add(float64(expired))
-	}
-	is.store[peerId] = messages
+	messages, hasMore := is.backend.Retrieve(peerId, limit)
 
 	if len(messages) == 0 {
 		log.Printf("[INBOX] No messages for %s", peerId[:min(20, len(peerId))])
 		return nil
 	}
 
-	if limit > len(messages) {
-		limit = len(messages)
+	inboxRetrievedCounter.Add(float64(len(messages)))
+
+	remaining := 0
+	if hasMore {
+		remaining = is.backend.Count(peerId)
 	}
-
-	result := make([]inboxMessage, limit)
-	copy(result, messages[:limit])
-
-	remaining := messages[limit:]
-	if len(remaining) > 0 {
-		is.store[peerId] = remaining
-	} else {
-		delete(is.store, peerId)
-	}
-
-	inboxRetrievedCounter.Add(float64(len(result)))
-
 	log.Printf("[INBOX] Retrieved %d message(s) for %s — deleted from memory (%d remaining)",
-		len(result), peerId[:min(20, len(peerId))], len(remaining))
-	return result
+		len(messages), peerId[:min(20, len(peerId))], remaining)
+	return messages
+}
+
+// RetrieveWithMeta retrieves messages and returns pagination metadata.
+func (is *InboxStore) RetrieveWithMeta(peerId string, limit int) ([]inboxMessage, bool) {
+	messages, hasMore := is.backend.Retrieve(peerId, limit)
+
+	if len(messages) > 0 {
+		inboxRetrievedCounter.Add(float64(len(messages)))
+	}
+
+	return messages, hasMore
 }
 
 func (is *InboxStore) Count(peerId string) int {
-	is.mu.Lock()
-	defer is.mu.Unlock()
-	return len(is.store[peerId])
+	return is.backend.Count(peerId)
 }
 
 func (is *InboxStore) Stats() (totalPeers, totalMessages int) {
-	is.mu.Lock()
-	defer is.mu.Unlock()
-	totalPeers = len(is.store)
-	for _, msgs := range is.store {
-		totalMessages += len(msgs)
-	}
-	return
-}
-
-func (is *InboxStore) pruneExpired(messages []inboxMessage) []inboxMessage {
-	if len(messages) == 0 {
-		return messages
-	}
-	cutoff := time.Now().Add(-maxMessageAge).UnixMilli()
-	var result []inboxMessage
-	for _, m := range messages {
-		if m.Timestamp > cutoff {
-			result = append(result, m)
-		}
-	}
-	return result
+	return is.backend.Stats()
 }
 
 // --- Group Inbox store ---
@@ -290,72 +248,41 @@ type groupInboxMessage struct {
 	From      string `json:"from"`
 	Message   string `json:"message"`
 	Timestamp int64  `json:"timestamp"`
+	ID        string `json:"id,omitempty"`
 }
 
+// GroupInboxStore wraps a GroupInboxBackend.
 type GroupInboxStore struct {
-	mu          sync.RWMutex
-	messages    map[string][]groupInboxMessage // key: groupId
-	maxPerGroup int
-	ttl         time.Duration
+	backend GroupInboxBackend
 }
 
+// NewGroupInboxStore creates a store with an in-memory backend.
 func NewGroupInboxStore(maxPerGroup int, ttl time.Duration) *GroupInboxStore {
 	return &GroupInboxStore{
-		messages:    make(map[string][]groupInboxMessage),
-		maxPerGroup: maxPerGroup,
-		ttl:         ttl,
+		backend: newMemoryGroupInboxBackend(maxPerGroup, ttl),
+	}
+}
+
+// NewGroupInboxStoreWithBackend creates a store with a custom backend.
+func NewGroupInboxStoreWithBackend(backend GroupInboxBackend) *GroupInboxStore {
+	return &GroupInboxStore{
+		backend: backend,
 	}
 }
 
 func (s *GroupInboxStore) Store(groupId, from, message string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	msgs := s.pruneExpiredLocked(s.messages[groupId])
-
-	// Cap enforcement: drop oldest when exceeding max.
-	if len(msgs) >= s.maxPerGroup {
-		overflow := len(msgs) - s.maxPerGroup + 1
-		groupInboxCappedCounter.Add(float64(overflow))
-		msgs = msgs[overflow:]
+	err := s.backend.Store(groupId, from, message)
+	if err == nil {
+		groupInboxStoredCounter.Inc()
+		log.Printf("[GROUP_INBOX] Stored message for group %s from %s",
+			groupId[:min(20, len(groupId))],
+			from[:min(20, len(from))])
 	}
-
-	msgs = append(msgs, groupInboxMessage{
-		From:      from,
-		Message:   message,
-		Timestamp: time.Now().UnixMilli(),
-	})
-	s.messages[groupId] = msgs
-	groupInboxStoredCounter.Inc()
-
-	log.Printf("[GROUP_INBOX] Stored message for group %s from %s (total: %d)",
-		groupId[:min(20, len(groupId))],
-		from[:min(20, len(from))],
-		len(msgs))
-	return nil
+	return err
 }
 
 func (s *GroupInboxStore) Retrieve(groupId string, sinceTimestamp int64) []groupInboxMessage {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	msgs := s.messages[groupId]
-	if len(msgs) == 0 {
-		return nil
-	}
-
-	var result []groupInboxMessage
-	cutoff := time.Now().Add(-s.ttl).UnixMilli()
-	for _, m := range msgs {
-		if m.Timestamp <= cutoff {
-			continue // expired
-		}
-		if sinceTimestamp > 0 && m.Timestamp <= sinceTimestamp {
-			continue // before requested window
-		}
-		result = append(result, m)
-	}
-
+	result := s.backend.RetrieveSince(groupId, sinceTimestamp)
 	groupInboxRetrievedCounter.Add(float64(len(result)))
 
 	log.Printf("[GROUP_INBOX] Retrieved %d message(s) for group %s (since=%d)",
@@ -363,54 +290,20 @@ func (s *GroupInboxStore) Retrieve(groupId string, sinceTimestamp int64) []group
 	return result
 }
 
+// RetrieveWithCursor retrieves messages using cursor-based pagination.
+func (s *GroupInboxStore) RetrieveWithCursor(groupId string, cursor string, limit int) ([]groupInboxMessage, string) {
+	messages, nextCursor := s.backend.RetrieveCursor(groupId, cursor, limit)
+	groupInboxRetrievedCounter.Add(float64(len(messages)))
+	return messages, nextCursor
+}
+
 // Prune removes expired messages across all groups. Called periodically.
 func (s *GroupInboxStore) Prune() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	totalExpired := 0
-	for groupId, msgs := range s.messages {
-		before := len(msgs)
-		pruned := s.pruneExpiredLocked(msgs)
-		expired := before - len(pruned)
-		totalExpired += expired
-
-		if len(pruned) == 0 {
-			delete(s.messages, groupId)
-		} else {
-			s.messages[groupId] = pruned
-		}
-	}
-
-	if totalExpired > 0 {
-		groupInboxExpiredCounter.Add(float64(totalExpired))
-		log.Printf("[GROUP_INBOX] Pruned %d expired messages across %d groups",
-			totalExpired, len(s.messages))
-	}
+	s.backend.Prune()
 }
 
 func (s *GroupInboxStore) Stats() (groups int, totalMessages int) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	groups = len(s.messages)
-	for _, msgs := range s.messages {
-		totalMessages += len(msgs)
-	}
-	return
-}
-
-func (s *GroupInboxStore) pruneExpiredLocked(messages []groupInboxMessage) []groupInboxMessage {
-	if len(messages) == 0 {
-		return messages
-	}
-	cutoff := time.Now().Add(-s.ttl).UnixMilli()
-	var result []groupInboxMessage
-	for _, m := range messages {
-		if m.Timestamp > cutoff {
-			result = append(result, m)
-		}
-	}
-	return result
+	return s.backend.Stats()
 }
 
 // --- 4-byte BE framing (matches JS inbox protocol) ---
@@ -460,13 +353,16 @@ type inboxRequest struct {
 	// Group inbox fields.
 	GroupId        string `json:"groupId,omitempty"`
 	SinceTimestamp int64  `json:"sinceTimestamp,omitempty"`
+	Cursor         string `json:"cursor,omitempty"`
 }
 
 type inboxResponse struct {
 	Status        string              `json:"status"`
 	Error         string              `json:"error,omitempty"`
 	Messages      []inboxMessage      `json:"messages,omitempty"`
+	HasMore       bool                `json:"hasMore,omitempty"`
 	GroupMessages []groupInboxMessage `json:"groupMessages,omitempty"`
+	NextCursor    string              `json:"nextCursor,omitempty"`
 }
 
 func HandleInboxStream(s network.Stream, inbox *InboxStore, groupInbox *GroupInboxStore) {
@@ -529,9 +425,9 @@ func HandleInboxStream(s network.Stream, inbox *InboxStore, groupInbox *GroupInb
 		if limit <= 0 {
 			limit = 50
 		}
-		messages := inbox.Retrieve(remotePeer, limit)
+		messages, hasMore := inbox.RetrieveWithMeta(remotePeer, limit)
 		if len(messages) > 0 {
-			resp = inboxResponse{Status: "OK", Messages: messages}
+			resp = inboxResponse{Status: "OK", Messages: messages, HasMore: hasMore}
 		} else {
 			resp = inboxResponse{Status: "NO_MESSAGES"}
 		}
@@ -570,6 +466,22 @@ func HandleInboxStream(s network.Stream, inbox *InboxStore, groupInbox *GroupInb
 			messages := groupInbox.Retrieve(req.GroupId, req.SinceTimestamp)
 			if len(messages) > 0 {
 				resp = inboxResponse{Status: "OK", GroupMessages: messages}
+			} else {
+				resp = inboxResponse{Status: "NO_MESSAGES"}
+			}
+		}
+
+	case "group_retrieve_cursor":
+		if req.GroupId == "" {
+			resp = inboxResponse{Status: "ERROR", Error: "Missing required field: groupId"}
+		} else {
+			limit := req.Limit
+			if limit <= 0 {
+				limit = 50
+			}
+			messages, nextCursor := groupInbox.RetrieveWithCursor(req.GroupId, req.Cursor, limit)
+			if len(messages) > 0 {
+				resp = inboxResponse{Status: "OK", GroupMessages: messages, NextCursor: nextCursor}
 			} else {
 				resp = inboxResponse{Status: "NO_MESSAGES"}
 			}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"testing"
 	"time"
 )
@@ -215,5 +216,153 @@ func TestGroupInboxStore_MultipleGroups(t *testing.T) {
 	}
 	if msgsB[0].Message != "msg-B1" {
 		t.Errorf("group-B[0] = %q, want %q", msgsB[0].Message, "msg-B1")
+	}
+}
+
+// =============================================================================
+// Phase 2: Shared Relay Control State — 1:1 Inbox Store tests
+// =============================================================================
+
+// TestInboxStore_RetrieveExactlyOnceAcrossInstances proves that a message
+// stored through inbox instance A is retrieved (and consumed) exactly once
+// through inbox instance B. The destructive FIFO semantics must hold.
+func TestInboxStore_RetrieveExactlyOnceAcrossInstances(t *testing.T) {
+	backend := newMemoryInboxBackend()
+	pushBackend := newMemoryPushTokenStore()
+	pushA := NewPushServiceWithBackend(pushBackend)
+	pushB := NewPushServiceWithBackend(pushBackend)
+	inboxA := NewInboxStoreWithBackend(backend, pushA)
+	inboxB := NewInboxStoreWithBackend(backend, pushB)
+
+	// Store through instance A.
+	inboxA.Store("peer-recipient", inboxMessage{
+		From:      "peer-sender",
+		Message:   "hello from A",
+		Timestamp: time.Now().UnixMilli(),
+	})
+
+	// Retrieve through instance B (destructive).
+	msgs := inboxB.Retrieve("peer-recipient", 50)
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message from B, got %d", len(msgs))
+	}
+	if msgs[0].Message != "hello from A" {
+		t.Fatalf("expected 'hello from A', got %q", msgs[0].Message)
+	}
+
+	// Second retrieve from either instance should return nothing.
+	msgsA := inboxA.Retrieve("peer-recipient", 50)
+	if len(msgsA) != 0 {
+		t.Fatalf("expected 0 messages on second retrieve from A, got %d", len(msgsA))
+	}
+	msgsB := inboxB.Retrieve("peer-recipient", 50)
+	if len(msgsB) != 0 {
+		t.Fatalf("expected 0 messages on second retrieve from B, got %d", len(msgsB))
+	}
+}
+
+// TestInboxStore_RegisterTokenVisibleAcrossInstances proves that a push
+// token registered through one PushService instance is visible to another
+// instance sharing the same PushTokenBackend.
+func TestInboxStore_RegisterTokenVisibleAcrossInstances(t *testing.T) {
+	pushBackend := newMemoryPushTokenStore()
+	pushA := NewPushServiceWithBackend(pushBackend)
+	pushB := NewPushServiceWithBackend(pushBackend)
+
+	// Register through instance A.
+	pushA.RegisterToken("peer-1", "fcm-token-abc", "ios")
+
+	// Verify visible through instance B.
+	entry := pushB.tokenBackend.LookupToken("peer-1")
+	if entry == nil {
+		t.Fatal("expected push B to see token registered by push A")
+	}
+	if entry.Token != "fcm-token-abc" {
+		t.Fatalf("expected token 'fcm-token-abc', got %q", entry.Token)
+	}
+	if entry.Platform != "ios" {
+		t.Fatalf("expected platform 'ios', got %q", entry.Platform)
+	}
+
+	// Verify count is consistent.
+	if pushA.TokenCount() != pushB.TokenCount() {
+		t.Fatalf("token counts should match: A=%d, B=%d",
+			pushA.TokenCount(), pushB.TokenCount())
+	}
+}
+
+// TestInboxStore_PushTokenSurvivesServerRestart simulates a server restart
+// by creating a new PushService instance with the same backend and verifying
+// that the previously registered token is still accessible.
+func TestInboxStore_PushTokenSurvivesServerRestart(t *testing.T) {
+	pushBackend := newMemoryPushTokenStore()
+
+	// "Server 1" registers a token.
+	push1 := NewPushServiceWithBackend(pushBackend)
+	push1.RegisterToken("peer-1", "fcm-token-xyz", "android")
+
+	// "Server 1" goes down. "Server 2" starts with the same backend.
+	push2 := NewPushServiceWithBackend(pushBackend)
+
+	// Token should survive.
+	entry := push2.tokenBackend.LookupToken("peer-1")
+	if entry == nil {
+		t.Fatal("expected token to survive server restart")
+	}
+	if entry.Token != "fcm-token-xyz" {
+		t.Fatalf("expected 'fcm-token-xyz', got %q", entry.Token)
+	}
+	if push2.TokenCount() != 1 {
+		t.Fatalf("expected 1 token after restart, got %d", push2.TokenCount())
+	}
+}
+
+// TestInboxStore_PaginatedRetrieveKeepsFIFOAcrossInstances proves that
+// paginated retrieval (with hasMore) works correctly across instances.
+// Store 5 messages through A, retrieve 2 through B (expecting hasMore=true),
+// then retrieve the rest through A (expecting hasMore=false).
+func TestInboxStore_PaginatedRetrieveKeepsFIFOAcrossInstances(t *testing.T) {
+	backend := newMemoryInboxBackend()
+	pushBackend := newMemoryPushTokenStore()
+	pushA := NewPushServiceWithBackend(pushBackend)
+	pushB := NewPushServiceWithBackend(pushBackend)
+	inboxA := NewInboxStoreWithBackend(backend, pushA)
+	inboxB := NewInboxStoreWithBackend(backend, pushB)
+
+	// Store 5 messages through instance A.
+	for i := 0; i < 5; i++ {
+		inboxA.Store("peer-recipient", inboxMessage{
+			From:      "peer-sender",
+			Message:   fmt.Sprintf("msg-%d", i),
+			Timestamp: time.Now().UnixMilli(),
+		})
+		time.Sleep(1 * time.Millisecond) // ensure distinct timestamps
+	}
+
+	// Retrieve first 2 through instance B.
+	msgs1, hasMore1 := inboxB.RetrieveWithMeta("peer-recipient", 2)
+	if len(msgs1) != 2 {
+		t.Fatalf("expected 2 messages in first page, got %d", len(msgs1))
+	}
+	if !hasMore1 {
+		t.Fatal("expected hasMore=true after retrieving 2 of 5")
+	}
+	if msgs1[0].Message != "msg-0" {
+		t.Fatalf("expected first message 'msg-0', got %q", msgs1[0].Message)
+	}
+	if msgs1[1].Message != "msg-1" {
+		t.Fatalf("expected second message 'msg-1', got %q", msgs1[1].Message)
+	}
+
+	// Retrieve remaining through instance A.
+	msgs2, hasMore2 := inboxA.RetrieveWithMeta("peer-recipient", 50)
+	if len(msgs2) != 3 {
+		t.Fatalf("expected 3 remaining messages, got %d", len(msgs2))
+	}
+	if hasMore2 {
+		t.Fatal("expected hasMore=false after retrieving all remaining")
+	}
+	if msgs2[0].Message != "msg-2" {
+		t.Fatalf("expected continuation at 'msg-2', got %q", msgs2[0].Message)
 	}
 }
