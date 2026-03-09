@@ -23,11 +23,6 @@ void main() {
             icon: Icons.campaign_outlined,
             onTap: () => tappedItems.add('announce'),
           ),
-          ExpandableFabItem(
-            label: 'New Q&A',
-            icon: Icons.quiz_outlined,
-            onTap: () => tappedItems.add('qa'),
-          ),
         ];
 
     Widget buildWidget({
@@ -77,7 +72,6 @@ void main() {
 
       expect(find.text('New Group'), findsOneWidget);
       expect(find.text('New Announce'), findsOneWidget);
-      expect(find.text('New Q&A'), findsOneWidget);
     });
 
     testWidgets('hides menu item labels when closed', (tester) async {
@@ -85,7 +79,6 @@ void main() {
 
       expect(find.text('New Group'), findsNothing);
       expect(find.text('New Announce'), findsNothing);
-      expect(find.text('New Q&A'), findsNothing);
     });
 
     testWidgets('calls item callback when menu item tapped', (tester) async {

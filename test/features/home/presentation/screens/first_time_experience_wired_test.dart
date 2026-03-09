@@ -5,6 +5,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/core/media/image_processor.dart';
+import 'package:flutter_app/core/services/share_intent_model.dart';
+import 'package:flutter_app/core/services/share_intent_service.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
 import 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
@@ -58,19 +60,15 @@ void main() {
     mediaAttachmentRepo = InMemoryMediaAttachmentRepository();
     mediaFileManager = FakeMediaFileManager();
     imageProcessor = ImageProcessor(
-      compressFile: ({
-        required path,
-        required quality,
-        required keepExif,
-        minWidth = 1920,
-        minHeight = 1080,
-      }) async =>
-          null,
-      compressVideo: ({
-        required path,
-        required compress,
-        onProgress,
-      }) async =>
+      compressFile:
+          ({
+            required path,
+            required quality,
+            required keepExif,
+            minWidth = 1920,
+            minHeight = 1080,
+          }) async => null,
+      compressVideo: ({required path, required compress, onProgress}) async =>
           null,
     );
 
@@ -93,26 +91,27 @@ void main() {
     // Mock path_provider channel
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
-      const MethodChannel('plugins.flutter.io/path_provider'),
-      (MethodCall methodCall) async {
-        if (methodCall.method == 'getApplicationDocumentsDirectory') {
-          return '/tmp/test_docs';
-        }
-        return null;
-      },
-    );
+          const MethodChannel('plugins.flutter.io/path_provider'),
+          (MethodCall methodCall) async {
+            if (methodCall.method == 'getApplicationDocumentsDirectory') {
+              return '/tmp/test_docs';
+            }
+            return null;
+          },
+        );
   });
 
   tearDown(() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
-      const MethodChannel('plugins.flutter.io/path_provider'),
-      null,
-    );
+          const MethodChannel('plugins.flutter.io/path_provider'),
+          null,
+        );
   });
 
   Widget buildFTE({
     ContactRequestListener? overrideListener,
+    ShareIntentService? shareIntentService,
   }) {
     return MaterialApp(
       home: FirstTimeExperienceWired(
@@ -128,18 +127,17 @@ void main() {
         mediaFileManager: mediaFileManager,
         imageProcessor: imageProcessor,
         secureKeyStore: secureKeyStore,
+        shareIntentService: shareIntentService,
       ),
     );
   }
 
   group('FirstTimeExperienceWired', () {
-    testWidgets('loads identity and generates QR data after first frame',
-        (tester) async {
+    testWidgets('loads identity and generates QR data after first frame', (
+      tester,
+    ) async {
       identityRepo.seed(testIdentity);
-      bridge.responses['payload.sign'] = {
-        'ok': true,
-        'signature': 'test-sig',
-      };
+      bridge.responses['payload.sign'] = {'ok': true, 'signature': 'test-sig'};
 
       await tester.pumpWidget(buildFTE());
       await tester.pump(); // trigger post-frame callback
@@ -157,10 +155,7 @@ void main() {
 
     testWidgets('displays username from loaded identity', (tester) async {
       identityRepo.seed(testIdentity);
-      bridge.responses['payload.sign'] = {
-        'ok': true,
-        'signature': 'test-sig',
-      };
+      bridge.responses['payload.sign'] = {'ok': true, 'signature': 'test-sig'};
 
       await tester.pumpWidget(buildFTE());
       await tester.pump();
@@ -172,10 +167,7 @@ void main() {
 
     testWidgets('updates username and regenerates QR', (tester) async {
       identityRepo.seed(testIdentity);
-      bridge.responses['payload.sign'] = {
-        'ok': true,
-        'signature': 'test-sig',
-      };
+      bridge.responses['payload.sign'] = {'ok': true, 'signature': 'test-sig'};
 
       await tester.pumpWidget(buildFTE());
       await tester.pump();
@@ -208,10 +200,7 @@ void main() {
 
     testWidgets('scan button exists and is tappable', (tester) async {
       identityRepo.seed(testIdentity);
-      bridge.responses['payload.sign'] = {
-        'ok': true,
-        'signature': 'test-sig',
-      };
+      bridge.responses['payload.sign'] = {'ok': true, 'signature': 'test-sig'};
 
       await tester.pumpWidget(buildFTE());
       await tester.pump();
@@ -228,13 +217,11 @@ void main() {
       expect(find.byIcon(Icons.crop_free), findsOneWidget);
     });
 
-    testWidgets('does not crash when contact request stream emits',
-        (tester) async {
+    testWidgets('does not crash when contact request stream emits', (
+      tester,
+    ) async {
       identityRepo.seed(testIdentity);
-      bridge.responses['payload.sign'] = {
-        'ok': true,
-        'signature': 'test-sig',
-      };
+      bridge.responses['payload.sign'] = {'ok': true, 'signature': 'test-sig'};
 
       // Create a controllable request stream that emits ContactRequestModel directly
       final requestController =
@@ -277,10 +264,7 @@ void main() {
 
     testWidgets('handles missing identity gracefully', (tester) async {
       // Do NOT seed any identity — loadIdentity will return null
-      bridge.responses['payload.sign'] = {
-        'ok': true,
-        'signature': 'test-sig',
-      };
+      bridge.responses['payload.sign'] = {'ok': true, 'signature': 'test-sig'};
 
       await tester.pumpWidget(buildFTE());
       await tester.pump();
@@ -299,13 +283,11 @@ void main() {
       expect(find.textContaining('Username'), findsOneWidget);
     });
 
-    testWidgets('displays QR data in screen after payload build',
-        (tester) async {
+    testWidgets('displays QR data in screen after payload build', (
+      tester,
+    ) async {
       identityRepo.seed(testIdentity);
-      bridge.responses['payload.sign'] = {
-        'ok': true,
-        'signature': 'test-sig',
-      };
+      bridge.responses['payload.sign'] = {'ok': true, 'signature': 'test-sig'};
 
       await tester.pumpWidget(buildFTE());
       await tester.pump();
@@ -329,10 +311,7 @@ void main() {
 
     testWidgets('disposes subscription without errors', (tester) async {
       identityRepo.seed(testIdentity);
-      bridge.responses['payload.sign'] = {
-        'ok': true,
-        'signature': 'test-sig',
-      };
+      bridge.responses['payload.sign'] = {'ok': true, 'signature': 'test-sig'};
 
       await tester.pumpWidget(buildFTE());
       await tester.pump();
@@ -347,6 +326,176 @@ void main() {
       // If dispose throws, the test would fail. Reaching here means success.
       expect(find.text('replaced'), findsOneWidget);
     });
+
+    testWidgets('accept success settles and replays a buffered share', (
+      tester,
+    ) async {
+      identityRepo.seed(testIdentity);
+      bridge.responses['payload.sign'] = {'ok': true, 'signature': 'test-sig'};
+      bridge.responses['contactrequest.encrypt'] = {
+        'ok': true,
+        'ephemeralPublicKey': 'ephemeral-pk',
+        'ciphertext': 'ciphertext',
+        'nonce': 'nonce',
+      };
+
+      final request = ContactRequestModel(
+        peerId: 'sender-peer-id-1234567890',
+        publicKey: 'sender-pub-key',
+        rendezvous: '/p2p-circuit/relay',
+        username: 'Charlie',
+        signature: 'sender-sig',
+        receivedAt: DateTime.now().toUtc().toIso8601String(),
+      );
+      contactRequestRepo.seed([request]);
+
+      final requestController =
+          StreamController<ContactRequestModel>.broadcast();
+      final customListener = _FakeContactRequestListener(
+        requestStream: requestController.stream,
+      );
+      final shareIntentService = ShareIntentService(resetShareIntent: () {});
+      await shareIntentService.bufferIntent(
+        const ShareIntent(type: ShareIntentType.text, text: 'from onboarding'),
+      );
+
+      await tester.pumpWidget(
+        buildFTE(
+          overrideListener: customListener,
+          shareIntentService: shareIntentService,
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      requestController.add(request);
+      await tester.pump();
+      await tester.pump();
+
+      await tester.tap(find.text('Accept'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pump();
+
+      expect(shareIntentService.isSettled, isTrue);
+      expect(shareIntentService.hasPendingIntent, isFalse);
+      expect(find.text('Share with...'), findsOneWidget);
+      expect(find.text('from onboarding'), findsOneWidget);
+
+      await requestController.close();
+    });
+
+    testWidgets('notPending still settles and replays a buffered share', (
+      tester,
+    ) async {
+      identityRepo.seed(testIdentity);
+      bridge.responses['payload.sign'] = {'ok': true, 'signature': 'test-sig'};
+
+      final acceptedRequest = ContactRequestModel(
+        peerId: 'sender-peer-id-accepted',
+        publicKey: 'sender-pub-key',
+        rendezvous: '/p2p-circuit/relay',
+        username: 'Charlie',
+        signature: 'sender-sig',
+        receivedAt: DateTime.now().toUtc().toIso8601String(),
+        status: ContactRequestStatus.accepted,
+      );
+      contactRequestRepo.seed([acceptedRequest]);
+      await contactRepo.addContact(acceptedRequest.toContactModel());
+
+      final requestController =
+          StreamController<ContactRequestModel>.broadcast();
+      final customListener = _FakeContactRequestListener(
+        requestStream: requestController.stream,
+      );
+      final shareIntentService = ShareIntentService(resetShareIntent: () {});
+      await shareIntentService.bufferIntent(
+        const ShareIntent(type: ShareIntentType.text, text: 'already added'),
+      );
+
+      await tester.pumpWidget(
+        buildFTE(
+          overrideListener: customListener,
+          shareIntentService: shareIntentService,
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      requestController.add(acceptedRequest);
+      await tester.pump();
+      await tester.pump();
+
+      await tester.tap(find.text('Accept'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pump();
+
+      expect(shareIntentService.isSettled, isTrue);
+      expect(find.text('Share with...'), findsOneWidget);
+      expect(find.text('already added'), findsOneWidget);
+
+      await requestController.close();
+    });
+
+    testWidgets(
+      '5o: accept success without buffered intent navigates to feed only',
+      (tester) async {
+        identityRepo.seed(testIdentity);
+        bridge.responses['payload.sign'] = {
+          'ok': true,
+          'signature': 'test-sig',
+        };
+        bridge.responses['contactrequest.encrypt'] = {
+          'ok': true,
+          'ephemeralPublicKey': 'ephemeral-pk',
+          'ciphertext': 'ciphertext',
+          'nonce': 'nonce',
+        };
+
+        final request = ContactRequestModel(
+          peerId: 'sender-peer-id-feed-only',
+          publicKey: 'sender-pub-key',
+          rendezvous: '/p2p-circuit/relay',
+          username: 'Charlie',
+          signature: 'sender-sig',
+          receivedAt: DateTime.now().toUtc().toIso8601String(),
+        );
+        contactRequestRepo.seed([request]);
+
+        final requestController =
+            StreamController<ContactRequestModel>.broadcast();
+        final customListener = _FakeContactRequestListener(
+          requestStream: requestController.stream,
+        );
+        final shareIntentService = ShareIntentService(resetShareIntent: () {});
+
+        await tester.pumpWidget(
+          buildFTE(
+            overrideListener: customListener,
+            shareIntentService: shareIntentService,
+          ),
+        );
+        await tester.pump();
+        await tester.pump();
+
+        requestController.add(request);
+        await tester.pump();
+        await tester.pump();
+
+        await tester.tap(find.text('Accept'));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+        await tester.pump();
+
+        expect(shareIntentService.isSettled, isTrue);
+        expect(shareIntentService.hasPendingIntent, isFalse);
+        expect(find.text('Feed'), findsOneWidget);
+        expect(find.text('Share with...'), findsNothing);
+
+        await requestController.close();
+      },
+    );
   });
 }
 
@@ -357,14 +506,14 @@ class _FakeContactRequestListener extends ContactRequestListener {
 
   _FakeContactRequestListener({
     required Stream<ContactRequestModel> requestStream,
-  })  : _overrideStream = requestStream,
-        super(
-          contactRequestStream: const Stream<ChatMessage>.empty(),
-          requestRepo: _NoOpContactRequestRepo(),
-          contactRepo: _NoOpContactRepo(),
-          bridge: FakeBridge(),
-          getOwnPeerId: () => '',
-        );
+  }) : _overrideStream = requestStream,
+       super(
+         contactRequestStream: const Stream<ChatMessage>.empty(),
+         requestRepo: _NoOpContactRequestRepo(),
+         contactRepo: _NoOpContactRepo(),
+         bridge: FakeBridge(),
+         getOwnPeerId: () => '',
+       );
 
   @override
   Stream<ContactRequestModel> get requestStream => _overrideStream;

@@ -11,7 +11,7 @@ class GroupTypeBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
       decoration: BoxDecoration(
         color: _colorForType(type).withOpacity(0.15),
         borderRadius: BorderRadius.circular(4),
@@ -19,7 +19,7 @@ class GroupTypeBadge extends StatelessWidget {
       child: Text(
         _labelForType(type),
         style: TextStyle(
-          fontSize: 11,
+          fontSize: 9,
           fontWeight: FontWeight.w600,
           color: _colorForType(type),
           letterSpacing: 0.3,
@@ -42,7 +42,7 @@ class GroupTypeBadge extends StatelessWidget {
   static String _labelForType(GroupType type) {
     switch (type) {
       case GroupType.chat:
-        return 'Chat';
+        return 'Discussion';
       case GroupType.announcement:
         return 'Announce';
       case GroupType.qa:

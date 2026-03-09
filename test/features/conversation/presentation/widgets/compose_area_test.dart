@@ -8,6 +8,7 @@ void main() {
     VoidCallback? onAttach,
     bool hasAttachments = false,
     bool isProcessing = false,
+    String? initialText,
   }) {
     return MaterialApp(
       home: Scaffold(
@@ -19,6 +20,7 @@ void main() {
               onAttach: onAttach,
               hasAttachments: hasAttachments,
               isProcessing: isProcessing,
+              initialText: initialText,
             ),
           ],
         ),
@@ -30,6 +32,22 @@ void main() {
     testWidgets('shows placeholder text', (tester) async {
       await tester.pumpWidget(buildTestWidget());
       expect(find.text('Write something...'), findsOneWidget);
+    });
+
+    testWidgets('seeds the text field with initialText', (tester) async {
+      await tester.pumpWidget(buildTestWidget(initialText: 'Shared caption'));
+      await tester.pump();
+
+      final textField = tester.widget<TextField>(find.byType(TextField));
+      expect(textField.controller?.text, 'Shared caption');
+    });
+
+    testWidgets('starts empty when initialText is omitted', (tester) async {
+      await tester.pumpWidget(buildTestWidget());
+      await tester.pump();
+
+      final textField = tester.widget<TextField>(find.byType(TextField));
+      expect(textField.controller?.text, isEmpty);
     });
 
     testWidgets('shows attachment button', (tester) async {

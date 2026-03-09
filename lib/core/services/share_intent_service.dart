@@ -9,6 +9,9 @@ import 'share_intent_model.dart';
 
 /// Injectable typedef so tests can supply a fake cache directory.
 typedef GetCacheDirectoryFn = Future<Directory> Function();
+typedef GetInitialMediaFn = Future<List<SharedMediaFile>> Function();
+typedef GetMediaStreamFn = Stream<List<SharedMediaFile>> Function();
+typedef ResetShareIntentFn = void Function();
 
 /// Wraps `ReceiveSharingIntent.instance` — no custom platform channels.
 ///
@@ -17,6 +20,9 @@ typedef GetCacheDirectoryFn = Future<Directory> Function();
 /// during onboarding.
 class ShareIntentService {
   final GetCacheDirectoryFn _getCacheDirectory;
+  final GetInitialMediaFn _getInitialMedia;
+  final GetMediaStreamFn _getMediaStream;
+  final ResetShareIntentFn _resetShareIntent;
 
   /// Whether the app has reached a "settled" state (FeedWired mounted
   /// after identity + contacts exist). Set to `true` by StartupRouter
@@ -26,12 +32,20 @@ class ShareIntentService {
 
   ShareIntentService({
     GetCacheDirectoryFn? getCacheDirectory,
-  }) : _getCacheDirectory = getCacheDirectory ?? getTemporaryDirectory;
+    GetInitialMediaFn? getInitialMedia,
+    GetMediaStreamFn? getMediaStream,
+    ResetShareIntentFn? resetShareIntent,
+  }) : _getCacheDirectory = getCacheDirectory ?? getTemporaryDirectory,
+       _getInitialMedia =
+           getInitialMedia ?? ReceiveSharingIntent.instance.getInitialMedia,
+       _getMediaStream =
+           getMediaStream ?? ReceiveSharingIntent.instance.getMediaStream,
+       _resetShareIntent =
+           resetShareIntent ?? ReceiveSharingIntent.instance.reset;
 
   /// Stream of share intents from warm-start (app already running).
   Stream<ShareIntent> get intentStream {
-    return ReceiveSharingIntent.instance
-        .getMediaStream()
+    return _getMediaStream()
         .map(_convertMediaList)
         .where((intent) => intent != null)
         .cast<ShareIntent>();
@@ -39,13 +53,22 @@ class ShareIntentService {
 
   /// Initial intent from cold-start (app launched from share).
   Future<ShareIntent?> getInitialIntent() async {
-    final media = await ReceiveSharingIntent.instance.getInitialMedia();
+    final media = await _getInitialMedia();
     return _convertMediaList(media);
+  }
+
+  /// Captures and buffers the initial intent before app routing starts.
+  Future<ShareIntent?> captureInitialIntent() async {
+    final intent = await getInitialIntent();
+    if (intent != null) {
+      await bufferIntent(intent);
+    }
+    return intent;
   }
 
   /// Clear the handled intent so it does not re-trigger on app resume.
   void reset() {
-    ReceiveSharingIntent.instance.reset();
+    _resetShareIntent();
   }
 
   /// Buffer a share intent for deferred handling during onboarding.
@@ -109,6 +132,9 @@ class ShareIntentService {
         if (item.path.isNotEmpty) textItems.add(item.path);
       } else {
         if (item.path.isNotEmpty) filePaths.add(item.path);
+        if (item.message != null && item.message!.trim().isNotEmpty) {
+          textItems.add(item.message!.trim());
+        }
       }
     }
 

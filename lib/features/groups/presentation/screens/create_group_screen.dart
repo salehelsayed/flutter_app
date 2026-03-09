@@ -177,7 +177,7 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
 
   Widget _buildTypeSelector() {
     return Row(
-      children: GroupType.values.map((type) {
+      children: GroupType.values.where((t) => t != GroupType.qa).map((type) {
         final isSelected = type == _selectedType;
         return Padding(
           padding: const EdgeInsets.only(right: 8),

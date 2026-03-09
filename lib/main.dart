@@ -2,7 +2,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/services/share_intent_model.dart';
 import 'package:flutter_app/core/services/share_intent_service.dart';
-import 'package:flutter_app/features/share/presentation/screens/share_target_picker_wired.dart';
+import 'package:flutter_app/features/share/application/handle_share_intent_use_case.dart';
+import 'package:flutter_app/features/share/presentation/navigation/share_target_picker_route.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:flutter_app/core/database/migrations/001_identity_table.dart';
 import 'package:flutter_app/core/database/migrations/002_messages_table.dart';
@@ -267,7 +268,8 @@ void main() async {
     dbBlockContact: (peerId) => dbBlockContact(db, peerId),
     dbUnblockContact: (peerId) => dbUnblockContact(db, peerId),
     dbDismissIntroBanner: (peerId) => dbDismissIntroBanner(db, peerId),
-    dbSetIntrosSentAt: (peerId, timestamp) => dbSetIntrosSentAt(db, peerId, timestamp),
+    dbSetIntrosSentAt: (peerId, timestamp) =>
+        dbSetIntrosSentAt(db, peerId, timestamp),
   );
 
   // Create contact request repository
@@ -366,8 +368,7 @@ void main() async {
         dbUpdateGroupMemberRole(db, groupId, peerId, role),
     dbDeleteGroupMember: (groupId, peerId) =>
         dbDeleteGroupMember(db, groupId, peerId),
-    dbDeleteAllGroupMembers: (groupId) =>
-        dbDeleteAllGroupMembers(db, groupId),
+    dbDeleteAllGroupMembers: (groupId) => dbDeleteAllGroupMembers(db, groupId),
     dbInsertGroupKey: (row) => dbInsertGroupKey(db, row),
     dbLoadLatestGroupKey: (groupId) => dbLoadLatestGroupKey(db, groupId),
     dbLoadGroupKeyByGeneration: (groupId, generation) =>
@@ -388,14 +389,18 @@ void main() async {
     dbCountGroupMessages: (groupId) => dbCountGroupMessages(db, groupId),
     dbCountUnreadGroupMessages: (groupId) =>
         dbCountUnreadGroupMessages(db, groupId),
-    dbCountTotalUnreadGroupMessages: () =>
-        dbCountTotalUnreadGroupMessages(db),
+    dbCountTotalUnreadGroupMessages: () => dbCountTotalUnreadGroupMessages(db),
     dbMarkGroupMessagesAsRead: (groupId) =>
         dbMarkGroupMessagesAsRead(db, groupId),
     dbDeleteGroupMessage: (id) => dbDeleteGroupMessage(db, id),
     dbExistsGroupMessageByContent: (groupId, senderPeerId, text, timestamp) =>
         dbExistsGroupMessageByContent(
-            db, groupId, senderPeerId, text, timestamp),
+          db,
+          groupId,
+          senderPeerId,
+          text,
+          timestamp,
+        ),
     dbDeleteGroupMessagesForGroup: (groupId) =>
         dbDeleteGroupMessagesForGroup(db, groupId),
     dbLoadGroupThreadSummaries: (groupIds) =>
@@ -406,15 +411,28 @@ void main() async {
   final introductionRepository = IntroductionRepositoryImpl(
     dbInsertIntroduction: (row) => dbInsertIntroduction(db, row),
     dbLoadIntroduction: (id) => dbLoadIntroduction(db, id),
-    dbLoadIntroductionsByRecipient: (recipientId) => dbLoadIntroductionsByRecipient(db, recipientId),
-    dbLoadIntroductionsByIntroduced: (introducedId) => dbLoadIntroductionsByIntroduced(db, introducedId),
-    dbLoadIntroductionsByIntroducer: (introducerId) => dbLoadIntroductionsByIntroducer(db, introducerId),
-    dbLoadIntroductionsForRecipientAndIntroducer: (recipientId, introducerId) => dbLoadIntroductionsForRecipientAndIntroducer(db, recipientId, introducerId),
-    dbUpdateRecipientStatus: (id, status, respondedAt) => dbUpdateRecipientStatus(db, id, status, respondedAt),
-    dbUpdateIntroducedStatus: (id, status, respondedAt) => dbUpdateIntroducedStatus(db, id, status, respondedAt),
-    dbUpdateOverallStatus: (id, status) => dbUpdateOverallStatus(db, id, status),
-    dbLoadPendingIntroductionsForUser: (peerId) => dbLoadPendingIntroductionsForUser(db, peerId),
-    dbCountPendingIntroductions: (peerId) => dbCountPendingIntroductions(db, peerId),
+    dbLoadIntroductionsByRecipient: (recipientId) =>
+        dbLoadIntroductionsByRecipient(db, recipientId),
+    dbLoadIntroductionsByIntroduced: (introducedId) =>
+        dbLoadIntroductionsByIntroduced(db, introducedId),
+    dbLoadIntroductionsByIntroducer: (introducerId) =>
+        dbLoadIntroductionsByIntroducer(db, introducerId),
+    dbLoadIntroductionsForRecipientAndIntroducer: (recipientId, introducerId) =>
+        dbLoadIntroductionsForRecipientAndIntroducer(
+          db,
+          recipientId,
+          introducerId,
+        ),
+    dbUpdateRecipientStatus: (id, status, respondedAt) =>
+        dbUpdateRecipientStatus(db, id, status, respondedAt),
+    dbUpdateIntroducedStatus: (id, status, respondedAt) =>
+        dbUpdateIntroducedStatus(db, id, status, respondedAt),
+    dbUpdateOverallStatus: (id, status) =>
+        dbUpdateOverallStatus(db, id, status),
+    dbLoadPendingIntroductionsForUser: (peerId) =>
+        dbLoadPendingIntroductionsForUser(db, peerId),
+    dbCountPendingIntroductions: (peerId) =>
+        dbCountPendingIntroductions(db, peerId),
   );
 
   // Create media file manager
@@ -624,6 +642,7 @@ void main() async {
   });
 
   final shareIntentService = ShareIntentService();
+  await shareIntentService.captureInitialIntent();
 
   runApp(
     MyApp(
@@ -699,7 +718,7 @@ class MyApp extends StatefulWidget {
   static final navigatorKey = GlobalKey<NavigatorState>();
 
   const MyApp({
-    Key? key,
+    super.key,
     required this.repository,
     required this.contactRepository,
     required this.contactRequestRepository,
@@ -731,7 +750,7 @@ class MyApp extends StatefulWidget {
     required this.introductionRepository,
     required this.introductionListener,
     required this.shareIntentService,
-  }) : super(key: key);
+  });
 
   @override
   State<MyApp> createState() => _MyAppState();
@@ -752,53 +771,38 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   void _setupShareIntentHandling() {
     // Warm-start: share arrives while app is running
     widget.shareIntentService.intentStream.listen((intent) {
-      if (!widget.shareIntentService.isSettled) {
-        // Still onboarding — buffer for later
-        widget.shareIntentService.bufferIntent(intent);
-        return;
-      }
-      _navigateToSharePicker(intent);
-      widget.shareIntentService.reset();
-    });
-
-    // Cold-start: buffer initial intent for StartupRouter to consume
-    _bufferInitialShareIntent();
-  }
-
-  Future<void> _bufferInitialShareIntent() async {
-    final intent = await widget.shareIntentService.getInitialIntent();
-    if (intent != null) {
-      await widget.shareIntentService.bufferIntent(intent);
-    }
-  }
-
-  void _navigateToSharePicker(ShareIntent intent) {
-    final navigator = MyApp.navigatorKey.currentState;
-    if (navigator == null) return;
-    navigator.push(
-      MaterialPageRoute(
-        builder: (_) => ShareTargetPickerWired(
-          shareIntent: intent,
-          identityRepo: widget.repository,
-          contactRepository: widget.contactRepository,
-          messageRepository: widget.messageRepository,
-          mediaAttachmentRepository: widget.mediaAttachmentRepository,
-          chatMessageListener: widget.chatMessageListener,
-          bridge: widget.bridge,
-          p2pService: widget.p2pService,
-          mediaFileManager: widget.mediaFileManager,
-          imageProcessor: widget.imageProcessor,
-          conversationTracker: widget.conversationTracker,
-          audioRecorderService: widget.audioRecorderService,
-          reactionRepository: widget.reactionRepository,
-          reactionListener: widget.reactionListener,
-          groupRepository: widget.groupRepository,
-          groupMessageRepository: widget.groupMessageRepository,
-          groupMessageListener: widget.groupMessageListener,
-          groupConversationTracker: widget.groupConversationTracker,
-          introductionRepository: widget.introductionRepository,
+      unawaited(
+        handleShareIntent(
+          intent: intent,
+          shareIntentService: widget.shareIntentService,
+          navigator: MyApp.navigatorKey.currentState,
+          buildRoute: _buildSharePickerRoute,
         ),
-      ),
+      );
+    });
+  }
+
+  Route<void> _buildSharePickerRoute(ShareIntent intent) {
+    return buildShareTargetPickerRoute(
+      shareIntent: intent,
+      identityRepo: widget.repository,
+      contactRepository: widget.contactRepository,
+      messageRepository: widget.messageRepository,
+      mediaAttachmentRepository: widget.mediaAttachmentRepository,
+      chatMessageListener: widget.chatMessageListener,
+      bridge: widget.bridge,
+      p2pService: widget.p2pService,
+      mediaFileManager: widget.mediaFileManager,
+      imageProcessor: widget.imageProcessor,
+      conversationTracker: widget.conversationTracker,
+      audioRecorderService: widget.audioRecorderService,
+      reactionRepository: widget.reactionRepository,
+      reactionListener: widget.reactionListener,
+      groupRepository: widget.groupRepository,
+      groupMessageRepository: widget.groupMessageRepository,
+      groupMessageListener: widget.groupMessageListener,
+      groupConversationTracker: widget.groupConversationTracker,
+      introductionRepository: widget.introductionRepository,
     );
   }
 

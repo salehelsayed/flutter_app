@@ -265,6 +265,7 @@ void main() {
       FakeAudioRecorderService? audioRecorderService,
       MediaPicker? mediaPicker,
       List<File>? initialAttachments,
+      String? initialText,
       ReactionRepository? reactionRepo,
       StreamController<ReactionChange>? reactionStreamController,
     }) {
@@ -287,10 +288,24 @@ void main() {
           audioRecorderService: audioRecorderService,
           mediaPicker: mediaPicker,
           initialAttachments: initialAttachments,
+          initialText: initialText,
           reactionRepo: reactionRepo,
         ),
       );
     }
+
+    testWidgets('prefills shared text into the group composer', (tester) async {
+      final group = makeChatGroup();
+      await groupRepo.saveGroup(group);
+
+      await tester.pumpWidget(
+        buildWidget(group: group, initialText: 'Shared group text'),
+      );
+      await pumpFrames(tester);
+
+      final textField = tester.widget<TextField>(find.byType(TextField));
+      expect(textField.controller?.text, 'Shared group text');
+    });
 
     testWidgets('loads and displays messages on init', (tester) async {
       final group = makeChatGroup();
@@ -767,16 +782,19 @@ void main() {
       expect(tracker.isViewing('group:${group.id}'), isFalse);
     });
 
-    testWidgets('accepts empty initialAttachments without error',
-        (tester) async {
+    testWidgets('accepts empty initialAttachments without error', (
+      tester,
+    ) async {
       final group = makeChatGroup();
       await groupRepo.saveGroup(group);
 
-      await tester.pumpWidget(buildWidget(
-        group: group,
-        mediaRepo: CountingMediaAttachmentRepository(),
-        initialAttachments: [],
-      ));
+      await tester.pumpWidget(
+        buildWidget(
+          group: group,
+          mediaRepo: CountingMediaAttachmentRepository(),
+          initialAttachments: [],
+        ),
+      );
       await pumpFrames(tester);
 
       expect(find.byType(GroupConversationWired), findsOneWidget);
@@ -820,72 +838,67 @@ void main() {
       },
     );
 
-    testWidgets(
-      'optimistic message is saved to DB before network ops',
-      (tester) async {
-        final group = makeChatGroup();
-        await groupRepo.saveGroup(group);
+    testWidgets('optimistic message is saved to DB before network ops', (
+      tester,
+    ) async {
+      final group = makeChatGroup();
+      await groupRepo.saveGroup(group);
 
-        final gatedBridge = _GatedPublishBridge();
-        bridge = gatedBridge;
+      final gatedBridge = _GatedPublishBridge();
+      bridge = gatedBridge;
 
-        await tester.pumpWidget(buildWidget(group: group));
-        await pumpFrames(tester);
+      await tester.pumpWidget(buildWidget(group: group));
+      await pumpFrames(tester);
 
-        await tester.enterText(find.byType(TextField), 'DB before net');
-        await pumpFrames(tester);
-        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
-        await pumpFrames(tester, count: 5);
+      await tester.enterText(find.byType(TextField), 'DB before net');
+      await pumpFrames(tester);
+      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+      await pumpFrames(tester, count: 5);
 
-        // Message should be in the DB with status 'sending'
-        final messages = await msgRepo.getMessagesPage(group.id);
-        expect(messages.length, 1);
-        expect(messages.first.text, 'DB before net');
-        expect(messages.first.status, 'sending');
+      // Message should be in the DB with status 'sending'
+      final messages = await msgRepo.getMessagesPage(group.id);
+      expect(messages.length, 1);
+      expect(messages.first.text, 'DB before net');
+      expect(messages.first.status, 'sending');
 
-        // Bridge hasn't been called for publish yet? Actually it was called
-        // but is blocked on the completer. The key point: DB was saved first.
+      // Bridge hasn't been called for publish yet? Actually it was called
+      // but is blocked on the completer. The key point: DB was saved first.
 
-        gatedBridge.publishGate.complete();
-        await pumpFrames(tester, count: 20);
+      gatedBridge.publishGate.complete();
+      await pumpFrames(tester, count: 20);
 
-        // After publish completes, status should be 'sent'
-        final updated = await msgRepo.getMessagesPage(group.id);
-        expect(updated.first.status, 'sent');
-      },
-    );
+      // After publish completes, status should be 'sent'
+      final updated = await msgRepo.getMessagesPage(group.id);
+      expect(updated.first.status, 'sent');
+    });
 
-    testWidgets(
-      'failed publish shows message with failed status',
-      (tester) async {
-        final group = makeChatGroup();
-        await groupRepo.saveGroup(group);
+    testWidgets('failed publish shows message with failed status', (
+      tester,
+    ) async {
+      final group = makeChatGroup();
+      await groupRepo.saveGroup(group);
 
-        // Bridge returns failure for publish
-        bridge = FakeBridge(
-          initialResponses: {
-            'group:publish': {
-              'ok': false,
-              'errorCode': 'PUBLISH_FAILED',
-            },
-          },
-        );
+      // Bridge returns failure for publish
+      bridge = FakeBridge(
+        initialResponses: {
+          'group:publish': {'ok': false, 'errorCode': 'PUBLISH_FAILED'},
+        },
+      );
 
-        await tester.pumpWidget(buildWidget(group: group));
-        await pumpFrames(tester);
+      await tester.pumpWidget(buildWidget(group: group));
+      await pumpFrames(tester);
 
-        await tester.enterText(find.byType(TextField), 'Will fail');
-        await pumpFrames(tester);
-        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
-        await pumpFrames(tester, count: 20);
+      await tester.enterText(find.byType(TextField), 'Will fail');
+      await pumpFrames(tester);
+      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+      await pumpFrames(tester, count: 20);
 
-        // Message should still be visible
-        expect(find.text('Will fail'), findsOneWidget);
+      // Message should still be visible
+      expect(find.text('Will fail'), findsOneWidget);
 
-        // Status should be 'failed' (error icon)
-        expect(find.byIcon(Icons.error_outline_rounded), findsOneWidget);
-      },
-    );
+      // Status should be 'failed' (error icon)
+      expect(find.byIcon(Icons.error_outline_rounded), findsOneWidget);
+    });
 
     // -----------------------------------------------------------------------
     // Voice message tests
@@ -953,50 +966,49 @@ void main() {
     // (The wired-level e2e test is not feasible because uploadMedia's File I/O
     // does not resolve in Flutter's FakeAsync zone.)
 
-    testWidgets(
-      'announcement admin sees mic button for voice recording',
-      (tester) async {
-        final group = makeAnnouncementGroup(role: GroupRole.admin);
-        await groupRepo.saveGroup(group);
-        final recorder = FakeAudioRecorderService()
-          ..fakeDurationMs = 3000
-          ..fakeSizeBytes = 48000;
+    testWidgets('announcement admin sees mic button for voice recording', (
+      tester,
+    ) async {
+      final group = makeAnnouncementGroup(role: GroupRole.admin);
+      await groupRepo.saveGroup(group);
+      final recorder = FakeAudioRecorderService()
+        ..fakeDurationMs = 3000
+        ..fakeSizeBytes = 48000;
 
-        await tester.pumpWidget(
-          buildWidget(
-            group: group,
-            mediaRepo: mediaAttachmentRepo,
-            audioRecorderService: recorder,
-          ),
-        );
-        await pumpFrames(tester, count: 20);
+      await tester.pumpWidget(
+        buildWidget(
+          group: group,
+          mediaRepo: mediaAttachmentRepo,
+          audioRecorderService: recorder,
+        ),
+      );
+      await pumpFrames(tester, count: 20);
 
-        // Mic button should be visible for admin in announcement group
-        expect(find.byIcon(Icons.mic_rounded), findsOneWidget);
+      // Mic button should be visible for admin in announcement group
+      expect(find.byIcon(Icons.mic_rounded), findsOneWidget);
 
-        // Start recording to verify the long press callback works
-        final gesture = await tester.startGesture(
-          tester.getCenter(find.byIcon(Icons.mic_rounded)),
-        );
-        await tester.pump(kLongPressTimeout + const Duration(milliseconds: 50));
-        await tester.pump();
+      // Start recording to verify the long press callback works
+      final gesture = await tester.startGesture(
+        tester.getCenter(find.byIcon(Icons.mic_rounded)),
+      );
+      await tester.pump(kLongPressTimeout + const Duration(milliseconds: 50));
+      await tester.pump();
 
-        // Recording overlay should appear
-        expect(find.text('Slide to cancel'), findsOneWidget);
+      // Recording overlay should appear
+      expect(find.text('Slide to cancel'), findsOneWidget);
 
-        await gesture.up();
-        await tester.runAsync(() async {
-          await Future<void>.delayed(const Duration(milliseconds: 100));
-        });
-        await pumpFrames(tester, count: 10);
+      await gesture.up();
+      await tester.runAsync(() async {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      });
+      await pumpFrames(tester, count: 10);
 
-        // Optimistic message saved to DB
-        final messages = await msgRepo.getMessagesPage(group.id);
-        expect(messages.length, 1);
-        expect(messages.first.text, '');
-        expect(messages.first.senderPeerId, testIdentity.peerId);
-      },
-    );
+      // Optimistic message saved to DB
+      final messages = await msgRepo.getMessagesPage(group.id);
+      expect(messages.length, 1);
+      expect(messages.first.text, '');
+      expect(messages.first.senderPeerId, testIdentity.peerId);
+    });
 
     // -----------------------------------------------------------------------
     // Reaction integration tests
@@ -1010,19 +1022,20 @@ void main() {
         await msgRepo.saveMessage(makeMessage(id: 'msg-1', text: 'Hello'));
 
         final reactionRepo = FakeReactionRepository();
-        await reactionRepo.saveReaction(MessageReaction(
-          id: 'rxn-1',
-          messageId: 'msg-1',
-          emoji: '\u{1F44D}',
-          senderPeerId: 'peer-alice',
-          timestamp: DateTime.now().toUtc().toIso8601String(),
-          createdAt: DateTime.now().toUtc().toIso8601String(),
-        ));
+        await reactionRepo.saveReaction(
+          MessageReaction(
+            id: 'rxn-1',
+            messageId: 'msg-1',
+            emoji: '\u{1F44D}',
+            senderPeerId: 'peer-alice',
+            timestamp: DateTime.now().toUtc().toIso8601String(),
+            createdAt: DateTime.now().toUtc().toIso8601String(),
+          ),
+        );
 
-        await tester.pumpWidget(buildWidget(
-          group: group,
-          reactionRepo: reactionRepo,
-        ));
+        await tester.pumpWidget(
+          buildWidget(group: group, reactionRepo: reactionRepo),
+        );
         await pumpFrames(tester);
 
         // The reaction emoji should be visible in the UI
@@ -1030,63 +1043,67 @@ void main() {
       },
     );
 
-    testWidgets(
-      'reaction UI is disabled when reactionRepo is null',
-      (tester) async {
-        final group = makeChatGroup();
-        await groupRepo.saveGroup(group);
-        await msgRepo.saveMessage(makeMessage(id: 'msg-1', text: 'Hello'));
+    testWidgets('reaction UI is disabled when reactionRepo is null', (
+      tester,
+    ) async {
+      final group = makeChatGroup();
+      await groupRepo.saveGroup(group);
+      await msgRepo.saveMessage(makeMessage(id: 'msg-1', text: 'Hello'));
 
-        await tester.pumpWidget(buildWidget(group: group));
-        await pumpFrames(tester);
+      await tester.pumpWidget(buildWidget(group: group));
+      await pumpFrames(tester);
 
-        // Long-press a message — should NOT show reaction bar
-        await tester.longPress(find.text('Hello'));
-        await pumpFrames(tester);
+      // Long-press a message — should NOT show reaction bar
+      await tester.longPress(find.text('Hello'));
+      await pumpFrames(tester);
 
-        // No reaction bar emojis visible (the preset emojis like thumbs up etc.)
-        expect(find.text('\u{1F44D}'), findsNothing);
-      },
-    );
+      // No reaction bar emojis visible (the preset emojis like thumbs up etc.)
+      expect(find.text('\u{1F44D}'), findsNothing);
+    });
 
-    testWidgets(
-      'incoming reaction change stream updates UI state',
-      (tester) async {
-        final group = makeChatGroup();
-        await groupRepo.saveGroup(group);
-        await msgRepo.saveMessage(makeMessage(id: 'msg-1', text: 'Hello'));
+    testWidgets('incoming reaction change stream updates UI state', (
+      tester,
+    ) async {
+      final group = makeChatGroup();
+      await groupRepo.saveGroup(group);
+      await msgRepo.saveMessage(makeMessage(id: 'msg-1', text: 'Hello'));
 
-        final reactionRepo = FakeReactionRepository();
-        final reactionStreamController =
-            StreamController<ReactionChange>.broadcast();
+      final reactionRepo = FakeReactionRepository();
+      final reactionStreamController =
+          StreamController<ReactionChange>.broadcast();
 
-        await tester.pumpWidget(buildWidget(
+      await tester.pumpWidget(
+        buildWidget(
           group: group,
           reactionRepo: reactionRepo,
           reactionStreamController: reactionStreamController,
-        ));
-        await pumpFrames(tester);
+        ),
+      );
+      await pumpFrames(tester);
 
-        // No reactions initially
-        expect(find.text('\u{1F44D}'), findsNothing);
+      // No reactions initially
+      expect(find.text('\u{1F44D}'), findsNothing);
 
-        // Emit an incoming reaction change
-        reactionStreamController.add(ReactionChange.upsert(MessageReaction(
-          id: 'rxn-incoming',
-          messageId: 'msg-1',
-          emoji: '\u{1F44D}',
-          senderPeerId: 'peer-bob',
-          timestamp: DateTime.now().toUtc().toIso8601String(),
-          createdAt: DateTime.now().toUtc().toIso8601String(),
-        )));
-        await pumpFrames(tester);
+      // Emit an incoming reaction change
+      reactionStreamController.add(
+        ReactionChange.upsert(
+          MessageReaction(
+            id: 'rxn-incoming',
+            messageId: 'msg-1',
+            emoji: '\u{1F44D}',
+            senderPeerId: 'peer-bob',
+            timestamp: DateTime.now().toUtc().toIso8601String(),
+            createdAt: DateTime.now().toUtc().toIso8601String(),
+          ),
+        ),
+      );
+      await pumpFrames(tester);
 
-        // Reaction should now be visible
-        expect(find.text('\u{1F44D}'), findsOneWidget);
+      // Reaction should now be visible
+      expect(find.text('\u{1F44D}'), findsOneWidget);
 
-        // Clean up
-        await reactionStreamController.close();
-      },
-    );
+      // Clean up
+      await reactionStreamController.close();
+    });
   });
 }

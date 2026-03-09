@@ -39,9 +39,10 @@ import 'package:flutter_app/features/groups/application/rejoin_group_topics_use_
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
 import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository.dart';
 import 'package:flutter_app/features/introduction/application/introduction_listener.dart';
+import 'package:flutter_app/core/services/share_intent_model.dart';
 import 'package:flutter_app/core/services/share_intent_service.dart';
-import 'package:flutter_app/features/share/presentation/screens/share_target_picker_wired.dart';
-import 'package:flutter_app/main.dart';
+import 'package:flutter_app/features/share/application/settle_share_intent_flow.dart';
+import 'package:flutter_app/features/share/presentation/navigation/share_target_picker_route.dart';
 
 /// Router widget that handles app startup navigation.
 ///
@@ -204,6 +205,7 @@ class _StartupRouterState extends State<StartupRouter> {
             event: 'ID_STARTUP_ROUTE_FEED',
             details: {'contactCount': contactCount},
           );
+          final navigator = Navigator.of(context);
           await _pushStartupReplacement(
             builder: (_) => FeedWired(
               repository: repository,
@@ -235,9 +237,11 @@ class _StartupRouterState extends State<StartupRouter> {
           // Start P2P node in background after navigation
           _startP2PInBackground();
 
-          // Mark settled and consume any buffered share intent
-          widget.shareIntentService?.isSettled = true;
-          _consumePendingShareIntent();
+          settleShareIntentFlow(
+            shareIntentService: widget.shareIntentService,
+            navigator: navigator,
+            buildRoute: _buildPendingShareRoute,
+          );
           break;
 
         case StartupDecision.hasIdentityNoContacts:
@@ -272,6 +276,7 @@ class _StartupRouterState extends State<StartupRouter> {
             groupConversationTracker: widget.groupConversationTracker,
             introductionRepository: widget.introductionRepository,
             introductionListener: widget.introductionListener,
+            shareIntentService: widget.shareIntentService,
           );
           break;
 
@@ -317,6 +322,7 @@ class _StartupRouterState extends State<StartupRouter> {
                       groupConversationTracker: widget.groupConversationTracker,
                       introductionRepository: widget.introductionRepository,
                       introductionListener: widget.introductionListener,
+                      shareIntentService: widget.shareIntentService,
                     ),
                   ),
                 );
@@ -506,6 +512,7 @@ class _StartupRouterState extends State<StartupRouter> {
     ActiveConversationTracker? groupConversationTracker,
     IntroductionRepository? introductionRepository,
     IntroductionListener? introductionListener,
+    ShareIntentService? shareIntentService,
   }) async {
     await _pushStartupReplacement(
       builder: (_) => FirstTimeExperienceWired(
@@ -532,6 +539,7 @@ class _StartupRouterState extends State<StartupRouter> {
         groupConversationTracker: groupConversationTracker,
         introductionRepository: introductionRepository,
         introductionListener: introductionListener,
+        shareIntentService: shareIntentService,
       ),
     );
 
@@ -544,40 +552,28 @@ class _StartupRouterState extends State<StartupRouter> {
     setState(() => _startupStage = stage);
   }
 
-  void _consumePendingShareIntent() {
-    final shareService = widget.shareIntentService;
-    if (shareService == null) return;
-    final intent = shareService.consumePendingIntent();
-    if (intent == null) return;
-    shareService.reset();
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      final navigator = MyApp.navigatorKey.currentState;
-      if (navigator == null) return;
-      navigator.push(MaterialPageRoute(
-        builder: (_) => ShareTargetPickerWired(
-          shareIntent: intent,
-          identityRepo: widget.repository,
-          contactRepository: widget.contactRepository,
-          messageRepository: widget.messageRepository,
-          mediaAttachmentRepository: widget.mediaAttachmentRepository,
-          chatMessageListener: widget.chatMessageListener,
-          bridge: widget.bridge,
-          p2pService: widget.p2pService,
-          mediaFileManager: widget.mediaFileManager,
-          imageProcessor: widget.imageProcessor,
-          conversationTracker: widget.conversationTracker,
-          audioRecorderService: widget.audioRecorderService,
-          reactionRepository: widget.reactionRepository,
-          reactionListener: widget.reactionListener,
-          groupRepository: widget.groupRepository,
-          groupMessageRepository: widget.groupMessageRepository,
-          groupMessageListener: widget.groupMessageListener,
-          groupConversationTracker: widget.groupConversationTracker,
-          introductionRepository: widget.introductionRepository,
-        ),
-      ));
-    });
+  Route<void> _buildPendingShareRoute(ShareIntent intent) {
+    return buildShareTargetPickerRoute(
+      shareIntent: intent,
+      identityRepo: widget.repository,
+      contactRepository: widget.contactRepository,
+      messageRepository: widget.messageRepository,
+      mediaAttachmentRepository: widget.mediaAttachmentRepository,
+      chatMessageListener: widget.chatMessageListener,
+      bridge: widget.bridge,
+      p2pService: widget.p2pService,
+      mediaFileManager: widget.mediaFileManager,
+      imageProcessor: widget.imageProcessor,
+      conversationTracker: widget.conversationTracker,
+      audioRecorderService: widget.audioRecorderService,
+      reactionRepository: widget.reactionRepository,
+      reactionListener: widget.reactionListener,
+      groupRepository: widget.groupRepository,
+      groupMessageRepository: widget.groupMessageRepository,
+      groupMessageListener: widget.groupMessageListener,
+      groupConversationTracker: widget.groupConversationTracker,
+      introductionRepository: widget.introductionRepository,
+    );
   }
 
   Future<void> _pushStartupReplacement({required WidgetBuilder builder}) async {

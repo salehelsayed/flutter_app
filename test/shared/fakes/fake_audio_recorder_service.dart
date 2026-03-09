@@ -9,6 +9,8 @@ class FakeAudioRecorderService implements AudioRecorderService {
   int fakeSizeBytes = 48000;
   bool permissionGranted = true;
   bool shouldFailStart = false;
+  /// When set, [stop] returns this path instead of [_currentOutputPath].
+  String? fakeOutputPath;
   final List<String> deletedPaths = [];
   final _durationController = StreamController<Duration>.broadcast();
   final _amplitudeController = StreamController<double>.broadcast();
@@ -44,7 +46,7 @@ class FakeAudioRecorderService implements AudioRecorderService {
   Future<AudioRecording?> stop() async {
     if (!_isRecording) return null;
     _isRecording = false;
-    final path = _currentOutputPath!;
+    final path = fakeOutputPath ?? _currentOutputPath!;
     _currentOutputPath = null;
 
     if (fakeDurationMs < 500) return null;

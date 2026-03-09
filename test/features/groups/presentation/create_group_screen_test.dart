@@ -29,11 +29,9 @@ void main() {
   testWidgets('type selector works', (tester) async {
     await tester.pumpWidget(buildTestWidget());
 
-    // Default is Chat
-    expect(find.text('Chat'), findsOneWidget);
+    // Default is Discussion (chat type)
+    expect(find.text('Discussion'), findsOneWidget);
     expect(find.text('Announce'), findsOneWidget);
-    expect(find.text('Q&A'), findsOneWidget);
-
     // Tap on Announce
     await tester.tap(find.text('Announce'));
     await tester.pump();
@@ -119,28 +117,5 @@ void main() {
       expect(submittedType, GroupType.announcement);
     });
 
-    testWidgets('pre-selects qa type when initialType is qa', (tester) async {
-      GroupType? submittedType;
-      await tester.pumpWidget(
-        MaterialApp(
-          home: CreateGroupScreen(
-            initialType: GroupType.qa,
-            onCreate: (_, type, __) => submittedType = type,
-            onBack: () {},
-          ),
-        ),
-      );
-
-      await tester.enterText(
-        find.widgetWithText(TextField, 'Enter group name'),
-        'Test',
-      );
-      await tester.pump();
-
-      await tester.tap(find.text('Create Group').last);
-      await tester.pump();
-
-      expect(submittedType, GroupType.qa);
-    });
   });
 }

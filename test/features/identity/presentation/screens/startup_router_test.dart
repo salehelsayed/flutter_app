@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -5,12 +6,15 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
+import 'package:flutter_app/core/services/share_intent_model.dart';
+import 'package:flutter_app/core/services/share_intent_service.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/feed/presentation/screens/feed_wired.dart';
 import 'package:flutter_app/features/home/presentation/screens/first_time_experience_wired.dart';
+import 'package:flutter_app/features/identity/application/startup_decision.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/identity/presentation/screens/identity_choice_wired.dart';
@@ -138,6 +142,7 @@ void main() {
     IdentityRepository? repoOverride,
     ContactRepository? contactRepoOverride,
     P2PService? p2pServiceOverride,
+    ShareIntentService? shareIntentService,
     List<NavigatorObserver> navigatorObservers = const [],
   }) {
     return MaterialApp(
@@ -155,6 +160,7 @@ void main() {
         mediaFileManager: mediaFileManager,
         secureKeyStore: secureKeyStore,
         imageProcessor: noOpImageProcessor(),
+        shareIntentService: shareIntentService,
       ),
     );
   }
@@ -301,6 +307,126 @@ void main() {
 
       expect(find.byType(FeedWired), findsOneWidget);
     });
+
+    testWidgets('settles and replays a buffered share after routing to feed', (
+      tester,
+    ) async {
+      identityRepo.seed(testIdentityWithMlKem);
+      contactRepo.seed([testContact]);
+      final shareIntentService = ShareIntentService(resetShareIntent: () {});
+      await shareIntentService.bufferIntent(
+        const ShareIntent(type: ShareIntentType.text, text: 'shared hello'),
+      );
+
+      await pumpAndRoute(
+        tester,
+        buildStartupRouter(shareIntentService: shareIntentService),
+      );
+      await tester.pump();
+
+      expect(shareIntentService.isSettled, isTrue);
+      expect(shareIntentService.hasPendingIntent, isFalse);
+      expect(find.byType(FeedWired), findsOneWidget);
+      expect(find.text('Share with...'), findsOneWidget);
+      expect(find.text('shared hello'), findsOneWidget);
+    });
+
+    testWidgets(
+      'passes the share service into first-time experience when onboarding is still required',
+      (tester) async {
+        identityRepo.seed(testIdentityWithMlKem);
+        final shareIntentService = ShareIntentService(resetShareIntent: () {});
+
+        await pumpAndRoute(
+          tester,
+          buildStartupRouter(shareIntentService: shareIntentService),
+        );
+
+        final firstTimeWidget = tester.widget<FirstTimeExperienceWired>(
+          find.byType(FirstTimeExperienceWired),
+        );
+        expect(firstTimeWidget.shareIntentService, same(shareIntentService));
+      },
+    );
+
+    testWidgets(
+      '5j: cold start + needsIdentity buffers intent without showing the picker',
+      (tester) async {
+        final shareIntentService = ShareIntentService(resetShareIntent: () {});
+        await shareIntentService.bufferIntent(
+          const ShareIntent(
+            type: ShareIntentType.text,
+            text: 'defer onboarding',
+          ),
+        );
+
+        await pumpAndRoute(
+          tester,
+          buildStartupRouter(shareIntentService: shareIntentService),
+        );
+
+        expect(find.byType(IdentityChoiceWired), findsOneWidget);
+        expect(find.text('Share with...'), findsNothing);
+        expect(shareIntentService.isSettled, isFalse);
+        expect(shareIntentService.hasPendingIntent, isTrue);
+      },
+    );
+
+    testWidgets(
+      '5k: cold start + hasIdentityNoContacts keeps the intent buffered until first contact',
+      (tester) async {
+        identityRepo.seed(testIdentityWithMlKem);
+        final shareIntentService = ShareIntentService(resetShareIntent: () {});
+        await shareIntentService.bufferIntent(
+          const ShareIntent(
+            type: ShareIntentType.text,
+            text: 'wait for contact',
+          ),
+        );
+
+        await pumpAndRoute(
+          tester,
+          buildStartupRouter(shareIntentService: shareIntentService),
+        );
+
+        expect(find.byType(FirstTimeExperienceWired), findsOneWidget);
+        expect(find.text('Share with...'), findsNothing);
+        expect(shareIntentService.isSettled, isFalse);
+        expect(shareIntentService.hasPendingIntent, isTrue);
+      },
+    );
+
+    test(
+      '5l: cold start + needsIdentity keeps cache-copied file paths buffered',
+      () async {
+        final tempDir = Directory.systemTemp.createTempSync('startup_share_');
+        final originalDir = Directory('${tempDir.path}/original')
+          ..createSync(recursive: true);
+        final originalFile = File('${originalDir.path}/shared.jpg')
+          ..writeAsStringSync('image');
+        final shareIntentService = ShareIntentService(
+          getCacheDirectory: () async => tempDir,
+          resetShareIntent: () {},
+        );
+        await shareIntentService.bufferIntent(
+          ShareIntent(
+            type: ShareIntentType.files,
+            filePaths: [originalFile.path],
+          ),
+        );
+
+        final decision = await decideStartupRoute(
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+        );
+
+        final pending = shareIntentService.consumePendingIntent();
+        expect(decision, StartupDecision.needsIdentity);
+        expect(pending, isNotNull);
+        expect(pending!.filePaths.single, contains('share_cache'));
+        expect(pending.filePaths.single, isNot(originalFile.path));
+      },
+    );
 
     testWidgets(
       'navigates to FirstTimeExperienceWired when identity exists no contacts',

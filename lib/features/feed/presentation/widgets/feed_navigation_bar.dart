@@ -18,59 +18,56 @@ class FeedNavigationBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: NavBarTheme.barMaxWidth),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(NavBarTheme.barBorderRadius),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(
-            sigmaX: NavBarTheme.blurSigma,
-            sigmaY: NavBarTheme.blurSigma,
-          ),
-          child: Container(
-            padding: NavBarTheme.barPadding,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(NavBarTheme.barBorderRadius),
-              gradient: const LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: NavBarTheme.barGradientColors,
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(NavBarTheme.barBorderRadius),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(
+          sigmaX: NavBarTheme.blurSigma,
+          sigmaY: NavBarTheme.blurSigma,
+        ),
+        child: Container(
+          padding: NavBarTheme.barPadding,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(NavBarTheme.barBorderRadius),
+            gradient: const LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: NavBarTheme.barGradientColors,
+            ),
+            border: Border.all(color: NavBarTheme.barBorderColor),
+            boxShadow: const [
+              BoxShadow(
+                color: NavBarTheme.barShadowColor,
+                blurRadius: NavBarTheme.barShadowBlur,
+                offset: NavBarTheme.barShadowOffset,
               ),
-              border: Border.all(color: NavBarTheme.barBorderColor),
-              boxShadow: const [
-                BoxShadow(
-                  color: NavBarTheme.barShadowColor,
-                  blurRadius: NavBarTheme.barShadowBlur,
-                  offset: NavBarTheme.barShadowOffset,
-                ),
-              ],
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                NavBarButton(
-                  label: 'Feed',
-                  svgAsset: 'assets/icons/nav_feed.svg',
-                  isActive: activeTab == 'feed',
-                  onTap: () => onSwitchView('feed'),
-                  badgeCount: feedBadgeCount,
-                ),
-                const SizedBox(width: NavBarTheme.buttonSpacing),
-                NavBarButton(
-                  label: 'Remember',
-                  svgAsset: 'assets/icons/nav_remember.svg',
-                  isActive: activeTab == 'remember',
-                  onTap: () => onSwitchView('remember'),
-                ),
-                const SizedBox(width: NavBarTheme.buttonSpacing),
-                NavBarButton(
-                  label: 'Orbit',
-                  svgAsset: 'assets/icons/nav_orbit.svg',
-                  isActive: activeTab == 'orbit',
-                  onTap: () => onSwitchView('orbit'),
-                ),
-              ],
-            ),
+            ],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              NavBarButton(
+                label: 'Feed',
+                svgAsset: 'assets/icons/nav_feed.svg',
+                isActive: activeTab == 'feed',
+                onTap: () => onSwitchView('feed'),
+                badgeCount: feedBadgeCount,
+              ),
+              const SizedBox(width: NavBarTheme.buttonSpacing),
+              NavBarButton(
+                label: 'Remember',
+                svgAsset: 'assets/icons/nav_remember.svg',
+                isActive: activeTab == 'remember',
+                onTap: () => onSwitchView('remember'),
+              ),
+              const SizedBox(width: NavBarTheme.buttonSpacing),
+              NavBarButton(
+                label: 'Orbit',
+                svgAsset: 'assets/icons/nav_orbit.svg',
+                isActive: activeTab == 'orbit',
+                onTap: () => onSwitchView('orbit'),
+              ),
+            ],
           ),
         ),
       ),
