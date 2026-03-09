@@ -75,6 +75,26 @@ class LifecycleBridge implements Bridge {
   int messageSendFailCount = 0;
   int _messageSendAttempts = 0;
 
+  // -- Phase 5: Structured recovery response fields --
+
+  /// When true, relay:reconnect returns structured result fields
+  /// (`recoveryMethod`, `refreshed`) instead of bare `{ok: true}`.
+  bool useStructuredRecoveryResponse = false;
+
+  /// The recovery method reported in structured relay:reconnect response.
+  /// 'in_place_refresh' or 'watchdog_restart'.
+  String structuredRecoveryMethod = 'in_place_refresh';
+
+  /// Number of consecutive relay:reconnect failures before the bridge
+  /// returns a 'watchdog_restart' result. Used for escalation testing.
+  int refreshFailuresBeforeWatchdog = 3;
+  int _consecutiveRefreshFailures = 0;
+
+  /// When true, relay:reconnect fails (simulating refresh failure)
+  /// until [refreshFailuresBeforeWatchdog] is reached, then succeeds
+  /// with 'watchdog_restart' method.
+  bool simulateRefreshEscalation = false;
+
   @override
   bool get isInitialized => _initialized;
 
@@ -256,6 +276,25 @@ class LifecycleBridge implements Bridge {
   /// Simulates relay:reconnect which in production restarts the node.
   Future<Map<String, dynamic>> _relayReconnectResponse() async {
     if (relayReservationLost) {
+      // Phase 5: escalation simulation — after enough failures, switch to
+      // watchdog restart and succeed.
+      if (simulateRefreshEscalation) {
+        _consecutiveRefreshFailures++;
+        if (_consecutiveRefreshFailures >= refreshFailuresBeforeWatchdog) {
+          // Watchdog kicks in and succeeds
+          relayReservationLost = false;
+          if (phase == 'degraded') {
+            phase = 'recovering';
+          }
+          return {
+            'ok': true,
+            if (useStructuredRecoveryResponse) ...{
+              'recoveryMethod': 'watchdog_restart',
+              'refreshed': true,
+            },
+          };
+        }
+      }
       return {
         'ok': false,
         'errorMessage': 'relay reservation lost (injected fault)',
@@ -268,6 +307,16 @@ class LifecycleBridge implements Bridge {
       isRestarting = true;
       await Future.delayed(reconnectDelay!);
       isRestarting = false;
+    }
+
+    // Phase 5: structured recovery response
+    if (useStructuredRecoveryResponse) {
+      _consecutiveRefreshFailures = 0;
+      return {
+        'ok': true,
+        'recoveryMethod': structuredRecoveryMethod,
+        'refreshed': true,
+      };
     }
     return {'ok': true};
   }
@@ -384,6 +433,25 @@ class LifecycleBridge implements Bridge {
     _fireAddressesUpdated();
   }
 
+  /// Simulate a relay-state push event showing degradation.
+  /// This fires onAddressesUpdated with empty circuit addresses,
+  /// simulating Go pushing a relay:state event when the relay connection drops.
+  void simulateRelayStatePush({bool degraded = true}) {
+    if (degraded) {
+      phase = 'degraded';
+      addressesPushFired = false;
+      _recoveryAttempts = 0;
+      onAddressesUpdated?.call(
+        ['/ip4/127.0.0.1/tcp/1234'],
+        <String>[], // empty = relay lost
+      );
+    } else {
+      phase = 'online';
+      addressesPushFired = true;
+      _fireAddressesUpdated();
+    }
+  }
+
   /// Resets all counters and fault flags to defaults.
   void reset() {
     phase = 'startup';
@@ -409,8 +477,16 @@ class LifecycleBridge implements Bridge {
     messageSendFailCount = 0;
     _messageSendAttempts = 0;
 
+    // Phase 5: structured recovery
+    useStructuredRecoveryResponse = false;
+    structuredRecoveryMethod = 'in_place_refresh';
+    refreshFailuresBeforeWatchdog = 3;
+    _consecutiveRefreshFailures = 0;
+    simulateRefreshEscalation = false;
+
     // Recovery timing
     _recoveryStartedAt = null;
     _lastRecoveryDuration = null;
   }
 }
+

@@ -436,4 +436,167 @@ void main() {
       await sub.cancel();
     });
   });
+
+  // ==========================================================================
+  // Phase 5: Event-Driven Resume and Watchdog Recovery
+  // ==========================================================================
+
+  group('Phase 5: Event-driven resume and watchdog recovery', () {
+    test(
+        'relay disconnect event triggers immediate recovery without waiting for timer',
+        () async {
+      // Start online
+      await service.startNodeCore(testBase64Key, testPeerId);
+      expect(healthFromState(service.currentState), ConnectionHealth.online);
+
+      // Configure fast recovery
+      bridge.pollsUntilCircuitReady = 1;
+
+      // Simulate relay-state push with degradation (empty circuits).
+      // This should trigger immediate recovery via the event-driven path
+      // instead of waiting for the 30s health check timer.
+      bridge.relayReconnectCallCount = 0;
+      bridge.simulateRelayStatePush(degraded: true);
+
+      // Allow the fire-and-forget recovery to complete
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+
+      // The event-driven path should have triggered relay:reconnect
+      expect(bridge.relayReconnectCallCount, greaterThanOrEqualTo(1),
+          reason:
+              'Relay disconnect push should trigger immediate relay:reconnect '
+              'without waiting for the periodic timer');
+    });
+
+    test('performImmediateHealthCheck prefers in-place recovery over restart',
+        () async {
+      // Start online
+      await service.startNodeCore(testBase64Key, testPeerId);
+      expect(healthFromState(service.currentState), ConnectionHealth.online);
+
+      // Enable structured recovery responses
+      bridge.useStructuredRecoveryResponse = true;
+      bridge.structuredRecoveryMethod = 'in_place_refresh';
+
+      // Background and recover
+      bridge.simulateBackground();
+      bridge.pollsUntilCircuitReady = 1;
+
+      await service.performImmediateHealthCheck();
+
+      // Verify the recovery method was in-place refresh (not watchdog restart)
+      expect(service.lastRecoveryMethod, equals('in_place_refresh'),
+          reason: 'Default recovery should use in-place refresh, not restart');
+    });
+
+    test('concurrent resume calls coalesce to one recovery', () async {
+      // Start online
+      await service.startNodeCore(testBase64Key, testPeerId);
+      expect(healthFromState(service.currentState), ConnectionHealth.online);
+
+      // Background with slow recovery
+      bridge.simulateBackground();
+      bridge.pollsUntilCircuitReady = 999;
+      bridge.reconnectDelay = const Duration(milliseconds: 100);
+
+      // Fire three concurrent health checks
+      bridge.relayReconnectCallCount = 0;
+      final check1 = service.performImmediateHealthCheck();
+      final check2 = service.performImmediateHealthCheck();
+      final check3 = service.performImmediateHealthCheck();
+
+      await Future.wait([check1, check2, check3]);
+
+      // Only ONE relay:reconnect should have been called due to coalescing
+      expect(bridge.relayReconnectCallCount, 1,
+          reason:
+              'Three concurrent recovery calls should coalesce to one actual '
+              'relay:reconnect call');
+
+      bridge.reconnectDelay = null;
+    });
+
+    test('manual reconnect plus resume coalesce to one recovery result',
+        () async {
+      // Start online
+      await service.startNodeCore(testBase64Key, testPeerId);
+
+      // Background
+      bridge.simulateBackground();
+      bridge.pollsUntilCircuitReady = 999;
+      bridge.reconnectDelay = const Duration(milliseconds: 100);
+
+      // Fire manual health check and handleAppResumed concurrently
+      bridge.relayReconnectCallCount = 0;
+      final manualCheck = service.performImmediateHealthCheck();
+      final resumeResult =
+          handleAppResumed(bridge: bridge, p2pService: service);
+
+      await Future.wait([manualCheck, resumeResult]);
+
+      // The resume's call to performImmediateHealthCheck should have coalesced
+      // with the manual check, resulting in only ONE recovery attempt.
+      expect(bridge.relayReconnectCallCount, 1,
+          reason:
+              'Manual reconnect + resume should coalesce to one recovery');
+
+      bridge.reconnectDelay = null;
+    });
+
+    test('recovery branching uses structured result fields when present',
+        () async {
+      // Start online
+      await service.startNodeCore(testBase64Key, testPeerId);
+
+      // Enable structured responses with watchdog_restart method
+      bridge.useStructuredRecoveryResponse = true;
+      bridge.structuredRecoveryMethod = 'watchdog_restart';
+
+      // Background and recover
+      bridge.simulateBackground();
+      bridge.pollsUntilCircuitReady = 1;
+
+      await service.performImmediateHealthCheck();
+
+      // The recovery method should reflect the structured response
+      expect(service.lastRecoveryMethod, equals('watchdog_restart'),
+          reason:
+              'Recovery method should be parsed from relay:reconnect response');
+    });
+
+    test(
+        'failed in-place recovery escalates to watchdog only after threshold',
+        () async {
+      // Start online
+      await service.startNodeCore(testBase64Key, testPeerId);
+
+      // Configure: relay reservation is lost, escalation enabled
+      bridge.useStructuredRecoveryResponse = true;
+      bridge.simulateRefreshEscalation = true;
+      bridge.refreshFailuresBeforeWatchdog = 3;
+      bridge.simulateRelayReservationLost();
+      bridge.pollsUntilCircuitReady = 1;
+
+      // Failure 1: in-place refresh fails
+      await service.performImmediateHealthCheck();
+      expect(service.consecutiveRefreshFailures, 1);
+
+      // Failure 2: in-place refresh fails again
+      await service.performImmediateHealthCheck();
+      expect(service.consecutiveRefreshFailures, 2);
+
+      // Failure 3: threshold reached — watchdog kicks in and succeeds
+      await service.performImmediateHealthCheck();
+
+      // After the threshold, bridge.simulateRefreshEscalation resets
+      // relayReservationLost and returns success with 'watchdog_restart'
+      expect(service.lastRecoveryMethod, equals('watchdog_restart'),
+          reason:
+              'After threshold failures, recovery should escalate to watchdog restart');
+      expect(service.consecutiveRefreshFailures, 0,
+          reason:
+              'Consecutive failures should reset to 0 after successful recovery');
+    });
+  });
 }
