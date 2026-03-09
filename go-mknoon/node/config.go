@@ -99,11 +99,21 @@ func RelayAddress() string {
 
 // NodeConfig holds the configuration for starting a Node.
 type NodeConfig struct {
-	PrivateKeyHex  string   // Ed25519 private key as hex string
-	RelayAddresses []string // Multiaddr strings for relay servers
-	Namespace      string   // e.g. "mknoon:chat:<peerId>"
-	AutoRegister   bool     // Auto-register on rendezvous after relay connect
-	ListenPort     int      // 0 for random
+	PrivateKeyHex  string        // Ed25519 private key as hex string
+	RelayAddresses []string      // Multiaddr strings for relay servers
+	Namespace      string        // e.g. "mknoon:chat:<peerId>"
+	AutoRegister   bool          // Auto-register on rendezvous after relay connect
+	ListenPort     int           // 0 for random
+	FeatureFlags   *FeatureFlags // Rollout flags; nil → all enabled
+}
+
+// EffectiveFlags returns the feature flags from this config, falling back
+// to DefaultFeatureFlags() when FeatureFlags is nil.
+func (c *NodeConfig) EffectiveFlags() FeatureFlags {
+	if c.FeatureFlags != nil {
+		return *c.FeatureFlags
+	}
+	return DefaultFeatureFlags()
 }
 
 // NodeState represents the current state of the node.

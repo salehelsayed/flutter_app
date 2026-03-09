@@ -347,3 +347,168 @@ func TestRelaySession_Reset(t *testing.T) {
 		t.Error("expected 0 sessions after reset")
 	}
 }
+
+// --- Phase 7 RED Tests: Watchdog Policy ---
+
+func TestWatchdog_TriggersAfterNConsecutiveRefreshFailures(t *testing.T) {
+	m := NewRelaySessionManager()
+	pid := fakePeerID("relay-1")
+
+	// Start with a healthy reservation so we have a session.
+	m.OnReservationOpened(pid)
+	if m.AggregateState() != AggregateRelayOnline {
+		t.Fatalf("expected online, got %s", m.AggregateState())
+	}
+
+	// Reservation ends — relay is degraded.
+	m.OnReservationEnded(pid)
+
+	// Simulate WatchdogMaxConsecutiveFailures consecutive refresh failures.
+	for i := 0; i < WatchdogMaxConsecutiveFailures; i++ {
+		m.OnRefreshFailed(pid, fmt.Errorf("refresh failure %d", i))
+	}
+
+	// After N consecutive failures, the watchdog should mark needsGroupRecovery
+	// and transition to watchdog_restart.
+	if !m.NeedsGroupRecovery() {
+		t.Error("watchdog should set needsGroupRecovery after max consecutive failures")
+	}
+	if m.AggregateState() != AggregateRelayWatchdogRestart {
+		t.Errorf("expected watchdog_restart state, got %s", m.AggregateState())
+	}
+}
+
+func TestWatchdog_SingleSuccessfulRefreshResetsFailureCounter(t *testing.T) {
+	m := NewRelaySessionManager()
+	pid := fakePeerID("relay-1")
+
+	// Start with a healthy reservation.
+	m.OnReservationOpened(pid)
+	m.OnReservationEnded(pid)
+
+	// Accumulate failures just below the threshold.
+	for i := 0; i < WatchdogMaxConsecutiveFailures-1; i++ {
+		m.OnRefreshFailed(pid, fmt.Errorf("failure %d", i))
+	}
+
+	s := m.GetSession(pid)
+	if s == nil {
+		t.Fatal("expected session")
+	}
+	if s.ConsecutiveRefreshFailures != WatchdogMaxConsecutiveFailures-1 {
+		t.Errorf("expected %d consecutive failures, got %d",
+			WatchdogMaxConsecutiveFailures-1, s.ConsecutiveRefreshFailures)
+	}
+
+	// A single successful refresh should reset the counter.
+	m.OnRefreshSucceeded(pid)
+
+	s = m.GetSession(pid)
+	if s.ConsecutiveRefreshFailures != 0 {
+		t.Errorf("expected 0 consecutive failures after success, got %d", s.ConsecutiveRefreshFailures)
+	}
+
+	// needsGroupRecovery should NOT be set since we never crossed the threshold.
+	if m.NeedsGroupRecovery() {
+		t.Error("needsGroupRecovery should be false when threshold was not crossed")
+	}
+}
+
+func TestWatchdog_MarksNeedsGroupRecoveryForFlutter(t *testing.T) {
+	m := NewRelaySessionManager()
+	pid := fakePeerID("relay-1")
+
+	// Start with a healthy reservation.
+	m.OnReservationOpened(pid)
+	m.OnReservationEnded(pid)
+
+	// Initially no group recovery needed.
+	if m.NeedsGroupRecovery() {
+		t.Error("needsGroupRecovery should be false initially")
+	}
+
+	// Cross the watchdog threshold.
+	for i := 0; i < WatchdogMaxConsecutiveFailures; i++ {
+		m.OnRefreshFailed(pid, fmt.Errorf("failure %d", i))
+	}
+
+	// Watchdog should mark needsGroupRecovery.
+	if !m.NeedsGroupRecovery() {
+		t.Error("needsGroupRecovery should be true after watchdog triggers")
+	}
+
+	// Acknowledge the recovery.
+	m.AcknowledgeGroupRecovery()
+
+	// After acknowledgement, the flag should be cleared.
+	if m.NeedsGroupRecovery() {
+		t.Error("needsGroupRecovery should be false after acknowledgement")
+	}
+
+	// The watchdog state should be reported in status fields.
+	fields := m.StatusFields()
+	if fields["needsGroupRecovery"] != false {
+		t.Errorf("expected needsGroupRecovery=false in status after ack, got %v", fields["needsGroupRecovery"])
+	}
+}
+
+// --- Phase 7 RED Tests: Feature Flags ---
+
+func TestFeatureFlags_DefaultAllTrue(t *testing.T) {
+	flags := DefaultFeatureFlags()
+
+	if !flags.EnableSharedRelayBackend {
+		t.Error("EnableSharedRelayBackend should default to true")
+	}
+	if !flags.EnableMultiRelayRouting {
+		t.Error("EnableMultiRelayRouting should default to true")
+	}
+	if !flags.EnableReservationAwareHealth {
+		t.Error("EnableReservationAwareHealth should default to true")
+	}
+	if !flags.EnableInPlaceRelayRecovery {
+		t.Error("EnableInPlaceRelayRecovery should default to true")
+	}
+	if !flags.EnableResumeGroupRecovery {
+		t.Error("EnableResumeGroupRecovery should default to true")
+	}
+}
+
+func TestFeatureFlags_ThreadedThroughNodeConfig(t *testing.T) {
+	cfg := NodeConfig{
+		PrivateKeyHex:  "abc123",
+		RelayAddresses: []string{"/ip4/127.0.0.1/tcp/4001"},
+		FeatureFlags:   &FeatureFlags{EnableMultiRelayRouting: false},
+	}
+
+	if cfg.FeatureFlags == nil {
+		t.Fatal("FeatureFlags should be set on NodeConfig")
+	}
+	if cfg.FeatureFlags.EnableMultiRelayRouting {
+		t.Error("EnableMultiRelayRouting should be false when explicitly set")
+	}
+
+	// EffectiveFlags should return the configured flags.
+	effective := cfg.EffectiveFlags()
+	if effective.EnableMultiRelayRouting {
+		t.Error("EffectiveFlags should respect configured value")
+	}
+	// Unset flags should retain their zero value (false in this case),
+	// not be overridden to true.
+}
+
+func TestFeatureFlags_NilDefaultsToAllEnabled(t *testing.T) {
+	cfg := NodeConfig{
+		PrivateKeyHex:  "abc123",
+		RelayAddresses: []string{"/ip4/127.0.0.1/tcp/4001"},
+	}
+
+	// When FeatureFlags is nil, EffectiveFlags should return defaults (all true).
+	effective := cfg.EffectiveFlags()
+	if !effective.EnableSharedRelayBackend {
+		t.Error("nil FeatureFlags should default EnableSharedRelayBackend to true")
+	}
+	if !effective.EnableMultiRelayRouting {
+		t.Error("nil FeatureFlags should default EnableMultiRelayRouting to true")
+	}
+}
