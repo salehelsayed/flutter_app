@@ -32,6 +32,7 @@ type groupInboxResponse struct {
 
 // GroupInboxStore stores a group message in the relay's group inbox.
 // This allows offline members to retrieve group messages they missed.
+// Tries each configured relay in order until one succeeds.
 func (n *Node) GroupInboxStore(groupId, message string) error {
 	n.mu.RLock()
 	h := n.host
@@ -41,60 +42,60 @@ func (n *Node) GroupInboxStore(groupId, message string) error {
 		return fmt.Errorf("node not started")
 	}
 
-	relayPeer, relayAddrs, err := n.getGroupRelayInfo()
-	if err != nil {
-		return err
-	}
+	rs := n.buildRelaySelector(nil)
 
-	ctx, cancel := context.WithTimeout(n.ctx, InboxTimeout)
-	defer cancel()
+	return rs.ForEach(func(relay RelayInfo) error {
+		ctx, cancel := context.WithTimeout(n.ctx, InboxTimeout)
+		defer cancel()
 
-	if err := h.Connect(ctx, peer.AddrInfo{ID: relayPeer, Addrs: relayAddrs}); err != nil {
-		return fmt.Errorf("connect to relay: %w", err)
-	}
+		if err := h.Connect(ctx, peer.AddrInfo{ID: relay.ID, Addrs: relay.Addrs}); err != nil {
+			return fmt.Errorf("connect to relay: %w", err)
+		}
 
-	s, err := h.NewStream(ctx, relayPeer, InboxProtocol)
-	if err != nil {
-		return fmt.Errorf("open inbox stream: %w", err)
-	}
-	defer s.Close()
+		s, err := h.NewStream(ctx, relay.ID, InboxProtocol)
+		if err != nil {
+			return fmt.Errorf("open inbox stream: %w", err)
+		}
+		defer s.Close()
 
-	req := groupInboxRequest{
-		Action:  "group_store",
-		GroupId: groupId,
-		From:    n.peerId,
-		Message: message,
-	}
+		req := groupInboxRequest{
+			Action:  "group_store",
+			GroupId: groupId,
+			From:    n.peerId,
+			Message: message,
+		}
 
-	reqBytes, err := json.Marshal(req)
-	if err != nil {
-		return fmt.Errorf("marshal request: %w", err)
-	}
+		reqBytes, err := json.Marshal(req)
+		if err != nil {
+			return fmt.Errorf("marshal request: %w", err)
+		}
 
-	if err := writeFrame(s, reqBytes); err != nil {
-		return fmt.Errorf("write request: %w", err)
-	}
+		if err := writeFrame(s, reqBytes); err != nil {
+			return fmt.Errorf("write request: %w", err)
+		}
 
-	respBytes, err := readFrame(s)
-	if err != nil {
-		return fmt.Errorf("read response: %w", err)
-	}
+		respBytes, err := readFrame(s)
+		if err != nil {
+			return fmt.Errorf("read response: %w", err)
+		}
 
-	var resp groupInboxResponse
-	if err := json.Unmarshal(respBytes, &resp); err != nil {
-		return fmt.Errorf("unmarshal response: %w", err)
-	}
+		var resp groupInboxResponse
+		if err := json.Unmarshal(respBytes, &resp); err != nil {
+			return fmt.Errorf("unmarshal response: %w", err)
+		}
 
-	if resp.Status != "OK" {
-		return fmt.Errorf("group inbox store failed: %s", resp.Error)
-	}
+		if resp.Status != "OK" {
+			return fmt.Errorf("group inbox store failed: %s", resp.Error)
+		}
 
-	log.Printf("[GROUP_INBOX] Stored message for group %s", groupId)
-	return nil
+		log.Printf("[GROUP_INBOX] Stored message for group %s", groupId)
+		return nil
+	})
 }
 
 // GroupInboxRetrieve retrieves missed group messages from the relay's group inbox
 // since the given timestamp (unix milliseconds). Returns messages in chronological order.
+// Tries each configured relay in order until one succeeds.
 func (n *Node) GroupInboxRetrieve(groupId string, sinceTimestamp int64) ([]InboxMessage, error) {
 	n.mu.RLock()
 	h := n.host
@@ -104,64 +105,63 @@ func (n *Node) GroupInboxRetrieve(groupId string, sinceTimestamp int64) ([]Inbox
 		return nil, fmt.Errorf("node not started")
 	}
 
-	relayPeer, relayAddrs, err := n.getGroupRelayInfo()
-	if err != nil {
-		return nil, err
-	}
+	rs := n.buildRelaySelector(nil)
 
-	ctx, cancel := context.WithTimeout(n.ctx, InboxTimeout)
-	defer cancel()
+	return ForEachWithResult(rs, func(relay RelayInfo) ([]InboxMessage, error) {
+		ctx, cancel := context.WithTimeout(n.ctx, InboxTimeout)
+		defer cancel()
 
-	if err := h.Connect(ctx, peer.AddrInfo{ID: relayPeer, Addrs: relayAddrs}); err != nil {
-		return nil, fmt.Errorf("connect to relay: %w", err)
-	}
+		if err := h.Connect(ctx, peer.AddrInfo{ID: relay.ID, Addrs: relay.Addrs}); err != nil {
+			return nil, fmt.Errorf("connect to relay: %w", err)
+		}
 
-	s, err := h.NewStream(ctx, relayPeer, InboxProtocol)
-	if err != nil {
-		return nil, fmt.Errorf("open inbox stream: %w", err)
-	}
-	defer s.Close()
+		s, err := h.NewStream(ctx, relay.ID, InboxProtocol)
+		if err != nil {
+			return nil, fmt.Errorf("open inbox stream: %w", err)
+		}
+		defer s.Close()
 
-	req := groupInboxRequest{
-		Action:         "group_retrieve",
-		GroupId:        groupId,
-		SinceTimestamp: sinceTimestamp,
-		Limit:          50,
-	}
+		req := groupInboxRequest{
+			Action:         "group_retrieve",
+			GroupId:        groupId,
+			SinceTimestamp: sinceTimestamp,
+			Limit:          50,
+		}
 
-	reqBytes, err := json.Marshal(req)
-	if err != nil {
-		return nil, fmt.Errorf("marshal request: %w", err)
-	}
+		reqBytes, err := json.Marshal(req)
+		if err != nil {
+			return nil, fmt.Errorf("marshal request: %w", err)
+		}
 
-	if err := writeFrame(s, reqBytes); err != nil {
-		return nil, fmt.Errorf("write request: %w", err)
-	}
+		if err := writeFrame(s, reqBytes); err != nil {
+			return nil, fmt.Errorf("write request: %w", err)
+		}
 
-	respBytes, err := readFrame(s)
-	if err != nil {
-		return nil, fmt.Errorf("read response: %w", err)
-	}
+		respBytes, err := readFrame(s)
+		if err != nil {
+			return nil, fmt.Errorf("read response: %w", err)
+		}
 
-	var resp groupInboxResponse
-	if err := json.Unmarshal(respBytes, &resp); err != nil {
-		return nil, fmt.Errorf("unmarshal response: %w", err)
-	}
+		var resp groupInboxResponse
+		if err := json.Unmarshal(respBytes, &resp); err != nil {
+			return nil, fmt.Errorf("unmarshal response: %w", err)
+		}
 
-	if resp.Status == "NO_MESSAGES" {
-		return nil, nil
-	}
+		if resp.Status == "NO_MESSAGES" {
+			return nil, nil
+		}
 
-	if resp.Status != "OK" {
-		return nil, fmt.Errorf("group inbox retrieve failed: %s", resp.Error)
-	}
+		if resp.Status != "OK" {
+			return nil, fmt.Errorf("group inbox retrieve failed: %s", resp.Error)
+		}
 
-	log.Printf("[GROUP_INBOX] Retrieved %d messages for group %s", len(resp.Messages), groupId)
-	return resp.Messages, nil
+		log.Printf("[GROUP_INBOX] Retrieved %d messages for group %s", len(resp.Messages), groupId)
+		return resp.Messages, nil
+	})
 }
 
 // getGroupRelayInfo returns the relay peer ID and addresses.
-// Uses the same relay as the 1:1 inbox.
+// Deprecated: use buildRelaySelector instead for multi-relay support.
 func (n *Node) getGroupRelayInfo() (peer.ID, []ma.Multiaddr, error) {
 	return n.getRelayInfo(nil)
 }

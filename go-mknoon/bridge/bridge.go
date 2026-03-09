@@ -490,7 +490,7 @@ func RendezvousRegister(paramsJSON string) (result string) {
 }
 
 // RendezvousDiscover discovers peers on a rendezvous namespace.
-// Input JSON: { "namespace": "..." } (optional, defaults to node's namespace)
+// Input JSON: { "namespace": "...", "serverAddresses": [...], "timeoutMs": N } (all optional)
 // Returns JSON: { "ok": true, "peers": [{ "peerId": "...", "addresses": [...] }, ...] }
 func RendezvousDiscover(paramsJSON string) (result string) {
 	defer func() {
@@ -508,8 +508,9 @@ func RendezvousDiscover(paramsJSON string) (result string) {
 	}
 
 	var params struct {
-		Namespace string `json:"namespace"`
-		TimeoutMs int    `json:"timeoutMs"`
+		Namespace       string   `json:"namespace"`
+		ServerAddresses []string `json:"serverAddresses"`
+		TimeoutMs       int      `json:"timeoutMs"`
 	}
 	if paramsJSON != "" {
 		if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
@@ -522,7 +523,7 @@ func RendezvousDiscover(paramsJSON string) (result string) {
 		ns = n.Namespace()
 	}
 
-	peers, err := n.RendezvousDiscoverWithTimeout(ns, nil, params.TimeoutMs)
+	peers, err := n.RendezvousDiscoverWithTimeout(ns, params.ServerAddresses, params.TimeoutMs)
 	if err != nil {
 		return errJSON("RENDEZVOUS_ERROR", err.Error())
 	}

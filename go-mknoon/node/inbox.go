@@ -35,6 +35,7 @@ type inboxResponse struct {
 }
 
 // InboxStore stores a message in the offline inbox for a peer.
+// Tries each configured relay in order until one succeeds.
 func (n *Node) InboxStore(toPeerId string, message string) error {
 	n.mu.RLock()
 	h := n.host
@@ -44,60 +45,60 @@ func (n *Node) InboxStore(toPeerId string, message string) error {
 		return fmt.Errorf("node not started")
 	}
 
-	relayPeer, relayAddrs, err := n.getRelayInfo(nil)
-	if err != nil {
-		return err
-	}
+	rs := n.buildRelaySelector(nil)
 
-	ctx, cancel := context.WithTimeout(n.ctx, InboxTimeout)
-	defer cancel()
+	return rs.ForEach(func(relay RelayInfo) error {
+		ctx, cancel := context.WithTimeout(n.ctx, InboxTimeout)
+		defer cancel()
 
-	// Ensure connected to relay
-	if err := h.Connect(ctx, peer.AddrInfo{ID: relayPeer, Addrs: relayAddrs}); err != nil {
-		return fmt.Errorf("connect to relay: %w", err)
-	}
+		// Ensure connected to relay
+		if err := h.Connect(ctx, peer.AddrInfo{ID: relay.ID, Addrs: relay.Addrs}); err != nil {
+			return fmt.Errorf("connect to relay: %w", err)
+		}
 
-	s, err := h.NewStream(ctx, relayPeer, InboxProtocol)
-	if err != nil {
-		return fmt.Errorf("open inbox stream: %w", err)
-	}
-	defer s.Close()
+		s, err := h.NewStream(ctx, relay.ID, InboxProtocol)
+		if err != nil {
+			return fmt.Errorf("open inbox stream: %w", err)
+		}
+		defer s.Close()
 
-	req := inboxRequest{
-		Action:  "store",
-		To:      toPeerId,
-		From:    n.peerId,
-		Message: message,
-	}
+		req := inboxRequest{
+			Action:  "store",
+			To:      toPeerId,
+			From:    n.peerId,
+			Message: message,
+		}
 
-	reqBytes, err := json.Marshal(req)
-	if err != nil {
-		return fmt.Errorf("marshal request: %w", err)
-	}
+		reqBytes, err := json.Marshal(req)
+		if err != nil {
+			return fmt.Errorf("marshal request: %w", err)
+		}
 
-	if err := writeFrame(s, reqBytes); err != nil {
-		return fmt.Errorf("write request: %w", err)
-	}
+		if err := writeFrame(s, reqBytes); err != nil {
+			return fmt.Errorf("write request: %w", err)
+		}
 
-	respBytes, err := readFrame(s)
-	if err != nil {
-		return fmt.Errorf("read response: %w", err)
-	}
+		respBytes, err := readFrame(s)
+		if err != nil {
+			return fmt.Errorf("read response: %w", err)
+		}
 
-	var resp inboxResponse
-	if err := json.Unmarshal(respBytes, &resp); err != nil {
-		return fmt.Errorf("unmarshal response: %w", err)
-	}
+		var resp inboxResponse
+		if err := json.Unmarshal(respBytes, &resp); err != nil {
+			return fmt.Errorf("unmarshal response: %w", err)
+		}
 
-	if resp.Status != "OK" {
-		return fmt.Errorf("inbox store failed: %s", resp.Error)
-	}
+		if resp.Status != "OK" {
+			return fmt.Errorf("inbox store failed: %s", resp.Error)
+		}
 
-	log.Printf("[INBOX] Stored message for %s", toPeerId[:min(20, len(toPeerId))])
-	return nil
+		log.Printf("[INBOX] Stored message for %s", toPeerId[:min(20, len(toPeerId))])
+		return nil
+	})
 }
 
 // InboxRetrieve retrieves pending messages from the offline inbox.
+// Tries each configured relay in order until one succeeds.
 func (n *Node) InboxRetrieve() ([]InboxMessage, error) {
 	n.mu.RLock()
 	h := n.host
@@ -107,58 +108,57 @@ func (n *Node) InboxRetrieve() ([]InboxMessage, error) {
 		return nil, fmt.Errorf("node not started")
 	}
 
-	relayPeer, relayAddrs, err := n.getRelayInfo(nil)
-	if err != nil {
-		return nil, err
-	}
+	rs := n.buildRelaySelector(nil)
 
-	ctx, cancel := context.WithTimeout(n.ctx, InboxTimeout)
-	defer cancel()
+	return ForEachWithResult(rs, func(relay RelayInfo) ([]InboxMessage, error) {
+		ctx, cancel := context.WithTimeout(n.ctx, InboxTimeout)
+		defer cancel()
 
-	if err := h.Connect(ctx, peer.AddrInfo{ID: relayPeer, Addrs: relayAddrs}); err != nil {
-		return nil, fmt.Errorf("connect to relay: %w", err)
-	}
+		if err := h.Connect(ctx, peer.AddrInfo{ID: relay.ID, Addrs: relay.Addrs}); err != nil {
+			return nil, fmt.Errorf("connect to relay: %w", err)
+		}
 
-	s, err := h.NewStream(ctx, relayPeer, InboxProtocol)
-	if err != nil {
-		return nil, fmt.Errorf("open inbox stream: %w", err)
-	}
-	defer s.Close()
+		s, err := h.NewStream(ctx, relay.ID, InboxProtocol)
+		if err != nil {
+			return nil, fmt.Errorf("open inbox stream: %w", err)
+		}
+		defer s.Close()
 
-	req := inboxRequest{
-		Action: "retrieve",
-		Limit:  50,
-	}
+		req := inboxRequest{
+			Action: "retrieve",
+			Limit:  50,
+		}
 
-	reqBytes, err := json.Marshal(req)
-	if err != nil {
-		return nil, fmt.Errorf("marshal request: %w", err)
-	}
+		reqBytes, err := json.Marshal(req)
+		if err != nil {
+			return nil, fmt.Errorf("marshal request: %w", err)
+		}
 
-	if err := writeFrame(s, reqBytes); err != nil {
-		return nil, fmt.Errorf("write request: %w", err)
-	}
+		if err := writeFrame(s, reqBytes); err != nil {
+			return nil, fmt.Errorf("write request: %w", err)
+		}
 
-	respBytes, err := readFrame(s)
-	if err != nil {
-		return nil, fmt.Errorf("read response: %w", err)
-	}
+		respBytes, err := readFrame(s)
+		if err != nil {
+			return nil, fmt.Errorf("read response: %w", err)
+		}
 
-	var resp inboxResponse
-	if err := json.Unmarshal(respBytes, &resp); err != nil {
-		return nil, fmt.Errorf("unmarshal response: %w", err)
-	}
+		var resp inboxResponse
+		if err := json.Unmarshal(respBytes, &resp); err != nil {
+			return nil, fmt.Errorf("unmarshal response: %w", err)
+		}
 
-	if resp.Status == "NO_MESSAGES" {
-		return nil, nil
-	}
+		if resp.Status == "NO_MESSAGES" {
+			return nil, nil
+		}
 
-	if resp.Status != "OK" {
-		return nil, fmt.Errorf("inbox retrieve failed: %s", resp.Error)
-	}
+		if resp.Status != "OK" {
+			return nil, fmt.Errorf("inbox retrieve failed: %s", resp.Error)
+		}
 
-	log.Printf("[INBOX] Retrieved %d messages", len(resp.Messages))
-	return resp.Messages, nil
+		log.Printf("[INBOX] Retrieved %d messages", len(resp.Messages))
+		return resp.Messages, nil
+	})
 }
 
 // InboxRetrieveResult holds the paginated result from InboxRetrieveWithTimeout.
@@ -170,6 +170,7 @@ type InboxRetrieveResult struct {
 // InboxRetrieveWithTimeout retrieves pending messages with an explicit timeout
 // and pagination support. If timeoutMs <= 0, the default InboxTimeout is used.
 // The HasMore field indicates whether additional pages are available.
+// Tries each configured relay in order until one succeeds.
 func (n *Node) InboxRetrieveWithTimeout(timeoutMs int) (*InboxRetrieveResult, error) {
 	n.mu.RLock()
 	h := n.host
@@ -179,69 +180,69 @@ func (n *Node) InboxRetrieveWithTimeout(timeoutMs int) (*InboxRetrieveResult, er
 		return nil, fmt.Errorf("node not started")
 	}
 
-	relayPeer, relayAddrs, err := n.getRelayInfo(nil)
-	if err != nil {
-		return nil, err
-	}
-
 	timeout := InboxTimeout
 	if timeoutMs > 0 {
 		timeout = time.Duration(timeoutMs) * time.Millisecond
 	}
 
-	ctx, cancel := context.WithTimeout(n.ctx, timeout)
-	defer cancel()
+	rs := n.buildRelaySelector(nil)
 
-	if err := h.Connect(ctx, peer.AddrInfo{ID: relayPeer, Addrs: relayAddrs}); err != nil {
-		return nil, fmt.Errorf("connect to relay: %w", err)
-	}
+	return ForEachWithResult(rs, func(relay RelayInfo) (*InboxRetrieveResult, error) {
+		ctx, cancel := context.WithTimeout(n.ctx, timeout)
+		defer cancel()
 
-	s, err := h.NewStream(ctx, relayPeer, InboxProtocol)
-	if err != nil {
-		return nil, fmt.Errorf("open inbox stream: %w", err)
-	}
-	defer s.Close()
+		if err := h.Connect(ctx, peer.AddrInfo{ID: relay.ID, Addrs: relay.Addrs}); err != nil {
+			return nil, fmt.Errorf("connect to relay: %w", err)
+		}
 
-	req := inboxRequest{
-		Action: "retrieve",
-		Limit:  50,
-	}
+		s, err := h.NewStream(ctx, relay.ID, InboxProtocol)
+		if err != nil {
+			return nil, fmt.Errorf("open inbox stream: %w", err)
+		}
+		defer s.Close()
 
-	reqBytes, err := json.Marshal(req)
-	if err != nil {
-		return nil, fmt.Errorf("marshal request: %w", err)
-	}
+		req := inboxRequest{
+			Action: "retrieve",
+			Limit:  50,
+		}
 
-	if err := writeFrame(s, reqBytes); err != nil {
-		return nil, fmt.Errorf("write request: %w", err)
-	}
+		reqBytes, err := json.Marshal(req)
+		if err != nil {
+			return nil, fmt.Errorf("marshal request: %w", err)
+		}
 
-	respBytes, err := readFrame(s)
-	if err != nil {
-		return nil, fmt.Errorf("read response: %w", err)
-	}
+		if err := writeFrame(s, reqBytes); err != nil {
+			return nil, fmt.Errorf("write request: %w", err)
+		}
 
-	var resp inboxResponse
-	if err := json.Unmarshal(respBytes, &resp); err != nil {
-		return nil, fmt.Errorf("unmarshal response: %w", err)
-	}
+		respBytes, err := readFrame(s)
+		if err != nil {
+			return nil, fmt.Errorf("read response: %w", err)
+		}
 
-	if resp.Status == "NO_MESSAGES" {
-		return &InboxRetrieveResult{Messages: nil, HasMore: false}, nil
-	}
+		var resp inboxResponse
+		if err := json.Unmarshal(respBytes, &resp); err != nil {
+			return nil, fmt.Errorf("unmarshal response: %w", err)
+		}
 
-	if resp.Status != "OK" {
-		return nil, fmt.Errorf("inbox retrieve failed: %s", resp.Error)
-	}
+		if resp.Status == "NO_MESSAGES" {
+			return &InboxRetrieveResult{Messages: nil, HasMore: false}, nil
+		}
 
-	// HasMore is true when we received exactly our limit (server may have more).
-	hasMore := len(resp.Messages) >= 50
+		if resp.Status != "OK" {
+			return nil, fmt.Errorf("inbox retrieve failed: %s", resp.Error)
+		}
 
-	log.Printf("[INBOX] Retrieved %d messages (hasMore=%v, timeout=%v)", len(resp.Messages), hasMore, timeout)
-	return &InboxRetrieveResult{Messages: resp.Messages, HasMore: hasMore}, nil
+		// HasMore is true when we received exactly our limit (server may have more).
+		hasMore := len(resp.Messages) >= 50
+
+		log.Printf("[INBOX] Retrieved %d messages (hasMore=%v, timeout=%v)", len(resp.Messages), hasMore, timeout)
+		return &InboxRetrieveResult{Messages: resp.Messages, HasMore: hasMore}, nil
+	})
 }
 
 // InboxRegisterToken registers an FCM push token with the relay.
+// Tries each configured relay in order until one succeeds.
 func (n *Node) InboxRegisterToken(token string, platform string) error {
 	n.mu.RLock()
 	h := n.host
@@ -251,76 +252,64 @@ func (n *Node) InboxRegisterToken(token string, platform string) error {
 		return fmt.Errorf("node not started")
 	}
 
-	relayPeer, relayAddrs, err := n.getRelayInfo(nil)
-	if err != nil {
-		return err
-	}
+	rs := n.buildRelaySelector(nil)
 
-	ctx, cancel := context.WithTimeout(n.ctx, InboxTimeout)
-	defer cancel()
+	return rs.ForEach(func(relay RelayInfo) error {
+		ctx, cancel := context.WithTimeout(n.ctx, InboxTimeout)
+		defer cancel()
 
-	if err := h.Connect(ctx, peer.AddrInfo{ID: relayPeer, Addrs: relayAddrs}); err != nil {
-		return fmt.Errorf("connect to relay: %w", err)
-	}
+		if err := h.Connect(ctx, peer.AddrInfo{ID: relay.ID, Addrs: relay.Addrs}); err != nil {
+			return fmt.Errorf("connect to relay: %w", err)
+		}
 
-	s, err := h.NewStream(ctx, relayPeer, InboxProtocol)
-	if err != nil {
-		return fmt.Errorf("open inbox stream: %w", err)
-	}
-	defer s.Close()
+		s, err := h.NewStream(ctx, relay.ID, InboxProtocol)
+		if err != nil {
+			return fmt.Errorf("open inbox stream: %w", err)
+		}
+		defer s.Close()
 
-	req := inboxRequest{
-		Action:   "register_token",
-		Token:    token,
-		Platform: platform,
-	}
+		req := inboxRequest{
+			Action:   "register_token",
+			Token:    token,
+			Platform: platform,
+		}
 
-	reqBytes, err := json.Marshal(req)
-	if err != nil {
-		return fmt.Errorf("marshal request: %w", err)
-	}
+		reqBytes, err := json.Marshal(req)
+		if err != nil {
+			return fmt.Errorf("marshal request: %w", err)
+		}
 
-	if err := writeFrame(s, reqBytes); err != nil {
-		return fmt.Errorf("write request: %w", err)
-	}
+		if err := writeFrame(s, reqBytes); err != nil {
+			return fmt.Errorf("write request: %w", err)
+		}
 
-	respBytes, err := readFrame(s)
-	if err != nil {
-		return fmt.Errorf("read response: %w", err)
-	}
+		respBytes, err := readFrame(s)
+		if err != nil {
+			return fmt.Errorf("read response: %w", err)
+		}
 
-	var resp inboxResponse
-	if err := json.Unmarshal(respBytes, &resp); err != nil {
-		return fmt.Errorf("unmarshal response: %w", err)
-	}
+		var resp inboxResponse
+		if err := json.Unmarshal(respBytes, &resp); err != nil {
+			return fmt.Errorf("unmarshal response: %w", err)
+		}
 
-	if resp.Status != "OK" {
-		return fmt.Errorf("register token failed: %s", resp.Error)
-	}
+		if resp.Status != "OK" {
+			return fmt.Errorf("register token failed: %s", resp.Error)
+		}
 
-	log.Printf("[INBOX] Push token registered (%s)", platform)
-	return nil
+		log.Printf("[INBOX] Push token registered (%s)", platform)
+		return nil
+	})
 }
 
 // getRelayInfo returns the relay peer ID and addresses.
+// Deprecated: use buildRelaySelector instead for multi-relay support.
+// Kept for backward compatibility with any callers not yet migrated.
 func (n *Node) getRelayInfo(serverAddresses []string) (peer.ID, []ma.Multiaddr, error) {
-	addrs := serverAddresses
-	if len(addrs) == 0 {
-		addrs = n.relayAddresses
-	}
-	if len(addrs) == 0 {
-		addrs = []string{DefaultRelayAddress}
-	}
-
-	maddr, err := ma.NewMultiaddr(addrs[0])
+	rs := n.buildRelaySelector(serverAddresses)
+	first, err := rs.First()
 	if err != nil {
-		return "", nil, fmt.Errorf("parse relay address: %w", err)
+		return "", nil, err
 	}
-
-	addrInfo, err := peer.AddrInfoFromP2pAddr(maddr)
-	if err != nil {
-		return "", nil, fmt.Errorf("parse relay addr info: %w", err)
-	}
-
-	return addrInfo.ID, addrInfo.Addrs, nil
+	return first.ID, first.Addrs, nil
 }
