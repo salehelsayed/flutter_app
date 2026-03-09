@@ -72,18 +72,20 @@ abstract class P2PService {
   ///
   /// Parameters:
   ///   - [peerId]: The peer ID to discover
+  ///   - [timeoutMs]: Optional discovery timeout in milliseconds
   ///
   /// Returns the discovered peer info, or null if not found.
-  Future<DiscoveredPeer?> discoverPeer(String peerId);
+  Future<DiscoveredPeer?> discoverPeer(String peerId, {int? timeoutMs});
 
   /// Dial (connect to) a peer.
   ///
   /// Parameters:
   ///   - [peerId]: The peer ID to dial
   ///   - [addresses]: Optional list of multiaddrs (discovers if not provided)
+  ///   - [timeoutMs]: Optional dial timeout in milliseconds
   ///
   /// Returns true if connection was established.
-  Future<bool> dialPeer(String peerId, {List<String>? addresses});
+  Future<bool> dialPeer(String peerId, {List<String>? addresses, int? timeoutMs});
 
   /// Store a message in the offline inbox for a peer.
   ///
@@ -96,8 +98,11 @@ abstract class P2PService {
 
   /// Retrieve messages from the offline inbox.
   ///
+  /// Parameters:
+  ///   - [timeoutMs]: Optional retrieval timeout in milliseconds
+  ///
   /// Returns a list of message maps from the inbox.
-  Future<List<Map<String, dynamic>>> retrieveInbox();
+  Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs});
 
   /// Register an FCM push token with the relay server.
   ///

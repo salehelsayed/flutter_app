@@ -43,13 +43,13 @@ class _FakeP2PService implements P2PService {
   Future<SendMessageResult> sendMessageWithReply(String peerId, String message, {int? timeoutMs}) async =>
       throw UnimplementedError();
   @override
-  Future<DiscoveredPeer?> discoverPeer(String peerId) async => null;
+  Future<DiscoveredPeer?> discoverPeer(String peerId, {int? timeoutMs}) async => null;
   @override
-  Future<bool> dialPeer(String peerId, {List<String>? addresses}) async => true;
+  Future<bool> dialPeer(String peerId, {List<String>? addresses, int? timeoutMs}) async => true;
   @override
   Future<bool> storeInInbox(String toPeerId, String message) async => true;
   @override
-  Future<List<Map<String, dynamic>>> retrieveInbox() async => [];
+  Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) async => [];
   @override
   Future<void> performImmediateHealthCheck() async {}
   @override

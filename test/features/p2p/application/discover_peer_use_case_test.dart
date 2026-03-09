@@ -9,7 +9,7 @@ class _ThrowingDiscoverFakeP2PService extends FakeP2PService {
   _ThrowingDiscoverFakeP2PService({super.initialState});
 
   @override
-  Future<DiscoveredPeer?> discoverPeer(String peerId) async {
+  Future<DiscoveredPeer?> discoverPeer(String peerId, {int? timeoutMs}) async {
     discoverPeerCallCount++;
     lastDiscoverPeerId = peerId;
     throw Exception('discover exploded');
@@ -21,7 +21,7 @@ class _ThrowingDialFakeP2PService extends FakeP2PService {
   _ThrowingDialFakeP2PService({super.initialState});
 
   @override
-  Future<bool> dialPeer(String peerId, {List<String>? addresses}) async {
+  Future<bool> dialPeer(String peerId, {List<String>? addresses, int? timeoutMs}) async {
     dialPeerCallCount++;
     lastDialPeerId = peerId;
     throw Exception('dial exploded');

@@ -240,51 +240,80 @@ class P2PServiceImpl implements P2PService {
     );
   }
 
+  /// Maximum number of inbox pages to drain in a single pass.
+  /// Prevents infinite loops if the server keeps returning hasMore.
+  static const int maxInboxPages = 10;
+
   /// Drain queued offline inbox messages and inject them into message stream.
+  /// Loops through pages when the server indicates more messages are available.
   Future<void> _drainOfflineInbox() async {
     try {
-      final inboxMessages = await retrieveInbox();
-      if (inboxMessages.isEmpty) {
-        return;
-      }
-
       final toPeerId = _currentState.peerId ?? '';
-      var emitted = 0;
+      var totalEmitted = 0;
 
-      for (final raw in inboxMessages) {
-        final from = raw['from']?.toString();
-        final content = raw['message']?.toString();
-        if (from == null || from.isEmpty || content == null || content.isEmpty) {
-          continue;
+      for (var page = 0; page < maxInboxPages; page++) {
+        final response = await callP2PInboxRetrieve(_bridge);
+        if (response['ok'] != true) {
+          break;
         }
 
-        final ts = raw['timestamp'];
-        final timestamp = ts is int
-            ? DateTime.fromMillisecondsSinceEpoch(ts, isUtc: true)
-                  .toIso8601String()
-            : (ts as String?) ?? DateTime.now().toUtc().toIso8601String();
+        final inboxMessages =
+            (response['messages'] as List<dynamic>?)
+                ?.cast<Map<String, dynamic>>() ??
+            [];
+        if (inboxMessages.isEmpty) {
+          break;
+        }
 
-        _handleMessageReceived(
-          ChatMessage(
-            from: from,
-            to: toPeerId,
-            content: content,
-            timestamp: timestamp,
-            isIncoming: true,
-            transport: 'inbox',
-          ),
+        for (final raw in inboxMessages) {
+          final from = raw['from']?.toString();
+          final content = raw['message']?.toString();
+          if (from == null || from.isEmpty || content == null || content.isEmpty) {
+            continue;
+          }
+
+          final ts = raw['timestamp'];
+          final timestamp = ts is int
+              ? DateTime.fromMillisecondsSinceEpoch(ts, isUtc: true)
+                    .toIso8601String()
+              : (ts as String?) ?? DateTime.now().toUtc().toIso8601String();
+
+          _handleMessageReceived(
+            ChatMessage(
+              from: from,
+              to: toPeerId,
+              content: content,
+              timestamp: timestamp,
+              isIncoming: true,
+              transport: 'inbox',
+            ),
+          );
+          totalEmitted++;
+        }
+
+        // Check if the server has more pages.
+        final hasMore = response['hasMore'] == true;
+        if (!hasMore) {
+          break;
+        }
+
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'P2P_SERVICE_INBOX_DRAIN_PAGE',
+          details: {'page': page + 1, 'emitted': totalEmitted},
         );
-        emitted++;
       }
 
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'P2P_SERVICE_INBOX_DRAIN_SUCCESS',
-        details: {
-          'count': emitted,
-          'note': 'messages consumed and deleted from relay memory',
-        },
-      );
+      if (totalEmitted > 0) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'P2P_SERVICE_INBOX_DRAIN_SUCCESS',
+          details: {
+            'count': totalEmitted,
+            'note': 'messages consumed and deleted from relay memory',
+          },
+        );
+      }
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -448,11 +477,11 @@ class P2PServiceImpl implements P2PService {
   }
 
   @override
-  Future<DiscoveredPeer?> discoverPeer(String peerId) async {
+  Future<DiscoveredPeer?> discoverPeer(String peerId, {int? timeoutMs}) async {
     emitFlowEvent(
       layer: 'FL',
       event: 'P2P_SERVICE_DISCOVER_PEER_BEGIN',
-      details: {'peerId': peerId},
+      details: {'peerId': peerId, if (timeoutMs != null) 'timeoutMs': timeoutMs},
     );
 
     try {
@@ -461,6 +490,7 @@ class P2PServiceImpl implements P2PService {
         _bridge,
         peerId: peerId,
         namespace: namespace,
+        timeoutMs: timeoutMs,
       );
 
       if (response['ok'] == true) {
@@ -497,11 +527,11 @@ class P2PServiceImpl implements P2PService {
   }
 
   @override
-  Future<bool> dialPeer(String peerId, {List<String>? addresses}) async {
+  Future<bool> dialPeer(String peerId, {List<String>? addresses, int? timeoutMs}) async {
     emitFlowEvent(
       layer: 'FL',
       event: 'P2P_SERVICE_DIAL_PEER_BEGIN',
-      details: {'peerId': peerId, 'hasAddresses': addresses != null},
+      details: {'peerId': peerId, 'hasAddresses': addresses != null, if (timeoutMs != null) 'timeoutMs': timeoutMs},
     );
 
     try {
@@ -509,6 +539,7 @@ class P2PServiceImpl implements P2PService {
         _bridge,
         peerId: peerId,
         addresses: addresses,
+        timeoutMs: timeoutMs,
       );
 
       if (response['ok'] == true) {
@@ -852,25 +883,30 @@ class P2PServiceImpl implements P2PService {
   }
 
   @override
-  Future<List<Map<String, dynamic>>> retrieveInbox() async {
+  Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) async {
     emitFlowEvent(
       layer: 'FL',
       event: 'P2P_SERVICE_INBOX_RETRIEVE_BEGIN',
-      details: {},
+      details: {if (timeoutMs != null) 'timeoutMs': timeoutMs},
     );
 
     try {
-      final response = await callP2PInboxRetrieve(_bridge);
+      final response = await callP2PInboxRetrieve(
+        _bridge,
+        timeoutMs: timeoutMs,
+      );
       if (response['ok'] == true) {
         final messages =
             (response['messages'] as List<dynamic>?)
                 ?.cast<Map<String, dynamic>>() ??
             [];
+        final hasMore = response['hasMore'] == true;
         emitFlowEvent(
           layer: 'FL',
           event: 'P2P_SERVICE_INBOX_RETRIEVE_SUCCESS',
           details: {
             'count': messages.length,
+            'hasMore': hasMore,
             'note': 'server deleted retrieved messages from memory',
           },
         );

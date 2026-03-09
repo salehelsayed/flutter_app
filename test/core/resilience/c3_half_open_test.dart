@@ -71,20 +71,20 @@ class _HalfOpenP2PService implements P2PService {
   Future<bool> stopNode() => _inner.stopNode();
 
   @override
-  Future<DiscoveredPeer?> discoverPeer(String peerId) =>
-      _inner.discoverPeer(peerId);
+  Future<DiscoveredPeer?> discoverPeer(String peerId, {int? timeoutMs}) =>
+      _inner.discoverPeer(peerId, timeoutMs: timeoutMs);
 
   @override
-  Future<bool> dialPeer(String peerId, {List<String>? addresses}) =>
-      _inner.dialPeer(peerId, addresses: addresses);
+  Future<bool> dialPeer(String peerId, {List<String>? addresses, int? timeoutMs}) =>
+      _inner.dialPeer(peerId, addresses: addresses, timeoutMs: timeoutMs);
 
   @override
   Future<bool> storeInInbox(String toPeerId, String message) =>
       _inner.storeInInbox(toPeerId, message);
 
   @override
-  Future<List<Map<String, dynamic>>> retrieveInbox() =>
-      _inner.retrieveInbox();
+  Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) =>
+      _inner.retrieveInbox(timeoutMs: timeoutMs);
 
   @override
   Future<bool> registerPushToken(String token, String platform) =>

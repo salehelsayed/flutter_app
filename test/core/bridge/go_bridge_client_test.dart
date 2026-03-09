@@ -45,7 +45,6 @@ void main() {
       'node:stop': 'stopNode',
       'node:status': 'nodeStatus',
       'relay:reconnect': 'relayReconnect',
-      'inbox:retrieve': 'inboxRetrieve',
     };
 
     for (final entry in noPayloadCmds.entries) {
@@ -85,6 +84,7 @@ void main() {
       'peer:dial': 'dialPeer',
       'peer:disconnect': 'disconnectPeer',
       'message:send': 'sendMessage',
+      'inbox:retrieve': 'inboxRetrieve',
       'inbox:store': 'inboxStore',
       'inbox:register_token': 'inboxRegisterToken',
       'media:upload': 'mediaUpload',

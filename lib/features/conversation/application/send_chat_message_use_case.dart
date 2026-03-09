@@ -1,26 +1,29 @@
+import 'dart:async';
+
 import 'package:uuid/uuid.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/chat_console_logger.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
-import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
-import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_payload.dart';
-import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
+
+/// Interactive send budget for local WiFi attempts.
+const Duration interactiveLocalBudget = Duration(milliseconds: 1500);
+
+/// Interactive send budget for the overall direct send path.
+const Duration interactiveDirectBudget = Duration(seconds: 4);
 
 /// Result of sending a chat message.
 enum SendChatMessageResult {
   success,
   nodeNotRunning,
   invalidMessage,
-  messageTooLong,
   peerNotFound,
   dialFailed,
   sendFailed,
-  encryptionRequired,
 }
 
 const _uuid = Uuid();
@@ -46,9 +49,6 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   String? timestamp,
   Bridge? bridge,
   String? recipientMlKemPublicKey,
-  String? quotedMessageId,
-  List<MediaAttachment>? mediaAttachments,
-  MediaAttachmentRepository? mediaAttachmentRepo,
 }) async {
   final targetPrefix = targetPeerId.length > 10
       ? targetPeerId.substring(0, 10)
@@ -60,48 +60,23 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     event: 'CHAT_MSG_SEND_START',
     details: {'targetPeerId': targetPrefix, 'textPreview': textPreview},
   );
-  final sendStart = DateTime.now();
 
-  // 1. Validate — allow empty text if media is attached
-  final hasMedia = mediaAttachments != null && mediaAttachments.isNotEmpty;
-  if (text.trim().isEmpty && !hasMedia) {
+  // 1. Validate
+  if (text.trim().isEmpty) {
     emitFlowEvent(
       layer: 'FL',
       event: 'CHAT_MSG_SEND_INVALID',
-      details: {
-        'reason': 'empty_text',
-        'totalMs': DateTime.now().difference(sendStart).inMilliseconds,
-      },
+      details: {'reason': 'empty_text'},
     );
     return (SendChatMessageResult.invalidMessage, null);
   }
-
-  // 1b. Length check
-  if (isMessageTooLong(text)) {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'CHAT_MSG_SEND_INVALID',
-      details: {
-        'reason': 'message_too_long',
-        'length': text.length,
-        'totalMs': DateTime.now().difference(sendStart).inMilliseconds,
-      },
-    );
-    return (SendChatMessageResult.messageTooLong, null);
-  }
-
-  // 1c. Sanitize text and username
-  text = sanitizeMessageText(text);
-  senderUsername = sanitizeUsername(senderUsername);
 
   // 2. Check P2P node
   if (!p2pService.currentState.isStarted) {
     emitFlowEvent(
       layer: 'FL',
       event: 'CHAT_MSG_SEND_NODE_NOT_RUNNING',
-      details: {
-        'totalMs': DateTime.now().difference(sendStart).inMilliseconds,
-      },
+      details: {},
     );
     return (SendChatMessageResult.nodeNotRunning, null);
   }
@@ -117,69 +92,51 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     senderPeerId: senderPeerId,
     senderUsername: senderUsername,
     timestamp: resolvedTimestamp,
-    quotedMessageId: quotedMessageId,
-    media: hasMedia ? mediaAttachments.map((a) => a.toJson()).toList() : null,
   );
   logChatOutgoing(
     messageId: resolvedMessageId,
     toPeerId: targetPeerId,
-    status: 'sending',
+    status: 'queued',
     text: text,
   );
 
-  // 4. Enforce V2 encryption — refuse to send unencrypted chat messages
-  if (bridge == null || recipientMlKemPublicKey == null) {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'CHAT_MSG_SEND_ENCRYPTION_REQUIRED',
-      details: {
-        'hasBridge': bridge != null,
-        'hasRecipientKey': recipientMlKemPublicKey != null,
-        'totalMs': DateTime.now().difference(sendStart).inMilliseconds,
-      },
-    );
-    return (SendChatMessageResult.encryptionRequired, null);
-  }
-
+  // 4. Serialize (v2 encrypted envelope if ML-KEM key available, v1 plaintext otherwise)
   String jsonString;
-  final encryptStart = DateTime.now();
-  try {
-    final innerJson = payload.toInnerJson();
-    final encryptResult = await callEncryptMessage(
-      bridge: bridge,
-      recipientMlKemPublicKey: recipientMlKemPublicKey,
-      plaintext: innerJson,
-    );
-    if (encryptResult['ok'] != true) {
+  if (bridge != null && recipientMlKemPublicKey != null) {
+    try {
+      final innerJson = payload.toInnerJson();
+      final encryptResult = await callEncryptMessage(
+        bridge: bridge,
+        recipientMlKemPublicKey: recipientMlKemPublicKey,
+        plaintext: innerJson,
+      );
+      if (encryptResult['ok'] != true) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'CHAT_MSG_SEND_ENCRYPT_FAILED',
+          details: {
+            'errorCode': encryptResult['errorCode'],
+            'errorMessage': encryptResult['errorMessage'],
+          },
+        );
+        return (SendChatMessageResult.sendFailed, null);
+      }
+      jsonString = MessagePayload.buildEncryptedEnvelope(
+        senderPeerId: senderPeerId,
+        kem: encryptResult['kem'] as String,
+        ciphertext: encryptResult['ciphertext'] as String,
+        nonce: encryptResult['nonce'] as String,
+      );
+    } catch (e) {
       emitFlowEvent(
         layer: 'FL',
-        event: 'CHAT_MSG_SEND_ENCRYPT_FAILED',
-        details: {
-          'errorCode': encryptResult['errorCode'],
-          'errorMessage': encryptResult['errorMessage'],
-          'encryptMs': DateTime.now().difference(encryptStart).inMilliseconds,
-          'totalMs': DateTime.now().difference(sendStart).inMilliseconds,
-        },
+        event: 'CHAT_MSG_SEND_ENCRYPT_ERROR',
+        details: {'error': e.toString()},
       );
       return (SendChatMessageResult.sendFailed, null);
     }
-    jsonString = MessagePayload.buildEncryptedEnvelope(
-      senderPeerId: senderPeerId,
-      kem: encryptResult['kem'] as String,
-      ciphertext: encryptResult['ciphertext'] as String,
-      nonce: encryptResult['nonce'] as String,
-    );
-  } catch (e) {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'CHAT_MSG_SEND_ENCRYPT_ERROR',
-      details: {
-        'error': e.toString(),
-        'encryptMs': DateTime.now().difference(encryptStart).inMilliseconds,
-        'totalMs': DateTime.now().difference(sendStart).inMilliseconds,
-      },
-    );
-    return (SendChatMessageResult.sendFailed, null);
+  } else {
+    jsonString = payload.toJson();
   }
 
   logChatWireEnvelope(
@@ -188,161 +145,40 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     wireJson: jsonString,
   );
 
-  // 4.5. Try local WiFi delivery first (dual-path: don't return early)
-  bool wifiSent = false;
-  if (p2pService.isLocalPeer(targetPeerId)) {
-    final localStart = DateTime.now();
+  // 4.5. Check for existing connected peer first (connection reuse).
+  // If the peer is already connected, try to send directly without
+  // rediscovering — this is the fastest interactive path.
+  final isAlreadyConnected = p2pService.currentState.connections
+      .any((c) => c.peerId == targetPeerId);
+
+  if (isAlreadyConnected) {
     emitFlowEvent(
       layer: 'FL',
-      event: 'CHAT_MSG_SEND_LOCAL_ATTEMPT',
+      event: 'CHAT_MSG_SEND_REUSE_CONNECTION',
       details: {'targetPeerId': targetPrefix},
     );
     try {
-      final localSent = await p2pService.sendLocalMessage(
-        targetPeerId, jsonString, senderPeerId);
-      if (localSent) {
-        final wifiMessage = payload.toConversationMessage(
-          contactPeerId: targetPeerId,
-          isIncoming: false,
-          status: 'sent',
-          transport: 'wifi',
-        );
-        await messageRepo.saveMessage(wifiMessage);
-        await _persistMediaAttachments(
-            mediaAttachmentRepo, mediaAttachments, resolvedMessageId);
-        wifiSent = true; // only true after persistence succeeds
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'CHAT_MSG_SEND_LOCAL_SUCCESS',
-          details: {
-            'id': resolvedMessageId.substring(0, 8),
-            'textPreview': textPreview,
-            'durationMs': DateTime.now().difference(localStart).inMilliseconds,
-          },
-        );
-        logChatOutgoing(
-          messageId: resolvedMessageId,
-          toPeerId: targetPeerId,
-          status: 'sent',
-          text: text,
-        );
-        // DO NOT RETURN — fall through to relay/inbox for confirmation
-      } else {
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'CHAT_MSG_SEND_LOCAL_FAILED',
-          details: {
-            'targetPeerId': targetPrefix,
-            'durationMs': DateTime.now().difference(localStart).inMilliseconds,
-          },
-        );
-      }
-    } catch (e) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'CHAT_MSG_SEND_LOCAL_ERROR',
-        details: {
-          'targetPeerId': targetPrefix,
-          'error': e.toString(),
-          'durationMs': DateTime.now().difference(localStart).inMilliseconds,
-        },
-      );
-    }
-    // Fall through to relay path
-  }
-
-  // 4.7. Fast path: if already connected, try sending directly (skip discover/dial)
-  if (p2pService.isConnectedToPeer(targetPeerId)) {
-    final fastStart = DateTime.now();
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'CHAT_MSG_SEND_FAST_PATH_ATTEMPT',
-      details: {'targetPeerId': targetPrefix},
-    );
-
-    try {
-      final fastResult = await p2pService.sendMessageWithReply(
+      final sendResult = await p2pService.sendMessageWithReply(
         targetPeerId,
         jsonString,
-        timeoutMs: 1000,
+        timeoutMs: interactiveDirectBudget.inMilliseconds,
       );
-
-      if (fastResult.sent) {
-        if (fastResult.acknowledged) {
-          // ACK'd — save as delivered
-          final message = payload.toConversationMessage(
-            contactPeerId: targetPeerId,
-            isIncoming: false,
-            status: 'delivered',
-            transport: wifiSent ? 'wifi' : 'relay',
-          );
-          await messageRepo.saveMessage(message);
-          if (!wifiSent) {
-            await _persistMediaAttachments(
-                mediaAttachmentRepo, mediaAttachments, resolvedMessageId);
-          }
-
-          emitFlowEvent(
-            layer: 'FL',
-            event: 'CHAT_MSG_SEND_FAST_PATH_SUCCESS',
-            details: {
-              'id': resolvedMessageId.substring(0, 8),
-              'status': 'delivered',
-              'textPreview': textPreview,
-              'durationMs': DateTime.now().difference(fastStart).inMilliseconds,
-              'totalMs': DateTime.now().difference(sendStart).inMilliseconds,
-            },
-          );
-          logChatOutgoing(
-            messageId: resolvedMessageId,
-            toPeerId: targetPeerId,
-            status: 'delivered',
-            text: text,
-          );
-          return (SendChatMessageResult.success, message);
-        }
-
-        // Sent but not ACK'd — try inbox safety net (skip for WiFi)
-        if (!wifiSent) {
-          final inboxResult = await _tryInboxSafetyNet(
-            p2pService: p2pService,
-            messageRepo: messageRepo,
-            mediaAttachmentRepo: mediaAttachmentRepo,
-            mediaAttachments: mediaAttachments,
-            payload: payload,
-            targetPeerId: targetPeerId,
-            resolvedMessageId: resolvedMessageId,
-            jsonString: jsonString,
-            textPreview: textPreview,
-            text: text,
-          );
-          if (inboxResult != null) return inboxResult;
-        }
-
-        // WiFi sent but no ACK, or inbox safety net failed — save as 'sent' with wire_envelope
-        final status = 'sent';
+      if (sendResult.sent) {
+        final status = sendResult.acknowledged ? 'delivered' : 'sent';
         final message = payload.toConversationMessage(
           contactPeerId: targetPeerId,
           isIncoming: false,
           status: status,
-          transport: wifiSent ? 'wifi' : 'relay',
-          wireEnvelope: wifiSent ? null : jsonString,
         );
         await messageRepo.saveMessage(message);
-        if (!wifiSent) {
-          await _persistMediaAttachments(
-              mediaAttachmentRepo, mediaAttachments, resolvedMessageId);
-        }
-
         emitFlowEvent(
           layer: 'FL',
-          event: 'CHAT_MSG_SEND_FAST_PATH_SUCCESS',
+          event: 'CHAT_MSG_SEND_SUCCESS',
           details: {
             'id': resolvedMessageId.substring(0, 8),
             'status': status,
+            'via': 'reuse',
             'textPreview': textPreview,
-            'durationMs': DateTime.now().difference(fastStart).inMilliseconds,
-            'totalMs': DateTime.now().difference(sendStart).inMilliseconds,
           },
         );
         logChatOutgoing(
@@ -353,350 +189,98 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
         );
         return (SendChatMessageResult.success, message);
       }
-    } catch (e) {
-      // Fast path failed — fall through to discover-dial-send
+    } catch (_) {
+      // Connection reuse failed — fall through to race
     }
+  }
 
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'CHAT_MSG_SEND_FAST_PATH_FAILED',
-      details: {
-        'targetPeerId': targetPrefix,
-        'durationMs': DateTime.now().difference(fastStart).inMilliseconds,
-      },
+  // 5. Race: local WiFi and direct discover/dial/send in parallel.
+  // The first successful path wins and is the only one to persist.
+  final isLocalPeer = p2pService.isLocalPeer(targetPeerId);
+
+  // Build race futures
+  final raceFutures = <Future<_RaceResult>>[];
+
+  // Local WiFi path (bounded by interactiveLocalBudget)
+  if (isLocalPeer) {
+    raceFutures.add(
+      _tryLocalSend(p2pService, targetPeerId, jsonString, senderPeerId)
+          .timeout(interactiveLocalBudget, onTimeout: () => _RaceResult.failed('local_timeout')),
     );
   }
 
-  // 4.8. Relay probe — fast offline detection
-  final probeStart = DateTime.now();
-  var probeResult = RelayProbeResult.error;
-  try {
-    probeResult = await p2pService.probeRelay(targetPeerId);
-  } catch (e) {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'CHAT_MSG_SEND_RELAY_PROBE_ERROR',
-      details: {
-        'error': e.toString(),
-        'durationMs': DateTime.now().difference(probeStart).inMilliseconds,
-      },
-    );
-  }
+  // Direct discover/dial/send path (bounded by interactiveDirectBudget)
+  raceFutures.add(
+    _tryDirectSend(p2pService, targetPeerId, jsonString)
+        .timeout(interactiveDirectBudget, onTimeout: () => _RaceResult.failed('direct_timeout')),
+  );
 
-  if (probeResult == RelayProbeResult.connected) {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'CHAT_MSG_SEND_RELAY_PROBE_CONNECTED',
-      details: {
-        'durationMs': DateTime.now().difference(probeStart).inMilliseconds,
-      },
-    );
-    // Peer is online — send on the newly established relay connection
-    try {
-      final probeResult = await p2pService.sendMessageWithReply(
-        targetPeerId,
-        jsonString,
-      );
-      if (probeResult.sent) {
-        if (probeResult.acknowledged) {
-          final message = payload.toConversationMessage(
-            contactPeerId: targetPeerId,
-            isIncoming: false,
-            status: 'delivered',
-            transport: wifiSent ? 'wifi' : 'relay',
-          );
-          await messageRepo.saveMessage(message);
-          if (!wifiSent) {
-            await _persistMediaAttachments(
-                mediaAttachmentRepo, mediaAttachments, resolvedMessageId);
-          }
+  // Race: first successful result wins.
+  // We use a completer to commit only the first success.
+  final completer = Completer<_RaceResult>();
+  var pendingCount = raceFutures.length;
+  final failures = <String>[];
 
-          emitFlowEvent(
-            layer: 'FL',
-            event: 'CHAT_MSG_SEND_SUCCESS',
-            details: {
-              'id': resolvedMessageId.substring(0, 8),
-              'status': 'delivered',
-              'via': 'relay_probe',
-              'textPreview': textPreview,
-              'durationMs': DateTime.now().difference(probeStart).inMilliseconds,
-              'totalMs': DateTime.now().difference(sendStart).inMilliseconds,
-            },
-          );
-          logChatOutgoing(
-            messageId: resolvedMessageId,
-            toPeerId: targetPeerId,
-            status: 'delivered',
-            text: text,
-          );
-          return (SendChatMessageResult.success, message);
-        }
-
-        // Sent but not ACK'd — try inbox safety net (skip for WiFi)
-        if (!wifiSent) {
-          final inboxResult = await _tryInboxSafetyNet(
-            p2pService: p2pService,
-            messageRepo: messageRepo,
-            mediaAttachmentRepo: mediaAttachmentRepo,
-            mediaAttachments: mediaAttachments,
-            payload: payload,
-            targetPeerId: targetPeerId,
-            resolvedMessageId: resolvedMessageId,
-            jsonString: jsonString,
-            textPreview: textPreview,
-            text: text,
-          );
-          if (inboxResult != null) return inboxResult;
-        }
-
-        // Save as 'sent' with wire_envelope
-        final message = payload.toConversationMessage(
-          contactPeerId: targetPeerId,
-          isIncoming: false,
-          status: 'sent',
-          transport: wifiSent ? 'wifi' : 'relay',
-          wireEnvelope: wifiSent ? null : jsonString,
-        );
-        await messageRepo.saveMessage(message);
-        if (!wifiSent) {
-          await _persistMediaAttachments(
-              mediaAttachmentRepo, mediaAttachments, resolvedMessageId);
-        }
-
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'CHAT_MSG_SEND_SUCCESS',
-          details: {
-            'id': resolvedMessageId.substring(0, 8),
-            'status': 'sent',
-            'via': 'relay_probe',
-            'textPreview': textPreview,
-            'durationMs': DateTime.now().difference(probeStart).inMilliseconds,
-            'totalMs': DateTime.now().difference(sendStart).inMilliseconds,
-          },
-        );
-        logChatOutgoing(
-          messageId: resolvedMessageId,
-          toPeerId: targetPeerId,
-          status: 'sent',
-          text: text,
-        );
-        return (SendChatMessageResult.success, message);
-      }
-    } catch (e) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'CHAT_MSG_SEND_RELAY_PROBE_SEND_FAILED',
-        details: {
-          'error': e.toString(),
-          'durationMs': DateTime.now().difference(probeStart).inMilliseconds,
-        },
-      );
-      // Send failed after relay connect — fall through to dial
-    }
-  } else if (probeResult == RelayProbeResult.noReservation) {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'CHAT_MSG_SEND_RELAY_PROBE_OFFLINE',
-      details: {
-        'durationMs': DateTime.now().difference(probeStart).inMilliseconds,
-      },
-    );
-    // Peer is definitely offline — skip dial entirely, go straight to inbox
-  }
-  // probeResult == error → fall through to single dial attempt
-
-  // 5. Single dial attempt (only reached on probe error or probe connected + send failed)
-  SendChatMessageResult? lastFailureReason;
-
-  if (probeResult != RelayProbeResult.noReservation) {
-    const maxAttempts = 1; // Reduced from 3 — probe already checked relay
-    const baseDelay = Duration(milliseconds: 500);
-
-    for (var attempt = 1; attempt <= maxAttempts; attempt++) {
-      final attemptStart = DateTime.now();
-      try {
-        // 5a. Discover peer
-        final peer = await p2pService.discoverPeer(targetPeerId);
-        if (peer == null) {
-          emitFlowEvent(
-            layer: 'FL',
-            event: 'CHAT_MSG_SEND_PEER_NOT_FOUND',
-            details: {
-              'attempt': attempt,
-              'targetPeerId': targetPrefix,
-              'durationMs': DateTime.now().difference(attemptStart).inMilliseconds,
-            },
-          );
-          lastFailureReason = SendChatMessageResult.peerNotFound;
-
-          if (attempt < maxAttempts) {
-            await Future.delayed(baseDelay * attempt);
-            continue;
-          }
-          break;
-        }
-
-        // 5b. Dial peer with discovered addresses
-        final dialed = await p2pService.dialPeer(
-          targetPeerId,
-          addresses: peer.addresses,
-        );
-
-        if (!dialed) {
-          emitFlowEvent(
-            layer: 'FL',
-            event: 'CHAT_MSG_SEND_DIAL_FAILED',
-            details: {
-              'attempt': attempt,
-              'targetPeerId': targetPrefix,
-              'durationMs': DateTime.now().difference(attemptStart).inMilliseconds,
-            },
-          );
-          lastFailureReason = SendChatMessageResult.dialFailed;
-
-          if (attempt < maxAttempts) {
-            await Future.delayed(baseDelay * attempt);
-            continue;
-          }
-          break;
-        }
-
-        // 5c. Send message
-        final sendResult = await p2pService.sendMessageWithReply(
-          targetPeerId,
-          jsonString,
-        );
-
-        if (!sendResult.sent) {
-          emitFlowEvent(
-            layer: 'FL',
-            event: 'CHAT_MSG_SEND_MESSAGE_FAILED',
-            details: {
-              'attempt': attempt,
-              'targetPeerId': targetPrefix,
-              'durationMs': DateTime.now().difference(attemptStart).inMilliseconds,
-            },
-          );
-          lastFailureReason = SendChatMessageResult.sendFailed;
-
-          if (attempt < maxAttempts) {
-            await Future.delayed(baseDelay * attempt);
-            continue;
-          }
-          break;
-        }
-
-        // Sent! Check ACK status
-        if (sendResult.acknowledged) {
-          // ACK'd — save as delivered
-          final message = payload.toConversationMessage(
-            contactPeerId: targetPeerId,
-            isIncoming: false,
-            status: 'delivered',
-            transport: wifiSent ? 'wifi' : 'relay',
-          );
-          await messageRepo.saveMessage(message);
-          if (!wifiSent) {
-            await _persistMediaAttachments(
-                mediaAttachmentRepo, mediaAttachments, resolvedMessageId);
-          }
-
-          emitFlowEvent(
-            layer: 'FL',
-            event: 'CHAT_MSG_SEND_SUCCESS',
-            details: {
-              'id': resolvedMessageId.substring(0, 8),
-              'status': 'delivered',
-              'attempts': attempt,
-              'textPreview': textPreview,
-              'durationMs': DateTime.now().difference(attemptStart).inMilliseconds,
-              'totalMs': DateTime.now().difference(sendStart).inMilliseconds,
-            },
-          );
-          logChatOutgoing(
-            messageId: resolvedMessageId,
-            toPeerId: targetPeerId,
-            status: 'delivered',
-            text: text,
-            attempt: attempt,
-          );
-          return (SendChatMessageResult.success, message);
-        }
-
-        // Sent but not ACK'd — try inbox safety net (skip for WiFi)
-        if (!wifiSent) {
-          final inboxResult = await _tryInboxSafetyNet(
-            p2pService: p2pService,
-            messageRepo: messageRepo,
-            mediaAttachmentRepo: mediaAttachmentRepo,
-            mediaAttachments: mediaAttachments,
-            payload: payload,
-            targetPeerId: targetPeerId,
-            resolvedMessageId: resolvedMessageId,
-            jsonString: jsonString,
-            textPreview: textPreview,
-            text: text,
-          );
-          if (inboxResult != null) return inboxResult;
-        }
-
-        // WiFi sent but no ACK, or inbox failed — save as 'sent' with wire_envelope
-        final message = payload.toConversationMessage(
-          contactPeerId: targetPeerId,
-          isIncoming: false,
-          status: 'sent',
-          transport: wifiSent ? 'wifi' : 'relay',
-          wireEnvelope: wifiSent ? null : jsonString,
-        );
-        await messageRepo.saveMessage(message);
-        if (!wifiSent) {
-          await _persistMediaAttachments(
-              mediaAttachmentRepo, mediaAttachments, resolvedMessageId);
-        }
-
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'CHAT_MSG_SEND_SUCCESS',
-          details: {
-            'id': resolvedMessageId.substring(0, 8),
-            'status': 'sent',
-            'attempts': attempt,
-            'textPreview': textPreview,
-            'durationMs': DateTime.now().difference(attemptStart).inMilliseconds,
-            'totalMs': DateTime.now().difference(sendStart).inMilliseconds,
-          },
-        );
-        logChatOutgoing(
-          messageId: resolvedMessageId,
-          toPeerId: targetPeerId,
-          status: 'sent',
-          text: text,
-          attempt: attempt,
-        );
-        return (SendChatMessageResult.success, message);
-      } catch (e) {
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'CHAT_MSG_SEND_ERROR',
-          details: {
-            'attempt': attempt,
-            'error': e.toString(),
-            'durationMs': DateTime.now().difference(attemptStart).inMilliseconds,
-          },
-        );
-        lastFailureReason = SendChatMessageResult.sendFailed;
-
-        if (attempt < maxAttempts) {
-          await Future.delayed(baseDelay * attempt);
-          continue;
+  for (final future in raceFutures) {
+    future.then((result) {
+      if (result.success && !completer.isCompleted) {
+        completer.complete(result);
+      } else {
+        failures.add(result.reason ?? 'unknown');
+        pendingCount--;
+        if (pendingCount <= 0 && !completer.isCompleted) {
+          // All paths failed
+          completer.complete(_RaceResult.failed(failures.join(', ')));
         }
       }
-    }
+    }).catchError((Object e) {
+      failures.add(e.toString());
+      pendingCount--;
+      if (pendingCount <= 0 && !completer.isCompleted) {
+        completer.complete(_RaceResult.failed(failures.join(', ')));
+      }
+    });
   }
 
-  // 6. Inbox fallback — try offline inbox.
-  final inboxStart = DateTime.now();
+  final raceResult = await completer.future;
+
+  if (raceResult.success) {
+    final status = raceResult.acknowledged ? 'delivered' : 'sent';
+    final message = payload.toConversationMessage(
+      contactPeerId: targetPeerId,
+      isIncoming: false,
+      status: status,
+    );
+    // Persist only once for this messageId
+    if (!await messageRepo.messageExists(resolvedMessageId)) {
+      await messageRepo.saveMessage(message);
+    }
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_SEND_SUCCESS',
+      details: {
+        'id': resolvedMessageId.substring(0, 8),
+        'status': status,
+        'via': raceResult.via,
+        'textPreview': textPreview,
+      },
+    );
+    logChatOutgoing(
+      messageId: resolvedMessageId,
+      toPeerId: targetPeerId,
+      status: status,
+      text: text,
+    );
+    return (SendChatMessageResult.success, message);
+  }
+
+  // All active paths failed — try offline inbox fallback once.
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'CHAT_MSG_SEND_RACE_ALL_FAILED',
+    details: {'reason': raceResult.reason ?? 'unknown'},
+  );
+
   try {
     final storedInInbox = await p2pService.storeInInbox(
       targetPeerId,
@@ -707,14 +291,10 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
         contactPeerId: targetPeerId,
         isIncoming: false,
         status: 'delivered',
-        transport: 'inbox',
       );
-      await messageRepo.saveMessage(deliveredMessage);
-      if (!wifiSent) {
-        await _persistMediaAttachments(
-            mediaAttachmentRepo, mediaAttachments, resolvedMessageId);
+      if (!await messageRepo.messageExists(resolvedMessageId)) {
+        await messageRepo.saveMessage(deliveredMessage);
       }
-
       emitFlowEvent(
         layer: 'FL',
         event: 'CHAT_MSG_SEND_SUCCESS',
@@ -722,10 +302,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
           'id': resolvedMessageId.substring(0, 8),
           'status': 'delivered',
           'via': 'inbox',
-          'probeResult': probeResult.name,
           'textPreview': textPreview,
-          'durationMs': DateTime.now().difference(inboxStart).inMilliseconds,
-          'totalMs': DateTime.now().difference(sendStart).inMilliseconds,
         },
       );
       logChatOutgoing(
@@ -740,44 +317,18 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     emitFlowEvent(
       layer: 'FL',
       event: 'CHAT_MSG_SEND_INBOX_FALLBACK_ERROR',
-      details: {
-        'error': e.toString(),
-        'durationMs': DateTime.now().difference(inboxStart).inMilliseconds,
-      },
+      details: {'error': e.toString()},
     );
   }
 
-  // Inbox fallback failed — if WiFi sent, that's our best effort.
-  if (wifiSent) {
-    return (SendChatMessageResult.success, payload.toConversationMessage(
-      contactPeerId: targetPeerId,
-      isIncoming: false,
-      status: 'sent',
-      transport: 'wifi',
-    ));
-  }
-
-  // No WiFi fallback — persist with failed status + wire_envelope for retry.
+  // Inbox fallback failed — persist with failed status.
   final failedMessage = payload.toConversationMessage(
     contactPeerId: targetPeerId,
     isIncoming: false,
     status: 'failed',
-    wireEnvelope: jsonString,
   );
-  try {
+  if (!await messageRepo.messageExists(resolvedMessageId)) {
     await messageRepo.saveMessage(failedMessage);
-    await _persistMediaAttachments(
-        mediaAttachmentRepo, mediaAttachments, resolvedMessageId);
-  } catch (e) {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'CHAT_MSG_SEND_PERSIST_FAILED_ERROR',
-      details: {
-        'error': e.toString(),
-        'totalMs': DateTime.now().difference(sendStart).inMilliseconds,
-      },
-    );
-    return (lastFailureReason ?? SendChatMessageResult.sendFailed, null);
   }
 
   emitFlowEvent(
@@ -785,9 +336,8 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     event: 'CHAT_MSG_SEND_FAILED',
     details: {
       'id': resolvedMessageId.substring(0, 8),
-      'reason': lastFailureReason?.name ?? 'unknown',
+      'reason': raceResult.reason ?? 'unknown',
       'textPreview': textPreview,
-      'totalMs': DateTime.now().difference(sendStart).inMilliseconds,
     },
   );
   logChatOutgoing(
@@ -796,72 +346,84 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     status: 'failed',
     text: text,
   );
-  return (lastFailureReason ?? SendChatMessageResult.sendFailed, failedMessage);
+  return (SendChatMessageResult.sendFailed, failedMessage);
 }
 
-/// Attempts to store the message in the relay inbox as a safety net
-/// when the message was sent but not ACK'd.
-///
-/// Returns the result tuple if inbox succeeded, or null to fall through.
-Future<(SendChatMessageResult, ConversationMessage?)?> _tryInboxSafetyNet({
-  required P2PService p2pService,
-  required MessageRepository messageRepo,
-  required MediaAttachmentRepository? mediaAttachmentRepo,
-  required List<MediaAttachment>? mediaAttachments,
-  required MessagePayload payload,
-  required String targetPeerId,
-  required String resolvedMessageId,
-  required String jsonString,
-  required String textPreview,
-  required String text,
-}) async {
-  try {
-    final stored = await p2pService.storeInInbox(targetPeerId, jsonString);
-    if (stored) {
-      final msg = payload.toConversationMessage(
-        contactPeerId: targetPeerId,
-        isIncoming: false,
-        status: 'delivered',
-        transport: 'inbox',
-      );
-      await messageRepo.saveMessage(msg);
-      await _persistMediaAttachments(
-          mediaAttachmentRepo, mediaAttachments, resolvedMessageId);
+/// Internal result of a single send path in the race.
+class _RaceResult {
+  final bool success;
+  final bool acknowledged;
+  final String? via;
+  final String? reason;
 
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'CHAT_MSG_SEND_INBOX_SAFETY_NET_SUCCESS',
-        details: {
-          'id': resolvedMessageId.substring(0, 8),
-          'textPreview': textPreview,
-        },
-      );
-      logChatOutgoing(
-        messageId: resolvedMessageId,
-        toPeerId: targetPeerId,
-        status: 'delivered',
-        text: text,
-      );
-      return (SendChatMessageResult.success, msg);
-    }
-  } catch (e) {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'CHAT_MSG_SEND_INBOX_SAFETY_NET_ERROR',
-      details: {'error': e.toString()},
-    );
-  }
-  return null;
+  const _RaceResult._({
+    required this.success,
+    this.acknowledged = false,
+    this.via,
+    this.reason,
+  });
+
+  factory _RaceResult.succeeded({required String via, bool acknowledged = false}) =>
+      _RaceResult._(success: true, acknowledged: acknowledged, via: via);
+
+  factory _RaceResult.failed(String reason) =>
+      _RaceResult._(success: false, reason: reason);
 }
 
-/// Persists media attachments after a message is saved.
-Future<void> _persistMediaAttachments(
-  MediaAttachmentRepository? repo,
-  List<MediaAttachment>? attachments,
-  String messageId,
+/// Try sending via local WiFi.
+Future<_RaceResult> _tryLocalSend(
+  P2PService p2pService,
+  String targetPeerId,
+  String jsonString,
+  String senderPeerId,
 ) async {
-  if (repo == null || attachments == null || attachments.isEmpty) return;
-  for (final a in attachments) {
-    await repo.saveAttachment(a.copyWith(messageId: messageId));
+  final localSent = await p2pService.sendLocalMessage(
+    targetPeerId, jsonString, senderPeerId);
+  if (localSent) {
+    return _RaceResult.succeeded(via: 'local', acknowledged: true);
   }
+  return _RaceResult.failed('local_send_failed');
+}
+
+/// Try direct discover → dial → send path.
+Future<_RaceResult> _tryDirectSend(
+  P2PService p2pService,
+  String targetPeerId,
+  String jsonString,
+) async {
+  final budgetMs = interactiveDirectBudget.inMilliseconds;
+
+  // Discover
+  final peer = await p2pService.discoverPeer(
+    targetPeerId,
+    timeoutMs: budgetMs,
+  );
+  if (peer == null) {
+    return _RaceResult.failed('peer_not_found');
+  }
+
+  // Dial
+  final dialed = await p2pService.dialPeer(
+    targetPeerId,
+    addresses: peer.addresses,
+    timeoutMs: budgetMs,
+  );
+  if (!dialed) {
+    return _RaceResult.failed('dial_failed');
+  }
+
+  // Send
+  final sendResult = await p2pService.sendMessageWithReply(
+    targetPeerId,
+    jsonString,
+    timeoutMs: budgetMs,
+  );
+  if (!sendResult.sent) {
+    return _RaceResult.failed('send_failed');
+  }
+
+  return _RaceResult.succeeded(
+    via: 'direct',
+    acknowledged: sendResult.acknowledged,
+  );
 }

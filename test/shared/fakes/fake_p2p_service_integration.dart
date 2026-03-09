@@ -129,7 +129,7 @@ class FakeP2PService implements P2PService {
   Future<bool> stopNode() async => true;
 
   @override
-  Future<DiscoveredPeer?> discoverPeer(String peerId) async {
+  Future<DiscoveredPeer?> discoverPeer(String peerId, {int? timeoutMs}) async {
     if (network.hasPeer(peerId)) {
       return DiscoveredPeer(
         id: peerId,
@@ -140,7 +140,7 @@ class FakeP2PService implements P2PService {
   }
 
   @override
-  Future<bool> dialPeer(String peerId, {List<String>? addresses}) async =>
+  Future<bool> dialPeer(String peerId, {List<String>? addresses, int? timeoutMs}) async =>
       network.hasPeer(peerId);
 
   @override
@@ -149,7 +149,7 @@ class FakeP2PService implements P2PService {
   }
 
   @override
-  Future<List<Map<String, dynamic>>> retrieveInbox() async {
+  Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) async {
     return network.retrieveInbox(peerId);
   }
 

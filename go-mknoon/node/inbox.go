@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/libp2p/go-libp2p/core/peer"
 	ma "github.com/multiformats/go-multiaddr"
@@ -158,6 +159,86 @@ func (n *Node) InboxRetrieve() ([]InboxMessage, error) {
 
 	log.Printf("[INBOX] Retrieved %d messages", len(resp.Messages))
 	return resp.Messages, nil
+}
+
+// InboxRetrieveResult holds the paginated result from InboxRetrieveWithTimeout.
+type InboxRetrieveResult struct {
+	Messages []InboxMessage
+	HasMore  bool
+}
+
+// InboxRetrieveWithTimeout retrieves pending messages with an explicit timeout
+// and pagination support. If timeoutMs <= 0, the default InboxTimeout is used.
+// The HasMore field indicates whether additional pages are available.
+func (n *Node) InboxRetrieveWithTimeout(timeoutMs int) (*InboxRetrieveResult, error) {
+	n.mu.RLock()
+	h := n.host
+	n.mu.RUnlock()
+
+	if h == nil {
+		return nil, fmt.Errorf("node not started")
+	}
+
+	relayPeer, relayAddrs, err := n.getRelayInfo(nil)
+	if err != nil {
+		return nil, err
+	}
+
+	timeout := InboxTimeout
+	if timeoutMs > 0 {
+		timeout = time.Duration(timeoutMs) * time.Millisecond
+	}
+
+	ctx, cancel := context.WithTimeout(n.ctx, timeout)
+	defer cancel()
+
+	if err := h.Connect(ctx, peer.AddrInfo{ID: relayPeer, Addrs: relayAddrs}); err != nil {
+		return nil, fmt.Errorf("connect to relay: %w", err)
+	}
+
+	s, err := h.NewStream(ctx, relayPeer, InboxProtocol)
+	if err != nil {
+		return nil, fmt.Errorf("open inbox stream: %w", err)
+	}
+	defer s.Close()
+
+	req := inboxRequest{
+		Action: "retrieve",
+		Limit:  50,
+	}
+
+	reqBytes, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("marshal request: %w", err)
+	}
+
+	if err := writeFrame(s, reqBytes); err != nil {
+		return nil, fmt.Errorf("write request: %w", err)
+	}
+
+	respBytes, err := readFrame(s)
+	if err != nil {
+		return nil, fmt.Errorf("read response: %w", err)
+	}
+
+	var resp inboxResponse
+	if err := json.Unmarshal(respBytes, &resp); err != nil {
+		return nil, fmt.Errorf("unmarshal response: %w", err)
+	}
+
+	if resp.Status == "NO_MESSAGES" {
+		return &InboxRetrieveResult{Messages: nil, HasMore: false}, nil
+	}
+
+	if resp.Status != "OK" {
+		return nil, fmt.Errorf("inbox retrieve failed: %s", resp.Error)
+	}
+
+	// HasMore is true when we received exactly our limit (server may have more).
+	hasMore := len(resp.Messages) >= 50
+
+	log.Printf("[INBOX] Retrieved %d messages (hasMore=%v, timeout=%v)", len(resp.Messages), hasMore, timeout)
+	return &InboxRetrieveResult{Messages: resp.Messages, HasMore: hasMore}, nil
 }
 
 // InboxRegisterToken registers an FCM push token with the relay.

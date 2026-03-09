@@ -144,8 +144,6 @@ class TestUser {
       text: text,
       senderPeerId: peerId,
       senderUsername: username,
-      mediaAttachments: null,
-      mediaAttachmentRepo: mediaAttachmentRepo,
       bridge: bridge,
       recipientMlKemPublicKey: await _mlKemKeyFor(targetPeerId),
     );
@@ -164,7 +162,6 @@ class TestUser {
       text: text,
       senderPeerId: peerId,
       senderUsername: username,
-      quotedMessageId: quotedMessageId,
       bridge: bridge,
       recipientMlKemPublicKey: await _mlKemKeyFor(targetPeerId),
     );
@@ -183,8 +180,6 @@ class TestUser {
       text: text,
       senderPeerId: peerId,
       senderUsername: username,
-      mediaAttachments: attachments,
-      mediaAttachmentRepo: mediaAttachmentRepo,
       bridge: bridge,
       recipientMlKemPublicKey: await _mlKemKeyFor(targetPeerId),
     );

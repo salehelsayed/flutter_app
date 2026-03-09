@@ -37,7 +37,56 @@ const (
 
 	// Inbox framing.
 	MaxFrameLen = 128 * 1024 // 128 KB, matches relay server
+
+	// Interactive (foreground) timeouts — used when a user action is
+	// waiting on the result (e.g. send-message, discover contact).
+	InteractiveDialTimeout     = 4 * time.Second
+	InteractiveSendTimeout     = 3 * time.Second
+	InteractiveDiscoverTimeout = 2 * time.Second
+	InteractiveInboxTimeout    = 3 * time.Second
+
+	// Background discover can afford more patience (e.g. periodic
+	// group peer re-discovery that runs on a 30 s ticker).
+	BackgroundDiscoverTimeout = 10 * time.Second
+
+	// Stream-level deadlines applied after NewStream succeeds.
+	// These prevent hung connections from blocking goroutines forever.
+	StreamWriteDeadline  = 10 * time.Second
+	StreamReadDeadline   = 10 * time.Second
+	InboundReadDeadline  = 15 * time.Second // inbound reads may come from slow peers
 )
+
+// TimeoutProfile bundles per-operation timeout durations for a given
+// execution context (interactive foreground vs background sync).
+type TimeoutProfile struct {
+	Dial     time.Duration
+	Send     time.Duration
+	Discover time.Duration
+	Inbox    time.Duration
+}
+
+// InteractiveTimeouts returns the timeout profile tuned for user-facing
+// actions where responsiveness matters more than retry surface.
+func InteractiveTimeouts() TimeoutProfile {
+	return TimeoutProfile{
+		Dial:     InteractiveDialTimeout,
+		Send:     InteractiveSendTimeout,
+		Discover: InteractiveDiscoverTimeout,
+		Inbox:    InteractiveInboxTimeout,
+	}
+}
+
+// BackgroundTimeouts returns the timeout profile for background work
+// (periodic discovery, store-and-forward retrieval) where a generous
+// timeout is acceptable.
+func BackgroundTimeouts() TimeoutProfile {
+	return TimeoutProfile{
+		Dial:     DialTimeout,
+		Send:     SendTimeout,
+		Discover: BackgroundDiscoverTimeout,
+		Inbox:    InboxTimeout,
+	}
+}
 
 // RelayAddress returns the QUIC relay multiaddr, overridable via
 // MKNOON_RELAY_ADDR for testing against local or alternative relays.
