@@ -46,6 +46,7 @@ type MediaMeta struct {
 // --- Helper ---
 
 // openMediaStream connects to the relay and opens a MediaProtocol stream.
+// Tries each configured relay in order until one succeeds.
 func (n *Node) openMediaStream() (network.Stream, context.CancelFunc, error) {
 	n.mu.RLock()
 	h := n.host
@@ -55,25 +56,35 @@ func (n *Node) openMediaStream() (network.Stream, context.CancelFunc, error) {
 		return nil, nil, fmt.Errorf("node not started")
 	}
 
-	relayPeer, relayAddrs, err := n.getRelayInfo(nil)
+	rs := n.buildRelaySelector(nil)
+
+	type streamResult struct {
+		stream network.Stream
+		cancel context.CancelFunc
+	}
+
+	result, err := ForEachWithResult(rs, func(relay RelayInfo) (*streamResult, error) {
+		ctx, cancel := context.WithTimeout(n.ctx, MediaTimeout)
+
+		if err := h.Connect(ctx, peer.AddrInfo{ID: relay.ID, Addrs: relay.Addrs}); err != nil {
+			cancel()
+			return nil, fmt.Errorf("connect to relay: %w", err)
+		}
+
+		s, err := h.NewStream(ctx, relay.ID, MediaProtocol)
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("open media stream: %w", err)
+		}
+
+		return &streamResult{stream: s, cancel: cancel}, nil
+	})
+
 	if err != nil {
 		return nil, nil, err
 	}
 
-	ctx, cancel := context.WithTimeout(n.ctx, MediaTimeout)
-
-	if err := h.Connect(ctx, peer.AddrInfo{ID: relayPeer, Addrs: relayAddrs}); err != nil {
-		cancel()
-		return nil, nil, fmt.Errorf("connect to relay: %w", err)
-	}
-
-	s, err := h.NewStream(ctx, relayPeer, MediaProtocol)
-	if err != nil {
-		cancel()
-		return nil, nil, fmt.Errorf("open media stream: %w", err)
-	}
-
-	return s, cancel, nil
+	return result.stream, result.cancel, nil
 }
 
 // sendMediaRequest sends a framed JSON request and reads the framed JSON response.

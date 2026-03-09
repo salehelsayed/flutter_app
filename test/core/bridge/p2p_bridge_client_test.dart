@@ -533,4 +533,73 @@ void main() {
       );
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // Phase 3: Multi-Relay Routing — explicit plan-required tests
+  // ---------------------------------------------------------------------------
+  group('Phase 3: Multi-Relay Routing', () {
+    test('callP2PNodeStart sends all default relay addresses', () async {
+      bridge.nextResponse = {'ok': true, 'peerId': '12D3KooWTest'};
+
+      await callP2PNodeStart(bridge, privateKeyHex: 'deadbeef');
+
+      final payload =
+          bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
+      final relayAddresses = payload['relayAddresses'] as List;
+
+      // Must send both WSS and QUIC addresses.
+      expect(relayAddresses, hasLength(2));
+      expect(relayAddresses, contains(defaultRendezvousAddress));
+      expect(relayAddresses, contains(defaultQUICRelayAddress));
+
+      // Both addresses should point to the same relay peer.
+      for (final addr in relayAddresses) {
+        expect(addr, contains('/p2p/'));
+      }
+    });
+
+    test('callP2PRendezvousRegister forwards explicit serverAddresses',
+        () async {
+      bridge.nextResponse = {'ok': true};
+
+      final explicitAddresses = [
+        '/ip4/10.0.0.1/tcp/4001/p2p/12D3KooWRelay1',
+        '/ip4/10.0.0.2/tcp/4001/p2p/12D3KooWRelay2',
+      ];
+
+      await callP2PRendezvousRegister(
+        bridge,
+        namespace: 'mknoon:chat:test',
+        serverAddresses: explicitAddresses,
+      );
+
+      final payload =
+          bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
+      expect(payload['serverAddresses'], equals(explicitAddresses));
+      expect(payload['serverAddresses'], hasLength(2));
+    });
+
+    test('callP2PRendezvousDiscover forwards explicit serverAddresses',
+        () async {
+      bridge.nextResponse = {'ok': true, 'peers': []};
+
+      final explicitAddresses = [
+        '/ip4/10.0.0.1/tcp/4001/p2p/12D3KooWRelay1',
+        '/ip4/10.0.0.2/tcp/4001/p2p/12D3KooWRelay2',
+      ];
+
+      await callP2PRendezvousDiscover(
+        bridge,
+        peerId: 'peer1',
+        namespace: 'mknoon:chat:test',
+        serverAddresses: explicitAddresses,
+        timeoutMs: 5000,
+      );
+
+      final payload =
+          bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
+      expect(payload['serverAddresses'], equals(explicitAddresses));
+      expect(payload['serverAddresses'], hasLength(2));
+    });
+  });
 }

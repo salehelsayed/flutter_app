@@ -521,10 +521,10 @@ func (n *Node) DialPeer(peerIdStr string, addresses []string) error {
 // DialPeerViaRelay connects to a peer through the relay circuit address only.
 // This is a fast probe (~100ms for NO_RESERVATION, ~500ms for connection) to
 // determine if a peer is online without a full discover/dial cycle.
+// Tries each configured relay in order until one succeeds.
 func (n *Node) DialPeerViaRelay(peerIdStr string) error {
 	n.mu.RLock()
 	h := n.host
-	relayAddrs := n.relayAddresses
 	n.mu.RUnlock()
 
 	if h == nil {
@@ -536,42 +536,36 @@ func (n *Node) DialPeerViaRelay(peerIdStr string) error {
 		return fmt.Errorf("invalid peer ID: %w", err)
 	}
 
-	if len(relayAddrs) == 0 {
-		return fmt.Errorf("no relay addresses configured")
-	}
+	rs := n.buildRelaySelector(nil)
 
-	// Parse the first relay address to get the relay peer info
-	relayMaddr, err := ma.NewMultiaddr(relayAddrs[0])
-	if err != nil {
-		return fmt.Errorf("parse relay address: %w", err)
-	}
-	relayInfo, err := peer.AddrInfoFromP2pAddr(relayMaddr)
-	if err != nil {
-		return fmt.Errorf("parse relay addr info: %w", err)
-	}
+	return rs.ForEach(func(relay RelayInfo) error {
+		// Use the first address of this relay peer to build the circuit addr.
+		if len(relay.Addrs) == 0 {
+			return fmt.Errorf("relay %s has no addresses", relay.ID)
+		}
 
-	// Construct circuit multiaddr: relayAddr + /p2p-circuit/p2p/<peerId>
-	// Strip the /p2p/<relayPeerId> component from the relay address first
-	relayTransport, _ := ma.SplitFunc(relayMaddr, func(c ma.Component) bool {
-		return c.Protocol().Code == ma.P_P2P
+		// Build a multiaddr from the relay's transport address.
+		// Pick the first transport address for this relay peer.
+		relayTransportAddr := relay.Addrs[0]
+
+		circuitSuffix, err := ma.NewMultiaddr(
+			fmt.Sprintf("/p2p/%s/p2p-circuit/p2p/%s", relay.ID.String(), peerIdStr),
+		)
+		if err != nil {
+			return fmt.Errorf("build circuit suffix: %w", err)
+		}
+		circuitAddr := relayTransportAddr.Encapsulate(circuitSuffix)
+
+		ai := peer.AddrInfo{
+			ID:    pid,
+			Addrs: []ma.Multiaddr{circuitAddr},
+		}
+
+		ctx, cancel := context.WithTimeout(n.ctx, RelayProbeTimeout)
+		defer cancel()
+
+		return h.Connect(ctx, ai)
 	})
-	circuitSuffix, err := ma.NewMultiaddr(
-		fmt.Sprintf("/p2p/%s/p2p-circuit/p2p/%s", relayInfo.ID.String(), peerIdStr),
-	)
-	if err != nil {
-		return fmt.Errorf("build circuit suffix: %w", err)
-	}
-	circuitAddr := relayTransport.Encapsulate(circuitSuffix)
-
-	ai := peer.AddrInfo{
-		ID:    pid,
-		Addrs: []ma.Multiaddr{circuitAddr},
-	}
-
-	ctx, cancel := context.WithTimeout(n.ctx, RelayProbeTimeout)
-	defer cancel()
-
-	return h.Connect(ctx, ai)
 }
 
 // DisconnectPeer closes connections to a peer.

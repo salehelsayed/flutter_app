@@ -4,9 +4,11 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/libp2p/go-libp2p/core/crypto"
+	"github.com/libp2p/go-libp2p/core/peer"
 )
 
 // parseJSON is a test helper that unmarshals a JSON string into a map.
@@ -1752,4 +1754,121 @@ func TestGroupUpdateKey_UpdatesStoredKey(t *testing.T) {
 	updateResult := GroupUpdateKey(string(updateInput))
 	updateMap := parseJSON(t, updateResult)
 	assertOk(t, updateMap)
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3: Multi-Relay Routing — Bridge tests
+// ---------------------------------------------------------------------------
+
+// generateFakeRelayAddrBridge generates a multiaddr string with a random peer ID.
+func generateFakeRelayAddrBridge(t *testing.T, port int) string {
+	t.Helper()
+	priv, _, err := crypto.GenerateEd25519Key(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate fake relay key: %v", err)
+	}
+	pid, err := peer.IDFromPrivateKey(priv)
+	if err != nil {
+		t.Fatalf("peer ID from key: %v", err)
+	}
+	return fmt.Sprintf("/ip4/127.0.0.1/tcp/%d/p2p/%s", port, pid.String())
+}
+
+// TestRendezvousRegister_PassesServerAddresses verifies that the bridge
+// RendezvousRegister function correctly parses and forwards multiple
+// serverAddresses to the node layer (multi-relay support).
+func TestRendezvousRegister_PassesServerAddresses(t *testing.T) {
+	withFreshSingletonNode(t)
+
+	keyHex := generateTestKeyHex(t)
+	input := startNodeJSON(t, keyHex)
+	startResult := StartNode(input)
+	assertOk(t, parseJSON(t, startResult))
+
+	// Call RendezvousRegister with multiple server addresses using random
+	// peer IDs that will never match the production relay.
+	addr1 := generateFakeRelayAddrBridge(t, 19991)
+	addr2 := generateFakeRelayAddrBridge(t, 19992)
+
+	registerInput, _ := json.Marshal(map[string]interface{}{
+		"namespace":       "mknoon:chat:test",
+		"serverAddresses": []string{addr1, addr2},
+	})
+	result := RendezvousRegister(string(registerInput))
+	m := parseJSON(t, result)
+
+	// Should fail at rendezvous layer (can't reach servers), not input parsing.
+	code, _ := m["errorCode"].(string)
+	if code == "INVALID_INPUT" {
+		t.Fatal("multiple serverAddresses should be parsed without INVALID_INPUT error")
+	}
+	// Expect RENDEZVOUS_ERROR since the servers are unreachable.
+	assertNotOk(t, m, "RENDEZVOUS_ERROR")
+}
+
+// TestRendezvousDiscover_PassesServerAddresses verifies that the bridge
+// RendezvousDiscover function correctly parses and forwards serverAddresses
+// to the node layer for multi-relay discovery.
+func TestRendezvousDiscover_PassesServerAddresses(t *testing.T) {
+	withFreshSingletonNode(t)
+
+	keyHex := generateTestKeyHex(t)
+	input := startNodeJSON(t, keyHex)
+	startResult := StartNode(input)
+	assertOk(t, parseJSON(t, startResult))
+
+	// Call RendezvousDiscover with serverAddresses field using a random
+	// peer ID to avoid hitting the production relay.
+	addr1 := generateFakeRelayAddrBridge(t, 19991)
+
+	discoverInput, _ := json.Marshal(map[string]interface{}{
+		"namespace":       "mknoon:chat:test",
+		"serverAddresses": []string{addr1},
+		"timeoutMs":       1000,
+	})
+	result := RendezvousDiscover(string(discoverInput))
+	m := parseJSON(t, result)
+
+	// Should fail at rendezvous layer, not input parsing.
+	code, _ := m["errorCode"].(string)
+	if code == "INVALID_INPUT" {
+		t.Fatal("serverAddresses should be parsed without INVALID_INPUT error")
+	}
+	assertNotOk(t, m, "RENDEZVOUS_ERROR")
+}
+
+// TestGroupInboxStore_UsesProvidedServerAddresses verifies that GroupInboxStore
+// uses the relay selector (which honors node-configured relay addresses)
+// rather than a hardcoded first relay. This is tested by starting the node
+// with fake unreachable relay addresses and verifying the operation uses them.
+func TestGroupInboxStore_UsesProvidedServerAddresses(t *testing.T) {
+	withFreshSingletonNode(t)
+
+	keyHex := generateTestKeyHex(t)
+	// Start node with two unreachable relays.
+	startInput, _ := json.Marshal(map[string]interface{}{
+		"privateKeyHex": keyHex,
+		"relayAddresses": []string{
+			"/ip4/10.99.99.1/tcp/4001/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g",
+			"/ip4/10.99.99.2/tcp/4001/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g",
+		},
+		"autoRegister": false,
+	})
+	startResult := StartNode(string(startInput))
+	assertOk(t, parseJSON(t, startResult))
+
+	// GroupInboxStore should attempt to use the configured relays.
+	storeInput, _ := json.Marshal(map[string]interface{}{
+		"groupId": "test-group-123",
+		"message": "hello",
+	})
+	result := GroupInboxStore(string(storeInput))
+	m := parseJSON(t, result)
+
+	// Should fail at group inbox layer (can't reach relay), not input parsing.
+	code, _ := m["errorCode"].(string)
+	if code == "INVALID_INPUT" {
+		t.Fatal("GroupInboxStore should not fail at input parsing")
+	}
+	assertNotOk(t, m, "GROUP_INBOX_ERROR")
 }

@@ -15,6 +15,7 @@ import (
 )
 
 // RendezvousRegister registers this node on a rendezvous namespace.
+// Tries each configured relay in order until one succeeds.
 func (n *Node) RendezvousRegister(namespace string, serverAddresses []string) error {
 	n.mu.RLock()
 	h := n.host
@@ -24,70 +25,70 @@ func (n *Node) RendezvousRegister(namespace string, serverAddresses []string) er
 		return fmt.Errorf("node not started")
 	}
 
-	relayPeer, err := n.getRelayPeerID(serverAddresses)
-	if err != nil {
-		return err
-	}
+	rs := n.buildRelaySelector(serverAddresses)
 
-	ctx, cancel := context.WithTimeout(n.ctx, DiscoverTimeout)
-	defer cancel()
+	return rs.ForEach(func(relay RelayInfo) error {
+		ctx, cancel := context.WithTimeout(n.ctx, DiscoverTimeout)
+		defer cancel()
 
-	s, err := h.NewStream(ctx, relayPeer, RendezvousProtocol)
-	if err != nil {
-		return fmt.Errorf("open rendezvous stream: %w", err)
-	}
-	defer s.Close()
-
-	// Build signed peer record
-	cab, ok := h.Peerstore().(peerstore.CertifiedAddrBook)
-	if !ok {
-		return fmt.Errorf("peerstore does not support certified addresses")
-	}
-
-	signedRecord := cab.GetPeerRecord(h.ID())
-	var signedRecordBytes []byte
-	if signedRecord != nil {
-		signedRecordBytes, err = signedRecord.Marshal()
+		s, err := h.NewStream(ctx, relay.ID, RendezvousProtocol)
 		if err != nil {
-			return fmt.Errorf("marshal signed peer record: %w", err)
+			return fmt.Errorf("open rendezvous stream: %w", err)
 		}
-	}
+		defer s.Close()
 
-	// Build Register message
-	regBytes := marshalRegister(namespace, signedRecordBytes, 7200)
-	msgBytes := marshalRzMessage(0, regBytes) // MessageType_REGISTER = 0
+		// Build signed peer record
+		cab, ok := h.Peerstore().(peerstore.CertifiedAddrBook)
+		if !ok {
+			return fmt.Errorf("peerstore does not support certified addresses")
+		}
 
-	// Write varint-prefixed message
-	writer := msgio.NewVarintWriter(s)
-	if err := writer.WriteMsg(msgBytes); err != nil {
-		return fmt.Errorf("write register: %w", err)
-	}
+		signedRecord := cab.GetPeerRecord(h.ID())
+		var signedRecordBytes []byte
+		if signedRecord != nil {
+			signedRecordBytes, err = signedRecord.Marshal()
+			if err != nil {
+				return fmt.Errorf("marshal signed peer record: %w", err)
+			}
+		}
 
-	// Read varint-prefixed response
-	reader := msgio.NewVarintReaderSize(s, 1<<20)
-	respBytes, err := reader.ReadMsg()
-	if err != nil {
-		return fmt.Errorf("read register response: %w", err)
-	}
-	defer reader.ReleaseMsg(respBytes)
+		// Build Register message
+		regBytes := marshalRegister(namespace, signedRecordBytes, 7200)
+		msgBytes := marshalRzMessage(0, regBytes) // MessageType_REGISTER = 0
 
-	// Parse response to check status
-	status, statusText, err := parseRegisterResponse(respBytes)
-	if err != nil {
-		return fmt.Errorf("parse register response: %w", err)
-	}
+		// Write varint-prefixed message
+		writer := msgio.NewVarintWriter(s)
+		if err := writer.WriteMsg(msgBytes); err != nil {
+			return fmt.Errorf("write register: %w", err)
+		}
 
-	if status != 0 { // 0 = OK
-		return fmt.Errorf("register failed: status=%d text=%s", status, statusText)
-	}
+		// Read varint-prefixed response
+		reader := msgio.NewVarintReaderSize(s, 1<<20)
+		respBytes, err := reader.ReadMsg()
+		if err != nil {
+			return fmt.Errorf("read register response: %w", err)
+		}
+		defer reader.ReleaseMsg(respBytes)
 
-	log.Printf("[RENDEZVOUS] Registered ns=%s", namespace)
-	return nil
+		// Parse response to check status
+		status, statusText, err := parseRegisterResponse(respBytes)
+		if err != nil {
+			return fmt.Errorf("parse register response: %w", err)
+		}
+
+		if status != 0 { // 0 = OK
+			return fmt.Errorf("register failed: status=%d text=%s", status, statusText)
+		}
+
+		log.Printf("[RENDEZVOUS] Registered ns=%s", namespace)
+		return nil
+	})
 }
 
 // RendezvousDiscoverWithTimeout discovers peers on a namespace using a
 // caller-supplied timeout override. If timeoutMs <= 0, the default
 // DiscoverTimeout is used.
+// Tries each configured relay in order until one succeeds.
 func (n *Node) RendezvousDiscoverWithTimeout(namespace string, serverAddresses []string, timeoutMs int) ([]peer.AddrInfo, error) {
 	n.mu.RLock()
 	h := n.host
@@ -97,102 +98,58 @@ func (n *Node) RendezvousDiscoverWithTimeout(namespace string, serverAddresses [
 		return nil, fmt.Errorf("node not started")
 	}
 
-	relayPeer, err := n.getRelayPeerID(serverAddresses)
-	if err != nil {
-		return nil, err
-	}
-
 	timeout := DiscoverTimeout
 	if timeoutMs > 0 {
 		timeout = time.Duration(timeoutMs) * time.Millisecond
 	}
 
-	ctx, cancel := context.WithTimeout(n.ctx, timeout)
-	defer cancel()
+	rs := n.buildRelaySelector(serverAddresses)
 
-	s, err := h.NewStream(ctx, relayPeer, RendezvousProtocol)
-	if err != nil {
-		return nil, fmt.Errorf("open rendezvous stream: %w", err)
-	}
-	defer s.Close()
+	return ForEachWithResult(rs, func(relay RelayInfo) ([]peer.AddrInfo, error) {
+		ctx, cancel := context.WithTimeout(n.ctx, timeout)
+		defer cancel()
 
-	// Build Discover message
-	discBytes := marshalDiscover(namespace, 64)
-	msgBytes := marshalRzMessage(3, discBytes) // MessageType_DISCOVER = 3
+		s, err := h.NewStream(ctx, relay.ID, RendezvousProtocol)
+		if err != nil {
+			return nil, fmt.Errorf("open rendezvous stream: %w", err)
+		}
+		defer s.Close()
 
-	writer := msgio.NewVarintWriter(s)
-	if err := writer.WriteMsg(msgBytes); err != nil {
-		return nil, fmt.Errorf("write discover: %w", err)
-	}
+		// Build Discover message
+		discBytes := marshalDiscover(namespace, 64)
+		msgBytes := marshalRzMessage(3, discBytes) // MessageType_DISCOVER = 3
 
-	reader := msgio.NewVarintReaderSize(s, 1<<20)
-	respBytes, err := reader.ReadMsg()
-	if err != nil {
-		return nil, fmt.Errorf("read discover response: %w", err)
-	}
-	defer reader.ReleaseMsg(respBytes)
+		writer := msgio.NewVarintWriter(s)
+		if err := writer.WriteMsg(msgBytes); err != nil {
+			return nil, fmt.Errorf("write discover: %w", err)
+		}
 
-	// Parse discover response
-	peers, err := parseDiscoverResponse(respBytes)
-	if err != nil {
-		return nil, fmt.Errorf("parse discover response: %w", err)
-	}
+		reader := msgio.NewVarintReaderSize(s, 1<<20)
+		respBytes, err := reader.ReadMsg()
+		if err != nil {
+			return nil, fmt.Errorf("read discover response: %w", err)
+		}
+		defer reader.ReleaseMsg(respBytes)
 
-	log.Printf("[RENDEZVOUS] Discovered %d peers on ns=%s (timeout=%v)", len(peers), namespace, timeout)
-	return peers, nil
+		// Parse discover response
+		peers, err := parseDiscoverResponse(respBytes)
+		if err != nil {
+			return nil, fmt.Errorf("parse discover response: %w", err)
+		}
+
+		log.Printf("[RENDEZVOUS] Discovered %d peers on ns=%s (timeout=%v)", len(peers), namespace, timeout)
+		return peers, nil
+	})
 }
 
 // RendezvousDiscover discovers peers on a namespace.
+// Tries each configured relay in order until one succeeds.
 func (n *Node) RendezvousDiscover(namespace string, serverAddresses []string) ([]peer.AddrInfo, error) {
-	n.mu.RLock()
-	h := n.host
-	n.mu.RUnlock()
-
-	if h == nil {
-		return nil, fmt.Errorf("node not started")
-	}
-
-	relayPeer, err := n.getRelayPeerID(serverAddresses)
-	if err != nil {
-		return nil, err
-	}
-
-	ctx, cancel := context.WithTimeout(n.ctx, DiscoverTimeout)
-	defer cancel()
-
-	s, err := h.NewStream(ctx, relayPeer, RendezvousProtocol)
-	if err != nil {
-		return nil, fmt.Errorf("open rendezvous stream: %w", err)
-	}
-	defer s.Close()
-
-	// Build Discover message
-	discBytes := marshalDiscover(namespace, 64)
-	msgBytes := marshalRzMessage(3, discBytes) // MessageType_DISCOVER = 3
-
-	writer := msgio.NewVarintWriter(s)
-	if err := writer.WriteMsg(msgBytes); err != nil {
-		return nil, fmt.Errorf("write discover: %w", err)
-	}
-
-	reader := msgio.NewVarintReaderSize(s, 1<<20)
-	respBytes, err := reader.ReadMsg()
-	if err != nil {
-		return nil, fmt.Errorf("read discover response: %w", err)
-	}
-	defer reader.ReleaseMsg(respBytes)
-
-	// Parse discover response
-	peers, err := parseDiscoverResponse(respBytes)
-	if err != nil {
-		return nil, fmt.Errorf("parse discover response: %w", err)
-	}
-
-	log.Printf("[RENDEZVOUS] Discovered %d peers on ns=%s", len(peers), namespace)
-	return peers, nil
+	return n.RendezvousDiscoverWithTimeout(namespace, serverAddresses, 0)
 }
 
 // RendezvousUnregister removes this node from a namespace.
+// Tries each configured relay in order until one succeeds.
 func (n *Node) RendezvousUnregister(namespace string, serverAddresses []string) error {
 	n.mu.RLock()
 	h := n.host
@@ -202,55 +159,43 @@ func (n *Node) RendezvousUnregister(namespace string, serverAddresses []string) 
 		return fmt.Errorf("node not started")
 	}
 
-	relayPeer, err := n.getRelayPeerID(serverAddresses)
-	if err != nil {
-		return err
-	}
+	rs := n.buildRelaySelector(serverAddresses)
 
-	ctx, cancel := context.WithTimeout(n.ctx, DiscoverTimeout)
-	defer cancel()
+	return rs.ForEach(func(relay RelayInfo) error {
+		ctx, cancel := context.WithTimeout(n.ctx, DiscoverTimeout)
+		defer cancel()
 
-	s, err := h.NewStream(ctx, relayPeer, RendezvousProtocol)
-	if err != nil {
-		return fmt.Errorf("open rendezvous stream: %w", err)
-	}
-	defer s.Close()
+		s, err := h.NewStream(ctx, relay.ID, RendezvousProtocol)
+		if err != nil {
+			return fmt.Errorf("open rendezvous stream: %w", err)
+		}
+		defer s.Close()
 
-	// Build Unregister message
-	unregBytes := marshalUnregister(namespace)
-	msgBytes := marshalRzMessage(2, unregBytes) // MessageType_UNREGISTER = 2
+		// Build Unregister message
+		unregBytes := marshalUnregister(namespace)
+		msgBytes := marshalRzMessage(2, unregBytes) // MessageType_UNREGISTER = 2
 
-	writer := msgio.NewVarintWriter(s)
-	if err := writer.WriteMsg(msgBytes); err != nil {
-		return fmt.Errorf("write unregister: %w", err)
-	}
+		writer := msgio.NewVarintWriter(s)
+		if err := writer.WriteMsg(msgBytes); err != nil {
+			return fmt.Errorf("write unregister: %w", err)
+		}
 
-	// Unregister has no response
-	log.Printf("[RENDEZVOUS] Unregistered ns=%s", namespace)
-	return nil
+		// Unregister has no response
+		log.Printf("[RENDEZVOUS] Unregistered ns=%s", namespace)
+		return nil
+	})
 }
 
 // getRelayPeerID parses the relay peer ID from addresses.
+// Deprecated: use buildRelaySelector instead for multi-relay support.
+// Kept for backward compatibility with any callers not yet migrated.
 func (n *Node) getRelayPeerID(serverAddresses []string) (peer.ID, error) {
-	addrs := serverAddresses
-	if len(addrs) == 0 {
-		addrs = n.relayAddresses
-	}
-	if len(addrs) == 0 {
-		addrs = []string{DefaultRelayAddress}
-	}
-
-	maddr, err := ma.NewMultiaddr(addrs[0])
+	rs := n.buildRelaySelector(serverAddresses)
+	first, err := rs.First()
 	if err != nil {
-		return "", fmt.Errorf("parse relay address: %w", err)
+		return "", err
 	}
-
-	addrInfo, err := peer.AddrInfoFromP2pAddr(maddr)
-	if err != nil {
-		return "", fmt.Errorf("parse relay addr info: %w", err)
-	}
-
-	return addrInfo.ID, nil
+	return first.ID, nil
 }
 
 // --- Protobuf encoding helpers (matching relay server's pb.go) ---
