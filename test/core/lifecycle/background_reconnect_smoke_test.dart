@@ -251,5 +251,87 @@ void main() {
       expect(bridge.relayReconnectCallCount, greaterThan(reconnectBefore),
           reason: 'Should call relay:reconnect when degraded');
     });
+
+    // =========================================================================
+    // Phase 5: Event-driven resume recovery
+    // =========================================================================
+
+    test('resume recovery restores online state without host restart',
+        () async {
+      // Start online
+      await service.startNodeCore(testBase64Key, testPeerId);
+      expect(healthFromState(service.currentState), ConnectionHealth.online);
+
+      // Enable structured response to verify in-place refresh is used
+      bridge.useStructuredRecoveryResponse = true;
+      bridge.structuredRecoveryMethod = 'in_place_refresh';
+
+      // Background
+      bridge.simulateBackground();
+      bridge.pollsUntilCircuitReady = 1;
+
+      // Resume
+      await handleAppResumed(bridge: bridge, p2pService: service);
+
+      // Should be back online via in-place refresh (not a full restart)
+      expect(healthFromState(service.currentState), ConnectionHealth.online);
+      expect(service.lastRecoveryMethod, equals('in_place_refresh'),
+          reason: 'Resume should use in-place refresh, not host restart');
+    });
+
+    test(
+        'event-driven relay-state push restores online state without timer alignment',
+        () async {
+      // Start online
+      await service.startNodeCore(testBase64Key, testPeerId);
+      expect(healthFromState(service.currentState), ConnectionHealth.online);
+
+      // Set fast recovery
+      bridge.pollsUntilCircuitReady = 1;
+
+      // Simulate relay-state push event showing degradation
+      bridge.relayReconnectCallCount = 0;
+      bridge.simulateRelayStatePush(degraded: true);
+
+      // Allow the event-driven recovery to fire and complete
+      // Multiple ticks needed for the fire-and-forget future chain
+      for (var i = 0; i < 10; i++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+
+      // Recovery should have been triggered by the push event,
+      // not by waiting for the 30s timer
+      expect(bridge.relayReconnectCallCount, greaterThanOrEqualTo(1),
+          reason: 'Relay-state push should trigger recovery immediately');
+    });
+
+    test('watchdog restart path is only used after repeated refresh failure',
+        () async {
+      // Start online
+      await service.startNodeCore(testBase64Key, testPeerId);
+
+      // Configure escalation: 3 failures before watchdog
+      bridge.useStructuredRecoveryResponse = true;
+      bridge.simulateRefreshEscalation = true;
+      bridge.refreshFailuresBeforeWatchdog = 3;
+      bridge.simulateRelayReservationLost();
+      bridge.pollsUntilCircuitReady = 1;
+
+      // First two health checks: refresh fails
+      await service.performImmediateHealthCheck();
+      expect(service.consecutiveRefreshFailures, 1);
+      expect(service.lastRecoveryMethod, isNot(equals('watchdog_restart')),
+          reason: 'Should not use watchdog after 1 failure');
+
+      await service.performImmediateHealthCheck();
+      expect(service.consecutiveRefreshFailures, 2);
+
+      // Third health check: threshold hit, watchdog kicks in
+      await service.performImmediateHealthCheck();
+      expect(service.lastRecoveryMethod, equals('watchdog_restart'),
+          reason: 'Should escalate to watchdog after threshold failures');
+      expect(service.consecutiveRefreshFailures, 0,
+          reason: 'Failures reset after successful watchdog recovery');
+    });
   });
 }

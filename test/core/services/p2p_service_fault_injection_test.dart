@@ -487,4 +487,85 @@ void main() {
       expect(bridge.eventChannelDead, isFalse);
     });
   });
+
+  // =========================================================================
+  // Phase 5: Event-driven recovery with fault injection
+  // =========================================================================
+
+  group('Phase 5: Fault injection with event-driven recovery', () {
+    late LifecycleBridge bridge;
+    late P2PServiceImpl service;
+
+    setUp(() {
+      bridge = LifecycleBridge();
+      service = P2PServiceImpl(bridge: bridge);
+    });
+
+    tearDown(() {
+      service.dispose();
+    });
+
+    test('lost reservation retries in place before watchdog restart', () async {
+      // Start online
+      await service.startNodeCore(testBase64Key, testPeerId);
+      expect(healthFromState(service.currentState), ConnectionHealth.online);
+
+      // Configure: relay reservation lost, escalation enabled
+      bridge.useStructuredRecoveryResponse = true;
+      bridge.simulateRefreshEscalation = true;
+      bridge.refreshFailuresBeforeWatchdog = 3;
+      bridge.simulateRelayReservationLost();
+      bridge.pollsUntilCircuitReady = 1;
+
+      // First two health checks: in-place refresh fails
+      await service.performImmediateHealthCheck();
+      expect(service.consecutiveRefreshFailures, 1,
+          reason: 'First refresh failure should increment counter');
+
+      await service.performImmediateHealthCheck();
+      expect(service.consecutiveRefreshFailures, 2,
+          reason: 'Second refresh failure should increment counter');
+
+      // Third health check: threshold reached, watchdog kicks in
+      await service.performImmediateHealthCheck();
+
+      // After watchdog success, the node should be recovering
+      expect(service.lastRecoveryMethod, equals('watchdog_restart'),
+          reason: 'Should escalate to watchdog after 3 refresh failures');
+      expect(service.consecutiveRefreshFailures, 0,
+          reason: 'Counter should reset after watchdog success');
+    });
+
+    test(
+        'bridge healthy but first relay dead still recovers through second relay',
+        () async {
+      // Start online
+      await service.startNodeCore(testBase64Key, testPeerId);
+      expect(healthFromState(service.currentState), ConnectionHealth.online);
+
+      // Simulate first relay failing but bridge being healthy
+      bridge.simulateBackground();
+      // First relay:reconnect fails (relay reservation lost)
+      bridge.relayReservationLost = true;
+      bridge.pollsUntilCircuitReady = 1;
+
+      // First health check: relay:reconnect fails
+      await service.performImmediateHealthCheck();
+      expect(service.consecutiveRefreshFailures, 1);
+      expect(healthFromState(service.currentState), ConnectionHealth.degraded);
+
+      // Simulate second relay becoming available — clear the fault
+      bridge.relayReservationLost = false;
+
+      // Second health check: relay:reconnect succeeds through second relay
+      await service.performImmediateHealthCheck();
+      expect(service.consecutiveRefreshFailures, 0,
+          reason: 'Counter should reset after successful recovery');
+
+      // Node may still be recovering (pollsUntilCircuitReady handling)
+      // but the relay:reconnect itself succeeded
+      expect(bridge.relayReconnectCallCount, greaterThanOrEqualTo(2),
+          reason: 'Should have tried relay:reconnect at least twice');
+    });
+  });
 }

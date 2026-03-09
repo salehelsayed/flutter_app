@@ -565,4 +565,85 @@ void main() {
       });
     });
   });
+
+  // =========================================================================
+  // Phase 5: Stop/dispose during in-place recovery
+  // =========================================================================
+
+  group('Phase 5: Stop/dispose during in-place recovery', () {
+    test('stop during in-place recovery does not resurrect node', () async {
+      // Setup: bridge where relay:reconnect is gated.
+      final bridge = _ReconnectGateBridge();
+      bridge.relayReconnectGate = Completer<void>();
+
+      bridge.responses['node:start'] = _nodeStartOk();
+      bridge.responses['node:status'] = _nodeStatusDegraded();
+      bridge.responses['node:stop'] = {'ok': true, 'stopped': true};
+      bridge.responses['relay:reconnect'] = {'ok': true};
+      bridge.responses['inbox:retrieve'] = {'ok': true, 'messages': []};
+
+      final service = P2PServiceImpl(bridge: bridge);
+
+      // Start healthy (sets _hasEverBeenOnline).
+      await service.startNodeCore(_testBase64Key, _testPeerId);
+      expect(service.currentState.isStarted, isTrue);
+      expect(service.currentState.circuitAddresses, isNotEmpty);
+
+      // Fire health check — it will enter in-place recovery via
+      // relay:reconnect, which blocks on the gate.
+      final healthCheckFuture = service.performImmediateHealthCheck();
+
+      // Wait for relay:reconnect to be called (gated).
+      await _waitForCommand(bridge.commandLog, 'relay:reconnect');
+
+      // Stop the node while in-place recovery is blocked.
+      final stopResult = await service.stopNode();
+      expect(stopResult, isTrue);
+      expect(service.currentState.isStarted, isFalse);
+
+      // Release the gate so recovery can complete.
+      bridge.relayReconnectGate!.complete();
+      await healthCheckFuture;
+
+      // Node should remain stopped — in-place recovery must not
+      // resurrect it after stopNode.
+      expect(service.currentState.isStarted, isFalse,
+          reason:
+              'In-place recovery must not resurrect node after stopNode');
+
+      service.dispose();
+    });
+
+    test('dispose during relay-state push recovery is safe', () async {
+      final bridge = _ReconnectGateBridge();
+      bridge.relayReconnectGate = Completer<void>();
+
+      bridge.responses['node:start'] = _nodeStartOk();
+      bridge.responses['node:status'] = _nodeStatusDegraded();
+      bridge.responses['relay:reconnect'] = {'ok': true};
+      bridge.responses['inbox:retrieve'] = {'ok': true, 'messages': []};
+
+      final service = P2PServiceImpl(bridge: bridge);
+
+      // Start healthy.
+      await service.startNodeCore(_testBase64Key, _testPeerId);
+
+      // Fire health check (enters recovery, blocks on relay:reconnect).
+      final healthCheckFuture = service.performImmediateHealthCheck();
+      await _waitForCommand(bridge.commandLog, 'relay:reconnect');
+
+      // Dispose the service while recovery is in-flight.
+      // This simulates a relay-state push triggering recovery right
+      // before the widget tree tears down.
+      service.dispose();
+
+      // Release the gate — should not throw.
+      bridge.relayReconnectGate!.complete();
+      await healthCheckFuture;
+
+      // State remains not-started after dispose.
+      expect(service.currentState.isStarted, isFalse,
+          reason: 'Dispose during relay-state push recovery should be safe');
+    });
+  });
 }

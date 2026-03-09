@@ -34,6 +34,22 @@ class P2PServiceImpl implements P2PService {
   bool _isHealthChecking = false;
   bool _stopped = true; // starts stopped; cleared when node starts
 
+  /// Phase 5: Completer-based recovery coalescing.
+  /// When non-null, a recovery is in progress and concurrent callers
+  /// should await this instead of starting a new recovery.
+  Completer<void>? _recoveryInProgress;
+
+  /// Phase 5: Count of consecutive in-place refresh failures.
+  /// Reset to 0 on successful recovery.
+  int _consecutiveRefreshFailures = 0;
+
+  /// Phase 5: The recovery method used by the last successful recovery.
+  /// 'in_place_refresh', 'watchdog_restart', or null if no recovery yet.
+  String? _lastRecoveryMethod;
+
+  /// Phase 5: Threshold for escalating from in-place refresh to watchdog.
+  static const int refreshFailureThreshold = 3;
+
   /// How often the health check polls node:status.
   static const healthCheckInterval = Duration(seconds: 30);
 
@@ -622,21 +638,43 @@ class P2PServiceImpl implements P2PService {
           freshState.circuitAddresses.isEmpty &&
           _hasEverBeenOnline) {
         debugPrint('[HEALTH] DEGRADED — no circuit addresses (was online before). '
-            'Calling relay:reconnect to restart node...');
+            'Attempting in-place recovery via relay:reconnect...');
 
         emitFlowEvent(
           layer: 'FL',
           event: 'P2P_HEALTH_CHECK_RECOVERY_ATTEMPT',
-          details: {'method': 'relay:reconnect'},
+          details: {
+            'method': 'relay:reconnect',
+            'consecutiveRefreshFailures': _consecutiveRefreshFailures,
+          },
         );
 
         try {
           final reconnectStart = DateTime.now();
-          await callP2PRelayReconnect(_bridge);
+          final reconnectResponse = await callP2PRelayReconnect(_bridge);
           final reconnectMs = DateTime.now().difference(reconnectStart).inMilliseconds;
-          debugPrint('[HEALTH] relay:reconnect SUCCESS (took ${reconnectMs}ms)');
+
+          if (reconnectResponse['ok'] == true) {
+            // Phase 5: Parse structured recovery result fields.
+            final recoveryMethod = reconnectResponse['recoveryMethod'] as String?;
+            if (recoveryMethod != null) {
+              _lastRecoveryMethod = recoveryMethod;
+              debugPrint('[HEALTH] relay:reconnect SUCCESS via $recoveryMethod '
+                  '(took ${reconnectMs}ms)');
+            } else {
+              _lastRecoveryMethod = 'in_place_refresh';
+              debugPrint('[HEALTH] relay:reconnect SUCCESS (took ${reconnectMs}ms)');
+            }
+            _consecutiveRefreshFailures = 0;
+          } else {
+            _consecutiveRefreshFailures++;
+            debugPrint('[HEALTH] relay:reconnect FAILED '
+                '(failure #$_consecutiveRefreshFailures, took ${reconnectMs}ms)');
+          }
         } catch (e) {
-          debugPrint('[HEALTH] relay:reconnect FAILED: $e');
+          _consecutiveRefreshFailures++;
+          debugPrint('[HEALTH] relay:reconnect FAILED: $e '
+              '(failure #$_consecutiveRefreshFailures)');
           // Relay still unreachable — will retry on next health check
         }
         if (_stopped) return;
@@ -847,6 +885,22 @@ class P2PServiceImpl implements P2PService {
         _lastFcmPlatform != null) {
       registerPushToken(_lastFcmToken!, _lastFcmPlatform!);
     }
+
+    // Phase 5: Event-driven recovery — if relay-state push shows
+    // degradation (was online, now no circuits), trigger immediate
+    // recovery instead of waiting for the 30s timer.
+    if (wasConnecting == false && circuitAddresses.isEmpty && _hasEverBeenOnline) {
+      debugPrint('[ADDR] Relay-state push shows degradation — '
+          'triggering immediate recovery');
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'P2P_SERVICE_RELAY_STATE_PUSH_RECOVERY',
+        details: {},
+      );
+      // Fire-and-forget: don't block the push event handler.
+      // performImmediateHealthCheck handles coalescing internally.
+      performImmediateHealthCheck();
+    }
   }
 
   @override
@@ -965,6 +1019,13 @@ class P2PServiceImpl implements P2PService {
     }
   }
 
+  /// Phase 5: The method used by the last successful recovery.
+  /// 'in_place_refresh' or 'watchdog_restart'. Null if no recovery yet.
+  String? get lastRecoveryMethod => _lastRecoveryMethod;
+
+  /// Phase 5: Number of consecutive in-place refresh failures.
+  int get consecutiveRefreshFailures => _consecutiveRefreshFailures;
+
   @override
   Future<void> performImmediateHealthCheck() async {
     debugPrint('[HEALTH] performImmediateHealthCheck() called');
@@ -973,13 +1034,34 @@ class P2PServiceImpl implements P2PService {
       event: 'P2P_SERVICE_IMMEDIATE_HEALTH_CHECK_BEGIN',
       details: {},
     );
-    await _performHealthCheck();
 
-    // Restart mDNS advertising (e.g. after iOS returns from background)
+    // Phase 5: Coalesce concurrent recovery attempts.
+    // If a recovery is already running, just wait for it to complete.
+    if (_recoveryInProgress != null) {
+      debugPrint('[HEALTH] Recovery already in progress — coalescing');
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'P2P_SERVICE_RECOVERY_COALESCED',
+        details: {},
+      );
+      await _recoveryInProgress!.future;
+      return;
+    }
+
+    _recoveryInProgress = Completer<void>();
     try {
-      await _localP2P?.restartAdvertising();
-    } catch (e) {
-      debugPrint('[P2PService] Local P2P restart advertising failed: $e');
+      await _performHealthCheck();
+
+      // Restart mDNS advertising (e.g. after iOS returns from background)
+      try {
+        await _localP2P?.restartAdvertising();
+      } catch (e) {
+        debugPrint('[P2PService] Local P2P restart advertising failed: $e');
+      }
+    } finally {
+      final completer = _recoveryInProgress;
+      _recoveryInProgress = null;
+      completer?.complete();
     }
 
     debugPrint('[HEALTH] performImmediateHealthCheck() done');
@@ -1057,6 +1139,13 @@ class P2PServiceImpl implements P2PService {
     _stopHealthCheck();
     _localMessageSub?.cancel();
     _localP2P?.dispose();
+
+    // Phase 5: Complete any pending recovery so awaiters don't hang.
+    if (_recoveryInProgress != null && !_recoveryInProgress!.isCompleted) {
+      _recoveryInProgress!.complete();
+    }
+    _recoveryInProgress = null;
+
     if (!_stateController.isClosed) _stateController.close();
     if (!_messageController.isClosed) _messageController.close();
 
