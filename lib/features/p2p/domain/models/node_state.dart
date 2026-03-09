@@ -9,6 +9,11 @@ class NodeState {
   final List<ConnectionState> connections;
   final List<String> registeredNamespaces;
 
+  /// Phase 4: Relay session state fields (additive — null when absent).
+  final String? relayState;
+  final int? healthyRelayCount;
+  final int? watchdogRestartCount;
+
   const NodeState({
     this.peerId,
     required this.isStarted,
@@ -16,6 +21,9 @@ class NodeState {
     this.circuitAddresses = const [],
     this.connections = const [],
     this.registeredNamespaces = const [],
+    this.relayState,
+    this.healthyRelayCount,
+    this.watchdogRestartCount,
   });
 
   /// Stopped node state constant.
@@ -41,11 +49,15 @@ class NodeState {
               ?.map((e) => e as String)
               .toList() ??
           [],
+      // Phase 4: Parse relay session fields when present.
+      relayState: json['relayState'] as String?,
+      healthyRelayCount: (json['healthyRelayCount'] as num?)?.toInt(),
+      watchdogRestartCount: (json['watchdogRestartCount'] as num?)?.toInt(),
     );
   }
 
   Map<String, dynamic> toJson() {
-    return {
+    final result = <String, dynamic>{
       'peerId': peerId,
       'isStarted': isStarted,
       'listenAddresses': listenAddresses,
@@ -53,6 +65,13 @@ class NodeState {
       'connections': connections.map((c) => c.toJson()).toList(),
       'registeredNamespaces': registeredNamespaces,
     };
+
+    // Phase 4: Include relay session fields when present.
+    if (relayState != null) result['relayState'] = relayState;
+    if (healthyRelayCount != null) result['healthyRelayCount'] = healthyRelayCount;
+    if (watchdogRestartCount != null) result['watchdogRestartCount'] = watchdogRestartCount;
+
+    return result;
   }
 
   NodeState copyWith({
@@ -62,6 +81,9 @@ class NodeState {
     List<String>? circuitAddresses,
     List<ConnectionState>? connections,
     List<String>? registeredNamespaces,
+    String? relayState,
+    int? healthyRelayCount,
+    int? watchdogRestartCount,
   }) {
     return NodeState(
       peerId: peerId ?? this.peerId,
@@ -70,11 +92,15 @@ class NodeState {
       circuitAddresses: circuitAddresses ?? this.circuitAddresses,
       connections: connections ?? this.connections,
       registeredNamespaces: registeredNamespaces ?? this.registeredNamespaces,
+      relayState: relayState ?? this.relayState,
+      healthyRelayCount: healthyRelayCount ?? this.healthyRelayCount,
+      watchdogRestartCount: watchdogRestartCount ?? this.watchdogRestartCount,
     );
   }
 
   @override
   String toString() {
-    return 'NodeState(peerId: $peerId, isStarted: $isStarted, connections: ${connections.length})';
+    return 'NodeState(peerId: $peerId, isStarted: $isStarted, connections: ${connections.length}'
+        '${relayState != null ? ', relayState: $relayState' : ''})';
   }
 }

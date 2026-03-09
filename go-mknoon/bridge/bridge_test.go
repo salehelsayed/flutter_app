@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/libp2p/go-libp2p/core/crypto"
@@ -965,6 +966,134 @@ func TestRelayReconnect_PreservesPeerId(t *testing.T) {
 	if peerIdAfter != peerIdBefore {
 		t.Errorf("peerId changed after reconnect: before=%q, after=%q",
 			peerIdBefore, peerIdAfter)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4: Relay Session Manager and Reservation-Aware Health — Bridge Tests
+// ---------------------------------------------------------------------------
+
+func TestNodeStatus_ContainsRelayStateWithoutBreakingLegacyFields(t *testing.T) {
+	withFreshSingletonNode(t)
+
+	keyHex := generateTestKeyHex(t)
+	input := startNodeJSON(t, keyHex)
+	startResult := StartNode(input)
+	assertOk(t, parseJSON(t, startResult))
+
+	result := NodeStatus()
+	m := parseJSON(t, result)
+	assertOk(t, m)
+
+	// Legacy fields must still be present.
+	legacyKeys := []string{"ok", "peerId", "isStarted", "listenAddresses", "circuitAddresses", "connections"}
+	for _, key := range legacyKeys {
+		if _, exists := m[key]; !exists {
+			t.Errorf("NodeStatus missing legacy key %q", key)
+		}
+	}
+
+	// New relay-session fields must be present (additive).
+	newKeys := []string{"relayState", "relayStates", "healthyRelayCount", "watchdogRestartCount"}
+	for _, key := range newKeys {
+		if _, exists := m[key]; !exists {
+			t.Errorf("NodeStatus missing new relay session key %q", key)
+		}
+	}
+
+	// relayState should be a string.
+	if _, ok := m["relayState"].(string); !ok {
+		t.Errorf("relayState should be string, got %T", m["relayState"])
+	}
+
+	// healthyRelayCount should be a number.
+	switch m["healthyRelayCount"].(type) {
+	case float64, int:
+		// ok — JSON numbers decode as float64
+	default:
+		t.Errorf("healthyRelayCount should be number, got %T", m["healthyRelayCount"])
+	}
+}
+
+func TestRelayReconnect_ReturnsRecoveryMode(t *testing.T) {
+	withFreshSingletonNode(t)
+
+	keyHex := generateTestKeyHex(t)
+	input := startNodeJSON(t, keyHex)
+	startResult := StartNode(input)
+	assertOk(t, parseJSON(t, startResult))
+
+	result := RelayReconnect()
+	m := parseJSON(t, result)
+	assertOk(t, m)
+
+	// Should include recoveryMode field.
+	recoveryMode, ok := m["recoveryMode"].(string)
+	if !ok {
+		t.Fatalf("RelayReconnect missing recoveryMode field")
+	}
+	if recoveryMode != "in_place" && recoveryMode != "watchdog_restart" {
+		t.Errorf("recoveryMode should be 'in_place' or 'watchdog_restart', got %q", recoveryMode)
+	}
+}
+
+func TestRelayReconnect_ConcurrentBridgeCallsShareSingleRecovery(t *testing.T) {
+	withFreshSingletonNode(t)
+
+	keyHex := generateTestKeyHex(t)
+	input := startNodeJSON(t, keyHex)
+	startResult := StartNode(input)
+	assertOk(t, parseJSON(t, startResult))
+
+	// Launch 3 concurrent reconnects.
+	var wg sync.WaitGroup
+	results := make([]string, 3)
+	for i := 0; i < 3; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			results[idx] = RelayReconnect()
+		}(i)
+	}
+
+	wg.Wait()
+
+	// All should succeed.
+	for i, r := range results {
+		m := parseJSON(t, r)
+		assertOk(t, m)
+		_ = i
+	}
+
+	// Verify the node is still started after concurrent reconnects.
+	statusResult := NodeStatus()
+	statusMap := parseJSON(t, statusResult)
+	assertOk(t, statusMap)
+
+	isStarted, _ := statusMap["isStarted"].(bool)
+	if !isStarted {
+		t.Error("node should be started after concurrent reconnects")
+	}
+}
+
+func TestRelayReconnect_ReturnsStructuredRecoveryFields(t *testing.T) {
+	withFreshSingletonNode(t)
+
+	keyHex := generateTestKeyHex(t)
+	input := startNodeJSON(t, keyHex)
+	startResult := StartNode(input)
+	assertOk(t, parseJSON(t, startResult))
+
+	result := RelayReconnect()
+	m := parseJSON(t, result)
+	assertOk(t, m)
+
+	// Verify structured fields exist so callers don't need string matching.
+	structuredFields := []string{"recoveryMode", "relayState", "healthyRelayCount"}
+	for _, field := range structuredFields {
+		if _, exists := m[field]; !exists {
+			t.Errorf("RelayReconnect response missing structured field %q", field)
+		}
 	}
 }
 

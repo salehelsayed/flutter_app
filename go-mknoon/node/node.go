@@ -47,6 +47,10 @@ type Node struct {
 	startedAt       time.Time // for startup timing instrumentation
 	lastConfig      *NodeConfig // saved for Restart()
 
+	// Phase 4: Relay session manager and event dispatcher.
+	relaySessionMgr *RelaySessionManager
+	eventDispatcher *EventDispatcher
+
 	// PubSub / Group messaging
 	pubsub            *pubsub.PubSub
 	groupTopics       map[string]*pubsub.Topic
@@ -66,15 +70,17 @@ type connectionInfo struct {
 // NewNode creates a new Node instance without an event callback.
 func NewNode() *Node {
 	return &Node{
-		connections: make(map[string]connectionInfo),
+		connections:     make(map[string]connectionInfo),
+		relaySessionMgr: NewRelaySessionManager(),
 	}
 }
 
 // New creates a new Node instance with an event callback for Go → Flutter push events.
 func New(cb EventCallback) *Node {
 	return &Node{
-		connections:   make(map[string]connectionInfo),
-		eventCallback: cb,
+		connections:     make(map[string]connectionInfo),
+		eventCallback:   cb,
+		relaySessionMgr: NewRelaySessionManager(),
 	}
 }
 
@@ -216,6 +222,11 @@ func (n *Node) Start(cfg NodeConfig) (*NodeState, error) {
 	n.startedAt = time.Now()
 	n.relayReady = make(chan struct{})
 
+	// Phase 4: Initialize event dispatcher for async delivery.
+	if n.eventCallback != nil && n.eventDispatcher == nil {
+		n.eventDispatcher = NewEventDispatcher(n.eventCallback, 1024)
+	}
+
 	// Warm relay connections concurrently in background.
 	// Each relayInfo may contain multiple addresses (e.g. WSS + QUIC) for
 	// the same peer — host.Connect() tries all addresses internally.
@@ -298,6 +309,16 @@ func (n *Node) Stop() error {
 	n.host = nil
 	n.eventSub = nil
 	n.relayReadyOnce = sync.Once{} // reset so next Start() can use it
+
+	// Phase 4: Stop event dispatcher and reset relay session state.
+	if n.eventDispatcher != nil {
+		n.eventDispatcher.Stop()
+		n.eventDispatcher = nil
+	}
+	if n.relaySessionMgr != nil {
+		n.relaySessionMgr.Reset()
+	}
+
 	return nil
 }
 
@@ -328,7 +349,7 @@ func (n *Node) Status() map[string]interface{} {
 		}
 	}
 
-	return map[string]interface{}{
+	result := map[string]interface{}{
 		"ok":               true,
 		"peerId":           n.peerId,
 		"isStarted":        n.isStarted,
@@ -336,6 +357,15 @@ func (n *Node) Status() map[string]interface{} {
 		"circuitAddresses": circuitAddrs,
 		"connections":      conns,
 	}
+
+	// Phase 4: Merge relay session fields additively.
+	if n.relaySessionMgr != nil {
+		for k, v := range n.relaySessionMgr.StatusFields() {
+			result[k] = v
+		}
+	}
+
+	return result
 }
 
 // State returns the current node state as a typed NodeState.
@@ -389,46 +419,154 @@ func (n *Node) warmRelayConnection(info peer.AddrInfo) error {
 	return nil
 }
 
-// ReconnectRelays performs a full node restart to recover circuit addresses.
+// RefreshRelaySession attempts in-place relay recovery without replacing the host.
+// It reconnects to relay peers and waits for AutoRelay to re-establish
+// circuit reservations. PubSub subscriptions and peer connections are preserved.
 //
-// go-libp2p's AutoRelay (v0.38.2) does NOT reliably re-reserve circuit
-// addresses after a relay disconnection. A full Stop() + Start() with
-// the saved NodeConfig creates a fresh libp2p host + AutoRelay, which
-// reliably obtains circuit addresses on startup.
-func (n *Node) ReconnectRelays() error {
+// Returns a RecoveryResult describing what happened.
+func (n *Node) RefreshRelaySession() *RecoveryResult {
 	n.mu.RLock()
-	cfg := n.lastConfig
+	h := n.host
 	started := n.isStarted
+	relayAddrs := n.relayAddresses
+	mgr := n.relaySessionMgr
+	n.mu.RUnlock()
+
+	if !started || h == nil {
+		return &RecoveryResult{
+			RecoveryMode: "in_place",
+			Success:      false,
+			ErrorCode:    "NOT_STARTED",
+			Reason:       "node not started",
+		}
+	}
+
+	// Singleflight: if another recovery is already in progress, wait for it.
+	ch, isNew := mgr.BeginRecovery()
+	if !isNew {
+		// Wait for the in-progress recovery to complete.
+		result := <-ch
+		if result != nil {
+			return result
+		}
+		return &RecoveryResult{
+			RecoveryMode: "in_place",
+			Success:      false,
+			ErrorCode:    "RECOVERY_NIL",
+			Reason:       "coalesced recovery returned nil result",
+		}
+	}
+
+	// We own the recovery — perform in-place refresh.
+	log.Printf("[NODE] RefreshRelaySession: attempting in-place relay recovery")
+
+	var refreshErr error
+
+	// Build relay AddrInfos for warm connection.
+	if len(relayAddrs) == 0 {
+		relayAddrs = []string{DefaultRelayAddress}
+	}
+
+	relayInfoMap := make(map[peer.ID]*peer.AddrInfo)
+	for _, addr := range relayAddrs {
+		maddr, err := ma.NewMultiaddr(addr)
+		if err != nil {
+			continue
+		}
+		info, err := peer.AddrInfoFromP2pAddr(maddr)
+		if err != nil {
+			continue
+		}
+		if existing, ok := relayInfoMap[info.ID]; ok {
+			existing.Addrs = append(existing.Addrs, info.Addrs...)
+		} else {
+			relayInfoMap[info.ID] = info
+		}
+	}
+
+	// Attempt to reconnect to each relay peer.
+	for _, info := range relayInfoMap {
+		if err := n.warmRelayConnection(*info); err != nil {
+			log.Printf("[NODE] RefreshRelaySession: warm %s failed: %v",
+				info.ID.String()[:min(20, len(info.ID.String()))], err)
+			refreshErr = err
+		} else {
+			log.Printf("[NODE] RefreshRelaySession: warm %s success",
+				info.ID.String()[:min(20, len(info.ID.String()))])
+		}
+	}
+
+	// Wait for AutoRelay to re-establish circuit addresses.
+	if ok := n.waitForCircuitAddress(10 * time.Second); ok {
+		log.Printf("[NODE] RefreshRelaySession: circuit addresses obtained ✓")
+		refreshErr = nil
+	} else if refreshErr == nil {
+		refreshErr = fmt.Errorf("no circuit addresses after 10s wait")
+	}
+
+	result := &RecoveryResult{
+		RecoveryMode:    "in_place",
+		Success:         refreshErr == nil,
+		RelayState:      string(mgr.AggregateState()),
+		HealthyRelayCount: mgr.HealthyRelayCount(),
+	}
+	if refreshErr != nil {
+		result.ErrorCode = "REFRESH_FAILED"
+		result.Reason = refreshErr.Error()
+	}
+
+	mgr.CompleteRecovery(result)
+	return result
+}
+
+// ReconnectRelays attempts in-place relay recovery first, then falls back
+// to a full host restart if in-place recovery fails.
+//
+// Phase 4: This method now uses singleflight coalescing via the relay
+// session manager, so concurrent callers share one recovery attempt.
+// The return value now includes structured recovery fields.
+func (n *Node) ReconnectRelays() (*RecoveryResult, error) {
+	n.mu.RLock()
+	started := n.isStarted
+	cfg := n.lastConfig
 	n.mu.RUnlock()
 
 	if !started {
-		return fmt.Errorf("node not started")
+		return nil, fmt.Errorf("node not started")
 	}
 	if cfg == nil {
-		return fmt.Errorf("no saved config — cannot restart")
+		return nil, fmt.Errorf("no saved config — cannot restart")
 	}
 
-	log.Printf("[NODE] ReconnectRelays: performing full node restart")
+	// Try in-place recovery first (Phase 4).
+	result := n.RefreshRelaySession()
+	if result.Success {
+		log.Printf("[NODE] ReconnectRelays: in-place recovery succeeded")
+		return result, nil
+	}
 
-	// Stop the current node (closes host, cancels context, clears state).
+	log.Printf("[NODE] ReconnectRelays: in-place recovery failed (%s), performing full restart",
+		result.Reason)
+
+	// Fallback: full host restart (pre-Phase 4 behavior).
 	if err := n.Stop(); err != nil {
 		log.Printf("[NODE] ReconnectRelays: Stop() error (continuing): %v", err)
 	}
 
-	// Re-start with the saved config (creates fresh host + AutoRelay).
-	// Disable auto-register since we don't need rendezvous re-registration
-	// on recovery — just circuit address restoration.
 	restartCfg := *cfg
 	restartCfg.AutoRegister = false
 
 	state, err := n.Start(restartCfg)
 	if err != nil {
-		return fmt.Errorf("restart Start() failed: %w", err)
+		return &RecoveryResult{
+			RecoveryMode: "watchdog_restart",
+			Success:      false,
+			ErrorCode:    "RESTART_FAILED",
+			Reason:       err.Error(),
+		}, fmt.Errorf("restart Start() failed: %w", err)
 	}
 
-	// Restore original AutoRegister so future recoveries preserve it.
-	// Start() saved restartCfg (with AutoRegister=false) into lastConfig;
-	// we need the original value for rendezvous TTL re-registration.
+	// Restore original AutoRegister.
 	n.mu.Lock()
 	n.lastConfig.AutoRegister = cfg.AutoRegister
 	n.mu.Unlock()
@@ -436,14 +574,31 @@ func (n *Node) ReconnectRelays() error {
 	log.Printf("[NODE] ReconnectRelays: node restarted, peerId=%s, waiting for circuit addresses...",
 		state.PeerId)
 
-	// Wait for AutoRelay to obtain circuit addresses (same as first startup).
-	if ok := n.waitForCircuitAddress(10 * time.Second); ok {
+	// Wait for circuit addresses.
+	circuitOk := n.waitForCircuitAddress(10 * time.Second)
+	if circuitOk {
 		log.Printf("[NODE] ReconnectRelays: circuit addresses obtained ✓")
 	} else {
 		log.Printf("[NODE] ReconnectRelays: WARNING — no circuit addresses after 10s")
 	}
 
-	return nil
+	// Track the watchdog restart.
+	n.mu.RLock()
+	mgr := n.relaySessionMgr
+	n.mu.RUnlock()
+
+	watchdogResult := &RecoveryResult{
+		RecoveryMode:    "watchdog_restart",
+		Success:         circuitOk,
+		RelayState:      string(mgr.AggregateState()),
+		HealthyRelayCount: mgr.HealthyRelayCount(),
+	}
+	if !circuitOk {
+		watchdogResult.ErrorCode = "NO_CIRCUIT"
+		watchdogResult.Reason = "no circuit addresses after watchdog restart"
+	}
+
+	return watchdogResult, nil
 }
 
 // DialPeerWithTimeout connects to a peer with an explicit timeout override.
@@ -823,11 +978,20 @@ func (n *Node) watchConnectionEvents() {
 }
 
 // emitEvent sends a push event to Flutter via the callback.
+// Phase 4: Uses the async event dispatcher when available, falling back
+// to synchronous delivery for backward compatibility.
 func (n *Node) emitEvent(eventName string, data map[string]interface{}) {
 	if n.eventCallback == nil {
 		return
 	}
 
+	// Use the async dispatcher if available (Phase 4).
+	if n.eventDispatcher != nil {
+		n.eventDispatcher.Emit(eventName, data)
+		return
+	}
+
+	// Fallback: synchronous delivery (pre-Phase 4 behavior).
 	payload := map[string]interface{}{
 		"event": eventName,
 		"data":  data,
