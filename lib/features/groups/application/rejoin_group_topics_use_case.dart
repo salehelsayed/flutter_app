@@ -3,13 +3,29 @@ import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 
-/// Rejoins all group pubsub topics on startup.
+/// The reason for calling rejoinGroupTopics.
+enum RejoinReason {
+  /// App startup — always rejoin all topics.
+  startup,
+
+  /// Watchdog restart — Go node was restarted, topics are gone.
+  watchdogRestart,
+
+  /// In-place recovery succeeded — topics should still be active.
+  inPlaceRecovery,
+}
+
+/// Rejoins all group pubsub topics on startup or after watchdog restart.
 ///
-/// After an app restart the Go node is fresh — no pubsub topics are
-/// subscribed. This function iterates every group (including archived),
-/// builds the full groupConfig from stored members, and calls
+/// After an app restart or watchdog restart the Go node is fresh — no pubsub
+/// topics are subscribed. This function iterates every group (including
+/// archived), builds the full groupConfig from stored members, and calls
 /// [callGroupJoinWithConfig] so the node can receive and validate
 /// real-time group messages again.
+///
+/// When [reason] is [RejoinReason.inPlaceRecovery], the rejoin is skipped
+/// because topics are still active in the Go node. This makes the function
+/// idempotent for in-place recovery scenarios.
 ///
 /// Groups without a stored key are skipped (can't join without key material).
 /// Errors on individual groups are logged and do not prevent other groups
@@ -17,11 +33,22 @@ import 'package:flutter_app/features/groups/domain/repositories/group_repository
 Future<void> rejoinGroupTopics({
   required Bridge bridge,
   required GroupRepository groupRepo,
+  RejoinReason reason = RejoinReason.startup,
 }) async {
+  // Skip rejoin when in-place recovery succeeded — topics are still active.
+  if (reason == RejoinReason.inPlaceRecovery) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_REJOIN_TOPICS_SKIPPED',
+      details: {'reason': 'inPlaceRecovery'},
+    );
+    return;
+  }
+
   emitFlowEvent(
     layer: 'FL',
     event: 'GROUP_REJOIN_TOPICS_BEGIN',
-    details: {},
+    details: {'reason': reason.name},
   );
 
   final groups = await groupRepo.getAllGroups();

@@ -69,6 +69,28 @@ Future<GroupMessage?> handleIncomingGroupMessage({
     parsedTimestamp = now;
   }
 
+  // Prefer messageId-based dedupe when a wire messageId is available.
+  // This catches the case where both pubsub and group inbox deliver the
+  // same message — content-based dedupe might miss it if timestamps
+  // differ slightly.
+  if (messageId != null && messageId.isNotEmpty) {
+    final existsById = await msgRepo.existsByMessageId(messageId);
+    if (existsById) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_HANDLE_INCOMING_MSG_DUPLICATE',
+        details: {
+          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+          'senderId':
+              senderId.length > 8 ? senderId.substring(0, 8) : senderId,
+          'dedupeBy': 'messageId',
+        },
+      );
+      return null;
+    }
+  }
+
+  // Fallback: content-based dedupe for messages without a messageId.
   final isDuplicate =
       await msgRepo.existsByContent(groupId, senderId, text, parsedTimestamp);
   if (isDuplicate) {
@@ -78,6 +100,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
       details: {
         'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
         'senderId': senderId.length > 8 ? senderId.substring(0, 8) : senderId,
+        'dedupeBy': 'content',
       },
     );
     return null;

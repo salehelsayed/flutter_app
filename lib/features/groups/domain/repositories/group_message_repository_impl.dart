@@ -48,6 +48,12 @@ class GroupMessageRepositoryImpl
   });
 
   @override
+  Future<bool> existsByMessageId(String messageId) async {
+    final row = await dbLoadGroupMessage(messageId);
+    return row != null;
+  }
+
+  @override
   Future<void> saveMessage(GroupMessage message) async {
     emitFlowEvent(
       layer: 'FL',

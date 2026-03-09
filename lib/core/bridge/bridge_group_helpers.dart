@@ -630,6 +630,77 @@ Future<List<Map<String, dynamic>>> callGroupInboxRetrieve(
   }
 }
 
+/// Result of a cursor-based group inbox retrieval.
+class GroupInboxPage {
+  final List<Map<String, dynamic>> messages;
+  final String cursor;
+
+  const GroupInboxPage({required this.messages, required this.cursor});
+}
+
+/// Calls the bridge to retrieve messages from the group inbox using
+/// cursor-based pagination for exactly-once delivery.
+///
+/// Returns a [GroupInboxPage] with the messages and an opaque cursor
+/// for fetching the next page. An empty cursor means no more pages.
+Future<GroupInboxPage> callGroupInboxRetrieveWithCursor(
+  Bridge bridge,
+  String groupId,
+  String cursor,
+  int limit, {
+  Duration timeout = const Duration(seconds: 10),
+}) async {
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'GROUP_FL_BRIDGE_INBOX_RETRIEVE_CURSOR_REQUEST',
+    details: {
+      'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+      'hasCursor': cursor.isNotEmpty,
+      'limit': limit,
+    },
+  );
+
+  final request = {
+    'cmd': 'group:inboxRetrieveCursor',
+    'payload': {
+      'groupId': groupId,
+      'cursor': cursor,
+      'limit': limit,
+    },
+  };
+
+  try {
+    final responseJson =
+        await bridge.send(jsonEncode(request)).timeout(timeout);
+    final response = jsonDecode(responseJson) as Map<String, dynamic>;
+
+    final messages = (response['messages'] as List<dynamic>?)
+            ?.map((m) => Map<String, dynamic>.from(m as Map))
+            .toList() ??
+        [];
+    final nextCursor = response['cursor'] as String? ?? '';
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_FL_BRIDGE_INBOX_RETRIEVE_CURSOR_RESPONSE',
+      details: {
+        'ok': response['ok'],
+        'count': messages.length,
+        'hasMore': nextCursor.isNotEmpty,
+      },
+    );
+
+    return GroupInboxPage(messages: messages, cursor: nextCursor);
+  } on TimeoutException {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_FL_BRIDGE_INBOX_RETRIEVE_CURSOR_RESPONSE',
+      details: {'ok': false, 'errorCode': 'BRIDGE_TIMEOUT'},
+    );
+    return const GroupInboxPage(messages: [], cursor: '');
+  }
+}
+
 /// Calls the bridge to generate a symmetric group key.
 ///
 /// Returns the base64-encoded key string on success.

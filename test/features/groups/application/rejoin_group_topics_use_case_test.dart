@@ -310,6 +310,198 @@ void main() {
       expect(regularMember['role'], 'writer');
     });
 
+    test('rejoin is idempotent when topic already active', () async {
+      // When Go returns ALREADY_JOINED, the rejoin should succeed without
+      // error. This tests idempotency for cases where a topic is already
+      // subscribed.
+      final now = DateTime.now().toUtc();
+
+      await seedGroup(
+        groupId: 'group-active-topic',
+        name: 'Already Active',
+        members: [
+          GroupMember(
+            groupId: 'group-active-topic',
+            peerId: 'alice',
+            username: 'Alice',
+            role: MemberRole.admin,
+            publicKey: 'pk-alice',
+            joinedAt: now,
+          ),
+        ],
+        keyInfo: GroupKeyInfo(
+          groupId: 'group-active-topic',
+          keyGeneration: 1,
+          encryptedKey: 'key-already',
+          createdAt: now,
+        ),
+      );
+
+      // Simulate Go returning ALREADY_JOINED (still ok:true).
+      bridge.responses['group:join'] = {
+        'ok': true,
+        'note': 'ALREADY_JOINED',
+      };
+
+      // Should not throw despite "already joined".
+      await rejoinGroupTopics(bridge: bridge, groupRepo: groupRepo);
+
+      final joinCommands = bridge.sentMessages
+          .map((m) => jsonDecode(m) as Map<String, dynamic>)
+          .where((m) => m['cmd'] == 'group:join')
+          .toList();
+      expect(joinCommands, hasLength(1));
+    });
+
+    test('rejoin runs after watchdog restart', () async {
+      final now = DateTime.now().toUtc();
+
+      await seedGroup(
+        groupId: 'group-watchdog',
+        name: 'Watchdog Group',
+        members: [
+          GroupMember(
+            groupId: 'group-watchdog',
+            peerId: 'alice',
+            username: 'Alice',
+            role: MemberRole.admin,
+            publicKey: 'pk-alice',
+            joinedAt: now,
+          ),
+        ],
+        keyInfo: GroupKeyInfo(
+          groupId: 'group-watchdog',
+          keyGeneration: 2,
+          encryptedKey: 'key-watchdog',
+          createdAt: now,
+        ),
+      );
+
+      // Rejoin with watchdog restart reason should proceed normally.
+      await rejoinGroupTopics(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        reason: RejoinReason.watchdogRestart,
+      );
+
+      final joinCommands = bridge.sentMessages
+          .map((m) => jsonDecode(m) as Map<String, dynamic>)
+          .where((m) => m['cmd'] == 'group:join')
+          .toList();
+      expect(joinCommands, hasLength(1));
+      expect(joinCommands.first['payload']['groupId'], 'group-watchdog');
+    });
+
+    test('rejoin is skipped after successful in-place recovery', () async {
+      final now = DateTime.now().toUtc();
+
+      await seedGroup(
+        groupId: 'group-inplace',
+        name: 'In-Place Group',
+        members: [
+          GroupMember(
+            groupId: 'group-inplace',
+            peerId: 'alice',
+            username: 'Alice',
+            role: MemberRole.admin,
+            publicKey: 'pk-alice',
+            joinedAt: now,
+          ),
+        ],
+        keyInfo: GroupKeyInfo(
+          groupId: 'group-inplace',
+          keyGeneration: 1,
+          encryptedKey: 'key-inplace',
+          createdAt: now,
+        ),
+      );
+
+      // Rejoin with in-place recovery reason should be skipped entirely.
+      await rejoinGroupTopics(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        reason: RejoinReason.inPlaceRecovery,
+      );
+
+      // No bridge calls should have been made.
+      expect(bridge.sendCallCount, 0);
+      expect(bridge.sentMessages, isEmpty);
+    });
+
+    test('announcement groups are rejoined and refreshed like normal groups',
+        () async {
+      final now = DateTime.now().toUtc();
+
+      // Create an announcement group.
+      await groupRepo.saveGroup(GroupModel(
+        id: 'group-announce',
+        name: 'Announcements',
+        type: GroupType.announcement,
+        topicName: 'topic-group-announce',
+        createdAt: now,
+        createdBy: 'admin-peer',
+        myRole: GroupRole.admin,
+      ));
+
+      await groupRepo.saveMember(GroupMember(
+        groupId: 'group-announce',
+        peerId: 'admin-peer',
+        username: 'Admin',
+        role: MemberRole.admin,
+        publicKey: 'pk-admin',
+        joinedAt: now,
+      ));
+
+      await groupRepo.saveKey(GroupKeyInfo(
+        groupId: 'group-announce',
+        keyGeneration: 1,
+        encryptedKey: 'key-announce',
+        createdAt: now,
+      ));
+
+      // Also create a normal chat group.
+      await seedGroup(
+        groupId: 'group-chat',
+        name: 'Chat Group',
+        members: [
+          GroupMember(
+            groupId: 'group-chat',
+            peerId: 'alice',
+            username: 'Alice',
+            role: MemberRole.admin,
+            publicKey: 'pk-alice',
+            joinedAt: now,
+          ),
+        ],
+        keyInfo: GroupKeyInfo(
+          groupId: 'group-chat',
+          keyGeneration: 1,
+          encryptedKey: 'key-chat',
+          createdAt: now,
+        ),
+      );
+
+      await rejoinGroupTopics(bridge: bridge, groupRepo: groupRepo);
+
+      final joinCommands = bridge.sentMessages
+          .map((m) => jsonDecode(m) as Map<String, dynamic>)
+          .where((m) => m['cmd'] == 'group:join')
+          .toList();
+
+      // Both announcement and chat groups should be rejoined.
+      expect(joinCommands, hasLength(2));
+      final groupIds =
+          joinCommands.map((c) => c['payload']['groupId'] as String).toSet();
+      expect(groupIds, {'group-announce', 'group-chat'});
+
+      // Verify announcement group config includes groupType=announcement.
+      final announceCmd = joinCommands.firstWhere(
+          (c) => c['payload']['groupId'] == 'group-announce');
+      final config =
+          announceCmd['payload']['groupConfig'] as Map<String, dynamic>;
+      expect(config['groupType'], 'announcement');
+    });
+
     test('rejoins archived groups', () async {
       final now = DateTime.now().toUtc();
 
