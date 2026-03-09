@@ -32,6 +32,11 @@ type RelaySessionState struct {
 	LastErrorAt    time.Time            `json:"lastErrorAt,omitempty"`
 	LastError      string               `json:"lastError,omitempty"`
 	FailCount      int                  `json:"failCount"`
+
+	// ConsecutiveRefreshFailures tracks how many consecutive relay refresh
+	// attempts have failed. Reset to 0 on any successful refresh.
+	// When this reaches WatchdogMaxConsecutiveFailures, the watchdog triggers.
+	ConsecutiveRefreshFailures int `json:"consecutiveRefreshFailures"`
 }
 
 // --- Aggregate Relay Session State ---
@@ -45,6 +50,11 @@ const (
 	AggregateRelayRecovering       AggregateRelayState = "recovering"
 	AggregateRelayWatchdogRestart  AggregateRelayState = "watchdog_restart"
 )
+
+// WatchdogMaxConsecutiveFailures is the number of consecutive relay refresh
+// failures that trigger a watchdog restart. After this threshold is crossed,
+// the manager sets needsGroupRecovery and transitions to watchdog_restart.
+const WatchdogMaxConsecutiveFailures = 5
 
 // RelaySessionManager tracks per-relay reservation state and provides
 // aggregate health without requiring a full host restart.
@@ -64,6 +74,10 @@ type RelaySessionManager struct {
 
 	// Counts for diagnostics.
 	watchdogRestartCount int
+
+	// needsGroupRecovery is set to true when the watchdog triggers,
+	// signalling to Flutter that group topics need rejoin.
+	needsGroupRecovery bool
 }
 
 // RecoveryResult carries the structured result of a relay session refresh.
@@ -413,6 +427,7 @@ func (m *RelaySessionManager) StatusFields() map[string]interface{} {
 		"relayStates":          relayStates,
 		"healthyRelayCount":    healthyCount,
 		"watchdogRestartCount": m.watchdogRestartCount,
+		"needsGroupRecovery":   m.needsGroupRecovery,
 	}
 
 	if lastReservationAt != "" {
@@ -475,6 +490,91 @@ func (m *RelaySessionManager) ReportsHealthyWithReservation(hostAddrs []string) 
 	}
 
 	return hasCircuit && hasReservation
+}
+
+// --- Watchdog Policy ---
+
+// OnRefreshFailed records a relay refresh failure and checks the watchdog threshold.
+// When consecutive failures reach WatchdogMaxConsecutiveFailures, the watchdog
+// triggers: needsGroupRecovery is set and the aggregate state becomes watchdog_restart.
+func (m *RelaySessionManager) OnRefreshFailed(peerID peer.ID, err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	pidStr := peerID.String()
+	s, ok := m.sessions[pidStr]
+	if !ok {
+		s = &RelaySessionState{PeerID: peerID, State: RelayStateDisconnected}
+		m.sessions[pidStr] = s
+	}
+
+	s.ConsecutiveRefreshFailures++
+	s.FailCount++
+	s.LastErrorAt = time.Now()
+	if err != nil {
+		s.LastError = err.Error()
+	}
+
+	log.Printf("[RELAY_SESSION] Refresh failed for %s (consecutive=%d, total=%d): %v",
+		pidStr[:min(20, len(pidStr))], s.ConsecutiveRefreshFailures, s.FailCount, err)
+
+	// Check if ALL tracked relays have exceeded the watchdog threshold.
+	allExceeded := true
+	for _, sess := range m.sessions {
+		if sess.ConsecutiveRefreshFailures < WatchdogMaxConsecutiveFailures &&
+			sess.State == RelayStateReserved {
+			allExceeded = false
+			break
+		}
+	}
+
+	// Only trigger watchdog if ALL relays are failing.
+	if s.ConsecutiveRefreshFailures >= WatchdogMaxConsecutiveFailures && allExceeded {
+		m.needsGroupRecovery = true
+		m.aggregateState = AggregateRelayWatchdogRestart
+		log.Printf("[RELAY_SESSION] Watchdog triggered: %d consecutive failures for %s",
+			s.ConsecutiveRefreshFailures, pidStr[:min(20, len(pidStr))])
+	} else {
+		m.recomputeAggregateLocked()
+	}
+}
+
+// OnRefreshSucceeded records a successful relay refresh and resets the
+// consecutive failure counter for that peer.
+func (m *RelaySessionManager) OnRefreshSucceeded(peerID peer.ID) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	pidStr := peerID.String()
+	s, ok := m.sessions[pidStr]
+	if !ok {
+		s = &RelaySessionState{PeerID: peerID, State: RelayStateDisconnected}
+		m.sessions[pidStr] = s
+	}
+
+	s.ConsecutiveRefreshFailures = 0
+	s.State = RelayStateReserved
+	s.LastReservedAt = time.Now()
+	s.LastError = ""
+
+	log.Printf("[RELAY_SESSION] Refresh succeeded for %s", pidStr[:min(20, len(pidStr))])
+	m.recomputeAggregateLocked()
+}
+
+// NeedsGroupRecovery returns true when the watchdog has triggered and Flutter
+// should rejoin group topics.
+func (m *RelaySessionManager) NeedsGroupRecovery() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.needsGroupRecovery
+}
+
+// AcknowledgeGroupRecovery clears the needsGroupRecovery flag after Flutter
+// has completed group topic rejoin.
+func (m *RelaySessionManager) AcknowledgeGroupRecovery() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.needsGroupRecovery = false
 }
 
 // Reset clears all session state. Used when performing a full host restart.
