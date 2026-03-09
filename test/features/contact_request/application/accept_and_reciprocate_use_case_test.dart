@@ -101,14 +101,14 @@ class _FakeP2PService implements P2PService {
     return const SendMessageResult(sent: true);
   }
   @override
-  Future<DiscoveredPeer?> discoverPeer(String peerId) async =>
+  Future<DiscoveredPeer?> discoverPeer(String peerId, {int? timeoutMs}) async =>
       DiscoveredPeer(id: peerId, addresses: ['/ip4/127.0.0.1/tcp/4001']);
   @override
-  Future<bool> dialPeer(String peerId, {List<String>? addresses}) async => true;
+  Future<bool> dialPeer(String peerId, {List<String>? addresses, int? timeoutMs}) async => true;
   @override
   Future<bool> storeInInbox(String toPeerId, String message) async => false;
   @override
-  Future<List<Map<String, dynamic>>> retrieveInbox() async => [];
+  Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) async => [];
   @override
   Future<bool> registerPushToken(String token, String platform) async => true;
   @override

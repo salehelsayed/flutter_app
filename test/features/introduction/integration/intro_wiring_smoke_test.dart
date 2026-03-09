@@ -120,13 +120,13 @@ class _FakeP2PService implements P2PService {
   @override
   void dispose() {}
   @override
-  Future<bool> dialPeer(String peerId, {List<String>? addresses}) async => true;
+  Future<bool> dialPeer(String peerId, {List<String>? addresses, int? timeoutMs}) async => true;
   @override
-  Future<DiscoveredPeer?> discoverPeer(String peerId) async => null;
+  Future<DiscoveredPeer?> discoverPeer(String peerId, {int? timeoutMs}) async => null;
   @override
   Stream<ChatMessage> get messageStream => const Stream.empty();
   @override
-  Future<List<Map<String, dynamic>>> retrieveInbox() async => [];
+  Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) async => [];
   @override
   Future<bool> sendMessage(String peerId, String message) async => true;
   @override

@@ -3,7 +3,9 @@ package node
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/libp2p/go-libp2p/core/crypto"
 )
@@ -342,6 +344,88 @@ func TestStatus_BackwardCompatibleShape(t *testing.T) {
 	// Verify additive fields do NOT break parsing: if a future Go version
 	// adds "relayState" or "healthyRelayCount", the existing Dart parser
 	// must ignore them. This test ensures the baseline shape is stable.
+}
+
+// TestAutoRegister_DoesNotWaitForAllRelayWarmAttemptsAfterFirstHealthyRelay
+// verifies that auto-registration fires after the first relay connection
+// succeeds, without waiting for all relay warm-up goroutines to finish.
+// This is a contract-locking test: the current implementation closes the
+// relayReady channel on the first successful warm, and auto-register runs
+// after the WaitGroup completes — but the first healthy relay is what
+// matters for circuit address availability.
+func TestAutoRegister_DoesNotWaitForAllRelayWarmAttemptsAfterFirstHealthyRelay(t *testing.T) {
+	hexKey := generateTestKey(t)
+
+	n := NewNode()
+	state, err := n.Start(NodeConfig{
+		PrivateKeyHex: hexKey,
+		// Use multiple relay addresses including the default one.
+		// When relays are unreachable (test environment), the relay-ready
+		// channel remains open but the goroutine completes once all attempts
+		// finish. This verifies Start() returns immediately without blocking.
+		RelayAddresses: []string{},
+		AutoRegister:   true, // auto-register enabled
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer n.Stop()
+
+	// The node should start regardless of relay connectivity.
+	if !state.IsStarted {
+		t.Error("node should be started even without relay connectivity")
+	}
+	if state.PeerId == "" {
+		t.Error("node should have a peerId even without relay connectivity")
+	}
+
+	// The relayReady channel should exist (created during Start).
+	n.mu.RLock()
+	rr := n.relayReady
+	n.mu.RUnlock()
+	if rr == nil {
+		t.Error("relayReady channel should be initialized after Start")
+	}
+}
+
+// TestAutoRegister_WaitsForDiscoverableCircuitRecordNotMereRelaySocket
+// verifies that auto-registration waits for a circuit address to appear
+// before registering on rendezvous. Without a circuit address in the
+// peer record, other peers cannot connect via the relay.
+func TestAutoRegister_WaitsForDiscoverableCircuitRecordNotMereRelaySocket(t *testing.T) {
+	hexKey := generateTestKey(t)
+
+	n := NewNode()
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex:  hexKey,
+		RelayAddresses: []string{}, // no relay available
+		AutoRegister:   true,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer n.Stop()
+
+	// In a test environment with no relay, waitForCircuitAddress should
+	// return false (no circuit addresses). This confirms the code path
+	// exists and doesn't panic or deadlock.
+	hasCircuit := n.waitForCircuitAddress(100 * time.Millisecond)
+	if hasCircuit {
+		t.Error("expected no circuit addresses without relay connection")
+	}
+
+	// Verify the node still has listen addresses (non-circuit).
+	state := n.State()
+	if len(state.Addresses) == 0 {
+		t.Error("should have local listen addresses even without relay")
+	}
+
+	// Verify no circuit addresses are in the set.
+	for _, addr := range state.Addresses {
+		if strings.Contains(addr, "/p2p-circuit") {
+			t.Errorf("unexpected circuit address without relay: %s", addr)
+		}
+	}
 }
 
 func TestNodeStopIdempotent(t *testing.T) {

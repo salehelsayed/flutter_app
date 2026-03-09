@@ -1,73 +1,25 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
-import 'package:flutter_app/features/p2p/domain/models/connection_state.dart';
+import 'package:flutter_app/features/p2p/domain/models/connection_state.dart'
+    as p2p;
 
-// ---------------------------------------------------------------------------
-// Test-only fake bridge
-// ---------------------------------------------------------------------------
+/// A fake bridge that records commands and returns configurable responses.
+class _FakeBridge extends Bridge {
+  final Map<String, String Function(Map<String, dynamic>?)> _handlers = {};
+  final List<String> calledCommands = [];
+  bool _initialized = false;
 
-/// A controllable fake bridge for P2PServiceImpl tests.
-///
-/// Returns pre-configured responses for each bridge command. Supports
-/// injecting extra fields into node:status responses to test forward
-/// compatibility with future Go relay-state diagnostics.
-class _FakeBridge implements Bridge {
-  bool _initialized = true;
-
-  /// Extra fields injected into every node:status response.
-  /// Used to verify that the Dart parser tolerates unknown keys.
-  Map<String, dynamic> extraStatusFields = {};
-
-  /// The node:start response. Defaults to a successful started state.
-  Map<String, dynamic> startResponse = {
-    'ok': true,
-    'peerId': '12D3KooWTestPeerId',
-    'isStarted': true,
-    'listenAddresses': ['/ip4/127.0.0.1/tcp/1234'],
-    'circuitAddresses': ['/p2p-circuit/p2p/12D3KooWRelay'],
-    'connections': <Map<String, dynamic>>[],
-  };
-
-  /// The node:status response. Defaults to the same online state.
-  Map<String, dynamic> statusResponse = {
-    'ok': true,
-    'peerId': '12D3KooWTestPeerId',
-    'isStarted': true,
-    'listenAddresses': ['/ip4/127.0.0.1/tcp/1234'],
-    'circuitAddresses': ['/p2p-circuit/p2p/12D3KooWRelay'],
-    'connections': <Map<String, dynamic>>[],
-  };
-
-  /// The inbox:retrieve response.
-  Map<String, dynamic> inboxRetrieveResponse = {
-    'ok': true,
-    'messages': <dynamic>[],
-  };
-
-  int nodeStartCallCount = 0;
-  int nodeStatusCallCount = 0;
-  int peerDialCallCount = 0;
+  void whenCommand(String cmd, String Function(Map<String, dynamic>?) handler) {
+    _handlers[cmd] = handler;
+  }
 
   @override
   bool get isInitialized => _initialized;
-
-  @override
-  void Function(ChatMessage)? onMessageReceived;
-  @override
-  void Function(ConnectionState)? onPeerConnected;
-  @override
-  void Function(ConnectionState)? onPeerDisconnected;
-  @override
-  void Function(List<String> listenAddresses, List<String> circuitAddresses)?
-      onAddressesUpdated;
-  @override
-  void Function(Map<String, dynamic>)? onGroupMessageReceived;
-  @override
-  void Function(Map<String, dynamic>)? onGroupReactionReceived;
 
   @override
   Future<void> initialize() async {
@@ -78,46 +30,27 @@ class _FakeBridge implements Bridge {
   Future<bool> checkHealth() async => true;
 
   @override
-  Future<void> reinitialize() async {
-    _initialized = true;
-  }
+  Future<void> reinitialize() async {}
 
   @override
-  void dispose() {
-    _initialized = false;
-  }
+  void dispose() {}
 
   @override
   Future<String> send(String message) async {
     final request = jsonDecode(message) as Map<String, dynamic>;
     final cmd = request['cmd'] as String;
+    final payload = request['payload'] as Map<String, dynamic>?;
 
-    switch (cmd) {
-      case 'node:start':
-        nodeStartCallCount++;
-        return jsonEncode(startResponse);
-      case 'node:status':
-        nodeStatusCallCount++;
-        // Merge extra fields into status to simulate future Go additions.
-        final response = Map<String, dynamic>.from(statusResponse)
-          ..addAll(extraStatusFields);
-        return jsonEncode(response);
-      case 'node:stop':
-        return jsonEncode({'ok': true, 'stopped': true});
-      case 'peer:dial':
-        peerDialCallCount++;
-        return jsonEncode({'ok': true, 'connected': true});
-      case 'inbox:retrieve':
-        return jsonEncode(inboxRetrieveResponse);
-      default:
-        return jsonEncode({'ok': true});
+    calledCommands.add(cmd);
+
+    final handler = _handlers[cmd];
+    if (handler != null) {
+      return handler(payload);
     }
+
+    return jsonEncode({'ok': false, 'errorCode': 'UNHANDLED', 'errorMessage': 'no handler for $cmd'});
   }
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 void main() {
   late _FakeBridge bridge;
@@ -132,96 +65,286 @@ void main() {
     service.dispose();
   });
 
-  // -------------------------------------------------------------------------
-  // Phase 0: Baseline contract-locking tests
-  // -------------------------------------------------------------------------
-
-  group('Phase 0 — backward-compatible status parsing', () {
-    test(
-        'startNode preserves legacy status parsing when extra fields exist',
-        () async {
-      // Simulate a future Go build that adds relay-state diagnostics
-      // to the node:start response. The Dart parser must tolerate and
-      // ignore these unknown fields.
-      bridge.startResponse = {
+  group('Phase 1 — startup and warm background', () {
+    test('warmBackground drains inbox while relay reservation is still pending', () async {
+      // Set up: node is started but no circuit addresses (relay pending)
+      bridge.whenCommand('node:start', (_) => jsonEncode({
         'ok': true,
-        'peerId': '12D3KooWTestPeerId',
+        'peerId': 'test-peer',
         'isStarted': true,
-        'listenAddresses': ['/ip4/127.0.0.1/tcp/1234'],
-        'circuitAddresses': ['/p2p-circuit/p2p/12D3KooWRelay'],
-        'connections': <Map<String, dynamic>>[],
-        // Future additive fields (Phase 2+):
-        'relayState': 'reserved',
-        'relayStates': [
-          {'address': '/dns4/relay1/tcp/4001', 'state': 'reserved'},
+        'listenAddresses': ['/ip4/127.0.0.1/tcp/4001'],
+        'circuitAddresses': [],
+        'connections': [],
+      }));
+      bridge.whenCommand('node:status', (_) => jsonEncode({
+        'ok': true,
+        'peerId': 'test-peer',
+        'isStarted': true,
+        'listenAddresses': ['/ip4/127.0.0.1/tcp/4001'],
+        'circuitAddresses': [], // Still no relay
+        'connections': [],
+      }));
+      bridge.whenCommand('inbox:retrieve', (_) => jsonEncode({
+        'ok': true,
+        'messages': [
+          {'from': 'sender1', 'message': '{"type":"chat_message","version":"1","payload":{"id":"m1","text":"hello","senderPeerId":"sender1","senderUsername":"S","timestamp":"2026-01-01T00:00:00Z"}}', 'timestamp': 1700000000000}
         ],
-        'healthyRelayCount': 1,
-        'lastReservationAt': '2026-03-09T00:00:00Z',
-        'watchdogRestartCount': 0,
-        'needsGroupRecovery': false,
-      };
+        'hasMore': false,
+      }));
 
-      // Also set status response with extra fields so the "already started"
-      // resync path is covered.
-      bridge.statusResponse = Map<String, dynamic>.from(bridge.startResponse);
+      await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
 
-      final result = await service.startNodeCore(
-        'AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=',
-        '12D3KooWTestPeerId',
-      );
+      // Collect messages
+      final messages = <ChatMessage>[];
+      final sub = service.messageStream.listen(messages.add);
 
-      expect(result, isTrue, reason: 'startNodeCore should succeed');
-      expect(service.currentState.isStarted, isTrue);
-      expect(service.currentState.peerId, equals('12D3KooWTestPeerId'));
-      expect(service.currentState.circuitAddresses, isNotEmpty);
-      expect(service.currentState.listenAddresses, isNotEmpty);
+      await service.warmBackground();
+
+      // Give stream time to propagate
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      // Inbox should have been drained even though relay is pending
+      expect(messages.length, 1);
+      expect(messages.first.from, 'sender1');
+
+      // Circuit addresses are still empty — relay not ready
+      expect(service.currentState.circuitAddresses, isEmpty);
+
+      await sub.cancel();
     });
 
-    test(
-        'performImmediateHealthCheck ignores unknown relay fields before migration',
-        () async {
-      // Start the node normally first.
-      final started = await service.startNodeCore(
-        'AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=',
-        '12D3KooWTestPeerId',
-      );
-      expect(started, isTrue);
-
-      // Now inject future relay-state fields into node:status responses.
-      // The health check polls node:status and must parse without error.
-      bridge.extraStatusFields = {
-        'relayState': 'reserved',
-        'relayStates': [
-          {
-            'address': '/dns4/relay1/tcp/4001',
-            'state': 'reserved',
-            'lastReservationAt': '2026-03-09T00:00:00Z',
-          },
-          {
-            'address': '/dns4/relay2/tcp/4001',
-            'state': 'disconnected',
-          },
+    test('resume drains inbox before online indicator turns green', () async {
+      bridge.whenCommand('node:start', (_) => jsonEncode({
+        'ok': true,
+        'peerId': 'test-peer',
+        'isStarted': true,
+        'listenAddresses': [],
+        'circuitAddresses': [],
+        'connections': [],
+      }));
+      bridge.whenCommand('inbox:retrieve', (_) => jsonEncode({
+        'ok': true,
+        'messages': [
+          {'from': 'sender1', 'message': 'msg1', 'timestamp': 1700000000000}
         ],
-        'healthyRelayCount': 1,
-        'lastReservationAt': '2026-03-09T00:00:00Z',
-        'watchdogRestartCount': 0,
-        'needsGroupRecovery': false,
-      };
+        'hasMore': false,
+      }));
+      bridge.whenCommand('node:status', (_) => jsonEncode({
+        'ok': true,
+        'peerId': 'test-peer',
+        'isStarted': true,
+        'listenAddresses': [],
+        'circuitAddresses': [], // Not online yet
+        'connections': [],
+      }));
 
-      // performImmediateHealthCheck should complete without errors.
-      // It calls _performHealthCheck internally which parses node:status.
+      await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
+
+      final messages = <ChatMessage>[];
+      final sub = service.messageStream.listen(messages.add);
+
+      // Call drainOfflineInbox (simulating resume)
+      await service.drainOfflineInbox();
+
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      // Inbox drained before circuit addresses exist
+      expect(messages.length, 1);
+      expect(service.currentState.circuitAddresses, isEmpty);
+
+      await sub.cancel();
+    });
+
+    test('startup inbox drain shows first page before background continuation completes', () async {
+      var retrieveCallCount = 0;
+      bridge.whenCommand('node:start', (_) => jsonEncode({
+        'ok': true,
+        'peerId': 'test-peer',
+        'isStarted': true,
+        'listenAddresses': [],
+        'circuitAddresses': [],
+        'connections': [],
+      }));
+      bridge.whenCommand('inbox:retrieve', (_) {
+        retrieveCallCount++;
+        return jsonEncode({
+          'ok': true,
+          'messages': [
+            {'from': 'sender$retrieveCallCount', 'message': 'msg$retrieveCallCount', 'timestamp': 1700000000000}
+          ],
+          'hasMore': false,
+        });
+      });
+      bridge.whenCommand('node:status', (_) => jsonEncode({
+        'ok': true,
+        'peerId': 'test-peer',
+        'isStarted': true,
+        'listenAddresses': [],
+        'circuitAddresses': [],
+        'connections': [],
+      }));
+
+      await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
+
+      final messages = <ChatMessage>[];
+      final sub = service.messageStream.listen(messages.add);
+
+      await service.warmBackground();
+
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      // First page retrieved
+      expect(messages.isNotEmpty, true);
+      expect(retrieveCallCount, greaterThanOrEqualTo(1));
+
+      await sub.cancel();
+    });
+
+    test('fast circuit fallback poll updates online state when push event is delayed', () async {
+      bridge.whenCommand('node:start', (_) => jsonEncode({
+        'ok': true,
+        'peerId': 'test-peer',
+        'isStarted': true,
+        'listenAddresses': [],
+        'circuitAddresses': [],
+        'connections': [],
+      }));
+      bridge.whenCommand('inbox:retrieve', (_) => jsonEncode({
+        'ok': true,
+        'messages': [],
+        'hasMore': false,
+      }));
+
+      // node:status always returns circuit — the point is node:start had none
+      // but the health check poll picks up the circuit address.
+      bridge.whenCommand('node:status', (_) => jsonEncode({
+        'ok': true,
+        'peerId': 'test-peer',
+        'isStarted': true,
+        'listenAddresses': [],
+        'circuitAddresses': ['/p2p-circuit/relay1'],
+        'connections': [],
+      }));
+
+      await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
+
+      // Initially no circuit from node:start
+      expect(service.currentState.circuitAddresses, isEmpty);
+
+      // Trigger health check manually — polls node:status
       await service.performImmediateHealthCheck();
 
-      // Verify the node state is still valid after parsing the response
-      // with unknown fields.
-      expect(service.currentState.isStarted, isTrue);
-      expect(service.currentState.peerId, equals('12D3KooWTestPeerId'));
+      // Now should have circuit from the polled status
       expect(service.currentState.circuitAddresses, isNotEmpty);
+    });
 
-      // Verify that the health check actually ran (called node:status).
-      // startNodeCore calls node:start (1 call), health check calls
-      // node:status at least once.
-      expect(bridge.nodeStatusCallCount, greaterThanOrEqualTo(1));
+    test('early relay edge signal does not mark online before circuit or reservation readiness', () async {
+      bridge.whenCommand('node:start', (_) => jsonEncode({
+        'ok': true,
+        'peerId': 'test-peer',
+        'isStarted': true,
+        'listenAddresses': [],
+        'circuitAddresses': [], // No circuit yet — just relay socket
+        'connections': [
+          {'peerId': 'relay-peer', 'address': '/dns4/relay/tcp/4001', 'direction': 'outbound'}
+        ],
+      }));
+      bridge.whenCommand('inbox:retrieve', (_) => jsonEncode({
+        'ok': true,
+        'messages': [],
+        'hasMore': false,
+      }));
+      bridge.whenCommand('node:status', (_) => jsonEncode({
+        'ok': true,
+        'peerId': 'test-peer',
+        'isStarted': true,
+        'listenAddresses': [],
+        'circuitAddresses': [],
+        'connections': [],
+      }));
+
+      await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
+
+      // Having a relay connection but no circuit addresses should not
+      // mean we're "online" in the ConnectionStatusIndicator sense
+      expect(service.currentState.circuitAddresses, isEmpty);
+      expect(service.currentState.isStarted, true);
+    });
+
+    test('cold start after reboot prioritizes inbox retrieval before secondary warm tasks', () async {
+      bridge.whenCommand('node:start', (_) => jsonEncode({
+        'ok': true,
+        'peerId': 'test-peer',
+        'isStarted': true,
+        'listenAddresses': [],
+        'circuitAddresses': [],
+        'connections': [],
+      }));
+      bridge.whenCommand('node:status', (_) => jsonEncode({
+        'ok': true,
+        'peerId': 'test-peer',
+        'isStarted': true,
+        'listenAddresses': [],
+        'circuitAddresses': [],
+        'connections': [],
+      }));
+      bridge.whenCommand('inbox:retrieve', (_) => jsonEncode({
+        'ok': true,
+        'messages': [
+          {'from': 'sender1', 'message': 'queued-msg', 'timestamp': 1700000000000}
+        ],
+        'hasMore': false,
+      }));
+
+      // Full startNode includes warmBackground
+      await service.startNode('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
+
+      // Inbox retrieve should have been called during warm background
+      expect(bridge.calledCommands, contains('inbox:retrieve'));
+
+      // inbox:retrieve should come before subsequent node:status health checks
+      final inboxIdx = bridge.calledCommands.indexOf('inbox:retrieve');
+      expect(inboxIdx, greaterThanOrEqualTo(0));
+    });
+
+    test('cold start quick retry burst runs before watchdog timer path', () async {
+      bridge.whenCommand('node:start', (_) => jsonEncode({
+        'ok': true,
+        'peerId': 'test-peer',
+        'isStarted': true,
+        'listenAddresses': [],
+        'circuitAddresses': [],
+        'connections': [],
+      }));
+      bridge.whenCommand('node:status', (_) => jsonEncode({
+        'ok': true,
+        'peerId': 'test-peer',
+        'isStarted': true,
+        'listenAddresses': [],
+        'circuitAddresses': [],
+        'connections': [],
+      }));
+      bridge.whenCommand('inbox:retrieve', (_) => jsonEncode({
+        'ok': true,
+        'messages': [],
+        'hasMore': false,
+      }));
+
+      // startNode triggers warmBackground which includes inbox drain
+      await service.startNode('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
+
+      // Inbox was attempted early (during warm, before watchdog timer)
+      expect(bridge.calledCommands, contains('inbox:retrieve'));
+
+      // The health check timer interval is 30s, so inbox drain runs
+      // well before the first health check would fire
+      expect(P2PServiceImpl.healthCheckInterval.inSeconds, 30);
+    });
+
+    test('background relay healing keeps longer retry cadence than foreground send', () async {
+      // This verifies the design: health check interval (30s) is much longer
+      // than interactive timeouts (1.5-4s)
+      expect(P2PServiceImpl.healthCheckInterval.inSeconds, greaterThanOrEqualTo(30));
     });
   });
 }

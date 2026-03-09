@@ -96,7 +96,7 @@ class GoBridge: NSObject {
         case "inboxStore":
             runOnBackground({ BridgeInboxStore(args ?? "") }, result: result)
         case "inboxRetrieve":
-            runOnBackground({ BridgeInboxRetrieve() }, result: result)
+            runOnBackground({ BridgeInboxRetrieveWithParams(args ?? "") }, result: result)
         case "inboxRegisterToken":
             runOnBackground({ BridgeInboxRegisterToken(args ?? "") }, result: result)
 

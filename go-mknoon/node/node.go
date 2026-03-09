@@ -446,6 +446,45 @@ func (n *Node) ReconnectRelays() error {
 	return nil
 }
 
+// DialPeerWithTimeout connects to a peer with an explicit timeout override.
+// If timeoutMs <= 0, the default PeerDialTimeout is used.
+func (n *Node) DialPeerWithTimeout(peerIdStr string, addresses []string, timeoutMs int) error {
+	n.mu.RLock()
+	h := n.host
+	n.mu.RUnlock()
+
+	if h == nil {
+		return fmt.Errorf("node not started")
+	}
+
+	pid, err := peer.Decode(peerIdStr)
+	if err != nil {
+		return fmt.Errorf("invalid peer ID: %w", err)
+	}
+
+	var addrs []ma.Multiaddr
+	for _, a := range addresses {
+		maddr, err := ma.NewMultiaddr(a)
+		if err != nil {
+			log.Printf("[NODE] Skip invalid address %s: %v", a, err)
+			continue
+		}
+		addrs = append(addrs, maddr)
+	}
+
+	timeout := PeerDialTimeout
+	if timeoutMs > 0 {
+		timeout = time.Duration(timeoutMs) * time.Millisecond
+	}
+
+	ai := peer.AddrInfo{ID: pid, Addrs: addrs}
+
+	ctx, cancel := context.WithTimeout(n.ctx, timeout)
+	defer cancel()
+
+	return h.Connect(ctx, ai)
+}
+
 // DialPeer connects to a peer, optionally with known addresses.
 func (n *Node) DialPeer(peerIdStr string, addresses []string) error {
 	n.mu.RLock()
@@ -604,14 +643,76 @@ func (n *Node) SendMessage(peerIdStr string, message string, timeoutMs int) (str
 	return string(replyBytes), true, nil
 }
 
+// SendMessageWithTimeout sends a message with explicit timeout enforcement
+// and stream deadline management. On error after NewStream succeeds, the
+// stream is Reset() instead of Close() to signal the transport that the
+// connection may be unhealthy.
+func (n *Node) SendMessageWithTimeout(peerIdStr string, message string, timeoutMs int) (string, error) {
+	n.mu.RLock()
+	h := n.host
+	n.mu.RUnlock()
+
+	if h == nil {
+		return "", fmt.Errorf("node not started")
+	}
+
+	pid, err := peer.Decode(peerIdStr)
+	if err != nil {
+		return "", fmt.Errorf("invalid peer ID: %w", err)
+	}
+
+	timeout := SendTimeout
+	if timeoutMs > 0 {
+		timeout = time.Duration(timeoutMs) * time.Millisecond
+	}
+
+	ctx, cancel := context.WithTimeout(n.ctx, timeout)
+	defer cancel()
+
+	s, err := h.NewStream(ctx, pid, ChatProtocol)
+	if err != nil {
+		return "", fmt.Errorf("open stream: %w", err)
+	}
+
+	// Apply stream-level deadline so OS-level writes/reads don't hang.
+	setStreamDeadline(s, timeout)
+
+	// Write message using 4-byte BE framing.
+	if err := writeFrame(s, []byte(message)); err != nil {
+		s.Reset() // signal unhealthy transport
+		return "", fmt.Errorf("write message: %w", err)
+	}
+
+	// Read reply.
+	replyBytes, err := readFrame(s)
+	if err != nil {
+		s.Reset()
+		return "", fmt.Errorf("read reply: %w", err)
+	}
+
+	s.Close()
+	return string(replyBytes), nil
+}
+
+// setStreamDeadline applies a deadline to a stream for both reads and writes.
+func setStreamDeadline(s network.Stream, d time.Duration) {
+	s.SetDeadline(time.Now().Add(d))
+}
+
 // handleIncomingMessage handles incoming chat protocol streams.
+// Applies an inbound read deadline to prevent slow/malicious peers
+// from holding a goroutine open indefinitely.
 func (n *Node) handleIncomingMessage(s network.Stream) {
 	defer s.Close()
 
 	remotePeer := s.Conn().RemotePeer().String()
 
+	// Apply bounded read deadline on inbound streams.
+	s.SetReadDeadline(time.Now().Add(InboundReadDeadline))
+
 	msgBytes, err := readFrame(s)
 	if err != nil {
+		s.Reset() // reset rather than graceful close on read failure
 		log.Printf("[NODE] Read error from %s: %v", remotePeer[:min(20, len(remotePeer))], err)
 		return
 	}

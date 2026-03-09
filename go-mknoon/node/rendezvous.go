@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/peerstore"
@@ -82,6 +83,63 @@ func (n *Node) RendezvousRegister(namespace string, serverAddresses []string) er
 
 	log.Printf("[RENDEZVOUS] Registered ns=%s", namespace)
 	return nil
+}
+
+// RendezvousDiscoverWithTimeout discovers peers on a namespace using a
+// caller-supplied timeout override. If timeoutMs <= 0, the default
+// DiscoverTimeout is used.
+func (n *Node) RendezvousDiscoverWithTimeout(namespace string, serverAddresses []string, timeoutMs int) ([]peer.AddrInfo, error) {
+	n.mu.RLock()
+	h := n.host
+	n.mu.RUnlock()
+
+	if h == nil {
+		return nil, fmt.Errorf("node not started")
+	}
+
+	relayPeer, err := n.getRelayPeerID(serverAddresses)
+	if err != nil {
+		return nil, err
+	}
+
+	timeout := DiscoverTimeout
+	if timeoutMs > 0 {
+		timeout = time.Duration(timeoutMs) * time.Millisecond
+	}
+
+	ctx, cancel := context.WithTimeout(n.ctx, timeout)
+	defer cancel()
+
+	s, err := h.NewStream(ctx, relayPeer, RendezvousProtocol)
+	if err != nil {
+		return nil, fmt.Errorf("open rendezvous stream: %w", err)
+	}
+	defer s.Close()
+
+	// Build Discover message
+	discBytes := marshalDiscover(namespace, 64)
+	msgBytes := marshalRzMessage(3, discBytes) // MessageType_DISCOVER = 3
+
+	writer := msgio.NewVarintWriter(s)
+	if err := writer.WriteMsg(msgBytes); err != nil {
+		return nil, fmt.Errorf("write discover: %w", err)
+	}
+
+	reader := msgio.NewVarintReaderSize(s, 1<<20)
+	respBytes, err := reader.ReadMsg()
+	if err != nil {
+		return nil, fmt.Errorf("read discover response: %w", err)
+	}
+	defer reader.ReleaseMsg(respBytes)
+
+	// Parse discover response
+	peers, err := parseDiscoverResponse(respBytes)
+	if err != nil {
+		return nil, fmt.Errorf("parse discover response: %w", err)
+	}
+
+	log.Printf("[RENDEZVOUS] Discovered %d peers on ns=%s (timeout=%v)", len(peers), namespace, timeout)
+	return peers, nil
 }
 
 // RendezvousDiscover discovers peers on a namespace.

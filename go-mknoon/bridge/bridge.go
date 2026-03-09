@@ -466,7 +466,8 @@ func RendezvousRegister(paramsJSON string) (result string) {
 	}
 
 	var params struct {
-		Namespace string `json:"namespace"`
+		Namespace       string   `json:"namespace"`
+		ServerAddresses []string `json:"serverAddresses"`
 	}
 	if paramsJSON != "" {
 		if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
@@ -479,7 +480,7 @@ func RendezvousRegister(paramsJSON string) (result string) {
 		ns = n.Namespace()
 	}
 
-	if err := n.RendezvousRegister(ns, nil); err != nil {
+	if err := n.RendezvousRegister(ns, params.ServerAddresses); err != nil {
 		return errJSON("RENDEZVOUS_ERROR", err.Error())
 	}
 
@@ -508,6 +509,7 @@ func RendezvousDiscover(paramsJSON string) (result string) {
 
 	var params struct {
 		Namespace string `json:"namespace"`
+		TimeoutMs int    `json:"timeoutMs"`
 	}
 	if paramsJSON != "" {
 		if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
@@ -520,7 +522,7 @@ func RendezvousDiscover(paramsJSON string) (result string) {
 		ns = n.Namespace()
 	}
 
-	peers, err := n.RendezvousDiscover(ns, nil)
+	peers, err := n.RendezvousDiscoverWithTimeout(ns, nil, params.TimeoutMs)
 	if err != nil {
 		return errJSON("RENDEZVOUS_ERROR", err.Error())
 	}
@@ -645,6 +647,7 @@ func DialPeer(paramsJSON string) (result string) {
 	var params struct {
 		PeerId    string   `json:"peerId"`
 		Addresses []string `json:"addresses"`
+		TimeoutMs int      `json:"timeoutMs"`
 	}
 	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
 		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
@@ -653,7 +656,7 @@ func DialPeer(paramsJSON string) (result string) {
 		return errJSON("INVALID_INPUT", "missing peerId")
 	}
 
-	if err := n.DialPeer(params.PeerId, params.Addresses); err != nil {
+	if err := n.DialPeerWithTimeout(params.PeerId, params.Addresses, params.TimeoutMs); err != nil {
 		return errJSON("DIAL_ERROR", err.Error())
 	}
 
@@ -816,6 +819,55 @@ func InboxRetrieve() (result string) {
 	return okJSON(map[string]interface{}{
 		"ok":       true,
 		"messages": msgList,
+	})
+}
+
+// InboxRetrieveWithParams retrieves pending messages with optional timeout and
+// pagination support.
+// Input JSON: { "timeoutMs": N } (optional; 0 uses default timeout)
+// Returns JSON: { "ok": true, "messages": [...], "hasMore": true/false }
+func InboxRetrieveWithParams(paramsJSON string) (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+		}
+	}()
+
+	nodeMu.Lock()
+	n := singletonNode
+	nodeMu.Unlock()
+
+	if n == nil {
+		return errJSON("NOT_INITIALIZED", "call Initialize first")
+	}
+
+	var params struct {
+		TimeoutMs int `json:"timeoutMs"`
+	}
+	if paramsJSON != "" {
+		if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
+			return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
+		}
+	}
+
+	res, err := n.InboxRetrieveWithTimeout(params.TimeoutMs)
+	if err != nil {
+		return errJSON("INBOX_ERROR", err.Error())
+	}
+
+	msgList := make([]map[string]interface{}, len(res.Messages))
+	for i, m := range res.Messages {
+		msgList[i] = map[string]interface{}{
+			"from":      m.From,
+			"message":   m.Message,
+			"timestamp": m.Timestamp,
+		}
+	}
+
+	return okJSON(map[string]interface{}{
+		"ok":       true,
+		"messages": msgList,
+		"hasMore":  res.HasMore,
 	})
 }
 

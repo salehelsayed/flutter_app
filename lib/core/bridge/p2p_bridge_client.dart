@@ -431,17 +431,26 @@ Future<Map<String, dynamic>> callP2PInboxRegisterToken(
 
 /// Calls the bridge to retrieve messages from the offline inbox.
 ///
-/// Returns: `{ "ok": true, "messages": [...] }` (stub — JS not yet implemented)
-Future<Map<String, dynamic>> callP2PInboxRetrieve(Bridge bridge) async {
+/// Parameters:
+///   - [bridge]: The Bridge instance
+///   - [timeoutMs]: Optional retrieval timeout in milliseconds
+///
+/// Returns: `{ "ok": true, "messages": [...], "hasMore": true/false }`
+Future<Map<String, dynamic>> callP2PInboxRetrieve(
+  Bridge bridge, {
+  int? timeoutMs,
+}) async {
   emitFlowEvent(
     layer: 'FL',
     event: 'P2P_INBOX_RETRIEVE_REQUEST',
-    details: {},
+    details: {if (timeoutMs != null) 'timeoutMs': timeoutMs},
   );
 
   final request = {
     'cmd': 'inbox:retrieve',
-    'payload': <String, dynamic>{},
+    'payload': <String, dynamic>{
+      if (timeoutMs != null) 'timeoutMs': timeoutMs,
+    },
   };
 
   final responseJson = await bridge.send(jsonEncode(request));
@@ -450,7 +459,7 @@ Future<Map<String, dynamic>> callP2PInboxRetrieve(Bridge bridge) async {
   emitFlowEvent(
     layer: 'FL',
     event: 'P2P_INBOX_RETRIEVE_RESPONSE',
-    details: {'ok': response['ok']},
+    details: {'ok': response['ok'], 'hasMore': response['hasMore']},
   );
 
   return response;
