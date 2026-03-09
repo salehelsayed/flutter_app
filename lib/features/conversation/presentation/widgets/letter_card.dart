@@ -353,8 +353,11 @@ class LetterCard extends StatelessWidget {
   static IconData _transportIcon(String transport) {
     switch (transport) {
       case 'wifi':
+      case 'local':
         return Icons.wifi;
       case 'relay':
+      case 'direct':
+      case 'reuse':
         return Icons.cell_tower;
       case 'inbox':
         return Icons.inbox;
