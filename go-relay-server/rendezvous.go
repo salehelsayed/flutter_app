@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"sync"
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/network"
@@ -28,15 +27,23 @@ type peerRegistration struct {
 	expiresAt        time.Time
 }
 
+// RendezvousStore wraps a RendezvousBackend and manages cleanup lifecycle.
 type RendezvousStore struct {
-	mu            sync.RWMutex
-	registrations map[string]map[string]*peerRegistration // namespace → peerId → registration
+	backend       RendezvousBackend
 	cancelCleanup context.CancelFunc
 }
 
+// NewRendezvousStore creates a store with an in-memory backend.
 func NewRendezvousStore() *RendezvousStore {
 	return &RendezvousStore{
-		registrations: make(map[string]map[string]*peerRegistration),
+		backend: newMemoryRendezvousBackend(),
+	}
+}
+
+// NewRendezvousStoreWithBackend creates a store with a custom backend.
+func NewRendezvousStoreWithBackend(backend RendezvousBackend) *RendezvousStore {
+	return &RendezvousStore{
+		backend: backend,
 	}
 }
 
@@ -64,81 +71,23 @@ func (s *RendezvousStore) StopCleanup() {
 }
 
 func (s *RendezvousStore) cleanupExpired() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	now := time.Now()
-	for ns, peers := range s.registrations {
-		for pid, reg := range peers {
-			if reg.expiresAt.Before(now) {
-				delete(peers, pid)
-				rendezvousExpiredCounter.Inc()
-				log.Printf("[RENDEZVOUS] Expired registration: %s / %s", ns, pid[:20])
-			}
-		}
-		if len(peers) == 0 {
-			delete(s.registrations, ns)
-		}
-	}
+	s.backend.Cleanup()
 }
 
 func (s *RendezvousStore) Register(ns string, peerId string, signedPeerRecord []byte, ttl uint64) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if _, ok := s.registrations[ns]; !ok {
-		s.registrations[ns] = make(map[string]*peerRegistration)
-	}
-	s.registrations[ns][peerId] = &peerRegistration{
-		signedPeerRecord: signedPeerRecord,
-		expiresAt:        time.Now().Add(time.Duration(ttl) * time.Second),
-	}
+	s.backend.Register(ns, peerId, signedPeerRecord, ttl)
 }
 
 func (s *RendezvousStore) Unregister(ns string, peerId string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if peers, ok := s.registrations[ns]; ok {
-		delete(peers, peerId)
-		if len(peers) == 0 {
-			delete(s.registrations, ns)
-		}
-	}
+	s.backend.Unregister(ns, peerId)
 }
 
 func (s *RendezvousStore) Discover(ns string, requestingPeer string, limit uint64) []Registration {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	var results []Registration
-	peers, ok := s.registrations[ns]
-	if !ok {
-		return results
-	}
-
-	now := time.Now()
-	var count uint64
-	for pid, reg := range peers {
-		if count >= limit {
-			break
-		}
-		if reg.expiresAt.After(now) && pid != requestingPeer {
-			results = append(results, Registration{
-				Ns:               ns,
-				SignedPeerRecord: reg.signedPeerRecord,
-			})
-			count++
-		}
-	}
-	return results
+	return s.backend.Discover(ns, requestingPeer, limit)
 }
 
 func (s *RendezvousStore) Stats() (namespaces, totalPeers int) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	namespaces = len(s.registrations)
-	for _, peers := range s.registrations {
-		totalPeers += len(peers)
-	}
-	return
+	return s.backend.Stats()
 }
 
 // --- Stream handler ---
