@@ -98,6 +98,11 @@ class InMemoryGroupMessageRepository
   }
 
   @override
+  Future<bool> existsByMessageId(String messageId) async {
+    return _messages.containsKey(messageId);
+  }
+
+  @override
   Future<int> deleteMessagesForGroup(String groupId) async {
     final toRemove =
         _messages.entries.where((e) => e.value.groupId == groupId).toList();

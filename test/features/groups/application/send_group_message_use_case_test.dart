@@ -568,6 +568,108 @@ void main() {
       expect(message, isNull);
     });
 
+    test('topicPeers zero does not fail group send when durable inbox store succeeds',
+        () async {
+      // When the Go pubsub topic has zero peers, publish still returns ok:true
+      // because the durable inbox store is the fallback path. The send should
+      // succeed as long as the inbox store completes successfully.
+      bridge.responses['group:publish'] = {
+        'ok': true,
+        'messageId': 'msg-zero-peers',
+        'topicPeers': 0,
+      };
+
+      final (result, message) = await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        text: 'No peers online',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        senderUsername: 'Alice',
+      );
+
+      expect(result, SendGroupMessageResult.success);
+      expect(message, isNotNull);
+      expect(message!.text, 'No peers online');
+      // Both publish and inbox store should have been called
+      expect(bridge.commandLog, contains('group:publish'));
+      expect(bridge.commandLog, contains('group:inboxStore'));
+    });
+
+    test('announcement admin send keeps success semantics when live fanout is zero',
+        () async {
+      // Admin in an announcement group should still succeed even when
+      // no peers are online (zero live fanout), because the durable
+      // inbox store ensures offline readers will catch up.
+      final announcementGroup = GroupModel(
+        id: 'group-announce-zero',
+        name: 'Announces',
+        type: GroupType.announcement,
+        topicName: 'group-topic-announce-zero',
+        createdAt: DateTime.now().toUtc(),
+        createdBy: 'peer-1',
+        myRole: GroupRole.admin,
+      );
+      await groupRepo.saveGroup(announcementGroup);
+
+      bridge.responses['group:publish'] = {
+        'ok': true,
+        'messageId': 'msg-announce-zero',
+        'topicPeers': 0,
+      };
+
+      final (result, message) = await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-announce-zero',
+        text: 'Announcement to empty room',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        senderUsername: 'Alice',
+      );
+
+      expect(result, SendGroupMessageResult.success);
+      expect(message, isNotNull);
+    });
+
+    test('announcement non-admin remains blocked before any network send starts',
+        () async {
+      // Non-admin in an announcement group must be rejected before
+      // any bridge calls are made (no publish, no inbox store).
+      final announcementGroup = GroupModel(
+        id: 'group-announce-blocked',
+        name: 'Announces Blocked',
+        type: GroupType.announcement,
+        topicName: 'group-topic-announce-blocked',
+        createdAt: DateTime.now().toUtc(),
+        createdBy: 'peer-admin',
+        myRole: GroupRole.member,
+      );
+      await groupRepo.saveGroup(announcementGroup);
+
+      final (result, message) = await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-announce-blocked',
+        text: 'Trying to announce',
+        senderPeerId: 'peer-2',
+        senderPublicKey: 'pk-2',
+        senderPrivateKey: 'sk-2',
+        senderUsername: 'Bob',
+      );
+
+      expect(result, SendGroupMessageResult.unauthorized);
+      expect(message, isNull);
+      // No bridge calls should have been made at all
+      expect(bridge.commandLog, isEmpty);
+    });
+
     test('text-only message without media — no media in payload', () async {
       await sendGroupMessage(
         bridge: bridge,

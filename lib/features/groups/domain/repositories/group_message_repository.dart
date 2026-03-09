@@ -44,4 +44,7 @@ abstract class GroupMessageRepository {
   /// Returns true if a message with the same content already exists.
   Future<bool> existsByContent(
       String groupId, String senderPeerId, String text, DateTime timestamp);
+
+  /// Returns true if a message with the given ID already exists.
+  Future<bool> existsByMessageId(String messageId);
 }

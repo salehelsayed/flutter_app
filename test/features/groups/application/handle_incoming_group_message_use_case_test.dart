@@ -176,6 +176,96 @@ void main() {
   });
 
   // ---------------------------------------------------------------------------
+  // Phase 6: messageId-based dedupe tests
+  // ---------------------------------------------------------------------------
+  test('deduplicates by messageId when pubsub and group inbox deliver same message',
+      () async {
+    final ts = DateTime.now().toUtc().toIso8601String();
+    const sharedMessageId = 'msg-shared-123';
+
+    // First delivery (e.g. from pubsub).
+    final result1 = await handleIncomingGroupMessage(
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      groupId: 'group-1',
+      senderId: 'peer-sender',
+      senderUsername: 'Sender',
+      keyEpoch: 0,
+      text: 'Hello!',
+      timestamp: ts,
+      messageId: sharedMessageId,
+    );
+    expect(result1, isNotNull);
+    expect(result1!.id, sharedMessageId);
+
+    // Second delivery (e.g. from group inbox drain) with the same messageId.
+    final result2 = await handleIncomingGroupMessage(
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      groupId: 'group-1',
+      senderId: 'peer-sender',
+      senderUsername: 'Sender',
+      keyEpoch: 0,
+      text: 'Hello!',
+      timestamp: ts,
+      messageId: sharedMessageId,
+    );
+    expect(result2, isNull, reason: 'Duplicate by messageId should be skipped');
+    expect(msgRepo.count, 1, reason: 'Only one message should be saved');
+  });
+
+  test('duplicate group inbox replay does not resave media', () async {
+    final mediaRepo = InMemoryMediaAttachmentRepository();
+    final ts = DateTime.now().toUtc().toIso8601String();
+    const sharedMessageId = 'msg-media-dup';
+
+    final media = [
+      {
+        'id': 'blob-dup-test',
+        'mime': 'image/png',
+        'size': 1000,
+        'mediaType': 'image',
+        'downloadStatus': 'pending',
+        'createdAt': ts,
+      },
+    ];
+
+    // First delivery — message and media saved.
+    await handleIncomingGroupMessage(
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      groupId: 'group-1',
+      senderId: 'peer-sender',
+      senderUsername: 'Sender',
+      keyEpoch: 0,
+      text: 'With media',
+      timestamp: ts,
+      messageId: sharedMessageId,
+      media: media,
+      mediaAttachmentRepo: mediaRepo,
+    );
+    expect(msgRepo.count, 1);
+    expect(mediaRepo.count, 1);
+
+    // Second delivery — same messageId, should be deduplicated.
+    final result2 = await handleIncomingGroupMessage(
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      groupId: 'group-1',
+      senderId: 'peer-sender',
+      senderUsername: 'Sender',
+      keyEpoch: 0,
+      text: 'With media',
+      timestamp: ts,
+      messageId: sharedMessageId,
+      media: media,
+      mediaAttachmentRepo: mediaRepo,
+    );
+    expect(result2, isNull);
+    expect(mediaRepo.count, 1, reason: 'Media should not be saved again');
+  });
+
+  // ---------------------------------------------------------------------------
   // Media attachment tests
   // ---------------------------------------------------------------------------
   group('media attachments', () {

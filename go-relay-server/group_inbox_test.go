@@ -116,6 +116,83 @@ func TestGroupInboxStore_FailoverDoesNotDuplicateMessages(t *testing.T) {
 	}
 }
 
+// =============================================================================
+// Phase 6: Group Continuity — Exactly-Once Cursor Pagination
+// =============================================================================
+
+// TestGroupInboxStore_CursorPaginationExactOnceAcrossPages proves that
+// cursor-based pagination delivers every message exactly once, even when
+// paginating across multiple pages with varying page sizes.
+func TestGroupInboxStore_CursorPaginationExactOnceAcrossPages(t *testing.T) {
+	backend := newMemoryGroupInboxBackend(500, 7*24*time.Hour)
+	store := NewGroupInboxStoreWithBackend(backend)
+
+	// Store 25 messages.
+	for i := 0; i < 25; i++ {
+		store.Store("group-exact", "peer-1", fmt.Sprintf("msg-%03d", i))
+		time.Sleep(1 * time.Millisecond)
+	}
+
+	// Paginate with page size 7 (25 / 7 = 3 full pages + 1 partial).
+	var allMessages []groupInboxMessage
+	cursor := ""
+	pageCount := 0
+	for {
+		msgs, nextCursor := store.RetrieveWithCursor("group-exact", cursor, 7)
+		if len(msgs) == 0 {
+			break
+		}
+		allMessages = append(allMessages, msgs...)
+		pageCount++
+		if nextCursor == "" {
+			break
+		}
+		cursor = nextCursor
+	}
+
+	// Exactly 25 messages across all pages.
+	if len(allMessages) != 25 {
+		t.Fatalf("expected 25 messages total, got %d (across %d pages)", len(allMessages), pageCount)
+	}
+
+	// Verify order is FIFO and no duplicates.
+	seen := make(map[string]bool)
+	for i, m := range allMessages {
+		expected := fmt.Sprintf("msg-%03d", i)
+		if m.Message != expected {
+			t.Fatalf("message %d: expected %q, got %q", i, expected, m.Message)
+		}
+		if seen[m.ID] {
+			t.Fatalf("duplicate message ID detected at position %d: %q", i, m.ID)
+		}
+		seen[m.ID] = true
+	}
+
+	// Re-paginating from the beginning should return the same messages.
+	var secondPass []groupInboxMessage
+	cursor = ""
+	for {
+		msgs, nextCursor := store.RetrieveWithCursor("group-exact", cursor, 10)
+		if len(msgs) == 0 {
+			break
+		}
+		secondPass = append(secondPass, msgs...)
+		if nextCursor == "" {
+			break
+		}
+		cursor = nextCursor
+	}
+
+	if len(secondPass) != 25 {
+		t.Fatalf("second pass: expected 25 messages, got %d", len(secondPass))
+	}
+	for i, m := range secondPass {
+		if m.ID != allMessages[i].ID {
+			t.Fatalf("second pass message %d: ID mismatch %q vs %q", i, m.ID, allMessages[i].ID)
+		}
+	}
+}
+
 // TestGroupInboxStore_CursorPaginationStableAcrossInstances proves that
 // cursor-based pagination works across different store instances and
 // delivers messages in stable order without duplication or omission.
