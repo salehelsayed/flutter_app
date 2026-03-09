@@ -1,0 +1,529 @@
+package node
+
+import (
+	"fmt"
+	"log"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/libp2p/go-libp2p/core/peer"
+)
+
+// --- Per-Relay Session State Machine ---
+
+// RelayConnectionState represents the state of a single relay's reservation session.
+type RelayConnectionState string
+
+const (
+	RelayStateDisconnected RelayConnectionState = "disconnected"
+	RelayStateConnected    RelayConnectionState = "connected"
+	RelayStateReserving    RelayConnectionState = "reserving"
+	RelayStateReserved     RelayConnectionState = "reserved"
+	RelayStateDegraded     RelayConnectionState = "degraded"
+	RelayStateCooldown     RelayConnectionState = "cooldown"
+)
+
+// RelaySessionState represents one relay peer's session with reservation tracking.
+type RelaySessionState struct {
+	PeerID         peer.ID              `json:"peerId"`
+	State          RelayConnectionState `json:"state"`
+	LastReservedAt time.Time            `json:"lastReservedAt,omitempty"`
+	LastErrorAt    time.Time            `json:"lastErrorAt,omitempty"`
+	LastError      string               `json:"lastError,omitempty"`
+	FailCount      int                  `json:"failCount"`
+}
+
+// --- Aggregate Relay Session State ---
+
+// AggregateRelayState summarizes the overall relay session health.
+type AggregateRelayState string
+
+const (
+	AggregateRelayStarting         AggregateRelayState = "starting"
+	AggregateRelayOnline           AggregateRelayState = "online"
+	AggregateRelayRecovering       AggregateRelayState = "recovering"
+	AggregateRelayWatchdogRestart  AggregateRelayState = "watchdog_restart"
+)
+
+// RelaySessionManager tracks per-relay reservation state and provides
+// aggregate health without requiring a full host restart.
+type RelaySessionManager struct {
+	mu sync.RWMutex
+
+	// Per-relay session state, keyed by peer ID string.
+	sessions map[string]*RelaySessionState
+
+	// Aggregate state computed from individual sessions.
+	aggregateState AggregateRelayState
+
+	// Singleflight gate for recovery — only one recovery runs at a time.
+	recovering   bool
+	recoveryCh   chan *RecoveryResult
+	recoveryOnce sync.Once
+
+	// Counts for diagnostics.
+	watchdogRestartCount int
+}
+
+// RecoveryResult carries the structured result of a relay session refresh.
+type RecoveryResult struct {
+	RecoveryMode    string `json:"recoveryMode"`    // "in_place" or "watchdog_restart"
+	Success         bool   `json:"success"`
+	ErrorCode       string `json:"errorCode,omitempty"`
+	Reason          string `json:"reason,omitempty"`
+	RelayState      string `json:"relayState"`
+	HealthyRelayCount int  `json:"healthyRelayCount"`
+}
+
+// NewRelaySessionManager creates a new relay session manager.
+func NewRelaySessionManager() *RelaySessionManager {
+	return &RelaySessionManager{
+		sessions:       make(map[string]*RelaySessionState),
+		aggregateState: AggregateRelayStarting,
+	}
+}
+
+// GetSession returns the session state for a relay peer, or nil if not tracked.
+func (m *RelaySessionManager) GetSession(peerID peer.ID) *RelaySessionState {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	s := m.sessions[peerID.String()]
+	if s == nil {
+		return nil
+	}
+	// Return a copy.
+	copy := *s
+	return &copy
+}
+
+// AggregateState returns the current aggregate relay health state.
+func (m *RelaySessionManager) AggregateState() AggregateRelayState {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.aggregateState
+}
+
+// HealthyRelayCount returns how many relays are in the "reserved" state.
+func (m *RelaySessionManager) HealthyRelayCount() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	count := 0
+	for _, s := range m.sessions {
+		if s.State == RelayStateReserved {
+			count++
+		}
+	}
+	return count
+}
+
+// AllSessions returns a copy of all relay session states.
+func (m *RelaySessionManager) AllSessions() []RelaySessionState {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]RelaySessionState, 0, len(m.sessions))
+	for _, s := range m.sessions {
+		out = append(out, *s)
+	}
+	return out
+}
+
+// WatchdogRestartCount returns how many watchdog restarts have been performed.
+func (m *RelaySessionManager) WatchdogRestartCount() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.watchdogRestartCount
+}
+
+// --- State Transitions (called from autorelay metrics tracer hooks) ---
+
+// OnReservationOpened transitions a relay to the "reserved" state.
+func (m *RelaySessionManager) OnReservationOpened(peerID peer.ID) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	pidStr := peerID.String()
+	s, ok := m.sessions[pidStr]
+	if !ok {
+		s = &RelaySessionState{PeerID: peerID, State: RelayStateDisconnected}
+		m.sessions[pidStr] = s
+	}
+
+	s.State = RelayStateReserved
+	s.LastReservedAt = time.Now()
+	s.FailCount = 0
+	s.LastError = ""
+
+	log.Printf("[RELAY_SESSION] Reservation opened for %s", pidStr[:min(20, len(pidStr))])
+	m.recomputeAggregateLocked()
+}
+
+// OnReservationEnded transitions a relay to "degraded" when the reservation ends.
+func (m *RelaySessionManager) OnReservationEnded(peerID peer.ID) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	pidStr := peerID.String()
+	s, ok := m.sessions[pidStr]
+	if !ok {
+		s = &RelaySessionState{PeerID: peerID, State: RelayStateDisconnected}
+		m.sessions[pidStr] = s
+	}
+
+	s.State = RelayStateDegraded
+	s.LastErrorAt = time.Now()
+
+	log.Printf("[RELAY_SESSION] Reservation ended for %s", pidStr[:min(20, len(pidStr))])
+	m.recomputeAggregateLocked()
+}
+
+// OnRequestFailed records a reservation request failure without triggering host restart.
+func (m *RelaySessionManager) OnRequestFailed(peerID peer.ID, err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	pidStr := peerID.String()
+	s, ok := m.sessions[pidStr]
+	if !ok {
+		s = &RelaySessionState{PeerID: peerID, State: RelayStateDisconnected}
+		m.sessions[pidStr] = s
+	}
+
+	s.FailCount++
+	s.LastErrorAt = time.Now()
+	if err != nil {
+		s.LastError = err.Error()
+	}
+
+	// Do NOT set state to degraded on a single request failure —
+	// AutoRelay will retry with its own backoff. Only move to degraded
+	// if we were previously reserved and the reservation actually ended.
+	if s.State == RelayStateReserving {
+		s.State = RelayStateCooldown
+	}
+
+	log.Printf("[RELAY_SESSION] Request failed for %s (count=%d): %v",
+		pidStr[:min(20, len(pidStr))], s.FailCount, err)
+	m.recomputeAggregateLocked()
+}
+
+// OnRelayAddressUpdated notes that an address update came through.
+// This is used to validate that circuit addresses match reservation state.
+func (m *RelaySessionManager) OnRelayAddressUpdated(peerID peer.ID, hasCircuitAddr bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	pidStr := peerID.String()
+	s, ok := m.sessions[pidStr]
+	if !ok {
+		s = &RelaySessionState{PeerID: peerID, State: RelayStateDisconnected}
+		m.sessions[pidStr] = s
+	}
+
+	// If we have a circuit address but no reservation, this is stale.
+	// The reservation is the source of truth.
+	if hasCircuitAddr && s.State != RelayStateReserved {
+		log.Printf("[RELAY_SESSION] Ignoring stale circuit address for %s (state=%s)",
+			pidStr[:min(20, len(pidStr))], s.State)
+	}
+}
+
+// OnConnected marks a relay peer as connected (transport layer only, not reserved).
+func (m *RelaySessionManager) OnConnected(peerID peer.ID) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	pidStr := peerID.String()
+	s, ok := m.sessions[pidStr]
+	if !ok {
+		s = &RelaySessionState{PeerID: peerID, State: RelayStateDisconnected}
+		m.sessions[pidStr] = s
+	}
+
+	if s.State == RelayStateDisconnected {
+		s.State = RelayStateConnected
+	}
+	m.recomputeAggregateLocked()
+}
+
+// OnDisconnected marks a relay peer as disconnected.
+func (m *RelaySessionManager) OnDisconnected(peerID peer.ID) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	pidStr := peerID.String()
+	s, ok := m.sessions[pidStr]
+	if !ok {
+		return
+	}
+
+	s.State = RelayStateDegraded
+	m.recomputeAggregateLocked()
+}
+
+// --- Health Queries ---
+
+// IsHealthy returns true if at least one relay has an active reservation
+// and the node's reported connectedness is consistent.
+func (m *RelaySessionManager) IsHealthy() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.aggregateState == AggregateRelayOnline
+}
+
+// HasReservation returns true if any relay is in "reserved" state.
+func (m *RelaySessionManager) HasReservation() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, s := range m.sessions {
+		if s.State == RelayStateReserved {
+			return true
+		}
+	}
+	return false
+}
+
+// --- Recovery Coalescing ---
+
+// BeginRecovery attempts to start a recovery operation. If one is already
+// in progress, it returns the existing channel to wait on (singleflight pattern).
+// Returns (channel, isNew). If isNew is true, the caller is responsible for
+// completing the recovery and calling CompleteRecovery.
+func (m *RelaySessionManager) BeginRecovery() (chan *RecoveryResult, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.recovering {
+		// Return existing channel — caller should wait on it.
+		return m.recoveryCh, false
+	}
+
+	m.recovering = true
+	m.recoveryCh = make(chan *RecoveryResult, 1)
+	m.aggregateState = AggregateRelayRecovering
+
+	return m.recoveryCh, true
+}
+
+// CompleteRecovery signals that recovery is done and broadcasts the result
+// to all waiting callers.
+func (m *RelaySessionManager) CompleteRecovery(result *RecoveryResult) {
+	m.mu.Lock()
+	ch := m.recoveryCh
+	m.recovering = false
+	if result != nil && result.RecoveryMode == "watchdog_restart" {
+		m.watchdogRestartCount++
+	}
+	m.recomputeAggregateLocked()
+	m.mu.Unlock()
+
+	if ch != nil {
+		ch <- result
+		close(ch)
+	}
+}
+
+// IsRecovering returns whether a recovery is currently in progress.
+func (m *RelaySessionManager) IsRecovering() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.recovering
+}
+
+// SetAggregateState overrides the aggregate state (for testing or manual control).
+func (m *RelaySessionManager) SetAggregateState(state AggregateRelayState) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.aggregateState = state
+}
+
+// --- Internal ---
+
+// recomputeAggregateLocked updates the aggregate state from per-relay states.
+// Caller must hold m.mu write lock.
+func (m *RelaySessionManager) recomputeAggregateLocked() {
+	if m.recovering {
+		m.aggregateState = AggregateRelayRecovering
+		return
+	}
+
+	hasReserved := false
+	allDegraded := true
+	for _, s := range m.sessions {
+		if s.State == RelayStateReserved {
+			hasReserved = true
+			allDegraded = false
+		}
+		if s.State != RelayStateDegraded && s.State != RelayStateDisconnected && s.State != RelayStateCooldown {
+			allDegraded = false
+		}
+	}
+
+	if hasReserved {
+		m.aggregateState = AggregateRelayOnline
+	} else if len(m.sessions) == 0 {
+		m.aggregateState = AggregateRelayStarting
+	} else if allDegraded {
+		m.aggregateState = AggregateRelayRecovering
+	} else {
+		m.aggregateState = AggregateRelayStarting
+	}
+}
+
+// StatusFields returns a map of relay-session fields suitable for merging
+// into the node:status response. All fields are additive.
+func (m *RelaySessionManager) StatusFields() map[string]interface{} {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	relayStates := make([]map[string]interface{}, 0, len(m.sessions))
+	for _, s := range m.sessions {
+		pidStr := s.PeerID.String()
+		entry := map[string]interface{}{
+			"peerId": pidStr,
+			"state":  string(s.State),
+		}
+		if !s.LastReservedAt.IsZero() {
+			entry["lastReservedAt"] = s.LastReservedAt.Format(time.RFC3339)
+		}
+		if s.LastError != "" {
+			entry["lastError"] = s.LastError
+		}
+		relayStates = append(relayStates, entry)
+	}
+
+	healthyCount := 0
+	for _, s := range m.sessions {
+		if s.State == RelayStateReserved {
+			healthyCount++
+		}
+	}
+
+	var lastReservationAt string
+	for _, s := range m.sessions {
+		if s.State == RelayStateReserved && !s.LastReservedAt.IsZero() {
+			if lastReservationAt == "" || s.LastReservedAt.Format(time.RFC3339) > lastReservationAt {
+				lastReservationAt = s.LastReservedAt.Format(time.RFC3339)
+			}
+		}
+	}
+
+	result := map[string]interface{}{
+		"relayState":           string(m.aggregateState),
+		"relayStates":          relayStates,
+		"healthyRelayCount":    healthyCount,
+		"watchdogRestartCount": m.watchdogRestartCount,
+	}
+
+	if lastReservationAt != "" {
+		result["lastReservationAt"] = lastReservationAt
+	}
+
+	return result
+}
+
+// --- Helpers used by node for circuit address validation ---
+
+// CircuitAddressesAreStale returns true if there are circuit addresses in
+// the host's address set but no relay has an active reservation.
+func (m *RelaySessionManager) CircuitAddressesAreStale(hostAddrs []string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	hasCircuit := false
+	for _, addr := range hostAddrs {
+		if strings.Contains(addr, "/p2p-circuit") {
+			hasCircuit = true
+			break
+		}
+	}
+
+	if !hasCircuit {
+		return false // No circuit addresses to be stale
+	}
+
+	for _, s := range m.sessions {
+		if s.State == RelayStateReserved {
+			return false // At least one reservation is active
+		}
+	}
+
+	return true // Has circuit addresses but no reservation
+}
+
+// ReportsHealthyWithReservation returns true when at least one relay is
+// reserved and the host reports circuit addresses — i.e., reservation truth
+// and circuit addresses agree.
+func (m *RelaySessionManager) ReportsHealthyWithReservation(hostAddrs []string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	hasCircuit := false
+	for _, addr := range hostAddrs {
+		if strings.Contains(addr, "/p2p-circuit") {
+			hasCircuit = true
+			break
+		}
+	}
+
+	hasReservation := false
+	for _, s := range m.sessions {
+		if s.State == RelayStateReserved {
+			hasReservation = true
+			break
+		}
+	}
+
+	return hasCircuit && hasReservation
+}
+
+// Reset clears all session state. Used when performing a full host restart.
+func (m *RelaySessionManager) Reset() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.sessions = make(map[string]*RelaySessionState)
+	m.aggregateState = AggregateRelayStarting
+	m.recovering = false
+	m.recoveryCh = nil
+}
+
+// --- Placeholder for autorelay metrics tracer hook ---
+
+// InitRelayPeer initializes tracking for a known relay peer ID.
+func (m *RelaySessionManager) InitRelayPeer(peerID peer.ID) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	pidStr := peerID.String()
+	if _, ok := m.sessions[pidStr]; !ok {
+		m.sessions[pidStr] = &RelaySessionState{
+			PeerID: peerID,
+			State:  RelayStateDisconnected,
+		}
+	}
+}
+
+// --- Helper for stale address detection ---
+
+// IgnoresStaleCircuitAddresses returns a filtered list of circuit addresses,
+// removing any that don't belong to a relay with an active reservation.
+func (m *RelaySessionManager) IgnoresStaleCircuitAddresses(circuitAddrs []string) []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var valid []string
+	for _, addr := range circuitAddrs {
+		// Check if this circuit address belongs to a reserved relay.
+		for _, s := range m.sessions {
+			if s.State == RelayStateReserved {
+				pidStr := s.PeerID.String()
+				if strings.Contains(addr, pidStr) || strings.Contains(addr, fmt.Sprintf("/p2p/%s/", pidStr)) {
+					valid = append(valid, addr)
+					break
+				}
+			}
+		}
+	}
+
+	return valid
+}

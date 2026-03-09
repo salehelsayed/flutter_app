@@ -548,10 +548,13 @@ func RendezvousDiscover(paramsJSON string) (result string) {
 
 // --- Relay ---
 
-// RelayReconnect performs a full Stop() + Start() restart of the libp2p
-// node to recover circuit addresses. Use this to recover from background →
+// RelayReconnect attempts in-place relay recovery first, then falls back to
+// a full host restart if needed. Use this to recover from background →
 // foreground transitions where the relay connection has dropped.
-// Returns JSON: { "ok": true }
+//
+// Phase 4: Returns structured recovery fields so callers can branch on
+// recoveryMode instead of parsing error strings.
+// Returns JSON: { "ok": true, "recoveryMode": "in_place"|"watchdog_restart", "relayState": "...", "healthyRelayCount": N }
 func RelayReconnect() (result string) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -567,13 +570,29 @@ func RelayReconnect() (result string) {
 		return errJSON("NOT_INITIALIZED", "call Initialize first")
 	}
 
-	if err := n.ReconnectRelays(); err != nil {
+	recoveryResult, err := n.ReconnectRelays()
+	if err != nil {
 		return errJSON("RELAY_ERROR", err.Error())
 	}
 
-	return okJSON(map[string]interface{}{
+	resp := map[string]interface{}{
 		"ok": true,
-	})
+	}
+
+	// Merge structured recovery fields.
+	if recoveryResult != nil {
+		resp["recoveryMode"] = recoveryResult.RecoveryMode
+		resp["relayState"] = recoveryResult.RelayState
+		resp["healthyRelayCount"] = recoveryResult.HealthyRelayCount
+		if recoveryResult.ErrorCode != "" {
+			resp["errorCode"] = recoveryResult.ErrorCode
+		}
+		if recoveryResult.Reason != "" {
+			resp["reason"] = recoveryResult.Reason
+		}
+	}
+
+	return okJSON(resp)
 }
 
 // --- Relay Probe ---

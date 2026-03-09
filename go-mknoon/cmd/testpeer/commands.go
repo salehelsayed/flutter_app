@@ -661,9 +661,11 @@ func cmdReconnectRelays() map[string]interface{} {
 	if state.node == nil {
 		return errResult("node not started")
 	}
-	if err := state.node.ReconnectRelays(); err != nil {
+	result, err := state.node.ReconnectRelays()
+	if err != nil {
 		return errResult(fmt.Sprintf("reconnect relays: %v", err))
 	}
+	_ = result
 	return okResult(nil)
 }
 

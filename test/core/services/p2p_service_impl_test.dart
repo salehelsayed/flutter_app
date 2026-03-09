@@ -347,4 +347,177 @@ void main() {
       expect(P2PServiceImpl.healthCheckInterval.inSeconds, greaterThanOrEqualTo(30));
     });
   });
+
+  group('Phase 4 — relay session manager and reservation-aware health', () {
+    test('health check uses relayState when present', () async {
+      // When node:status returns relayState, the parsed NodeState should
+      // include it for health decisions.
+      bridge.whenCommand('node:start', (_) => jsonEncode({
+        'ok': true,
+        'peerId': 'test-peer',
+        'isStarted': true,
+        'listenAddresses': [],
+        'circuitAddresses': ['/p2p-circuit/relay1'],
+        'connections': [],
+        'relayState': 'online',
+        'healthyRelayCount': 1,
+        'watchdogRestartCount': 0,
+      }));
+      bridge.whenCommand('inbox:retrieve', (_) => jsonEncode({
+        'ok': true,
+        'messages': [],
+        'hasMore': false,
+      }));
+      bridge.whenCommand('node:status', (_) => jsonEncode({
+        'ok': true,
+        'peerId': 'test-peer',
+        'isStarted': true,
+        'listenAddresses': [],
+        'circuitAddresses': ['/p2p-circuit/relay1'],
+        'connections': [],
+        'relayState': 'online',
+        'healthyRelayCount': 1,
+        'watchdogRestartCount': 0,
+      }));
+
+      await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
+
+      // The NodeState should include the relayState field.
+      expect(service.currentState.relayState, 'online');
+      expect(service.currentState.healthyRelayCount, 1);
+      expect(service.currentState.watchdogRestartCount, 0);
+    });
+
+    test('legacy circuitAddresses path still works when relayState absent', () async {
+      // When the Go bridge does not include relayState (pre-Phase 4),
+      // the parser should still work and relayState should be null.
+      bridge.whenCommand('node:start', (_) => jsonEncode({
+        'ok': true,
+        'peerId': 'test-peer',
+        'isStarted': true,
+        'listenAddresses': ['/ip4/127.0.0.1/tcp/4001'],
+        'circuitAddresses': ['/p2p-circuit/relay1'],
+        'connections': [],
+        // No relayState, healthyRelayCount, or watchdogRestartCount
+      }));
+      bridge.whenCommand('inbox:retrieve', (_) => jsonEncode({
+        'ok': true,
+        'messages': [],
+        'hasMore': false,
+      }));
+      bridge.whenCommand('node:status', (_) => jsonEncode({
+        'ok': true,
+        'peerId': 'test-peer',
+        'isStarted': true,
+        'listenAddresses': [],
+        'circuitAddresses': ['/p2p-circuit/relay1'],
+        'connections': [],
+      }));
+
+      await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
+
+      // Legacy fields work.
+      expect(service.currentState.isStarted, true);
+      expect(service.currentState.circuitAddresses, isNotEmpty);
+
+      // New fields are null (absent from response).
+      expect(service.currentState.relayState, isNull);
+      expect(service.currentState.healthyRelayCount, isNull);
+    });
+
+    test('relay state push updates current state without restart', () async {
+      bridge.whenCommand('node:start', (_) => jsonEncode({
+        'ok': true,
+        'peerId': 'test-peer',
+        'isStarted': true,
+        'listenAddresses': [],
+        'circuitAddresses': [],
+        'connections': [],
+        'relayState': 'starting',
+        'healthyRelayCount': 0,
+      }));
+      bridge.whenCommand('inbox:retrieve', (_) => jsonEncode({
+        'ok': true,
+        'messages': [],
+        'hasMore': false,
+      }));
+      bridge.whenCommand('node:status', (_) => jsonEncode({
+        'ok': true,
+        'peerId': 'test-peer',
+        'isStarted': true,
+        'listenAddresses': [],
+        'circuitAddresses': ['/p2p-circuit/relay1'],
+        'connections': [],
+        'relayState': 'online',
+        'healthyRelayCount': 1,
+      }));
+
+      await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
+
+      // Initially starting with no circuits.
+      expect(service.currentState.relayState, 'starting');
+
+      // After health check, the state should update in place (no restart).
+      await service.performImmediateHealthCheck();
+
+      // The relay state should be updated from the status response.
+      expect(service.currentState.relayState, 'online');
+      expect(service.currentState.healthyRelayCount, 1);
+      expect(service.currentState.circuitAddresses, isNotEmpty);
+    });
+
+    test('status push burst coalescing does not lose final online state', () async {
+      bridge.whenCommand('node:start', (_) => jsonEncode({
+        'ok': true,
+        'peerId': 'test-peer',
+        'isStarted': true,
+        'listenAddresses': [],
+        'circuitAddresses': [],
+        'connections': [],
+      }));
+      bridge.whenCommand('inbox:retrieve', (_) => jsonEncode({
+        'ok': true,
+        'messages': [],
+        'hasMore': false,
+      }));
+
+      // Simulate a burst of status updates via the addresses:updated push.
+      // The final state should be the one that sticks.
+      var statusCallCount = 0;
+      bridge.whenCommand('node:status', (_) {
+        statusCallCount++;
+        // Each call returns progressively more connected state.
+        if (statusCallCount <= 2) {
+          return jsonEncode({
+            'ok': true,
+            'peerId': 'test-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+            'circuitAddresses': [],
+            'connections': [],
+          });
+        }
+        return jsonEncode({
+          'ok': true,
+          'peerId': 'test-peer',
+          'isStarted': true,
+          'listenAddresses': [],
+          'circuitAddresses': ['/p2p-circuit/relay1'],
+          'connections': [],
+          'relayState': 'online',
+          'healthyRelayCount': 1,
+        });
+      });
+
+      await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
+
+      // Simulate multiple health checks (as if push events triggered them).
+      await service.performImmediateHealthCheck();
+      await service.performImmediateHealthCheck();
+      await service.performImmediateHealthCheck();
+
+      // The final state should reflect online.
+      expect(service.currentState.circuitAddresses, isNotEmpty);
+    });
+  });
 }
