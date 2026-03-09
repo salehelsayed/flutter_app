@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/utils/text_sanitizer.dart';
-import 'package:flutter_app/core/theme/feed_colors.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/voice_record_button.dart';
 
 /// Pill-shaped single-line inline reply input with animated send button.
 ///
 /// Used in collapsed thread cards for quick replies without leaving the feed.
 /// GestureDetector wrapping absorbs taps to prevent parent card interaction.
+/// Styled to match the conversation ComposeArea.
 class InlineReplyInput extends StatefulWidget {
   final String hintText;
   final ValueChanged<String> onSend;
@@ -15,6 +16,12 @@ class InlineReplyInput extends StatefulWidget {
   final ValueChanged<String>? onDraftChanged;
   final ValueChanged<bool>? onFocusChanged;
   final VoidCallback? onAttach;
+  final VoidCallback? onRecordStart;
+  final VoidCallback? onRecordStop;
+  final VoidCallback? onRecordCancel;
+  final bool isRecording;
+  final Duration recordingDuration;
+  final List<double> amplitudeValues;
 
   const InlineReplyInput({
     super.key,
@@ -26,6 +33,12 @@ class InlineReplyInput extends StatefulWidget {
     this.onDraftChanged,
     this.onFocusChanged,
     this.onAttach,
+    this.onRecordStart,
+    this.onRecordStop,
+    this.onRecordCancel,
+    this.isRecording = false,
+    this.recordingDuration = Duration.zero,
+    this.amplitudeValues = const [],
   });
 
   @override
@@ -54,8 +67,17 @@ class _InlineReplyInputState extends State<InlineReplyInput>
       parent: _sendButtonController,
       curve: Curves.easeOut,
     );
-    _sendScale = Tween<double>(begin: 0.86, end: 1.0).animate(sendCurve);
-    _sendOpacity = Tween<double>(begin: 0.46, end: 1.0).animate(sendCurve);
+
+    // When voice is available, fully hide send (0→1).
+    // When voice is NOT available, keep dimmed send always visible (0.46→1).
+    if (_canRecordVoice) {
+      _sendScale = Tween<double>(begin: 0.9, end: 1.0).animate(sendCurve);
+      _sendOpacity = Tween<double>(begin: 0.0, end: 1.0).animate(sendCurve);
+    } else {
+      _sendScale = Tween<double>(begin: 0.86, end: 1.0).animate(sendCurve);
+      _sendOpacity = Tween<double>(begin: 0.46, end: 1.0).animate(sendCurve);
+    }
+
     _controller.addListener(_onTextChanged);
     _focusNode.addListener(_onFocusChanged);
     if (widget.initialText.isNotEmpty) {
@@ -103,6 +125,11 @@ class _InlineReplyInputState extends State<InlineReplyInput>
     widget.onSend(text);
   }
 
+  bool get _canRecordVoice =>
+      widget.onRecordStart != null && widget.onRecordStop != null;
+
+  bool get _shouldShowMicButton => !_hasText && _canRecordVoice;
+
   @override
   void dispose() {
     _controller.dispose();
@@ -116,157 +143,137 @@ class _InlineReplyInputState extends State<InlineReplyInput>
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: () {}, // absorb taps
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
+      child: SizedBox(
         height: 44,
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: _hasFocus
-                ? const [
-                    Color.fromRGBO(255, 255, 255, 0.09),
-                    Color.fromRGBO(255, 255, 255, 0.05),
-                  ]
-                : const [
-                    Color.fromRGBO(255, 255, 255, 0.07),
-                    Color.fromRGBO(255, 255, 255, 0.04),
-                  ],
-          ),
-          borderRadius: BorderRadius.circular(22),
-          border: Border.all(
-            color: _hasFocus
-                ? FeedColors.accentTeal.withValues(alpha: 0.32)
-                : const Color.fromRGBO(255, 255, 255, 0.10),
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.24),
-              blurRadius: 12,
-              offset: const Offset(0, 6),
-            ),
-            if (_hasFocus)
-              BoxShadow(
-                color: FeedColors.accentTeal.withValues(alpha: 0.10),
-                blurRadius: 14,
-                spreadRadius: 1,
-              ),
-          ],
-        ),
         child: Row(
           children: [
-            if (widget.onAttach != null)
+            if (widget.onAttach != null) ...[
               GestureDetector(
                 onTap: widget.onAttach,
                 child: Container(
-                  width: 32,
-                  height: 32,
-                  margin: const EdgeInsets.only(left: 6, right: 4),
+                  width: 36,
+                  height: 36,
                   decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    gradient: const LinearGradient(
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                      colors: [
-                        Color.fromRGBO(255, 255, 255, 0.13),
-                        Color.fromRGBO(255, 255, 255, 0.07),
-                      ],
-                    ),
+                    color: const Color.fromRGBO(255, 255, 255, 0.08),
+                    borderRadius: BorderRadius.circular(100),
                     border: Border.all(
-                      color: const Color.fromRGBO(255, 255, 255, 0.12),
+                      color: const Color.fromRGBO(255, 255, 255, 0.15),
                     ),
                   ),
-                  child: const Icon(
-                    Icons.add_rounded,
-                    size: 18,
-                    color: Color.fromRGBO(255, 255, 255, 0.56),
+                  child: const Center(
+                    child: Icon(
+                      Icons.add_rounded,
+                      size: 20,
+                      color: Color.fromRGBO(255, 255, 255, 0.5),
+                    ),
                   ),
                 ),
               ),
+              const SizedBox(width: 8),
+            ],
             Expanded(
-              child: TextField(
-                controller: _controller,
-                focusNode: _focusNode,
-                enabled: widget.enabled,
-                maxLines: 1,
-                maxLength: maxMessageLength,
-                style: const TextStyle(
-                  fontSize: 14,
-                  color: Color.fromRGBO(255, 255, 255, 0.90),
-                  height: 1.3,
-                ),
-                textAlignVertical: TextAlignVertical.center,
-                decoration: InputDecoration(
-                  hintText: widget.hintText,
-                  hintStyle: const TextStyle(
-                    fontSize: 14,
-                    color: Color.fromRGBO(255, 255, 255, 0.40),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                decoration: BoxDecoration(
+                  color: const Color.fromRGBO(255, 255, 255, 0.06),
+                  borderRadius: BorderRadius.circular(22),
+                  border: Border.all(
+                    color: _hasFocus
+                        ? const Color.fromRGBO(255, 255, 255, 0.20)
+                        : const Color.fromRGBO(255, 255, 255, 0.10),
                   ),
-                  border: InputBorder.none,
-                  counterText: '',
-                  contentPadding: EdgeInsets.only(
-                    left: widget.onAttach != null ? 6 : 14,
-                    right: 10,
-                    top: 10,
-                    bottom: 10,
-                  ),
-                  isDense: true,
-                ),
-              ),
-            ),
-            ScaleTransition(
-              scale: _sendScale,
-              child: FadeTransition(
-                opacity: _sendOpacity,
-                child: GestureDetector(
-                  onTap: _hasText ? _onSendPressed : null,
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 180),
-                    width: 32,
-                    height: 32,
-                    margin: const EdgeInsets.only(right: 6),
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      gradient: LinearGradient(
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                        colors: [
-                          FeedColors.accentTeal.withValues(
-                            alpha: _hasText ? 0.42 : 0.24,
+                  boxShadow: _hasFocus
+                      ? const [
+                          BoxShadow(
+                            color: Color.fromRGBO(255, 255, 255, 0.08),
+                            blurRadius: 0,
+                            spreadRadius: 1,
                           ),
-                          FeedColors.accentTeal.withValues(
-                            alpha: _hasText ? 0.28 : 0.16,
+                          BoxShadow(
+                            color: Color.fromRGBO(0, 0, 0, 0.3),
+                            blurRadius: 20,
+                            offset: Offset(0, 4),
+                          ),
+                        ]
+                      : [
+                          const BoxShadow(
+                            color: Color.fromRGBO(0, 0, 0, 0.24),
+                            blurRadius: 12,
+                            offset: Offset(0, 6),
                           ),
                         ],
+                ),
+                child: TextField(
+                  controller: _controller,
+                  focusNode: _focusNode,
+                  enabled: widget.enabled,
+                  maxLines: 1,
+                  maxLength: maxMessageLength,
+                  style: const TextStyle(
+                    fontSize: 15,
+                    color: Color.fromRGBO(255, 255, 255, 0.95),
+                    height: 1.5,
+                  ),
+                  textAlignVertical: TextAlignVertical.center,
+                  decoration: InputDecoration(
+                    hintText: widget.hintText,
+                    hintStyle: TextStyle(
+                      fontSize: 15,
+                      color: Color.fromRGBO(
+                        255,
+                        255,
+                        255,
+                        _hasFocus ? 0.2 : 0.3,
                       ),
-                      border: Border.all(
-                        color: FeedColors.accentTeal.withValues(
-                          alpha: _hasText ? 0.58 : 0.24,
+                    ),
+                    border: InputBorder.none,
+                    counterText: '',
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 12,
+                    ),
+                    isDense: true,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            // Mic button or Send button
+            if (_shouldShowMicButton)
+              VoiceRecordButton(
+                onTapDown: widget.onRecordStart!,
+                onTapUp: widget.onRecordStop!,
+                onTapCancel: widget.onRecordCancel ?? () {},
+                isRecording: widget.isRecording,
+              )
+            else
+              ScaleTransition(
+                scale: _sendScale,
+                child: FadeTransition(
+                  opacity: _sendOpacity,
+                  child: GestureDetector(
+                    onTap: _hasText ? _onSendPressed : null,
+                    child: Container(
+                      width: 36,
+                      height: 36,
+                      decoration: BoxDecoration(
+                        color: const Color.fromRGBO(29, 185, 84, 0.15),
+                        borderRadius: BorderRadius.circular(100),
+                        border: Border.all(
+                          color: const Color.fromRGBO(29, 185, 84, 0.3),
                         ),
                       ),
-                      boxShadow: _hasText
-                          ? [
-                              BoxShadow(
-                                color: FeedColors.accentTeal.withValues(
-                                  alpha: 0.20,
-                                ),
-                                blurRadius: 10,
-                                offset: const Offset(0, 4),
-                              ),
-                            ]
-                          : null,
-                    ),
-                    child: Icon(
-                      Icons.arrow_upward_rounded,
-                      size: 18,
-                      color: FeedColors.accentTeal.withValues(
-                        alpha: _hasText ? 0.96 : 0.68,
+                      child: const Center(
+                        child: Icon(
+                          Icons.arrow_upward_rounded,
+                          size: 20,
+                          color: Color(0xFF1DB954),
+                        ),
                       ),
                     ),
                   ),
                 ),
               ),
-            ),
           ],
         ),
       ),

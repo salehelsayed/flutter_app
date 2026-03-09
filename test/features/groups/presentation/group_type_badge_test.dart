@@ -15,7 +15,7 @@ void main() {
 
   testWidgets('renders correct text for each type', (tester) async {
     await tester.pumpWidget(buildTestWidget(GroupType.chat));
-    expect(find.text('Chat'), findsOneWidget);
+    expect(find.text('Discussion'), findsOneWidget);
 
     await tester.pumpWidget(buildTestWidget(GroupType.announcement));
     expect(find.text('Announce'), findsOneWidget);

@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:async';
 
 import 'package:flutter/gestures.dart';
@@ -322,6 +323,8 @@ void main() {
     FakeAudioRecorderService? audioRecorderService,
     ImageProcessor? imageProcessor,
     MediaPicker? mediaPicker,
+    String? initialText,
+    List<File>? initialAttachments,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -335,6 +338,8 @@ void main() {
           audioRecorderService: audioRecorderService,
           imageProcessor: imageProcessor,
           mediaPicker: mediaPicker,
+          initialText: initialText,
+          initialAttachments: initialAttachments,
         ),
       ),
     );
@@ -342,6 +347,64 @@ void main() {
   }
 
   group('ConversationWired optimistic send', () {
+    testWidgets('prefills shared text into the composer', (tester) async {
+      final identityRepo = FakeIdentityRepository(makeIdentity());
+      final messageRepo = FakeMessageRepository();
+      final chatListener = ChatMessageListener(
+        chatMessageStream: const Stream.empty(),
+        messageRepo: messageRepo,
+        contactRepo: FakeContactRepository(),
+      );
+
+      await pumpScreen(
+        tester,
+        identityRepo: identityRepo,
+        messageRepo: messageRepo,
+        chatListener: chatListener,
+        sendFn: _instantSuccessSendFn,
+        initialText: 'Shared hello',
+      );
+
+      final textField = tester.widget<TextField>(find.byType(TextField));
+      expect(textField.controller?.text, 'Shared hello');
+    });
+
+    testWidgets('shows both initialText and initialAttachments together', (
+      tester,
+    ) async {
+      final identityRepo = FakeIdentityRepository(makeIdentity());
+      final messageRepo = FakeMessageRepository();
+      final chatListener = ChatMessageListener(
+        chatMessageStream: const Stream.empty(),
+        messageRepo: messageRepo,
+        contactRepo: FakeContactRepository(),
+      );
+      final tempDir = Directory.systemTemp.createTempSync(
+        'conversation_share_',
+      );
+      addTearDown(() {
+        if (tempDir.existsSync()) {
+          tempDir.deleteSync(recursive: true);
+        }
+      });
+      final attachment = File('${tempDir.path}/shared.jpg')
+        ..writeAsStringSync('image');
+
+      await pumpScreen(
+        tester,
+        identityRepo: identityRepo,
+        messageRepo: messageRepo,
+        chatListener: chatListener,
+        sendFn: _instantSuccessSendFn,
+        initialText: 'Shared hello',
+        initialAttachments: [attachment],
+      );
+
+      final textField = tester.widget<TextField>(find.byType(TextField));
+      expect(textField.controller?.text, 'Shared hello');
+      expect(find.byType(AttachmentPreviewStrip), findsOneWidget);
+    });
+
     testWidgets('shows loading shell until the initial page resolves', (
       tester,
     ) async {

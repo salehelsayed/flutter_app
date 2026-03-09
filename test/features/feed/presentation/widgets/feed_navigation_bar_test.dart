@@ -57,7 +57,7 @@ void main() {
       expect(buttons[2].badgeCount, 0); // Orbit
     });
 
-    testWidgets('maxWidth matches NavBarTheme.barMaxWidth', (tester) async {
+    testWidgets('bar shrink-wraps to fit buttons', (tester) async {
       suppressAssetErrors(tester);
       await tester.pumpWidget(wrap(FeedNavigationBar(
         activeTab: 'feed',
@@ -65,11 +65,8 @@ void main() {
       )));
       await tester.pump();
 
-      final boxes = tester
-          .widgetList<ConstrainedBox>(find.byType(ConstrainedBox))
-          .where((b) => b.constraints.maxWidth == NavBarTheme.barMaxWidth)
-          .toList();
-      expect(boxes, isNotEmpty);
+      final row = tester.widget<Row>(find.byType(Row));
+      expect(row.mainAxisSize, MainAxisSize.min);
     });
 
     testWidgets('bar padding matches NavBarTheme.barPadding', (tester) async {

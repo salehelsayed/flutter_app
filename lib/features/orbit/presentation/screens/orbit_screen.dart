@@ -378,11 +378,6 @@ class OrbitScreen extends StatelessWidget {
                   icon: Icons.campaign_outlined,
                   onTap: () => onCreateGroup(GroupType.announcement),
                 ),
-                ExpandableFabItem(
-                  label: 'New Q&A',
-                  icon: Icons.quiz_outlined,
-                  onTap: () => onCreateGroup(GroupType.qa),
-                ),
               ],
             ),
           ],

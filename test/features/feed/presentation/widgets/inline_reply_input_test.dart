@@ -50,5 +50,67 @@ void main() {
       )));
       expect(find.text('Type here...'), findsOneWidget);
     });
+
+    testWidgets('send button is 36x36', (tester) async {
+      await tester.pumpWidget(wrap(InlineReplyInput(onSend: (_) {})));
+      await tester.enterText(find.byType(TextField), 'Hi');
+      await tester.pumpAndSettle();
+
+      final sendContainer = tester.widget<Container>(
+        find.ancestor(
+          of: find.byIcon(Icons.arrow_upward_rounded),
+          matching: find.byType(Container),
+        ).first,
+      );
+      expect(sendContainer.constraints?.maxWidth, 36);
+      expect(sendContainer.constraints?.maxHeight, 36);
+    });
+
+    testWidgets('attach button is 36x36 when shown', (tester) async {
+      await tester.pumpWidget(wrap(InlineReplyInput(
+        onSend: (_) {},
+        onAttach: () {},
+      )));
+
+      final attachContainer = tester.widget<Container>(
+        find.ancestor(
+          of: find.byIcon(Icons.add_rounded),
+          matching: find.byType(Container),
+        ).first,
+      );
+      expect(attachContainer.constraints?.maxWidth, 36);
+      expect(attachContainer.constraints?.maxHeight, 36);
+    });
+
+    testWidgets('shows mic button when voice callbacks provided and no text',
+        (tester) async {
+      await tester.pumpWidget(wrap(InlineReplyInput(
+        onSend: (_) {},
+        onRecordStart: () {},
+        onRecordStop: () {},
+      )));
+      expect(find.byIcon(Icons.mic_rounded), findsOneWidget);
+      expect(find.byIcon(Icons.arrow_upward_rounded), findsNothing);
+    });
+
+    testWidgets('shows send button instead of mic when text is present',
+        (tester) async {
+      await tester.pumpWidget(wrap(InlineReplyInput(
+        onSend: (_) {},
+        onRecordStart: () {},
+        onRecordStop: () {},
+      )));
+      await tester.enterText(find.byType(TextField), 'Hello');
+      await tester.pump();
+      expect(find.byIcon(Icons.arrow_upward_rounded), findsOneWidget);
+      expect(find.byIcon(Icons.mic_rounded), findsNothing);
+    });
+
+    testWidgets('no mic button when voice callbacks are null', (tester) async {
+      await tester.pumpWidget(wrap(InlineReplyInput(onSend: (_) {})));
+      expect(find.byIcon(Icons.mic_rounded), findsNothing);
+      // Send button still shown (dimmed)
+      expect(find.byIcon(Icons.arrow_upward_rounded), findsOneWidget);
+    });
   });
 }

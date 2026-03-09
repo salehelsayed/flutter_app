@@ -82,7 +82,8 @@ class _ShareTargetPickerScreenState extends State<ShareTargetPickerScreen> {
           child: Column(
             children: [
               _buildHeader(),
-              if (widget.sharedText != null || widget.sharedFilePaths.isNotEmpty)
+              if (widget.sharedText != null ||
+                  widget.sharedFilePaths.isNotEmpty)
                 _buildPreviewStrip(),
               _buildSearchField(),
               Expanded(child: _buildTargetList()),
@@ -123,9 +124,7 @@ class _ShareTargetPickerScreenState extends State<ShareTargetPickerScreen> {
       decoration: BoxDecoration(
         color: const Color.fromRGBO(255, 255, 255, 0.06),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: const Color.fromRGBO(255, 255, 255, 0.08),
-        ),
+        border: Border.all(color: const Color.fromRGBO(255, 255, 255, 0.08)),
       ),
       child: Row(
         children: [
@@ -138,7 +137,7 @@ class _ShareTargetPickerScreenState extends State<ShareTargetPickerScreen> {
                 child: Image.file(
                   File(widget.sharedFilePaths.first),
                   fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => Container(
+                  errorBuilder: (context, error, stackTrace) => Container(
                     color: const Color.fromRGBO(255, 255, 255, 0.1),
                     child: const Icon(Icons.image, color: Colors.white38),
                   ),
@@ -150,10 +149,7 @@ class _ShareTargetPickerScreenState extends State<ShareTargetPickerScreen> {
                 padding: const EdgeInsets.only(left: 8),
                 child: Text(
                   '+${widget.sharedFilePaths.length - 1}',
-                  style: const TextStyle(
-                    color: Colors.white54,
-                    fontSize: 13,
-                  ),
+                  style: const TextStyle(color: Colors.white54, fontSize: 13),
                 ),
               ),
             const SizedBox(width: 12),
@@ -164,10 +160,7 @@ class _ShareTargetPickerScreenState extends State<ShareTargetPickerScreen> {
                 widget.sharedText!,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Colors.white70,
-                  fontSize: 13,
-                ),
+                style: const TextStyle(color: Colors.white70, fontSize: 13),
               ),
             ),
         ],
@@ -184,16 +177,17 @@ class _ShareTargetPickerScreenState extends State<ShareTargetPickerScreen> {
         decoration: InputDecoration(
           hintText: 'Search contacts & groups',
           hintStyle: const TextStyle(color: Colors.white38, fontSize: 14),
-          prefixIcon:
-              const Icon(Icons.search, color: Colors.white38, size: 20),
+          prefixIcon: const Icon(Icons.search, color: Colors.white38, size: 20),
           filled: true,
           fillColor: const Color.fromRGBO(255, 255, 255, 0.06),
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
             borderSide: BorderSide.none,
           ),
-          contentPadding:
-              const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 10,
+          ),
         ),
       ),
     );

@@ -6,6 +6,8 @@ import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
+import 'package:flutter_app/core/services/share_intent_model.dart';
+import 'package:flutter_app/core/services/share_intent_service.dart';
 import 'package:flutter_app/core/theme/app_colors.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
@@ -28,6 +30,8 @@ import 'package:flutter_app/features/introduction/domain/repositories/introducti
 import 'package:flutter_app/features/introduction/application/introduction_listener.dart';
 import 'package:flutter_app/features/feed/presentation/navigation/feed_route_transition.dart';
 import 'package:flutter_app/features/feed/presentation/screens/feed_wired.dart';
+import 'package:flutter_app/features/share/application/settle_share_intent_flow.dart';
+import 'package:flutter_app/features/share/presentation/navigation/share_target_picker_route.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/qr_code/application/parse_qr_payload_use_case.dart';
@@ -68,6 +72,7 @@ class QRScannerWired extends StatelessWidget {
   final DownloadProfilePictureFn? downloadProfilePictureFn;
   final IntroductionRepository? introductionRepository;
   final IntroductionListener? introductionListener;
+  final ShareIntentService? shareIntentService;
 
   const QRScannerWired({
     super.key,
@@ -96,6 +101,7 @@ class QRScannerWired extends StatelessWidget {
     this.downloadProfilePictureFn,
     this.introductionRepository,
     this.introductionListener,
+    this.shareIntentService,
   });
 
   @override
@@ -206,7 +212,10 @@ class QRScannerWired extends StatelessWidget {
   ///
   /// This enables bidirectional contact exchange - when Bob scans Alice's QR,
   /// Bob automatically sends his info to Alice so she can add him back.
-  void _sendContactRequestInBackground(String targetPeerId, String recipientPublicKey) async {
+  void _sendContactRequestInBackground(
+    String targetPeerId,
+    String recipientPublicKey,
+  ) async {
     final sendResult = await sendContactRequest(
       p2pService: p2pService,
       identityRepo: identityRepository,
@@ -232,12 +241,13 @@ class QRScannerWired extends StatelessWidget {
   /// On success, notifies the UI via [chatMessageListener.emitContactUpdate].
   void _downloadProfilePictureInBackground(String peerId) async {
     try {
-      final updated = await (downloadProfilePictureFn ?? downloadProfilePicture)(
-        bridge: bridge,
-        contactRepo: contactRepository,
-        ownerPeerId: peerId,
-        avatarVersion: 'initial',
-      );
+      final updated =
+          await (downloadProfilePictureFn ?? downloadProfilePicture)(
+            bridge: bridge,
+            contactRepo: contactRepository,
+            ownerPeerId: peerId,
+            avatarVersion: 'initial',
+          );
       if (updated != null) chatMessageListener.emitContactUpdate(updated);
     } catch (e) {
       emitFlowEvent(
@@ -306,7 +316,8 @@ class QRScannerWired extends StatelessWidget {
               width: double.infinity,
               child: ElevatedButton(
                 onPressed: () {
-                  Navigator.of(ctx).pushAndRemoveUntil(
+                  final navigator = Navigator.of(ctx);
+                  navigator.pushAndRemoveUntil(
                     buildFeedSlideUpRoute(
                       builder: (_) => FeedWired(
                         repository: identityRepository,
@@ -335,6 +346,11 @@ class QRScannerWired extends StatelessWidget {
                       ),
                     ),
                     (route) => false,
+                  );
+                  settleShareIntentFlow(
+                    shareIntentService: shareIntentService,
+                    navigator: navigator,
+                    buildRoute: _buildPendingShareRoute,
                   );
                 },
                 style: ElevatedButton.styleFrom(
@@ -417,6 +433,30 @@ class QRScannerWired extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+
+  Route<void> _buildPendingShareRoute(ShareIntent intent) {
+    return buildShareTargetPickerRoute(
+      shareIntent: intent,
+      identityRepo: identityRepository,
+      contactRepository: contactRepository,
+      messageRepository: messageRepository,
+      mediaAttachmentRepository: mediaAttachmentRepository,
+      chatMessageListener: chatMessageListener,
+      bridge: bridge,
+      p2pService: p2pService,
+      mediaFileManager: mediaFileManager,
+      imageProcessor: imageProcessor,
+      conversationTracker: conversationTracker,
+      audioRecorderService: audioRecorderService,
+      reactionRepository: reactionRepository,
+      reactionListener: reactionListener,
+      groupRepository: groupRepository,
+      groupMessageRepository: groupMessageRepository,
+      groupMessageListener: groupMessageListener,
+      groupConversationTracker: groupConversationTracker,
+      introductionRepository: introductionRepository,
     );
   }
 }

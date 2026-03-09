@@ -44,13 +44,12 @@ target 'Runner' do
   if File.exist?(File.join(__dir__, 'Runner', 'GoMknoon.xcframework'))
     pod 'GoMknoon', :path => '.'
   end
+  target 'Share Extension' do
+    inherit! :search_paths
+  end
   target 'RunnerTests' do
     inherit! :search_paths
   end
-end
-
-target 'Share Extension' do
-  use_frameworks!
 end
 
 post_install do |installer|

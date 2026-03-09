@@ -429,6 +429,145 @@ void main() {
       expect(saved, isTrue);
     });
 
+    test('uses provided messageId when given', () async {
+      final (result, message) = await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        text: 'Hello!',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        senderUsername: 'Alice',
+        messageId: 'pre-created-id',
+      );
+
+      expect(result, SendGroupMessageResult.success);
+      expect(message!.id, 'pre-created-id');
+      final saved = await msgRepo.getMessage('pre-created-id');
+      expect(saved, isNotNull);
+    });
+
+    test('uses provided timestamp when given', () async {
+      final fixedTime = DateTime.utc(2026, 1, 15, 12, 0, 0);
+
+      final (result, message) = await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        text: 'Hello!',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        senderUsername: 'Alice',
+        timestamp: fixedTime,
+      );
+
+      expect(result, SendGroupMessageResult.success);
+      expect(message!.timestamp, fixedTime);
+    });
+
+    test('generates messageId when not provided', () async {
+      final (_, message) = await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        text: 'Hello!',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        senderUsername: 'Alice',
+      );
+
+      expect(message!.id, isNotEmpty);
+      expect(message.id, isNot('pre-created-id'));
+    });
+
+    test('sends message with empty text and media (voice note)', () async {
+      final voiceAttachment = MediaAttachment(
+        id: 'att-voice',
+        messageId: '',
+        mime: 'audio/mp4',
+        size: 48000,
+        mediaType: 'audio',
+        downloadStatus: 'done',
+        createdAt: DateTime.now().toUtc().toIso8601String(),
+        localPath: '/tmp/voice.m4a',
+        durationMs: 3000,
+        waveform: [0.1, 0.5, 0.8, 0.3],
+      );
+
+      final (result, message) = await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        text: '',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        senderUsername: 'Alice',
+        mediaAttachments: [voiceAttachment],
+        mediaAttachmentRepo: mediaRepo,
+      );
+
+      expect(result, SendGroupMessageResult.success);
+      expect(message, isNotNull);
+      expect(message!.text, '');
+      expect(message.status, 'sent');
+
+      // Verify bridge received media in publish payload
+      final publishMsg = bridge.sentMessages.firstWhere(
+        (m) => (jsonDecode(m) as Map)['cmd'] == 'group:publish',
+      );
+      final payload =
+          (jsonDecode(publishMsg) as Map)['payload'] as Map<String, dynamic>;
+      expect(payload['media'], isNotNull);
+      expect((payload['media'] as List).length, 1);
+
+      // Verify attachment saved with resolved messageId
+      expect(mediaRepo.count, 1);
+    });
+
+    test('rejects message with empty text and no media', () async {
+      final (result, message) = await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        text: '',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        senderUsername: 'Alice',
+      );
+
+      expect(result, SendGroupMessageResult.error);
+      expect(message, isNull);
+      // Should not have called bridge at all
+      expect(bridge.commandLog, isEmpty);
+    });
+
+    test('rejects message with whitespace-only text and no media', () async {
+      final (result, message) = await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        text: '   ',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        senderUsername: 'Alice',
+      );
+
+      expect(result, SendGroupMessageResult.error);
+      expect(message, isNull);
+    });
+
     test('text-only message without media — no media in payload', () async {
       await sendGroupMessage(
         bridge: bridge,

@@ -10,17 +10,17 @@ abstract final class NavBarTheme {
   static const double barBorderRadius = 30;
   static const EdgeInsets barPadding =
       EdgeInsets.symmetric(horizontal: 6, vertical: 5);
-  static const double blurSigma = 14;
+  static const double blurSigma = 28;
 
   static const List<Color> barGradientColors = [
-    Color.fromRGBO(43, 47, 57, 0.92),
-    Color.fromRGBO(22, 25, 32, 0.96),
+    Color.fromRGBO(255, 255, 255, 0.18),
+    Color.fromRGBO(255, 255, 255, 0.10),
   ];
 
-  static const Color barBorderColor = Color.fromRGBO(255, 255, 255, 0.07);
-  static const Color barShadowColor = Color.fromRGBO(0, 0, 0, 0.30);
-  static const double barShadowBlur = 12;
-  static const Offset barShadowOffset = Offset(0, 6);
+  static const Color barBorderColor = Color.fromRGBO(255, 255, 255, 0.30);
+  static const Color barShadowColor = Color.fromRGBO(0, 0, 0, 0.12);
+  static const double barShadowBlur = 16;
+  static const Offset barShadowOffset = Offset(0, 4);
 
   // ── Button ───────────────────────────────────────────────────────────
 
@@ -38,8 +38,8 @@ abstract final class NavBarTheme {
 
   // Active state
   static const List<Color> activePillGradient = [
+    Color.fromRGBO(255, 255, 255, 0.25),
     Color.fromRGBO(255, 255, 255, 0.12),
-    Color.fromRGBO(255, 255, 255, 0.05),
   ];
   static const Color activeTextColor = Colors.white;
   static const Color activeIconColor = Colors.white;

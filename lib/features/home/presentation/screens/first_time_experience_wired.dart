@@ -10,6 +10,8 @@ import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
+import 'package:flutter_app/core/services/share_intent_model.dart';
+import 'package:flutter_app/core/services/share_intent_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contact_request/application/accept_and_reciprocate_use_case.dart';
 import 'package:flutter_app/features/settings/application/upload_profile_picture_use_case.dart';
@@ -37,6 +39,8 @@ import 'package:flutter_app/features/qr_code/application/build_qr_payload_use_ca
 import 'package:flutter_app/features/qr_code/presentation/screens/qr_scanner_wired.dart';
 import 'package:flutter_app/features/feed/presentation/screens/feed_wired.dart';
 import 'package:flutter_app/features/feed/presentation/navigation/feed_route_transition.dart';
+import 'package:flutter_app/features/share/application/settle_share_intent_flow.dart';
+import 'package:flutter_app/features/share/presentation/navigation/share_target_picker_route.dart';
 import 'package:flutter_app/core/utils/startup_timing.dart';
 import 'first_time_experience_screen.dart';
 
@@ -65,6 +69,7 @@ class FirstTimeExperienceWired extends StatefulWidget {
   final ActiveConversationTracker? groupConversationTracker;
   final IntroductionRepository? introductionRepository;
   final IntroductionListener? introductionListener;
+  final ShareIntentService? shareIntentService;
 
   const FirstTimeExperienceWired({
     super.key,
@@ -91,6 +96,7 @@ class FirstTimeExperienceWired extends StatefulWidget {
     this.groupConversationTracker,
     this.introductionRepository,
     this.introductionListener,
+    this.shareIntentService,
   });
 
   @override
@@ -123,10 +129,18 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
     _requestSubscription = widget.contactRequestListener.requestStream.listen(
       _onContactRequest,
       onError: (error) {
-        emitFlowEvent(layer: 'FL', event: 'FTE_REQUEST_STREAM_ERROR', details: {'error': error.toString()});
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'FTE_REQUEST_STREAM_ERROR',
+          details: {'error': error.toString()},
+        );
       },
       onDone: () {
-        emitFlowEvent(layer: 'FL', event: 'FTE_REQUEST_STREAM_DONE', details: {});
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'FTE_REQUEST_STREAM_DONE',
+          details: {},
+        );
       },
     );
   }
@@ -174,7 +188,8 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
     // the contact exists — navigate to feed.
     if (result == AcceptContactRequestResult.success ||
         result == AcceptContactRequestResult.notPending) {
-      Navigator.of(context).pushReplacement(
+      final navigator = Navigator.of(context);
+      navigator.pushReplacement(
         buildFeedSlideUpRoute(
           builder: (_) => FeedWired(
             repository: widget.repository,
@@ -202,6 +217,11 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
             introductionListener: widget.introductionListener,
           ),
         ),
+      );
+      settleShareIntentFlow(
+        shareIntentService: widget.shareIntentService,
+        navigator: navigator,
+        buildRoute: _buildPendingShareRoute,
       );
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -381,9 +401,7 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
     try {
       // Pick image
       final picker = ImagePicker();
-      final pickedFile = await picker.pickImage(
-        source: source,
-      );
+      final pickedFile = await picker.pickImage(source: source);
 
       if (pickedFile == null) return;
 
@@ -471,8 +489,33 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
           groupConversationTracker: widget.groupConversationTracker,
           introductionRepository: widget.introductionRepository,
           introductionListener: widget.introductionListener,
+          shareIntentService: widget.shareIntentService,
         ),
       ),
+    );
+  }
+
+  Route<void> _buildPendingShareRoute(ShareIntent intent) {
+    return buildShareTargetPickerRoute(
+      shareIntent: intent,
+      identityRepo: widget.repository,
+      contactRepository: widget.contactRepository,
+      messageRepository: widget.messageRepository,
+      mediaAttachmentRepository: widget.mediaAttachmentRepository,
+      chatMessageListener: widget.chatMessageListener,
+      bridge: widget.bridge,
+      p2pService: widget.p2pService,
+      mediaFileManager: widget.mediaFileManager,
+      imageProcessor: widget.imageProcessor,
+      conversationTracker: widget.conversationTracker,
+      audioRecorderService: widget.audioRecorderService,
+      reactionRepository: widget.reactionRepository,
+      reactionListener: widget.reactionListener,
+      groupRepository: widget.groupRepository,
+      groupMessageRepository: widget.groupMessageRepository,
+      groupMessageListener: widget.groupMessageListener,
+      groupConversationTracker: widget.groupConversationTracker,
+      introductionRepository: widget.introductionRepository,
     );
   }
 

@@ -715,7 +715,7 @@ void main() {
     });
 
     testWidgets(
-      'tapping FAB opens menu with New Group, New Announce, New Q&A',
+      'tapping FAB opens menu with New Group and New Announce',
       (tester) async {
         setLargeTestSurface(tester);
         suppressOverflowErrors();
@@ -731,7 +731,6 @@ void main() {
 
         expect(find.text('New Group'), findsOneWidget);
         expect(find.text('New Announce'), findsOneWidget);
-        expect(find.text('New Q&A'), findsOneWidget);
       },
     );
 
