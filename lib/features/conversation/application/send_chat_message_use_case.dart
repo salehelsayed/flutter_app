@@ -187,12 +187,13 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
         timeoutMs: interactiveDirectBudget.inMilliseconds,
       );
       if (sendResult.sent) {
-        final status = sendResult.acknowledged ? 'delivered' : 'sent';
-        final message = payload.toConversationMessage(
-          contactPeerId: targetPeerId,
-          isIncoming: false,
-          status: status,
-          transport: 'reuse',
+        final message = await _persistOutgoingSendResult(
+          p2pService: p2pService,
+          payload: payload,
+          targetPeerId: targetPeerId,
+          jsonString: jsonString,
+          acknowledged: sendResult.acknowledged,
+          via: 'reuse',
         );
         await messageRepo.saveMessage(message);
         await _persistOutgoingMedia(
@@ -204,15 +205,15 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
           event: 'CHAT_MSG_SEND_SUCCESS',
           details: {
             'id': resolvedMessageId.substring(0, 8),
-            'status': status,
-            'via': 'reuse',
+            'status': message.status,
+            'via': message.transport,
             'textPreview': textPreview,
           },
         );
         logChatOutgoing(
           messageId: resolvedMessageId,
           toPeerId: targetPeerId,
-          status: status,
+          status: message.status,
           text: text,
         );
         return (
@@ -282,12 +283,13 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   final raceResult = await completer.future;
 
   if (raceResult.success) {
-    final status = raceResult.acknowledged ? 'delivered' : 'sent';
-    final message = payload.toConversationMessage(
-      contactPeerId: targetPeerId,
-      isIncoming: false,
-      status: status,
-      transport: raceResult.via,
+    final message = await _persistOutgoingSendResult(
+      p2pService: p2pService,
+      payload: payload,
+      targetPeerId: targetPeerId,
+      jsonString: jsonString,
+      acknowledged: raceResult.acknowledged,
+      via: raceResult.via!,
     );
     await messageRepo.saveMessage(message);
     await _persistOutgoingMedia(
@@ -299,15 +301,15 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       event: 'CHAT_MSG_SEND_SUCCESS',
       details: {
         'id': resolvedMessageId.substring(0, 8),
-        'status': status,
-        'via': raceResult.via,
+        'status': message.status,
+        'via': message.transport,
         'textPreview': textPreview,
       },
     );
     logChatOutgoing(
       messageId: resolvedMessageId,
       toPeerId: targetPeerId,
-      status: status,
+      status: message.status,
       text: text,
     );
     return (
@@ -505,4 +507,61 @@ SendChatMessageResult _resultForFailureReason(String? reason) {
     'dial_failed' => SendChatMessageResult.dialFailed,
     _ => SendChatMessageResult.sendFailed,
   };
+}
+
+Future<ConversationMessage> _persistOutgoingSendResult({
+  required P2PService p2pService,
+  required MessagePayload payload,
+  required String targetPeerId,
+  required String jsonString,
+  required bool acknowledged,
+  required String via,
+}) async {
+  if (acknowledged) {
+    return payload.toConversationMessage(
+      contactPeerId: targetPeerId,
+      isIncoming: false,
+      status: 'delivered',
+      transport: via,
+    );
+  }
+
+  try {
+    final storedInInbox = await p2pService.storeInInbox(
+      targetPeerId,
+      jsonString,
+    );
+    if (storedInInbox) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CHAT_MSG_SEND_UNACKED_INBOX_HANDOFF',
+        details: {'via': via},
+      );
+      return payload.toConversationMessage(
+        contactPeerId: targetPeerId,
+        isIncoming: false,
+        status: 'delivered',
+        transport: 'inbox',
+      );
+    }
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_SEND_UNACKED_INBOX_ERROR',
+      details: {'via': via, 'error': e.toString()},
+    );
+  }
+
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'CHAT_MSG_SEND_UNACKED_PENDING_RETRY',
+    details: {'via': via},
+  );
+  return payload.toConversationMessage(
+    contactPeerId: targetPeerId,
+    isIncoming: false,
+    status: 'sent',
+    transport: via,
+    wireEnvelope: jsonString,
+  );
 }

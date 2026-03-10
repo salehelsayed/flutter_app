@@ -482,6 +482,7 @@ void main() {
         String? timestamp,
         Bridge? bridge,
         String? recipientMlKemPublicKey,
+        String? quotedMessageId,
         List<MediaAttachment>? mediaAttachments,
         MediaAttachmentRepository? mediaAttachmentRepo,
       }) async {
@@ -554,6 +555,7 @@ void main() {
         String? timestamp,
         Bridge? bridge,
         String? recipientMlKemPublicKey,
+        String? quotedMessageId,
         List<MediaAttachment>? mediaAttachments,
         MediaAttachmentRepository? mediaAttachmentRepo,
       }) async {
@@ -610,6 +612,7 @@ void main() {
         String? timestamp,
         Bridge? bridge,
         String? recipientMlKemPublicKey,
+        String? quotedMessageId,
         List<MediaAttachment>? mediaAttachments,
         MediaAttachmentRepository? mediaAttachmentRepo,
       }) async {
@@ -677,6 +680,7 @@ void main() {
         String? timestamp,
         Bridge? bridge,
         String? recipientMlKemPublicKey,
+        String? quotedMessageId,
         List<MediaAttachment>? mediaAttachments,
         MediaAttachmentRepository? mediaAttachmentRepo,
       }) async {
@@ -1044,6 +1048,7 @@ void main() {
         String? timestamp,
         Bridge? bridge,
         String? recipientMlKemPublicKey,
+        String? quotedMessageId,
         List<MediaAttachment>? mediaAttachments,
         MediaAttachmentRepository? mediaAttachmentRepo,
       }) async {
@@ -1110,6 +1115,7 @@ void main() {
         String? timestamp,
         Bridge? bridge,
         String? recipientMlKemPublicKey,
+        String? quotedMessageId,
         List<MediaAttachment>? mediaAttachments,
         MediaAttachmentRepository? mediaAttachmentRepo,
       }) async {
@@ -1148,6 +1154,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> _instantSuccessSendFn({
   String? timestamp,
   Bridge? bridge,
   String? recipientMlKemPublicKey,
+  String? quotedMessageId,
   List<MediaAttachment>? mediaAttachments,
   MediaAttachmentRepository? mediaAttachmentRepo,
 }) async {
