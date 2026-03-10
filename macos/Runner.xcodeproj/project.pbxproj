@@ -235,6 +235,7 @@
 			buildConfigurationList = 33CC10FB2044A3C60003C045 /* Build configuration list for PBXNativeTarget "Runner" */;
 			buildPhases = (
 				50E41DA6ABBECA3A5028CE82 /* [CP] Check Pods Manifest.lock */,
+				0B1619862944C9BD95F315D2 /* [CP-User] Ensure GoMknoon macOS Bindings */,
 				33CC10E92044A3C60003C045 /* Sources */,
 				33CC10EA2044A3C60003C045 /* Frameworks */,
 				33CC10EB2044A3C60003C045 /* Resources */,
@@ -324,6 +325,16 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
+		0B1619862944C9BD95F315D2 /* [CP-User] Ensure GoMknoon macOS Bindings */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			name = "[CP-User] Ensure GoMknoon macOS Bindings";
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "\"${PODS_ROOT}/../../scripts/ensure_go_macos_bindings.sh\"\n";
+		};
 		3399D490228B24CF009A79C7 /* ShellScript */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;

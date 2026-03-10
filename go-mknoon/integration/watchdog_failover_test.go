@@ -3,247 +3,282 @@
 package integration_test
 
 import (
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/mknoon/go-mknoon/node"
 )
 
-// =============================================================================
-// Phase 7: Watchdog & Failover Integration Tests
-//
-// These tests verify that:
-// 1. A second relay prevents watchdog restart when one relay is unavailable.
-// 2. All relays unavailable enters degraded state and later recovers.
-// 3. Rendezvous and inbox still work after relay process restart.
-// =============================================================================
+func TestSecondRelayAvailablePreventsWatchdogRestart(t *testing.T) {
+	relayA, relayB := startLocalRelayPair(t)
+	relayAddrs := []string{relayA.addr(), relayB.addr()}
 
-// TestSecondRelayAvailablePreventWatchdogRestart verifies that when configured
-// with two relays (one dead, one alive), the watchdog does NOT trigger a
-// restart because the surviving relay keeps the node online.
-func TestSecondRelayAvailablePreventWatchdogRestart(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in -short mode")
-	}
-	requireRelay(t)
+	nodeA, peerIDA := startNodeWithRelays(t, relayAddrs, nil, nil)
+	nodeB, peerIDB := startNodeWithRelays(t, relayAddrs, nil, nil)
 
-	// Start a node with fake-first relay (dead) and real relay (alive).
-	n, _ := startNodeWithFakeFirstRelay(t)
+	waitForNodeStatus(t, nodeA, 10*time.Second, func(status map[string]interface{}) bool {
+		return statusConnectionCount(status) >= 1
+	})
+	waitForNodeStatus(t, nodeB, 10*time.Second, func(status map[string]interface{}) bool {
+		return statusConnectionCount(status) >= 1
+	})
 
-	// Wait for circuit addresses from the real relay.
-	_, ok := waitForCircuitAddresses(n, 30*time.Second)
-	if !ok {
-		t.Fatal("circuit addresses did not appear within 30s")
-	}
+	relayA.stop()
 
-	// Verify the watchdog restart count is still 0 — the second relay
-	// prevented the need for a watchdog restart.
-	status := n.Status()
-	watchdogCount, _ := status["watchdogRestartCount"].(int)
-	if watchdogCount != 0 {
-		t.Errorf("expected watchdogRestartCount=0 (second relay should prevent restart), got %d", watchdogCount)
+	waitForNodeStatus(t, nodeA, 15*time.Second, func(status map[string]interface{}) bool {
+		return statusInt(status, "watchdogRestartCount") == 0 &&
+			statusString(status, "relayState") != "watchdog_restart"
+	})
+
+	namespace := randomNamespace()
+	if err := nodeA.RendezvousRegister(namespace, nil); err != nil {
+		t.Fatalf("RendezvousRegister after relayA loss: %v", err)
 	}
 
-	// Aggregate state should be online (not watchdog_restart).
-	relayState, _ := status["relayState"].(string)
-	if relayState == "watchdog_restart" {
-		t.Error("relay state should not be watchdog_restart when a healthy relay exists")
-	}
-}
+	waitForDiscoverablePeer(t, nodeB, namespace, peerIDA, 15*time.Second)
 
-// TestAllRelaysUnavailableEntersDegradedStateAndRecovers verifies that when all
-// relays become unavailable, the node enters degraded state. When a relay comes
-// back, the node recovers.
-func TestAllRelaysUnavailableEntersDegradedStateAndRecovers(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in -short mode")
-	}
-	requireRelay(t)
-
-	collector := &eventCollector{}
-	n, peerId := startNodeWithCallback(t, collector)
-
-	// Wait for initial circuit addresses.
-	_, ok := collector.waitForEvent("p2p-circuit", 30*time.Second)
-	if !ok {
-		t.Fatal("did not receive circuit address event within 30s")
+	message := "hello through relayB after relayA loss"
+	if err := nodeA.InboxStore(peerIDB, message); err != nil {
+		t.Fatalf("InboxStore after relayA loss: %v", err)
 	}
 
-	// Disconnect from the relay.
-	relayPeerID := extractRelayPeerID(t, relayAddr())
-	if err := n.DisconnectPeer(relayPeerID); err != nil {
-		t.Fatalf("DisconnectPeer: %v", err)
-	}
-	time.Sleep(2 * time.Second)
+	waitForInboxMessage(t, nodeB, peerIDA, message, 15*time.Second)
 
-	// Verify we're in a non-online state.
-	status := n.Status()
-	relayState, _ := status["relayState"].(string)
-	if relayState == "online" {
-		// AutoRelay may have already reconnected. That's acceptable.
-		t.Log("relay already recovered (AutoRelay fast reconnect)")
-	} else {
-		t.Logf("relay state after disconnect: %s (expected non-online)", relayState)
-	}
-
-	// Reconnect relays and verify recovery.
-	if _, err := n.ReconnectRelays(); err != nil {
-		t.Fatalf("ReconnectRelays: %v", err)
-	}
-
-	// Wait for circuit addresses to return.
-	recoveredAddrs, recovered := waitForCircuitAddresses(n, 15*time.Second)
-	if !recovered {
-		t.Fatal("circuit addresses did not recover within 15s after ReconnectRelays")
-	}
-
-	// Verify state is back online.
-	for _, addr := range recoveredAddrs {
-		if !strings.Contains(addr, "/p2p-circuit") {
-			t.Errorf("recovered address %q does not contain /p2p-circuit", addr)
-		}
-	}
-
-	// PeerId preserved.
-	if n.PeerId() != peerId {
-		t.Errorf("peerId changed: got %s, want %s", n.PeerId(), peerId)
-	}
-}
-
-// TestRendezvousAndInboxStillWorkAfterRelayRestart verifies that after
-// disconnecting and reconnecting to the relay, rendezvous registration and
-// inbox operations still function correctly.
-func TestRendezvousAndInboxStillWorkAfterRelayRestart(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in -short mode")
-	}
-	requireRelay(t)
-
-	collector := &eventCollector{}
-	nodeA, peerIdA := startNodeWithCallback(t, collector)
-
-	// Wait for circuit address.
-	_, ok := collector.waitForEvent("p2p-circuit", 30*time.Second)
-	if !ok {
-		t.Fatal("did not receive circuit address event within 30s")
-	}
-
-	// Disconnect from relay (simulates relay process restart).
-	relayPeerID := extractRelayPeerID(t, relayAddr())
-	if err := nodeA.DisconnectPeer(relayPeerID); err != nil {
-		t.Fatalf("DisconnectPeer: %v", err)
-	}
-	time.Sleep(2 * time.Second)
-
-	// Reconnect.
-	if _, err := nodeA.ReconnectRelays(); err != nil {
-		t.Fatalf("ReconnectRelays: %v", err)
-	}
-
-	// Wait for circuit addresses to return.
-	_, recovered := waitForCircuitAddresses(nodeA, 15*time.Second)
-	if !recovered {
-		t.Fatal("circuit addresses did not recover within 15s")
-	}
-
-	// Test 1: Rendezvous registration still works.
-	ns := randomNamespace()
-	if err := nodeA.RendezvousRegister(ns, nil); err != nil {
-		t.Fatalf("RendezvousRegister after relay restart: %v", err)
-	}
-	t.Logf("rendezvous register succeeded after relay restart: ns=%s", ns)
-
-	// Test 2: Start nodeB and verify it can discover nodeA.
-	nodeB, _ := startNode(t)
-	time.Sleep(3 * time.Second)
-
-	var found bool
-	for attempt := 1; attempt <= 5; attempt++ {
-		peers, err := nodeB.RendezvousDiscover(ns, nil)
-		if err != nil {
-			t.Logf("discover attempt %d: %v", attempt, err)
-			time.Sleep(2 * time.Second)
-			continue
-		}
-		for _, p := range peers {
-			if p.ID.String() == peerIdA {
-				found = true
-				break
-			}
-		}
-		if found {
-			break
-		}
-		time.Sleep(2 * time.Second)
-	}
-	if !found {
-		t.Error("nodeA not discoverable after relay restart")
-	}
-
-	// Test 3: Inbox still works after relay restart.
-	_, peerIdB := nodeB.PeerId(), nodeB.PeerId()
-	if err := nodeA.InboxStore(peerIdB, "hello after restart"); err != nil {
-		t.Fatalf("InboxStore after relay restart: %v", err)
-	}
-
-	time.Sleep(2 * time.Second)
-
-	msgs, err := nodeB.InboxRetrieve()
-	if err != nil {
-		t.Fatalf("InboxRetrieve: %v", err)
-	}
-
-	var foundMsg bool
-	for _, m := range msgs {
-		if m.From == peerIdA && m.Message == "hello after restart" {
-			foundMsg = true
-			break
-		}
-	}
-	if !foundMsg {
-		t.Error("expected message from nodeA after relay restart")
-	}
-
-	// Test 4: Verify feature flags are accessible.
 	status := nodeA.Status()
-	if _, ok := status["featureFlags"]; !ok {
-		t.Log("featureFlags not yet in status (expected until wired)")
+	if got := statusInt(status, "watchdogRestartCount"); got != 0 {
+		t.Fatalf("expected watchdogRestartCount=0, got %d", got)
 	}
-
-	t.Log("rendezvous and inbox verified after relay restart")
+	if got := statusString(status, "relayState"); got == "watchdog_restart" {
+		t.Fatalf("second relay should prevent watchdog restart, status=%+v", status)
+	}
 }
 
-// TestNodeStatusIncludesWatchdogMetrics verifies that node status includes
-// watchdog-related metrics for operational telemetry.
-func TestNodeStatusIncludesWatchdogMetrics(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in -short mode")
-	}
-	requireRelay(t)
+func TestAllRelaysUnavailableEnterDegradedStateAndRecover(t *testing.T) {
+	relayA, relayB := startLocalRelayPair(t)
+	relayAddrs := []string{relayA.addr(), relayB.addr()}
 
-	n, _ := startNode(t)
+	n, peerID := startNodeWithRelays(t, relayAddrs, nil, nil)
+
+	waitForNodeStatus(t, n, 10*time.Second, func(status map[string]interface{}) bool {
+		return statusConnectionCount(status) >= 1
+	})
+
+	relayA.stop()
+	relayB.stop()
+
+	waitForNodeStatus(t, n, 20*time.Second, func(status map[string]interface{}) bool {
+		return statusConnectionCount(status) == 0
+	})
+
+	result, err := n.ReconnectRelays()
+	if err != nil {
+		t.Fatalf("ReconnectRelays() with all relays down: %v", err)
+	}
+	if result.RecoveryMode != "watchdog_restart" {
+		t.Fatalf("expected watchdog_restart fallback, got %+v", result)
+	}
+	if result.Success {
+		t.Fatalf("expected watchdog fallback to remain unhealthy while all relays are down, got %+v", result)
+	}
+
+	statusAfterFallback := waitForNodeStatus(t, n, 5*time.Second, func(status map[string]interface{}) bool {
+		return statusInt(status, "watchdogRestartCount") >= 1
+	})
+	if !statusBool(statusAfterFallback, "needsGroupRecovery") {
+		t.Fatalf("watchdog restart should mark needsGroupRecovery, got %+v", statusAfterFallback)
+	}
+
+	relayB.start()
+	nodePeer, peerIDPeer := startNodeWithRelays(t, []string{relayB.addr()}, nil, nil)
+
+	namespace := randomNamespace()
+	waitForRendezvousRegister(t, n, namespace, 15*time.Second)
+	waitForDiscoverablePeer(t, nodePeer, namespace, peerID, 15*time.Second)
+
+	message := "recovered after relayB returned"
+	waitForInboxStore(t, n, peerIDPeer, message, 15*time.Second)
+	waitForInboxMessage(t, nodePeer, peerID, message, 15*time.Second)
 
 	status := n.Status()
+	if got := statusInt(status, "watchdogRestartCount"); got < 1 {
+		t.Fatalf("watchdog restart count should persist after recovery, got %+v", status)
+	}
+	if n.PeerId() != peerID {
+		t.Fatalf("peerId changed across degraded/recovered cycle: got %s want %s", n.PeerId(), peerID)
+	}
+}
 
-	// Verify watchdog metrics are present.
+func TestRendezvousAndInboxStillWorkAfterRelayRestart(t *testing.T) {
+	relayA, relayB := startLocalRelayPair(t)
+	relayAddrs := []string{relayA.addr(), relayB.addr()}
+
+	nodeA, peerIDA := startNodeWithRelays(t, relayAddrs, nil, nil)
+	nodeB, peerIDB := startNodeWithRelays(t, relayAddrs, nil, nil)
+
+	waitForNodeStatus(t, nodeA, 10*time.Second, func(status map[string]interface{}) bool {
+		return statusConnectionCount(status) >= 1
+	})
+	waitForNodeStatus(t, nodeB, 10*time.Second, func(status map[string]interface{}) bool {
+		return statusConnectionCount(status) >= 1
+	})
+
+	relayA.stop()
+
+	namespaceWhileADown := randomNamespace()
+	waitForRendezvousRegister(t, nodeA, namespaceWhileADown, 15*time.Second)
+	waitForDiscoverablePeer(t, nodeB, namespaceWhileADown, peerIDA, 15*time.Second)
+
+	msgWhileADown := "message via relayB while relayA is down"
+	waitForInboxStore(t, nodeA, peerIDB, msgWhileADown, 15*time.Second)
+	waitForInboxMessage(t, nodeB, peerIDA, msgWhileADown, 15*time.Second)
+
+	relayA.start()
+	relayB.stop()
+
+	postRestartRelayAddrs := []string{relayA.addr()}
+	nodeC, peerIDC := startNodeWithRelays(t, postRestartRelayAddrs, nil, nil)
+	nodeD, peerIDD := startNodeWithRelays(t, postRestartRelayAddrs, nil, nil)
+
+	namespaceAfterRestart := randomNamespace()
+	waitForRendezvousRegister(t, nodeC, namespaceAfterRestart, 15*time.Second)
+	waitForDiscoverablePeer(t, nodeD, namespaceAfterRestart, peerIDC, 15*time.Second)
+
+	msgAfterRestart := "message via restarted relayA"
+	waitForInboxStore(t, nodeC, peerIDD, msgAfterRestart, 15*time.Second)
+	waitForInboxMessage(t, nodeD, peerIDC, msgAfterRestart, 15*time.Second)
+}
+
+func TestNodeStatusIncludesWatchdogMetrics(t *testing.T) {
+	relayA, relayB := startLocalRelayPair(t)
+	n, _ := startNodeWithRelays(t, []string{relayA.addr(), relayB.addr()}, nil, nil)
+
+	status := waitForNodeStatus(t, n, 10*time.Second, func(status map[string]interface{}) bool {
+		return statusConnectionCount(status) >= 1
+	})
+
 	if _, ok := status["watchdogRestartCount"]; !ok {
-		t.Error("status should include watchdogRestartCount")
+		t.Fatal("status should include watchdogRestartCount")
 	}
 	if _, ok := status["relayState"]; !ok {
-		t.Error("status should include relayState")
+		t.Fatal("status should include relayState")
 	}
 	if _, ok := status["healthyRelayCount"]; !ok {
-		t.Error("status should include healthyRelayCount")
+		t.Fatal("status should include healthyRelayCount")
 	}
 
-	// Verify the node reports a feature flag struct or equivalent.
-	// (This validates operational telemetry hooks.)
-	t.Logf("node status: relayState=%v healthyRelayCount=%v watchdogRestartCount=%v",
-		status["relayState"], status["healthyRelayCount"], status["watchdogRestartCount"])
+	flags, ok := status["featureFlags"].(map[string]bool)
+	if !ok {
+		t.Fatalf("status should include featureFlags, got %T", status["featureFlags"])
+	}
+	if !flags["enableMultiRelayRouting"] {
+		t.Fatal("enableMultiRelayRouting should be true by default")
+	}
 }
 
-// --- Helper: start node with fake first relay ---
-// (Reuses the helper from multi_relay_test.go which is in the same package.)
-// startNodeWithFakeFirstRelay is already defined in multi_relay_test.go
-// so we don't re-define it here.
+func waitForDiscoverablePeer(t *testing.T, n *node.Node, namespace, peerID string, timeout time.Duration) {
+	t.Helper()
+
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		peers, err := n.RendezvousDiscover(namespace, nil)
+		if err == nil {
+			for _, discovered := range peers {
+				if discovered.ID.String() == peerID {
+					return
+				}
+			}
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+
+	peers, err := n.RendezvousDiscover(namespace, nil)
+	t.Fatalf("peer %s not discoverable on %s within %v (last err=%v peers=%v)", peerID, namespace, timeout, err, peers)
+}
+
+func waitForRendezvousRegister(t *testing.T, n *node.Node, namespace string, timeout time.Duration) {
+	t.Helper()
+
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		if err := n.RendezvousRegister(namespace, nil); err == nil {
+			return
+		} else {
+			lastErr = err
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+	t.Fatalf("RendezvousRegister for %s did not succeed within %v: %v", namespace, timeout, lastErr)
+}
+
+func waitForInboxStore(t *testing.T, n *node.Node, toPeerID, message string, timeout time.Duration) {
+	t.Helper()
+
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		if err := n.InboxStore(toPeerID, message); err == nil {
+			return
+		} else {
+			lastErr = err
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+	t.Fatalf("InboxStore to %s did not succeed within %v: %v", toPeerID, timeout, lastErr)
+}
+
+func waitForInboxMessage(t *testing.T, n *node.Node, fromPeerID, message string, timeout time.Duration) {
+	t.Helper()
+
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		messages, err := n.InboxRetrieve()
+		if err == nil {
+			for _, inboxMessage := range messages {
+				if inboxMessage.From == fromPeerID && inboxMessage.Message == message {
+					return
+				}
+			}
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+
+	messages, err := n.InboxRetrieve()
+	t.Fatalf("message %q from %s not retrieved within %v (last err=%v messages=%v)", message, fromPeerID, timeout, err, messages)
+}
+
+func statusInt(status map[string]interface{}, key string) int {
+	switch value := status[key].(type) {
+	case int:
+		return value
+	case int32:
+		return int(value)
+	case int64:
+		return int(value)
+	case float64:
+		return int(value)
+	default:
+		return 0
+	}
+}
+
+func statusString(status map[string]interface{}, key string) string {
+	value, _ := status[key].(string)
+	return value
+}
+
+func statusBool(status map[string]interface{}, key string) bool {
+	value, _ := status[key].(bool)
+	return value
+}
+
+func statusConnectionCount(status map[string]interface{}) int {
+	switch value := status["connections"].(type) {
+	case []map[string]interface{}:
+		return len(value)
+	case []interface{}:
+		return len(value)
+	default:
+		return 0
+	}
+}

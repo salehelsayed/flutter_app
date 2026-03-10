@@ -106,9 +106,11 @@ void main() {
     // 1. Read CLI peer fixture
     final fixtureFile = File('${_signalDir()}/cli_peer_fixture.json');
     if (!fixtureFile.existsSync()) {
-      fail('CLI peer fixture not found at ${fixtureFile.path}. '
-          'Run with the orchestrator: '
-          'dart run integration_test/scripts/run_soak_e2e.dart');
+      fail(
+        'CLI peer fixture not found at ${fixtureFile.path}. '
+        'Run with the orchestrator: '
+        'dart run integration_test/scripts/run_soak_e2e.dart',
+      );
     }
     final fixture =
         jsonDecode(fixtureFile.readAsStringSync()) as Map<String, dynamic>;
@@ -121,17 +123,15 @@ void main() {
     final bridge = GoBridgeClient();
     await bridge.initialize();
 
-    final identityJson = await bridge.send(jsonEncode({
-      'cmd': 'identity.generate',
-    }));
+    final identityJson = await bridge.send(
+      jsonEncode({'cmd': 'identity.generate'}),
+    );
     final identityResult = jsonDecode(identityJson) as Map<String, dynamic>;
     final myPeerId = identityResult['peerId'] as String;
     final myPrivateKey = identityResult['privateKey'] as String;
 
     // Generate ML-KEM keys
-    final mlKemJson = await bridge.send(jsonEncode({
-      'cmd': 'mlkem.keygen',
-    }));
+    final mlKemJson = await bridge.send(jsonEncode({'cmd': 'mlkem.keygen'}));
     final mlKemResult = jsonDecode(mlKemJson) as Map<String, dynamic>;
     final myMlKemPK = mlKemResult['publicKey'] as String;
     final myMlKemSK = mlKemResult['secretKey'] as String;
@@ -195,11 +195,17 @@ void main() {
       dbDeleteMessagesForContact: (contactPeerId) =>
           dbDeleteMessagesForContact(db, contactPeerId),
       dbLoadMessagesPage: (contactPeerId, {limit = 50, beforeTimestamp}) =>
-          dbLoadMessagesPage(db, contactPeerId,
-              limit: limit, beforeTimestamp: beforeTimestamp),
+          dbLoadMessagesPage(
+            db,
+            contactPeerId,
+            limit: limit,
+            beforeTimestamp: beforeTimestamp,
+          ),
       dbLoadFailedOutgoingMessages: () => dbLoadFailedOutgoingMessages(db),
       dbLoadUnackedOutgoingMessages: ({required olderThan, limit = 50}) =>
           dbLoadUnackedOutgoingMessages(db, olderThan: olderThan, limit: limit),
+      dbLoadConversationThreadSummaries: (contactPeerIds) =>
+          dbLoadConversationThreadSummaries(db, contactPeerIds),
     );
 
     // Start P2P node
@@ -207,15 +213,17 @@ void main() {
     await p2pService.startNode(myPrivateKey, myPeerId);
 
     // Add CLI peer as contact
-    await contactRepo.addContact(ContactModel(
-      peerId: cliPeerId,
-      publicKey: cliPublicKey,
-      rendezvous: '/dns4/relay/tcp/443/p2p/relay',
-      username: 'CLI-Soak-Peer',
-      signature: 'sig-cli',
-      scannedAt: DateTime.now().toUtc().toIso8601String(),
-      mlKemPublicKey: cliMlKemPK,
-    ));
+    await contactRepo.addContact(
+      ContactModel(
+        peerId: cliPeerId,
+        publicKey: cliPublicKey,
+        rendezvous: '/dns4/relay/tcp/443/p2p/relay',
+        username: 'CLI-Soak-Peer',
+        signature: 'sig-cli',
+        scannedAt: DateTime.now().toUtc().toIso8601String(),
+        mlKemPublicKey: cliMlKemPK,
+      ),
+    );
 
     // Start listener
     final listener = ChatMessageListener(
@@ -228,11 +236,14 @@ void main() {
     listener.start();
 
     // Write our fixture for the orchestrator
-    _writeSignal('flutter_peer_fixture.json', jsonEncode({
-      'peerId': myPeerId,
-      'publicKey': identityResult['publicKey'],
-      'mlKemPublicKey': myMlKemPK,
-    }));
+    _writeSignal(
+      'flutter_peer_fixture.json',
+      jsonEncode({
+        'peerId': myPeerId,
+        'publicKey': identityResult['publicKey'],
+        'mlKemPublicKey': myMlKemPK,
+      }),
+    );
 
     // 3. Signal-driven loop
     int sentCount = 0;
@@ -277,27 +288,34 @@ void main() {
       // Write stats periodically (every 10 loops)
       if (loopCount % 10 == 0) {
         final msgCount = await messageRepo.getMessageCountForContact(cliPeerId);
-        _writeSignal('soak_stats', jsonEncode({
-          'sentCount': sentCount,
-          'messageCount': msgCount,
-          'drainCount': drainCount,
-          'healthCheckCount': healthCheckCount,
-          'loopCount': loopCount,
-        }));
+        _writeSignal(
+          'soak_stats',
+          jsonEncode({
+            'sentCount': sentCount,
+            'messageCount': msgCount,
+            'drainCount': drainCount,
+            'healthCheckCount': healthCheckCount,
+            'loopCount': loopCount,
+          }),
+        );
       }
 
       await Future.delayed(const Duration(milliseconds: 500));
     }
 
     // 4. Final stats
-    final finalMsgCount =
-        await messageRepo.getMessageCountForContact(cliPeerId);
-    _writeSignal('soak_final_stats', jsonEncode({
-      'sentCount': sentCount,
-      'messageCount': finalMsgCount,
-      'drainCount': drainCount,
-      'healthCheckCount': healthCheckCount,
-    }));
+    final finalMsgCount = await messageRepo.getMessageCountForContact(
+      cliPeerId,
+    );
+    _writeSignal(
+      'soak_final_stats',
+      jsonEncode({
+        'sentCount': sentCount,
+        'messageCount': finalMsgCount,
+        'drainCount': drainCount,
+        'healthCheckCount': healthCheckCount,
+      }),
+    );
 
     // Cleanup
     listener.dispose();

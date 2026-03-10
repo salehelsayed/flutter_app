@@ -11,8 +11,25 @@ enum RejoinReason {
   /// Watchdog restart — Go node was restarted, topics are gone.
   watchdogRestart,
 
+  /// Go explicitly requested rejoin because topics may be missing.
+  nodeRequestedRecovery,
+
   /// In-place recovery succeeded — topics should still be active.
   inPlaceRecovery,
+}
+
+class RejoinGroupTopicsResult {
+  final int joinedGroupCount;
+  final int skippedNoKeyCount;
+  final int errorCount;
+  final bool skipped;
+
+  const RejoinGroupTopicsResult({
+    required this.joinedGroupCount,
+    required this.skippedNoKeyCount,
+    required this.errorCount,
+    required this.skipped,
+  });
 }
 
 /// Rejoins all group pubsub topics on startup or after watchdog restart.
@@ -30,7 +47,7 @@ enum RejoinReason {
 /// Groups without a stored key are skipped (can't join without key material).
 /// Errors on individual groups are logged and do not prevent other groups
 /// from being rejoined.
-Future<void> rejoinGroupTopics({
+Future<RejoinGroupTopicsResult> rejoinGroupTopics({
   required Bridge bridge,
   required GroupRepository groupRepo,
   RejoinReason reason = RejoinReason.startup,
@@ -42,7 +59,12 @@ Future<void> rejoinGroupTopics({
       event: 'GROUP_REJOIN_TOPICS_SKIPPED',
       details: {'reason': 'inPlaceRecovery'},
     );
-    return;
+    return const RejoinGroupTopicsResult(
+      joinedGroupCount: 0,
+      skippedNoKeyCount: 0,
+      errorCount: 0,
+      skipped: true,
+    );
   }
 
   emitFlowEvent(
@@ -52,17 +74,22 @@ Future<void> rejoinGroupTopics({
   );
 
   final groups = await groupRepo.getAllGroups();
+  var joinedGroupCount = 0;
+  var skippedNoKeyCount = 0;
+  var errorCount = 0;
 
   for (final group in groups) {
     try {
       final keyInfo = await groupRepo.getLatestKey(group.id);
       if (keyInfo == null) {
+        skippedNoKeyCount++;
         emitFlowEvent(
           layer: 'FL',
           event: 'GROUP_REJOIN_TOPICS_SKIP_NO_KEY',
           details: {
-            'groupId':
-                group.id.length > 8 ? group.id.substring(0, 8) : group.id,
+            'groupId': group.id.length > 8
+                ? group.id.substring(0, 8)
+                : group.id,
           },
         );
         continue;
@@ -75,14 +102,16 @@ Future<void> rejoinGroupTopics({
         'groupType': group.type.toValue(),
         if (group.description != null) 'description': group.description,
         'members': members
-            .map((m) => {
-                  'peerId': m.peerId,
-                  'username': m.username,
-                  'role': m.role.toValue(),
-                  'publicKey': m.publicKey,
-                  if (m.mlKemPublicKey != null)
-                    'mlKemPublicKey': m.mlKemPublicKey,
-                })
+            .map(
+              (m) => {
+                'peerId': m.peerId,
+                'username': m.username,
+                'role': m.role.toValue(),
+                'publicKey': m.publicKey,
+                if (m.mlKemPublicKey != null)
+                  'mlKemPublicKey': m.mlKemPublicKey,
+              },
+            )
             .toList(),
         'createdBy': group.createdBy,
         'createdAt': group.createdAt.toUtc().toIso8601String(),
@@ -95,24 +124,24 @@ Future<void> rejoinGroupTopics({
         groupKey: keyInfo.encryptedKey,
         keyEpoch: keyInfo.keyGeneration,
       );
+      joinedGroupCount++;
 
       emitFlowEvent(
         layer: 'FL',
         event: 'GROUP_REJOIN_TOPICS_JOINED',
         details: {
-          'groupId':
-              group.id.length > 8 ? group.id.substring(0, 8) : group.id,
+          'groupId': group.id.length > 8 ? group.id.substring(0, 8) : group.id,
           'keyEpoch': keyInfo.keyGeneration,
           'memberCount': members.length,
         },
       );
     } catch (e) {
+      errorCount++;
       emitFlowEvent(
         layer: 'FL',
         event: 'GROUP_REJOIN_TOPICS_ERROR',
         details: {
-          'groupId':
-              group.id.length > 8 ? group.id.substring(0, 8) : group.id,
+          'groupId': group.id.length > 8 ? group.id.substring(0, 8) : group.id,
           'error': e.toString(),
         },
       );
@@ -122,6 +151,18 @@ Future<void> rejoinGroupTopics({
   emitFlowEvent(
     layer: 'FL',
     event: 'GROUP_REJOIN_TOPICS_DONE',
-    details: {'groupCount': groups.length},
+    details: {
+      'groupCount': groups.length,
+      'joinedGroupCount': joinedGroupCount,
+      'skippedNoKeyCount': skippedNoKeyCount,
+      'errorCount': errorCount,
+    },
+  );
+
+  return RejoinGroupTopicsResult(
+    joinedGroupCount: joinedGroupCount,
+    skippedNoKeyCount: skippedNoKeyCount,
+    errorCount: errorCount,
+    skipped: false,
   );
 }

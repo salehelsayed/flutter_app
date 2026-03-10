@@ -84,6 +84,8 @@ class GoBridgeClient extends Bridge {
     'group:updateKey': _CmdSpec('groupUpdateKey', true),
     'group:inboxStore': _CmdSpec('groupInboxStore', true),
     'group:inboxRetrieve': _CmdSpec('groupInboxRetrieve', true),
+    'group:inboxRetrieveCursor': _CmdSpec('groupInboxRetrieveCursor', true),
+    'group:acknowledgeRecovery': _CmdSpec('groupAcknowledgeRecovery', false),
     'group.keygen': _CmdSpec('generateGroupKey', false),
     'group.encrypt': _CmdSpec('groupEncryptMessage', true),
     'group.decrypt': _CmdSpec('groupDecryptMessage', true),
@@ -112,8 +114,10 @@ class GoBridgeClient extends Bridge {
         );
       },
       onDone: () {
-        debugPrint('[BRIDGE] ⚠ EventChannel DONE — stream closed! '
-            'No more push events will be received.');
+        debugPrint(
+          '[BRIDGE] ⚠ EventChannel DONE — stream closed! '
+          'No more push events will be received.',
+        );
         emitFlowEvent(
           layer: 'FL',
           event: 'GO_BRIDGE_EVENT_STREAM_DONE',
@@ -138,15 +142,18 @@ class GoBridgeClient extends Bridge {
 
     try {
       final start = DateTime.now();
-      final response = await send(jsonEncode({'cmd': 'node:status'}))
-          .timeout(const Duration(seconds: 5));
+      final response = await send(
+        jsonEncode({'cmd': 'node:status'}),
+      ).timeout(const Duration(seconds: 5));
       final ms = DateTime.now().difference(start).inMilliseconds;
       final data = jsonDecode(response);
       final ok = data['ok'] == true;
-      debugPrint('[BRIDGE] checkHealth() → ok=$ok, '
-          'isStarted=${data['isStarted']}, '
-          'circuitAddresses=${(data['circuitAddresses'] as List?)?.length ?? 0} '
-          '(took ${ms}ms)');
+      debugPrint(
+        '[BRIDGE] checkHealth() → ok=$ok, '
+        'isStarted=${data['isStarted']}, '
+        'circuitAddresses=${(data['circuitAddresses'] as List?)?.length ?? 0} '
+        '(took ${ms}ms)',
+      );
       return ok;
     } catch (e) {
       debugPrint('[BRIDGE] checkHealth() FAILED: $e');
@@ -161,20 +168,20 @@ class GoBridgeClient extends Bridge {
 
   @override
   Future<void> reinitialize() async {
-    debugPrint('[BRIDGE] reinitialize() starting — '
-        'cancelling event subscription and re-subscribing...');
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'GO_BRIDGE_REINIT_START',
-      details: {},
+    debugPrint(
+      '[BRIDGE] reinitialize() starting — '
+      'cancelling event subscription and re-subscribing...',
     );
+    emitFlowEvent(layer: 'FL', event: 'GO_BRIDGE_REINIT_START', details: {});
 
     // Preserve callbacks
     final savedOnMessage = onMessageReceived;
     final savedOnConnect = onPeerConnected;
     final savedOnDisconnect = onPeerDisconnected;
     final savedOnAddresses = onAddressesUpdated;
+    final savedOnRelayState = onRelayStateChanged;
     final savedOnGroupMessage = onGroupMessageReceived;
+    final savedOnGroupReaction = onGroupReactionReceived;
 
     // Cancel existing subscription
     await _eventSubscription?.cancel();
@@ -187,12 +194,16 @@ class GoBridgeClient extends Bridge {
     onPeerConnected = savedOnConnect;
     onPeerDisconnected = savedOnDisconnect;
     onAddressesUpdated = savedOnAddresses;
+    onRelayStateChanged = savedOnRelayState;
     onGroupMessageReceived = savedOnGroupMessage;
+    onGroupReactionReceived = savedOnGroupReaction;
 
     // Re-initialize
     await initialize();
-    debugPrint('[BRIDGE] reinitialize() complete — '
-        'event stream re-subscribed');
+    debugPrint(
+      '[BRIDGE] reinitialize() complete — '
+      'event stream re-subscribed',
+    );
   }
 
   @override
@@ -204,9 +215,13 @@ class GoBridgeClient extends Bridge {
     onPeerConnected = null;
     onPeerDisconnected = null;
     onAddressesUpdated = null;
+    onRelayStateChanged = null;
     onGroupMessageReceived = null;
     onGroupReactionReceived = null;
   }
+
+  @visibleForTesting
+  void debugHandleEventForTest(dynamic event) => _handleEvent(event);
 
   /// Handle push events from the Go layer.
   void _handleEvent(dynamic event) {
@@ -253,23 +268,31 @@ class GoBridgeClient extends Bridge {
               onPeerDisconnected!(connState);
             } catch (e) {
               debugPrint(
-                  '[GoBridgeClient] Error parsing peer disconnected: $e');
+                '[GoBridgeClient] Error parsing peer disconnected: $e',
+              );
             }
           }
           break;
 
         case 'addresses:updated':
           if (onAddressesUpdated != null) {
-            final listenAddrs = (eventData['listenAddresses'] as List<dynamic>?)
+            final listenAddrs =
+                (eventData['listenAddresses'] as List<dynamic>?)
                     ?.map((e) => e as String)
                     .toList() ??
                 [];
             final circuitAddrs =
                 (eventData['circuitAddresses'] as List<dynamic>?)
-                        ?.map((e) => e as String)
-                        .toList() ??
-                    [];
+                    ?.map((e) => e as String)
+                    .toList() ??
+                [];
             onAddressesUpdated!(listenAddrs, circuitAddrs);
+          }
+          break;
+
+        case 'relay:state':
+          if (onRelayStateChanged != null) {
+            onRelayStateChanged!(eventData);
           }
           break;
 
@@ -278,8 +301,7 @@ class GoBridgeClient extends Bridge {
             try {
               onGroupMessageReceived!(eventData);
             } catch (e) {
-              debugPrint(
-                  '[GoBridgeClient] Error handling group message: $e');
+              debugPrint('[GoBridgeClient] Error handling group message: $e');
             }
           }
           break;
@@ -289,8 +311,7 @@ class GoBridgeClient extends Bridge {
             try {
               onGroupReactionReceived!(eventData);
             } catch (e) {
-              debugPrint(
-                  '[GoBridgeClient] Error handling group reaction: $e');
+              debugPrint('[GoBridgeClient] Error handling group reaction: $e');
             }
           }
           break;

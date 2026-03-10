@@ -18,6 +18,7 @@ type groupInboxRequest struct {
 	From           string `json:"from,omitempty"`
 	Message        string `json:"message,omitempty"`
 	SinceTimestamp int64  `json:"sinceTimestamp,omitempty"`
+	Cursor         string `json:"cursor,omitempty"`
 	Limit          int    `json:"limit,omitempty"`
 }
 
@@ -25,9 +26,10 @@ type groupInboxRequest struct {
 // server for group inbox operations.
 // NOTE: The relay uses "groupMessages" (not "messages") for group inbox.
 type groupInboxResponse struct {
-	Status   string         `json:"status"`
-	Error    string         `json:"error,omitempty"`
-	Messages []InboxMessage `json:"groupMessages,omitempty"`
+	Status     string         `json:"status"`
+	Error      string         `json:"error,omitempty"`
+	Messages   []InboxMessage `json:"groupMessages,omitempty"`
+	NextCursor string         `json:"nextCursor,omitempty"`
 }
 
 // GroupInboxStore stores a group message in the relay's group inbox.
@@ -45,7 +47,8 @@ func (n *Node) GroupInboxStore(groupId, message string) error {
 	rs := n.buildRelaySelector(nil)
 
 	return rs.ForEach(func(relay RelayInfo) error {
-		ctx, cancel := context.WithTimeout(n.ctx, InboxTimeout)
+		timeout := InboxTimeout
+		ctx, cancel := context.WithTimeout(n.ctx, timeout)
 		defer cancel()
 
 		if err := h.Connect(ctx, peer.AddrInfo{ID: relay.ID, Addrs: relay.Addrs}); err != nil {
@@ -56,7 +59,9 @@ func (n *Node) GroupInboxStore(groupId, message string) error {
 		if err != nil {
 			return fmt.Errorf("open inbox stream: %w", err)
 		}
-		defer s.Close()
+		streamOK := false
+		defer finishStream(s, &streamOK)
+		setStreamDeadline(s, timeout)
 
 		req := groupInboxRequest{
 			Action:  "group_store",
@@ -89,6 +94,7 @@ func (n *Node) GroupInboxStore(groupId, message string) error {
 		}
 
 		log.Printf("[GROUP_INBOX] Stored message for group %s", groupId)
+		streamOK = true
 		return nil
 	})
 }
@@ -97,6 +103,39 @@ func (n *Node) GroupInboxStore(groupId, message string) error {
 // since the given timestamp (unix milliseconds). Returns messages in chronological order.
 // Tries each configured relay in order until one succeeds.
 func (n *Node) GroupInboxRetrieve(groupId string, sinceTimestamp int64) ([]InboxMessage, error) {
+	result, err := n.groupInboxRetrieve(groupInboxRequest{
+		Action:         "group_retrieve",
+		GroupId:        groupId,
+		SinceTimestamp: sinceTimestamp,
+		Limit:          50,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result.Messages, nil
+}
+
+// GroupInboxRetrieveWithCursor retrieves missed group messages using cursor-based
+// pagination. The cursor is opaque and comes from the relay server.
+// Tries each configured relay in order until one succeeds.
+func (n *Node) GroupInboxRetrieveWithCursor(groupId, cursor string, limit int) ([]InboxMessage, string, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+
+	result, err := n.groupInboxRetrieve(groupInboxRequest{
+		Action:  "group_retrieve_cursor",
+		GroupId: groupId,
+		Cursor:  cursor,
+		Limit:   limit,
+	})
+	if err != nil {
+		return nil, "", err
+	}
+	return result.Messages, result.NextCursor, nil
+}
+
+func (n *Node) groupInboxRetrieve(req groupInboxRequest) (*groupInboxResponse, error) {
 	n.mu.RLock()
 	h := n.host
 	n.mu.RUnlock()
@@ -107,8 +146,9 @@ func (n *Node) GroupInboxRetrieve(groupId string, sinceTimestamp int64) ([]Inbox
 
 	rs := n.buildRelaySelector(nil)
 
-	return ForEachWithResult(rs, func(relay RelayInfo) ([]InboxMessage, error) {
-		ctx, cancel := context.WithTimeout(n.ctx, InboxTimeout)
+	return ForEachWithResult(rs, func(relay RelayInfo) (*groupInboxResponse, error) {
+		timeout := InboxTimeout
+		ctx, cancel := context.WithTimeout(n.ctx, timeout)
 		defer cancel()
 
 		if err := h.Connect(ctx, peer.AddrInfo{ID: relay.ID, Addrs: relay.Addrs}); err != nil {
@@ -119,14 +159,9 @@ func (n *Node) GroupInboxRetrieve(groupId string, sinceTimestamp int64) ([]Inbox
 		if err != nil {
 			return nil, fmt.Errorf("open inbox stream: %w", err)
 		}
-		defer s.Close()
-
-		req := groupInboxRequest{
-			Action:         "group_retrieve",
-			GroupId:        groupId,
-			SinceTimestamp: sinceTimestamp,
-			Limit:          50,
-		}
+		streamOK := false
+		defer finishStream(s, &streamOK)
+		setStreamDeadline(s, timeout)
 
 		reqBytes, err := json.Marshal(req)
 		if err != nil {
@@ -148,15 +183,22 @@ func (n *Node) GroupInboxRetrieve(groupId string, sinceTimestamp int64) ([]Inbox
 		}
 
 		if resp.Status == "NO_MESSAGES" {
-			return nil, nil
+			streamOK = true
+			return &groupInboxResponse{}, nil
 		}
 
 		if resp.Status != "OK" {
 			return nil, fmt.Errorf("group inbox retrieve failed: %s", resp.Error)
 		}
 
-		log.Printf("[GROUP_INBOX] Retrieved %d messages for group %s", len(resp.Messages), groupId)
-		return resp.Messages, nil
+		log.Printf(
+			"[GROUP_INBOX] Retrieved %d messages for group %s (cursor=%q)",
+			len(resp.Messages),
+			req.GroupId,
+			resp.NextCursor,
+		)
+		streamOK = true
+		return &resp, nil
 	})
 }
 

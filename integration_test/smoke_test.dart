@@ -148,11 +148,17 @@ void main() {
       dbDeleteMessagesForContact: (contactPeerId) =>
           dbDeleteMessagesForContact(db, contactPeerId),
       dbLoadMessagesPage: (contactPeerId, {limit = 50, beforeTimestamp}) =>
-          dbLoadMessagesPage(db, contactPeerId,
-              limit: limit, beforeTimestamp: beforeTimestamp),
+          dbLoadMessagesPage(
+            db,
+            contactPeerId,
+            limit: limit,
+            beforeTimestamp: beforeTimestamp,
+          ),
       dbLoadFailedOutgoingMessages: () => dbLoadFailedOutgoingMessages(db),
       dbLoadUnackedOutgoingMessages: ({required olderThan, limit = 50}) =>
           dbLoadUnackedOutgoingMessages(db, olderThan: olderThan, limit: limit),
+      dbLoadConversationThreadSummaries: (contactPeerIds) =>
+          dbLoadConversationThreadSummaries(db, contactPeerIds),
     );
 
     final mediaAttachmentRepository = MediaAttachmentRepositoryImpl(
@@ -267,18 +273,27 @@ void main() {
       print('Created At: ${identityRow['created_at']}');
 
       // Verify DB secret columns are null (secrets stored in secure storage)
-      expect(identityRow['mnemonic12'], isNull,
-          reason: 'mnemonic12 should be null in DB (stored in secure storage)');
-      expect(identityRow['private_key'], isNull,
-          reason: 'private_key should be null in DB (stored in secure storage)');
+      expect(
+        identityRow['mnemonic12'],
+        isNull,
+        reason: 'mnemonic12 should be null in DB (stored in secure storage)',
+      );
+      expect(
+        identityRow['private_key'],
+        isNull,
+        reason: 'private_key should be null in DB (stored in secure storage)',
+      );
 
       // Read mnemonic from secure storage
       final mnemonic = await secureKeyStore.read('identity_mnemonic12');
       print('Mnemonic (stored in secure storage): $mnemonic');
       print('========================================\n');
 
-      expect(mnemonic, isNotNull,
-          reason: 'mnemonic12 should exist in secure storage');
+      expect(
+        mnemonic,
+        isNotNull,
+        reason: 'mnemonic12 should exist in secure storage',
+      );
       expect(mnemonic, isNot(contains('demo seed phrase')));
       expect(mnemonic!.split(' ').length, equals(12));
 

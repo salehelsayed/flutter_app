@@ -111,6 +111,8 @@ class GoBridge(flutterEngine: FlutterEngine) : MethodChannel.MethodCallHandler,
             "groupDecryptMessage" -> runOnBackground({ GoMknoon.groupDecryptMessage(args ?: "") }, result)
             "groupInboxStore" -> runOnBackground({ GoMknoon.groupInboxStore(args ?: "") }, result)
             "groupInboxRetrieve" -> runOnBackground({ GoMknoon.groupInboxRetrieve(args ?: "") }, result)
+            "groupInboxRetrieveCursor" -> runOnBackground({ GoMknoon.groupInboxRetrieveCursor(args ?: "") }, result)
+            "groupAcknowledgeRecovery" -> runOnBackground({ GoMknoon.groupAcknowledgeRecovery() }, result)
 
             else -> result.notImplemented()
         }

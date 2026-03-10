@@ -103,7 +103,11 @@ class FakeP2PService implements P2PService {
   }
 
   @override
-  Future<bool> dialPeer(String peerId, {List<String>? addresses, int? timeoutMs}) async {
+  Future<bool> dialPeer(
+    String peerId, {
+    List<String>? addresses,
+    int? timeoutMs,
+  }) async {
     dialCallCount++;
     return dialPeerResult;
   }
@@ -117,7 +121,8 @@ class FakeP2PService implements P2PService {
   }
 
   @override
-  Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) async => [];
+  Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) async =>
+      [];
 
   @override
   Future<bool> registerPushToken(String token, String platform) async => true;
@@ -132,7 +137,11 @@ class FakeP2PService implements P2PService {
   bool isLocalPeer(String peerId) => localPeers.contains(peerId);
 
   @override
-  Future<bool> sendLocalMessage(String peerId, String message, String fromPeerId) async {
+  Future<bool> sendLocalMessage(
+    String peerId,
+    String message,
+    String fromPeerId,
+  ) async {
     localSendCallCount++;
     lastSentPeerId = peerId;
     lastSentMessage = message;
@@ -143,7 +152,8 @@ class FakeP2PService implements P2PService {
   bool isConnectedToPeer(String peerId) => false;
 
   @override
-  Future<RelayProbeResult> probeRelay(String peerId) async => RelayProbeResult.error;
+  Future<RelayProbeResult> probeRelay(String peerId) async =>
+      RelayProbeResult.error;
 
   @override
   Future<bool> sendLocalMedia({
@@ -158,10 +168,14 @@ class FakeP2PService implements P2PService {
   }) async => false;
 
   @override
-  Future<bool> startNodeCore(String privateKeyBase64, String peerId) async => false;
+  Future<bool> startNodeCore(String privateKeyBase64, String peerId) async =>
+      false;
 
   @override
   Future<void> warmBackground() async {}
+
+  @override
+  String? get lastRecoveryMethod => null;
 
   @override
   void dispose() {}
@@ -459,60 +473,11 @@ void main() {
       expect(message!.status, 'failed');
     });
 
-    test(
-      'returns sendFailed when discover returns null (peer not found)',
-      () async {
-        p2pService = FakeP2PService(useNullDiscover: true);
-
-        final (result, message) = await sendChatMessage(
-          p2pService: p2pService,
-          messageRepo: messageRepo,
-          targetPeerId: 'target-peer',
-          text: 'Hello!',
-          senderPeerId: 'my-peer',
-          senderUsername: 'Me',
-        );
-
-        expect(result, SendChatMessageResult.sendFailed);
-        expect(message, isNotNull);
-        expect(message!.status, 'failed');
-        // With the race-based send, discover is called once per attempt
-        expect(p2pService.discoverCallCount, 1);
-        expect(messageRepo.saved.length, 1);
-        expect(messageRepo.saved.first.status, 'failed');
-      },
-    );
-
-    test(
-      'returns sendFailed when dial returns false',
-      () async {
-        p2pService = FakeP2PService(dialPeerResult: false);
-
-        final (result, message) = await sendChatMessage(
-          p2pService: p2pService,
-          messageRepo: messageRepo,
-          targetPeerId: 'target-peer',
-          text: 'Hello!',
-          senderPeerId: 'my-peer',
-          senderUsername: 'Me',
-        );
-
-        expect(result, SendChatMessageResult.sendFailed);
-        expect(message, isNotNull);
-        expect(message!.status, 'failed');
-        // Race-based send: one discover + one dial attempt
-        expect(p2pService.dialCallCount, 1);
-        expect(messageRepo.saved.length, 1);
-      },
-    );
-
-    test('flaky discover results in inbox fallback or failure', () async {
-      // With race-based send, a single failed discover causes the direct path
-      // to fail. The inbox fallback (if available) would then be tried.
-      final flakyP2P = _FlakyDiscoverP2PService();
+    test('returns peerNotFound when discover returns null', () async {
+      p2pService = FakeP2PService(useNullDiscover: true);
 
       final (result, message) = await sendChatMessage(
-        p2pService: flakyP2P,
+        p2pService: p2pService,
         messageRepo: messageRepo,
         targetPeerId: 'target-peer',
         text: 'Hello!',
@@ -520,11 +485,58 @@ void main() {
         senderUsername: 'Me',
       );
 
-      // Discover fails on first call → direct path fails → inbox fallback (returns false) → sendFailed
-      expect(result, SendChatMessageResult.sendFailed);
+      expect(result, SendChatMessageResult.peerNotFound);
       expect(message, isNotNull);
-      expect(flakyP2P.discoverCallCount, 1);
+      expect(message!.status, 'failed');
+      // With the race-based send, discover is called once per attempt
+      expect(p2pService.discoverCallCount, 1);
+      expect(messageRepo.saved.length, 1);
+      expect(messageRepo.saved.first.status, 'failed');
     });
+
+    test('returns dialFailed when dial returns false', () async {
+      p2pService = FakeP2PService(dialPeerResult: false);
+
+      final (result, message) = await sendChatMessage(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        targetPeerId: 'target-peer',
+        text: 'Hello!',
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me',
+      );
+
+      expect(result, SendChatMessageResult.dialFailed);
+      expect(message, isNotNull);
+      expect(message!.status, 'failed');
+      // Race-based send: one discover + one dial attempt
+      expect(p2pService.dialCallCount, 1);
+      expect(messageRepo.saved.length, 1);
+    });
+
+    test(
+      'flaky discover surfaces peerNotFound when direct discovery loses',
+      () async {
+        // With race-based send, a single failed discover causes the direct path
+        // to fail. The inbox fallback (if available) would then be tried.
+        final flakyP2P = _FlakyDiscoverP2PService();
+
+        final (result, message) = await sendChatMessage(
+          p2pService: flakyP2P,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Hello!',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+
+        // Discover fails on the direct path, so the user-visible result should
+        // preserve the more specific peerNotFound taxonomy.
+        expect(result, SendChatMessageResult.peerNotFound);
+        expect(message, isNotNull);
+        expect(flakyP2P.discoverCallCount, 1);
+      },
+    );
 
     test('success with ack sets status to delivered', () async {
       p2pService = FakeP2PService(sendMessageReply: 'received: ok');
@@ -639,102 +651,117 @@ void main() {
 
   // ─── Phase 1: Interactive Send Path Tests ─────────────────────────
   group('Phase 1 — interactive send path', () {
-    test('existing connected peer is used before launching new transport attempts', () async {
-      // Set up a FakeP2PService with the target peer already connected
-      p2pService = FakeP2PService(
-        currentState: NodeState(
-          isStarted: true,
-          connections: [
-            const p2p.ConnectionState(
-              peerId: 'target-peer',
-              multiaddrs: ['/ip4/127.0.0.1/tcp/4001'],
-              direction: 'outbound',
-              status: 'connected',
-            ),
-          ],
-        ),
-      );
+    test(
+      'existing connected peer is used before launching new transport attempts',
+      () async {
+        // Set up a FakeP2PService with the target peer already connected
+        p2pService = FakeP2PService(
+          currentState: NodeState(
+            isStarted: true,
+            connections: [
+              const p2p.ConnectionState(
+                peerId: 'target-peer',
+                multiaddrs: ['/ip4/127.0.0.1/tcp/4001'],
+                direction: 'outbound',
+                status: 'connected',
+              ),
+            ],
+          ),
+        );
 
-      final (result, message) = await sendChatMessage(
-        p2pService: p2pService,
-        messageRepo: messageRepo,
-        targetPeerId: 'target-peer',
-        text: 'Hello connected!',
-        senderPeerId: 'my-peer',
-        senderUsername: 'Me',
-      );
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Hello connected!',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
 
-      expect(result, SendChatMessageResult.success);
-      expect(message, isNotNull);
-      // Should have sent without discover/dial (connection reuse)
-      expect(p2pService.sendCallCount, 1);
-      expect(p2pService.discoverCallCount, 0);
-      expect(p2pService.dialCallCount, 0);
-    });
+        expect(result, SendChatMessageResult.success);
+        expect(message, isNotNull);
+        // Should have sent without discover/dial (connection reuse)
+        expect(p2pService.sendCallCount, 1);
+        expect(p2pService.discoverCallCount, 0);
+        expect(p2pService.dialCallCount, 0);
+      },
+    );
 
-    test('local wifi and direct send race commits only the first successful path', () async {
-      p2pService.localPeers.add('target-peer');
-      // Both local and direct will succeed — but only one message should be persisted
+    test(
+      'local wifi and direct send race commits only the first successful path',
+      () async {
+        p2pService.localPeers.add('target-peer');
+        // Both local and direct will succeed — but only one message should be persisted
 
-      final (result, message) = await sendChatMessage(
-        p2pService: p2pService,
-        messageRepo: messageRepo,
-        targetPeerId: 'target-peer',
-        text: 'Race test!',
-        senderPeerId: 'my-peer',
-        senderUsername: 'Me',
-      );
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Race test!',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
 
-      expect(result, SendChatMessageResult.success);
-      expect(message, isNotNull);
-      expect(message!.status, 'delivered');
-      // Only one message should be persisted regardless of how many paths won
-      expect(messageRepo.saved.length, 1);
-    });
+        expect(result, SendChatMessageResult.success);
+        expect(message, isNotNull);
+        expect(message!.status, 'delivered');
+        // Only one message should be persisted regardless of how many paths won
+        expect(messageRepo.saved.length, 1);
+      },
+    );
 
-    test('slow local wifi does not block direct success beyond interactive budget', () async {
-      // Create a service where local is slow but direct succeeds quickly
-      final slowLocalP2P = _SlowLocalFastDirectP2PService();
+    test(
+      'slow local wifi does not block direct success beyond interactive budget',
+      () async {
+        // Create a service where local is slow but direct succeeds quickly
+        final slowLocalP2P = _SlowLocalFastDirectP2PService();
 
-      final stopwatch = Stopwatch()..start();
-      final (result, message) = await sendChatMessage(
-        p2pService: slowLocalP2P,
-        messageRepo: messageRepo,
-        targetPeerId: 'target-peer',
-        text: 'Speed test!',
-        senderPeerId: 'my-peer',
-        senderUsername: 'Me',
-      );
-      stopwatch.stop();
+        final stopwatch = Stopwatch()..start();
+        final (result, message) = await sendChatMessage(
+          p2pService: slowLocalP2P,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Speed test!',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+        stopwatch.stop();
 
-      expect(result, SendChatMessageResult.success);
-      expect(message, isNotNull);
-      // Should complete quickly (direct path wins before local timeout)
-      expect(stopwatch.elapsed.inSeconds, lessThan(3));
-    });
+        expect(result, SendChatMessageResult.success);
+        expect(message, isNotNull);
+        // Should complete quickly (direct path wins before local timeout)
+        expect(stopwatch.elapsed.inSeconds, lessThan(3));
+      },
+    );
 
-    test('interactive direct discover uses short budget while background discover remains longer', () async {
-      // This is a design/constant test — verify the budgets are distinct
-      expect(interactiveLocalBudget.inMilliseconds, lessThanOrEqualTo(1500));
-      expect(interactiveDirectBudget.inSeconds, lessThanOrEqualTo(4));
-    });
+    test(
+      'interactive direct discover uses short budget while background discover remains longer',
+      () async {
+        // This is a design/constant test — verify the budgets are distinct
+        expect(interactiveLocalBudget.inMilliseconds, lessThanOrEqualTo(1500));
+        expect(interactiveDirectBudget.inSeconds, lessThanOrEqualTo(4));
+      },
+    );
 
-    test('relay probe does not block direct discovery on the interactive path', () async {
-      // Direct path should succeed without needing relay probe first
-      final (result, message) = await sendChatMessage(
-        p2pService: p2pService,
-        messageRepo: messageRepo,
-        targetPeerId: 'target-peer',
-        text: 'No relay probe!',
-        senderPeerId: 'my-peer',
-        senderUsername: 'Me',
-      );
+    test(
+      'relay probe does not block direct discovery on the interactive path',
+      () async {
+        // Direct path should succeed without needing relay probe first
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'No relay probe!',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
 
-      expect(result, SendChatMessageResult.success);
-      expect(message, isNotNull);
-      // Direct discover/dial/send succeeded without relay gates
-      expect(p2pService.discoverCallCount, 1);
-    });
+        expect(result, SendChatMessageResult.success);
+        expect(message, isNotNull);
+        // Direct discover/dial/send succeeded without relay gates
+        expect(p2pService.discoverCallCount, 1);
+      },
+    );
 
     test('all active send paths failing falls back to inbox once', () async {
       p2pService = FakeP2PService(
@@ -758,26 +785,29 @@ void main() {
       expect(p2pService.storeInInboxCallCount, 1);
     });
 
-    test('same messageId winning on two paths persists only one outgoing message', () async {
-      p2pService.localPeers.add('target-peer');
-      const fixedMessageId = 'msg-dedup-001';
+    test(
+      'same messageId winning on two paths persists only one outgoing message',
+      () async {
+        p2pService.localPeers.add('target-peer');
+        const fixedMessageId = 'msg-dedup-001';
 
-      final (result, message) = await sendChatMessage(
-        p2pService: p2pService,
-        messageRepo: messageRepo,
-        targetPeerId: 'target-peer',
-        text: 'Dedup test!',
-        senderPeerId: 'my-peer',
-        senderUsername: 'Me',
-        messageId: fixedMessageId,
-      );
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Dedup test!',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          messageId: fixedMessageId,
+        );
 
-      expect(result, SendChatMessageResult.success);
-      expect(message, isNotNull);
-      // Only one message with this ID should be persisted
-      expect(messageRepo.saved.length, 1);
-      expect(messageRepo.saved.first.id, fixedMessageId);
-    });
+        expect(result, SendChatMessageResult.success);
+        expect(message, isNotNull);
+        // Only one message with this ID should be persisted
+        expect(messageRepo.saved.length, 1);
+        expect(messageRepo.saved.first.id, fixedMessageId);
+      },
+    );
   });
 }
 
@@ -817,13 +847,18 @@ class _ThrowOnSendP2PService implements P2PService {
       );
 
   @override
-  Future<bool> dialPeer(String peerId, {List<String>? addresses, int? timeoutMs}) async => true;
+  Future<bool> dialPeer(
+    String peerId, {
+    List<String>? addresses,
+    int? timeoutMs,
+  }) async => true;
 
   @override
   Future<bool> storeInInbox(String toPeerId, String message) async => false;
 
   @override
-  Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) async => [];
+  Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) async =>
+      [];
 
   @override
   Future<bool> registerPushToken(String token, String platform) async => true;
@@ -838,13 +873,18 @@ class _ThrowOnSendP2PService implements P2PService {
   bool isLocalPeer(String peerId) => false;
 
   @override
-  Future<bool> sendLocalMessage(String peerId, String message, String fromPeerId) async => false;
+  Future<bool> sendLocalMessage(
+    String peerId,
+    String message,
+    String fromPeerId,
+  ) async => false;
 
   @override
   bool isConnectedToPeer(String peerId) => false;
 
   @override
-  Future<RelayProbeResult> probeRelay(String peerId) async => RelayProbeResult.error;
+  Future<RelayProbeResult> probeRelay(String peerId) async =>
+      RelayProbeResult.error;
 
   @override
   Future<bool> sendLocalMedia({
@@ -859,10 +899,14 @@ class _ThrowOnSendP2PService implements P2PService {
   }) async => false;
 
   @override
-  Future<bool> startNodeCore(String privateKeyBase64, String peerId) async => false;
+  Future<bool> startNodeCore(String privateKeyBase64, String peerId) async =>
+      false;
 
   @override
   Future<void> warmBackground() async {}
+
+  @override
+  String? get lastRecoveryMethod => null;
 
   @override
   void dispose() {}
@@ -908,13 +952,18 @@ class _FlakyDiscoverP2PService implements P2PService {
   }
 
   @override
-  Future<bool> dialPeer(String peerId, {List<String>? addresses, int? timeoutMs}) async => true;
+  Future<bool> dialPeer(
+    String peerId, {
+    List<String>? addresses,
+    int? timeoutMs,
+  }) async => true;
 
   @override
   Future<bool> storeInInbox(String toPeerId, String message) async => false;
 
   @override
-  Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) async => [];
+  Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) async =>
+      [];
 
   @override
   Future<bool> registerPushToken(String token, String platform) async => true;
@@ -929,13 +978,18 @@ class _FlakyDiscoverP2PService implements P2PService {
   bool isLocalPeer(String peerId) => false;
 
   @override
-  Future<bool> sendLocalMessage(String peerId, String message, String fromPeerId) async => false;
+  Future<bool> sendLocalMessage(
+    String peerId,
+    String message,
+    String fromPeerId,
+  ) async => false;
 
   @override
   bool isConnectedToPeer(String peerId) => false;
 
   @override
-  Future<RelayProbeResult> probeRelay(String peerId) async => RelayProbeResult.error;
+  Future<RelayProbeResult> probeRelay(String peerId) async =>
+      RelayProbeResult.error;
 
   @override
   Future<bool> sendLocalMedia({
@@ -950,10 +1004,14 @@ class _FlakyDiscoverP2PService implements P2PService {
   }) async => false;
 
   @override
-  Future<bool> startNodeCore(String privateKeyBase64, String peerId) async => false;
+  Future<bool> startNodeCore(String privateKeyBase64, String peerId) async =>
+      false;
 
   @override
   Future<void> warmBackground() async {}
+
+  @override
+  String? get lastRecoveryMethod => null;
 
   @override
   void dispose() {}
@@ -994,13 +1052,18 @@ class _SlowLocalFastDirectP2PService implements P2PService {
       );
 
   @override
-  Future<bool> dialPeer(String peerId, {List<String>? addresses, int? timeoutMs}) async => true;
+  Future<bool> dialPeer(
+    String peerId, {
+    List<String>? addresses,
+    int? timeoutMs,
+  }) async => true;
 
   @override
   Future<bool> storeInInbox(String toPeerId, String message) async => false;
 
   @override
-  Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) async => [];
+  Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) async =>
+      [];
 
   @override
   Future<bool> registerPushToken(String token, String platform) async => true;
@@ -1015,7 +1078,11 @@ class _SlowLocalFastDirectP2PService implements P2PService {
   bool isLocalPeer(String peerId) => true;
 
   @override
-  Future<bool> sendLocalMessage(String peerId, String message, String fromPeerId) async {
+  Future<bool> sendLocalMessage(
+    String peerId,
+    String message,
+    String fromPeerId,
+  ) async {
     // Simulate slow local send (3 seconds)
     await Future.delayed(const Duration(seconds: 3));
     return true;
@@ -1025,7 +1092,8 @@ class _SlowLocalFastDirectP2PService implements P2PService {
   bool isConnectedToPeer(String peerId) => false;
 
   @override
-  Future<RelayProbeResult> probeRelay(String peerId) async => RelayProbeResult.error;
+  Future<RelayProbeResult> probeRelay(String peerId) async =>
+      RelayProbeResult.error;
 
   @override
   Future<bool> sendLocalMedia({
@@ -1040,10 +1108,14 @@ class _SlowLocalFastDirectP2PService implements P2PService {
   }) async => false;
 
   @override
-  Future<bool> startNodeCore(String privateKeyBase64, String peerId) async => false;
+  Future<bool> startNodeCore(String privateKeyBase64, String peerId) async =>
+      false;
 
   @override
   Future<void> warmBackground() async {}
+
+  @override
+  String? get lastRecoveryMethod => null;
 
   @override
   void dispose() {}

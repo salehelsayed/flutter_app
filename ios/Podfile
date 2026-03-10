@@ -41,6 +41,18 @@ target 'Runner' do
 
   flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
 
+  # Keep the local gomobile framework in sync with Swift bridge calls so
+  # simulator builds fail early with a clear regeneration step instead of an
+  # unresolved symbol deeper in Xcode compilation.
+  script_phase(
+    :name => 'Ensure GoMknoon iOS Bindings',
+    :execution_position => :before_compile,
+    :shell_path => '/bin/bash',
+    :script => <<-'SCRIPT'
+"${PODS_ROOT}/../../scripts/ensure_go_ios_bindings.sh"
+SCRIPT
+  )
+
   # Go native library (built via: cd go-mknoon && make ios)
   if File.exist?(File.join(__dir__, 'Runner', 'GoMknoon.xcframework'))
     pod 'GoMknoon', :path => '.'

@@ -47,6 +47,8 @@ class _FakeDecryptBridge implements Bridge {
   @override
   void Function(List<String>, List<String>)? onAddressesUpdated;
   @override
+  void Function(Map<String, dynamic>)? onRelayStateChanged;
+  @override
   void Function(Map<String, dynamic>)? onGroupMessageReceived;
   @override
   void Function(Map<String, dynamic>)? onGroupReactionReceived;
@@ -60,9 +62,15 @@ void main() {
   setUp(() {
     network = FakeP2PNetwork();
     alice = TestUser.create(
-        peerId: 'alice-peer', username: 'Alice', network: network);
+      peerId: 'alice-peer',
+      username: 'Alice',
+      network: network,
+    );
     bob = TestUser.create(
-        peerId: 'bob-peer', username: 'Bob', network: network);
+      peerId: 'bob-peer',
+      username: 'Bob',
+      network: network,
+    );
     alice.addContact(bob);
     bob.addContact(alice);
     alice.start();
@@ -78,13 +86,19 @@ void main() {
     test('1.1 Store → retrieve basic flow', () async {
       // Bob online → direct delivery succeeds
       final delivered = await network.deliver(
-          'alice-peer', 'bob-peer', 'direct message');
+        'alice-peer',
+        'bob-peer',
+        'direct message',
+      );
       expect(delivered, isTrue);
 
       // Bob goes offline → store in inbox
       bob.setOnline(false);
       final stored = network.storeInInbox(
-          'alice-peer', 'bob-peer', 'offline message');
+        'alice-peer',
+        'bob-peer',
+        'offline message',
+      );
       expect(stored, isTrue);
 
       // Verify inbox has the message
@@ -94,90 +108,104 @@ void main() {
       expect(inbox.first['message'], 'offline message');
     });
 
-    test('1.2 Retrieve on resume — full drain → listener → persist pipeline',
-        () async {
-      bob.setOnline(false);
+    test(
+      '1.2 Retrieve on resume — full drain → listener → persist pipeline',
+      () async {
+        bob.setOnline(false);
 
-      // Alice stores a message in Bob's inbox
-      final payload = MessagePayload(
-        id: 'msg-00001-inbox-test',
-        text: 'Hello from inbox',
-        senderPeerId: 'alice-peer',
-        senderUsername: 'Alice',
-        timestamp: DateTime.now().toUtc().toIso8601String(),
-      );
-      network.storeInInbox('alice-peer', 'bob-peer', payload.toJson());
+        // Alice stores a message in Bob's inbox
+        final payload = MessagePayload(
+          id: 'msg-00001-inbox-test',
+          text: 'Hello from inbox',
+          senderPeerId: 'alice-peer',
+          senderUsername: 'Alice',
+          timestamp: DateTime.now().toUtc().toIso8601String(),
+        );
+        network.storeInInbox('alice-peer', 'bob-peer', payload.toJson());
 
-      // Bob comes online and drains inbox
-      bob.setOnline(true);
-      final drained = await bob.drainOfflineInbox();
-      expect(drained, 1);
+        // Bob comes online and drains inbox
+        bob.setOnline(true);
+        final drained = await bob.drainOfflineInbox();
+        expect(drained, 1);
 
-      // Allow listener to process the message
-      await Future<void>.delayed(Duration.zero);
+        // Allow listener to process the message
+        await Future<void>.delayed(Duration.zero);
 
-      // Verify message was persisted via ChatMessageListener → handleIncomingChatMessage
-      final messages = await bob.messageRepo.getMessagesForContact('alice-peer');
-      expect(messages, hasLength(1));
-      expect(messages.first.text, 'Hello from inbox');
-      expect(messages.first.id, 'msg-00001-inbox-test');
-      expect(messages.first.isIncoming, isTrue);
-    });
+        // Verify message was persisted via ChatMessageListener → handleIncomingChatMessage
+        final messages = await bob.messageRepo.getMessagesForContact(
+          'alice-peer',
+        );
+        expect(messages, hasLength(1));
+        expect(messages.first.text, 'Hello from inbox');
+        expect(messages.first.id, 'msg-00001-inbox-test');
+        expect(messages.first.isIncoming, isTrue);
+      },
+    );
 
-    test('1.3 Inbox store failure — sends fail when both direct and inbox fail',
-        () async {
-      // Disable inbox on the network
-      network.inboxDisabled = true;
+    test(
+      '1.3 Inbox store failure — sends fail when both direct and inbox fail',
+      () async {
+        // Disable inbox on the network
+        network.inboxDisabled = true;
 
-      // Bob goes offline (direct delivery will fail)
-      bob.setOnline(false);
+        // Bob goes offline (direct delivery will fail)
+        bob.setOnline(false);
 
-      // Alice sends message — discover/dial fails + inbox fails
-      final (result, message) = await alice.sendMessage(
-        'bob-peer',
-        'this will fail',
-      );
+        // Alice sends message — discover/dial fails + inbox fails
+        final (result, message) = await alice.sendMessage(
+          'bob-peer',
+          'this will fail',
+        );
 
-      // sendChatMessage returns the specific failure reason (peerNotFound or sendFailed)
-      expect(result,
-          anyOf(SendChatMessageResult.sendFailed, SendChatMessageResult.peerNotFound));
-      expect(message, isNotNull);
-      expect(message!.status, 'failed');
+        // sendChatMessage returns the specific failure reason (peerNotFound or sendFailed)
+        expect(
+          result,
+          anyOf(
+            SendChatMessageResult.sendFailed,
+            SendChatMessageResult.peerNotFound,
+          ),
+        );
+        expect(message, isNotNull);
+        expect(message!.status, 'failed');
 
-      // Verify failed message was persisted
-      final aliceMessages =
-          await alice.messageRepo.getMessagesForContact('bob-peer');
-      expect(aliceMessages, hasLength(1));
-      expect(aliceMessages.first.status, 'failed');
-    });
+        // Verify failed message was persisted
+        final aliceMessages = await alice.messageRepo.getMessagesForContact(
+          'bob-peer',
+        );
+        expect(aliceMessages, hasLength(1));
+        expect(aliceMessages.first.status, 'failed');
+      },
+    );
 
-    test('1.4 Inbox retrieve timing — cleared after retrieval, batches independent',
-        () async {
-      // Store 1 message
-      network.storeInInbox('alice-peer', 'bob-peer', 'msg-1');
-      var inbox = network.retrieveInbox('bob-peer');
-      expect(inbox, hasLength(1));
+    test(
+      '1.4 Inbox retrieve timing — cleared after retrieval, batches independent',
+      () async {
+        // Store 1 message
+        network.storeInInbox('alice-peer', 'bob-peer', 'msg-1');
+        var inbox = network.retrieveInbox('bob-peer');
+        expect(inbox, hasLength(1));
 
-      // After retrieval, inbox is empty
-      inbox = network.retrieveInbox('bob-peer');
-      expect(inbox, isEmpty);
+        // After retrieval, inbox is empty
+        inbox = network.retrieveInbox('bob-peer');
+        expect(inbox, isEmpty);
 
-      // Store 2 messages, retrieve both
-      network.storeInInbox('alice-peer', 'bob-peer', 'msg-2');
-      network.storeInInbox('alice-peer', 'bob-peer', 'msg-3');
-      inbox = network.retrieveInbox('bob-peer');
-      expect(inbox, hasLength(2));
+        // Store 2 messages, retrieve both
+        network.storeInInbox('alice-peer', 'bob-peer', 'msg-2');
+        network.storeInInbox('alice-peer', 'bob-peer', 'msg-3');
+        inbox = network.retrieveInbox('bob-peer');
+        expect(inbox, hasLength(2));
 
-      // Inbox is empty again
-      inbox = network.retrieveInbox('bob-peer');
-      expect(inbox, isEmpty);
+        // Inbox is empty again
+        inbox = network.retrieveInbox('bob-peer');
+        expect(inbox, isEmpty);
 
-      // Store another message independently
-      network.storeInInbox('alice-peer', 'bob-peer', 'msg-4');
-      inbox = network.retrieveInbox('bob-peer');
-      expect(inbox, hasLength(1));
-      expect(inbox.first['message'], 'msg-4');
-    });
+        // Store another message independently
+        network.storeInInbox('alice-peer', 'bob-peer', 'msg-4');
+        inbox = network.retrieveInbox('bob-peer');
+        expect(inbox, hasLength(1));
+        expect(inbox.first['message'], 'msg-4');
+      },
+    );
 
     test('1.5 Multiple messages queued (5 messages while offline)', () async {
       bob.setOnline(false);
@@ -206,11 +234,17 @@ void main() {
       await Future<void>.delayed(Duration.zero);
 
       // Verify all 5 messages persisted
-      final messages = await bob.messageRepo.getMessagesForContact('alice-peer');
+      final messages = await bob.messageRepo.getMessagesForContact(
+        'alice-peer',
+      );
       expect(messages, hasLength(5));
-      expect(messages.map((m) => m.id).toList(),
-          ['msg-00001-batch', 'msg-00002-batch', 'msg-00003-batch',
-           'msg-00004-batch', 'msg-00005-batch']);
+      expect(messages.map((m) => m.id).toList(), [
+        'msg-00001-batch',
+        'msg-00002-batch',
+        'msg-00003-batch',
+        'msg-00004-batch',
+        'msg-00005-batch',
+      ]);
     });
 
     test('1.6 Encrypted inbox messages (v2 envelope)', () async {
@@ -270,8 +304,9 @@ void main() {
       expect(decryptBridge.decryptCallCount, 1);
 
       // Verify the decrypted message was persisted
-      final messages =
-          await bobWithCrypto.messageRepo.getMessagesForContact('alice-peer');
+      final messages = await bobWithCrypto.messageRepo.getMessagesForContact(
+        'alice-peer',
+      );
       expect(messages, hasLength(1));
       expect(messages.first.text, 'Secret message');
       expect(messages.first.id, 'enc-msg-0001');
@@ -287,7 +322,7 @@ void main() {
       );
       expect(resultA, SendChatMessageResult.success);
       expect(messageA, isNotNull);
-      expect(messageA!.transport, 'relay');
+      expect(messageA!.transport, 'direct');
 
       // Scenario B: Bob offline, discovery fails → inbox fallback → success
       bob.setOnline(false);
@@ -305,8 +340,13 @@ void main() {
         'bob-peer',
         'will fail completely',
       );
-      expect(resultC,
-          anyOf(SendChatMessageResult.sendFailed, SendChatMessageResult.peerNotFound));
+      expect(
+        resultC,
+        anyOf(
+          SendChatMessageResult.sendFailed,
+          SendChatMessageResult.peerNotFound,
+        ),
+      );
       expect(messageC, isNotNull);
       expect(messageC!.status, 'failed');
     });
@@ -335,7 +375,7 @@ void main() {
 
       // If it succeeded via inbox, verify the inbox path worked
       if (result == SendChatMessageResult.success && message != null) {
-        expect(message.transport, anyOf('relay', 'inbox'));
+        expect(message.transport, anyOf('direct', 'inbox'));
       }
 
       // Clean up: remove delivery delay for other tests
@@ -349,29 +389,32 @@ void main() {
       expect(drained, 0);
     });
 
-    test('inbox messages from unknown sender are rejected by listener',
-        () async {
-      bob.setOnline(false);
+    test(
+      'inbox messages from unknown sender are rejected by listener',
+      () async {
+        bob.setOnline(false);
 
-      // Store message from a peer that isn't in Bob's contacts
-      final payload = MessagePayload(
-        id: 'unknown-msg',
-        text: 'Unknown sender message',
-        senderPeerId: 'charlie-peer',
-        senderUsername: 'Charlie',
-        timestamp: DateTime.now().toUtc().toIso8601String(),
-      );
-      network.storeInInbox('charlie-peer', 'bob-peer', payload.toJson());
+        // Store message from a peer that isn't in Bob's contacts
+        final payload = MessagePayload(
+          id: 'unknown-msg',
+          text: 'Unknown sender message',
+          senderPeerId: 'charlie-peer',
+          senderUsername: 'Charlie',
+          timestamp: DateTime.now().toUtc().toIso8601String(),
+        );
+        network.storeInInbox('charlie-peer', 'bob-peer', payload.toJson());
 
-      bob.setOnline(true);
-      await bob.drainOfflineInbox();
-      await Future<void>.delayed(Duration.zero);
+        bob.setOnline(true);
+        await bob.drainOfflineInbox();
+        await Future<void>.delayed(Duration.zero);
 
-      // Message should NOT be persisted (unknown sender)
-      final messages =
-          await bob.messageRepo.getMessagesForContact('charlie-peer');
-      expect(messages, isEmpty);
-    });
+        // Message should NOT be persisted (unknown sender)
+        final messages = await bob.messageRepo.getMessagesForContact(
+          'charlie-peer',
+        );
+        expect(messages, isEmpty);
+      },
+    );
 
     test('duplicate inbox message is rejected by listener', () async {
       bob.setOnline(false);
@@ -396,8 +439,9 @@ void main() {
       await Future<void>.delayed(Duration.zero);
 
       // Only 1 message persisted (second is a duplicate)
-      final messages =
-          await bob.messageRepo.getMessagesForContact('alice-peer');
+      final messages = await bob.messageRepo.getMessagesForContact(
+        'alice-peer',
+      );
       expect(messages, hasLength(1));
       expect(messages.first.id, 'dup-msg-00001-test');
     });

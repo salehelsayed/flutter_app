@@ -569,6 +569,14 @@ type noopCallback struct{}
 
 func (noopCallback) OnEvent(string) {}
 
+type recordingBridgeCallback struct {
+	events []string
+}
+
+func (c *recordingBridgeCallback) OnEvent(jsonString string) {
+	c.events = append(c.events, jsonString)
+}
+
 // withSingletonNode sets up a singleton for the duration of one test.
 func withSingletonNode(t *testing.T) {
 	t.Helper()
@@ -994,7 +1002,7 @@ func TestNodeStatus_ContainsRelayStateWithoutBreakingLegacyFields(t *testing.T) 
 	}
 
 	// New relay-session fields must be present (additive).
-	newKeys := []string{"relayState", "relayStates", "healthyRelayCount", "watchdogRestartCount"}
+	newKeys := []string{"relayState", "relayStates", "healthyRelayCount", "watchdogRestartCount", "needsGroupRecovery"}
 	for _, key := range newKeys {
 		if _, exists := m[key]; !exists {
 			t.Errorf("NodeStatus missing new relay session key %q", key)
@@ -1012,6 +1020,21 @@ func TestNodeStatus_ContainsRelayStateWithoutBreakingLegacyFields(t *testing.T) 
 		// ok — JSON numbers decode as float64
 	default:
 		t.Errorf("healthyRelayCount should be number, got %T", m["healthyRelayCount"])
+	}
+}
+
+func TestNodeCallbackAdapter_ForwardsRelayStateEventUntouched(t *testing.T) {
+	recorder := &recordingBridgeCallback{}
+	adapter := &nodeCallbackAdapter{cb: recorder}
+	payload := `{"event":"relay:state","data":{"relayState":"online","healthyRelayCount":1}}`
+
+	adapter.OnEvent(payload)
+
+	if len(recorder.events) != 1 {
+		t.Fatalf("expected exactly 1 forwarded event, got %d", len(recorder.events))
+	}
+	if recorder.events[0] != payload {
+		t.Fatalf("expected forwarded payload %q, got %q", payload, recorder.events[0])
 	}
 }
 
@@ -1095,6 +1118,26 @@ func TestRelayReconnect_ReturnsStructuredRecoveryFields(t *testing.T) {
 			t.Errorf("RelayReconnect response missing structured field %q", field)
 		}
 	}
+}
+
+func TestGroupAcknowledgeRecovery_NotInitialized(t *testing.T) {
+	withNilSingleton(t)
+	result := GroupAcknowledgeRecovery()
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "NOT_INITIALIZED")
+}
+
+func TestGroupAcknowledgeRecovery_Success(t *testing.T) {
+	withFreshSingletonNode(t)
+
+	keyHex := generateTestKeyHex(t)
+	input := startNodeJSON(t, keyHex)
+	startResult := StartNode(input)
+	assertOk(t, parseJSON(t, startResult))
+
+	result := GroupAcknowledgeRecovery()
+	m := parseJSON(t, result)
+	assertOk(t, m)
 }
 
 // ---------------------------------------------------------------------------
@@ -1278,6 +1321,13 @@ func TestGroupInboxRetrieve_NodeNotInitialized(t *testing.T) {
 	assertNotOk(t, m, "NOT_INITIALIZED")
 }
 
+func TestGroupInboxRetrieveCursor_NodeNotInitialized(t *testing.T) {
+	withNilSingleton(t)
+	result := GroupInboxRetrieveCursor(`{"groupId": "g1"}`)
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "NOT_INITIALIZED")
+}
+
 // --- Group: JSON validation (requires initialized node) ---
 
 func TestGroupCreate_InvalidJSON(t *testing.T) {
@@ -1439,6 +1489,20 @@ func TestGroupInboxRetrieve_InvalidJSON(t *testing.T) {
 func TestGroupInboxRetrieve_MissingGroupId(t *testing.T) {
 	withSingletonNode(t)
 	result := GroupInboxRetrieve(`{}`)
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "INVALID_INPUT")
+}
+
+func TestGroupInboxRetrieveCursor_InvalidJSON(t *testing.T) {
+	withSingletonNode(t)
+	result := GroupInboxRetrieveCursor("not valid json")
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "INVALID_INPUT")
+}
+
+func TestGroupInboxRetrieveCursor_MissingGroupId(t *testing.T) {
+	withSingletonNode(t)
+	result := GroupInboxRetrieveCursor(`{"cursor": "opaque"}`)
 	m := parseJSON(t, result)
 	assertNotOk(t, m, "INVALID_INPUT")
 }
@@ -1999,5 +2063,71 @@ func TestGroupInboxStore_UsesProvidedServerAddresses(t *testing.T) {
 	if code == "INVALID_INPUT" {
 		t.Fatal("GroupInboxStore should not fail at input parsing")
 	}
+	assertNotOk(t, m, "GROUP_INBOX_ERROR")
+}
+
+// TestGroupInboxRetrieveCursor_PassesOpaqueCursor verifies that the bridge
+// accepts the additive cursor contract and reaches the node layer without
+// rejecting opaque cursor values during JSON parsing.
+func TestGroupInboxRetrieveCursor_PassesOpaqueCursor(t *testing.T) {
+	withFreshSingletonNode(t)
+
+	keyHex := generateTestKeyHex(t)
+	startInput, _ := json.Marshal(map[string]interface{}{
+		"privateKeyHex": keyHex,
+		"relayAddresses": []string{
+			generateFakeRelayAddrBridge(t, 19993),
+			generateFakeRelayAddrBridge(t, 19994),
+		},
+		"autoRegister": false,
+	})
+	startResult := StartNode(string(startInput))
+	assertOk(t, parseJSON(t, startResult))
+
+	retrieveInput, _ := json.Marshal(map[string]interface{}{
+		"groupId": "test-group-opaque-cursor",
+		"cursor":  "opaque+/=cursor:page-2",
+		"limit":   7,
+	})
+	result := GroupInboxRetrieveCursor(string(retrieveInput))
+	m := parseJSON(t, result)
+
+	code, _ := m["errorCode"].(string)
+	if code == "INVALID_INPUT" {
+		t.Fatal("GroupInboxRetrieveCursor should accept opaque cursor payloads")
+	}
+	assertNotOk(t, m, "GROUP_INBOX_ERROR")
+}
+
+// TestGroupInboxRetrieveCursor_CommandExposed verifies that
+// GroupInboxRetrieveCursor is callable from the bridge layer and accepts
+// valid JSON input without INVALID_INPUT rejection.
+func TestGroupInboxRetrieveCursor_CommandExposed(t *testing.T) {
+	withFreshSingletonNode(t)
+	keyHex := generateTestKeyHex(t)
+	startInput, _ := json.Marshal(map[string]interface{}{
+		"privateKeyHex": keyHex,
+		"relayAddresses": []string{
+			generateFakeRelayAddrBridge(t, 19995),
+		},
+		"autoRegister": false,
+	})
+	startResult := StartNode(string(startInput))
+	assertOk(t, parseJSON(t, startResult))
+
+	retrieveInput, _ := json.Marshal(map[string]interface{}{
+		"groupId": "test-group-cursor-exposed",
+		"cursor":  "",
+		"limit":   20,
+	})
+	result := GroupInboxRetrieveCursor(string(retrieveInput))
+	m := parseJSON(t, result)
+
+	// Should fail at group inbox layer (can't reach relay), not input parsing.
+	code, _ := m["errorCode"].(string)
+	if code == "INVALID_INPUT" {
+		t.Fatal("GroupInboxRetrieveCursor should be an exposed command that accepts valid input")
+	}
+	// Expected failure: GROUP_INBOX_ERROR (no relay reachable)
 	assertNotOk(t, m, "GROUP_INBOX_ERROR")
 }

@@ -1,10 +1,11 @@
-.PHONY: ios android all clean test testpeer
+.PHONY: ios android macos all clean test testpeer verify-bindings
 
 MODULE := github.com/mknoon/go-mknoon
 BIND_PKG := $(MODULE)/bridge
 
 # Output paths relative to the Flutter project
 IOS_OUT := ../ios/Runner/GoMknoon.xcframework
+MACOS_OUT := ../macos/Runner/GoMknoon.xcframework
 ANDROID_OUT := ../android/app/libs/GoMknoon.aar
 
 # Android min API level (matches Flutter minSdk)
@@ -26,6 +27,9 @@ all: ios android
 ios:
 	gomobile bind -target=ios -o $(IOS_OUT) $(BIND_PKG)
 
+macos:
+	gomobile bind -target=macos -o $(MACOS_OUT) $(BIND_PKG)
+
 android:
 	ANDROID_NDK_HOME=$(ANDROID_NDK_HOME) \
 	gomobile bind -target=android -androidapi $(ANDROID_API) \
@@ -33,10 +37,13 @@ android:
 	|| { rm -f $(ANDROID_OUT); exit 1; }
 
 clean:
-	rm -rf $(IOS_OUT) $(ANDROID_OUT) GoMknoon-sources.jar
+	rm -rf $(IOS_OUT) $(MACOS_OUT) $(ANDROID_OUT) GoMknoon-sources.jar
 
 testpeer:
 	go build -o bin/testpeer ./cmd/testpeer
 
 test:
 	go test ./...
+
+verify-bindings:
+	../scripts/verify_gomobile_bindings.sh

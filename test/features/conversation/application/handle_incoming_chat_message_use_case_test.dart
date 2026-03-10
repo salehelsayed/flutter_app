@@ -233,6 +233,8 @@ class FakeDecryptBridge implements Bridge {
   @override
   void Function(List<String> p1, List<String> p2)? onAddressesUpdated;
   @override
+  void Function(Map<String, dynamic>)? onRelayStateChanged;
+  @override
   void Function(Map<String, dynamic>)? onGroupMessageReceived;
   @override
   void Function(Map<String, dynamic>)? onGroupReactionReceived;
@@ -712,10 +714,12 @@ void main() {
       () async {
         // V1 plaintext message — must still be accepted on the receive path
         // even though the send path now requires V2 encryption
-        final message = buildP2PMessage(buildValidChatJson(
-          id: 'msg-v1-compat-001',
-          text: 'Hello from older peer',
-        ));
+        final message = buildP2PMessage(
+          buildValidChatJson(
+            id: 'msg-v1-compat-001',
+            text: 'Hello from older peer',
+          ),
+        );
 
         final (result, msg, _) = await handleIncomingChatMessage(
           message: message,

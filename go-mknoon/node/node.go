@@ -8,11 +8,13 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/libp2p/go-libp2p"
+	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/event"
 	"github.com/libp2p/go-libp2p/core/host"
@@ -20,7 +22,6 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/p2p/host/autorelay"
 	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
-	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	ma "github.com/multiformats/go-multiaddr"
 )
 
@@ -31,21 +32,23 @@ type EventCallback interface {
 
 // Node wraps a go-libp2p host with mknoon protocol handlers.
 type Node struct {
-	mu              sync.RWMutex
-	host            host.Host
-	ctx             context.Context
-	cancel          context.CancelFunc
-	peerId          string
-	isStarted       bool
-	relayAddresses  []string
-	namespace       string
-	eventCallback   EventCallback
-	eventSub        event.Subscription
-	connections     map[string]connectionInfo
-	relayReady      chan struct{}
-	relayReadyOnce  sync.Once
-	startedAt       time.Time // for startup timing instrumentation
-	lastConfig      *NodeConfig // saved for Restart()
+	mu             sync.RWMutex
+	host           host.Host
+	ctx            context.Context
+	cancel         context.CancelFunc
+	peerId         string
+	isStarted      bool
+	relayAddresses []string
+	relayPeerOrder []peer.ID
+	featureFlags   *FeatureFlags
+	namespace      string
+	eventCallback  EventCallback
+	eventSub       event.Subscription
+	connections    map[string]connectionInfo
+	relayReady     chan struct{}
+	relayReadyOnce sync.Once
+	startedAt      time.Time   // for startup timing instrumentation
+	lastConfig     *NodeConfig // saved for Restart()
 
 	// Phase 4: Relay session manager and event dispatcher.
 	relaySessionMgr *RelaySessionManager
@@ -59,6 +62,14 @@ type Node struct {
 	groupKeys         map[string]*GroupKeyInfo
 	groupSubCtx       map[string]context.CancelFunc
 	groupDiscoveryCtx map[string]context.CancelFunc // per-group rendezvous discovery loop cancellation
+	groupDialBackoff  map[string]groupPeerDialState
+	groupRecoverySem  chan struct{}
+
+	// Test seams for startup timing behavior.
+	warmRelayConnectionHook   func(peer.AddrInfo) error
+	waitForCircuitAddressHook func(time.Duration) bool
+	rendezvousRegisterHook    func(string, []string) error
+	refreshRelaySessionHook   func() *RecoveryResult
 }
 
 type connectionInfo struct {
@@ -67,20 +78,80 @@ type connectionInfo struct {
 	Direction string `json:"direction"`
 }
 
+// isCircuitAddr returns true if the multiaddr contains a /p2p-circuit component.
+func isCircuitAddr(a ma.Multiaddr) bool {
+	return strings.Contains(a.String(), "/p2p-circuit")
+}
+
+// extractIP returns the first IP address from a multiaddr, stripping any
+// ip6zone prefix. Returns nil if the multiaddr does not start with an IP.
+func extractIP(a ma.Multiaddr) net.IP {
+	c, rest := ma.SplitFirst(a)
+	if c == nil {
+		return nil
+	}
+	// Strip ip6zone prefix: /ip6zone/<zone>/ip6/<addr>/...
+	if c.Protocol().Code == ma.P_IP6ZONE {
+		if rest == nil {
+			return nil
+		}
+		c, _ = ma.SplitFirst(rest)
+		if c == nil {
+			return nil
+		}
+	}
+	switch c.Protocol().Code {
+	case ma.P_IP4, ma.P_IP6:
+		return net.IP(c.RawValue())
+	}
+	return nil
+}
+
+// isNonRoutableAddr returns true if the multiaddr starts with a loopback,
+// link-local, or unspecified IP address.
+func isNonRoutableAddr(a ma.Multiaddr) bool {
+	ip := extractIP(a)
+	if ip == nil {
+		return false
+	}
+	return ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsUnspecified()
+}
+
+// filterAddresses removes loopback, link-local, and unspecified addresses
+// from the given multiaddr slice. Circuit relay addresses are always kept.
+func filterAddresses(addrs []ma.Multiaddr) []ma.Multiaddr {
+	filtered := make([]ma.Multiaddr, 0, len(addrs))
+	for _, a := range addrs {
+		if isCircuitAddr(a) {
+			filtered = append(filtered, a)
+			continue
+		}
+		if isNonRoutableAddr(a) {
+			continue
+		}
+		filtered = append(filtered, a)
+	}
+	return filtered
+}
+
 // NewNode creates a new Node instance without an event callback.
 func NewNode() *Node {
 	return &Node{
-		connections:     make(map[string]connectionInfo),
-		relaySessionMgr: NewRelaySessionManager(),
+		connections:      make(map[string]connectionInfo),
+		relaySessionMgr:  NewRelaySessionManager(),
+		groupDialBackoff: make(map[string]groupPeerDialState),
+		groupRecoverySem: make(chan struct{}, GroupDiscoveryConcurrency),
 	}
 }
 
 // New creates a new Node instance with an event callback for Go → Flutter push events.
 func New(cb EventCallback) *Node {
 	return &Node{
-		connections:     make(map[string]connectionInfo),
-		eventCallback:   cb,
-		relaySessionMgr: NewRelaySessionManager(),
+		connections:      make(map[string]connectionInfo),
+		eventCallback:    cb,
+		relaySessionMgr:  NewRelaySessionManager(),
+		groupDialBackoff: make(map[string]groupPeerDialState),
+		groupRecoverySem: make(chan struct{}, GroupDiscoveryConcurrency),
 	}
 }
 
@@ -97,6 +168,8 @@ func (n *Node) Start(cfg NodeConfig) (*NodeState, error) {
 	// Save config for Restart().
 	cfgCopy := cfg
 	n.lastConfig = &cfgCopy
+	flags := cfg.EffectiveFlags()
+	n.featureFlags = &flags
 
 	// Decode private key from hex
 	keyBytes, err := hex.DecodeString(cfg.PrivateKeyHex)
@@ -122,11 +195,14 @@ func (n *Node) Start(cfg NodeConfig) (*NodeState, error) {
 	if len(relayAddresses) == 0 {
 		relayAddresses = []string{DefaultRelayAddress}
 	}
+	relayAddresses = limitRelayAddresses(relayAddresses, flags)
 	n.relayAddresses = relayAddresses
 
 	// Parse relay multiaddrs into AddrInfo for AutoRelay.
 	// Merge addresses for the same peer ID (e.g. WSS + QUIC for the same relay).
 	relayInfoMap := make(map[peer.ID]*peer.AddrInfo)
+	relayPeerOrder := make([]peer.ID, 0, len(relayAddresses))
+	seenRelayPeers := make(map[peer.ID]struct{})
 	for _, addr := range relayAddresses {
 		maddr, err := ma.NewMultiaddr(addr)
 		if err != nil {
@@ -143,10 +219,20 @@ func (n *Node) Start(cfg NodeConfig) (*NodeState, error) {
 		} else {
 			relayInfoMap[info.ID] = info
 		}
+		if _, seen := seenRelayPeers[info.ID]; !seen {
+			seenRelayPeers[info.ID] = struct{}{}
+			relayPeerOrder = append(relayPeerOrder, info.ID)
+		}
 	}
 	relayInfos := make([]peer.AddrInfo, 0, len(relayInfoMap))
 	for _, info := range relayInfoMap {
 		relayInfos = append(relayInfos, *info)
+	}
+	n.relayPeerOrder = relayPeerOrder
+	if n.relaySessionMgr != nil {
+		for _, relayPeerID := range relayPeerOrder {
+			n.relaySessionMgr.InitRelayPeer(relayPeerID)
+		}
 	}
 
 	// Build listen addresses
@@ -174,6 +260,7 @@ func (n *Node) Start(cfg NodeConfig) (*NodeState, error) {
 		libp2p.EnableHolePunching(),
 		libp2p.NATPortMap(),
 		libp2p.ForceReachabilityPrivate(),
+		libp2p.AddrsFactory(filterAddresses),
 	}
 	if len(relayInfos) > 0 {
 		hostOpts = append(hostOpts,
@@ -191,6 +278,13 @@ func (n *Node) Start(cfg NodeConfig) (*NodeState, error) {
 
 	n.host = h
 	n.peerId = h.ID().String()
+
+	// Log announced addresses (post-filter).
+	announceAddrs := h.Addrs()
+	log.Printf("[NODE] Announcing %d addresses (loopback/link-local filtered out)", len(announceAddrs))
+	for _, a := range announceAddrs {
+		log.Printf("[NODE]   %s", a.String())
+	}
 
 	// Initialize PubSub (GossipSub) for group messaging.
 	if err := n.initPubSub(); err != nil {
@@ -231,30 +325,30 @@ func (n *Node) Start(cfg NodeConfig) (*NodeState, error) {
 	// Each relayInfo may contain multiple addresses (e.g. WSS + QUIC) for
 	// the same peer — host.Connect() tries all addresses internally.
 	go func() {
-		var wg sync.WaitGroup
 		for _, info := range relayInfos {
-			wg.Add(1)
 			go func(ri peer.AddrInfo) {
-				defer wg.Done()
-				if err := n.warmRelayConnection(ri); err != nil {
+				if err := n.warmRelayConnectionForStart(ri); err != nil {
 					log.Printf("[NODE] relay dial FAILED (%s): %v", ri.ID.String()[:min(20, len(ri.ID.String()))], err)
 				} else {
 					n.relayReadyOnce.Do(func() { close(n.relayReady) })
 				}
 			}(info)
 		}
-		wg.Wait()
+	}()
 
-		// Auto-register on rendezvous after relay connection.
-		// Wait for circuit address to appear before registering so that
-		// the peer record includes the relay circuit address.
-		if cfg.AutoRegister {
-			n.waitForCircuitAddress(10 * time.Second)
-			if err := n.RendezvousRegister(n.namespace, nil); err != nil {
+	// Auto-register as soon as the first relay path yields a discoverable
+	// circuit address. Do not wait for slower warm attempts to settle.
+	if cfg.AutoRegister {
+		go func() {
+			if !n.waitForCircuitAddressForStart(10 * time.Second) {
+				log.Printf("[NODE] auto-register skipped: no circuit address ready")
+				return
+			}
+			if err := n.rendezvousRegisterForStart(n.namespace, nil); err != nil {
 				log.Printf("[NODE] auto-register failed: %v", err)
 			}
-		}
-	}()
+		}()
+	}
 
 	return n.stateLocked(), nil
 }
@@ -306,9 +400,13 @@ func (n *Node) Stop() error {
 
 	n.isStarted = false
 	n.connections = make(map[string]connectionInfo)
+	n.relayPeerOrder = nil
 	n.host = nil
 	n.eventSub = nil
+	n.groupDialBackoff = make(map[string]groupPeerDialState)
+	n.groupRecoverySem = make(chan struct{}, GroupDiscoveryConcurrency)
 	n.relayReadyOnce = sync.Once{} // reset so next Start() can use it
+	n.featureFlags = nil
 
 	// Phase 4: Stop event dispatcher and reset relay session state.
 	if n.eventDispatcher != nil {
@@ -332,14 +430,7 @@ func (n *Node) Status() map[string]interface{} {
 	conns := []map[string]interface{}{}
 
 	if n.host != nil && n.isStarted {
-		for _, addr := range n.host.Addrs() {
-			s := addr.String()
-			if strings.Contains(s, "/p2p-circuit") {
-				circuitAddrs = append(circuitAddrs, s)
-			} else {
-				listenAddrs = append(listenAddrs, s)
-			}
-		}
+		listenAddrs, circuitAddrs = splitHostAddresses(n.host)
 		for _, c := range n.connections {
 			conns = append(conns, map[string]interface{}{
 				"peerId":    c.PeerId,
@@ -349,6 +440,11 @@ func (n *Node) Status() map[string]interface{} {
 		}
 	}
 
+	featureFlags := DefaultFeatureFlags()
+	if n.featureFlags != nil {
+		featureFlags = *n.featureFlags
+	}
+
 	result := map[string]interface{}{
 		"ok":               true,
 		"peerId":           n.peerId,
@@ -356,10 +452,11 @@ func (n *Node) Status() map[string]interface{} {
 		"listenAddresses":  listenAddrs,
 		"circuitAddresses": circuitAddrs,
 		"connections":      conns,
+		"featureFlags":     featureFlagsStatusMap(featureFlags),
 	}
 
 	// Phase 4: Merge relay session fields additively.
-	if n.relaySessionMgr != nil {
+	if n.relaySessionMgr != nil && featureFlags.EnableReservationAwareHealth {
 		for k, v := range n.relaySessionMgr.StatusFields() {
 			result[k] = v
 		}
@@ -419,12 +516,23 @@ func (n *Node) warmRelayConnection(info peer.AddrInfo) error {
 	return nil
 }
 
+func (n *Node) warmRelayConnectionForStart(info peer.AddrInfo) error {
+	if n.warmRelayConnectionHook != nil {
+		return n.warmRelayConnectionHook(info)
+	}
+	return n.warmRelayConnection(info)
+}
+
 // RefreshRelaySession attempts in-place relay recovery without replacing the host.
 // It reconnects to relay peers and waits for AutoRelay to re-establish
 // circuit reservations. PubSub subscriptions and peer connections are preserved.
 //
 // Returns a RecoveryResult describing what happened.
 func (n *Node) RefreshRelaySession() *RecoveryResult {
+	if n.refreshRelaySessionHook != nil {
+		return n.refreshRelaySessionHook()
+	}
+
 	n.mu.RLock()
 	h := n.host
 	started := n.isStarted
@@ -503,11 +611,13 @@ func (n *Node) RefreshRelaySession() *RecoveryResult {
 	} else if refreshErr == nil {
 		refreshErr = fmt.Errorf("no circuit addresses after 10s wait")
 	}
+	_, circuitAddrs := splitHostAddresses(h)
+	n.syncRelaySessionFromRuntime("refresh_relay_session", circuitAddrs)
 
 	result := &RecoveryResult{
-		RecoveryMode:    "in_place",
-		Success:         refreshErr == nil,
-		RelayState:      string(mgr.AggregateState()),
+		RecoveryMode:      "in_place",
+		Success:           refreshErr == nil,
+		RelayState:        string(mgr.AggregateState()),
 		HealthyRelayCount: mgr.HealthyRelayCount(),
 	}
 	if refreshErr != nil {
@@ -538,15 +648,21 @@ func (n *Node) ReconnectRelays() (*RecoveryResult, error) {
 		return nil, fmt.Errorf("no saved config — cannot restart")
 	}
 
-	// Try in-place recovery first (Phase 4).
-	result := n.RefreshRelaySession()
-	if result.Success {
-		log.Printf("[NODE] ReconnectRelays: in-place recovery succeeded")
-		return result, nil
-	}
+	flags := cfg.EffectiveFlags()
 
-	log.Printf("[NODE] ReconnectRelays: in-place recovery failed (%s), performing full restart",
-		result.Reason)
+	if flags.EnableInPlaceRelayRecovery {
+		// Try in-place recovery first (Phase 4).
+		result := n.RefreshRelaySession()
+		if result.Success {
+			log.Printf("[NODE] ReconnectRelays: in-place recovery succeeded")
+			return result, nil
+		}
+
+		log.Printf("[NODE] ReconnectRelays: in-place recovery failed (%s), performing full restart",
+			result.Reason)
+	} else {
+		log.Printf("[NODE] ReconnectRelays: in-place recovery disabled by feature flag, performing full restart")
+	}
 
 	// Fallback: full host restart (pre-Phase 4 behavior).
 	if err := n.Stop(); err != nil {
@@ -586,11 +702,14 @@ func (n *Node) ReconnectRelays() (*RecoveryResult, error) {
 	n.mu.RLock()
 	mgr := n.relaySessionMgr
 	n.mu.RUnlock()
+	if mgr != nil {
+		mgr.RecordWatchdogRestart()
+	}
 
 	watchdogResult := &RecoveryResult{
-		RecoveryMode:    "watchdog_restart",
-		Success:         circuitOk,
-		RelayState:      string(mgr.AggregateState()),
+		RecoveryMode:      "watchdog_restart",
+		Success:           circuitOk,
+		RelayState:        string(mgr.AggregateState()),
 		HealthyRelayCount: mgr.HealthyRelayCount(),
 	}
 	if !circuitOk {
@@ -848,6 +967,14 @@ func setStreamDeadline(s network.Stream, d time.Duration) {
 	s.SetDeadline(time.Now().Add(d))
 }
 
+func finishStream(s network.Stream, ok *bool) {
+	if *ok {
+		_ = s.Close()
+		return
+	}
+	_ = s.Reset()
+}
+
 // handleIncomingMessage handles incoming chat protocol streams.
 // Applies an inbound read deadline to prevent slow/malicious peers
 // from holding a goroutine open indefinitely.
@@ -888,6 +1015,10 @@ func (n *Node) handleIncomingMessage(s network.Stream) {
 // waitForCircuitAddress polls until at least one /p2p-circuit address
 // appears in the host's address set, or the timeout expires.
 func (n *Node) waitForCircuitAddress(timeout time.Duration) bool {
+	if n.waitForCircuitAddressHook != nil {
+		return n.waitForCircuitAddressHook(timeout)
+	}
+
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		n.mu.RLock()
@@ -905,6 +1036,17 @@ func (n *Node) waitForCircuitAddress(timeout time.Duration) bool {
 	}
 	log.Printf("[NODE] Timed out waiting for circuit address after %v", timeout)
 	return false
+}
+
+func (n *Node) waitForCircuitAddressForStart(timeout time.Duration) bool {
+	return n.waitForCircuitAddress(timeout)
+}
+
+func (n *Node) rendezvousRegisterForStart(namespace string, serverAddresses []string) error {
+	if n.rendezvousRegisterHook != nil {
+		return n.rendezvousRegisterHook(namespace, serverAddresses)
+	}
+	return n.RendezvousRegister(namespace, serverAddresses)
 }
 
 // watchConnectionEvents monitors peer connect/disconnect and address events.
@@ -937,10 +1079,12 @@ func (n *Node) watchConnectionEvents() {
 					"address":   addr,
 					"direction": direction,
 				})
+				n.handleRelayConnectednessChanged(e.Peer, e.Connectedness)
 			} else if e.Connectedness == network.NotConnected {
 				n.mu.Lock()
 				delete(n.connections, pid)
 				n.mu.Unlock()
+				n.handleRelayConnectednessChanged(e.Peer, e.Connectedness)
 
 				n.emitEvent("peer:disconnected", map[string]interface{}{
 					"peerId": pid,
@@ -956,15 +1100,8 @@ func (n *Node) watchConnectionEvents() {
 				continue
 			}
 
-			var listenAddrs, circuitAddrs []string
-			for _, addr := range h.Addrs() {
-				s := addr.String()
-				if strings.Contains(s, "/p2p-circuit") {
-					circuitAddrs = append(circuitAddrs, s)
-				} else {
-					listenAddrs = append(listenAddrs, s)
-				}
-			}
+			listenAddrs, circuitAddrs := splitHostAddresses(h)
+			n.syncRelaySessionFromRuntime("addresses_updated", circuitAddrs)
 
 			sinceStartMs := time.Since(started).Milliseconds()
 
@@ -975,6 +1112,82 @@ func (n *Node) watchConnectionEvents() {
 			})
 		}
 	}
+}
+
+func splitHostAddresses(h host.Host) (listenAddrs []string, circuitAddrs []string) {
+	if h == nil {
+		return nil, nil
+	}
+	for _, addr := range h.Addrs() {
+		s := addr.String()
+		if strings.Contains(s, "/p2p-circuit") {
+			circuitAddrs = append(circuitAddrs, s)
+			continue
+		}
+		// Belt-and-suspenders: skip loopback/link-local even if AddrsFactory missed them.
+		if isNonRoutableAddr(addr) {
+			continue
+		}
+		listenAddrs = append(listenAddrs, s)
+	}
+	return listenAddrs, circuitAddrs
+}
+
+func (n *Node) isRelayPeer(pid peer.ID) bool {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	for _, relayPeerID := range n.relayPeerOrder {
+		if relayPeerID == pid {
+			return true
+		}
+	}
+	return false
+}
+
+func (n *Node) emitRelayStateEvent(reason string) {
+	if n.relaySessionMgr == nil || !n.reservationAwareHealthEnabled() {
+		return
+	}
+
+	data := n.relaySessionMgr.StatusFields()
+	if reason != "" {
+		data["reason"] = reason
+	}
+	n.emitEvent("relay:state", data)
+}
+
+// AcknowledgeGroupRecovery clears the pending group recovery signal after
+// Flutter successfully rejoins group topics.
+func (n *Node) AcknowledgeGroupRecovery() error {
+	n.mu.RLock()
+	started := n.isStarted
+	mgr := n.relaySessionMgr
+	n.mu.RUnlock()
+
+	if !started || mgr == nil {
+		return fmt.Errorf("node not started")
+	}
+
+	mgr.AcknowledgeGroupRecovery()
+	n.emitRelayStateEvent("group_recovery_acknowledged")
+	return nil
+}
+
+func (n *Node) handleRelayConnectednessChanged(pid peer.ID, connectedness network.Connectedness) {
+	if n.relaySessionMgr == nil || !n.isRelayPeer(pid) {
+		return
+	}
+
+	reason := "connectedness_changed"
+	switch connectedness {
+	case network.Connected:
+		reason = "relay_connected"
+	case network.NotConnected:
+		reason = "relay_disconnected"
+	}
+
+	_, circuitAddrs := splitHostAddresses(n.Host())
+	n.syncRelaySessionFromRuntime(reason, circuitAddrs)
 }
 
 // emitEvent sends a push event to Flutter via the callback.

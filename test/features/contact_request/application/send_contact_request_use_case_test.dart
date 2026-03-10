@@ -157,6 +157,9 @@ class _FakeP2PService implements P2PService {
   }) async => false;
 
   @override
+  String? get lastRecoveryMethod => null;
+
+  @override
   void dispose() {}
 }
 

@@ -136,6 +136,9 @@ class _AckDropP2PService implements P2PService {
   Future<void> warmBackground() => _inner.warmBackground();
 
   @override
+  String? get lastRecoveryMethod => _inner.lastRecoveryMethod;
+
+  @override
   void dispose() => _inner.dispose();
 }
 

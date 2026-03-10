@@ -222,6 +222,8 @@ class _FakeBridge implements Bridge {
   void Function(List<String> listenAddresses, List<String> circuitAddresses)?
   onAddressesUpdated;
   @override
+  void Function(Map<String, dynamic>)? onRelayStateChanged;
+  @override
   void Function(Map<String, dynamic>)? onGroupMessageReceived;
   @override
   void Function(Map<String, dynamic>)? onGroupReactionReceived;
@@ -268,6 +270,8 @@ class _ThrowingBridge implements Bridge {
   @override
   void Function(List<String> listenAddresses, List<String> circuitAddresses)?
   onAddressesUpdated;
+  @override
+  void Function(Map<String, dynamic>)? onRelayStateChanged;
   @override
   void Function(Map<String, dynamic>)? onGroupMessageReceived;
   @override

@@ -3,6 +3,7 @@ package node
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -11,6 +12,9 @@ import (
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/crypto"
+	"github.com/libp2p/go-libp2p/core/host"
+	"github.com/libp2p/go-libp2p/core/peer"
+	ma "github.com/multiformats/go-multiaddr"
 )
 
 // generateTestKey creates a random Ed25519 key and returns its hex-encoded private key.
@@ -25,6 +29,20 @@ func generateTestKey(t *testing.T) string {
 		t.Fatalf("raw key: %v", err)
 	}
 	return hex.EncodeToString(raw)
+}
+
+// generatePeerIDStr creates a random Ed25519 key and returns the peer ID string.
+func generatePeerIDStr(t *testing.T) string {
+	t.Helper()
+	priv, _, err := crypto.GenerateEd25519Key(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	pid, err := peer.IDFromPrivateKey(priv)
+	if err != nil {
+		t.Fatalf("peer ID from key: %v", err)
+	}
+	return pid.String()
 }
 
 func TestNewNode(t *testing.T) {
@@ -431,6 +449,65 @@ func TestAutoRegister_WaitsForDiscoverableCircuitRecordNotMereRelaySocket(t *tes
 	}
 }
 
+func TestAutoRegister_DoesNotWaitForSlowSecondaryWarmAttempt(t *testing.T) {
+	hexKey := generateTestKey(t)
+
+	n := NewNode()
+	slowRelayReleased := make(chan struct{})
+	circuitReady := make(chan struct{})
+	registerCalled := make(chan struct{}, 1)
+	var warmCalls atomic.Int32
+
+	n.warmRelayConnectionHook = func(info peer.AddrInfo) error {
+		call := warmCalls.Add(1)
+		if call == 1 {
+			close(circuitReady)
+			return nil
+		}
+
+		<-slowRelayReleased
+		return nil
+	}
+	n.waitForCircuitAddressHook = func(timeout time.Duration) bool {
+		select {
+		case <-circuitReady:
+			return true
+		case <-time.After(timeout):
+			return false
+		}
+	}
+	n.rendezvousRegisterHook = func(namespace string, serverAddresses []string) error {
+		registerCalled <- struct{}{}
+		return nil
+	}
+
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex: hexKey,
+		RelayAddresses: []string{
+			generateFakeRelayAddr(t, 19011),
+			generateFakeRelayAddr(t, 19012),
+		},
+		AutoRegister: true,
+		Namespace:    "mknoon:chat:test",
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	select {
+	case <-registerCalled:
+	case <-time.After(200 * time.Millisecond):
+		close(slowRelayReleased)
+		n.Stop()
+		t.Fatal("auto-register waited on a slow secondary warm attempt")
+	}
+
+	close(slowRelayReleased)
+	if err := n.Stop(); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Phase 4: Relay Session Manager and Reservation-Aware Health
 // ---------------------------------------------------------------------------
@@ -569,6 +646,7 @@ func TestStatus_IncludesRelaySessionFields(t *testing.T) {
 		"relayStates",
 		"healthyRelayCount",
 		"watchdogRestartCount",
+		"needsGroupRecovery",
 	}
 	for _, key := range requiredNewKeys {
 		if _, exists := status[key]; !exists {
@@ -900,6 +978,393 @@ type recordingEventCallback struct {
 
 func (c *recordingEventCallback) OnEvent(jsonStr string) {
 	c.onEvent(jsonStr)
+}
+
+// ---------------------------------------------------------------------------
+// Loopback / Link-Local Address Filtering
+// ---------------------------------------------------------------------------
+
+func TestFilterAddresses(t *testing.T) {
+	tests := []struct {
+		name  string
+		input []string
+		want  []string
+	}{
+		// --- IPv4 ---
+		{
+			name:  "removes IPv4 loopback TCP",
+			input: []string{"/ip4/127.0.0.1/tcp/1234"},
+			want:  []string{},
+		},
+		{
+			name:  "removes IPv4 loopback QUIC",
+			input: []string{"/ip4/127.0.0.1/udp/1234/quic-v1"},
+			want:  []string{},
+		},
+		{
+			name:  "removes IPv4 loopback WebSocket",
+			input: []string{"/ip4/127.0.0.1/tcp/1234/ws"},
+			want:  []string{},
+		},
+		{
+			name:  "removes IPv4 unspecified",
+			input: []string{"/ip4/0.0.0.0/tcp/1234"},
+			want:  []string{},
+		},
+		{
+			name:  "keeps private LAN 192.168.x",
+			input: []string{"/ip4/192.168.1.100/tcp/1234"},
+			want:  []string{"/ip4/192.168.1.100/tcp/1234"},
+		},
+		{
+			name:  "keeps private LAN 10.x",
+			input: []string{"/ip4/10.0.0.1/udp/4001/quic-v1"},
+			want:  []string{"/ip4/10.0.0.1/udp/4001/quic-v1"},
+		},
+		{
+			name:  "keeps private LAN 172.16.x WebSocket",
+			input: []string{"/ip4/172.16.0.1/tcp/4001/ws"},
+			want:  []string{"/ip4/172.16.0.1/tcp/4001/ws"},
+		},
+		{
+			name:  "keeps public IPv4 address",
+			input: []string{"/ip4/203.0.113.5/tcp/1234"},
+			want:  []string{"/ip4/203.0.113.5/tcp/1234"},
+		},
+		// --- IPv6 ---
+		{
+			name:  "removes IPv6 loopback TCP",
+			input: []string{"/ip6/::1/tcp/1234"},
+			want:  []string{},
+		},
+		{
+			name:  "removes IPv6 loopback QUIC",
+			input: []string{"/ip6/::1/udp/1234/quic-v1"},
+			want:  []string{},
+		},
+		{
+			name:  "removes IPv6 link-local",
+			input: []string{"/ip6/fe80::1/tcp/1234"},
+			want:  []string{},
+		},
+		{
+			name:  "removes IPv4 link-local (169.254.x.x)",
+			input: []string{"/ip4/169.254.1.100/tcp/1234"},
+			want:  []string{},
+		},
+		{
+			name:  "removes IPv6 link-local with zone (ip6zone)",
+			input: []string{"/ip6zone/en0/ip6/fe80::1/tcp/1234"},
+			want:  []string{},
+		},
+		{
+			name:  "removes IPv6 unspecified",
+			input: []string{"/ip6/::/tcp/1234"},
+			want:  []string{},
+		},
+		{
+			name:  "keeps global IPv6 address",
+			input: []string{"/ip6/2001:db8::1/tcp/1234"},
+			want:  []string{"/ip6/2001:db8::1/tcp/1234"},
+		},
+		{
+			name:  "keeps global IPv6 QUIC",
+			input: []string{"/ip6/2607:f8b0:4004:800::200e/udp/4001/quic-v1"},
+			want:  []string{"/ip6/2607:f8b0:4004:800::200e/udp/4001/quic-v1"},
+		},
+		// --- Circuit relay (must survive loopback filter) ---
+		{
+			name:  "keeps circuit relay even when transport IP is loopback",
+			input: []string{"/ip4/127.0.0.1/tcp/4001/p2p/12D3KooWRelay/p2p-circuit/p2p/12D3KooWPeer"},
+			want:  []string{"/ip4/127.0.0.1/tcp/4001/p2p/12D3KooWRelay/p2p-circuit/p2p/12D3KooWPeer"},
+		},
+		{
+			name:  "keeps circuit relay with public IP",
+			input: []string{"/ip4/203.0.113.5/tcp/4001/p2p/12D3KooWRelay/p2p-circuit/p2p/12D3KooWPeer"},
+			want:  []string{"/ip4/203.0.113.5/tcp/4001/p2p/12D3KooWRelay/p2p-circuit/p2p/12D3KooWPeer"},
+		},
+		{
+			name: "loopback circuit kept, plain loopback removed",
+			input: []string{
+				"/ip4/127.0.0.1/tcp/5678",
+				"/ip4/127.0.0.1/tcp/4001/p2p/12D3KooWRelay/p2p-circuit/p2p/12D3KooWPeer",
+			},
+			want: []string{
+				"/ip4/127.0.0.1/tcp/4001/p2p/12D3KooWRelay/p2p-circuit/p2p/12D3KooWPeer",
+			},
+		},
+		// --- Mixed ---
+		{
+			name: "mixed IPv4+IPv6: filters all loopback, keeps routable and circuit",
+			input: []string{
+				"/ip4/127.0.0.1/tcp/5678",
+				"/ip4/127.0.0.1/udp/5678/quic-v1",
+				"/ip4/127.0.0.1/tcp/5678/ws",
+				"/ip6/::1/tcp/5678",
+				"/ip6/::1/udp/5678/quic-v1",
+				"/ip6/fe80::1/tcp/5678",
+				"/ip4/192.168.1.100/tcp/5678",
+				"/ip4/192.168.1.100/udp/5678/quic-v1",
+				"/ip6/2001:db8::1/tcp/5678",
+				"/ip6/2001:db8::1/udp/5678/quic-v1",
+				"/ip4/127.0.0.1/tcp/4001/p2p/12D3KooWRelay/p2p-circuit/p2p/12D3KooWPeer",
+			},
+			want: []string{
+				"/ip4/192.168.1.100/tcp/5678",
+				"/ip4/192.168.1.100/udp/5678/quic-v1",
+				"/ip6/2001:db8::1/tcp/5678",
+				"/ip6/2001:db8::1/udp/5678/quic-v1",
+				"/ip4/127.0.0.1/tcp/4001/p2p/12D3KooWRelay/p2p-circuit/p2p/12D3KooWPeer",
+			},
+		},
+		{
+			name:  "empty input returns empty",
+			input: []string{},
+			want:  []string{},
+		},
+		{
+			name:  "nil input returns empty",
+			input: nil,
+			want:  []string{},
+		},
+	}
+
+	// Generate real peer IDs for circuit relay test addresses.
+	relayPeerID := generatePeerIDStr(t)
+	targetPeerID := generatePeerIDStr(t)
+	circuitSuffix := fmt.Sprintf("/p2p/%s/p2p-circuit/p2p/%s", relayPeerID, targetPeerID)
+
+	// Replace placeholder peer IDs in test cases.
+	replacePeerIDs := func(s string) string {
+		s = strings.ReplaceAll(s, "/p2p/12D3KooWRelay/p2p-circuit/p2p/12D3KooWPeer", circuitSuffix)
+		return s
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var addrs []ma.Multiaddr
+			for _, s := range tt.input {
+				addrs = append(addrs, ma.StringCast(replacePeerIDs(s)))
+			}
+
+			got := filterAddresses(addrs)
+
+			gotStrs := make([]string, len(got))
+			for i, a := range got {
+				gotStrs[i] = a.String()
+			}
+
+			want := make([]string, len(tt.want))
+			for i, w := range tt.want {
+				want[i] = replacePeerIDs(w)
+			}
+
+			if len(gotStrs) != len(want) {
+				t.Fatalf("filterAddresses() returned %d addrs, want %d\ngot:  %v\nwant: %v",
+					len(gotStrs), len(want), gotStrs, want)
+			}
+			for i, w := range want {
+				if gotStrs[i] != w {
+					t.Errorf("filterAddresses()[%d] = %q, want %q", i, gotStrs[i], w)
+				}
+			}
+		})
+	}
+}
+
+func TestNodeAddressesExcludeLoopback(t *testing.T) {
+	hexKey := generateTestKey(t)
+	n := NewNode()
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex:  hexKey,
+		RelayAddresses: []string{},
+		AutoRegister:   false,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer n.Stop()
+
+	for _, addr := range n.Host().Addrs() {
+		s := addr.String()
+		if strings.Contains(s, "/ip4/127.0.0.1/") || strings.Contains(s, "/ip6/::1/") {
+			t.Errorf("host.Addrs() contains loopback address: %s", s)
+		}
+		if strings.Contains(s, "/ip6/fe80") || strings.Contains(s, "169.254.") {
+			t.Errorf("host.Addrs() contains link-local address: %s", s)
+		}
+		if strings.Contains(s, "/ip4/0.0.0.0/") || strings.Contains(s, "/ip6/::/") {
+			t.Errorf("host.Addrs() contains unspecified address: %s", s)
+		}
+	}
+
+	state := n.State()
+	for _, a := range state.Addresses {
+		if strings.Contains(a, "127.0.0.1") || strings.Contains(a, "::1/") ||
+			strings.Contains(a, "/ip6/fe80") || strings.Contains(a, "169.254.") {
+			t.Errorf("State().Addresses contains non-routable: %s", a)
+		}
+	}
+}
+
+// fakeHostWithAddrs is a minimal host.Host stub for testing splitHostAddresses
+// with synthetic addresses that bypass AddrsFactory.
+type fakeHostWithAddrs struct {
+	host.Host // embed to satisfy interface; only Addrs() is called
+	addrs     []ma.Multiaddr
+}
+
+func (f *fakeHostWithAddrs) Addrs() []ma.Multiaddr { return f.addrs }
+
+func TestSplitHostAddressesFiltersLoopbackDirectly(t *testing.T) {
+	relayPID := generatePeerIDStr(t)
+	targetPID := generatePeerIDStr(t)
+	circuitAddr := fmt.Sprintf("/ip4/127.0.0.1/tcp/4001/p2p/%s/p2p-circuit/p2p/%s", relayPID, targetPID)
+
+	rawAddrs := []ma.Multiaddr{
+		// Should be filtered (non-routable)
+		ma.StringCast("/ip4/127.0.0.1/tcp/5678"),
+		ma.StringCast("/ip4/127.0.0.1/udp/5678/quic-v1"),
+		ma.StringCast("/ip6/::1/tcp/5678"),
+		ma.StringCast("/ip6/fe80::1/tcp/5678"),
+		ma.StringCast("/ip4/169.254.1.100/tcp/5678"),
+		ma.StringCast("/ip4/0.0.0.0/tcp/5678"),
+		ma.StringCast("/ip6/::/tcp/5678"),
+		// Should be kept (routable listen addresses)
+		ma.StringCast("/ip4/192.168.1.100/tcp/5678"),
+		ma.StringCast("/ip6/2001:db8::1/tcp/5678"),
+		// Should be kept (circuit relay — even with loopback transport)
+		ma.StringCast(circuitAddr),
+	}
+
+	fh := &fakeHostWithAddrs{addrs: rawAddrs}
+	listenAddrs, circuitAddrs := splitHostAddresses(fh)
+
+	for _, a := range listenAddrs {
+		if strings.Contains(a, "127.0.0.1") || strings.HasPrefix(a, "/ip6/::1/") ||
+			strings.Contains(a, "/ip6/fe80") || strings.Contains(a, "169.254.") ||
+			strings.HasPrefix(a, "/ip4/0.0.0.0") || strings.HasPrefix(a, "/ip6/::/") {
+			t.Errorf("splitHostAddresses returned non-routable listen address: %s", a)
+		}
+	}
+
+	if len(listenAddrs) != 2 {
+		t.Errorf("expected 2 routable listen addrs, got %d: %v", len(listenAddrs), listenAddrs)
+	}
+
+	if len(circuitAddrs) != 1 {
+		t.Errorf("expected 1 circuit addr, got %d: %v", len(circuitAddrs), circuitAddrs)
+	}
+}
+
+func TestStatusExcludesLoopback(t *testing.T) {
+	hexKey := generateTestKey(t)
+	n := NewNode()
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex:  hexKey,
+		RelayAddresses: []string{},
+		AutoRegister:   false,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer n.Stop()
+
+	status := n.Status()
+	listenAddrs, _ := status["listenAddresses"].([]string)
+	for _, a := range listenAddrs {
+		if strings.Contains(a, "127.0.0.1") || strings.Contains(a, "::1/") ||
+			strings.Contains(a, "/ip6/fe80") || strings.Contains(a, "169.254.") {
+			t.Errorf("Status() listenAddresses contains non-routable: %s", a)
+		}
+	}
+}
+
+func TestStateLockedExcludesLoopback(t *testing.T) {
+	hexKey := generateTestKey(t)
+	n := NewNode()
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex:  hexKey,
+		RelayAddresses: []string{},
+		AutoRegister:   false,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer n.Stop()
+
+	state := n.State()
+	for _, a := range state.Addresses {
+		if strings.Contains(a, "127.0.0.1") || strings.Contains(a, "::1/") ||
+			strings.Contains(a, "/ip6/fe80") || strings.Contains(a, "169.254.") ||
+			strings.Contains(a, "0.0.0.0") || strings.Contains(a, "/ip6/::/") {
+			t.Errorf("State().Addresses contains non-routable address: %s", a)
+		}
+	}
+}
+
+func TestAddressesUpdatedEventExcludesNonRoutable(t *testing.T) {
+	hexKey := generateTestKey(t)
+
+	var captured []map[string]interface{}
+	var mu sync.Mutex
+	gotEvent := make(chan struct{}, 1)
+
+	cb := &recordingEventCallback{
+		onEvent: func(jsonStr string) {
+			var ev map[string]interface{}
+			if err := json.Unmarshal([]byte(jsonStr), &ev); err != nil {
+				return
+			}
+			if ev["event"] == "addresses:updated" {
+				data, _ := ev["data"].(map[string]interface{})
+				mu.Lock()
+				captured = append(captured, data)
+				mu.Unlock()
+				select {
+				case gotEvent <- struct{}{}:
+				default:
+				}
+			}
+		},
+	}
+
+	n := New(cb)
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex:  hexKey,
+		RelayAddresses: []string{},
+		AutoRegister:   false,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer n.Stop()
+
+	// Wait for at least one addresses:updated event (with bounded timeout).
+	select {
+	case <-gotEvent:
+		// got at least one event
+	case <-time.After(5 * time.Second):
+		// No event arrived — this is fine in local-only mode (no relay means
+		// EvtLocalAddressesUpdated may not fire). Skip the payload check.
+		t.Skip("addresses:updated event not received within 5s — no relay in test env")
+	}
+
+	mu.Lock()
+	events := captured
+	mu.Unlock()
+
+	for _, ev := range events {
+		addrs, _ := ev["listenAddresses"].([]interface{})
+		for _, a := range addrs {
+			s, _ := a.(string)
+			if strings.Contains(s, "127.0.0.1") || strings.Contains(s, "::1/") ||
+				strings.Contains(s, "/ip6/fe80") || strings.Contains(s, "169.254.") ||
+				strings.HasPrefix(s, "/ip4/0.0.0.0") || strings.HasPrefix(s, "/ip6/::/") {
+				t.Errorf("addresses:updated event contains non-routable: %s", s)
+			}
+		}
+	}
 }
 
 func TestNodeStopIdempotent(t *testing.T) {

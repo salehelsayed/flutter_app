@@ -26,6 +26,7 @@ class FakeP2PService implements P2PService {
   bool registerPushTokenResult;
   bool throwOnHealthCheck;
   bool throwOnDrainInbox;
+  String? recoveryMethod;
 
   /// Ordered log of all sendMessage calls for multi-send assertions.
   final List<({String peerId, String content})> sentMessageLog = [];
@@ -65,9 +66,11 @@ class FakeP2PService implements P2PService {
     this.registerPushTokenResult = true,
     this.throwOnHealthCheck = false,
     this.throwOnDrainInbox = false,
-  })  : _currentState = initialState ?? NodeState.stopped,
-        sendMessageWithReplyResult = sendMessageWithReplyResult ??
-            const SendMessageResult(sent: true, reply: 'ack');
+    this.recoveryMethod,
+  }) : _currentState = initialState ?? NodeState.stopped,
+       sendMessageWithReplyResult =
+           sendMessageWithReplyResult ??
+           const SendMessageResult(sent: true, reply: 'ack');
 
   @override
   NodeState get currentState => _currentState;
@@ -122,7 +125,10 @@ class FakeP2PService implements P2PService {
 
   @override
   Future<SendMessageResult> sendMessageWithReply(
-      String peerId, String message, {int? timeoutMs}) async {
+    String peerId,
+    String message, {
+    int? timeoutMs,
+  }) async {
     sendMessageWithReplyCallCount++;
     lastSendMessagePeerId = peerId;
     lastSendMessageContent = message;
@@ -137,7 +143,11 @@ class FakeP2PService implements P2PService {
   }
 
   @override
-  Future<bool> dialPeer(String peerId, {List<String>? addresses, int? timeoutMs}) async {
+  Future<bool> dialPeer(
+    String peerId, {
+    List<String>? addresses,
+    int? timeoutMs,
+  }) async {
     dialPeerCallCount++;
     lastDialPeerId = peerId;
     return dialPeerResult;
@@ -190,7 +200,10 @@ class FakeP2PService implements P2PService {
 
   @override
   Future<bool> sendLocalMessage(
-      String peerId, String message, String fromPeerId) async {
+    String peerId,
+    String message,
+    String fromPeerId,
+  ) async {
     return false;
   }
 
@@ -214,6 +227,9 @@ class FakeP2PService implements P2PService {
     lastSendLocalMediaPeerId = peerId;
     return sendLocalMediaResult;
   }
+
+  @override
+  String? get lastRecoveryMethod => recoveryMethod;
 
   @override
   void dispose() {

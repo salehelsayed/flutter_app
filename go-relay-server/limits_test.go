@@ -139,3 +139,46 @@ func TestServerLimits_DefaultsAreSane(t *testing.T) {
 		t.Error("MaxConnectionsPerPeer should be > 0")
 	}
 }
+
+func TestRelayService_UsesFiniteLimitsFromServerConfig(t *testing.T) {
+	cfg := DefaultServerLimits()
+	cfg.MaxRelayReservations = 42
+	cfg.MaxConnectionsPerPeer = 3
+
+	resources := relayResourcesFromServerLimits(cfg)
+
+	if resources.MaxReservations != 42 {
+		t.Fatalf("expected MaxReservations=42, got %d", resources.MaxReservations)
+	}
+	if resources.MaxCircuits != 3 {
+		t.Fatalf("expected MaxCircuits=3, got %d", resources.MaxCircuits)
+	}
+	if resources.Limit == nil {
+		t.Fatal("expected finite per-circuit limits to be configured")
+	}
+}
+
+func TestRelayService_RejectsExcessReservationsPredictably(t *testing.T) {
+	cfg := DefaultServerLimits()
+	cfg.MaxRelayReservations = 1
+
+	resources := relayResourcesFromServerLimits(cfg)
+
+	if resources.MaxReservations != 1 {
+		t.Fatalf("expected MaxReservations=1, got %d", resources.MaxReservations)
+	}
+	if resources.MaxReservations <= 0 {
+		t.Fatal("relay reservations must remain finite and positive")
+	}
+}
+
+func TestRelayService_EnforcesPerPeerConnectionCap(t *testing.T) {
+	cfg := DefaultServerLimits()
+	cfg.MaxConnectionsPerPeer = 2
+
+	resources := relayResourcesFromServerLimits(cfg)
+
+	if resources.MaxCircuits != 2 {
+		t.Fatalf("expected MaxCircuits=2, got %d", resources.MaxCircuits)
+	}
+}

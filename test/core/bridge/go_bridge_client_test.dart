@@ -22,17 +22,17 @@ void main() {
 
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
-      const MethodChannel('com.mknoon/go_bridge'),
-      (MethodCall call) async => defaultHandler(call),
-    );
+          const MethodChannel('com.mknoon/go_bridge'),
+          (MethodCall call) async => defaultHandler(call),
+        );
   });
 
   tearDown(() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
-      const MethodChannel('com.mknoon/go_bridge'),
-      null,
-    );
+          const MethodChannel('com.mknoon/go_bridge'),
+          null,
+        );
   });
 
   // ---------------------------------------------------------------------------
@@ -45,6 +45,8 @@ void main() {
       'node:stop': 'stopNode',
       'node:status': 'nodeStatus',
       'relay:reconnect': 'relayReconnect',
+      'group:acknowledgeRecovery': 'groupAcknowledgeRecovery',
+      'group.keygen': 'generateGroupKey',
     };
 
     for (final entry in noPayloadCmds.entries) {
@@ -93,15 +95,25 @@ void main() {
       'media:list': 'mediaList',
       'profile:upload': 'profileUpload',
       'profile:download': 'profileDownload',
+      'group:create': 'groupCreate',
+      'group:join': 'groupJoinTopic',
+      'group:leave': 'groupLeaveTopic',
+      'group:publish': 'groupPublish',
+      'group:publishReaction': 'groupPublishReaction',
+      'group:updateConfig': 'groupUpdateConfig',
+      'group:rotateKey': 'groupRotateKey',
+      'group:updateKey': 'groupUpdateKey',
+      'group:inboxStore': 'groupInboxStore',
+      'group:inboxRetrieve': 'groupInboxRetrieve',
+      'group:inboxRetrieveCursor': 'groupInboxRetrieveCursor',
+      'group.encrypt': 'groupEncryptMessage',
+      'group.decrypt': 'groupDecryptMessage',
     };
 
     for (final entry in payloadCmds.entries) {
       test('${entry.key} calls ${entry.value} with payload JSON', () async {
         final payload = {'foo': 'bar', 'num': 42};
-        final request = jsonEncode({
-          'cmd': entry.key,
-          'payload': payload,
-        });
+        final request = jsonEncode({'cmd': entry.key, 'payload': payload});
 
         final response = await client.send(request);
         final decoded = jsonDecode(response) as Map<String, dynamic>;
@@ -121,9 +133,7 @@ void main() {
     test('payload command with null payload sends no arguments', () async {
       // identity.restore has hasPayload=true, but if payload is null in the
       // request JSON the bridge should invoke the method without arguments.
-      final request = jsonEncode({
-        'cmd': 'identity.restore',
-      });
+      final request = jsonEncode({'cmd': 'identity.restore'});
 
       final response = await client.send(request);
       final decoded = jsonDecode(response) as Map<String, dynamic>;
@@ -158,12 +168,12 @@ void main() {
     test('null response from native returns NULL_RESPONSE error', () async {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(
-        const MethodChannel('com.mknoon/go_bridge'),
-        (MethodCall call) async {
-          lastCall = call;
-          return null;
-        },
-      );
+            const MethodChannel('com.mknoon/go_bridge'),
+            (MethodCall call) async {
+              lastCall = call;
+              return null;
+            },
+          );
 
       final request = jsonEncode({
         'cmd': 'identity.generate',
@@ -183,15 +193,15 @@ void main() {
     test('PlatformException returns PLATFORM_ERROR with message', () async {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(
-        const MethodChannel('com.mknoon/go_bridge'),
-        (MethodCall call) async {
-          lastCall = call;
-          throw PlatformException(
-            code: 'GO_ERROR',
-            message: 'something went wrong in Go',
+            const MethodChannel('com.mknoon/go_bridge'),
+            (MethodCall call) async {
+              lastCall = call;
+              throw PlatformException(
+                code: 'GO_ERROR',
+                message: 'something went wrong in Go',
+              );
+            },
           );
-        },
-      );
 
       final request = jsonEncode({
         'cmd': 'node:start',
@@ -211,12 +221,12 @@ void main() {
     test('PlatformException with null message uses fallback text', () async {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(
-        const MethodChannel('com.mknoon/go_bridge'),
-        (MethodCall call) async {
-          lastCall = call;
-          throw PlatformException(code: 'GO_ERROR');
-        },
-      );
+            const MethodChannel('com.mknoon/go_bridge'),
+            (MethodCall call) async {
+              lastCall = call;
+              throw PlatformException(code: 'GO_ERROR');
+            },
+          );
 
       final request = jsonEncode({
         'cmd': 'node:status',
@@ -232,10 +242,37 @@ void main() {
     });
   });
 
+  group('push event routing', () {
+    test('relay:state push event invokes relay-state callback', () {
+      Map<String, dynamic>? received;
+      client.onRelayStateChanged = (data) {
+        received = data;
+      };
+
+      client.debugHandleEventForTest(
+        jsonEncode({
+          'event': 'relay:state',
+          'data': {
+            'relayState': 'online',
+            'healthyRelayCount': 1,
+            'watchdogRestartCount': 2,
+            'needsGroupRecovery': true,
+          },
+        }),
+      );
+
+      expect(received, isNotNull);
+      expect(received!['relayState'], equals('online'));
+      expect(received!['healthyRelayCount'], equals(1));
+      expect(received!['watchdogRestartCount'], equals(2));
+      expect(received!['needsGroupRecovery'], isTrue);
+    });
+  });
+
   // ---------------------------------------------------------------------------
   // Total command coverage sanity check
   // ---------------------------------------------------------------------------
-  test('all 39 commands are covered', () async {
+  test('all 43 commands are covered', () async {
     // Exhaustive list of every command in _cmdMap.
     final allCmds = [
       // Identity
@@ -281,16 +318,20 @@ void main() {
       'group:join',
       'group:leave',
       'group:publish',
+      'group:publishReaction',
       'group:updateConfig',
       'group:rotateKey',
+      'group:updateKey',
       'group:inboxStore',
       'group:inboxRetrieve',
+      'group:inboxRetrieveCursor',
+      'group:acknowledgeRecovery',
       'group.keygen',
       'group.encrypt',
       'group.decrypt',
     ];
 
-    expect(allCmds, hasLength(39));
+    expect(allCmds, hasLength(43));
 
     for (final cmd in allCmds) {
       final request = jsonEncode({

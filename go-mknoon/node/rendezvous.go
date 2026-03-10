@@ -28,14 +28,17 @@ func (n *Node) RendezvousRegister(namespace string, serverAddresses []string) er
 	rs := n.buildRelaySelector(serverAddresses)
 
 	return rs.ForEach(func(relay RelayInfo) error {
-		ctx, cancel := context.WithTimeout(n.ctx, DiscoverTimeout)
+		timeout := DiscoverTimeout
+		ctx, cancel := context.WithTimeout(n.ctx, timeout)
 		defer cancel()
 
 		s, err := h.NewStream(ctx, relay.ID, RendezvousProtocol)
 		if err != nil {
 			return fmt.Errorf("open rendezvous stream: %w", err)
 		}
-		defer s.Close()
+		streamOK := false
+		defer finishStream(s, &streamOK)
+		setStreamDeadline(s, timeout)
 
 		// Build signed peer record
 		cab, ok := h.Peerstore().(peerstore.CertifiedAddrBook)
@@ -81,6 +84,7 @@ func (n *Node) RendezvousRegister(namespace string, serverAddresses []string) er
 		}
 
 		log.Printf("[RENDEZVOUS] Registered ns=%s", namespace)
+		streamOK = true
 		return nil
 	})
 }
@@ -113,7 +117,9 @@ func (n *Node) RendezvousDiscoverWithTimeout(namespace string, serverAddresses [
 		if err != nil {
 			return nil, fmt.Errorf("open rendezvous stream: %w", err)
 		}
-		defer s.Close()
+		streamOK := false
+		defer finishStream(s, &streamOK)
+		setStreamDeadline(s, timeout)
 
 		// Build Discover message
 		discBytes := marshalDiscover(namespace, 64)
@@ -138,6 +144,7 @@ func (n *Node) RendezvousDiscoverWithTimeout(namespace string, serverAddresses [
 		}
 
 		log.Printf("[RENDEZVOUS] Discovered %d peers on ns=%s (timeout=%v)", len(peers), namespace, timeout)
+		streamOK = true
 		return peers, nil
 	})
 }
@@ -162,14 +169,17 @@ func (n *Node) RendezvousUnregister(namespace string, serverAddresses []string) 
 	rs := n.buildRelaySelector(serverAddresses)
 
 	return rs.ForEach(func(relay RelayInfo) error {
-		ctx, cancel := context.WithTimeout(n.ctx, DiscoverTimeout)
+		timeout := DiscoverTimeout
+		ctx, cancel := context.WithTimeout(n.ctx, timeout)
 		defer cancel()
 
 		s, err := h.NewStream(ctx, relay.ID, RendezvousProtocol)
 		if err != nil {
 			return fmt.Errorf("open rendezvous stream: %w", err)
 		}
-		defer s.Close()
+		streamOK := false
+		defer finishStream(s, &streamOK)
+		setStreamDeadline(s, timeout)
 
 		// Build Unregister message
 		unregBytes := marshalUnregister(namespace)
@@ -182,6 +192,7 @@ func (n *Node) RendezvousUnregister(namespace string, serverAddresses []string) 
 
 		// Unregister has no response
 		log.Printf("[RENDEZVOUS] Unregistered ns=%s", namespace)
+		streamOK = true
 		return nil
 	})
 }

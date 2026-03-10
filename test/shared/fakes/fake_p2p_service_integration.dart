@@ -197,6 +197,9 @@ class FakeP2PService implements P2PService {
   Future<void> warmBackground() async {}
 
   @override
+  String? get lastRecoveryMethod => null;
+
+  @override
   void dispose() {
     _messageController.close();
   }

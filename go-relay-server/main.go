@@ -33,12 +33,12 @@ var privateKeyRaw = []byte{
 }
 
 const (
-	serverDNS  = "mknoun.xyz"
-	serverIP4  = "13.60.15.36"
-	wsPort     = 4000 // Local WS — nginx proxies WSS:4001 → WS:4000
-	tcpPort    = 4005
-	wssPort    = 4001 // Announced WSS port (via nginx)
-	quicPort   = 4002 // New: direct QUIC for mobile clients
+	serverDNS = "mknoun.xyz"
+	serverIP4 = "13.60.15.36"
+	wsPort    = 4000 // Local WS — nginx proxies WSS:4001 → WS:4000
+	tcpPort   = 4005
+	wssPort   = 4001 // Announced WSS port (via nginx)
+	quicPort  = 4002 // New: direct QUIC for mobile clients
 )
 
 func main() {
@@ -50,6 +50,8 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to unmarshal private key: %v", err)
 	}
+
+	limitsCfg := loadServerLimitsFromEnv()
 
 	// Announce addresses — what peers see from the outside
 	announceAddrs := []ma.Multiaddr{
@@ -70,7 +72,7 @@ func main() {
 			return announceAddrs
 		}),
 		libp2p.EnableRelayService(
-			relay.WithInfiniteLimits(),
+			relay.WithResources(relayResourcesFromServerLimits(limitsCfg)),
 		),
 		libp2p.ForceReachabilityPublic(),
 	)
@@ -79,16 +81,27 @@ func main() {
 	}
 
 	// Initialize subsystems
-	store := NewRendezvousStore()
-	store.StartCleanup(ctx)
-
 	fcmPath := os.Getenv("FIREBASE_SERVICE_ACCOUNT")
 	if fcmPath == "" {
 		fcmPath = "./firebase-service-account.json"
 	}
-	push := NewPushService(ctx, fcmPath)
-	inbox := NewInboxStore(push)
-	groupInbox := NewGroupInboxStore(maxMessagesPerGroup, groupMessageTTL)
+
+	backendCfg := loadBackendConfigFromEnv()
+	stores, err := newControlPlaneStores(ctx, backendCfg, limitsCfg, fcmPath)
+	if err != nil {
+		log.Fatalf("Failed to initialize control-plane stores: %v", err)
+	}
+	defer func() {
+		if err := stores.Close(); err != nil {
+			log.Printf("Failed to close control-plane stores: %v", err)
+		}
+	}()
+
+	store := stores.Rendezvous
+	store.StartCleanup(ctx)
+	push := stores.Push
+	inbox := stores.Inbox
+	groupInbox := stores.GroupInbox
 	media := NewMediaStore(mediaDataDir)
 	media.StartCleanup(ctx)
 	profile := NewProfileStore(profileDataDir)
@@ -146,6 +159,14 @@ func main() {
 
 	// Start
 	log.Println("Starting go-libp2p relay + rendezvous + inbox server...")
+	log.Printf("Control-plane backend: %s", backendCfg.Kind)
+	log.Printf(
+		"Relay limits: reservations=%d connectionsPerPeer=%d inboxPerPeer=%d groupInboxPerGroup=%d",
+		limitsCfg.MaxRelayReservations,
+		limitsCfg.MaxConnectionsPerPeer,
+		limitsCfg.MaxInboxMessagesPerPeer,
+		limitsCfg.MaxGroupInboxMessages,
+	)
 
 	log.Printf("Peer ID: %s", h.ID())
 	log.Println("Listening addresses:")

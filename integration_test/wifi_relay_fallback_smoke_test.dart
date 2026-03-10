@@ -68,16 +68,10 @@ class _FakeSecureKeyStore implements SecureKeyStore {
 // ---------------------------------------------------------------------------
 
 /// Read dir: orchestrator pushes signals here (readable by app on Android).
-const _readDir = String.fromEnvironment(
-  'E2E_TEMP_DIR',
-  defaultValue: '/tmp',
-);
+const _readDir = String.fromEnvironment('E2E_TEMP_DIR', defaultValue: '/tmp');
 
 /// Write dir: app writes signals here (app-private cache on Android).
-const _writeDir = String.fromEnvironment(
-  'E2E_WRITE_DIR',
-  defaultValue: '/tmp',
-);
+const _writeDir = String.fromEnvironment('E2E_WRITE_DIR', defaultValue: '/tmp');
 
 /// Path for reading orchestrator->Flutter signals.
 String _readSignalPath(String name) => '$_readDir/$name';
@@ -221,11 +215,17 @@ Future<_SmokeTestStack> _setupStack() async {
     dbDeleteMessagesForContact: (contactPeerId) =>
         dbDeleteMessagesForContact(db, contactPeerId),
     dbLoadMessagesPage: (contactPeerId, {limit = 50, beforeTimestamp}) =>
-        dbLoadMessagesPage(db, contactPeerId,
-            limit: limit, beforeTimestamp: beforeTimestamp),
+        dbLoadMessagesPage(
+          db,
+          contactPeerId,
+          limit: limit,
+          beforeTimestamp: beforeTimestamp,
+        ),
     dbLoadFailedOutgoingMessages: () => dbLoadFailedOutgoingMessages(db),
     dbLoadUnackedOutgoingMessages: ({required olderThan, limit = 50}) =>
         dbLoadUnackedOutgoingMessages(db, olderThan: olderThan, limit: limit),
+    dbLoadConversationThreadSummaries: (contactPeerIds) =>
+        dbLoadConversationThreadSummaries(db, contactPeerIds),
   );
 
   final bridge = GoBridgeClient();
@@ -237,10 +237,9 @@ Future<_SmokeTestStack> _setupStack() async {
   try {
     // Generate identity.
     print('[SMOKE] Generating identity...');
-    final genResponse = await bridge.send(jsonEncode({
-      'cmd': 'identity.generate',
-      'payload': {},
-    }));
+    final genResponse = await bridge.send(
+      jsonEncode({'cmd': 'identity.generate', 'payload': {}}),
+    );
     final genResult = jsonDecode(genResponse) as Map<String, dynamic>;
     if (genResult['ok'] != true) {
       throw StateError('identity.generate failed: $genResult');
@@ -252,10 +251,9 @@ Future<_SmokeTestStack> _setupStack() async {
     print('[SMOKE] Identity: ${ownPeerId.substring(0, 20)}...');
 
     // Generate ML-KEM keys.
-    final mlkemResponse = await bridge.send(jsonEncode({
-      'cmd': 'mlkem.keygen',
-      'payload': {},
-    }));
+    final mlkemResponse = await bridge.send(
+      jsonEncode({'cmd': 'mlkem.keygen', 'payload': {}}),
+    );
     final mlkemResult = jsonDecode(mlkemResponse) as Map<String, dynamic>;
     String? ownMlKemPublicKey;
     String? ownMlKemSecretKey;
@@ -274,15 +272,17 @@ Future<_SmokeTestStack> _setupStack() async {
 
     // Add CLI peer as contact (required for handleIncomingChatMessage).
     if (cliPeerId != null) {
-      await contactRepo.addContact(ContactModel(
-        peerId: cliPeerId,
-        publicKey: cliPublicKey ?? 'pk-cli-peer',
-        rendezvous: '/dns4/relay/tcp/443/p2p/relay',
-        username: 'CLISmokeTestPeer',
-        signature: 'sig-cli-peer',
-        scannedAt: DateTime.now().toUtc().toIso8601String(),
-        mlKemPublicKey: cliMlKemPublicKey,
-      ));
+      await contactRepo.addContact(
+        ContactModel(
+          peerId: cliPeerId,
+          publicKey: cliPublicKey ?? 'pk-cli-peer',
+          rendezvous: '/dns4/relay/tcp/443/p2p/relay',
+          username: 'CLISmokeTestPeer',
+          signature: 'sig-cli-peer',
+          scannedAt: DateTime.now().toUtc().toIso8601String(),
+          mlKemPublicKey: cliMlKemPublicKey,
+        ),
+      );
       print('[SMOKE] CLI peer added as contact');
     }
 
@@ -423,8 +423,9 @@ void main() {
         for (var sec = 0; sec < 60; sec++) {
           await Future.delayed(const Duration(seconds: 1));
 
-          final msgs = await stack.messageRepo
-              .getMessagesForContact(stack.cliPeerId!);
+          final msgs = await stack.messageRepo.getMessagesForContact(
+            stack.cliPeerId!,
+          );
           final incoming = msgs.where((m) => m.isIncoming).toList();
           final s1Msgs = incoming.where((m) => m.text.contains('S1:')).toList();
 
@@ -433,21 +434,31 @@ void main() {
             final transport = s1Msgs.first.transport;
             // Accept relay or inbox transport -- both prove end-to-end works.
             final pass = transport == 'relay' || transport == 'inbox';
-            results.add(_ScenarioResult(
-                'S1', pass, 'transport=$transport text="${s1Msgs.first.text}"'));
-            print('[SMOKE] S1 ${pass ? 'PASS' : 'FAIL'}: '
-                '"${s1Msgs.first.text}" transport=$transport (after ${sec + 1}s)');
+            results.add(
+              _ScenarioResult(
+                'S1',
+                pass,
+                'transport=$transport text="${s1Msgs.first.text}"',
+              ),
+            );
+            print(
+              '[SMOKE] S1 ${pass ? 'PASS' : 'FAIL'}: '
+              '"${s1Msgs.first.text}" transport=$transport (after ${sec + 1}s)',
+            );
             break;
           }
 
           if (sec % 10 == 9) {
-            print('[SMOKE] S1: ... ${sec + 1}s: ${incoming.length} incoming so far');
+            print(
+              '[SMOKE] S1: ... ${sec + 1}s: ${incoming.length} incoming so far',
+            );
           }
         }
 
         if (!s1Found) {
-          results.add(_ScenarioResult(
-              'S1', false, 'no S1 message received after 60s'));
+          results.add(
+            _ScenarioResult('S1', false, 'no S1 message received after 60s'),
+          );
           print('[SMOKE] S1 FAIL: no incoming message with S1: prefix');
         }
       }
@@ -467,16 +478,20 @@ void main() {
             senderUsername: 'FlutterSmoke',
           );
 
-          final stored = await stack.messageRepo
-              .getMessagesForContact(stack.cliPeerId!);
+          final stored = await stack.messageRepo.getMessagesForContact(
+            stack.cliPeerId!,
+          );
           final outgoing = stored
               .where((m) => !m.isIncoming && m.text.contains('S2:'))
               .toList();
           final status = outgoing.isNotEmpty ? outgoing.last.status : 'none';
-          final transport = outgoing.isNotEmpty ? outgoing.last.transport : 'none';
+          final transport = outgoing.isNotEmpty
+              ? outgoing.last.transport
+              : 'none';
           final detail = 'status=$status transport=$transport';
           // Accept delivered via relay or inbox.
-          final pass = m2 != null &&
+          final pass =
+              m2 != null &&
               status == 'delivered' &&
               (transport == 'relay' || transport == 'inbox');
           results.add(_ScenarioResult('S2', pass, detail));
@@ -507,8 +522,13 @@ void main() {
 
         if (!cliStopped) {
           print('[SMOKE] S3: SKIP -- CLI stopped signal not found');
-          results.add(_ScenarioResult(
-              'S3', false, 'CLI stopped signal not received after 60s'));
+          results.add(
+            _ScenarioResult(
+              'S3',
+              false,
+              'CLI stopped signal not received after 60s',
+            ),
+          );
         } else {
           try {
             // Send a message while CLI is down -- should fall back to inbox.
@@ -522,28 +542,43 @@ void main() {
             );
 
             // Signal orchestrator that we sent the S3 message.
-            File(_writeSignalPath('e2e_smoke_s3_sent')).writeAsStringSync('sent');
+            File(
+              _writeSignalPath('e2e_smoke_s3_sent'),
+            ).writeAsStringSync('sent');
             print('[SMOKE] S3: message sent, signal written');
 
             // Validate: message persisted with expected status/transport.
-            final s3Stored = await stack.messageRepo
-                .getMessagesForContact(stack.cliPeerId!);
+            final s3Stored = await stack.messageRepo.getMessagesForContact(
+              stack.cliPeerId!,
+            );
             final s3Out = s3Stored
                 .where((m) => !m.isIncoming && m.text.contains('S3:'))
                 .toList();
             final s3Status = s3Out.isNotEmpty ? s3Out.last.status : 'none';
-            final s3Transport = s3Out.isNotEmpty ? s3Out.last.transport : 'none';
-            final s3Pass = s3Msg != null &&
+            final s3Transport = s3Out.isNotEmpty
+                ? s3Out.last.transport
+                : 'none';
+            final s3Pass =
+                s3Msg != null &&
                 s3Status == 'delivered' &&
                 s3Transport == 'inbox';
-            results.add(_ScenarioResult(
-                'S3', s3Pass, 'status=$s3Status transport=$s3Transport'));
-            print('[SMOKE] S3 ${s3Pass ? 'PASS' : 'FAIL'}: '
-                'status=$s3Status transport=$s3Transport');
+            results.add(
+              _ScenarioResult(
+                'S3',
+                s3Pass,
+                'status=$s3Status transport=$s3Transport',
+              ),
+            );
+            print(
+              '[SMOKE] S3 ${s3Pass ? 'PASS' : 'FAIL'}: '
+              'status=$s3Status transport=$s3Transport',
+            );
           } catch (e) {
             // Still write signal so orchestrator does not hang.
             try {
-              File(_writeSignalPath('e2e_smoke_s3_sent')).writeAsStringSync('sent');
+              File(
+                _writeSignalPath('e2e_smoke_s3_sent'),
+              ).writeAsStringSync('sent');
             } catch (_) {}
             results.add(_ScenarioResult('S3', false, 'error: $e'));
             print('[SMOKE] S3 FAIL: $e');
@@ -562,8 +597,9 @@ void main() {
         for (var sec = 0; sec < 90; sec++) {
           await Future.delayed(const Duration(seconds: 1));
 
-          final msgs = await stack.messageRepo
-              .getMessagesForContact(stack.cliPeerId!);
+          final msgs = await stack.messageRepo.getMessagesForContact(
+            stack.cliPeerId!,
+          );
           final incoming = msgs.where((m) => m.isIncoming).toList();
           final s4Msgs = incoming.where((m) => m.text.contains('S4:')).toList();
 
@@ -571,15 +607,24 @@ void main() {
             s4Found = true;
             final transport = s4Msgs.first.transport;
             final pass = transport == 'relay' || transport == 'inbox';
-            results.add(_ScenarioResult(
-                'S4', pass, 'transport=$transport text="${s4Msgs.first.text}"'));
-            print('[SMOKE] S4 ${pass ? 'PASS' : 'FAIL'}: '
-                '"${s4Msgs.first.text}" transport=$transport (after ${sec + 1}s)');
+            results.add(
+              _ScenarioResult(
+                'S4',
+                pass,
+                'transport=$transport text="${s4Msgs.first.text}"',
+              ),
+            );
+            print(
+              '[SMOKE] S4 ${pass ? 'PASS' : 'FAIL'}: '
+              '"${s4Msgs.first.text}" transport=$transport (after ${sec + 1}s)',
+            );
             break;
           }
 
           if (sec % 15 == 14) {
-            print('[SMOKE] S4: ... ${sec + 1}s: ${incoming.length} incoming so far');
+            print(
+              '[SMOKE] S4: ... ${sec + 1}s: ${incoming.length} incoming so far',
+            );
           }
         }
 
@@ -589,16 +634,22 @@ void main() {
           try {
             await stack.p2pService.drainOfflineInbox();
             await Future.delayed(const Duration(seconds: 3));
-            final msgs = await stack.messageRepo
-                .getMessagesForContact(stack.cliPeerId!);
+            final msgs = await stack.messageRepo.getMessagesForContact(
+              stack.cliPeerId!,
+            );
             final s4Msgs = msgs
                 .where((m) => m.isIncoming && m.text.contains('S4:'))
                 .toList();
             if (s4Msgs.isNotEmpty) {
               s4Found = true;
               final transport = s4Msgs.first.transport;
-              results.add(_ScenarioResult('S4', true,
-                  'transport=$transport (after inbox drain)'));
+              results.add(
+                _ScenarioResult(
+                  'S4',
+                  true,
+                  'transport=$transport (after inbox drain)',
+                ),
+              );
               print('[SMOKE] S4 PASS: found after inbox drain');
             }
           } catch (e) {
@@ -607,8 +658,13 @@ void main() {
         }
 
         if (!s4Found) {
-          results.add(_ScenarioResult(
-              'S4', false, 'no S4 message received after 90s + inbox drain'));
+          results.add(
+            _ScenarioResult(
+              'S4',
+              false,
+              'no S4 message received after 90s + inbox drain',
+            ),
+          );
           print('[SMOKE] S4 FAIL: no incoming message with S4: prefix');
         }
 
@@ -651,9 +707,13 @@ void main() {
 
       // Hard-fail if any scenario failed.
       final failedScenarios = results.where((r) => !r.passed).toList();
-      expect(failedScenarios, isEmpty,
-          reason: 'Failed smoke scenarios: '
-              '${failedScenarios.map((r) => '${r.name}: ${r.detail}').join(', ')}');
+      expect(
+        failedScenarios,
+        isEmpty,
+        reason:
+            'Failed smoke scenarios: '
+            '${failedScenarios.map((r) => '${r.name}: ${r.detail}').join(', ')}',
+      );
     } finally {
       await stack.teardown();
     }

@@ -13,6 +13,7 @@ type EventCallback interface {
 	//   "peer:connected"          — { peerId, address, direction }
 	//   "peer:disconnected"       — { peerId }
 	//   "addresses:updated"       — { listenAddresses, circuitAddresses }
+	//   "relay:state"             — { relayState, healthyRelayCount, watchdogRestartCount, ... }
 	//   "group_message:received"  — { groupId, senderId, senderUsername, keyEpoch, text, timestamp }
 	OnEvent(jsonString string)
 }

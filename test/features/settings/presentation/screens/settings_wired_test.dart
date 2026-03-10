@@ -11,7 +11,8 @@ import 'package:flutter_app/features/contacts/domain/repositories/contact_reposi
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
-import 'package:flutter_app/features/p2p/domain/models/connection_state.dart' as p2p;
+import 'package:flutter_app/features/p2p/domain/models/connection_state.dart'
+    as p2p;
 import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
@@ -57,7 +58,9 @@ class _FakeBridge implements Bridge {
   void Function(p2p.ConnectionState)? onPeerDisconnected;
   @override
   void Function(List<String> listenAddresses, List<String> circuitAddresses)?
-      onAddressesUpdated;
+  onAddressesUpdated;
+  @override
+  void Function(Map<String, dynamic>)? onRelayStateChanged;
   @override
   void Function(Map<String, dynamic>)? onGroupMessageReceived;
   @override
@@ -105,7 +108,8 @@ class _FakeP2PService implements P2PService {
   @override
   Future<bool> startNode(String privateKeyBase64, String peerId) async => true;
   @override
-  Future<bool> startNodeCore(String privateKeyBase64, String peerId) async => false;
+  Future<bool> startNodeCore(String privateKeyBase64, String peerId) async =>
+      false;
   @override
   Future<void> warmBackground() async {}
   @override
@@ -113,16 +117,25 @@ class _FakeP2PService implements P2PService {
   @override
   Future<bool> sendMessage(String peerId, String message) async => true;
   @override
-  Future<SendMessageResult> sendMessageWithReply(String peerId, String message, {int? timeoutMs}) async =>
-      const SendMessageResult(sent: true);
+  Future<SendMessageResult> sendMessageWithReply(
+    String peerId,
+    String message, {
+    int? timeoutMs,
+  }) async => const SendMessageResult(sent: true);
   @override
-  Future<DiscoveredPeer?> discoverPeer(String peerId, {int? timeoutMs}) async => null;
+  Future<DiscoveredPeer?> discoverPeer(String peerId, {int? timeoutMs}) async =>
+      null;
   @override
-  Future<bool> dialPeer(String peerId, {List<String>? addresses, int? timeoutMs}) async => true;
+  Future<bool> dialPeer(
+    String peerId, {
+    List<String>? addresses,
+    int? timeoutMs,
+  }) async => true;
   @override
   Future<bool> storeInInbox(String toPeerId, String message) async => false;
   @override
-  Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) async => [];
+  Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) async =>
+      [];
   @override
   Future<bool> registerPushToken(String token, String platform) async => true;
   @override
@@ -137,7 +150,11 @@ class _FakeP2PService implements P2PService {
   @override
   bool isLocalPeer(String peerId) => false;
   @override
-  Future<bool> sendLocalMessage(String peerId, String message, String fromPeerId) async => false;
+  Future<bool> sendLocalMessage(
+    String peerId,
+    String message,
+    String fromPeerId,
+  ) async => false;
   @override
   Future<bool> sendLocalMedia({
     required String peerId,
@@ -149,6 +166,8 @@ class _FakeP2PService implements P2PService {
     List<double>? waveform,
     String? filename,
   }) async => false;
+  @override
+  String? get lastRecoveryMethod => null;
   @override
   void dispose() {}
 }
@@ -341,7 +360,9 @@ void main() {
 
     // Find the Video Quality section and check that "Original" is selected
     // The second "Original" text (in Video Quality) should have bold weight
-    final originalTexts = tester.widgetList<Text>(find.text('Original')).toList();
+    final originalTexts = tester
+        .widgetList<Text>(find.text('Original'))
+        .toList();
     // There are 2 Original texts: one in Photo Quality, one in Video Quality
     expect(originalTexts.length, 2);
     // Video quality toggle is second — its Original should be bold (w600)
@@ -357,18 +378,22 @@ void main() {
         home: Builder(
           builder: (context) => ElevatedButton(
             onPressed: () {
-              Navigator.of(context).push(
-                MaterialPageRoute<void>(
-                  builder: (_) => SettingsWired(
-                    identityRepo: identityRepo,
-                    bridge: _FakeBridge(),
-                    contactRepo: _FakeContactRepo(),
-                    p2pService: _FakeP2PService(),
-                    secureKeyStore: FakeSecureKeyStore(),
-                    imageProcessor: ImageProcessor(compressFile: _noOpCompress),
-                  ),
-                ),
-              ).then((_) => popped = true);
+              Navigator.of(context)
+                  .push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => SettingsWired(
+                        identityRepo: identityRepo,
+                        bridge: _FakeBridge(),
+                        contactRepo: _FakeContactRepo(),
+                        p2pService: _FakeP2PService(),
+                        secureKeyStore: FakeSecureKeyStore(),
+                        imageProcessor: ImageProcessor(
+                          compressFile: _noOpCompress,
+                        ),
+                      ),
+                    ),
+                  )
+                  .then((_) => popped = true);
             },
             child: const Text('Open'),
           ),

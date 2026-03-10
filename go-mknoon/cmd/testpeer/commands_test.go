@@ -3,6 +3,9 @@ package main
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/mknoon/go-mknoon/identity"
+	"github.com/mknoon/go-mknoon/node"
 )
 
 // TestHandleCommandUnknown verifies unknown commands return an error.
@@ -126,6 +129,58 @@ func TestHandleCommandGetMessagesEmpty(t *testing.T) {
 	count, _ := result["count"].(int)
 	if count != 0 {
 		t.Errorf("expected count=0, got %d", count)
+	}
+}
+
+func TestHandleCommandGroupJoinNotStarted(t *testing.T) {
+	state = &peerState{}
+	result := handleCommand("group_join", map[string]interface{}{
+		"groupId": "group-1",
+	})
+
+	if result["ok"] != false {
+		t.Error("expected ok=false without node")
+	}
+}
+
+func TestHandleCommandGroupJoinMissingParams(t *testing.T) {
+	state = &peerState{
+		node: node.NewNode(),
+	}
+	result := handleCommand("group_join", map[string]interface{}{
+		"groupId": "group-1",
+	})
+
+	if result["ok"] != false {
+		t.Error("expected ok=false for missing group config")
+	}
+}
+
+func TestHandleCommandGroupPublishWithoutIdentity(t *testing.T) {
+	state = &peerState{
+		node: node.NewNode(),
+	}
+	result := handleCommand("group_publish", map[string]interface{}{
+		"groupId": "group-1",
+		"text":    "hello",
+	})
+
+	if result["ok"] != false {
+		t.Error("expected ok=false without identity")
+	}
+}
+
+func TestHandleCommandGroupInboxStoreMissingText(t *testing.T) {
+	state = &peerState{
+		node:     node.NewNode(),
+		identity: &identity.Identity{PeerId: "peer-1"},
+	}
+	result := handleCommand("group_inbox_store", map[string]interface{}{
+		"groupId": "group-1",
+	})
+
+	if result["ok"] != false {
+		t.Error("expected ok=false for missing text")
 	}
 }
 
