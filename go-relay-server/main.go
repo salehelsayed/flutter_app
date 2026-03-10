@@ -22,31 +22,28 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-// Same private key as the JS server — produces the same Peer ID.
-var privateKeyRaw = []byte{
-	3, 98, 126, 31, 53, 38, 77, 83, 95, 52, 208,
-	245, 12, 231, 179, 29, 77, 119, 64, 225, 28, 76,
-	152, 60, 22, 170, 169, 92, 240, 114, 50, 34, 97,
-	34, 166, 6, 69, 146, 135, 77, 74, 250, 62, 215,
-	106, 6, 45, 2, 118, 162, 136, 195, 108, 174, 61,
-	180, 216, 136, 89, 9, 101, 139, 157, 193,
-}
-
-const (
-	serverDNS = "mknoun.xyz"
-	serverIP4 = "13.60.15.36"
-	wsPort    = 4000 // Local WS — nginx proxies WSS:4001 → WS:4000
-	tcpPort   = 4005
-	wssPort   = 4001 // Announced WSS port (via nginx)
-	quicPort  = 4002 // New: direct QUIC for mobile clients
-)
+const version = "1.1.0"
 
 func main() {
+	// Handle subcommands
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "version", "--version", "-v":
+			fmt.Println("relay-server v" + version)
+			return
+		case "generate-key":
+			generateAndPrintKey()
+			return
+		}
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	serverCfg := loadServerConfigFromEnv()
+
 	// Load private key (Ed25519, 64 bytes: seed + public)
-	privKey, err := crypto.UnmarshalEd25519PrivateKey(privateKeyRaw)
+	privKey, err := crypto.UnmarshalEd25519PrivateKey(serverCfg.PrivateKey)
 	if err != nil {
 		log.Fatalf("Failed to unmarshal private key: %v", err)
 	}
@@ -55,18 +52,18 @@ func main() {
 
 	// Announce addresses — what peers see from the outside
 	announceAddrs := []ma.Multiaddr{
-		ma.StringCast(fmt.Sprintf("/dns4/%s/tcp/%d/wss", serverDNS, wssPort)),
-		ma.StringCast(fmt.Sprintf("/ip4/%s/tcp/%d", serverIP4, tcpPort)),
-		ma.StringCast(fmt.Sprintf("/dns4/%s/udp/%d/quic-v1", serverDNS, quicPort)),
+		ma.StringCast(fmt.Sprintf("/dns4/%s/tcp/%d/wss", serverCfg.ServerDNS, serverCfg.WSSPort)),
+		ma.StringCast(fmt.Sprintf("/ip4/%s/tcp/%d", serverCfg.ServerIP4, serverCfg.TCPPort)),
+		ma.StringCast(fmt.Sprintf("/dns4/%s/udp/%d/quic-v1", serverCfg.ServerDNS, serverCfg.QUICPort)),
 	}
 
 	// Create the libp2p host
 	h, err := libp2p.New(
 		libp2p.Identity(privKey),
 		libp2p.ListenAddrStrings(
-			fmt.Sprintf("/ip4/0.0.0.0/tcp/%d/ws", wsPort),
-			fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", tcpPort),
-			fmt.Sprintf("/ip4/0.0.0.0/udp/%d/quic-v1", quicPort),
+			fmt.Sprintf("/ip4/0.0.0.0/tcp/%d/ws", serverCfg.WSPort),
+			fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", serverCfg.TCPPort),
+			fmt.Sprintf("/ip4/0.0.0.0/udp/%d/quic-v1", serverCfg.QUICPort),
 		),
 		libp2p.AddrsFactory(func([]ma.Multiaddr) []ma.Multiaddr {
 			return announceAddrs
@@ -158,8 +155,16 @@ func main() {
 	}()
 
 	// Start
-	log.Println("Starting go-libp2p relay + rendezvous + inbox server...")
+	log.Printf("Starting relay-server v%s", version)
 	log.Printf("Control-plane backend: %s", backendCfg.Kind)
+	keySource := "default"
+	if serverCfg.IsCustomKey() {
+		keySource = "custom"
+	}
+	log.Printf("Server config: dns=%s ip=%s ws=%d tcp=%d wss=%d quic=%d key=%s",
+		serverCfg.ServerDNS, serverCfg.ServerIP4,
+		serverCfg.WSPort, serverCfg.TCPPort, serverCfg.WSSPort, serverCfg.QUICPort,
+		keySource)
 	log.Printf(
 		"Relay limits: reservations=%d connectionsPerPeer=%d inboxPerPeer=%d groupInboxPerGroup=%d",
 		limitsCfg.MaxRelayReservations,

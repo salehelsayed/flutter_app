@@ -7,10 +7,12 @@ import (
 
 const (
 	// DefaultRelayAddress is the relay server multiaddr (WSS).
-	DefaultRelayAddress = "/dns4/mknoun.xyz/tcp/4001/wss/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g"
+	// Uses /dns/ (not /dns4/) to resolve both A and AAAA records for dual-stack.
+	DefaultRelayAddress = "/dns/mknoun.xyz/tcp/4001/wss/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g"
 
 	// DefaultQUICRelay is the relay server multiaddr (QUIC).
-	DefaultQUICRelay = "/dns4/mknoun.xyz/udp/4002/quic-v1/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g"
+	// Uses /dns/ (not /dns4/) to resolve both A and AAAA records for dual-stack.
+	DefaultQUICRelay = "/dns/mknoun.xyz/udp/4002/quic-v1/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g"
 
 	// DefaultRendezvousNamespace prefix for chat discovery.
 	RendezvousPrefix = "mknoon:chat:"

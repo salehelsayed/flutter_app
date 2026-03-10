@@ -1,0 +1,1755 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>mknoon — Deals & Wallet</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;0,9..40,800&family=JetBrains+Mono:wght@400;600&display=swap');
+
+/* ━━━━━━━━━━━━━━━━━ RESET & BASE ━━━━━━━━━━━━━━━━━ */
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+
+:root {
+  --bg: #000;
+  --bg-deep: #0a0a0f;
+  --bg-top: #0f0f18;
+  --green: #1DB954;
+  --green-dim: #18A349;
+  --purple: #a78bfa;
+  --teal: #81e6d9;
+  --red: #FF6B6B;
+  --red-hot: #FF3232;
+  --text: #fff;
+  --text-50: rgba(255,255,255,.50);
+  --text-35: rgba(255,255,255,.35);
+  --text-20: rgba(255,255,255,.20);
+  --text-08: rgba(255,255,255,.08);
+  --text-04: rgba(255,255,255,.04);
+  --card-bg: rgba(255,255,255,.03);
+  --card-border: rgba(255,255,255,.08);
+  --glass-from: rgba(255,255,255,.18);
+  --glass-to: rgba(255,255,255,.10);
+  --glass-border: rgba(255,255,255,.30);
+  --radius-card: 22px;
+  --radius-pill: 30px;
+  --font: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  --mono: 'JetBrains Mono', monospace;
+}
+
+body {
+  font-family: var(--font);
+  background: #050508;
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+/* ━━━━━━━━━━━━━━━━━ LAYOUT ━━━━━━━━━━━━━━━━━ */
+.page-section {
+  padding: 80px 0 40px;
+  text-align: center;
+}
+
+.section-num {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 3px;
+  color: var(--purple);
+  text-transform: uppercase;
+  margin-bottom: 8px;
+}
+
+.section-heading {
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  background: linear-gradient(135deg, var(--purple), var(--teal));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  margin-bottom: 10px;
+}
+
+.section-desc {
+  font-size: 14px;
+  color: var(--text-50);
+  max-width: 640px;
+  margin: 0 auto 50px;
+  line-height: 1.6;
+}
+
+.phones-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 48px;
+  justify-content: center;
+  padding: 0 24px;
+  max-width: 1500px;
+  margin: 0 auto;
+}
+
+/* ━━━━━━━━━━━━━━━━━ PHONE FRAME ━━━━━━━━━━━━━━━━━ */
+.phone-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+
+.phone-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 2px;
+  color: var(--text-35);
+  text-transform: uppercase;
+}
+
+.phone {
+  width: 375px;
+  height: 812px;
+  background: var(--bg);
+  border-radius: 48px;
+  border: 2.5px solid rgba(255,255,255,.08);
+  overflow: hidden;
+  position: relative;
+  box-shadow:
+    0 0 0 1px rgba(255,255,255,.04),
+    0 30px 100px -20px rgba(0,0,0,.8),
+    0 0 60px rgba(167,139,250,.04);
+}
+
+/* Notch */
+.phone::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 50%;
+  transform: translateX(-50%);
+  width: 150px; height: 34px;
+  background: var(--bg);
+  border-radius: 0 0 24px 24px;
+  z-index: 50;
+}
+
+.status-bar {
+  height: 56px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  padding: 0 32px 8px;
+  font-size: 14px;
+  font-weight: 600;
+  position: relative;
+  z-index: 51;
+}
+
+.status-icons {
+  display: flex;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--text-50);
+}
+
+.screen {
+  height: calc(100% - 56px);
+  overflow-y: auto;
+  scrollbar-width: none;
+  position: relative;
+}
+.screen::-webkit-scrollbar { display: none; }
+
+.screen-pad {
+  padding: 0 18px;
+}
+
+/* ━━━━━━━━━━━━━━━━━ NAV BAR ━━━━━━━━━━━━━━━━━ */
+.nav {
+  position: absolute;
+  bottom: 26px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 3px;
+  padding: 5px 6px;
+  border-radius: var(--radius-pill);
+  background: linear-gradient(135deg, var(--glass-from), var(--glass-to));
+  border: 1px solid var(--glass-border);
+  backdrop-filter: blur(28px);
+  -webkit-backdrop-filter: blur(28px);
+  box-shadow: 0 4px 16px rgba(0,0,0,.12);
+  z-index: 40;
+  max-width: 320px;
+}
+
+.nav-btn {
+  width: 68px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 7px 0 5px;
+  border-radius: 19px;
+  font-size: 10px;
+  font-weight: 500;
+  color: rgba(255,255,255,.45);
+  transition: all .22s ease-out;
+  cursor: pointer;
+  position: relative;
+}
+
+.nav-btn .ni { font-size: 16px; opacity: .55; transition: opacity .22s; }
+
+.nav-btn.active {
+  background: linear-gradient(135deg, rgba(255,255,255,.22), rgba(255,255,255,.10));
+  color: #fff;
+  font-weight: 600;
+}
+.nav-btn.active .ni { opacity: 1; }
+
+/* ━━━━━━━━━━━━━━━━━ SHARED COMPONENTS ━━━━━━━━━━━━━━━━━ */
+.hdr {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.hdr-title {
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+}
+
+.hdr-icon {
+  width: 38px; height: 38px;
+  border-radius: 50%;
+  background: rgba(255,255,255,.06);
+  border: 1px solid var(--card-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  cursor: pointer;
+  transition: background .2s;
+}
+.hdr-icon:hover { background: rgba(255,255,255,.1); }
+
+.back-hdr {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 22px;
+}
+
+.back-btn {
+  width: 36px; height: 36px;
+  border-radius: 50%;
+  background: rgba(255,255,255,.06);
+  border: 1px solid var(--card-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+}
+
+.back-hdr-title { font-size: 18px; font-weight: 600; }
+
+.stitle {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 2px;
+  color: var(--text-35);
+  text-transform: uppercase;
+  margin: 22px 0 12px;
+}
+
+.spacer { height: 110px; }
+
+/* ━━━━━━━━━━━━━━━━━ CATEGORY PILLS ━━━━━━━━━━━━━━━━━ */
+.cats {
+  display: flex;
+  gap: 7px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  margin: 0 -18px 18px;
+  padding: 0 18px 2px;
+}
+.cats::-webkit-scrollbar { display: none; }
+
+.cat {
+  flex-shrink: 0;
+  padding: 7px 15px;
+  border-radius: 20px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-50);
+  border: 1px solid rgba(255,255,255,.08);
+  cursor: pointer;
+  transition: all .2s;
+  white-space: nowrap;
+}
+.cat:hover { border-color: rgba(255,255,255,.15); color: var(--text); }
+.cat.on {
+  background: rgba(255,255,255,.08);
+  border-color: rgba(255,255,255,.18);
+  color: #fff;
+  font-weight: 600;
+}
+
+/* ━━━━━━━━━━━━━━━━━ DEAL CARD ━━━━━━━━━━━━━━━━━ */
+.deal {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-card);
+  padding: 16px 16px 14px;
+  margin-bottom: 12px;
+  position: relative;
+  overflow: hidden;
+  transition: border-color .25s, transform .2s;
+}
+.deal:hover {
+  border-color: rgba(255,255,255,.12);
+  transform: translateY(-1px);
+}
+
+.deal-bar {
+  position: absolute;
+  top: 0; left: 0;
+  width: 3.5px; height: 100%;
+  border-radius: 4px 0 0 4px;
+  background: linear-gradient(180deg, var(--purple), var(--teal));
+}
+.deal.hot .deal-bar {
+  background: linear-gradient(180deg, var(--red), var(--red-hot));
+}
+.deal.circle-deal .deal-bar {
+  background: linear-gradient(180deg, var(--purple), #c4b5fd);
+}
+
+.deal-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 10px;
+}
+
+.deal-brand {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.deal-logo {
+  width: 40px; height: 40px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 19px;
+}
+
+.deal-bname { font-size: 14px; font-weight: 600; }
+.deal-bcat { font-size: 11.5px; color: var(--text-35); margin-top: 1px; }
+
+.badge {
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 700;
+  padding: 3px 9px;
+  border-radius: 20px;
+  text-transform: uppercase;
+  letter-spacing: .8px;
+}
+.badge-hot { background: rgba(255,59,48,.12); color: var(--red); border: 1px solid rgba(255,59,48,.25); }
+.badge-new { background: rgba(29,185,84,.12); color: var(--green); border: 1px solid rgba(29,185,84,.25); }
+.badge-circle { background: rgba(167,139,250,.12); color: var(--purple); border: 1px solid rgba(167,139,250,.25); }
+
+.deal-title { font-size: 15.5px; font-weight: 600; line-height: 1.3; margin-bottom: 5px; }
+.deal-desc { font-size: 12.5px; color: var(--text-50); line-height: 1.45; margin-bottom: 14px; }
+
+.deal-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.deal-earn-wrap { display: flex; align-items: baseline; gap: 5px; }
+.deal-earn { font-size: 15px; font-weight: 700; color: var(--green); }
+.deal-earn-lbl { font-size: 11px; color: var(--text-35); }
+
+.deal-cta {
+  padding: 8px 20px;
+  border-radius: 18px;
+  background: linear-gradient(135deg, var(--purple), var(--teal));
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #000;
+  border: none;
+  cursor: pointer;
+  letter-spacing: .2px;
+  transition: opacity .2s, transform .15s;
+}
+.deal-cta:hover { opacity: .9; transform: scale(1.02); }
+
+.deal-meta {
+  display: flex;
+  gap: 12px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255,255,255,.04);
+  flex-wrap: wrap;
+}
+.deal-mi {
+  font-size: 11px;
+  color: var(--text-35);
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+/* Circle deal progress */
+.circle-progress {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(167,139,250,.06);
+  border: 1px solid rgba(167,139,250,.12);
+}
+.cp-bar-wrap {
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255,255,255,.06);
+  margin: 8px 0 6px;
+  overflow: hidden;
+}
+.cp-bar {
+  height: 100%;
+  border-radius: 2px;
+  background: linear-gradient(90deg, var(--purple), var(--teal));
+}
+.cp-text { font-size: 11px; color: var(--text-50); }
+.cp-text b { color: var(--purple); font-weight: 600; }
+
+/* ━━━━━━━━━━━━━━━━━ BOTTOM SHEET ━━━━━━━━━━━━━━━━━ */
+.sheet-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,.6);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  z-index: 30;
+}
+
+.sheet {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  background: linear-gradient(180deg, #141418, #0c0c10);
+  border-radius: 26px 26px 0 0;
+  padding: 14px 20px 32px;
+  border-top: 1px solid rgba(255,255,255,.08);
+  z-index: 31;
+}
+
+.sheet-handle {
+  width: 34px; height: 4px;
+  background: rgba(255,255,255,.15);
+  border-radius: 2px;
+  margin: 0 auto 18px;
+}
+
+.qr-box {
+  width: 170px; height: 170px;
+  border-radius: 18px;
+  background: #fff;
+  margin: 0 auto 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 40px rgba(167,139,250,.15);
+}
+
+.sheet-title { font-size: 18px; font-weight: 700; text-align: center; margin-bottom: 4px; }
+.sheet-sub { font-size: 12.5px; color: var(--text-50); text-align: center; margin-bottom: 16px; }
+
+.breakdown {
+  background: rgba(255,255,255,.03);
+  border: 1px solid var(--card-border);
+  border-radius: 14px;
+  padding: 14px 16px;
+  margin-bottom: 14px;
+}
+.bd-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 5px 0;
+  font-size: 13px;
+}
+.bd-lbl { color: var(--text-50); }
+.bd-val-g { color: var(--green); font-weight: 600; }
+.bd-total {
+  border-top: 1px solid rgba(255,255,255,.06);
+  padding-top: 8px;
+  margin-top: 4px;
+  font-weight: 600;
+}
+
+.steps {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+.step {
+  flex: 1;
+  text-align: center;
+  padding: 10px 6px;
+  border-radius: 12px;
+  background: rgba(255,255,255,.03);
+  border: 1px solid var(--card-border);
+  font-size: 11px;
+  color: var(--text-50);
+  line-height: 1.35;
+}
+.step .step-num {
+  display: block;
+  font-family: var(--mono);
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--purple);
+  margin-bottom: 4px;
+}
+.step.active-step {
+  border-color: rgba(167,139,250,.3);
+  background: rgba(167,139,250,.06);
+}
+
+.privacy-note {
+  font-size: 11px;
+  color: var(--text-35);
+  text-align: center;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: rgba(29,185,84,.04);
+  border: 1px solid rgba(29,185,84,.08);
+  line-height: 1.4;
+}
+
+/* ━━━━━━━━━━━━━━━━━ SCAN SCREEN ━━━━━━━━━━━━━━━━━ */
+.scan-area {
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 20px;
+  background: linear-gradient(135deg, rgba(167,139,250,.05), rgba(129,230,217,.03));
+  border: 2px dashed rgba(167,139,250,.2);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 16px;
+  position: relative;
+  overflow: hidden;
+}
+
+.scan-corners {
+  position: absolute;
+  inset: 16px;
+}
+.scan-corners::before, .scan-corners::after,
+.scan-corner-bl::before, .scan-corner-br::before {
+  content: '';
+  position: absolute;
+  width: 28px; height: 28px;
+  border-color: var(--purple);
+  border-style: solid;
+  border-width: 0;
+}
+.scan-corners::before { top: 0; left: 0; border-top-width: 3px; border-left-width: 3px; border-radius: 6px 0 0 0; }
+.scan-corners::after { top: 0; right: 0; border-top-width: 3px; border-right-width: 3px; border-radius: 0 6px 0 0; }
+.scan-corner-bl, .scan-corner-br { position: absolute; }
+.scan-corner-bl { bottom: 16px; left: 16px; }
+.scan-corner-br { bottom: 16px; right: 16px; }
+.scan-corner-bl::before { border-bottom-width: 3px; border-left-width: 3px; border-radius: 0 0 0 6px; position: static; display: block; }
+.scan-corner-br::before { border-bottom-width: 3px; border-right-width: 3px; border-radius: 0 0 6px 0; position: static; display: block; }
+
+.scan-line {
+  position: absolute;
+  left: 20px; right: 20px;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--purple), transparent);
+  animation: scanMove 2.5s ease-in-out infinite;
+  box-shadow: 0 0 12px var(--purple);
+}
+
+@keyframes scanMove {
+  0%, 100% { top: 20%; }
+  50% { top: 75%; }
+}
+
+.scan-text { font-size: 13px; color: var(--text-50); z-index: 1; }
+
+.code-display {
+  text-align: center;
+  padding: 24px;
+  border-radius: 18px;
+  background: linear-gradient(135deg, rgba(167,139,250,.08), rgba(129,230,217,.04));
+  border: 1px solid rgba(167,139,250,.2);
+  margin-bottom: 14px;
+}
+.code-digits {
+  font-family: var(--mono);
+  font-size: 48px;
+  font-weight: 700;
+  letter-spacing: 12px;
+  background: linear-gradient(135deg, var(--purple), var(--teal));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.code-label { font-size: 13px; color: var(--text-50); margin-top: 6px; }
+.code-timer {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--red);
+  margin-top: 8px;
+}
+
+/* ━━━━━━━━━━━━━━━━━ WALLET ━━━━━━━━━━━━━━━━━ */
+.wallet-hero {
+  position: relative;
+  padding: 24px;
+  border-radius: 24px;
+  background: linear-gradient(135deg, rgba(167,139,250,.10), rgba(129,230,217,.06));
+  border: 1px solid rgba(167,139,250,.18);
+  margin-bottom: 20px;
+  overflow: hidden;
+}
+.wallet-hero::after {
+  content: '';
+  position: absolute;
+  top: -60%; right: -25%;
+  width: 200px; height: 200px;
+  background: radial-gradient(circle, rgba(167,139,250,.12), transparent 65%);
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+.wh-label { font-size: 12px; color: var(--text-50); margin-bottom: 4px; }
+.wh-bal { font-size: 38px; font-weight: 800; letter-spacing: -1px; }
+.wh-sub { font-size: 13px; color: var(--text-35); margin-bottom: 20px; }
+
+.wh-actions { display: flex; gap: 10px; position: relative; z-index: 1; }
+.wh-btn {
+  flex: 1;
+  padding: 12px;
+  border-radius: 14px;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity .2s;
+}
+.wh-btn:hover { opacity: .85; }
+.wh-primary { background: linear-gradient(135deg, var(--purple), var(--teal)); color: #000; }
+.wh-secondary { background: rgba(255,255,255,.06); border: 1px solid var(--card-border); color: #fff; }
+
+.stats-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+.stat {
+  flex: 1;
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 16px;
+  padding: 14px 10px;
+  text-align: center;
+}
+.stat-val { font-size: 18px; font-weight: 700; }
+.stat-lbl { font-size: 10px; color: var(--text-35); margin-top: 3px; font-weight: 500; }
+
+/* Transactions */
+.tx {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 13px 0;
+  border-bottom: 1px solid rgba(255,255,255,.03);
+}
+
+.tx-ic {
+  width: 38px; height: 38px;
+  border-radius: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  flex-shrink: 0;
+}
+.tx-ic.earn { background: rgba(29,185,84,.10); }
+.tx-ic.spend { background: rgba(255,107,107,.10); }
+.tx-ic.circ { background: rgba(167,139,250,.10); }
+
+.tx-info { flex: 1; min-width: 0; }
+.tx-name { font-size: 13.5px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tx-sub { font-size: 11.5px; color: var(--text-35); margin-top: 1px; }
+.tx-amt { font-size: 14px; font-weight: 600; text-align: right; }
+.tx-amt.pos { color: var(--green); }
+.tx-amt.neg { color: var(--red); }
+.tx-time { font-size: 10.5px; color: var(--text-20); text-align: right; margin-top: 2px; }
+
+/* ━━━━━━━━━━━━━━━━━ GIFT CARDS ━━━━━━━━━━━━━━━━━ */
+.gift-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 9px;
+  margin-bottom: 14px;
+}
+.gift {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 16px;
+  padding: 18px 12px;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color .2s, transform .15s;
+}
+.gift:hover { border-color: rgba(167,139,250,.25); transform: translateY(-1px); }
+.gift-em { font-size: 28px; margin-bottom: 8px; }
+.gift-name { font-size: 13px; font-weight: 600; margin-bottom: 3px; }
+.gift-min { font-size: 11px; color: var(--text-35); }
+
+.gift-wide {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 16px;
+  padding: 16px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  cursor: pointer;
+  transition: border-color .2s;
+  margin-bottom: 14px;
+}
+.gift-wide:hover { border-color: rgba(167,139,250,.25); }
+
+/* ━━━━━━━━━━━━━━━━━ CIRCLE WALLET ━━━━━━━━━━━━━━━━━ */
+.circ-hero {
+  padding: 20px;
+  border-radius: 22px;
+  background: linear-gradient(135deg, rgba(167,139,250,.08), rgba(129,230,217,.05));
+  border: 1px solid rgba(167,139,250,.14);
+  margin-bottom: 16px;
+}
+
+.circ-top { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
+
+.avatar-stack { display: flex; }
+.av {
+  width: 30px; height: 30px;
+  border-radius: 50%;
+  border: 2px solid var(--bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 600;
+  margin-left: -7px;
+}
+.av:first-child { margin-left: 0; }
+
+.circ-name { font-size: 16px; font-weight: 700; }
+.circ-count { font-size: 11.5px; color: var(--text-35); }
+
+.circ-bal-row { display: flex; justify-content: space-between; align-items: flex-end; }
+.circ-bal-lbl { font-size: 11px; color: var(--text-35); margin-bottom: 3px; }
+.circ-bal { font-size: 28px; font-weight: 800; letter-spacing: -0.5px; }
+.circ-share-val { font-size: 18px; font-weight: 700; color: var(--green); }
+.circ-share-lbl { font-size: 10px; color: var(--text-35); }
+
+.circ-deal {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(255,255,255,.03);
+}
+.circ-deal-em { font-size: 17px; }
+.circ-deal-name { flex: 1; font-size: 13px; font-weight: 500; }
+.circ-deal-cnt { font-size: 11px; color: var(--text-35); }
+.circ-deal-earn { font-size: 13px; font-weight: 600; color: var(--green); min-width: 48px; text-align: right; }
+
+.lb {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 0;
+  border-bottom: 1px solid rgba(255,255,255,.03);
+}
+.lb-rank {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-20);
+  width: 20px;
+  text-align: center;
+}
+.lb-av {
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 600;
+}
+.lb-name { flex: 1; font-size: 13px; font-weight: 500; }
+.lb-deals { font-size: 11px; color: var(--text-35); text-align: right; }
+.lb-earned { font-size: 13px; font-weight: 600; color: var(--green); min-width: 50px; text-align: right; }
+
+/* ━━━━━━━━━━━━━━━━━ GOVERNANCE ━━━━━━━━━━━━━━━━━ */
+.vote {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 18px;
+  padding: 16px;
+  margin-bottom: 12px;
+}
+.vote.active-v { border-color: rgba(167,139,250,.25); }
+
+.vote-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.vote-title { font-size: 14px; font-weight: 600; flex: 1; }
+.vote-badge {
+  font-family: var(--mono);
+  font-size: 9px; font-weight: 700;
+  padding: 3px 9px;
+  border-radius: 10px;
+  letter-spacing: .5px;
+}
+.vb-open { background: rgba(29,185,84,.12); color: var(--green); }
+.vb-closed { background: rgba(255,255,255,.06); color: var(--text-35); }
+
+.vote-desc { font-size: 12.5px; color: var(--text-50); line-height: 1.45; margin-bottom: 14px; }
+
+.vote-opts { display: flex; flex-direction: column; gap: 7px; margin-bottom: 12px; }
+
+.vopt {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(255,255,255,.03);
+  border: 1px solid rgba(255,255,255,.05);
+  position: relative;
+  overflow: hidden;
+  cursor: pointer;
+  transition: border-color .2s;
+}
+.vopt:hover { border-color: rgba(255,255,255,.1); }
+.vopt.sel { border-color: rgba(167,139,250,.35); background: rgba(167,139,250,.06); }
+
+.vopt-fill {
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  background: rgba(167,139,250,.06);
+  border-radius: 12px;
+  transition: width .3s;
+}
+
+.vopt-radio {
+  width: 16px; height: 16px;
+  border-radius: 50%;
+  border: 2px solid var(--text-20);
+  flex-shrink: 0;
+  position: relative; z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.vopt.sel .vopt-radio {
+  border-color: var(--purple);
+  background: var(--purple);
+}
+.vopt.sel .vopt-radio::after { content: '✓'; color: #000; font-size: 9px; font-weight: 800; }
+
+.vopt-text { font-size: 12.5px; font-weight: 500; flex: 1; position: relative; z-index: 1; }
+.vopt-pct {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--purple);
+  position: relative; z-index: 1;
+}
+
+.vote-foot { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-35); }
+
+/* Roles */
+.role {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 14px;
+  padding: 13px 14px;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+.role-av {
+  width: 38px; height: 38px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.role-info { flex: 1; }
+.role-name { font-size: 13.5px; font-weight: 600; }
+.role-tag {
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 6px;
+  margin-left: 5px;
+  letter-spacing: .5px;
+  vertical-align: middle;
+}
+.tag-creator { background: rgba(167,139,250,.15); color: var(--purple); }
+.tag-member { background: rgba(255,255,255,.06); color: var(--text-50); }
+.role-perm { font-size: 11px; color: var(--text-35); margin-top: 2px; }
+
+/* Toggles */
+.tgl {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 0;
+  border-bottom: 1px solid rgba(255,255,255,.03);
+  gap: 14px;
+}
+.tgl-label { font-size: 13.5px; font-weight: 500; }
+.tgl-desc { font-size: 11px; color: var(--text-35); margin-top: 2px; }
+.tgl-switch {
+  width: 42px; height: 24px;
+  border-radius: 12px;
+  background: rgba(255,255,255,.12);
+  position: relative;
+  flex-shrink: 0;
+  cursor: pointer;
+  transition: background .2s;
+}
+.tgl-switch.on { background: var(--green); }
+.tgl-switch::after {
+  content: '';
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  position: absolute;
+  top: 3px; left: 3px;
+  transition: left .2s;
+}
+.tgl-switch.on::after { left: 21px; }
+
+/* ━━━━━━━━━━━━━━━━━ FLOWS COMPARISON ━━━━━━━━━━━━━━━━━ */
+.flow-container {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+.flow-cols {
+  display: flex;
+  gap: 24px;
+  margin-bottom: 32px;
+}
+
+.flow-col {
+  flex: 1;
+  background: rgba(255,255,255,.02);
+  border: 1px solid var(--card-border);
+  border-radius: 24px;
+  padding: 28px 24px;
+}
+
+.flow-col-title {
+  font-size: 16px;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+.flow-col-sub { font-size: 12px; color: var(--text-50); margin-bottom: 20px; }
+
+.flow-step {
+  display: flex;
+  gap: 14px;
+  margin-bottom: 16px;
+  align-items: flex-start;
+}
+
+.flow-dot {
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--purple), var(--teal));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  color: #000;
+  flex-shrink: 0;
+}
+
+.flow-step-text { font-size: 13px; color: var(--text-50); line-height: 1.5; padding-top: 4px; }
+.flow-step-text b { color: #fff; font-weight: 600; }
+
+.flow-arrow {
+  width: 2px;
+  height: 12px;
+  background: rgba(167,139,250,.2);
+  margin-left: 13px;
+  margin-bottom: 4px;
+  border-radius: 1px;
+}
+
+.compare-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  background: rgba(255,255,255,.02);
+  border: 1px solid var(--card-border);
+  border-radius: 16px;
+  overflow: hidden;
+  margin-bottom: 20px;
+}
+.compare-table th {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--text-35);
+  padding: 14px 16px;
+  text-align: left;
+  border-bottom: 1px solid rgba(255,255,255,.04);
+}
+.compare-table td {
+  font-size: 13px;
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(255,255,255,.03);
+  color: var(--text-50);
+}
+.compare-table tr:last-child td { border-bottom: none; }
+.compare-table td:first-child { color: var(--text); font-weight: 500; }
+
+@media (max-width: 900px) {
+  .flow-cols { flex-direction: column; }
+}
+
+@media (max-width: 480px) {
+  .phone { transform: scale(.85); transform-origin: top center; }
+  .phones-row { gap: 20px; }
+}
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════ SECTION 1: DEALS FEED ═══════════════════ -->
+<div class="page-section">
+  <div class="section-num">Screen 01</div>
+  <div class="section-heading">Deals Feed</div>
+  <div class="section-desc">Users browse deals by category. Matching happens entirely on-device — the relay only knows "peer X subscribed to food/berlin", never who peer X is.</div>
+</div>
+
+<div class="phones-row">
+  <div class="phone-wrap">
+    <div class="phone-label">Deals Tab — Browse</div>
+    <div class="phone">
+      <div class="status-bar">
+        <span>9:41</span>
+        <div class="status-icons"><span>5G</span><span>100%</span></div>
+      </div>
+      <div class="screen screen-pad">
+        <div class="hdr">
+          <div class="hdr-title">Deals</div>
+          <div class="hdr-icon">⚙</div>
+        </div>
+
+        <div class="cats">
+          <div class="cat on">All</div>
+          <div class="cat">🍕 Food</div>
+          <div class="cat">👗 Fashion</div>
+          <div class="cat">📱 Tech</div>
+          <div class="cat">💪 Fitness</div>
+          <div class="cat">🎤 Events</div>
+          <div class="cat">✈️ Travel</div>
+        </div>
+
+        <!-- Deal 1: Hot -->
+        <div class="deal hot">
+          <div class="deal-bar"></div>
+          <div class="deal-top">
+            <div class="deal-brand">
+              <div class="deal-logo" style="background:rgba(255,59,48,.10)">🍕</div>
+              <div>
+                <div class="deal-bname">Luigi's Pizza</div>
+                <div class="deal-bcat">Food · 1.2 km away</div>
+              </div>
+            </div>
+            <div class="badge badge-hot">Hot</div>
+          </div>
+          <div class="deal-title">50% off any large pizza</div>
+          <div class="deal-desc">First-time order. Dine-in or pickup. Valid at Kreuzberg location.</div>
+          <div class="deal-foot">
+            <div class="deal-earn-wrap">
+              <span class="deal-earn">+€0.80</span>
+              <span class="deal-earn-lbl">you earn</span>
+            </div>
+            <button class="deal-cta">Get Deal</button>
+          </div>
+          <div class="deal-meta">
+            <span class="deal-mi">⏳ Expires Apr 1</span>
+            <span class="deal-mi">👥 23 redeemed</span>
+            <span class="deal-mi">🔥 3 in your circles</span>
+          </div>
+        </div>
+
+        <!-- Deal 2: Circle -->
+        <div class="deal circle-deal">
+          <div class="deal-bar"></div>
+          <div class="deal-top">
+            <div class="deal-brand">
+              <div class="deal-logo" style="background:rgba(29,185,84,.10)">☕</div>
+              <div>
+                <div class="deal-bname">Barn Coffee</div>
+                <div class="deal-bcat">Coffee · 0.8 km</div>
+              </div>
+            </div>
+            <div class="badge badge-circle">Circle</div>
+          </div>
+          <div class="deal-title">€1 latte — unlocks with 3 friends</div>
+          <div class="deal-desc">Group deal: €1 latte for everyone when 3+ from your circle claim it.</div>
+          <div class="deal-foot">
+            <div class="deal-earn-wrap">
+              <span class="deal-earn">+€0.80</span>
+              <span class="deal-earn-lbl">you earn</span>
+            </div>
+            <button class="deal-cta">Get Deal</button>
+          </div>
+          <div class="circle-progress">
+            <div class="cp-text"><b>College Squad</b> — 2 of 3 claimed</div>
+            <div class="cp-bar-wrap"><div class="cp-bar" style="width:66%"></div></div>
+            <div class="cp-text">1 more friend to unlock!</div>
+          </div>
+        </div>
+
+        <!-- Deal 3: New -->
+        <div class="deal">
+          <div class="deal-bar"></div>
+          <div class="deal-top">
+            <div class="deal-brand">
+              <div class="deal-logo" style="background:rgba(167,139,250,.10)">👟</div>
+              <div>
+                <div class="deal-bname">Nike</div>
+                <div class="deal-bcat">Fashion · Online</div>
+              </div>
+            </div>
+            <div class="badge badge-new">New</div>
+          </div>
+          <div class="deal-title">40% off running shoes</div>
+          <div class="deal-desc">Valid on all running shoes in-store and online. Code auto-applied.</div>
+          <div class="deal-foot">
+            <div class="deal-earn-wrap">
+              <span class="deal-earn">+€0.80</span>
+              <span class="deal-earn-lbl">you earn</span>
+            </div>
+            <button class="deal-cta">Get Deal</button>
+          </div>
+          <div class="deal-meta">
+            <span class="deal-mi">⏳ Mar 31</span>
+            <span class="deal-mi">👥 142 redeemed</span>
+          </div>
+        </div>
+
+        <div class="spacer"></div>
+      </div>
+      <div class="nav">
+        <div class="nav-btn"><span class="ni">💬</span>Feed</div>
+        <div class="nav-btn"><span class="ni">🔔</span>Remember</div>
+        <div class="nav-btn active"><span class="ni">🏷️</span>Deals</div>
+        <div class="nav-btn"><span class="ni">🌐</span>Orbit</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════ SCREEN 2: REDEEM — SHOW QR ═══════ -->
+  <div class="phone-wrap">
+    <div class="phone-label">Option A — Show QR to Shop</div>
+    <div class="phone">
+      <div class="status-bar">
+        <span>9:42</span>
+        <div class="status-icons"><span>5G</span><span>100%</span></div>
+      </div>
+      <div class="screen screen-pad" style="opacity:.25;filter:blur(2px)">
+        <div class="hdr"><div class="hdr-title">Deals</div></div>
+        <div class="deal"><div class="deal-title">50% off any large pizza</div></div>
+      </div>
+      <div class="sheet-overlay"></div>
+      <div class="sheet">
+        <div class="sheet-handle"></div>
+
+        <div class="steps">
+          <div class="step active-step"><span class="step-num">1</span>Show QR to cashier</div>
+          <div class="step"><span class="step-num">2</span>Cashier scans</div>
+          <div class="step"><span class="step-num">3</span>Discount applied</div>
+        </div>
+
+        <div class="qr-box">
+          <svg width="130" height="130" viewBox="0 0 130 130">
+            <rect x="8" y="8" width="32" height="32" rx="3" fill="#000"/>
+            <rect x="12" y="12" width="24" height="24" rx="2" fill="#fff"/>
+            <rect x="17" y="17" width="14" height="14" rx="1" fill="#000"/>
+            <rect x="90" y="8" width="32" height="32" rx="3" fill="#000"/>
+            <rect x="94" y="12" width="24" height="24" rx="2" fill="#fff"/>
+            <rect x="99" y="17" width="14" height="14" rx="1" fill="#000"/>
+            <rect x="8" y="90" width="32" height="32" rx="3" fill="#000"/>
+            <rect x="12" y="94" width="24" height="24" rx="2" fill="#fff"/>
+            <rect x="17" y="99" width="14" height="14" rx="1" fill="#000"/>
+            <rect x="50" y="8" width="7" height="7" fill="#000"/>
+            <rect x="50" y="22" width="7" height="7" fill="#000"/>
+            <rect x="65" y="8" width="7" height="7" fill="#000"/>
+            <rect x="50" y="50" width="7" height="7" fill="#000"/>
+            <rect x="65" y="50" width="7" height="7" fill="#000"/>
+            <rect x="50" y="65" width="7" height="7" fill="#000"/>
+            <rect x="80" y="50" width="7" height="7" fill="#000"/>
+            <rect x="95" y="50" width="7" height="7" fill="#000"/>
+            <rect x="110" y="50" width="7" height="7" fill="#000"/>
+            <rect x="50" y="90" width="7" height="7" fill="#000"/>
+            <rect x="65" y="90" width="7" height="7" fill="#000"/>
+            <rect x="80" y="80" width="7" height="7" fill="#000"/>
+            <rect x="95" y="95" width="7" height="7" fill="#000"/>
+            <rect x="110" y="80" width="7" height="7" fill="#000"/>
+            <rect x="110" y="110" width="7" height="7" fill="#000"/>
+            <rect x="80" y="110" width="7" height="7" fill="#000"/>
+            <rect x="65" y="65" width="7" height="7" fill="#000"/>
+            <rect x="80" y="65" width="7" height="7" fill="#000"/>
+            <rect x="95" y="110" width="7" height="7" fill="#000"/>
+            <rect x="65" y="110" width="7" height="7" fill="#000"/>
+          </svg>
+        </div>
+
+        <div class="sheet-title">Luigi's Pizza — 50% off</div>
+        <div class="sheet-sub">Show this QR at checkout. Valid once.</div>
+
+        <div class="breakdown">
+          <div class="bd-row"><span class="bd-lbl">Deal fee</span><span>€2.00</span></div>
+          <div class="bd-row"><span class="bd-lbl">You earn</span><span class="bd-val-g">+€0.80</span></div>
+          <div class="bd-row"><span class="bd-lbl">Your circles earn</span><span class="bd-val-g">+€0.20</span></div>
+          <div class="bd-row bd-total"><span>Total back to users</span><span class="bd-val-g">€1.00</span></div>
+        </div>
+
+        <div class="privacy-note">🔒 Anonymous token — the business only verifies the code, not your identity.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════ SECTION 2: SCAN FLOW ═══════════════════ -->
+<div class="page-section">
+  <div class="section-num">Screen 03</div>
+  <div class="section-heading">Scan at Shop</div>
+  <div class="section-desc">User scans the shop's QR sticker, confirms the deal, and gets a 4-digit code to tell the cashier. Shop needs zero tech — just a printed QR.</div>
+</div>
+
+<div class="phones-row">
+  <div class="phone-wrap">
+    <div class="phone-label">Step 1 — Scan Shop QR</div>
+    <div class="phone">
+      <div class="status-bar">
+        <span>9:42</span>
+        <div class="status-icons"><span>5G</span><span>100%</span></div>
+      </div>
+      <div class="screen screen-pad">
+        <div class="back-hdr">
+          <div class="back-btn">←</div>
+          <div class="back-hdr-title">Scan Deal</div>
+        </div>
+
+        <div class="scan-area">
+          <div class="scan-corners"></div>
+          <div class="scan-corner-bl"></div>
+          <div class="scan-corner-br"></div>
+          <div class="scan-line"></div>
+          <div class="scan-text">Point camera at the shop's QR code</div>
+        </div>
+
+        <div style="text-align:center;margin-top:8px">
+          <div style="font-size:13px;color:var(--text-50);margin-bottom:4px">Look for the mknoon sticker</div>
+          <div style="font-size:11px;color:var(--text-35)">Usually near the register or door</div>
+        </div>
+
+        <div class="spacer"></div>
+      </div>
+      <div class="nav">
+        <div class="nav-btn"><span class="ni">💬</span>Feed</div>
+        <div class="nav-btn"><span class="ni">🔔</span>Remember</div>
+        <div class="nav-btn active"><span class="ni">🏷️</span>Deals</div>
+        <div class="nav-btn"><span class="ni">🌐</span>Orbit</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="phone-wrap">
+    <div class="phone-label">Step 2 — Confirm & Get Code</div>
+    <div class="phone">
+      <div class="status-bar">
+        <span>9:42</span>
+        <div class="status-icons"><span>5G</span><span>100%</span></div>
+      </div>
+      <div class="screen screen-pad">
+        <div class="back-hdr">
+          <div class="back-btn">←</div>
+          <div class="back-hdr-title">Redeem Deal</div>
+        </div>
+
+        <!-- Confirmation card -->
+        <div style="background:var(--card-bg);border:1px solid rgba(167,139,250,.2);border-radius:22px;padding:20px;margin-bottom:16px;text-align:center">
+          <div style="font-size:40px;margin-bottom:12px">☕</div>
+          <div style="font-size:17px;font-weight:700;margin-bottom:4px">Barn Coffee</div>
+          <div style="font-size:14px;color:var(--text-50);margin-bottom:14px">50% off any latte</div>
+          <button class="deal-cta" style="width:100%;padding:14px;font-size:14px;border-radius:14px">Redeem Now</button>
+        </div>
+
+        <!-- Code display (after redeem) -->
+        <div class="code-display">
+          <div style="font-size:11px;color:var(--text-35);margin-bottom:6px;font-weight:500">TELL THIS CODE TO THE CASHIER</div>
+          <div class="code-digits">7294</div>
+          <div class="code-timer">Expires in 4:58</div>
+        </div>
+
+        <div class="breakdown">
+          <div class="bd-row"><span class="bd-lbl">Deal fee</span><span>€2.00</span></div>
+          <div class="bd-row"><span class="bd-lbl">You earn</span><span class="bd-val-g">+€0.80</span></div>
+          <div class="bd-row"><span class="bd-lbl">Your circles earn</span><span class="bd-val-g">+€0.20</span></div>
+          <div class="bd-row bd-total"><span>Total back to users</span><span class="bd-val-g">€1.00</span></div>
+        </div>
+
+        <div class="privacy-note">🔒 Anonymous token — the business only verifies the code, not your identity.</div>
+
+        <div class="spacer"></div>
+      </div>
+      <div class="nav">
+        <div class="nav-btn"><span class="ni">💬</span>Feed</div>
+        <div class="nav-btn"><span class="ni">🔔</span>Remember</div>
+        <div class="nav-btn active"><span class="ni">🏷️</span>Deals</div>
+        <div class="nav-btn"><span class="ni">🌐</span>Orbit</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════ SECTION 3: CASH OUT ═══════════════════ -->
+<div class="page-section">
+  <div class="section-num">Screen 04</div>
+  <div class="section-heading">Cash Out</div>
+  <div class="section-desc">Convert earnings to gift cards or crypto. No bank details, no identity, no KYC. Just pick a card and redeem.</div>
+</div>
+
+<div class="phones-row">
+  <div class="phone-wrap">
+    <div class="phone-label">Cash Out — Gift Cards</div>
+    <div class="phone">
+      <div class="status-bar">
+        <span>9:41</span>
+        <div class="status-icons"><span>5G</span><span>100%</span></div>
+      </div>
+      <div class="screen screen-pad">
+        <div class="back-hdr">
+          <div class="back-btn">←</div>
+          <div class="back-hdr-title">Cash Out</div>
+        </div>
+
+        <div style="text-align:center;margin-bottom:28px">
+          <div style="font-size:12px;color:var(--text-50);margin-bottom:2px">Available balance</div>
+          <div style="font-size:40px;font-weight:800;letter-spacing:-1px">€12.40</div>
+        </div>
+
+        <div class="stitle">Gift Cards</div>
+
+        <div class="gift-grid">
+          <div class="gift"><div class="gift-em">🍎</div><div class="gift-name">App Store</div><div class="gift-min">From €5</div></div>
+          <div class="gift"><div class="gift-em">▶️</div><div class="gift-name">Google Play</div><div class="gift-min">From €5</div></div>
+          <div class="gift"><div class="gift-em">📦</div><div class="gift-name">Amazon</div><div class="gift-min">From €10</div></div>
+          <div class="gift"><div class="gift-em">🎵</div><div class="gift-name">Spotify</div><div class="gift-min">From €10</div></div>
+          <div class="gift"><div class="gift-em">🎮</div><div class="gift-name">Steam</div><div class="gift-min">From €5</div></div>
+          <div class="gift"><div class="gift-em">💳</div><div class="gift-name">Visa Prepaid</div><div class="gift-min">From €10</div></div>
+        </div>
+
+        <div class="stitle">Crypto</div>
+
+        <div class="gift-wide">
+          <span style="font-size:26px">🪙</span>
+          <div>
+            <div class="gift-name">USDC Wallet</div>
+            <div class="gift-min">Withdraw to any crypto wallet</div>
+          </div>
+        </div>
+
+        <div class="privacy-note" style="margin-top:8px">No bank details needed. No identity required.</div>
+
+        <div class="spacer"></div>
+      </div>
+      <div class="nav">
+        <div class="nav-btn"><span class="ni">💬</span>Feed</div>
+        <div class="nav-btn"><span class="ni">🔔</span>Remember</div>
+        <div class="nav-btn active"><span class="ni">🏷️</span>Deals</div>
+        <div class="nav-btn"><span class="ni">🌐</span>Orbit</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════ SECTION 4: PERSONAL WALLET ═══════════════════ -->
+<div class="page-section">
+  <div class="section-num">Screen 05</div>
+  <div class="section-heading">Personal Wallet</div>
+  <div class="section-desc">Users monitor their earnings from deal redemptions and circle bonuses. All credits remain anonymous — linked to blind tokens, not identity.</div>
+</div>
+
+<div class="phones-row">
+  <div class="phone-wrap">
+    <div class="phone-label">Wallet — Overview</div>
+    <div class="phone">
+      <div class="status-bar">
+        <span>9:41</span>
+        <div class="status-icons"><span>5G</span><span>100%</span></div>
+      </div>
+      <div class="screen screen-pad">
+        <div class="hdr">
+          <div class="hdr-title">Wallet</div>
+          <div class="hdr-icon">↗</div>
+        </div>
+
+        <div class="wallet-hero">
+          <div class="wh-label">Total balance</div>
+          <div class="wh-bal">€12.40</div>
+          <div class="wh-sub">≈ 0.15g gold (Noon tokens)</div>
+          <div class="wh-actions">
+            <div class="wh-btn wh-primary">Cash Out</div>
+            <div class="wh-btn wh-secondary">History</div>
+          </div>
+        </div>
+
+        <div class="stats-row">
+          <div class="stat"><div class="stat-val" style="color:var(--green)">€8.60</div><div class="stat-lbl">Deals earned</div></div>
+          <div class="stat"><div class="stat-val" style="color:var(--purple)">€3.80</div><div class="stat-lbl">Circle bonuses</div></div>
+          <div class="stat"><div class="stat-val">14</div><div class="stat-lbl">Deals used</div></div>
+        </div>
+
+        <div class="stitle">Recent</div>
+
+        <div class="tx">
+          <div class="tx-ic earn">🍕</div>
+          <div class="tx-info"><div class="tx-name">Luigi's Pizza deal</div><div class="tx-sub">You redeemed</div></div>
+          <div><div class="tx-amt pos">+€0.80</div><div class="tx-time">2h ago</div></div>
+        </div>
+
+        <div class="tx">
+          <div class="tx-ic circ">👥</div>
+          <div class="tx-info"><div class="tx-name">College Squad bonus</div><div class="tx-sub">Ahmed redeemed Nike deal</div></div>
+          <div><div class="tx-amt pos">+€0.025</div><div class="tx-time">5h ago</div></div>
+        </div>
+
+        <div class="tx">
+          <div class="tx-ic earn">☕</div>
+          <div class="tx-info"><div class="tx-name">Barn Coffee deal</div><div class="tx-sub">You redeemed (circle deal!)</div></div>
+          <div><div class="tx-amt pos">+€0.80</div><div class="tx-time">Yesterday</div></div>
+        </div>
+
+        <div class="tx">
+          <div class="tx-ic circ">👥</div>
+          <div class="tx-info"><div class="tx-name">College Squad bonus</div><div class="tx-sub">3 friends redeemed Barn Coffee</div></div>
+          <div><div class="tx-amt pos">+€0.075</div><div class="tx-time">Yesterday</div></div>
+        </div>
+
+        <div class="tx">
+          <div class="tx-ic spend">🎁</div>
+          <div class="tx-info"><div class="tx-name">App Store gift card</div><div class="tx-sub">Cashed out €5</div></div>
+          <div><div class="tx-amt neg">-€5.00</div><div class="tx-time">Mar 3</div></div>
+        </div>
+
+        <div class="tx">
+          <div class="tx-ic earn">👟</div>
+          <div class="tx-info"><div class="tx-name">Nike deal</div><div class="tx-sub">You redeemed</div></div>
+          <div><div class="tx-amt pos">+€0.80</div><div class="tx-time">Mar 2</div></div>
+        </div>
+
+        <div class="spacer"></div>
+      </div>
+      <div class="nav">
+        <div class="nav-btn"><span class="ni">💬</span>Feed</div>
+        <div class="nav-btn"><span class="ni">🔔</span>Remember</div>
+        <div class="nav-btn active"><span class="ni">🏷️</span>Deals</div>
+        <div class="nav-btn"><span class="ni">🌐</span>Orbit</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════ SECTION 5: CIRCLE WALLET ═══════════════════ -->
+<div class="page-section">
+  <div class="section-num">Screen 06</div>
+  <div class="section-heading">Circle Wallet</div>
+  <div class="section-desc">Each circle has a shared earnings pool. 10% of every deal redeemed by a member goes to the circle, split equally among all members.</div>
+</div>
+
+<div class="phones-row">
+  <div class="phone-wrap">
+    <div class="phone-label">Circle — Earnings & Members</div>
+    <div class="phone">
+      <div class="status-bar">
+        <span>9:41</span>
+        <div class="status-icons"><span>5G</span><span>100%</span></div>
+      </div>
+      <div class="screen screen-pad">
+        <div class="back-hdr">
+          <div class="back-btn">←</div>
+          <div class="back-hdr-title">Circle Wallet</div>
+        </div>
+
+        <div class="circ-hero">
+          <div class="circ-top">
+            <div class="avatar-stack">
+              <div class="av" style="background:#a78bfa">S</div>
+              <div class="av" style="background:#81e6d9;color:#000">A</div>
+              <div class="av" style="background:#FF6B6B">F</div>
+              <div class="av" style="background:#1DB954">Y</div>
+              <div class="av" style="background:rgba(255,255,255,.08)">+4</div>
+            </div>
+            <div>
+              <div class="circ-name">College Squad</div>
+              <div class="circ-count">8 members</div>
+            </div>
+          </div>
+          <div class="circ-bal-row">
+            <div>
+              <div class="circ-bal-lbl">Circle earnings this month</div>
+              <div class="circ-bal">€4.60</div>
+            </div>
+            <div style="text-align:right">
+              <div class="circ-share-lbl">Your share</div>
+              <div class="circ-share-val">€0.58</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="stats-row">
+          <div class="stat"><div class="stat-val">23</div><div class="stat-lbl">Deals redeemed</div></div>
+          <div class="stat"><div class="stat-val">€18.40</div><div class="stat-lbl">All-time earned</div></div>
+        </div>
+
+        <div class="stitle">Top Deals This Month</div>
+
+        <div class="circ-deal"><span class="circ-deal-em">👟</span><div class="circ-deal-name">Nike 40% off</div><div class="circ-deal-cnt">5 people</div><div class="circ-deal-earn">€1.00</div></div>
+        <div class="circ-deal"><span class="circ-deal-em">🍕</span><div class="circ-deal-name">Luigi's 50% off</div><div class="circ-deal-cnt">7 people</div><div class="circ-deal-earn">€1.40</div></div>
+        <div class="circ-deal"><span class="circ-deal-em">☕</span><div class="circ-deal-name">Barn Coffee €1 latte</div><div class="circ-deal-cnt">4 people</div><div class="circ-deal-earn">€0.80</div></div>
+        <div class="circ-deal"><span class="circ-deal-em">🎵</span><div class="circ-deal-name">Spotify 3mo deal</div><div class="circ-deal-cnt">3 people</div><div class="circ-deal-earn">€0.60</div></div>
+
+        <div class="stitle">Members</div>
+
+        <div class="lb"><div class="lb-rank">1</div><div class="lb-av" style="background:#a78bfa">S</div><div class="lb-name">Sara</div><div class="lb-deals">6 deals</div><div class="lb-earned">€0.58</div></div>
+        <div class="lb"><div class="lb-rank">2</div><div class="lb-av" style="background:#81e6d9;color:#000">A</div><div class="lb-name">Ahmed</div><div class="lb-deals">5 deals</div><div class="lb-earned">€0.58</div></div>
+        <div class="lb"><div class="lb-rank">3</div><div class="lb-av" style="background:#FF6B6B">F</div><div class="lb-name">Fatima</div><div class="lb-deals">4 deals</div><div class="lb-earned">€0.58</div></div>
+        <div class="lb"><div class="lb-rank">4</div><div class="lb-av" style="background:#1DB954">Y</div><div class="lb-name">Youssef</div><div class="lb-deals">3 deals</div><div class="lb-earned">€0.58</div></div>
+
+        <div class="spacer"></div>
+      </div>
+      <div class="nav">
+        <div class="nav-btn"><span class="ni">💬</span>Feed</div>
+        <div class="nav-btn"><span class="ni">🔔</span>Remember</div>
+        <div class="nav-btn active"><span class="ni">🏷️</span>Deals</div>
+        <div class="nav-btn"><span class="ni">🌐</span>Orbit</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════ SCREEN 7: GOVERNANCE ═══════ -->
+  <div class="phone-wrap">
+    <div class="phone-label">Circle — Governance & Rules</div>
+    <div class="phone">
+      <div class="status-bar">
+        <span>9:41</span>
+        <div class="status-icons"><span>5G</span><span>100%</span></div>
+      </div>
+      <div class="screen screen-pad">
+        <div class="back-hdr">
+          <div class="back-btn">←</div>
+          <div class="back-hdr-title">Circle Settings</div>
+        </div>
+
+        <div class="stitle">Earnings Rule</div>
+
+        <div class="vote active-v">
+          <div class="vote-top">
+            <div class="vote-title">How should circle earnings work?</div>
+            <div class="vote-badge vb-open">Active</div>
+          </div>
+          <div class="vote-desc">Choose how the 10% circle bonus is distributed to members.</div>
+          <div class="vote-opts">
+            <div class="vopt sel"><div class="vopt-fill" style="width:62%"></div><div class="vopt-radio"></div><div class="vopt-text">Split equally among all members</div><div class="vopt-pct">62%</div></div>
+            <div class="vopt"><div class="vopt-fill" style="width:25%"></div><div class="vopt-radio"></div><div class="vopt-text">Save in circle pool for activities</div><div class="vopt-pct">25%</div></div>
+            <div class="vopt"><div class="vopt-fill" style="width:13%"></div><div class="vopt-radio"></div><div class="vopt-text">Donate to a cause the circle picks</div><div class="vopt-pct">13%</div></div>
+          </div>
+          <div class="vote-foot"><span>6 of 8 voted</span><span>Ends in 2 days</span></div>
+        </div>
+
+        <div class="stitle">Spending Proposals</div>
+
+        <div class="vote active-v">
+          <div class="vote-top">
+            <div class="vote-title">Movie night from circle fund?</div>
+            <div class="vote-badge vb-open">Vote</div>
+          </div>
+          <div class="vote-desc">Ahmed proposed: Use €8 from circle pool for group cinema tickets (2-for-1 deal available).</div>
+          <div class="vote-opts">
+            <div class="vopt sel"><div class="vopt-fill" style="width:75%"></div><div class="vopt-radio"></div><div class="vopt-text">Yes, let's go!</div><div class="vopt-pct">75%</div></div>
+            <div class="vopt"><div class="vopt-fill" style="width:25%"></div><div class="vopt-radio"></div><div class="vopt-text">Save it for later</div><div class="vopt-pct">25%</div></div>
+          </div>
+          <div class="vote-foot"><span>4 of 8 voted</span><span>Ends tomorrow</span></div>
+        </div>
+
+        <div class="vote" style="opacity:.6">
+          <div class="vote-top">
+            <div class="vote-title">Donate to local food bank?</div>
+            <div class="vote-badge vb-closed">Passed</div>
+          </div>
+          <div class="vote-desc">Sara proposed: Donate €5 from circle pool. Passed 7-1.</div>
+          <div class="vote-foot"><span>8 of 8 voted</span><span>Completed Mar 5</span></div>
+        </div>
+
+        <div class="stitle">Authority & Roles</div>
+
+        <div class="role">
+          <div class="role-av" style="background:#a78bfa">S</div>
+          <div class="role-info">
+            <div class="role-name">Sara <span class="role-tag tag-creator">Creator</span></div>
+            <div class="role-perm">Can set rules, create votes, manage members</div>
+          </div>
+        </div>
+
+        <div class="role">
+          <div class="role-av" style="background:#81e6d9;color:#000">A</div>
+          <div class="role-info">
+            <div class="role-name">Ahmed <span class="role-tag tag-member">Member</span></div>
+            <div class="role-perm">Can vote, propose spending, redeem deals</div>
+          </div>
+        </div>
+
+        <div class="stitle">Circle Rules</div>
+
+        <div class="tgl">
+          <div><div class="tgl-label">Require majority to spend</div><div class="tgl-desc">51% of members must approve</div></div>
+          <div class="tgl-switch on"></div>
+        </div>
+        <div class="tgl">
+          <div><div class="tgl-label">Auto-distribute monthly</div><div class="tgl-desc">Split earnings to members on the 1st</div></div>
+          <div class="tgl-switch on"></div>
+        </div>
+        <div class="tgl">
+          <div><div class="tgl-label">Anyone can propose spending</div><div class="tgl-desc">Not just the circle creator</div></div>
+          <div class="tgl-switch on"></div>
+        </div>
+        <div class="tgl">
+          <div><div class="tgl-label">Spending limit without vote</div><div class="tgl-desc">Creator can spend up to €2 without a vote</div></div>
+          <div class="tgl-switch"></div>
+        </div>
+
+        <div class="spacer"></div>
+      </div>
+      <div class="nav">
+        <div class="nav-btn"><span class="ni">💬</span>Feed</div>
+        <div class="nav-btn"><span class="ni">🔔</span>Remember</div>
+        <div class="nav-btn active"><span class="ni">🏷️</span>Deals</div>
+        <div class="nav-btn"><span class="ni">🌐</span>Orbit</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════ SECTION 6: HOW IT WORKS ═══════════════════ -->
+<div class="page-section">
+  <div class="section-num">Screen 08</div>
+  <div class="section-heading">How Redemption Works</div>
+  <div class="section-desc">Two methods — both use anonymous blind tokens. The business verifies the deal, never the user's identity.</div>
+</div>
+
+<div class="flow-container">
+  <div class="flow-cols">
+    <!-- Flow A -->
+    <div class="flow-col">
+      <div class="flow-col-title">📱 Show to Shop</div>
+      <div class="flow-col-sub">User shows QR, cashier scans with their phone</div>
+
+      <div class="flow-step"><div class="flow-dot">1</div><div class="flow-step-text"><b>Open your deal</b> in the Deals tab</div></div>
+      <div class="flow-arrow"></div>
+      <div class="flow-step"><div class="flow-dot">2</div><div class="flow-step-text"><b>Show QR code</b> on your screen to the cashier</div></div>
+      <div class="flow-arrow"></div>
+      <div class="flow-step"><div class="flow-dot">3</div><div class="flow-step-text">Cashier <b>scans with their phone</b> via business.mknoun.xyz</div></div>
+      <div class="flow-arrow"></div>
+      <div class="flow-step"><div class="flow-dot">4</div><div class="flow-step-text"><b>Deal verified ✓</b> — discount applied to your order</div></div>
+      <div class="flow-arrow"></div>
+      <div class="flow-step"><div class="flow-dot">5</div><div class="flow-step-text"><b>+€0.80 credited</b> to your wallet automatically</div></div>
+    </div>
+
+    <!-- Flow B -->
+    <div class="flow-col">
+      <div class="flow-col-title">📷 Scan at Shop</div>
+      <div class="flow-col-sub">User scans shop's QR sticker, gets a code</div>
+
+      <div class="flow-step"><div class="flow-dot">1</div><div class="flow-step-text">Spot the <b>mknoon QR sticker</b> near the register</div></div>
+      <div class="flow-arrow"></div>
+      <div class="flow-step"><div class="flow-dot">2</div><div class="flow-step-text"><b>Scan it</b> with your mknoon app</div></div>
+      <div class="flow-arrow"></div>
+      <div class="flow-step"><div class="flow-dot">3</div><div class="flow-step-text">Tap <b>"Redeem"</b> — get a 4-digit code</div></div>
+      <div class="flow-arrow"></div>
+      <div class="flow-step"><div class="flow-dot">4</div><div class="flow-step-text"><b>Tell the cashier</b> your code (e.g. "7294")</div></div>
+      <div class="flow-arrow"></div>
+      <div class="flow-step"><div class="flow-dot">5</div><div class="flow-step-text">Cashier verifies → <b>+€0.80 credited</b></div></div>
+    </div>
+  </div>
+
+  <table class="compare-table">
+    <thead>
+      <tr>
+        <th></th>
+        <th>Show to Shop</th>
+        <th>Scan at Shop</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Shop effort</td>
+        <td>Needs phone to scan</td>
+        <td>Just a printed QR sticker</td>
+      </tr>
+      <tr>
+        <td>User effort</td>
+        <td>Open app, show screen</td>
+        <td>Scan + say a code</td>
+      </tr>
+      <tr>
+        <td>Speed</td>
+        <td>~5 seconds</td>
+        <td>~10 seconds</td>
+      </tr>
+      <tr>
+        <td>Best for</td>
+        <td>Chains, cafés with tablets</td>
+        <td>Small shops, market stalls</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="privacy-note" style="max-width:500px;margin:0 auto 80px">🔒 Both methods use anonymous blind tokens. The business sees "valid deal code" — never who you are.</div>
+</div>
+
+</body>
+</html>
