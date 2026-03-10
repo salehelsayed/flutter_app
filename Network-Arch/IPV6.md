@@ -89,11 +89,13 @@ Change `/dns4/` to `/dns/` (protocol-agnostic DNS) in **all three places** that 
 
 Adding IPv6 listen/announce to the relay server is a separate deployment concern (needs server IPv6 connectivity, DNS AAAA records). This plan prepares the client for it but does NOT require it.
 
+**Limitation**: IPv6-only clients (no IPv4 at all) will NOT work after this change — they still cannot reach the IPv4-only relay for bootstrap/rendezvous. Full IPv6-only support requires the relay server IPv6 rollout (see `IPV6-Infra-Ops.md`). This plan targets the common case: dual-stack clients that benefit from direct IPv6 peer-to-peer connections after relay-mediated discovery.
+
 ---
 
-## Prerequisite (Hard Blocker)
+## Prerequisite (Satisfied)
 
-**`loopback-filtering.md` must be implemented first — this is a hard blocker, not a soft dependency.** Without the `AddrsFactory` filter, adding `/ip6/::/...` listen addresses would cause the node to announce `::1` (IPv6 loopback), `fe80::` (link-local), and `169.254.x.x` (IPv4 link-local) to all peers via rendezvous signed peer records (`rendezvous.go:43`), `addresses:updated` events, and `State()`/`Status()` output. There is no secondary filter in the current codebase.
+~~`loopback-filtering.md` must be implemented first.~~ **Already implemented.** The `filterAddresses()` function (`node.go:120-135`) and `isNonRoutableAddr()` (`node.go:110-118`) are registered as `AddrsFactory` (`node.go:263`), plus defensive re-filtering in `splitHostAddresses()` (`node.go:1117-1134`). IPv6-aware filtering tests exist at `node_test.go:987-1173` covering `::1`, `fe80::`, `::`, and `ip6zone` cases. No blocker remains.
 
 ---
 
@@ -102,6 +104,7 @@ Adding IPv6 listen/announce to the relay server is a separate deployment concern
 | File | Change | Description |
 |------|--------|-------------|
 | `go-mknoon/node/node.go` | EDIT | Add IPv6 listen addresses in `Start()` |
+| `go-mknoon/node/node.go` | EDIT | `DialPeerViaRelay`: try all relay transport addrs, not just first |
 | `go-mknoon/node/config.go` | EDIT | `dns4` → `dns` in Go fallback relay constants |
 | `lib/core/bridge/p2p_bridge_client.dart` | EDIT | `dns4` → `dns` in Dart production relay constants (the real path) |
 | `lib/core/constants/network_constants.dart` | EDIT | `dns4` → `dns` in `RENDEZVOUS_ADDRESS` (embedded in QR + contact payloads) |
@@ -346,9 +349,9 @@ if cfg.ListenPort > 0 {
 
 ---
 
-### Step 5: RED — Test that IPv6 loopback/link-local are NOT in announced addresses
+### Step 5: GREEN — Verify IPv6 loopback/link-local are NOT in announced addresses
 
-This confirms the loopback-filtering plan's `filterAddresses()` correctly handles IPv6 addresses produced by the new listen config.
+Loopback filtering is already implemented (`filterAddresses()` at `node.go:120-135`, `AddrsFactory` at `node.go:263`). This test confirms the existing filter handles IPv6 addresses produced by the new dual-stack listen config. Expected to pass immediately after Step 4.
 
 **File**: `go-mknoon/node/node_test.go`
 
@@ -381,7 +384,7 @@ func TestNodeIPv6LoopbackFiltered(t *testing.T) {
 }
 ```
 
-**Expected**: Passes if loopback-filtering is implemented first. Fails if not — confirms the dependency.
+**Expected**: Passes immediately — loopback filtering already handles IPv6 (`node_test.go:987-1173` covers unit cases; this is an integration-level confirmation with the new listen config).
 
 ---
 
@@ -563,23 +566,29 @@ func TestFixedListenPortDualStack(t *testing.T) {
     }
     defer n.Stop()
 
-    addrs := n.Host().Addrs()
-
-    // Check that at least one address uses port 9876
-    hasPort := false
-    for _, a := range addrs {
-        if strings.Contains(a.String(), "/9876") {
-            hasPort = true
-            break
+    // Use ListenAddresses (raw bindings) — Addrs() depends on routable interfaces.
+    listeners := n.Host().Network().ListenAddresses()
+    hasIPv4Port := false
+    hasIPv6Port := false
+    for _, a := range listeners {
+        s := a.String()
+        if strings.HasPrefix(s, "/ip4/") && strings.Contains(s, "/9876") {
+            hasIPv4Port = true
+        }
+        if strings.HasPrefix(s, "/ip6/") && strings.Contains(s, "/9876") {
+            hasIPv6Port = true
         }
     }
-    if !hasPort {
-        t.Errorf("expected at least one address with port 9876, got: %v", addrs)
+    if !hasIPv4Port {
+        t.Errorf("expected IPv4 listener on port 9876, got: %v", listeners)
+    }
+    if !hasIPv6Port {
+        t.Errorf("expected IPv6 listener on port 9876, got: %v", listeners)
     }
 }
 ```
 
-**Expected**: Already passes with the Step 4 implementation (both branches set IPv6 addrs).
+**Expected**: Passes after Step 4 (both branches set IPv6 addrs). Would **fail** if `ListenPort > 0` branch stayed IPv4-only — unlike the previous version which only checked for any address with `/9876`.
 
 ---
 
@@ -643,7 +652,134 @@ func TestTwoNodesDualStackConnect(t *testing.T) {
 
 ---
 
-### Step 11: RED — Integration test: dual-stack node connects to IPv4-only local relay
+### Step 11: RED — Fix `DialPeerViaRelay` to try all relay transport addresses
+
+`DialPeerViaRelay()` (`node.go:815-823`) currently uses only `relay.Addrs[0]` when building a circuit probe address. If a relay announces both IPv4 and IPv6 transport addresses and the first one is unreachable, the probe fails without trying alternatives. This is a latent bug today (relays only announce IPv4), but becomes active once relays add IPv6 announcements.
+
+**Unit test** — verifies relay selector groups multi-addr correctly and the code path exercises all addresses:
+
+**File**: `go-mknoon/node/node_test.go`
+
+```go
+func TestDialPeerViaRelayTriesAllAddresses(t *testing.T) {
+    // Set up a relay peer with TWO transport addresses (same peer ID).
+    // Existing tests in multi_relay_test.go cover multiple relay *peers*
+    // falling over (TestDialPeerViaRelay_TriesSecondRelayWhenFirstFails).
+    // This test covers multiple *addresses* on a single relay peer.
+
+    n := startLocalNodeForMultiRelayTest(t)
+
+    // Generate ONE relay peer ID with TWO transports (TCP + QUIC).
+    key, _, err := crypto.GenerateKeyPair(crypto.Ed25519, 0)
+    if err != nil {
+        t.Fatal(err)
+    }
+    relayID, _ := peer.IDFromPrivateKey(key)
+
+    addr1 := fmt.Sprintf("/ip4/127.0.0.1/tcp/19991/p2p/%s", relayID)
+    addr2 := fmt.Sprintf("/ip4/127.0.0.1/udp/19992/quic-v1/p2p/%s", relayID)
+
+    n.mu.Lock()
+    n.relayAddresses = []string{addr1, addr2}
+    n.mu.Unlock()
+
+    // Verify the selector groups them as 1 relay with 2 addrs.
+    rs := n.buildRelaySelector(nil)
+    if rs.Len() != 1 {
+        t.Fatalf("expected 1 relay (grouped by peer ID), got %d", rs.Len())
+    }
+    relays := rs.Relays()
+    if len(relays[0].Addrs) != 2 {
+        t.Fatalf("expected 2 addrs for relay, got %d", len(relays[0].Addrs))
+    }
+
+    // Dial target — both addresses unreachable, but the code path
+    // must build circuit addrs from ALL relay.Addrs, not just [0].
+    targetKey := generateTestKey(t)
+    targetNode := NewNode()
+    st, err := targetNode.Start(NodeConfig{
+        PrivateKeyHex:  targetKey,
+        RelayAddresses: []string{},
+        AutoRegister:   false,
+    })
+    if err != nil {
+        t.Fatal(err)
+    }
+    defer targetNode.Stop()
+
+    err = n.DialPeerViaRelay(st.PeerId)
+    if err == nil {
+        t.Fatal("expected error (fake relay unreachable)")
+    }
+
+    // Confirm the error comes from the relay selector (all relays tried),
+    // not from an early bail on address count.
+    if !strings.Contains(err.Error(), "relay") {
+        t.Errorf("error should reference relay attempt, got: %v", err)
+    }
+}
+```
+
+**Integration test** — verifies actual failover (bogus first address, real second address):
+
+**File**: `go-mknoon/integration/local_relay_harness_test.go` (build tag `integration`)
+
+```go
+func TestDialPeerViaRelayMultiAddrFailover(t *testing.T) {
+    // Start a real local relay (IPv4 only).
+    shared := newLocalRelaySharedState()
+    relay := newLocalRelayServer(t, shared)
+    relay.start()
+    defer relay.stop()
+
+    // Build a relay entry with TWO addresses for the same relay peer:
+    //   [0] = bogus unreachable address (simulates failed IPv6 transport)
+    //   [1] = real relay address (IPv4, should succeed)
+    realAddr := relay.addr()  // e.g. "/ip4/127.0.0.1/tcp/PORT/p2p/RELAY_ID"
+
+    // Extract relay peer ID from real address.
+    maddr, _ := ma.NewMultiaddr(realAddr)
+    relayInfo, _ := peer.AddrInfoFromP2pAddr(maddr)
+
+    bogusAddr := fmt.Sprintf("/ip4/192.0.2.1/tcp/1/p2p/%s", relayInfo.ID)
+
+    // Node A: configure with bogus-first relay addresses.
+    nodeA, peerIdA := startNodeWithRelays(t, []string{bogusAddr, realAddr}, nil, nil)
+    waitForRendezvousRegister(t, nodeA, nodeA.Namespace(), 10*time.Second)
+
+    // Node B: configure with only the real relay.
+    nodeB, _ := startNodeWithRelays(t, []string{realAddr}, nil, nil)
+
+    // B dials A via relay — must succeed even though Addrs[0] is bogus.
+    err := nodeB.DialPeerViaRelay(peerIdA)
+    if err != nil {
+        t.Fatalf("DialPeerViaRelay should succeed via second address: %v", err)
+    }
+}
+```
+
+**File**: `go-mknoon/node/node.go` — change `DialPeerViaRelay` to iterate all addresses per relay:
+
+```go
+// Before (single address — bug):
+//   relayTransportAddr := relay.Addrs[0]
+//   circuitAddr := relayTransportAddr.Encapsulate(circuitSuffix)
+//   ai := peer.AddrInfo{ID: pid, Addrs: []ma.Multiaddr{circuitAddr}}
+
+// After (try all transport addresses for each relay):
+var circuitAddrs []ma.Multiaddr
+for _, transportAddr := range relay.Addrs {
+    circuitAddr := transportAddr.Encapsulate(circuitSuffix)
+    circuitAddrs = append(circuitAddrs, circuitAddr)
+}
+ai := peer.AddrInfo{ID: pid, Addrs: circuitAddrs}
+```
+
+libp2p's `h.Connect()` already handles multi-address failover — it tries all provided addresses. This is consistent with how `DialPeer()` (`node.go:763-792`) works.
+
+---
+
+### Step 12: RED — Integration test: dual-stack node connects to IPv4-only local relay
 
 Verify that a dual-stack node can connect to an IPv4-only relay, register, and be discovered. This uses the local relay harness (which listens on `127.0.0.1`) — the node must connect via IPv4 even though it also listens on IPv6.
 
@@ -691,7 +827,7 @@ func TestDualStackNodeWithIPv4Relay(t *testing.T) {
 
 ---
 
-### Step 12: RED — Test `NodeState` (Dart) parses IPv6 addresses correctly
+### Step 13: RED — Test `NodeState` (Dart) parses IPv6 addresses correctly
 
 Verify the Dart `NodeState.fromJson` handles IPv6 multiaddr strings without issue.
 
@@ -725,7 +861,7 @@ test('fromJson handles IPv6 listen addresses', () {
 
 ---
 
-### Step 13: RED — Test Dart `_handleAddressesUpdated` with IPv6
+### Step 14: RED — Test Dart `_handleAddressesUpdated` with IPv6
 
 Verify the Dart P2P service correctly processes addresses:updated events containing IPv6.
 
@@ -769,7 +905,7 @@ go test ./node/ -run TestDefaultRelayAddressUsesDNS -v
 # Step 3+4: Dual-stack listen (uses ListenAddresses, passes on any machine)
 go test ./node/ -run TestNodeListensDualStack -v
 
-# Step 5: IPv6 loopback filtering (depends on loopback-filtering.md)
+# Step 5: IPv6 loopback filtering (already implemented — should pass immediately)
 go test ./node/ -run TestNodeIPv6LoopbackFiltered -v
 
 # Step 6: splitHostAddresses with IPv6
@@ -787,8 +923,12 @@ go test ./node/ -run TestFixedListenPortDualStack -v
 # Step 10: Two-node connect (smoke)
 go test ./node/ -run TestTwoNodesDualStackConnect -v
 
-# Step 11: Dual-stack with IPv4-only relay (integration, needs relay harness)
+# Step 11: DialPeerViaRelay multi-address (unit)
+go test ./node/ -run TestDialPeerViaRelayTriesAllAddresses -v
+
+# Step 12: Dual-stack with IPv4-only relay + multi-addr failover (integration)
 go test -tags integration ./integration/ -run TestDualStackNodeWithIPv4Relay -v
+go test -tags integration ./integration/ -run TestDialPeerViaRelayMultiAddrFailover -v
 
 # Full Go suite
 go test ./node/ -v -count=1
@@ -803,10 +943,10 @@ flutter test test/core/bridge/p2p_bridge_client_test.dart -v
 # Step 2d+2e: RENDEZVOUS_ADDRESS
 flutter test test/core/constants/network_constants_test.dart -v
 
-# Step 12: NodeState parsing
+# Step 13: NodeState parsing
 flutter test test/features/p2p/domain/models/node_state_test.dart -v
 
-# Step 13: P2P service IPv6 event handling
+# Step 14: P2P service IPv6 event handling
 flutter test test/core/services/p2p_service_impl_test.dart -v
 
 # Full Dart suite
@@ -820,6 +960,7 @@ flutter test
 | Component | Change | Risk |
 |-----------|--------|------|
 | `node.go:182-193` listen addrs | Add 3 IPv6 listen addrs (`/ip6/::/...`) | Low — libp2p handles dual-stack natively |
+| `node.go:815-823` `DialPeerViaRelay` | Try all relay transport addrs, not just `[0]` | Low — uses existing `h.Connect()` multi-addr failover |
 | `config.go:10,13` Go relay consts | `/dns4/` → `/dns/` | Low — `/dns/` falls back to A record if no AAAA |
 | `p2p_bridge_client.dart:6-11` Dart relay consts | `/dns4/` → `/dns/` | Low — production path, same semantics |
 | `network_constants.dart:12` `RENDEZVOUS_ADDRESS` | `/dns4/` → `/dns/` | Low — affects QR/contact payloads |
@@ -866,9 +1007,23 @@ Most CI runners (GitHub Actions, etc.) have IPv6 support via loopback (`::1`) bu
 - **Configuration tests** (Steps 1-4, 9): Assert that the _code_ configures IPv6 listen addrs via `ListenAddresses()`. Pass on any machine.
 - **Dart constant tests** (Steps 2b-2e): Assert `/dns/` not `/dns4/`. Pass on any machine.
 - **Filtering tests** (Step 5): Assert `::1` is filtered. Pass on any machine (loopback always exists).
-- **Integration tests** (Step 11): Uses local relay harness — tests IPv4 relay compatibility with dual-stack node. Pass on any machine.
+- **Integration tests** (Step 12): Uses local relay harness — tests IPv4 relay compatibility with dual-stack node. Pass on any machine.
 - **Connectivity tests** (Step 10): Two local nodes connect — works via IPv4 LAN on any machine. IPv6 is a bonus.
 - **Address presence tests** (Steps 6-8): Use `t.Log` not `t.Error` for "no IPv6 found" — informational, not failure.
+
+---
+
+## Known IPv4-Biased Test Artifacts (Follow-Up)
+
+These files still hardcode `/dns4/` or IPv4 literals. They do NOT block this plan's client-side changes, but should be updated as part of the relay server IPv6 rollout to complete the verification story:
+
+| File | Line(s) | Issue |
+|------|---------|-------|
+| `go-relay-server/quic_smoke_test.go` | 21-23 | `/dns4/mknoun.xyz/...` and `/ip4/13.60.15.36/...` hardcoded |
+| `integration_test/scripts/run_transport_e2e.dart` | 513 | `/dns4/mknoun.xyz/...` in relay circuit fallback |
+| `integration_test/scripts/run_wifi_relay_fallback_smoke.dart` | 476, 634 | `/dns4/mknoun.xyz/...` in relay circuit fallback (S1 + S4) |
+
+These are intentionally deferred: the relay smoke test belongs to `go-relay-server/` (excluded from this plan's scope), and the Dart E2E scripts test against the production relay which is IPv4-only today. Updating them to `/dns/` before the relay has an AAAA record would be cosmetic — correct but untestable.
 
 ---
 
@@ -889,7 +1044,8 @@ go-mknoon/node/config.go
   └── DefaultQUICRelay: /dns4/ → /dns/                        (EDIT)
 
 go-mknoon/node/node.go
-  └── Start(): add 3 IPv6 listen addresses (/ip6/::/...)      (EDIT)
+  ├── Start(): add 3 IPv6 listen addresses (/ip6/::/...)      (EDIT)
+  └── DialPeerViaRelay(): try all relay addrs, not just [0]   (EDIT)
 
 lib/core/bridge/p2p_bridge_client.dart
   ├── defaultRendezvousAddress: /dns4/ → /dns/                (EDIT)
@@ -906,10 +1062,12 @@ go-mknoon/node/node_test.go
   ├── TestStatusIncludesIPv6Addresses                          (NEW)
   ├── TestAddressesUpdatedEventIncludesIPv6                    (NEW)
   ├── TestFixedListenPortDualStack                             (NEW)
-  └── TestTwoNodesDualStackConnect                             (NEW — smoke)
+  ├── TestTwoNodesDualStackConnect                             (NEW — smoke)
+  └── TestDialPeerViaRelayTriesAllAddresses                    (NEW)
 
 go-mknoon/integration/ (build tag: integration)
-  └── TestDualStackNodeWithIPv4Relay                           (NEW — integration)
+  ├── TestDualStackNodeWithIPv4Relay                           (NEW — integration)
+  └── TestDialPeerViaRelayMultiAddrFailover                    (NEW — integration)
 
 test/core/bridge/p2p_bridge_client_test.dart
   ├── 'default relay addresses use /dns/ not /dns4/'           (NEW)
@@ -925,4 +1083,4 @@ test/core/services/p2p_service_impl_test.dart
   └── 'handles addresses:updated with IPv6 addresses'          (NEW)
 ```
 
-**Total**: ~15 lines of production code, ~320 lines of test code (Go + Dart).
+**Total**: ~25 lines of production code, ~350 lines of test code (Go + Dart).

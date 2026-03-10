@@ -235,17 +235,23 @@ func (n *Node) Start(cfg NodeConfig) (*NodeState, error) {
 		}
 	}
 
-	// Build listen addresses
+	// Build listen addresses (dual-stack: IPv4 + IPv6)
 	listenAddrs := []string{
 		"/ip4/0.0.0.0/udp/0/quic-v1",
 		"/ip4/0.0.0.0/tcp/0/ws",
 		"/ip4/0.0.0.0/tcp/0",
+		"/ip6/::/udp/0/quic-v1",
+		"/ip6/::/tcp/0/ws",
+		"/ip6/::/tcp/0",
 	}
 	if cfg.ListenPort > 0 {
 		listenAddrs = []string{
 			fmt.Sprintf("/ip4/0.0.0.0/udp/%d/quic-v1", cfg.ListenPort),
 			fmt.Sprintf("/ip4/0.0.0.0/tcp/%d/ws", cfg.ListenPort),
 			fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", cfg.ListenPort),
+			fmt.Sprintf("/ip6/::/udp/%d/quic-v1", cfg.ListenPort),
+			fmt.Sprintf("/ip6/::/tcp/%d/ws", cfg.ListenPort),
+			fmt.Sprintf("/ip6/::/tcp/%d", cfg.ListenPort),
 		}
 	}
 
@@ -813,14 +819,9 @@ func (n *Node) DialPeerViaRelay(peerIdStr string) error {
 	rs := n.buildRelaySelector(nil)
 
 	return rs.ForEach(func(relay RelayInfo) error {
-		// Use the first address of this relay peer to build the circuit addr.
 		if len(relay.Addrs) == 0 {
 			return fmt.Errorf("relay %s has no addresses", relay.ID)
 		}
-
-		// Build a multiaddr from the relay's transport address.
-		// Pick the first transport address for this relay peer.
-		relayTransportAddr := relay.Addrs[0]
 
 		circuitSuffix, err := ma.NewMultiaddr(
 			fmt.Sprintf("/p2p/%s/p2p-circuit/p2p/%s", relay.ID.String(), peerIdStr),
@@ -828,11 +829,18 @@ func (n *Node) DialPeerViaRelay(peerIdStr string) error {
 		if err != nil {
 			return fmt.Errorf("build circuit suffix: %w", err)
 		}
-		circuitAddr := relayTransportAddr.Encapsulate(circuitSuffix)
+
+		// Build circuit addresses from ALL transport addresses for this relay.
+		// This lets h.Connect try each transport (e.g. IPv4 + IPv6) before
+		// falling over to the next relay peer.
+		var circuitAddrs []ma.Multiaddr
+		for _, transportAddr := range relay.Addrs {
+			circuitAddrs = append(circuitAddrs, transportAddr.Encapsulate(circuitSuffix))
+		}
 
 		ai := peer.AddrInfo{
 			ID:    pid,
-			Addrs: []ma.Multiaddr{circuitAddr},
+			Addrs: circuitAddrs,
 		}
 
 		ctx, cancel := context.WithTimeout(n.ctx, RelayProbeTimeout)

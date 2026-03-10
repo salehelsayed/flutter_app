@@ -8,6 +8,7 @@
 /// This address is included in QR payloads so that scanning devices
 /// know where to connect to reach this user on the P2P network.
 ///
-/// Format: /dns4/{domain}/tcp/{port}/wss/p2p/{peerId}
+/// Format: /dns/{domain}/tcp/{port}/wss/p2p/{peerId}
+/// Uses /dns/ (not /dns4/) to resolve both A and AAAA records for dual-stack.
 const String RENDEZVOUS_ADDRESS =
-    '/dns4/mknoun.xyz/tcp/4001/wss/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g';
+    '/dns/mknoun.xyz/tcp/4001/wss/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g';

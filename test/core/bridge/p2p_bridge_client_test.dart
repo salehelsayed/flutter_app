@@ -53,15 +53,28 @@ void main() {
   // ---------------------------------------------------------------------------
   group('constants', () {
     test('defaultRendezvousAddress is valid multiaddr', () {
-      expect(defaultRendezvousAddress, startsWith('/dns4/'));
+      expect(defaultRendezvousAddress, startsWith('/dns/'));
       expect(defaultRendezvousAddress, contains('/wss/'));
       expect(defaultRendezvousAddress, contains('/p2p/'));
     });
 
     test('defaultQUICRelayAddress is valid multiaddr', () {
-      expect(defaultQUICRelayAddress, startsWith('/dns4/'));
+      expect(defaultQUICRelayAddress, startsWith('/dns/'));
       expect(defaultQUICRelayAddress, contains('/quic-v1/'));
       expect(defaultQUICRelayAddress, contains('/p2p/'));
+    });
+
+    test('default relay addresses use /dns/ not /dns4/', () {
+      expect(defaultRendezvousAddress, isNot(contains('/dns4/')));
+      expect(defaultQUICRelayAddress, isNot(contains('/dns4/')));
+    });
+
+    test('defaultRelayAddresses() returns /dns/ addresses', () {
+      final addrs = defaultRelayAddresses();
+      for (final addr in addrs) {
+        expect(addr, isNot(contains('/dns4/')),
+            reason: 'relay address should use /dns/ for dual-stack: $addr');
+      }
     });
   });
 

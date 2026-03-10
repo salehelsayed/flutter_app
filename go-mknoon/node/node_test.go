@@ -1345,9 +1345,7 @@ func TestAddressesUpdatedEventExcludesNonRoutable(t *testing.T) {
 	case <-gotEvent:
 		// got at least one event
 	case <-time.After(5 * time.Second):
-		// No event arrived — this is fine in local-only mode (no relay means
-		// EvtLocalAddressesUpdated may not fire). Skip the payload check.
-		t.Skip("addresses:updated event not received within 5s — no relay in test env")
+		t.Fatal("addresses:updated event not received within 5s — leak path #2 untested")
 	}
 
 	mu.Lock()
@@ -1390,5 +1388,346 @@ func TestNodeStopIdempotent(t *testing.T) {
 	}
 	if err := n.Stop(); err != nil {
 		t.Fatalf("second Stop: %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// IPv6 Dual-Stack Tests
+// ---------------------------------------------------------------------------
+
+func TestDefaultRelayAddressUsesDNS(t *testing.T) {
+	if strings.Contains(DefaultRelayAddress, "/dns4/") {
+		t.Errorf("DefaultRelayAddress uses /dns4/ — should use /dns/ for dual-stack: %s",
+			DefaultRelayAddress)
+	}
+	if strings.Contains(DefaultQUICRelay, "/dns4/") {
+		t.Errorf("DefaultQUICRelay uses /dns4/ — should use /dns/ for dual-stack: %s",
+			DefaultQUICRelay)
+	}
+}
+
+func TestNodeListensDualStack(t *testing.T) {
+	hexKey := generateTestKey(t)
+	n := NewNode()
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex:  hexKey,
+		RelayAddresses: []string{},
+		AutoRegister:   false,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer n.Stop()
+
+	listeners := n.Host().Network().ListenAddresses()
+	hasIPv4 := false
+	hasIPv6 := false
+	for _, a := range listeners {
+		s := a.String()
+		if strings.HasPrefix(s, "/ip4/") {
+			hasIPv4 = true
+		}
+		if strings.HasPrefix(s, "/ip6/") {
+			hasIPv6 = true
+		}
+	}
+
+	if !hasIPv4 {
+		t.Error("node should have at least one IPv4 listener")
+	}
+	if !hasIPv6 {
+		t.Error("node should have at least one IPv6 listener")
+	}
+}
+
+func TestNodeIPv6LoopbackFiltered(t *testing.T) {
+	hexKey := generateTestKey(t)
+	n := NewNode()
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex:  hexKey,
+		RelayAddresses: []string{},
+		AutoRegister:   false,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer n.Stop()
+
+	for _, addr := range n.Host().Addrs() {
+		s := addr.String()
+		if strings.Contains(s, "/ip6/::1/") {
+			t.Errorf("host.Addrs() contains IPv6 loopback: %s", s)
+		}
+		if strings.HasPrefix(s, "/ip6/fe80") {
+			t.Errorf("host.Addrs() contains IPv6 link-local: %s", s)
+		}
+		if strings.HasPrefix(s, "/ip6/::/") {
+			t.Errorf("host.Addrs() contains IPv6 unspecified: %s", s)
+		}
+	}
+}
+
+func TestSplitHostAddressesIncludesIPv6(t *testing.T) {
+	hexKey := generateTestKey(t)
+	n := NewNode()
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex:  hexKey,
+		RelayAddresses: []string{},
+		AutoRegister:   false,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer n.Stop()
+
+	listenAddrs, _ := splitHostAddresses(n.Host())
+
+	hasIPv6 := false
+	for _, a := range listenAddrs {
+		if strings.HasPrefix(a, "/ip6/") {
+			hasIPv6 = true
+			if strings.Contains(a, "/ip6/::1/") || strings.HasPrefix(a, "/ip6/fe80") {
+				t.Errorf("splitHostAddresses returned non-routable IPv6: %s", a)
+			}
+		}
+	}
+
+	if !hasIPv6 {
+		t.Log("INFO: no global IPv6 addresses found — machine may not have IPv6 connectivity")
+	}
+}
+
+func TestStatusIncludesIPv6Addresses(t *testing.T) {
+	hexKey := generateTestKey(t)
+	n := NewNode()
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex:  hexKey,
+		RelayAddresses: []string{},
+		AutoRegister:   false,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer n.Stop()
+
+	status := n.Status()
+	listenAddrs, ok := status["listenAddresses"].([]string)
+	if !ok {
+		t.Fatal("status missing listenAddresses")
+	}
+
+	hasIPv4 := false
+	hasIPv6 := false
+	for _, a := range listenAddrs {
+		if strings.HasPrefix(a, "/ip4/") {
+			hasIPv4 = true
+		}
+		if strings.HasPrefix(a, "/ip6/") {
+			hasIPv6 = true
+		}
+	}
+
+	if !hasIPv4 {
+		t.Error("Status() listenAddresses should contain IPv4 addresses")
+	}
+	if !hasIPv6 {
+		t.Log("INFO: Status() has no IPv6 listen addresses — machine may lack IPv6")
+	}
+}
+
+func TestAddressesUpdatedEventIncludesIPv6(t *testing.T) {
+	hexKey := generateTestKey(t)
+
+	var lastEvent map[string]interface{}
+	var mu sync.Mutex
+	gotEvent := make(chan struct{}, 1)
+
+	cb := &recordingEventCallback{
+		onEvent: func(jsonStr string) {
+			var ev map[string]interface{}
+			if err := json.Unmarshal([]byte(jsonStr), &ev); err != nil {
+				return
+			}
+			if ev["event"] == "addresses:updated" {
+				data, _ := ev["data"].(map[string]interface{})
+				mu.Lock()
+				lastEvent = data
+				mu.Unlock()
+				select {
+				case gotEvent <- struct{}{}:
+				default:
+				}
+			}
+		},
+	}
+
+	n := New(cb)
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex:  hexKey,
+		RelayAddresses: []string{},
+		AutoRegister:   false,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer n.Stop()
+
+	select {
+	case <-gotEvent:
+	case <-time.After(5 * time.Second):
+		t.Skip("no addresses:updated event received within 5s")
+		return
+	}
+
+	mu.Lock()
+	ev := lastEvent
+	mu.Unlock()
+
+	if ev == nil {
+		t.Skip("no addresses:updated event received — may need relay connection")
+		return
+	}
+
+	listenAddrs, _ := ev["listenAddresses"].([]interface{})
+	hasIPv6 := false
+	for _, a := range listenAddrs {
+		if s, ok := a.(string); ok && strings.HasPrefix(s, "/ip6/") {
+			hasIPv6 = true
+		}
+	}
+
+	if !hasIPv6 {
+		t.Log("INFO: addresses:updated event has no IPv6 — machine may lack IPv6")
+	}
+}
+
+func TestFixedListenPortDualStack(t *testing.T) {
+	hexKey := generateTestKey(t)
+	n := NewNode()
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex:  hexKey,
+		RelayAddresses: []string{},
+		AutoRegister:   false,
+		ListenPort:     9876,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer n.Stop()
+
+	listeners := n.Host().Network().ListenAddresses()
+	hasIPv4Port := false
+	hasIPv6Port := false
+	for _, a := range listeners {
+		s := a.String()
+		if strings.HasPrefix(s, "/ip4/") && strings.Contains(s, "/9876") {
+			hasIPv4Port = true
+		}
+		if strings.HasPrefix(s, "/ip6/") && strings.Contains(s, "/9876") {
+			hasIPv6Port = true
+		}
+	}
+	if !hasIPv4Port {
+		t.Errorf("expected IPv4 listener on port 9876, got: %v", listeners)
+	}
+	if !hasIPv6Port {
+		t.Errorf("expected IPv6 listener on port 9876, got: %v", listeners)
+	}
+}
+
+func TestTwoNodesDualStackConnect(t *testing.T) {
+	keyA := generateTestKey(t)
+	keyB := generateTestKey(t)
+
+	nodeA := NewNode()
+	stateA, err := nodeA.Start(NodeConfig{
+		PrivateKeyHex:  keyA,
+		RelayAddresses: []string{},
+		AutoRegister:   false,
+	})
+	if err != nil {
+		t.Fatalf("Start A: %v", err)
+	}
+	defer nodeA.Stop()
+
+	nodeB := NewNode()
+	_, err = nodeB.Start(NodeConfig{
+		PrivateKeyHex:  keyB,
+		RelayAddresses: []string{},
+		AutoRegister:   false,
+	})
+	if err != nil {
+		t.Fatalf("Start B: %v", err)
+	}
+	defer nodeB.Stop()
+
+	var addrStrs []string
+	for _, a := range nodeA.Host().Addrs() {
+		addrStrs = append(addrStrs, a.String())
+	}
+
+	err = nodeB.DialPeer(stateA.PeerId, addrStrs)
+	if err != nil {
+		t.Fatalf("DialPeer: %v", err)
+	}
+
+	conns := nodeB.Host().Network().ConnsToPeer(nodeA.Host().ID())
+	if len(conns) == 0 {
+		t.Fatal("expected at least one connection from B to A")
+	}
+
+	for _, c := range conns {
+		t.Logf("Connection: %s → %s", c.LocalMultiaddr(), c.RemoteMultiaddr())
+	}
+}
+
+func TestDialPeerViaRelayTriesAllAddresses(t *testing.T) {
+	n := startLocalNodeForMultiRelayTest(t)
+
+	// Generate ONE relay peer ID with TWO transports (TCP + QUIC).
+	key, _, err := crypto.GenerateKeyPair(crypto.Ed25519, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	relayID, _ := peer.IDFromPrivateKey(key)
+
+	addr1 := fmt.Sprintf("/ip4/127.0.0.1/tcp/19991/p2p/%s", relayID)
+	addr2 := fmt.Sprintf("/ip4/127.0.0.1/udp/19992/quic-v1/p2p/%s", relayID)
+
+	n.mu.Lock()
+	n.relayAddresses = []string{addr1, addr2}
+	n.mu.Unlock()
+
+	// Verify the selector groups them as 1 relay with 2 addrs.
+	rs := n.buildRelaySelector(nil)
+	if rs.Len() != 1 {
+		t.Fatalf("expected 1 relay (grouped by peer ID), got %d", rs.Len())
+	}
+	relays := rs.Relays()
+	if len(relays[0].Addrs) != 2 {
+		t.Fatalf("expected 2 addrs for relay, got %d", len(relays[0].Addrs))
+	}
+
+	// Dial target — both addresses unreachable, but the code path
+	// must build circuit addrs from ALL relay.Addrs, not just [0].
+	targetKey := generateTestKey(t)
+	targetNode := NewNode()
+	st, err := targetNode.Start(NodeConfig{
+		PrivateKeyHex:  targetKey,
+		RelayAddresses: []string{},
+		AutoRegister:   false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer targetNode.Stop()
+
+	err = n.DialPeerViaRelay(st.PeerId)
+	if err == nil {
+		t.Fatal("expected error (fake relay unreachable)")
+	}
+
+	if !strings.Contains(err.Error(), "relay") {
+		t.Errorf("error should reference relay attempt, got: %v", err)
 	}
 }

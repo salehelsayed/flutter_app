@@ -76,6 +76,28 @@ void main() {
         expect(restored.isStarted, isFalse);
       });
 
+      test('fromJson handles IPv6 listen addresses', () {
+        final json = <String, dynamic>{
+          'peerId': 'QmTest123',
+          'isStarted': true,
+          'listenAddresses': [
+            '/ip4/192.168.1.100/tcp/5678',
+            '/ip6/2001:db8::1/tcp/5678',
+            '/ip6/2607:f8b0:4004:800::200e/udp/5678/quic-v1',
+          ],
+          'circuitAddresses': [
+            '/ip6/2001:db8::99/tcp/4001/p2p/12D3KooWRelay/p2p-circuit/p2p/QmPeer',
+          ],
+        };
+
+        final state = NodeState.fromJson(json);
+
+        expect(state.listenAddresses, hasLength(3));
+        expect(state.listenAddresses[1], contains('2001:db8::1'));
+        expect(state.circuitAddresses, hasLength(1));
+        expect(state.circuitAddresses[0], contains('p2p-circuit'));
+      });
+
       test('defaults isStarted to false when missing', () {
         final json = <String, dynamic>{
           'peerId': testPeerId,

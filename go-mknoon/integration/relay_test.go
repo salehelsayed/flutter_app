@@ -37,7 +37,10 @@ func requireRelay(t *testing.T) {
 	if err != nil {
 		t.Skipf("cannot parse relay multiaddr %q: %v", addr, err)
 	}
-	host, _ := maddr.ValueForProtocol(ma.P_DNS4)
+	host, _ := maddr.ValueForProtocol(ma.P_DNS)
+	if host == "" {
+		host, _ = maddr.ValueForProtocol(ma.P_DNS4)
+	}
 	if host == "" {
 		host, _ = maddr.ValueForProtocol(ma.P_IP4)
 	}
@@ -1120,4 +1123,66 @@ func TestLongRunningNode_RemainsPersonallyDiscoverablePastSingleTTLWindow(t *tes
 	// important thing is that the registration succeeded and the
 	// node tracks the namespace for future refresh.
 	t.Logf("nodeA is discoverable on namespace %s", ns)
+}
+
+// TestDiscoveredPeerRecordExcludesLoopback verifies the external symptom:
+// when peer B discovers peer A via rendezvous, A's discovered peer record
+// contains no loopback, link-local, or unspecified addresses. Circuit relay
+// addresses through loopback are OK (that's the relay's transport in test env).
+// This closes the loop on leak path #1 from loopback-filtering.md.
+func TestDiscoveredPeerRecordExcludesLoopback(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in -short mode")
+	}
+	requireRelay(t)
+
+	// Start Node A and wait for circuit address.
+	collectorA := &eventCollector{}
+	nodeA, peerIdA := startNodeWithCallback(t, collectorA)
+
+	_, ok := collectorA.waitForEvent("p2p-circuit", 30*time.Second)
+	if !ok {
+		t.Logf("all events: %v", collectorA.snapshot())
+		t.Fatal("Node A did not receive addresses:updated event with circuit addresses")
+	}
+
+	// Register Node A on a unique namespace.
+	ns := randomNamespace()
+	if err := nodeA.RendezvousRegister(ns, nil); err != nil {
+		t.Fatalf("RendezvousRegister: %v", err)
+	}
+
+	// Start Node B and discover A.
+	nodeB, _ := startNode(t)
+	time.Sleep(2 * time.Second)
+
+	peers, err := nodeB.RendezvousDiscover(ns, nil)
+	if err != nil {
+		t.Fatalf("RendezvousDiscover: %v", err)
+	}
+
+	// Positive assertion: discovered record must have at least one address.
+	totalAddrs := 0
+	for _, p := range peers {
+		if p.ID.String() != peerIdA {
+			continue
+		}
+		totalAddrs += len(p.Addrs)
+		for _, addr := range p.Addrs {
+			s := addr.String()
+			// Circuit relay addresses through loopback are OK —
+			// that's the local test relay's transport.
+			if strings.Contains(s, "/p2p-circuit") {
+				continue
+			}
+			if strings.Contains(s, "/ip4/127.0.0.1/") || strings.Contains(s, "/ip6/::1/") ||
+				strings.Contains(s, "/ip6/fe80") || strings.Contains(s, "169.254.") ||
+				strings.HasPrefix(s, "/ip4/0.0.0.0") || strings.HasPrefix(s, "/ip6/::/") {
+				t.Errorf("discovered peer record contains non-routable address: %s", s)
+			}
+		}
+	}
+	if totalAddrs == 0 {
+		t.Fatal("discovered peer record has zero addresses — filter may be too aggressive")
+	}
 }
