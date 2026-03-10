@@ -94,8 +94,11 @@ void main() {
 
       // MUST use 'groupType', NOT 'type'
       expect(payload['groupType'], equals('private'));
-      expect(payload.containsKey('type'), isFalse,
-          reason: 'Payload must use "groupType" not "type"');
+      expect(
+        payload.containsKey('type'),
+        isFalse,
+        reason: 'Payload must use "groupType" not "type"',
+      );
     });
 
     test('includes optional description when provided', () async {
@@ -139,10 +142,16 @@ void main() {
       final sent = jsonDecode(bridge.lastSentMessage!) as Map<String, dynamic>;
       final payload = sent['payload'] as Map<String, dynamic>;
 
-      expect(payload.containsKey('creatorMlKemPublicKey'), isFalse,
-          reason: 'creatorMlKemPublicKey should be omitted when null');
-      expect(payload.containsKey('description'), isFalse,
-          reason: 'description should be omitted when null');
+      expect(
+        payload.containsKey('creatorMlKemPublicKey'),
+        isFalse,
+        reason: 'creatorMlKemPublicKey should be omitted when null',
+      );
+      expect(
+        payload.containsKey('description'),
+        isFalse,
+        reason: 'description should be omitted when null',
+      );
     });
 
     test('returns parsed response on success', () async {
@@ -224,29 +233,31 @@ void main() {
       expect(payload['creatorMlKemPublicKey'], equals('mlkemPub7'));
     });
 
-    test('groupType field carries the correct value for different types',
-        () async {
-      for (final groupType in ['private', 'public', 'broadcast']) {
-        bridge.responses['group:create'] = {
-          'ok': true,
-          'groupId': 'grp-$groupType',
-          'topicName': '/mknoon/group/grp-$groupType',
-        };
+    test(
+      'groupType field carries the correct value for different types',
+      () async {
+        for (final groupType in ['private', 'public', 'broadcast']) {
+          bridge.responses['group:create'] = {
+            'ok': true,
+            'groupId': 'grp-$groupType',
+            'topicName': '/mknoon/group/grp-$groupType',
+          };
 
-        await callGroupCreate(
-          bridge,
-          name: '$groupType Group',
-          type: groupType,
-          creatorPeerId: 'peer',
-          creatorPublicKey: 'pk',
-        );
+          await callGroupCreate(
+            bridge,
+            name: '$groupType Group',
+            type: groupType,
+            creatorPeerId: 'peer',
+            creatorPublicKey: 'pk',
+          );
 
-        final sent =
-            jsonDecode(bridge.lastSentMessage!) as Map<String, dynamic>;
-        final payload = sent['payload'] as Map<String, dynamic>;
-        expect(payload['groupType'], equals(groupType));
-      }
-    });
+          final sent =
+              jsonDecode(bridge.lastSentMessage!) as Map<String, dynamic>;
+          final payload = sent['payload'] as Map<String, dynamic>;
+          expect(payload['groupType'], equals(groupType));
+        }
+      },
+    );
   });
 
   // ---------------------------------------------------------------------------
@@ -285,37 +296,40 @@ void main() {
   // callGroupPublish
   // ---------------------------------------------------------------------------
   group('callGroupPublish', () {
-    test('sends group:publish with correct payload and returns messageId',
-        () async {
-      bridge.responses['group:publish'] = {
-        'ok': true,
-        'messageId': 'msg-pub-001',
-      };
+    test(
+      'sends group:publish with correct payload and returns messageId',
+      () async {
+        bridge.responses['group:publish'] = {
+          'ok': true,
+          'messageId': 'msg-pub-001',
+        };
 
-      final result = await callGroupPublish(
-        bridge,
-        groupId: 'grp-abc123',
-        text: 'Hello group!',
-        senderPeerId: 'peer-123',
-        senderPublicKey: 'pk-123',
-        senderPrivateKey: 'sk-123',
-        senderUsername: 'alice',
-      );
+        final result = await callGroupPublish(
+          bridge,
+          groupId: 'grp-abc123',
+          text: 'Hello group!',
+          senderPeerId: 'peer-123',
+          senderPublicKey: 'pk-123',
+          senderPrivateKey: 'sk-123',
+          senderUsername: 'alice',
+        );
 
-      expect(result['ok'], isTrue);
-      expect(result['messageId'], equals('msg-pub-001'));
+        expect(result['ok'], isTrue);
+        expect(result['messageId'], equals('msg-pub-001'));
 
-      final sent = jsonDecode(bridge.lastSentMessage!) as Map<String, dynamic>;
-      expect(sent['cmd'], equals('group:publish'));
+        final sent =
+            jsonDecode(bridge.lastSentMessage!) as Map<String, dynamic>;
+        expect(sent['cmd'], equals('group:publish'));
 
-      final sentPayload = sent['payload'] as Map<String, dynamic>;
-      expect(sentPayload['groupId'], equals('grp-abc123'));
-      expect(sentPayload['text'], equals('Hello group!'));
-      expect(sentPayload['senderPeerId'], equals('peer-123'));
-      expect(sentPayload['senderPublicKey'], equals('pk-123'));
-      expect(sentPayload['senderPrivateKey'], equals('sk-123'));
-      expect(sentPayload['senderUsername'], equals('alice'));
-    });
+        final sentPayload = sent['payload'] as Map<String, dynamic>;
+        expect(sentPayload['groupId'], equals('grp-abc123'));
+        expect(sentPayload['text'], equals('Hello group!'));
+        expect(sentPayload['senderPeerId'], equals('peer-123'));
+        expect(sentPayload['senderPublicKey'], equals('pk-123'));
+        expect(sentPayload['senderPrivateKey'], equals('sk-123'));
+        expect(sentPayload['senderUsername'], equals('alice'));
+      },
+    );
 
     test('returns error map on bridge error', () async {
       bridge.responses['group:publish'] = {
@@ -565,37 +579,38 @@ void main() {
   // ---------------------------------------------------------------------------
   group('callGroupJoinWithConfig', () {
     test(
-        'sends group:join with groupId, groupConfig, groupKey, keyEpoch',
-        () async {
-      final config = {
-        'name': 'Book Club',
-        'groupType': 'chat',
-        'members': [
-          {'peerId': '12D3KooWAlice', 'role': 'admin'},
-        ],
-      };
+      'sends group:join with groupId, groupConfig, groupKey, keyEpoch',
+      () async {
+        final config = {
+          'name': 'Book Club',
+          'groupType': 'chat',
+          'members': [
+            {'peerId': '12D3KooWAlice', 'role': 'admin'},
+          ],
+        };
 
-      await callGroupJoinWithConfig(
-        bridge,
-        groupId: 'grp-join-cfg-001',
-        groupConfig: config,
-        groupKey: 'base64GroupKey==',
-        keyEpoch: 1,
-      );
+        await callGroupJoinWithConfig(
+          bridge,
+          groupId: 'grp-join-cfg-001',
+          groupConfig: config,
+          groupKey: 'base64GroupKey==',
+          keyEpoch: 1,
+        );
 
-      expect(bridge.lastCommand, equals('group:join'));
+        expect(bridge.lastCommand, equals('group:join'));
 
-      final sent = jsonDecode(bridge.lastSentMessage!) as Map<String, dynamic>;
-      expect(sent['cmd'], equals('group:join'));
+        final sent =
+            jsonDecode(bridge.lastSentMessage!) as Map<String, dynamic>;
+        expect(sent['cmd'], equals('group:join'));
 
-      final payload = sent['payload'] as Map<String, dynamic>;
-      expect(payload['groupId'], equals('grp-join-cfg-001'));
-      expect(payload['groupConfig'], isA<Map<String, dynamic>>());
-      expect(
-          (payload['groupConfig'] as Map)['name'], equals('Book Club'));
-      expect(payload['groupKey'], equals('base64GroupKey=='));
-      expect(payload['keyEpoch'], equals(1));
-    });
+        final payload = sent['payload'] as Map<String, dynamic>;
+        expect(payload['groupId'], equals('grp-join-cfg-001'));
+        expect(payload['groupConfig'], isA<Map<String, dynamic>>());
+        expect((payload['groupConfig'] as Map)['name'], equals('Book Club'));
+        expect(payload['groupKey'], equals('base64GroupKey=='));
+        expect(payload['keyEpoch'], equals(1));
+      },
+    );
 
     test('completes without error on success', () async {
       await expectLater(
@@ -628,6 +643,34 @@ void main() {
   });
 
   // ---------------------------------------------------------------------------
+  // callGroupAcknowledgeRecovery
+  // ---------------------------------------------------------------------------
+  group('callGroupAcknowledgeRecovery', () {
+    test('sends group:acknowledgeRecovery', () async {
+      await callGroupAcknowledgeRecovery(bridge);
+
+      final sent = jsonDecode(bridge.lastSentMessage!) as Map<String, dynamic>;
+      expect(sent['cmd'], equals('group:acknowledgeRecovery'));
+    });
+
+    test('completes without error on success', () async {
+      await expectLater(callGroupAcknowledgeRecovery(bridge), completes);
+    });
+
+    test('rethrows TimeoutException on timeout', () async {
+      final slowBridge = _SlowBridge();
+
+      expect(
+        () => callGroupAcknowledgeRecovery(
+          slowBridge,
+          timeout: const Duration(milliseconds: 1),
+        ),
+        throwsA(isA<TimeoutException>()),
+      );
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // callGroupLeave
   // ---------------------------------------------------------------------------
   group('callGroupLeave', () {
@@ -642,10 +685,7 @@ void main() {
     });
 
     test('completes without error on success', () async {
-      await expectLater(
-        callGroupLeave(bridge, 'grp-leave-ok'),
-        completes,
-      );
+      await expectLater(callGroupLeave(bridge, 'grp-leave-ok'), completes);
     });
 
     test('rethrows TimeoutException on timeout', () async {
@@ -666,35 +706,38 @@ void main() {
   // callGroupUpdateConfig
   // ---------------------------------------------------------------------------
   group('callGroupUpdateConfig', () {
-    test('sends group:updateConfig with groupId and full groupConfig',
-        () async {
-      final config = {
-        'name': 'New Name',
-        'groupType': 'chat',
-        'members': [
-          {'peerId': 'peer-1', 'role': 'admin', 'publicKey': 'pk-1'},
-          {'peerId': 'peer-2', 'role': 'writer', 'publicKey': 'pk-2'},
-        ],
-        'createdBy': 'peer-1',
-        'createdAt': '2026-01-01T00:00:00Z',
-      };
+    test(
+      'sends group:updateConfig with groupId and full groupConfig',
+      () async {
+        final config = {
+          'name': 'New Name',
+          'groupType': 'chat',
+          'members': [
+            {'peerId': 'peer-1', 'role': 'admin', 'publicKey': 'pk-1'},
+            {'peerId': 'peer-2', 'role': 'writer', 'publicKey': 'pk-2'},
+          ],
+          'createdBy': 'peer-1',
+          'createdAt': '2026-01-01T00:00:00Z',
+        };
 
-      await callGroupUpdateConfig(
-        bridge,
-        groupId: 'grp-cfg-001',
-        groupConfig: config,
-      );
+        await callGroupUpdateConfig(
+          bridge,
+          groupId: 'grp-cfg-001',
+          groupConfig: config,
+        );
 
-      final sent = jsonDecode(bridge.lastSentMessage!) as Map<String, dynamic>;
-      expect(sent['cmd'], equals('group:updateConfig'));
+        final sent =
+            jsonDecode(bridge.lastSentMessage!) as Map<String, dynamic>;
+        expect(sent['cmd'], equals('group:updateConfig'));
 
-      final payload = sent['payload'] as Map<String, dynamic>;
-      expect(payload['groupId'], equals('grp-cfg-001'));
-      expect(payload['groupConfig'], isNotNull);
-      final sentConfig = payload['groupConfig'] as Map<String, dynamic>;
-      expect(sentConfig['name'], equals('New Name'));
-      expect((sentConfig['members'] as List).length, equals(2));
-    });
+        final payload = sent['payload'] as Map<String, dynamic>;
+        expect(payload['groupId'], equals('grp-cfg-001'));
+        expect(payload['groupConfig'], isNotNull);
+        final sentConfig = payload['groupConfig'] as Map<String, dynamic>;
+        expect(sentConfig['name'], equals('New Name'));
+        expect((sentConfig['members'] as List).length, equals(2));
+      },
+    );
 
     test('rethrows TimeoutException on timeout', () async {
       final slowBridge = _SlowBridge();
@@ -790,8 +833,11 @@ void main() {
         ],
       };
 
-      final messages =
-          await callGroupInboxRetrieve(bridge, 'grp-inbox-002', 1700000000);
+      final messages = await callGroupInboxRetrieve(
+        bridge,
+        'grp-inbox-002',
+        1700000000,
+      );
 
       expect(messages, hasLength(2));
       expect(messages[0]['id'], equals('msg1'));
@@ -806,24 +852,17 @@ void main() {
     });
 
     test('returns empty list when no messages', () async {
-      bridge.responses['group:inboxRetrieve'] = {
-        'ok': true,
-        'messages': [],
-      };
+      bridge.responses['group:inboxRetrieve'] = {'ok': true, 'messages': []};
 
-      final messages =
-          await callGroupInboxRetrieve(bridge, 'grp-empty', 0);
+      final messages = await callGroupInboxRetrieve(bridge, 'grp-empty', 0);
 
       expect(messages, isEmpty);
     });
 
     test('returns empty list when messages field is null', () async {
-      bridge.responses['group:inboxRetrieve'] = {
-        'ok': true,
-      };
+      bridge.responses['group:inboxRetrieve'] = {'ok': true};
 
-      final messages =
-          await callGroupInboxRetrieve(bridge, 'grp-null', 0);
+      final messages = await callGroupInboxRetrieve(bridge, 'grp-null', 0);
 
       expect(messages, isEmpty);
     });
@@ -843,75 +882,130 @@ void main() {
   });
 
   // ---------------------------------------------------------------------------
+  // callGroupInboxRetrieveWithCursor
+  // ---------------------------------------------------------------------------
+  group('callGroupInboxRetrieveWithCursor', () {
+    test('encodes cursor and page metadata and returns next cursor', () async {
+      bridge.responses['group:inboxRetrieveCursor'] = {
+        'ok': true,
+        'messages': [
+          {'messageId': 'msg-cursor-1', 'text': 'Hello cursor'},
+        ],
+        'cursor': 'opaque-next-cursor',
+      };
+
+      final page = await callGroupInboxRetrieveWithCursor(
+        bridge,
+        'grp-inbox-cursor',
+        'opaque-prev-cursor',
+        25,
+      );
+
+      expect(page.messages, hasLength(1));
+      expect(page.messages.single['messageId'], equals('msg-cursor-1'));
+      expect(page.cursor, equals('opaque-next-cursor'));
+
+      final sent = jsonDecode(bridge.lastSentMessage!) as Map<String, dynamic>;
+      expect(sent['cmd'], equals('group:inboxRetrieveCursor'));
+
+      final payload = sent['payload'] as Map<String, dynamic>;
+      expect(payload['groupId'], equals('grp-inbox-cursor'));
+      expect(payload['cursor'], equals('opaque-prev-cursor'));
+      expect(payload['limit'], equals(25));
+    });
+
+    test('returns empty page on timeout', () async {
+      final slowBridge = _SlowBridge();
+
+      final page = await callGroupInboxRetrieveWithCursor(
+        slowBridge,
+        'grp-slow-cursor',
+        '',
+        10,
+        timeout: const Duration(milliseconds: 1),
+      );
+
+      expect(page.messages, isEmpty);
+      expect(page.cursor, isEmpty);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // Bridge error propagation (Finding 5)
   // ---------------------------------------------------------------------------
   group('BridgeCommandException on ok:false', () {
-    test('throws BridgeCommandException when group:join returns ok:false',
-        () async {
-      bridge.responses['group:join'] = {
-        'ok': false,
-        'errorCode': 'TOPIC_ERROR',
-        'errorMessage': 'failed',
-      };
+    test(
+      'throws BridgeCommandException when group:join returns ok:false',
+      () async {
+        bridge.responses['group:join'] = {
+          'ok': false,
+          'errorCode': 'TOPIC_ERROR',
+          'errorMessage': 'failed',
+        };
 
-      expect(
-        () => callGroupJoin(bridge, groupId: 'grp-1', topicName: '/t/grp-1'),
-        throwsA(isA<BridgeCommandException>()),
-      );
-    });
+        expect(
+          () => callGroupJoin(bridge, groupId: 'grp-1', topicName: '/t/grp-1'),
+          throwsA(isA<BridgeCommandException>()),
+        );
+      },
+    );
 
     test(
-        'throws BridgeCommandException when group:join (with config) returns ok:false',
-        () async {
-      bridge.responses['group:join'] = {
-        'ok': false,
-        'errorCode': 'CONFIG_ERROR',
-        'errorMessage': 'bad config',
-      };
+      'throws BridgeCommandException when group:join (with config) returns ok:false',
+      () async {
+        bridge.responses['group:join'] = {
+          'ok': false,
+          'errorCode': 'CONFIG_ERROR',
+          'errorMessage': 'bad config',
+        };
 
-      expect(
-        () => callGroupJoinWithConfig(
-          bridge,
-          groupId: 'grp-1',
-          groupConfig: {'name': 'Test'},
-          groupKey: 'key',
-          keyEpoch: 1,
-        ),
-        throwsA(isA<BridgeCommandException>()),
-      );
-    });
-
-    test('throws BridgeCommandException when group:leave returns ok:false',
-        () async {
-      bridge.responses['group:leave'] = {
-        'ok': false,
-        'errorCode': 'NOT_SUBSCRIBED',
-        'errorMessage': 'not in group',
-      };
-
-      expect(
-        () => callGroupLeave(bridge, 'grp-1'),
-        throwsA(isA<BridgeCommandException>()),
-      );
-    });
+        expect(
+          () => callGroupJoinWithConfig(
+            bridge,
+            groupId: 'grp-1',
+            groupConfig: {'name': 'Test'},
+            groupKey: 'key',
+            keyEpoch: 1,
+          ),
+          throwsA(isA<BridgeCommandException>()),
+        );
+      },
+    );
 
     test(
-        'throws BridgeCommandException when group:updateConfig returns ok:false',
-        () async {
-      bridge.responses['group:updateConfig'] = {
-        'ok': false,
-        'errorCode': 'PERMISSION_DENIED',
-        'errorMessage': 'not admin',
-      };
+      'throws BridgeCommandException when group:leave returns ok:false',
+      () async {
+        bridge.responses['group:leave'] = {
+          'ok': false,
+          'errorCode': 'NOT_SUBSCRIBED',
+          'errorMessage': 'not in group',
+        };
 
-      expect(
-        () => callGroupUpdateConfig(
-          bridge,
-          groupId: 'grp-1',
-          groupConfig: {'name': 'x', 'groupType': 'chat', 'members': []},
-        ),
-        throwsA(isA<BridgeCommandException>()),
-      );
-    });
+        expect(
+          () => callGroupLeave(bridge, 'grp-1'),
+          throwsA(isA<BridgeCommandException>()),
+        );
+      },
+    );
+
+    test(
+      'throws BridgeCommandException when group:updateConfig returns ok:false',
+      () async {
+        bridge.responses['group:updateConfig'] = {
+          'ok': false,
+          'errorCode': 'PERMISSION_DENIED',
+          'errorMessage': 'not admin',
+        };
+
+        expect(
+          () => callGroupUpdateConfig(
+            bridge,
+            groupId: 'grp-1',
+            groupConfig: {'name': 'x', 'groupType': 'chat', 'members': []},
+          ),
+          throwsA(isA<BridgeCommandException>()),
+        );
+      },
+    );
   });
 }

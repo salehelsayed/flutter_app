@@ -60,6 +60,8 @@ class _ReconnectGateBridge implements Bridge {
   @override
   void Function(List<String>, List<String>)? onAddressesUpdated;
   @override
+  void Function(Map<String, dynamic>)? onRelayStateChanged;
+  @override
   void Function(Map<String, dynamic>)? onGroupMessageReceived;
   @override
   void Function(Map<String, dynamic>)? onGroupReactionReceived;
@@ -132,43 +134,43 @@ class _ReconnectGateBridge implements Bridge {
 /// node:start response that is "started" but with EMPTY circuit addresses.
 /// This puts the node in a degraded state so the health check enters recovery.
 Map<String, dynamic> _nodeStartDegraded() => {
-      'ok': true,
-      'peerId': _testPeerId,
-      'isStarted': true,
-      'listenAddresses': ['/ip4/127.0.0.1/tcp/1234'],
-      'circuitAddresses': <String>[], // empty = degraded
-      'connections': <Map<String, dynamic>>[],
-    };
+  'ok': true,
+  'peerId': _testPeerId,
+  'isStarted': true,
+  'listenAddresses': ['/ip4/127.0.0.1/tcp/1234'],
+  'circuitAddresses': <String>[], // empty = degraded
+  'connections': <Map<String, dynamic>>[],
+};
 
 /// node:start with full circuit addresses (healthy).
 Map<String, dynamic> _nodeStartOk() => {
-      'ok': true,
-      'peerId': _testPeerId,
-      'isStarted': true,
-      'listenAddresses': ['/ip4/127.0.0.1/tcp/1234'],
-      'circuitAddresses': ['/p2p-circuit/test'],
-      'connections': <Map<String, dynamic>>[],
-    };
+  'ok': true,
+  'peerId': _testPeerId,
+  'isStarted': true,
+  'listenAddresses': ['/ip4/127.0.0.1/tcp/1234'],
+  'circuitAddresses': ['/p2p-circuit/test'],
+  'connections': <Map<String, dynamic>>[],
+};
 
 /// node:status that returns started but empty circuits (degraded).
 Map<String, dynamic> _nodeStatusDegraded() => {
-      'ok': true,
-      'peerId': _testPeerId,
-      'isStarted': true,
-      'listenAddresses': ['/ip4/127.0.0.1/tcp/1234'],
-      'circuitAddresses': <String>[],
-      'connections': <Map<String, dynamic>>[],
-    };
+  'ok': true,
+  'peerId': _testPeerId,
+  'isStarted': true,
+  'listenAddresses': ['/ip4/127.0.0.1/tcp/1234'],
+  'circuitAddresses': <String>[],
+  'connections': <Map<String, dynamic>>[],
+};
 
 /// node:status that returns healthy with circuit addresses.
 Map<String, dynamic> _nodeStatusOk() => {
-      'ok': true,
-      'peerId': _testPeerId,
-      'isStarted': true,
-      'listenAddresses': ['/ip4/127.0.0.1/tcp/1234'],
-      'circuitAddresses': ['/p2p-circuit/test'],
-      'connections': <Map<String, dynamic>>[],
-    };
+  'ok': true,
+  'peerId': _testPeerId,
+  'isStarted': true,
+  'listenAddresses': ['/ip4/127.0.0.1/tcp/1234'],
+  'circuitAddresses': ['/p2p-circuit/test'],
+  'connections': <Map<String, dynamic>>[],
+};
 
 // ---------------------------------------------------------------------------
 // Helper: wait for a command to appear in the log
@@ -212,97 +214,100 @@ void main() {
   // =========================================================================
 
   group('Stop during in-flight reconnect', () {
-    test('stopNode during relay:reconnect does not resurrect started state',
-        () async {
-      // Setup: a bridge where relay:reconnect is gated by a Completer.
-      final bridge = _ReconnectGateBridge();
-      bridge.relayReconnectGate = Completer<void>();
+    test(
+      'stopNode during relay:reconnect does not resurrect started state',
+      () async {
+        // Setup: a bridge where relay:reconnect is gated by a Completer.
+        final bridge = _ReconnectGateBridge();
+        bridge.relayReconnectGate = Completer<void>();
 
-      // node:start returns degraded so _hasEverBeenOnline won't be set yet.
-      // We need to first get the node online, THEN degrade it.
-      bridge.responses['node:start'] = _nodeStartOk();
-      // First node:status call returns degraded to trigger recovery.
-      bridge.responses['node:status'] = _nodeStatusDegraded();
-      bridge.responses['node:stop'] = {'ok': true, 'stopped': true};
-      bridge.responses['relay:reconnect'] = {'ok': true};
-      bridge.responses['inbox:retrieve'] = {'ok': true, 'messages': []};
+        // node:start returns degraded so _hasEverBeenOnline won't be set yet.
+        // We need to first get the node online, THEN degrade it.
+        bridge.responses['node:start'] = _nodeStartOk();
+        // First node:status call returns degraded to trigger recovery.
+        bridge.responses['node:status'] = _nodeStatusDegraded();
+        bridge.responses['node:stop'] = {'ok': true, 'stopped': true};
+        bridge.responses['relay:reconnect'] = {'ok': true};
+        bridge.responses['inbox:retrieve'] = {'ok': true, 'messages': []};
 
-      final service = P2PServiceImpl(bridge: bridge);
+        final service = P2PServiceImpl(bridge: bridge);
 
-      // Start the node in healthy state first (sets _hasEverBeenOnline = true).
-      await service.startNodeCore(_testBase64Key, _testPeerId);
-      expect(service.currentState.isStarted, isTrue);
-      expect(service.currentState.circuitAddresses, isNotEmpty);
+        // Start the node in healthy state first (sets _hasEverBeenOnline = true).
+        await service.startNodeCore(_testBase64Key, _testPeerId);
+        expect(service.currentState.isStarted, isTrue);
+        expect(service.currentState.circuitAddresses, isNotEmpty);
 
-      // Now fire a health check. It will see degraded node:status (empty
-      // circuits + _hasEverBeenOnline) and call relay:reconnect, which blocks.
-      // Do NOT await — we want it in-flight.
-      final healthCheckFuture = service.performImmediateHealthCheck();
+        // Now fire a health check. It will see degraded node:status (empty
+        // circuits + _hasEverBeenOnline) and call relay:reconnect, which blocks.
+        // Do NOT await — we want it in-flight.
+        final healthCheckFuture = service.performImmediateHealthCheck();
 
-      // Wait until relay:reconnect has been called (the gate is holding it).
-      await _waitForCommand(bridge.commandLog, 'relay:reconnect');
-      expect(bridge.commandLog, contains('relay:reconnect'));
+        // Wait until relay:reconnect has been called (the gate is holding it).
+        await _waitForCommand(bridge.commandLog, 'relay:reconnect');
+        expect(bridge.commandLog, contains('relay:reconnect'));
 
-      // Now call stopNode while relay:reconnect is still blocked.
-      final stopResult = await service.stopNode();
-      expect(stopResult, isTrue);
-      expect(service.currentState.isStarted, isFalse);
+        // Now call stopNode while relay:reconnect is still blocked.
+        final stopResult = await service.stopNode();
+        expect(stopResult, isTrue);
+        expect(service.currentState.isStarted, isFalse);
 
-      // Release the relay:reconnect gate so the health check can complete.
-      bridge.relayReconnectGate!.complete();
-      await healthCheckFuture;
+        // Release the relay:reconnect gate so the health check can complete.
+        bridge.relayReconnectGate!.complete();
+        await healthCheckFuture;
 
-      // The _stopped guard prevents the health check from resurrecting state.
-      expect(service.currentState.isStarted, isFalse);
+        // The _stopped guard prevents the health check from resurrecting state.
+        expect(service.currentState.isStarted, isFalse);
 
-      service.dispose();
-    });
+        service.dispose();
+      },
+    );
 
     test(
-        'stopNode during post-reconnect node:status does not resurrect state',
-        () async {
-      final bridge = _ReconnectGateBridge();
+      'stopNode during post-reconnect node:status does not resurrect state',
+      () async {
+        final bridge = _ReconnectGateBridge();
 
-      // Gate the 2nd node:status call (the post-reconnect re-poll).
-      // The 1st node:status is the initial poll inside _performHealthCheck.
-      bridge.gateNodeStatusOnCallNumber = 2;
-      bridge.nodeStatusGate = Completer<void>();
+        // Gate the 2nd node:status call (the post-reconnect re-poll).
+        // The 1st node:status is the initial poll inside _performHealthCheck.
+        bridge.gateNodeStatusOnCallNumber = 2;
+        bridge.nodeStatusGate = Completer<void>();
 
-      bridge.responses['node:start'] = _nodeStartOk();
-      bridge.responses['node:status'] = _nodeStatusDegraded();
-      bridge.responses['node:stop'] = {'ok': true, 'stopped': true};
-      bridge.responses['relay:reconnect'] = {'ok': true};
-      bridge.responses['inbox:retrieve'] = {'ok': true, 'messages': []};
+        bridge.responses['node:start'] = _nodeStartOk();
+        bridge.responses['node:status'] = _nodeStatusDegraded();
+        bridge.responses['node:stop'] = {'ok': true, 'stopped': true};
+        bridge.responses['relay:reconnect'] = {'ok': true};
+        bridge.responses['inbox:retrieve'] = {'ok': true, 'messages': []};
 
-      final service = P2PServiceImpl(bridge: bridge);
+        final service = P2PServiceImpl(bridge: bridge);
 
-      // Start healthy (sets _hasEverBeenOnline).
-      await service.startNodeCore(_testBase64Key, _testPeerId);
-      expect(service.currentState.isStarted, isTrue);
+        // Start healthy (sets _hasEverBeenOnline).
+        await service.startNodeCore(_testBase64Key, _testPeerId);
+        expect(service.currentState.isStarted, isTrue);
 
-      // Fire health check (don't await). It will:
-      //   1. call node:status (#1) -> degraded -> enters recovery
-      //   2. call relay:reconnect -> ok
-      //   3. call node:status (#2) -> GATED
-      final healthCheckFuture = service.performImmediateHealthCheck();
+        // Fire health check (don't await). It will:
+        //   1. call node:status (#1) -> degraded -> enters recovery
+        //   2. call relay:reconnect -> ok
+        //   3. call node:status (#2) -> GATED
+        final healthCheckFuture = service.performImmediateHealthCheck();
 
-      // Wait for the 2nd node:status call to appear (gated).
-      await _waitForCommandCount(bridge.commandLog, 'node:status', 2);
+        // Wait for the 2nd node:status call to appear (gated).
+        await _waitForCommandCount(bridge.commandLog, 'node:status', 2);
 
-      // Stop the node while the 2nd node:status is blocked.
-      final stopResult = await service.stopNode();
-      expect(stopResult, isTrue);
-      expect(service.currentState.isStarted, isFalse);
+        // Stop the node while the 2nd node:status is blocked.
+        final stopResult = await service.stopNode();
+        expect(stopResult, isTrue);
+        expect(service.currentState.isStarted, isFalse);
 
-      // Release the gate.
-      bridge.nodeStatusGate!.complete();
-      await healthCheckFuture;
+        // Release the gate.
+        bridge.nodeStatusGate!.complete();
+        await healthCheckFuture;
 
-      // The _stopped guard prevents the health check from resurrecting state.
-      expect(service.currentState.isStarted, isFalse);
+        // The _stopped guard prevents the health check from resurrecting state.
+        expect(service.currentState.isStarted, isFalse);
 
-      service.dispose();
-    });
+        service.dispose();
+      },
+    );
   });
 
   // =========================================================================
@@ -311,38 +316,39 @@ void main() {
 
   group('Dispose during in-flight reconnect', () {
     test(
-        'dispose during relay:reconnect does not throw on closed stream controller',
-        () async {
-      final bridge = _ReconnectGateBridge();
-      bridge.relayReconnectGate = Completer<void>();
+      'dispose during relay:reconnect does not throw on closed stream controller',
+      () async {
+        final bridge = _ReconnectGateBridge();
+        bridge.relayReconnectGate = Completer<void>();
 
-      bridge.responses['node:start'] = _nodeStartOk();
-      bridge.responses['node:status'] = _nodeStatusDegraded();
-      bridge.responses['relay:reconnect'] = {'ok': true};
-      bridge.responses['inbox:retrieve'] = {'ok': true, 'messages': []};
+        bridge.responses['node:start'] = _nodeStartOk();
+        bridge.responses['node:status'] = _nodeStatusDegraded();
+        bridge.responses['relay:reconnect'] = {'ok': true};
+        bridge.responses['inbox:retrieve'] = {'ok': true, 'messages': []};
 
-      final service = P2PServiceImpl(bridge: bridge);
+        final service = P2PServiceImpl(bridge: bridge);
 
-      // Start healthy.
-      await service.startNodeCore(_testBase64Key, _testPeerId);
+        // Start healthy.
+        await service.startNodeCore(_testBase64Key, _testPeerId);
 
-      // Fire health check (enters recovery, blocks on relay:reconnect).
-      final healthCheckFuture = service.performImmediateHealthCheck();
-      await _waitForCommand(bridge.commandLog, 'relay:reconnect');
+        // Fire health check (enters recovery, blocks on relay:reconnect).
+        final healthCheckFuture = service.performImmediateHealthCheck();
+        await _waitForCommand(bridge.commandLog, 'relay:reconnect');
 
-      // Dispose the service while relay:reconnect is in-flight.
-      // This closes _stateController and _messageController.
-      service.dispose();
+        // Dispose the service while relay:reconnect is in-flight.
+        // This closes _stateController and _messageController.
+        service.dispose();
 
-      // Release the gate. No exception should be thrown because
-      // _emitState guards against closed controllers and _stopped
-      // causes the health check to bail out.
-      bridge.relayReconnectGate!.complete();
-      await healthCheckFuture;
+        // Release the gate. No exception should be thrown because
+        // _emitState guards against closed controllers and _stopped
+        // causes the health check to bail out.
+        bridge.relayReconnectGate!.complete();
+        await healthCheckFuture;
 
-      // State remains not-started after dispose.
-      expect(service.currentState.isStarted, isFalse);
-    });
+        // State remains not-started after dispose.
+        expect(service.currentState.isStarted, isFalse);
+      },
+    );
 
     test('double dispose is safe (idempotent)', () {
       final bridge = _ReconnectGateBridge();
@@ -439,37 +445,39 @@ void main() {
   // =========================================================================
 
   group('stopNode failure reverts _stopped guard', () {
-    test('stopNode failure reverts _stopped guard so health check can run',
-        () async {
-      final bridge = _ReconnectGateBridge();
-      bridge.responses['node:start'] = _nodeStartOk();
-      // node:stop returns failure
-      bridge.responses['node:stop'] = {
-        'ok': false,
-        'errorMessage': 'stop failed',
-      };
-      bridge.responses['node:status'] = _nodeStatusOk();
-      bridge.responses['inbox:retrieve'] = {'ok': true, 'messages': []};
+    test(
+      'stopNode failure reverts _stopped guard so health check can run',
+      () async {
+        final bridge = _ReconnectGateBridge();
+        bridge.responses['node:start'] = _nodeStartOk();
+        // node:stop returns failure
+        bridge.responses['node:stop'] = {
+          'ok': false,
+          'errorMessage': 'stop failed',
+        };
+        bridge.responses['node:status'] = _nodeStatusOk();
+        bridge.responses['inbox:retrieve'] = {'ok': true, 'messages': []};
 
-      final service = P2PServiceImpl(bridge: bridge);
+        final service = P2PServiceImpl(bridge: bridge);
 
-      // Start the node.
-      await service.startNodeCore(_testBase64Key, _testPeerId);
-      expect(service.currentState.isStarted, isTrue);
+        // Start the node.
+        await service.startNodeCore(_testBase64Key, _testPeerId);
+        expect(service.currentState.isStarted, isTrue);
 
-      // Attempt to stop — it will fail.
-      final stopResult = await service.stopNode();
-      expect(stopResult, isFalse);
+        // Attempt to stop — it will fail.
+        final stopResult = await service.stopNode();
+        expect(stopResult, isFalse);
 
-      // The service should still be functional — health check can run.
-      // (The _stopped flag was reverted to false on failure.)
-      await service.performImmediateHealthCheck();
+        // The service should still be functional — health check can run.
+        // (The _stopped flag was reverted to false on failure.)
+        await service.performImmediateHealthCheck();
 
-      // The node is still started because stop failed.
-      expect(service.currentState.isStarted, isTrue);
+        // The node is still started because stop failed.
+        expect(service.currentState.isStarted, isTrue);
 
-      service.dispose();
-    });
+        service.dispose();
+      },
+    );
   });
 
   // =========================================================================
@@ -513,7 +521,8 @@ void main() {
         expect(
           bridge.nodeStatusCallCount,
           statusCountAfterStop,
-          reason: 'No health check should fire after stopNode cancelled the timer',
+          reason:
+              'No health check should fire after stopNode cancelled the timer',
         );
 
         service.dispose();
@@ -607,9 +616,11 @@ void main() {
 
       // Node should remain stopped — in-place recovery must not
       // resurrect it after stopNode.
-      expect(service.currentState.isStarted, isFalse,
-          reason:
-              'In-place recovery must not resurrect node after stopNode');
+      expect(
+        service.currentState.isStarted,
+        isFalse,
+        reason: 'In-place recovery must not resurrect node after stopNode',
+      );
 
       service.dispose();
     });
@@ -642,8 +653,11 @@ void main() {
       await healthCheckFuture;
 
       // State remains not-started after dispose.
-      expect(service.currentState.isStarted, isFalse,
-          reason: 'Dispose during relay-state push recovery should be safe');
+      expect(
+        service.currentState.isStarted,
+        isFalse,
+        reason: 'Dispose during relay-state push recovery should be safe',
+      );
     });
   });
 }

@@ -17,10 +17,10 @@ import (
 )
 
 const (
-	InboxProtocol       = "/mknoon/inbox/1.0.0"
-	maxFrameLen         = 128 * 1024     // 128 KB
-	maxMessagesPerPeer  = 100
-	maxMessageAge       = 7 * 24 * time.Hour
+	InboxProtocol      = "/mknoon/inbox/1.0.0"
+	maxFrameLen        = 128 * 1024 // 128 KB
+	maxMessagesPerPeer = 100
+	maxMessageAge      = 7 * 24 * time.Hour
 
 	// Group inbox constants.
 	maxMessagesPerGroup = 500
@@ -41,8 +41,16 @@ type tokenEntry struct {
 }
 
 func NewPushService(ctx context.Context, serviceAccountPath string) *PushService {
+	return newPushServiceWithTokenBackend(ctx, serviceAccountPath, newMemoryPushTokenStore())
+}
+
+func newPushServiceWithTokenBackend(
+	ctx context.Context,
+	serviceAccountPath string,
+	tokenBackend PushTokenBackend,
+) *PushService {
 	ps := &PushService{
-		tokenBackend: newMemoryPushTokenStore(),
+		tokenBackend: tokenBackend,
 	}
 
 	opt := option.WithCredentialsFile(serviceAccountPath)

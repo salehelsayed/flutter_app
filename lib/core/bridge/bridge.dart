@@ -35,7 +35,11 @@ abstract class Bridge {
   void Function(ConnectionState)? onPeerDisconnected;
 
   /// Event callback when local addresses change (circuit relay acquired/lost).
-  void Function(List<String> listenAddresses, List<String> circuitAddresses)? onAddressesUpdated;
+  void Function(List<String> listenAddresses, List<String> circuitAddresses)?
+  onAddressesUpdated;
+
+  /// Event callback when relay session state changes.
+  void Function(Map<String, dynamic>)? onRelayStateChanged;
 
   /// Event callback for incoming group messages.
   void Function(Map<String, dynamic>)? onGroupMessageReceived;
@@ -56,10 +60,7 @@ Future<Map<String, dynamic>> callIdentityGenerate(
   Bridge bridge, {
   Duration timeout = const Duration(seconds: 30),
 }) async {
-  final request = {
-    'cmd': 'identity.generate',
-    'payload': <String, dynamic>{},
-  };
+  final request = {'cmd': 'identity.generate', 'payload': <String, dynamic>{}};
 
   emitFlowEvent(
     layer: 'FL',
@@ -68,7 +69,9 @@ Future<Map<String, dynamic>> callIdentityGenerate(
   );
 
   try {
-    final responseJson = await bridge.send(jsonEncode(request)).timeout(timeout);
+    final responseJson = await bridge
+        .send(jsonEncode(request))
+        .timeout(timeout);
     final response = jsonDecode(responseJson) as Map<String, dynamic>;
 
     emitFlowEvent(
@@ -92,6 +95,7 @@ Future<Map<String, dynamic>> callIdentityGenerate(
     };
   }
 }
+
 /// Calls the bridge to restore an identity from a 12-word mnemonic.
 ///
 /// Sends an `identity.restore` command to the core-lib and returns
@@ -114,22 +118,20 @@ Future<Map<String, dynamic>> callIdentityRestore(
   emitFlowEvent(
     layer: 'FL',
     event: 'ID_BRIDGE_IDENTITY_RESTORE_REQUEST',
-    details: {
-      'wordCount': mnemonic12.split(' ').length,
-    },
+    details: {'wordCount': mnemonic12.split(' ').length},
   );
 
   // Build the request payload
   final request = {
     'cmd': 'identity.restore',
-    'payload': {
-      'mnemonic12': mnemonic12,
-    },
+    'payload': {'mnemonic12': mnemonic12},
   };
 
   try {
     // Send request via bridge and get response
-    final responseJson = await bridge.send(jsonEncode(request)).timeout(timeout);
+    final responseJson = await bridge
+        .send(jsonEncode(request))
+        .timeout(timeout);
     final response = jsonDecode(responseJson) as Map<String, dynamic>;
 
     // Emit flow event after response
@@ -182,15 +184,13 @@ Future<bool> callVerifyPayload({
 
   final request = {
     'cmd': 'payload.verify',
-    'payload': {
-      'publicKey': publicKey,
-      'data': data,
-      'signature': signature,
-    },
+    'payload': {'publicKey': publicKey, 'data': data, 'signature': signature},
   };
 
   try {
-    final responseJson = await bridge.send(jsonEncode(request)).timeout(timeout);
+    final responseJson = await bridge
+        .send(jsonEncode(request))
+        .timeout(timeout);
     final response = jsonDecode(responseJson) as Map<String, dynamic>;
 
     // Debug: print full response
@@ -255,18 +255,12 @@ Future<Map<String, dynamic>> callSignPayload({
   emitFlowEvent(
     layer: 'FL',
     event: 'QR_FL_BRIDGE_SIGN_REQUEST',
-    details: {
-      'dataLength': dataToSign.length,
-      'correlationId': correlationId,
-    },
+    details: {'dataLength': dataToSign.length, 'correlationId': correlationId},
   );
 
   final request = {
     'cmd': 'payload.sign',
-    'payload': {
-      'data': dataToSign,
-      'privateKey': privateKey,
-    },
+    'payload': {'data': dataToSign, 'privateKey': privateKey},
   };
 
   try {
@@ -278,10 +272,7 @@ Future<Map<String, dynamic>> callSignPayload({
     emitFlowEvent(
       layer: 'FL',
       event: 'QR_FL_BRIDGE_SIGN_RESPONSE',
-      details: {
-        'ok': response['ok'] ?? false,
-        'correlationId': correlationId,
-      },
+      details: {'ok': response['ok'] ?? false, 'correlationId': correlationId},
     );
 
     return response;
@@ -319,13 +310,12 @@ Future<Map<String, dynamic>> callMlKemKeygen(
     details: {},
   );
 
-  final request = {
-    'cmd': 'mlkem.keygen',
-    'payload': <String, dynamic>{},
-  };
+  final request = {'cmd': 'mlkem.keygen', 'payload': <String, dynamic>{}};
 
   try {
-    final responseJson = await bridge.send(jsonEncode(request)).timeout(timeout);
+    final responseJson = await bridge
+        .send(jsonEncode(request))
+        .timeout(timeout);
     final response = jsonDecode(responseJson) as Map<String, dynamic>;
 
     emitFlowEvent(
@@ -393,10 +383,7 @@ Future<Map<String, dynamic>> callEncryptContactRequest({
     emitFlowEvent(
       layer: 'FL',
       event: 'CR_FL_BRIDGE_ENCRYPT_RESPONSE',
-      details: {
-        'ok': response['ok'] ?? false,
-        'correlationId': correlationId,
-      },
+      details: {'ok': response['ok'] ?? false, 'correlationId': correlationId},
     );
 
     return response;
@@ -463,10 +450,7 @@ Future<Map<String, dynamic>> callDecryptContactRequest({
     emitFlowEvent(
       layer: 'FL',
       event: 'CR_FL_BRIDGE_DECRYPT_RESPONSE',
-      details: {
-        'ok': response['ok'] ?? false,
-        'correlationId': correlationId,
-      },
+      details: {'ok': response['ok'] ?? false, 'correlationId': correlationId},
     );
 
     return response;
@@ -528,10 +512,7 @@ Future<Map<String, dynamic>> callEncryptMessage({
     emitFlowEvent(
       layer: 'FL',
       event: 'MLKEM_FL_BRIDGE_ENCRYPT_RESPONSE',
-      details: {
-        'ok': response['ok'] ?? false,
-        'correlationId': correlationId,
-      },
+      details: {'ok': response['ok'] ?? false, 'correlationId': correlationId},
     );
 
     return response;
@@ -594,10 +575,7 @@ Future<Map<String, dynamic>> callDecryptMessage({
     emitFlowEvent(
       layer: 'FL',
       event: 'MLKEM_FL_BRIDGE_DECRYPT_RESPONSE',
-      details: {
-        'ok': response['ok'] ?? false,
-        'correlationId': correlationId,
-      },
+      details: {'ok': response['ok'] ?? false, 'correlationId': correlationId},
     );
 
     return response;

@@ -25,15 +25,17 @@ void main() {
     List<GroupMember>? members,
     GroupKeyInfo? keyInfo,
   }) async {
-    await groupRepo.saveGroup(GroupModel(
-      id: groupId,
-      name: name,
-      type: GroupType.chat,
-      topicName: 'topic-$groupId',
-      createdAt: DateTime.now().toUtc(),
-      createdBy: 'admin-peer',
-      myRole: GroupRole.admin,
-    ));
+    await groupRepo.saveGroup(
+      GroupModel(
+        id: groupId,
+        name: name,
+        type: GroupType.chat,
+        topicName: 'topic-$groupId',
+        createdAt: DateTime.now().toUtc(),
+        createdBy: 'admin-peer',
+        myRole: GroupRole.admin,
+      ),
+    );
 
     if (members != null) {
       for (final m in members) {
@@ -112,8 +114,9 @@ void main() {
 
       expect(joinCommands, hasLength(2));
 
-      final groupIds =
-          joinCommands.map((c) => c['payload']['groupId'] as String).toSet();
+      final groupIds = joinCommands
+          .map((c) => c['payload']['groupId'] as String)
+          .toSet();
       expect(groupIds, {'group-1', 'group-2'});
     });
 
@@ -229,8 +232,11 @@ void main() {
           .where((m) => m['cmd'] == 'group:join')
           .toList();
 
-      expect(joinCommands, hasLength(2),
-          reason: 'Both groups should be attempted even when joins fail');
+      expect(
+        joinCommands,
+        hasLength(2),
+        reason: 'Both groups should be attempted even when joins fail',
+      );
     });
 
     test('does nothing when no active groups exist', () async {
@@ -299,13 +305,15 @@ void main() {
       expect(members, hasLength(2));
 
       final adminMember = members.firstWhere(
-          (m) => (m as Map<String, dynamic>)['peerId'] == 'admin-peer');
+        (m) => (m as Map<String, dynamic>)['peerId'] == 'admin-peer',
+      );
       expect(adminMember['publicKey'], 'pk-admin');
       expect(adminMember['mlKemPublicKey'], 'mlkem-admin');
       expect(adminMember['role'], 'admin');
 
       final regularMember = members.firstWhere(
-          (m) => (m as Map<String, dynamic>)['peerId'] == 'member-peer');
+        (m) => (m as Map<String, dynamic>)['peerId'] == 'member-peer',
+      );
       expect(regularMember['publicKey'], 'pk-member');
       expect(regularMember['role'], 'writer');
     });
@@ -338,10 +346,7 @@ void main() {
       );
 
       // Simulate Go returning ALREADY_JOINED (still ok:true).
-      bridge.responses['group:join'] = {
-        'ok': true,
-        'note': 'ALREADY_JOINED',
-      };
+      bridge.responses['group:join'] = {'ok': true, 'note': 'ALREADY_JOINED'};
 
       // Should not throw despite "already joined".
       await rejoinGroupTopics(bridge: bridge, groupRepo: groupRepo);
@@ -392,6 +397,45 @@ void main() {
       expect(joinCommands.first['payload']['groupId'], 'group-watchdog');
     });
 
+    test('node-requested recovery rejoins topics', () async {
+      final now = DateTime.now().toUtc();
+
+      await seedGroup(
+        groupId: 'group-node-requested',
+        name: 'Node Requested Group',
+        members: [
+          GroupMember(
+            groupId: 'group-node-requested',
+            peerId: 'alice',
+            username: 'Alice',
+            role: MemberRole.admin,
+            publicKey: 'pk-alice',
+            joinedAt: now,
+          ),
+        ],
+        keyInfo: GroupKeyInfo(
+          groupId: 'group-node-requested',
+          keyGeneration: 1,
+          encryptedKey: 'key-node-requested',
+          createdAt: now,
+        ),
+      );
+
+      final result = await rejoinGroupTopics(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        reason: RejoinReason.nodeRequestedRecovery,
+      );
+
+      final joinCommands = bridge.sentMessages
+          .map((m) => jsonDecode(m) as Map<String, dynamic>)
+          .where((m) => m['cmd'] == 'group:join')
+          .toList();
+      expect(joinCommands, hasLength(1));
+      expect(result.skipped, isFalse);
+      expect(result.errorCount, 0);
+    });
+
     test('rejoin is skipped after successful in-place recovery', () async {
       final now = DateTime.now().toUtc();
 
@@ -428,44 +472,146 @@ void main() {
       expect(bridge.sentMessages, isEmpty);
     });
 
-    test('announcement groups are rejoined and refreshed like normal groups',
-        () async {
+    test(
+      'announcement groups are rejoined and refreshed like normal groups',
+      () async {
+        final now = DateTime.now().toUtc();
+
+        // Create an announcement group.
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: 'group-announce',
+            name: 'Announcements',
+            type: GroupType.announcement,
+            topicName: 'topic-group-announce',
+            createdAt: now,
+            createdBy: 'admin-peer',
+            myRole: GroupRole.admin,
+          ),
+        );
+
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-announce',
+            peerId: 'admin-peer',
+            username: 'Admin',
+            role: MemberRole.admin,
+            publicKey: 'pk-admin',
+            joinedAt: now,
+          ),
+        );
+
+        await groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: 'group-announce',
+            keyGeneration: 1,
+            encryptedKey: 'key-announce',
+            createdAt: now,
+          ),
+        );
+
+        // Also create a normal chat group.
+        await seedGroup(
+          groupId: 'group-chat',
+          name: 'Chat Group',
+          members: [
+            GroupMember(
+              groupId: 'group-chat',
+              peerId: 'alice',
+              username: 'Alice',
+              role: MemberRole.admin,
+              publicKey: 'pk-alice',
+              joinedAt: now,
+            ),
+          ],
+          keyInfo: GroupKeyInfo(
+            groupId: 'group-chat',
+            keyGeneration: 1,
+            encryptedKey: 'key-chat',
+            createdAt: now,
+          ),
+        );
+
+        await rejoinGroupTopics(bridge: bridge, groupRepo: groupRepo);
+
+        final joinCommands = bridge.sentMessages
+            .map((m) => jsonDecode(m) as Map<String, dynamic>)
+            .where((m) => m['cmd'] == 'group:join')
+            .toList();
+
+        // Both announcement and chat groups should be rejoined.
+        expect(joinCommands, hasLength(2));
+        final groupIds = joinCommands
+            .map((c) => c['payload']['groupId'] as String)
+            .toSet();
+        expect(groupIds, {'group-announce', 'group-chat'});
+
+        // Verify announcement group config includes groupType=announcement.
+        final announceCmd = joinCommands.firstWhere(
+          (c) => c['payload']['groupId'] == 'group-announce',
+        );
+        final config =
+            announceCmd['payload']['groupConfig'] as Map<String, dynamic>;
+        expect(config['groupType'], 'announcement');
+      },
+    );
+
+    // -------------------------------------------------------------------------
+    // Phase 6: Group recovery on resume and watchdog
+    // -------------------------------------------------------------------------
+
+    test('watchdog restart triggers group rejoin for all groups', () async {
       final now = DateTime.now().toUtc();
 
-      // Create an announcement group.
-      await groupRepo.saveGroup(GroupModel(
-        id: 'group-announce',
-        name: 'Announcements',
-        type: GroupType.announcement,
-        topicName: 'topic-group-announce',
-        createdAt: now,
-        createdBy: 'admin-peer',
-        myRole: GroupRole.admin,
-      ));
+      // Create 3 groups with keys
+      for (var i = 1; i <= 3; i++) {
+        await seedGroup(
+          groupId: 'group-wd-$i',
+          name: 'WD Group $i',
+          members: [
+            GroupMember(
+              groupId: 'group-wd-$i',
+              peerId: 'alice',
+              username: 'Alice',
+              role: MemberRole.admin,
+              publicKey: 'pk-alice',
+              joinedAt: now,
+            ),
+          ],
+          keyInfo: GroupKeyInfo(
+            groupId: 'group-wd-$i',
+            keyGeneration: 1,
+            encryptedKey: 'key-wd-$i',
+            createdAt: now,
+          ),
+        );
+      }
 
-      await groupRepo.saveMember(GroupMember(
-        groupId: 'group-announce',
-        peerId: 'admin-peer',
-        username: 'Admin',
-        role: MemberRole.admin,
-        publicKey: 'pk-admin',
-        joinedAt: now,
-      ));
+      // Call rejoinGroupTopics with watchdogRestart reason
+      await rejoinGroupTopics(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        reason: RejoinReason.watchdogRestart,
+      );
 
-      await groupRepo.saveKey(GroupKeyInfo(
-        groupId: 'group-announce',
-        keyGeneration: 1,
-        encryptedKey: 'key-announce',
-        createdAt: now,
-      ));
+      // Verify bridge received 3 group:join commands
+      final joinCommands = bridge.sentMessages
+          .map((m) => jsonDecode(m) as Map<String, dynamic>)
+          .where((m) => m['cmd'] == 'group:join')
+          .toList();
+      expect(joinCommands, hasLength(3));
+    });
 
-      // Also create a normal chat group.
+    test('in place relay recovery skips unnecessary rejoin', () async {
+      final now = DateTime.now().toUtc();
+
+      // Create groups
       await seedGroup(
-        groupId: 'group-chat',
-        name: 'Chat Group',
+        groupId: 'group-ip-1',
+        name: 'IP Group',
         members: [
           GroupMember(
-            groupId: 'group-chat',
+            groupId: 'group-ip-1',
             peerId: 'alice',
             username: 'Alice',
             role: MemberRole.admin,
@@ -474,33 +620,191 @@ void main() {
           ),
         ],
         keyInfo: GroupKeyInfo(
-          groupId: 'group-chat',
+          groupId: 'group-ip-1',
           keyGeneration: 1,
-          encryptedKey: 'key-chat',
+          encryptedKey: 'key-ip-1',
           createdAt: now,
         ),
       );
 
-      await rejoinGroupTopics(bridge: bridge, groupRepo: groupRepo);
+      // Call rejoinGroupTopics with inPlaceRecovery reason
+      await rejoinGroupTopics(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        reason: RejoinReason.inPlaceRecovery,
+      );
 
+      // Verify bridge received 0 group:join commands
       final joinCommands = bridge.sentMessages
           .map((m) => jsonDecode(m) as Map<String, dynamic>)
           .where((m) => m['cmd'] == 'group:join')
           .toList();
-
-      // Both announcement and chat groups should be rejoined.
-      expect(joinCommands, hasLength(2));
-      final groupIds =
-          joinCommands.map((c) => c['payload']['groupId'] as String).toSet();
-      expect(groupIds, {'group-announce', 'group-chat'});
-
-      // Verify announcement group config includes groupType=announcement.
-      final announceCmd = joinCommands.firstWhere(
-          (c) => c['payload']['groupId'] == 'group-announce');
-      final config =
-          announceCmd['payload']['groupConfig'] as Map<String, dynamic>;
-      expect(config['groupType'], 'announcement');
+      expect(joinCommands, hasLength(0));
     });
+
+    test('startup triggers group rejoin for all groups', () async {
+      final now = DateTime.now().toUtc();
+
+      // Create groups
+      for (var i = 1; i <= 2; i++) {
+        await seedGroup(
+          groupId: 'group-start-$i',
+          name: 'Start Group $i',
+          members: [
+            GroupMember(
+              groupId: 'group-start-$i',
+              peerId: 'alice',
+              username: 'Alice',
+              role: MemberRole.admin,
+              publicKey: 'pk-alice',
+              joinedAt: now,
+            ),
+          ],
+          keyInfo: GroupKeyInfo(
+            groupId: 'group-start-$i',
+            keyGeneration: 1,
+            encryptedKey: 'key-start-$i',
+            createdAt: now,
+          ),
+        );
+      }
+
+      // Call rejoinGroupTopics with startup reason (default)
+      await rejoinGroupTopics(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        reason: RejoinReason.startup,
+      );
+
+      // Verify bridge received group:join commands for all groups
+      final joinCommands = bridge.sentMessages
+          .map((m) => jsonDecode(m) as Map<String, dynamic>)
+          .where((m) => m['cmd'] == 'group:join')
+          .toList();
+      expect(joinCommands, hasLength(2));
+    });
+
+    test('groups without key material are skipped', () async {
+      final now = DateTime.now().toUtc();
+
+      // Create 2 groups, only 1 has a key
+      await seedGroup(
+        groupId: 'group-has-key',
+        name: 'Has Key',
+        members: [
+          GroupMember(
+            groupId: 'group-has-key',
+            peerId: 'alice',
+            username: 'Alice',
+            role: MemberRole.admin,
+            publicKey: 'pk-alice',
+            joinedAt: now,
+          ),
+        ],
+        keyInfo: GroupKeyInfo(
+          groupId: 'group-has-key',
+          keyGeneration: 1,
+          encryptedKey: 'key-has',
+          createdAt: now,
+        ),
+      );
+
+      await seedGroup(
+        groupId: 'group-lacks-key',
+        name: 'Lacks Key',
+        members: [
+          GroupMember(
+            groupId: 'group-lacks-key',
+            peerId: 'alice',
+            username: 'Alice',
+            role: MemberRole.admin,
+            publicKey: 'pk-alice',
+            joinedAt: now,
+          ),
+        ],
+        // No keyInfo
+      );
+
+      await rejoinGroupTopics(bridge: bridge, groupRepo: groupRepo);
+
+      // Verify only 1 group:join command was sent
+      final joinCommands = bridge.sentMessages
+          .map((m) => jsonDecode(m) as Map<String, dynamic>)
+          .where((m) => m['cmd'] == 'group:join')
+          .toList();
+      expect(joinCommands, hasLength(1));
+      expect(joinCommands.first['payload']['groupId'], equals('group-has-key'));
+    });
+
+    test(
+      'error in one group does not prevent other groups from being rejoined',
+      () async {
+        final now = DateTime.now().toUtc();
+
+        // Create 2 groups with keys
+        await seedGroup(
+          groupId: 'group-err-1',
+          name: 'Error Group',
+          members: [
+            GroupMember(
+              groupId: 'group-err-1',
+              peerId: 'alice',
+              username: 'Alice',
+              role: MemberRole.admin,
+              publicKey: 'pk-alice',
+              joinedAt: now,
+            ),
+          ],
+          keyInfo: GroupKeyInfo(
+            groupId: 'group-err-1',
+            keyGeneration: 1,
+            encryptedKey: 'key-err-1',
+            createdAt: now,
+          ),
+        );
+
+        await seedGroup(
+          groupId: 'group-err-2',
+          name: 'OK Group',
+          members: [
+            GroupMember(
+              groupId: 'group-err-2',
+              peerId: 'alice',
+              username: 'Alice',
+              role: MemberRole.admin,
+              publicKey: 'pk-alice',
+              joinedAt: now,
+            ),
+          ],
+          keyInfo: GroupKeyInfo(
+            groupId: 'group-err-2',
+            keyGeneration: 1,
+            encryptedKey: 'key-err-2',
+            createdAt: now,
+          ),
+        );
+
+        // Configure bridge to fail on all group:join commands (returns ok:false)
+        bridge.responses['group:join'] = {
+          'ok': false,
+          'errorCode': 'TEST_FAIL',
+        };
+
+        // Should not throw
+        await rejoinGroupTopics(bridge: bridge, groupRepo: groupRepo);
+
+        // Both groups should have been attempted
+        final joinCommands = bridge.sentMessages
+            .map((m) => jsonDecode(m) as Map<String, dynamic>)
+            .where((m) => m['cmd'] == 'group:join')
+            .toList();
+        expect(
+          joinCommands,
+          hasLength(2),
+          reason: 'Second group should still be attempted after first fails',
+        );
+      },
+    );
 
     test('rejoins archived groups', () async {
       final now = DateTime.now().toUtc();
@@ -560,8 +864,9 @@ void main() {
           .toList();
 
       expect(joinCommands, hasLength(2));
-      final groupIds =
-          joinCommands.map((c) => c['payload']['groupId'] as String).toSet();
+      final groupIds = joinCommands
+          .map((c) => c['payload']['groupId'] as String)
+          .toSet();
       expect(groupIds, {'group-active', 'group-archived'});
     });
   });

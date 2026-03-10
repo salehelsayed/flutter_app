@@ -976,6 +976,10 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         p2pService: widget.p2pService,
         contactRepo: widget.contactRepository,
         identityRepo: widget.repository,
+        groupRepo: widget.groupRepository,
+        groupMsgRepo: widget.groupMessageRepository,
+        mediaAttachmentRepo: widget.mediaAttachmentRepository,
+        reactionRepo: widget.reactionRepository,
       );
     } finally {
       _isResuming = false;

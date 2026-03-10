@@ -10,13 +10,21 @@ import 'package:flutter_app/features/p2p/domain/models/connection_state.dart'
 
 /// A fake bridge that records commands and returns configurable responses.
 class _FakeBridge extends Bridge {
-  final Map<String, String Function(Map<String, dynamic>?)> _handlers = {};
+  final Map<String, FutureOr<String> Function(Map<String, dynamic>?)>
+  _handlers = {};
   final List<String> calledCommands = [];
+  final Map<String, List<Map<String, dynamic>?>> payloadsByCommand = {};
   bool _initialized = false;
 
-  void whenCommand(String cmd, String Function(Map<String, dynamic>?) handler) {
+  void whenCommand(
+    String cmd,
+    FutureOr<String> Function(Map<String, dynamic>?) handler,
+  ) {
     _handlers[cmd] = handler;
   }
+
+  List<Map<String, dynamic>?> payloadsFor(String cmd) =>
+      List.unmodifiable(payloadsByCommand[cmd] ?? const []);
 
   @override
   bool get isInitialized => _initialized;
@@ -42,13 +50,18 @@ class _FakeBridge extends Bridge {
     final payload = request['payload'] as Map<String, dynamic>?;
 
     calledCommands.add(cmd);
+    payloadsByCommand.putIfAbsent(cmd, () => []).add(payload);
 
     final handler = _handlers[cmd];
     if (handler != null) {
-      return handler(payload);
+      return await handler(payload);
     }
 
-    return jsonEncode({'ok': false, 'errorCode': 'UNHANDLED', 'errorMessage': 'no handler for $cmd'});
+    return jsonEncode({
+      'ok': false,
+      'errorCode': 'UNHANDLED',
+      'errorMessage': 'no handler for $cmd',
+    });
   }
 }
 
@@ -66,77 +79,150 @@ void main() {
   });
 
   group('Phase 1 — startup and warm background', () {
-    test('warmBackground drains inbox while relay reservation is still pending', () async {
-      // Set up: node is started but no circuit addresses (relay pending)
-      bridge.whenCommand('node:start', (_) => jsonEncode({
-        'ok': true,
-        'peerId': 'test-peer',
-        'isStarted': true,
-        'listenAddresses': ['/ip4/127.0.0.1/tcp/4001'],
-        'circuitAddresses': [],
-        'connections': [],
-      }));
-      bridge.whenCommand('node:status', (_) => jsonEncode({
-        'ok': true,
-        'peerId': 'test-peer',
-        'isStarted': true,
-        'listenAddresses': ['/ip4/127.0.0.1/tcp/4001'],
-        'circuitAddresses': [], // Still no relay
-        'connections': [],
-      }));
-      bridge.whenCommand('inbox:retrieve', (_) => jsonEncode({
-        'ok': true,
-        'messages': [
-          {'from': 'sender1', 'message': '{"type":"chat_message","version":"1","payload":{"id":"m1","text":"hello","senderPeerId":"sender1","senderUsername":"S","timestamp":"2026-01-01T00:00:00Z"}}', 'timestamp': 1700000000000}
-        ],
-        'hasMore': false,
-      }));
+    test(
+      'startNode returns before background warm continuation drains remaining inbox pages',
+      () async {
+        final firstPage = Completer<String>();
 
-      await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
+        bridge.whenCommand(
+          'node:start',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'test-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+            'circuitAddresses': [],
+            'connections': [],
+          }),
+        );
+        bridge.whenCommand('inbox:retrieve', (_) => firstPage.future);
+        bridge.whenCommand(
+          'node:status',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'test-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+            'circuitAddresses': [],
+            'connections': [],
+          }),
+        );
 
-      // Collect messages
-      final messages = <ChatMessage>[];
-      final sub = service.messageStream.listen(messages.add);
+        final started = await service.startNode(
+          'cHJpdmF0ZWtleXRlc3Q=',
+          'test-peer',
+        );
 
-      await service.warmBackground();
+        expect(started, isTrue);
+        expect(firstPage.isCompleted, isFalse);
 
-      // Give stream time to propagate
-      await Future.delayed(const Duration(milliseconds: 50));
+        await Future<void>.delayed(Duration.zero);
+        expect(bridge.calledCommands, contains('inbox:retrieve'));
 
-      // Inbox should have been drained even though relay is pending
-      expect(messages.length, 1);
-      expect(messages.first.from, 'sender1');
+        firstPage.complete(
+          jsonEncode({'ok': true, 'messages': const [], 'hasMore': false}),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      },
+    );
 
-      // Circuit addresses are still empty — relay not ready
-      expect(service.currentState.circuitAddresses, isEmpty);
+    test(
+      'warmBackground drains inbox while relay reservation is still pending',
+      () async {
+        // Set up: node is started but no circuit addresses (relay pending)
+        bridge.whenCommand(
+          'node:start',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'test-peer',
+            'isStarted': true,
+            'listenAddresses': ['/ip4/127.0.0.1/tcp/4001'],
+            'circuitAddresses': [],
+            'connections': [],
+          }),
+        );
+        bridge.whenCommand(
+          'node:status',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'test-peer',
+            'isStarted': true,
+            'listenAddresses': ['/ip4/127.0.0.1/tcp/4001'],
+            'circuitAddresses': [], // Still no relay
+            'connections': [],
+          }),
+        );
+        bridge.whenCommand(
+          'inbox:retrieve',
+          (_) => jsonEncode({
+            'ok': true,
+            'messages': [
+              {
+                'from': 'sender1',
+                'message':
+                    '{"type":"chat_message","version":"1","payload":{"id":"m1","text":"hello","senderPeerId":"sender1","senderUsername":"S","timestamp":"2026-01-01T00:00:00Z"}}',
+                'timestamp': 1700000000000,
+              },
+            ],
+            'hasMore': false,
+          }),
+        );
 
-      await sub.cancel();
-    });
+        await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
+
+        // Collect messages
+        final messages = <ChatMessage>[];
+        final sub = service.messageStream.listen(messages.add);
+
+        await service.warmBackground();
+
+        // Give stream time to propagate
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        // Inbox should have been drained even though relay is pending
+        expect(messages.length, 1);
+        expect(messages.first.from, 'sender1');
+
+        // Circuit addresses are still empty — relay not ready
+        expect(service.currentState.circuitAddresses, isEmpty);
+
+        await sub.cancel();
+      },
+    );
 
     test('resume drains inbox before online indicator turns green', () async {
-      bridge.whenCommand('node:start', (_) => jsonEncode({
-        'ok': true,
-        'peerId': 'test-peer',
-        'isStarted': true,
-        'listenAddresses': [],
-        'circuitAddresses': [],
-        'connections': [],
-      }));
-      bridge.whenCommand('inbox:retrieve', (_) => jsonEncode({
-        'ok': true,
-        'messages': [
-          {'from': 'sender1', 'message': 'msg1', 'timestamp': 1700000000000}
-        ],
-        'hasMore': false,
-      }));
-      bridge.whenCommand('node:status', (_) => jsonEncode({
-        'ok': true,
-        'peerId': 'test-peer',
-        'isStarted': true,
-        'listenAddresses': [],
-        'circuitAddresses': [], // Not online yet
-        'connections': [],
-      }));
+      bridge.whenCommand(
+        'node:start',
+        (_) => jsonEncode({
+          'ok': true,
+          'peerId': 'test-peer',
+          'isStarted': true,
+          'listenAddresses': [],
+          'circuitAddresses': [],
+          'connections': [],
+        }),
+      );
+      bridge.whenCommand(
+        'inbox:retrieve',
+        (_) => jsonEncode({
+          'ok': true,
+          'messages': [
+            {'from': 'sender1', 'message': 'msg1', 'timestamp': 1700000000000},
+          ],
+          'hasMore': false,
+        }),
+      );
+      bridge.whenCommand(
+        'node:status',
+        (_) => jsonEncode({
+          'ok': true,
+          'peerId': 'test-peer',
+          'isStarted': true,
+          'listenAddresses': [],
+          'circuitAddresses': [], // Not online yet
+          'connections': [],
+        }),
+      );
 
       await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
 
@@ -155,230 +241,404 @@ void main() {
       await sub.cancel();
     });
 
-    test('startup inbox drain shows first page before background continuation completes', () async {
-      var retrieveCallCount = 0;
-      bridge.whenCommand('node:start', (_) => jsonEncode({
-        'ok': true,
-        'peerId': 'test-peer',
-        'isStarted': true,
-        'listenAddresses': [],
-        'circuitAddresses': [],
-        'connections': [],
-      }));
-      bridge.whenCommand('inbox:retrieve', (_) {
-        retrieveCallCount++;
-        return jsonEncode({
-          'ok': true,
-          'messages': [
-            {'from': 'sender$retrieveCallCount', 'message': 'msg$retrieveCallCount', 'timestamp': 1700000000000}
-          ],
-          'hasMore': false,
+    test(
+      'startup inbox drain shows first page before background continuation completes',
+      () async {
+        var retrieveCallCount = 0;
+        bridge.whenCommand(
+          'node:start',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'test-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+            'circuitAddresses': [],
+            'connections': [],
+          }),
+        );
+        bridge.whenCommand('inbox:retrieve', (_) {
+          retrieveCallCount++;
+          return jsonEncode({
+            'ok': true,
+            'messages': [
+              {
+                'from': 'sender$retrieveCallCount',
+                'message': 'msg$retrieveCallCount',
+                'timestamp': 1700000000000,
+              },
+            ],
+            'hasMore': false,
+          });
         });
-      });
-      bridge.whenCommand('node:status', (_) => jsonEncode({
-        'ok': true,
-        'peerId': 'test-peer',
-        'isStarted': true,
-        'listenAddresses': [],
-        'circuitAddresses': [],
-        'connections': [],
-      }));
+        bridge.whenCommand(
+          'node:status',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'test-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+            'circuitAddresses': [],
+            'connections': [],
+          }),
+        );
 
-      await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
+        await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
 
-      final messages = <ChatMessage>[];
-      final sub = service.messageStream.listen(messages.add);
+        final messages = <ChatMessage>[];
+        final sub = service.messageStream.listen(messages.add);
 
-      await service.warmBackground();
+        await service.warmBackground();
 
-      await Future.delayed(const Duration(milliseconds: 50));
+        await Future.delayed(const Duration(milliseconds: 50));
 
-      // First page retrieved
-      expect(messages.isNotEmpty, true);
-      expect(retrieveCallCount, greaterThanOrEqualTo(1));
+        // First page retrieved
+        expect(messages.isNotEmpty, true);
+        expect(retrieveCallCount, greaterThanOrEqualTo(1));
 
-      await sub.cancel();
-    });
+        await sub.cancel();
+      },
+    );
 
-    test('fast circuit fallback poll updates online state when push event is delayed', () async {
-      bridge.whenCommand('node:start', (_) => jsonEncode({
-        'ok': true,
-        'peerId': 'test-peer',
-        'isStarted': true,
-        'listenAddresses': [],
-        'circuitAddresses': [],
-        'connections': [],
-      }));
-      bridge.whenCommand('inbox:retrieve', (_) => jsonEncode({
-        'ok': true,
-        'messages': [],
-        'hasMore': false,
-      }));
+    test(
+      'drainOfflineInbox uses foreground timeout for the first page',
+      () async {
+        bridge.whenCommand(
+          'node:start',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'test-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+            'circuitAddresses': [],
+            'connections': [],
+          }),
+        );
+        bridge.whenCommand(
+          'inbox:retrieve',
+          (_) =>
+              jsonEncode({'ok': true, 'messages': const [], 'hasMore': false}),
+        );
 
-      // node:status always returns circuit — the point is node:start had none
-      // but the health check poll picks up the circuit address.
-      bridge.whenCommand('node:status', (_) => jsonEncode({
-        'ok': true,
-        'peerId': 'test-peer',
-        'isStarted': true,
-        'listenAddresses': [],
-        'circuitAddresses': ['/p2p-circuit/relay1'],
-        'connections': [],
-      }));
+        await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
+        await service.drainOfflineInbox();
 
-      await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
+        final firstPayload = bridge.payloadsFor('inbox:retrieve').first;
+        expect(
+          firstPayload?['timeoutMs'],
+          P2PServiceImpl.foregroundInboxTimeout.inMilliseconds,
+        );
+      },
+    );
 
-      // Initially no circuit from node:start
-      expect(service.currentState.circuitAddresses, isEmpty);
+    test(
+      'drainOfflineInbox schedules remaining pages on background budget',
+      () async {
+        var retrieveCallCount = 0;
+        final secondPage = Completer<String>();
 
-      // Trigger health check manually — polls node:status
-      await service.performImmediateHealthCheck();
+        bridge.whenCommand(
+          'node:start',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'test-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+            'circuitAddresses': [],
+            'connections': [],
+          }),
+        );
+        bridge.whenCommand('inbox:retrieve', (_) {
+          retrieveCallCount++;
+          if (retrieveCallCount == 1) {
+            return jsonEncode({
+              'ok': true,
+              'messages': [
+                {
+                  'from': 'sender1',
+                  'message': 'msg1',
+                  'timestamp': 1700000000000,
+                },
+              ],
+              'hasMore': true,
+            });
+          }
+          return secondPage.future;
+        });
 
-      // Now should have circuit from the polled status
-      expect(service.currentState.circuitAddresses, isNotEmpty);
-    });
+        await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
 
-    test('early relay edge signal does not mark online before circuit or reservation readiness', () async {
-      bridge.whenCommand('node:start', (_) => jsonEncode({
-        'ok': true,
-        'peerId': 'test-peer',
-        'isStarted': true,
-        'listenAddresses': [],
-        'circuitAddresses': [], // No circuit yet — just relay socket
-        'connections': [
-          {'peerId': 'relay-peer', 'address': '/dns4/relay/tcp/4001', 'direction': 'outbound'}
-        ],
-      }));
-      bridge.whenCommand('inbox:retrieve', (_) => jsonEncode({
-        'ok': true,
-        'messages': [],
-        'hasMore': false,
-      }));
-      bridge.whenCommand('node:status', (_) => jsonEncode({
-        'ok': true,
-        'peerId': 'test-peer',
-        'isStarted': true,
-        'listenAddresses': [],
-        'circuitAddresses': [],
-        'connections': [],
-      }));
+        final messages = <ChatMessage>[];
+        final sub = service.messageStream.listen(messages.add);
 
-      await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
+        await service.drainOfflineInbox();
 
-      // Having a relay connection but no circuit addresses should not
-      // mean we're "online" in the ConnectionStatusIndicator sense
-      expect(service.currentState.circuitAddresses, isEmpty);
-      expect(service.currentState.isStarted, true);
-    });
+        await Future<void>.delayed(Duration.zero);
+        expect(messages.length, 1);
+        expect(
+          bridge.payloadsFor('inbox:retrieve').first?['timeoutMs'],
+          P2PServiceImpl.foregroundInboxTimeout.inMilliseconds,
+        );
 
-    test('cold start after reboot prioritizes inbox retrieval before secondary warm tasks', () async {
-      bridge.whenCommand('node:start', (_) => jsonEncode({
-        'ok': true,
-        'peerId': 'test-peer',
-        'isStarted': true,
-        'listenAddresses': [],
-        'circuitAddresses': [],
-        'connections': [],
-      }));
-      bridge.whenCommand('node:status', (_) => jsonEncode({
-        'ok': true,
-        'peerId': 'test-peer',
-        'isStarted': true,
-        'listenAddresses': [],
-        'circuitAddresses': [],
-        'connections': [],
-      }));
-      bridge.whenCommand('inbox:retrieve', (_) => jsonEncode({
-        'ok': true,
-        'messages': [
-          {'from': 'sender1', 'message': 'queued-msg', 'timestamp': 1700000000000}
-        ],
-        'hasMore': false,
-      }));
+        expect(bridge.payloadsFor('inbox:retrieve').length, 2);
+        expect(bridge.payloadsFor('inbox:retrieve')[1]?['timeoutMs'], isNull);
 
-      // Full startNode includes warmBackground
-      await service.startNode('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
+        secondPage.complete(
+          jsonEncode({
+            'ok': true,
+            'messages': [
+              {
+                'from': 'sender2',
+                'message': 'msg2',
+                'timestamp': 1700000001000,
+              },
+            ],
+            'hasMore': false,
+          }),
+        );
 
-      // Inbox retrieve should have been called during warm background
-      expect(bridge.calledCommands, contains('inbox:retrieve'));
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        expect(messages.length, 2);
 
-      // inbox:retrieve should come before subsequent node:status health checks
-      final inboxIdx = bridge.calledCommands.indexOf('inbox:retrieve');
-      expect(inboxIdx, greaterThanOrEqualTo(0));
-    });
+        await sub.cancel();
+      },
+    );
 
-    test('cold start quick retry burst runs before watchdog timer path', () async {
-      bridge.whenCommand('node:start', (_) => jsonEncode({
-        'ok': true,
-        'peerId': 'test-peer',
-        'isStarted': true,
-        'listenAddresses': [],
-        'circuitAddresses': [],
-        'connections': [],
-      }));
-      bridge.whenCommand('node:status', (_) => jsonEncode({
-        'ok': true,
-        'peerId': 'test-peer',
-        'isStarted': true,
-        'listenAddresses': [],
-        'circuitAddresses': [],
-        'connections': [],
-      }));
-      bridge.whenCommand('inbox:retrieve', (_) => jsonEncode({
-        'ok': true,
-        'messages': [],
-        'hasMore': false,
-      }));
+    test(
+      'fast circuit fallback poll updates online state when push event is delayed',
+      () async {
+        bridge.whenCommand(
+          'node:start',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'test-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+            'circuitAddresses': [],
+            'connections': [],
+          }),
+        );
+        bridge.whenCommand(
+          'inbox:retrieve',
+          (_) => jsonEncode({'ok': true, 'messages': [], 'hasMore': false}),
+        );
 
-      // startNode triggers warmBackground which includes inbox drain
-      await service.startNode('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
+        // node:status always returns circuit — the point is node:start had none
+        // but the health check poll picks up the circuit address.
+        bridge.whenCommand(
+          'node:status',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'test-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+            'circuitAddresses': ['/p2p-circuit/relay1'],
+            'connections': [],
+          }),
+        );
 
-      // Inbox was attempted early (during warm, before watchdog timer)
-      expect(bridge.calledCommands, contains('inbox:retrieve'));
+        await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
 
-      // The health check timer interval is 30s, so inbox drain runs
-      // well before the first health check would fire
-      expect(P2PServiceImpl.healthCheckInterval.inSeconds, 30);
-    });
+        // Initially no circuit from node:start
+        expect(service.currentState.circuitAddresses, isEmpty);
 
-    test('background relay healing keeps longer retry cadence than foreground send', () async {
-      // This verifies the design: health check interval (30s) is much longer
-      // than interactive timeouts (1.5-4s)
-      expect(P2PServiceImpl.healthCheckInterval.inSeconds, greaterThanOrEqualTo(30));
-    });
+        // Trigger health check manually — polls node:status
+        await service.performImmediateHealthCheck();
+
+        // Now should have circuit from the polled status
+        expect(service.currentState.circuitAddresses, isNotEmpty);
+      },
+    );
+
+    test(
+      'early relay edge signal does not mark online before circuit or reservation readiness',
+      () async {
+        bridge.whenCommand(
+          'node:start',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'test-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+            'circuitAddresses': [], // No circuit yet — just relay socket
+            'connections': [
+              {
+                'peerId': 'relay-peer',
+                'address': '/dns4/relay/tcp/4001',
+                'direction': 'outbound',
+              },
+            ],
+          }),
+        );
+        bridge.whenCommand(
+          'inbox:retrieve',
+          (_) => jsonEncode({'ok': true, 'messages': [], 'hasMore': false}),
+        );
+        bridge.whenCommand(
+          'node:status',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'test-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+            'circuitAddresses': [],
+            'connections': [],
+          }),
+        );
+
+        await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
+
+        // Having a relay connection but no circuit addresses should not
+        // mean we're "online" in the ConnectionStatusIndicator sense
+        expect(service.currentState.circuitAddresses, isEmpty);
+        expect(service.currentState.isStarted, true);
+      },
+    );
+
+    test(
+      'cold start after reboot prioritizes inbox retrieval before secondary warm tasks',
+      () async {
+        bridge.whenCommand(
+          'node:start',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'test-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+            'circuitAddresses': [],
+            'connections': [],
+          }),
+        );
+        bridge.whenCommand(
+          'node:status',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'test-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+            'circuitAddresses': [],
+            'connections': [],
+          }),
+        );
+        bridge.whenCommand(
+          'inbox:retrieve',
+          (_) => jsonEncode({
+            'ok': true,
+            'messages': [
+              {
+                'from': 'sender1',
+                'message': 'queued-msg',
+                'timestamp': 1700000000000,
+              },
+            ],
+            'hasMore': false,
+          }),
+        );
+
+        // Full startNode includes warmBackground
+        await service.startNode('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
+
+        // Inbox retrieve should have been called during warm background
+        expect(bridge.calledCommands, contains('inbox:retrieve'));
+
+        // inbox:retrieve should come before subsequent node:status health checks
+        final inboxIdx = bridge.calledCommands.indexOf('inbox:retrieve');
+        expect(inboxIdx, greaterThanOrEqualTo(0));
+      },
+    );
+
+    test(
+      'cold start quick retry burst runs before watchdog timer path',
+      () async {
+        bridge.whenCommand(
+          'node:start',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'test-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+            'circuitAddresses': [],
+            'connections': [],
+          }),
+        );
+        bridge.whenCommand(
+          'node:status',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'test-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+            'circuitAddresses': [],
+            'connections': [],
+          }),
+        );
+        bridge.whenCommand(
+          'inbox:retrieve',
+          (_) => jsonEncode({'ok': true, 'messages': [], 'hasMore': false}),
+        );
+
+        // startNode triggers warmBackground which includes inbox drain
+        await service.startNode('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
+
+        // Inbox was attempted early (during warm, before watchdog timer)
+        expect(bridge.calledCommands, contains('inbox:retrieve'));
+
+        // The health check timer interval is 30s, so inbox drain runs
+        // well before the first health check would fire
+        expect(P2PServiceImpl.healthCheckInterval.inSeconds, 30);
+      },
+    );
+
+    test(
+      'background relay healing keeps longer retry cadence than foreground send',
+      () async {
+        // This verifies the design: health check interval (30s) is much longer
+        // than interactive timeouts (1.5-4s)
+        expect(
+          P2PServiceImpl.healthCheckInterval.inSeconds,
+          greaterThanOrEqualTo(30),
+        );
+      },
+    );
   });
 
   group('Phase 4 — relay session manager and reservation-aware health', () {
     test('health check uses relayState when present', () async {
       // When node:status returns relayState, the parsed NodeState should
       // include it for health decisions.
-      bridge.whenCommand('node:start', (_) => jsonEncode({
-        'ok': true,
-        'peerId': 'test-peer',
-        'isStarted': true,
-        'listenAddresses': [],
-        'circuitAddresses': ['/p2p-circuit/relay1'],
-        'connections': [],
-        'relayState': 'online',
-        'healthyRelayCount': 1,
-        'watchdogRestartCount': 0,
-      }));
-      bridge.whenCommand('inbox:retrieve', (_) => jsonEncode({
-        'ok': true,
-        'messages': [],
-        'hasMore': false,
-      }));
-      bridge.whenCommand('node:status', (_) => jsonEncode({
-        'ok': true,
-        'peerId': 'test-peer',
-        'isStarted': true,
-        'listenAddresses': [],
-        'circuitAddresses': ['/p2p-circuit/relay1'],
-        'connections': [],
-        'relayState': 'online',
-        'healthyRelayCount': 1,
-        'watchdogRestartCount': 0,
-      }));
+      bridge.whenCommand(
+        'node:start',
+        (_) => jsonEncode({
+          'ok': true,
+          'peerId': 'test-peer',
+          'isStarted': true,
+          'listenAddresses': [],
+          'circuitAddresses': ['/p2p-circuit/relay1'],
+          'connections': [],
+          'relayState': 'online',
+          'healthyRelayCount': 1,
+          'watchdogRestartCount': 0,
+          'needsGroupRecovery': true,
+        }),
+      );
+      bridge.whenCommand(
+        'inbox:retrieve',
+        (_) => jsonEncode({'ok': true, 'messages': [], 'hasMore': false}),
+      );
+      bridge.whenCommand(
+        'node:status',
+        (_) => jsonEncode({
+          'ok': true,
+          'peerId': 'test-peer',
+          'isStarted': true,
+          'listenAddresses': [],
+          'circuitAddresses': ['/p2p-circuit/relay1'],
+          'connections': [],
+          'relayState': 'online',
+          'healthyRelayCount': 1,
+          'watchdogRestartCount': 0,
+          'needsGroupRecovery': true,
+        }),
+      );
 
       await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
 
@@ -386,71 +646,85 @@ void main() {
       expect(service.currentState.relayState, 'online');
       expect(service.currentState.healthyRelayCount, 1);
       expect(service.currentState.watchdogRestartCount, 0);
+      expect(service.currentState.needsGroupRecovery, isTrue);
     });
 
-    test('legacy circuitAddresses path still works when relayState absent', () async {
-      // When the Go bridge does not include relayState (pre-Phase 4),
-      // the parser should still work and relayState should be null.
-      bridge.whenCommand('node:start', (_) => jsonEncode({
-        'ok': true,
-        'peerId': 'test-peer',
-        'isStarted': true,
-        'listenAddresses': ['/ip4/127.0.0.1/tcp/4001'],
-        'circuitAddresses': ['/p2p-circuit/relay1'],
-        'connections': [],
-        // No relayState, healthyRelayCount, or watchdogRestartCount
-      }));
-      bridge.whenCommand('inbox:retrieve', (_) => jsonEncode({
-        'ok': true,
-        'messages': [],
-        'hasMore': false,
-      }));
-      bridge.whenCommand('node:status', (_) => jsonEncode({
-        'ok': true,
-        'peerId': 'test-peer',
-        'isStarted': true,
-        'listenAddresses': [],
-        'circuitAddresses': ['/p2p-circuit/relay1'],
-        'connections': [],
-      }));
+    test(
+      'legacy circuitAddresses path still works when relayState absent',
+      () async {
+        // When the Go bridge does not include relayState (pre-Phase 4),
+        // the parser should still work and relayState should be null.
+        bridge.whenCommand(
+          'node:start',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'test-peer',
+            'isStarted': true,
+            'listenAddresses': ['/ip4/127.0.0.1/tcp/4001'],
+            'circuitAddresses': ['/p2p-circuit/relay1'],
+            'connections': [],
+            // No relayState, healthyRelayCount, or watchdogRestartCount
+          }),
+        );
+        bridge.whenCommand(
+          'inbox:retrieve',
+          (_) => jsonEncode({'ok': true, 'messages': [], 'hasMore': false}),
+        );
+        bridge.whenCommand(
+          'node:status',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'test-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+            'circuitAddresses': ['/p2p-circuit/relay1'],
+            'connections': [],
+          }),
+        );
 
-      await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
+        await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
 
-      // Legacy fields work.
-      expect(service.currentState.isStarted, true);
-      expect(service.currentState.circuitAddresses, isNotEmpty);
+        // Legacy fields work.
+        expect(service.currentState.isStarted, true);
+        expect(service.currentState.circuitAddresses, isNotEmpty);
 
-      // New fields are null (absent from response).
-      expect(service.currentState.relayState, isNull);
-      expect(service.currentState.healthyRelayCount, isNull);
-    });
+        // New fields are null (absent from response).
+        expect(service.currentState.relayState, isNull);
+        expect(service.currentState.healthyRelayCount, isNull);
+      },
+    );
 
     test('relay state push updates current state without restart', () async {
-      bridge.whenCommand('node:start', (_) => jsonEncode({
-        'ok': true,
-        'peerId': 'test-peer',
-        'isStarted': true,
-        'listenAddresses': [],
-        'circuitAddresses': [],
-        'connections': [],
-        'relayState': 'starting',
-        'healthyRelayCount': 0,
-      }));
-      bridge.whenCommand('inbox:retrieve', (_) => jsonEncode({
-        'ok': true,
-        'messages': [],
-        'hasMore': false,
-      }));
-      bridge.whenCommand('node:status', (_) => jsonEncode({
-        'ok': true,
-        'peerId': 'test-peer',
-        'isStarted': true,
-        'listenAddresses': [],
-        'circuitAddresses': ['/p2p-circuit/relay1'],
-        'connections': [],
-        'relayState': 'online',
-        'healthyRelayCount': 1,
-      }));
+      bridge.whenCommand(
+        'node:start',
+        (_) => jsonEncode({
+          'ok': true,
+          'peerId': 'test-peer',
+          'isStarted': true,
+          'listenAddresses': [],
+          'circuitAddresses': [],
+          'connections': [],
+          'relayState': 'starting',
+          'healthyRelayCount': 0,
+        }),
+      );
+      bridge.whenCommand(
+        'inbox:retrieve',
+        (_) => jsonEncode({'ok': true, 'messages': [], 'hasMore': false}),
+      );
+      bridge.whenCommand(
+        'node:status',
+        (_) => jsonEncode({
+          'ok': true,
+          'peerId': 'test-peer',
+          'isStarted': true,
+          'listenAddresses': [],
+          'circuitAddresses': ['/p2p-circuit/relay1'],
+          'connections': [],
+          'relayState': 'online',
+          'healthyRelayCount': 1,
+        }),
+      );
 
       await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
 
@@ -466,58 +740,329 @@ void main() {
       expect(service.currentState.circuitAddresses, isNotEmpty);
     });
 
-    test('status push burst coalescing does not lose final online state', () async {
-      bridge.whenCommand('node:start', (_) => jsonEncode({
-        'ok': true,
-        'peerId': 'test-peer',
-        'isStarted': true,
-        'listenAddresses': [],
-        'circuitAddresses': [],
-        'connections': [],
-      }));
-      bridge.whenCommand('inbox:retrieve', (_) => jsonEncode({
-        'ok': true,
-        'messages': [],
-        'hasMore': false,
-      }));
-
-      // Simulate a burst of status updates via the addresses:updated push.
-      // The final state should be the one that sticks.
-      var statusCallCount = 0;
-      bridge.whenCommand('node:status', (_) {
-        statusCallCount++;
-        // Each call returns progressively more connected state.
-        if (statusCallCount <= 2) {
-          return jsonEncode({
+    test(
+      'relay state push updates current state without waiting for addresses update',
+      () async {
+        bridge.whenCommand(
+          'node:start',
+          (_) => jsonEncode({
             'ok': true,
             'peerId': 'test-peer',
             'isStarted': true,
             'listenAddresses': [],
             'circuitAddresses': [],
             'connections': [],
-          });
-        }
-        return jsonEncode({
-          'ok': true,
-          'peerId': 'test-peer',
-          'isStarted': true,
-          'listenAddresses': [],
-          'circuitAddresses': ['/p2p-circuit/relay1'],
-          'connections': [],
+            'relayState': 'starting',
+            'healthyRelayCount': 0,
+            'watchdogRestartCount': 0,
+          }),
+        );
+        bridge.whenCommand(
+          'inbox:retrieve',
+          (_) => jsonEncode({'ok': true, 'messages': [], 'hasMore': false}),
+        );
+
+        await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
+
+        bridge.onRelayStateChanged?.call({
           'relayState': 'online',
           'healthyRelayCount': 1,
+          'watchdogRestartCount': 2,
+          'needsGroupRecovery': true,
         });
-      });
 
-      await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
+        expect(service.currentState.relayState, 'online');
+        expect(service.currentState.healthyRelayCount, 1);
+        expect(service.currentState.watchdogRestartCount, 2);
+        expect(service.currentState.needsGroupRecovery, isTrue);
+      },
+    );
 
-      // Simulate multiple health checks (as if push events triggered them).
-      await service.performImmediateHealthCheck();
-      await service.performImmediateHealthCheck();
-      await service.performImmediateHealthCheck();
+    test(
+      'addresses updated with empty circuits does not trigger recovery when relayState is online',
+      () async {
+        bridge.whenCommand(
+          'node:start',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'test-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+            'circuitAddresses': [],
+            'connections': [],
+            'relayState': 'online',
+            'healthyRelayCount': 1,
+          }),
+        );
+        bridge.whenCommand(
+          'inbox:retrieve',
+          (_) => jsonEncode({'ok': true, 'messages': [], 'hasMore': false}),
+        );
+        bridge.whenCommand(
+          'node:status',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'test-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+            'circuitAddresses': [],
+            'connections': [],
+            'relayState': 'online',
+            'healthyRelayCount': 1,
+          }),
+        );
 
-      // The final state should reflect online.
-      expect(service.currentState.circuitAddresses, isNotEmpty);
-    });
+        await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
+        bridge.calledCommands.clear();
+
+        bridge.onAddressesUpdated?.call(const [], const []);
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+
+        expect(bridge.calledCommands, isNot(contains('relay:reconnect')));
+        expect(bridge.calledCommands, isNot(contains('node:status')));
+        expect(service.currentState.relayState, 'online');
+      },
+    );
+
+    test(
+      'health check prefers relayState when present even if circuit addresses are empty',
+      () async {
+        bridge.whenCommand(
+          'node:start',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'test-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+            'circuitAddresses': [],
+            'connections': [],
+            'relayState': 'online',
+            'healthyRelayCount': 1,
+          }),
+        );
+        bridge.whenCommand(
+          'inbox:retrieve',
+          (_) => jsonEncode({'ok': true, 'messages': [], 'hasMore': false}),
+        );
+        bridge.whenCommand(
+          'node:status',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'test-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+            'circuitAddresses': [],
+            'connections': [],
+            'relayState': 'online',
+            'healthyRelayCount': 1,
+          }),
+        );
+
+        await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
+        bridge.calledCommands.clear();
+
+        await service.performImmediateHealthCheck();
+
+        expect(bridge.calledCommands, contains('node:status'));
+        expect(bridge.calledCommands, isNot(contains('relay:reconnect')));
+        expect(service.currentState.relayState, 'online');
+        expect(service.currentState.circuitAddresses, isEmpty);
+      },
+    );
+
+    test(
+      'relay state degradation push triggers immediate recovery without addresses fallback',
+      () async {
+        bridge.whenCommand(
+          'node:start',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'test-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+            'circuitAddresses': ['/p2p-circuit/relay1'],
+            'connections': [],
+            'relayState': 'online',
+            'healthyRelayCount': 1,
+            'watchdogRestartCount': 0,
+          }),
+        );
+        bridge.whenCommand(
+          'inbox:retrieve',
+          (_) => jsonEncode({'ok': true, 'messages': [], 'hasMore': false}),
+        );
+
+        var statusCallCount = 0;
+        bridge.whenCommand('node:status', (_) {
+          statusCallCount++;
+          if (statusCallCount == 1) {
+            return jsonEncode({
+              'ok': true,
+              'peerId': 'test-peer',
+              'isStarted': true,
+              'listenAddresses': [],
+              'circuitAddresses': [],
+              'connections': [],
+              'relayState': 'degraded',
+              'healthyRelayCount': 0,
+              'watchdogRestartCount': 0,
+            });
+          }
+          return jsonEncode({
+            'ok': true,
+            'peerId': 'test-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+            'circuitAddresses': ['/p2p-circuit/relay1'],
+            'connections': [],
+            'relayState': 'online',
+            'healthyRelayCount': 1,
+            'watchdogRestartCount': 0,
+          });
+        });
+        bridge.whenCommand(
+          'relay:reconnect',
+          (_) => jsonEncode({'ok': true, 'recoveryMode': 'in_place'}),
+        );
+
+        await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
+        bridge.calledCommands.clear();
+
+        bridge.onRelayStateChanged?.call({
+          'relayState': 'degraded',
+          'healthyRelayCount': 0,
+          'watchdogRestartCount': 0,
+          'reason': 'relay_disconnected',
+        });
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+
+        expect(bridge.calledCommands, contains('relay:reconnect'));
+        expect(service.lastRecoveryMethod, equals('in_place'));
+        expect(service.currentState.relayState, 'online');
+      },
+    );
+
+    test(
+      'relay reconnect uses recoveryMode and does not require legacy recoveryMethod',
+      () async {
+        bridge.whenCommand(
+          'node:start',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'test-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+            'circuitAddresses': ['/p2p-circuit/relay1'],
+            'connections': [],
+            'relayState': 'online',
+            'healthyRelayCount': 1,
+            'watchdogRestartCount': 0,
+          }),
+        );
+        bridge.whenCommand(
+          'inbox:retrieve',
+          (_) => jsonEncode({'ok': true, 'messages': [], 'hasMore': false}),
+        );
+
+        var statusCallCount = 0;
+        bridge.whenCommand('node:status', (_) {
+          statusCallCount++;
+          if (statusCallCount == 1) {
+            return jsonEncode({
+              'ok': true,
+              'peerId': 'test-peer',
+              'isStarted': true,
+              'listenAddresses': [],
+              'circuitAddresses': [],
+              'connections': [],
+              'relayState': 'degraded',
+              'healthyRelayCount': 0,
+              'watchdogRestartCount': 0,
+            });
+          }
+          return jsonEncode({
+            'ok': true,
+            'peerId': 'test-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+            'circuitAddresses': ['/p2p-circuit/relay1'],
+            'connections': [],
+            'relayState': 'online',
+            'healthyRelayCount': 1,
+            'watchdogRestartCount': 0,
+          });
+        });
+        bridge.whenCommand(
+          'relay:reconnect',
+          (_) => jsonEncode({'ok': true, 'recoveryMethod': 'watchdog_restart'}),
+        );
+
+        await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
+
+        await service.performImmediateHealthCheck();
+
+        expect(service.lastRecoveryMethod, equals('in_place'));
+        expect(service.currentState.relayState, 'online');
+      },
+    );
+
+    test(
+      'status push burst coalescing does not lose final online state',
+      () async {
+        bridge.whenCommand(
+          'node:start',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'test-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+            'circuitAddresses': [],
+            'connections': [],
+          }),
+        );
+        bridge.whenCommand(
+          'inbox:retrieve',
+          (_) => jsonEncode({'ok': true, 'messages': [], 'hasMore': false}),
+        );
+
+        // Simulate a burst of status updates via the addresses:updated push.
+        // The final state should be the one that sticks.
+        var statusCallCount = 0;
+        bridge.whenCommand('node:status', (_) {
+          statusCallCount++;
+          // Each call returns progressively more connected state.
+          if (statusCallCount <= 2) {
+            return jsonEncode({
+              'ok': true,
+              'peerId': 'test-peer',
+              'isStarted': true,
+              'listenAddresses': [],
+              'circuitAddresses': [],
+              'connections': [],
+            });
+          }
+          return jsonEncode({
+            'ok': true,
+            'peerId': 'test-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+            'circuitAddresses': ['/p2p-circuit/relay1'],
+            'connections': [],
+            'relayState': 'online',
+            'healthyRelayCount': 1,
+          });
+        });
+
+        await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
+
+        // Simulate multiple health checks (as if push events triggered them).
+        await service.performImmediateHealthCheck();
+        await service.performImmediateHealthCheck();
+        await service.performImmediateHealthCheck();
+
+        // The final state should reflect online.
+        expect(service.currentState.circuitAddresses, isNotEmpty);
+      },
+    );
   });
 }

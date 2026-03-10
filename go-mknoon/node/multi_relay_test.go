@@ -305,6 +305,20 @@ func TestGroupInboxRetrieve_TriesSecondRelayWhenFirstFails(t *testing.T) {
 	}
 }
 
+func TestGroupInboxRetrieveWithCursor_TriesSecondRelayWhenFirstFails(t *testing.T) {
+	n := startLocalNodeForMultiRelayTest(t)
+	setFakeRelays(t, n)
+
+	_, _, err := n.GroupInboxRetrieveWithCursor("group-123", "opaque-cursor", 25)
+	if err == nil {
+		t.Fatal("expected error (both fake relays unreachable)")
+	}
+
+	if !strings.Contains(err.Error(), "relays failed") {
+		t.Errorf("error should indicate multi-relay attempt, got: %v", err)
+	}
+}
+
 func TestMediaUpload_TriesSecondRelayWhenFirstFails(t *testing.T) {
 	n := startLocalNodeForMultiRelayTest(t)
 	setFakeRelays(t, n)

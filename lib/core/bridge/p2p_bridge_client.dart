@@ -10,6 +10,46 @@ const String defaultRendezvousAddress =
 const String defaultQUICRelayAddress =
     '/dns4/mknoun.xyz/udp/4002/quic-v1/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g';
 
+List<String> defaultRelayAddresses({String? relayAddressesCsv}) {
+  final csv =
+      relayAddressesCsv ??
+      const String.fromEnvironment('MKNOON_RELAY_ADDRESSES', defaultValue: '');
+  final configured = csv
+      .split(',')
+      .map((entry) => entry.trim())
+      .where((entry) => entry.isNotEmpty)
+      .toList(growable: false);
+  if (configured.isNotEmpty) {
+    return configured;
+  }
+  return const [defaultRendezvousAddress, defaultQUICRelayAddress];
+}
+
+Map<String, bool> defaultResilienceFeatureFlags() {
+  return {
+    'enableSharedRelayBackend': const bool.fromEnvironment(
+      'MKNOON_ENABLE_SHARED_RELAY_BACKEND',
+      defaultValue: true,
+    ),
+    'enableMultiRelayRouting': const bool.fromEnvironment(
+      'MKNOON_ENABLE_MULTI_RELAY_ROUTING',
+      defaultValue: true,
+    ),
+    'enableReservationAwareHealth': const bool.fromEnvironment(
+      'MKNOON_ENABLE_RESERVATION_AWARE_HEALTH',
+      defaultValue: true,
+    ),
+    'enableInPlaceRelayRecovery': const bool.fromEnvironment(
+      'MKNOON_ENABLE_IN_PLACE_RELAY_RECOVERY',
+      defaultValue: true,
+    ),
+    'enableResumeGroupRecovery': const bool.fromEnvironment(
+      'MKNOON_ENABLE_RESUME_GROUP_RECOVERY',
+      defaultValue: true,
+    ),
+  };
+}
+
 /// Calls the bridge to start the P2P node.
 ///
 /// Parameters:
@@ -27,6 +67,7 @@ Future<Map<String, dynamic>> callP2PNodeStart(
   List<String>? relayAddresses,
   bool autoRegister = true,
   String? namespace,
+  Map<String, bool>? featureFlags,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -38,8 +79,9 @@ Future<Map<String, dynamic>> callP2PNodeStart(
     'cmd': 'node:start',
     'payload': {
       'privateKeyHex': privateKeyHex,
-      'relayAddresses': relayAddresses ?? [defaultRendezvousAddress, defaultQUICRelayAddress],
+      'relayAddresses': relayAddresses ?? defaultRelayAddresses(),
       'autoRegister': autoRegister,
+      'featureFlags': featureFlags ?? defaultResilienceFeatureFlags(),
       if (namespace != null) 'namespace': namespace,
     },
   };
@@ -66,16 +108,9 @@ Future<Map<String, dynamic>> callP2PNodeStart(
 ///
 /// Returns: `{ "ok": true }` on success.
 Future<Map<String, dynamic>> callP2PRelayReconnect(Bridge bridge) async {
-  emitFlowEvent(
-    layer: 'FL',
-    event: 'P2P_RELAY_RECONNECT_REQUEST',
-    details: {},
-  );
+  emitFlowEvent(layer: 'FL', event: 'P2P_RELAY_RECONNECT_REQUEST', details: {});
 
-  final request = {
-    'cmd': 'relay:reconnect',
-    'payload': <String, dynamic>{},
-  };
+  final request = {'cmd': 'relay:reconnect', 'payload': <String, dynamic>{}};
 
   final responseJson = await bridge.send(jsonEncode(request));
   final response = jsonDecode(responseJson) as Map<String, dynamic>;
@@ -115,9 +150,7 @@ Future<Map<String, dynamic>> callP2PRelayProbe(
 
   final request = {
     'cmd': 'relay:probe',
-    'payload': {
-      'peerId': peerId,
-    },
+    'payload': {'peerId': peerId},
   };
 
   final responseJson = await bridge.send(jsonEncode(request));
@@ -136,16 +169,9 @@ Future<Map<String, dynamic>> callP2PRelayProbe(
 ///
 /// Returns: `{ "ok": true, "stopped": true }` on success.
 Future<Map<String, dynamic>> callP2PNodeStop(Bridge bridge) async {
-  emitFlowEvent(
-    layer: 'FL',
-    event: 'P2P_NODE_STOP_REQUEST',
-    details: {},
-  );
+  emitFlowEvent(layer: 'FL', event: 'P2P_NODE_STOP_REQUEST', details: {});
 
-  final request = {
-    'cmd': 'node:stop',
-    'payload': <String, dynamic>{},
-  };
+  final request = {'cmd': 'node:stop', 'payload': <String, dynamic>{}};
 
   final responseJson = await bridge.send(jsonEncode(request));
   final response = jsonDecode(responseJson) as Map<String, dynamic>;
@@ -163,16 +189,9 @@ Future<Map<String, dynamic>> callP2PNodeStop(Bridge bridge) async {
 ///
 /// Returns: Node state including peerId, isStarted, connections, etc.
 Future<Map<String, dynamic>> callP2PNodeStatus(Bridge bridge) async {
-  emitFlowEvent(
-    layer: 'FL',
-    event: 'P2P_NODE_STATUS_REQUEST',
-    details: {},
-  );
+  emitFlowEvent(layer: 'FL', event: 'P2P_NODE_STATUS_REQUEST', details: {});
 
-  final request = {
-    'cmd': 'node:status',
-    'payload': <String, dynamic>{},
-  };
+  final request = {'cmd': 'node:status', 'payload': <String, dynamic>{}};
 
   final responseJson = await bridge.send(jsonEncode(request));
   final response = jsonDecode(responseJson) as Map<String, dynamic>;
@@ -334,9 +353,7 @@ Future<Map<String, dynamic>> callP2PPeerDisconnect(
 
   final request = {
     'cmd': 'peer:disconnect',
-    'payload': {
-      'peerId': peerId,
-    },
+    'payload': {'peerId': peerId},
   };
 
   final responseJson = await bridge.send(jsonEncode(request));
@@ -372,10 +389,7 @@ Future<Map<String, dynamic>> callP2PInboxStore(
 
   final request = {
     'cmd': 'inbox:store',
-    'payload': {
-      'toPeerId': toPeerId,
-      'message': message,
-    },
+    'payload': {'toPeerId': toPeerId, 'message': message},
   };
 
   final responseJson = await bridge.send(jsonEncode(request));
@@ -411,10 +425,7 @@ Future<Map<String, dynamic>> callP2PInboxRegisterToken(
 
   final request = {
     'cmd': 'inbox:register_token',
-    'payload': {
-      'token': token,
-      'platform': platform,
-    },
+    'payload': {'token': token, 'platform': platform},
   };
 
   final responseJson = await bridge.send(jsonEncode(request));
@@ -448,9 +459,7 @@ Future<Map<String, dynamic>> callP2PInboxRetrieve(
 
   final request = {
     'cmd': 'inbox:retrieve',
-    'payload': <String, dynamic>{
-      if (timeoutMs != null) 'timeoutMs': timeoutMs,
-    },
+    'payload': <String, dynamic>{if (timeoutMs != null) 'timeoutMs': timeoutMs},
   };
 
   final responseJson = await bridge.send(jsonEncode(request));
@@ -538,10 +547,7 @@ Future<Map<String, dynamic>> callP2PMediaDownload(
 
   final request = {
     'cmd': 'media:download',
-    'payload': {
-      'id': id,
-      'outputPath': outputPath,
-    },
+    'payload': {'id': id, 'outputPath': outputPath},
   };
 
   final responseJson = await bridge
@@ -577,9 +583,7 @@ Future<Map<String, dynamic>> callP2PMediaDelete(
 
   final request = {
     'cmd': 'media:delete',
-    'payload': {
-      'id': id,
-    },
+    'payload': {'id': id},
   };
 
   final responseJson = await bridge
@@ -600,16 +604,9 @@ Future<Map<String, dynamic>> callP2PMediaDelete(
 ///
 /// Returns: `{ "ok": true, "blobs": [...] }`
 Future<Map<String, dynamic>> callP2PMediaList(Bridge bridge) async {
-  emitFlowEvent(
-    layer: 'FL',
-    event: 'P2P_MEDIA_LIST_REQUEST',
-    details: {},
-  );
+  emitFlowEvent(layer: 'FL', event: 'P2P_MEDIA_LIST_REQUEST', details: {});
 
-  final request = {
-    'cmd': 'media:list',
-    'payload': <String, dynamic>{},
-  };
+  final request = {'cmd': 'media:list', 'payload': <String, dynamic>{}};
 
   final responseJson = await bridge
       .send(jsonEncode(request))
@@ -648,10 +645,7 @@ Future<Map<String, dynamic>> callP2PProfileUpload(
 
   final request = {
     'cmd': 'profile:upload',
-    'payload': {
-      'mime': mime,
-      'filePath': filePath,
-    },
+    'payload': {'mime': mime, 'filePath': filePath},
   };
 
   final responseJson = await bridge
@@ -689,10 +683,7 @@ Future<Map<String, dynamic>> callP2PProfileDownload(
 
   final request = {
     'cmd': 'profile:download',
-    'payload': {
-      'ownerPeerId': ownerPeerId,
-      'outputPath': outputPath,
-    },
+    'payload': {'ownerPeerId': ownerPeerId, 'outputPath': outputPath},
   };
 
   final responseJson = await bridge

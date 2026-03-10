@@ -220,10 +220,10 @@ func EncryptContactRequest(paramsJSON string) (result string) {
 	}
 
 	return okJSON(map[string]interface{}{
-		"ok":                true,
+		"ok":                 true,
 		"ephemeralPublicKey": enc.EphemeralPublicKey,
-		"ciphertext":        enc.Ciphertext,
-		"nonce":             enc.Nonce,
+		"ciphertext":         enc.Ciphertext,
+		"nonce":              enc.Nonce,
 	})
 }
 
@@ -369,11 +369,12 @@ func StartNode(paramsJSON string) (result string) {
 	}
 
 	var params struct {
-		PrivateKeyHex  string   `json:"privateKeyHex"`
-		RelayAddresses []string `json:"relayAddresses"`
-		Namespace      string   `json:"namespace"`
-		AutoRegister   bool     `json:"autoRegister"`
-		ListenPort     int      `json:"listenPort"`
+		PrivateKeyHex  string             `json:"privateKeyHex"`
+		RelayAddresses []string           `json:"relayAddresses"`
+		Namespace      string             `json:"namespace"`
+		AutoRegister   bool               `json:"autoRegister"`
+		ListenPort     int                `json:"listenPort"`
+		FeatureFlags   *node.FeatureFlags `json:"featureFlags"`
 	}
 	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
 		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
@@ -388,6 +389,7 @@ func StartNode(paramsJSON string) (result string) {
 		Namespace:      params.Namespace,
 		AutoRegister:   params.AutoRegister,
 		ListenPort:     params.ListenPort,
+		FeatureFlags:   params.FeatureFlags,
 	}
 
 	_, err := n.Start(cfg)
@@ -593,6 +595,33 @@ func RelayReconnect() (result string) {
 	}
 
 	return okJSON(resp)
+}
+
+// GroupAcknowledgeRecovery clears the pending needsGroupRecovery signal after
+// Flutter has successfully rejoined group topics.
+// Returns JSON: { "ok": true }
+func GroupAcknowledgeRecovery() (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+		}
+	}()
+
+	nodeMu.Lock()
+	n := singletonNode
+	nodeMu.Unlock()
+
+	if n == nil {
+		return errJSON("NOT_INITIALIZED", "call Initialize first")
+	}
+
+	if err := n.AcknowledgeGroupRecovery(); err != nil {
+		return errJSON("GROUP_ERROR", err.Error())
+	}
+
+	return okJSON(map[string]interface{}{
+		"ok": true,
+	})
 }
 
 // --- Relay Probe ---
@@ -1215,10 +1244,10 @@ func GroupCreate(paramsJSON string) (result string) {
 	}
 
 	var params struct {
-		Name                string `json:"name"`
-		GroupType           string `json:"groupType"`
-		CreatorPeerId       string `json:"creatorPeerId"`
-		CreatorPublicKey    string `json:"creatorPublicKey"`
+		Name                  string `json:"name"`
+		GroupType             string `json:"groupType"`
+		CreatorPeerId         string `json:"creatorPeerId"`
+		CreatorPublicKey      string `json:"creatorPublicKey"`
 		CreatorMlKemPublicKey string `json:"creatorMlKemPublicKey"`
 	}
 	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
@@ -1302,10 +1331,10 @@ func GroupJoinTopic(paramsJSON string) (result string) {
 	}
 
 	var params struct {
-		GroupId     string            `json:"groupId"`
-		GroupConfig node.GroupConfig  `json:"groupConfig"`
-		GroupKey    string            `json:"groupKey"`
-		KeyEpoch   int               `json:"keyEpoch"`
+		GroupId     string           `json:"groupId"`
+		GroupConfig node.GroupConfig `json:"groupConfig"`
+		GroupKey    string           `json:"groupKey"`
+		KeyEpoch    int              `json:"keyEpoch"`
 	}
 	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
 		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
@@ -1775,6 +1804,63 @@ func GroupInboxRetrieve(paramsJSON string) (result string) {
 	return okJSON(map[string]interface{}{
 		"ok":       true,
 		"messages": msgList,
+	})
+}
+
+// GroupInboxRetrieveCursor retrieves missed group messages from the relay's
+// group inbox using cursor-based pagination.
+// Input JSON: { "groupId": "...", "cursor": "...", "limit": N }
+// Returns JSON: { "ok": true, "messages": [...], "cursor": "..." }
+func GroupInboxRetrieveCursor(paramsJSON string) (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+		}
+	}()
+
+	nodeMu.Lock()
+	n := singletonNode
+	nodeMu.Unlock()
+
+	if n == nil {
+		return errJSON("NOT_INITIALIZED", "call Initialize first")
+	}
+
+	var params struct {
+		GroupId string `json:"groupId"`
+		Cursor  string `json:"cursor"`
+		Limit   int    `json:"limit"`
+	}
+	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
+		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
+	}
+
+	if params.GroupId == "" {
+		return errJSON("INVALID_INPUT", "missing groupId")
+	}
+
+	msgs, nextCursor, err := n.GroupInboxRetrieveWithCursor(
+		params.GroupId,
+		params.Cursor,
+		params.Limit,
+	)
+	if err != nil {
+		return errJSON("GROUP_INBOX_ERROR", err.Error())
+	}
+
+	msgList := make([]map[string]interface{}, len(msgs))
+	for i, m := range msgs {
+		msgList[i] = map[string]interface{}{
+			"from":      m.From,
+			"message":   m.Message,
+			"timestamp": m.Timestamp,
+		}
+	}
+
+	return okJSON(map[string]interface{}{
+		"ok":       true,
+		"messages": msgList,
+		"cursor":   nextCursor,
 	})
 }
 

@@ -589,6 +589,161 @@ void main() {
   // ---------------------------------------------------------------------------
   // Reaction drain tests
   // ---------------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
+  // Phase 6: Cursor continuation and exactly-once delivery
+  // ---------------------------------------------------------------------------
+
+  group('drainGroupOfflineInbox use case', () {
+    test('resume uses cursor continuation rather than timestamp guessing',
+        () async {
+      final ts = DateTime.now().toUtc().toIso8601String();
+
+      // Page 1 returns cursor "page2", page 2 returns cursor ""
+      bridge.addPage('group-1', '', [
+        {
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Sender',
+          'keyEpoch': 1,
+          'text': 'Page 1 message',
+          'timestamp': ts,
+          'messageId': 'msg-p6-p1',
+        },
+      ], 'page2');
+
+      bridge.addPage('group-1', 'page2', [
+        {
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Sender',
+          'keyEpoch': 1,
+          'text': 'Page 2 message',
+          'timestamp': ts,
+          'messageId': 'msg-p6-p2',
+        },
+      ], '');
+
+      await drainGroupOfflineInbox(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+      );
+
+      // Verify that the bridge was called with cursor="page2" for the second page
+      // and NOT with a sinceTimestamp
+      final cursorCmds = bridge.sentMessages
+          .map((m) => jsonDecode(m) as Map<String, dynamic>)
+          .where((m) => m['cmd'] == 'group:inboxRetrieveCursor')
+          .toList();
+
+      expect(cursorCmds.length, 2);
+      expect(cursorCmds[0]['payload']['cursor'], '');
+      expect(cursorCmds[1]['payload']['cursor'], 'page2');
+
+      // Verify no sinceTimestamp field was sent
+      for (final cmd in cursorCmds) {
+        expect(cmd['payload'].containsKey('sinceTimestamp'), isFalse,
+            reason: 'Cursor-based pagination should not use sinceTimestamp');
+      }
+
+      expect(msgRepo.count, 2);
+    });
+
+    test('watchdog restart drains missed group messages exactly once',
+        () async {
+      final ts = DateTime.now().toUtc().toIso8601String();
+
+      bridge.addPage('group-1', '', [
+        {
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Sender',
+          'keyEpoch': 1,
+          'text': 'Watchdog missed msg',
+          'timestamp': ts,
+          'messageId': 'msg-wd-once',
+        },
+      ], '');
+
+      // Drain the inbox
+      await drainGroupOfflineInbox(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+      );
+
+      // Verify messages are saved to msgRepo exactly once
+      expect(msgRepo.count, 1);
+
+      // Drain again with the same page data (bridge still returns same message)
+      await drainGroupOfflineInbox(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+      );
+
+      // Verify count hasn't changed (dedup by messageId)
+      expect(msgRepo.count, 1,
+          reason: 'Draining twice should not duplicate messages');
+    });
+
+    test(
+        'first group inbox page returns before background continuation completes',
+        () async {
+      final ts = DateTime.now().toUtc().toIso8601String();
+
+      // Page 1 with cursor pointing to page 2
+      bridge.addPage('group-1', '', [
+        {
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Sender',
+          'keyEpoch': 1,
+          'text': 'First page only',
+          'timestamp': ts,
+          'messageId': 'msg-fp-1',
+        },
+      ], 'more-pages-cursor');
+
+      // Page 2 (should not be fetched)
+      bridge.addPage('group-1', 'more-pages-cursor', [
+        {
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Sender',
+          'keyEpoch': 1,
+          'text': 'Second page',
+          'timestamp': ts,
+          'messageId': 'msg-fp-2',
+        },
+      ], '');
+
+      // Call drainGroupOfflineInbox with drainAllPages: false
+      await drainGroupOfflineInbox(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        drainAllPages: false,
+      );
+
+      // Verify that only the first page is fetched
+      expect(msgRepo.count, 1);
+
+      // Bridge should have been called exactly once with cursor=""
+      final cursorCmds = bridge.sentMessages
+          .map((m) => jsonDecode(m) as Map<String, dynamic>)
+          .where((m) => m['cmd'] == 'group:inboxRetrieveCursor')
+          .toList();
+
+      expect(cursorCmds.length, 1,
+          reason: 'Only one page should be fetched when drainAllPages=false');
+      expect(cursorCmds[0]['payload']['cursor'], '');
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Reaction drain tests
+  // ---------------------------------------------------------------------------
   test('drains group_reaction items when reactionRepo is provided', () async {
     final reactionRepo = FakeReactionRepository();
 

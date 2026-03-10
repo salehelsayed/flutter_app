@@ -48,7 +48,8 @@ func (n *Node) InboxStore(toPeerId string, message string) error {
 	rs := n.buildRelaySelector(nil)
 
 	return rs.ForEach(func(relay RelayInfo) error {
-		ctx, cancel := context.WithTimeout(n.ctx, InboxTimeout)
+		timeout := InboxTimeout
+		ctx, cancel := context.WithTimeout(n.ctx, timeout)
 		defer cancel()
 
 		// Ensure connected to relay
@@ -60,7 +61,9 @@ func (n *Node) InboxStore(toPeerId string, message string) error {
 		if err != nil {
 			return fmt.Errorf("open inbox stream: %w", err)
 		}
-		defer s.Close()
+		streamOK := false
+		defer finishStream(s, &streamOK)
+		setStreamDeadline(s, timeout)
 
 		req := inboxRequest{
 			Action:  "store",
@@ -93,6 +96,7 @@ func (n *Node) InboxStore(toPeerId string, message string) error {
 		}
 
 		log.Printf("[INBOX] Stored message for %s", toPeerId[:min(20, len(toPeerId))])
+		streamOK = true
 		return nil
 	})
 }
@@ -111,7 +115,8 @@ func (n *Node) InboxRetrieve() ([]InboxMessage, error) {
 	rs := n.buildRelaySelector(nil)
 
 	return ForEachWithResult(rs, func(relay RelayInfo) ([]InboxMessage, error) {
-		ctx, cancel := context.WithTimeout(n.ctx, InboxTimeout)
+		timeout := InboxTimeout
+		ctx, cancel := context.WithTimeout(n.ctx, timeout)
 		defer cancel()
 
 		if err := h.Connect(ctx, peer.AddrInfo{ID: relay.ID, Addrs: relay.Addrs}); err != nil {
@@ -122,7 +127,9 @@ func (n *Node) InboxRetrieve() ([]InboxMessage, error) {
 		if err != nil {
 			return nil, fmt.Errorf("open inbox stream: %w", err)
 		}
-		defer s.Close()
+		streamOK := false
+		defer finishStream(s, &streamOK)
+		setStreamDeadline(s, timeout)
 
 		req := inboxRequest{
 			Action: "retrieve",
@@ -149,6 +156,7 @@ func (n *Node) InboxRetrieve() ([]InboxMessage, error) {
 		}
 
 		if resp.Status == "NO_MESSAGES" {
+			streamOK = true
 			return nil, nil
 		}
 
@@ -157,6 +165,7 @@ func (n *Node) InboxRetrieve() ([]InboxMessage, error) {
 		}
 
 		log.Printf("[INBOX] Retrieved %d messages", len(resp.Messages))
+		streamOK = true
 		return resp.Messages, nil
 	})
 }
@@ -199,7 +208,9 @@ func (n *Node) InboxRetrieveWithTimeout(timeoutMs int) (*InboxRetrieveResult, er
 		if err != nil {
 			return nil, fmt.Errorf("open inbox stream: %w", err)
 		}
-		defer s.Close()
+		streamOK := false
+		defer finishStream(s, &streamOK)
+		setStreamDeadline(s, timeout)
 
 		req := inboxRequest{
 			Action: "retrieve",
@@ -226,6 +237,7 @@ func (n *Node) InboxRetrieveWithTimeout(timeoutMs int) (*InboxRetrieveResult, er
 		}
 
 		if resp.Status == "NO_MESSAGES" {
+			streamOK = true
 			return &InboxRetrieveResult{Messages: nil, HasMore: false}, nil
 		}
 
@@ -237,6 +249,7 @@ func (n *Node) InboxRetrieveWithTimeout(timeoutMs int) (*InboxRetrieveResult, er
 		hasMore := len(resp.Messages) >= 50
 
 		log.Printf("[INBOX] Retrieved %d messages (hasMore=%v, timeout=%v)", len(resp.Messages), hasMore, timeout)
+		streamOK = true
 		return &InboxRetrieveResult{Messages: resp.Messages, HasMore: hasMore}, nil
 	})
 }
@@ -255,7 +268,8 @@ func (n *Node) InboxRegisterToken(token string, platform string) error {
 	rs := n.buildRelaySelector(nil)
 
 	return rs.ForEach(func(relay RelayInfo) error {
-		ctx, cancel := context.WithTimeout(n.ctx, InboxTimeout)
+		timeout := InboxTimeout
+		ctx, cancel := context.WithTimeout(n.ctx, timeout)
 		defer cancel()
 
 		if err := h.Connect(ctx, peer.AddrInfo{ID: relay.ID, Addrs: relay.Addrs}); err != nil {
@@ -266,7 +280,9 @@ func (n *Node) InboxRegisterToken(token string, platform string) error {
 		if err != nil {
 			return fmt.Errorf("open inbox stream: %w", err)
 		}
-		defer s.Close()
+		streamOK := false
+		defer finishStream(s, &streamOK)
+		setStreamDeadline(s, timeout)
 
 		req := inboxRequest{
 			Action:   "register_token",
@@ -298,6 +314,7 @@ func (n *Node) InboxRegisterToken(token string, platform string) error {
 		}
 
 		log.Printf("[INBOX] Push token registered (%s)", platform)
+		streamOK = true
 		return nil
 	})
 }

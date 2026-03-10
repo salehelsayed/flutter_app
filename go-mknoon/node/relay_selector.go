@@ -149,5 +149,6 @@ func (n *Node) buildRelaySelector(serverAddresses []string) *RelaySelector {
 	if len(addrs) == 0 {
 		addrs = []string{DefaultRelayAddress}
 	}
+	addrs = limitRelayAddresses(addrs, n.currentFeatureFlags())
 	return NewRelaySelector(addrs)
 }

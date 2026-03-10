@@ -13,6 +13,8 @@ class NodeState {
   final String? relayState;
   final int? healthyRelayCount;
   final int? watchdogRestartCount;
+  final bool? needsGroupRecovery;
+  final Map<String, bool>? featureFlags;
 
   const NodeState({
     this.peerId,
@@ -24,6 +26,8 @@ class NodeState {
     this.relayState,
     this.healthyRelayCount,
     this.watchdogRestartCount,
+    this.needsGroupRecovery,
+    this.featureFlags,
   });
 
   /// Stopped node state constant.
@@ -33,19 +37,23 @@ class NodeState {
     return NodeState(
       peerId: json['peerId'] as String?,
       isStarted: json['isStarted'] as bool? ?? false,
-      listenAddresses: (json['listenAddresses'] as List<dynamic>?)
+      listenAddresses:
+          (json['listenAddresses'] as List<dynamic>?)
               ?.map((e) => e as String)
               .toList() ??
           [],
-      circuitAddresses: (json['circuitAddresses'] as List<dynamic>?)
+      circuitAddresses:
+          (json['circuitAddresses'] as List<dynamic>?)
               ?.map((e) => e as String)
               .toList() ??
           [],
-      connections: (json['connections'] as List<dynamic>?)
+      connections:
+          (json['connections'] as List<dynamic>?)
               ?.map((e) => ConnectionState.fromJson(e as Map<String, dynamic>))
               .toList() ??
           [],
-      registeredNamespaces: (json['registeredNamespaces'] as List<dynamic>?)
+      registeredNamespaces:
+          (json['registeredNamespaces'] as List<dynamic>?)
               ?.map((e) => e as String)
               .toList() ??
           [],
@@ -53,6 +61,10 @@ class NodeState {
       relayState: json['relayState'] as String?,
       healthyRelayCount: (json['healthyRelayCount'] as num?)?.toInt(),
       watchdogRestartCount: (json['watchdogRestartCount'] as num?)?.toInt(),
+      needsGroupRecovery: json['needsGroupRecovery'] as bool?,
+      featureFlags: (json['featureFlags'] as Map<String, dynamic>?)?.map(
+        (key, value) => MapEntry(key, value == true),
+      ),
     );
   }
 
@@ -68,8 +80,13 @@ class NodeState {
 
     // Phase 4: Include relay session fields when present.
     if (relayState != null) result['relayState'] = relayState;
-    if (healthyRelayCount != null) result['healthyRelayCount'] = healthyRelayCount;
-    if (watchdogRestartCount != null) result['watchdogRestartCount'] = watchdogRestartCount;
+    if (healthyRelayCount != null)
+      result['healthyRelayCount'] = healthyRelayCount;
+    if (watchdogRestartCount != null)
+      result['watchdogRestartCount'] = watchdogRestartCount;
+    if (needsGroupRecovery != null)
+      result['needsGroupRecovery'] = needsGroupRecovery;
+    if (featureFlags != null) result['featureFlags'] = featureFlags;
 
     return result;
   }
@@ -84,6 +101,8 @@ class NodeState {
     String? relayState,
     int? healthyRelayCount,
     int? watchdogRestartCount,
+    bool? needsGroupRecovery,
+    Map<String, bool>? featureFlags,
   }) {
     return NodeState(
       peerId: peerId ?? this.peerId,
@@ -95,6 +114,8 @@ class NodeState {
       relayState: relayState ?? this.relayState,
       healthyRelayCount: healthyRelayCount ?? this.healthyRelayCount,
       watchdogRestartCount: watchdogRestartCount ?? this.watchdogRestartCount,
+      needsGroupRecovery: needsGroupRecovery ?? this.needsGroupRecovery,
+      featureFlags: featureFlags ?? this.featureFlags,
     );
   }
 

@@ -137,6 +137,8 @@ class _FakeP2PService implements P2PService {
     String? filename,
   }) async => false;
   @override
+  String? get lastRecoveryMethod => null;
+  @override
   void dispose() {}
 }
 

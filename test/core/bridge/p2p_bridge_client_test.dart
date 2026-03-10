@@ -69,51 +69,78 @@ void main() {
   // callP2PNodeStart
   // ---------------------------------------------------------------------------
   group('callP2PNodeStart', () {
-    test('sends node:start with privateKeyHex and default relay addresses',
-        () async {
-      bridge.nextResponse = {'ok': true, 'peerId': '12D3KooWTest'};
+    test(
+      'sends node:start with privateKeyHex and default relay addresses',
+      () async {
+        bridge.nextResponse = {'ok': true, 'peerId': '12D3KooWTest'};
 
-      final result = await callP2PNodeStart(
-        bridge,
-        privateKeyHex: 'deadbeef',
-      );
+        final result = await callP2PNodeStart(
+          bridge,
+          privateKeyHex: 'deadbeef',
+        );
 
-      expect(result['ok'], isTrue);
-      final req = bridge.lastParsedRequest!;
-      expect(req['cmd'], equals('node:start'));
-      expect(req['payload']['privateKeyHex'], equals('deadbeef'));
-      expect(req['payload']['relayAddresses'],
-          contains(defaultRendezvousAddress));
-      // QUIC relay re-enabled after relay server dependency upgrade.
-      expect(req['payload']['relayAddresses'],
-          contains(defaultQUICRelayAddress));
-    });
+        expect(result['ok'], isTrue);
+        final req = bridge.lastParsedRequest!;
+        expect(req['cmd'], equals('node:start'));
+        expect(req['payload']['privateKeyHex'], equals('deadbeef'));
+        expect(
+          req['payload']['relayAddresses'],
+          contains(defaultRendezvousAddress),
+        );
+        // QUIC relay re-enabled after relay server dependency upgrade.
+        expect(
+          req['payload']['relayAddresses'],
+          contains(defaultQUICRelayAddress),
+        );
+        expect(
+          req['payload']['featureFlags'],
+          equals(defaultResilienceFeatureFlags()),
+        );
+      },
+    );
 
     test('default relay addresses include both WSS and QUIC', () async {
       bridge.nextResponse = {'ok': true, 'peerId': '12D3KooWTest'};
 
       await callP2PNodeStart(bridge, privateKeyHex: 'deadbeef');
 
-      final payload = bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
+      final payload =
+          bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
       final relayAddresses = payload['relayAddresses'] as List;
       expect(relayAddresses, hasLength(2));
       expect(relayAddresses[0], equals(defaultRendezvousAddress));
       expect(relayAddresses[1], equals(defaultQUICRelayAddress));
     });
 
-    test('sends node:start with custom relay addresses when provided',
-        () async {
-      bridge.nextResponse = {'ok': true};
-
-      await callP2PNodeStart(
-        bridge,
-        privateKeyHex: 'deadbeef',
-        relayAddresses: ['/ip4/127.0.0.1/tcp/4001'],
+    test('default relay addresses honor MKNOON_RELAY_ADDRESSES style input', () {
+      expect(
+        defaultRelayAddresses(
+          relayAddressesCsv:
+              ' /ip4/127.0.0.1/tcp/4001/p2p/a , /ip4/127.0.0.1/tcp/4002/p2p/b ',
+        ),
+        equals([
+          '/ip4/127.0.0.1/tcp/4001/p2p/a',
+          '/ip4/127.0.0.1/tcp/4002/p2p/b',
+        ]),
       );
-
-      final payload = bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
-      expect(payload['relayAddresses'], equals(['/ip4/127.0.0.1/tcp/4001']));
     });
+
+    test(
+      'sends node:start with custom relay addresses when provided',
+      () async {
+        bridge.nextResponse = {'ok': true};
+
+        await callP2PNodeStart(
+          bridge,
+          privateKeyHex: 'deadbeef',
+          relayAddresses: ['/ip4/127.0.0.1/tcp/4001'],
+        );
+
+        final payload =
+            bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
+        expect(payload['relayAddresses'], equals(['/ip4/127.0.0.1/tcp/4001']));
+      },
+    );
 
     test('includes namespace in payload when provided', () async {
       bridge.nextResponse = {'ok': true};
@@ -124,8 +151,31 @@ void main() {
         namespace: 'mknoon:chat',
       );
 
-      final payload = bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
+      final payload =
+          bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
       expect(payload['namespace'], equals('mknoon:chat'));
+    });
+
+    test('includes custom feature flags when provided', () async {
+      bridge.nextResponse = {'ok': true};
+
+      await callP2PNodeStart(
+        bridge,
+        privateKeyHex: 'deadbeef',
+        featureFlags: const {
+          'enableSharedRelayBackend': true,
+          'enableMultiRelayRouting': false,
+          'enableReservationAwareHealth': true,
+          'enableInPlaceRelayRecovery': false,
+          'enableResumeGroupRecovery': false,
+        },
+      );
+
+      final payload =
+          bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
+      expect(payload['featureFlags']['enableMultiRelayRouting'], isFalse);
+      expect(payload['featureFlags']['enableInPlaceRelayRecovery'], isFalse);
+      expect(payload['featureFlags']['enableResumeGroupRecovery'], isFalse);
     });
 
     test('returns parsed response map', () async {
@@ -135,10 +185,7 @@ void main() {
         'isStarted': true,
       };
 
-      final result = await callP2PNodeStart(
-        bridge,
-        privateKeyHex: 'deadbeef',
-      );
+      final result = await callP2PNodeStart(bridge, privateKeyHex: 'deadbeef');
 
       expect(result, isA<Map<String, dynamic>>());
       expect(result['peerId'], equals('12D3KooWTest'));
@@ -181,6 +228,41 @@ void main() {
   });
 
   // ---------------------------------------------------------------------------
+  // callP2PRelayReconnect
+  // ---------------------------------------------------------------------------
+  group('callP2PRelayReconnect', () {
+    test('sends relay:reconnect and returns structured recoveryMode', () async {
+      bridge.nextResponse = {
+        'ok': true,
+        'recoveryMode': 'watchdog_restart',
+        'relayState': 'watchdog_restart',
+        'healthyRelayCount': 0,
+      };
+
+      final result = await callP2PRelayReconnect(bridge);
+
+      expect(result['ok'], isTrue);
+      expect(result['recoveryMode'], equals('watchdog_restart'));
+      expect(bridge.lastParsedRequest!['cmd'], equals('relay:reconnect'));
+    });
+
+    test('recoveryMode is sufficient without legacy recoveryMethod', () async {
+      bridge.nextResponse = {
+        'ok': true,
+        'recoveryMode': 'in_place',
+        'relayState': 'online',
+        'healthyRelayCount': 1,
+      };
+
+      final result = await callP2PRelayReconnect(bridge);
+
+      expect(result['ok'], isTrue);
+      expect(result['recoveryMode'], equals('in_place'));
+      expect(result.containsKey('recoveryMethod'), isFalse);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // callP2PRendezvousRegister
   // ---------------------------------------------------------------------------
   group('callP2PRendezvousRegister', () {
@@ -202,7 +284,8 @@ void main() {
         serverAddresses: ['/ip4/1.2.3.4/tcp/4001'],
       );
 
-      final payload = bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
+      final payload =
+          bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
       expect(payload['namespace'], equals('mknoon:chat:peer123'));
       expect(payload['serverAddresses'], equals(['/ip4/1.2.3.4/tcp/4001']));
     });
@@ -216,7 +299,10 @@ void main() {
       bridge.nextResponse = {
         'ok': true,
         'peers': [
-          {'id': 'peerA', 'addresses': ['/ip4/1.2.3.4/tcp/4001']}
+          {
+            'id': 'peerA',
+            'addresses': ['/ip4/1.2.3.4/tcp/4001'],
+          },
         ],
       };
 
@@ -227,27 +313,31 @@ void main() {
 
       expect(result['ok'], isTrue);
       expect(bridge.lastParsedRequest!['cmd'], equals('rendezvous:discover'));
-      final payload = bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
+      final payload =
+          bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
       expect(payload['peerId'], equals('12D3KooWTargetPeer'));
     });
 
-    test('includes namespace, serverAddresses, timeoutMs when provided',
-        () async {
-      bridge.nextResponse = {'ok': true, 'peers': []};
+    test(
+      'includes namespace, serverAddresses, timeoutMs when provided',
+      () async {
+        bridge.nextResponse = {'ok': true, 'peers': []};
 
-      await callP2PRendezvousDiscover(
-        bridge,
-        peerId: 'peer1',
-        namespace: 'ns',
-        serverAddresses: ['/addr'],
-        timeoutMs: 5000,
-      );
+        await callP2PRendezvousDiscover(
+          bridge,
+          peerId: 'peer1',
+          namespace: 'ns',
+          serverAddresses: ['/addr'],
+          timeoutMs: 5000,
+        );
 
-      final payload = bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
-      expect(payload['namespace'], equals('ns'));
-      expect(payload['serverAddresses'], equals(['/addr']));
-      expect(payload['timeoutMs'], equals(5000));
-    });
+        final payload =
+            bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
+        expect(payload['namespace'], equals('ns'));
+        expect(payload['serverAddresses'], equals(['/addr']));
+        expect(payload['timeoutMs'], equals(5000));
+      },
+    );
   });
 
   // ---------------------------------------------------------------------------
@@ -265,7 +355,8 @@ void main() {
       expect(result['ok'], isTrue);
       expect(result['connected'], isTrue);
       expect(bridge.lastParsedRequest!['cmd'], equals('peer:dial'));
-      final payload = bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
+      final payload =
+          bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
       expect(payload['peerId'], equals('12D3KooWDialTarget'));
     });
 
@@ -279,7 +370,8 @@ void main() {
         timeoutMs: 10000,
       );
 
-      final payload = bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
+      final payload =
+          bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
       expect(payload['addresses'], equals(['/ip4/1.2.3.4/tcp/4001']));
       expect(payload['timeoutMs'], equals(10000));
     });
@@ -299,7 +391,8 @@ void main() {
 
       expect(result['ok'], isTrue);
       expect(bridge.lastParsedRequest!['cmd'], equals('peer:disconnect'));
-      final payload = bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
+      final payload =
+          bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
       expect(payload['peerId'], equals('12D3KooWDisconnectTarget'));
     });
   });
@@ -319,7 +412,8 @@ void main() {
 
       expect(result['ok'], isTrue);
       expect(bridge.lastParsedRequest!['cmd'], equals('inbox:store'));
-      final payload = bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
+      final payload =
+          bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
       expect(payload['toPeerId'], equals('12D3KooWInboxTarget'));
       expect(payload['message'], equals('Hello offline!'));
     });
@@ -340,7 +434,8 @@ void main() {
 
       expect(result['ok'], isTrue);
       expect(bridge.lastParsedRequest!['cmd'], equals('inbox:register_token'));
-      final payload = bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
+      final payload =
+          bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
       expect(payload['token'], equals('fcm_token_abc123'));
       expect(payload['platform'], equals('ios'));
     });
@@ -378,7 +473,8 @@ void main() {
       expect(result['ok'], isTrue);
       expect(result['id'], equals('uuid-123'));
       expect(bridge.lastParsedRequest!['cmd'], equals('media:upload'));
-      final payload = bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
+      final payload =
+          bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
       expect(payload['id'], equals('uuid-123'));
       expect(payload['to'], equals('12D3KooWMediaTarget'));
       expect(payload['mime'], equals('image/jpeg'));
@@ -406,7 +502,8 @@ void main() {
 
       expect(result['ok'], isTrue);
       expect(bridge.lastParsedRequest!['cmd'], equals('media:download'));
-      final payload = bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
+      final payload =
+          bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
       expect(payload['id'], equals('uuid-456'));
       expect(payload['outputPath'], equals('/tmp/downloaded.png'));
     });
@@ -423,7 +520,8 @@ void main() {
 
       expect(result['ok'], isTrue);
       expect(bridge.lastParsedRequest!['cmd'], equals('media:delete'));
-      final payload = bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
+      final payload =
+          bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
       expect(payload['id'], equals('uuid-789'));
     });
   });
@@ -457,7 +555,8 @@ void main() {
 
       expect(result['ok'], isTrue);
       expect(bridge.lastParsedRequest!['cmd'], equals('profile:upload'));
-      final payload = bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
+      final payload =
+          bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
       expect(payload['mime'], equals('image/jpeg'));
       expect(payload['filePath'], equals('/tmp/avatar.jpg'));
     });
@@ -478,7 +577,8 @@ void main() {
 
       expect(result['ok'], isTrue);
       expect(bridge.lastParsedRequest!['cmd'], equals('profile:download'));
-      final payload = bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
+      final payload =
+          bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
       expect(payload['ownerPeerId'], equals('12D3KooWProfileOwner'));
       expect(payload['outputPath'], equals('/tmp/profile.jpg'));
     });
@@ -500,7 +600,8 @@ void main() {
       expect(result['ok'], isTrue);
       expect(result['sent'], isTrue);
       expect(bridge.lastParsedRequest!['cmd'], equals('message:send'));
-      final payload = bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
+      final payload =
+          bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
       expect(payload['peerId'], equals('12D3KooWSendTarget'));
       expect(payload['message'], equals('Hello, world!'));
     });
@@ -515,7 +616,8 @@ void main() {
         timeoutMs: 30000,
       );
 
-      final payload = bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
+      final payload =
+          bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
       expect(payload['timeoutMs'], equals(30000));
     });
   });
@@ -527,10 +629,7 @@ void main() {
     test('propagates exception when bridge.send throws', () async {
       bridge.shouldThrow = true;
 
-      expect(
-        () => callP2PNodeStop(bridge),
-        throwsA(isA<Exception>()),
-      );
+      expect(() => callP2PNodeStop(bridge), throwsA(isA<Exception>()));
     });
   });
 
@@ -558,48 +657,52 @@ void main() {
       }
     });
 
-    test('callP2PRendezvousRegister forwards explicit serverAddresses',
-        () async {
-      bridge.nextResponse = {'ok': true};
+    test(
+      'callP2PRendezvousRegister forwards explicit serverAddresses',
+      () async {
+        bridge.nextResponse = {'ok': true};
 
-      final explicitAddresses = [
-        '/ip4/10.0.0.1/tcp/4001/p2p/12D3KooWRelay1',
-        '/ip4/10.0.0.2/tcp/4001/p2p/12D3KooWRelay2',
-      ];
+        final explicitAddresses = [
+          '/ip4/10.0.0.1/tcp/4001/p2p/12D3KooWRelay1',
+          '/ip4/10.0.0.2/tcp/4001/p2p/12D3KooWRelay2',
+        ];
 
-      await callP2PRendezvousRegister(
-        bridge,
-        namespace: 'mknoon:chat:test',
-        serverAddresses: explicitAddresses,
-      );
+        await callP2PRendezvousRegister(
+          bridge,
+          namespace: 'mknoon:chat:test',
+          serverAddresses: explicitAddresses,
+        );
 
-      final payload =
-          bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
-      expect(payload['serverAddresses'], equals(explicitAddresses));
-      expect(payload['serverAddresses'], hasLength(2));
-    });
+        final payload =
+            bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
+        expect(payload['serverAddresses'], equals(explicitAddresses));
+        expect(payload['serverAddresses'], hasLength(2));
+      },
+    );
 
-    test('callP2PRendezvousDiscover forwards explicit serverAddresses',
-        () async {
-      bridge.nextResponse = {'ok': true, 'peers': []};
+    test(
+      'callP2PRendezvousDiscover forwards explicit serverAddresses',
+      () async {
+        bridge.nextResponse = {'ok': true, 'peers': []};
 
-      final explicitAddresses = [
-        '/ip4/10.0.0.1/tcp/4001/p2p/12D3KooWRelay1',
-        '/ip4/10.0.0.2/tcp/4001/p2p/12D3KooWRelay2',
-      ];
+        final explicitAddresses = [
+          '/ip4/10.0.0.1/tcp/4001/p2p/12D3KooWRelay1',
+          '/ip4/10.0.0.2/tcp/4001/p2p/12D3KooWRelay2',
+        ];
 
-      await callP2PRendezvousDiscover(
-        bridge,
-        peerId: 'peer1',
-        namespace: 'mknoon:chat:test',
-        serverAddresses: explicitAddresses,
-        timeoutMs: 5000,
-      );
+        await callP2PRendezvousDiscover(
+          bridge,
+          peerId: 'peer1',
+          namespace: 'mknoon:chat:test',
+          serverAddresses: explicitAddresses,
+          timeoutMs: 5000,
+        );
 
-      final payload =
-          bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
-      expect(payload['serverAddresses'], equals(explicitAddresses));
-      expect(payload['serverAddresses'], hasLength(2));
-    });
+        final payload =
+            bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
+        expect(payload['serverAddresses'], equals(explicitAddresses));
+        expect(payload['serverAddresses'], hasLength(2));
+      },
+    );
   });
 }

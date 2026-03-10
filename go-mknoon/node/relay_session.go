@@ -45,10 +45,10 @@ type RelaySessionState struct {
 type AggregateRelayState string
 
 const (
-	AggregateRelayStarting         AggregateRelayState = "starting"
-	AggregateRelayOnline           AggregateRelayState = "online"
-	AggregateRelayRecovering       AggregateRelayState = "recovering"
-	AggregateRelayWatchdogRestart  AggregateRelayState = "watchdog_restart"
+	AggregateRelayStarting        AggregateRelayState = "starting"
+	AggregateRelayOnline          AggregateRelayState = "online"
+	AggregateRelayRecovering      AggregateRelayState = "recovering"
+	AggregateRelayWatchdogRestart AggregateRelayState = "watchdog_restart"
 )
 
 // WatchdogMaxConsecutiveFailures is the number of consecutive relay refresh
@@ -82,12 +82,12 @@ type RelaySessionManager struct {
 
 // RecoveryResult carries the structured result of a relay session refresh.
 type RecoveryResult struct {
-	RecoveryMode    string `json:"recoveryMode"`    // "in_place" or "watchdog_restart"
-	Success         bool   `json:"success"`
-	ErrorCode       string `json:"errorCode,omitempty"`
-	Reason          string `json:"reason,omitempty"`
-	RelayState      string `json:"relayState"`
-	HealthyRelayCount int  `json:"healthyRelayCount"`
+	RecoveryMode      string `json:"recoveryMode"` // "in_place" or "watchdog_restart"
+	Success           bool   `json:"success"`
+	ErrorCode         string `json:"errorCode,omitempty"`
+	Reason            string `json:"reason,omitempty"`
+	RelayState        string `json:"relayState"`
+	HealthyRelayCount int    `json:"healthyRelayCount"`
 }
 
 // NewRelaySessionManager creates a new relay session manager.
@@ -575,6 +575,16 @@ func (m *RelaySessionManager) AcknowledgeGroupRecovery() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.needsGroupRecovery = false
+}
+
+// RecordWatchdogRestart tracks an actual full watchdog restart on the live
+// node. This preserves restart telemetry and the follow-up group recovery
+// signal across Stop()+Start() recovery cycles.
+func (m *RelaySessionManager) RecordWatchdogRestart() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.watchdogRestartCount++
+	m.needsGroupRecovery = true
 }
 
 // Reset clears all session state. Used when performing a full host restart.

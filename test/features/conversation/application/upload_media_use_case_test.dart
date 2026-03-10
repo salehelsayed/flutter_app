@@ -37,7 +37,9 @@ class _FakeBridge implements Bridge {
   void Function(ConnectionState)? onPeerDisconnected;
   @override
   void Function(List<String> listenAddresses, List<String> circuitAddresses)?
-      onAddressesUpdated;
+  onAddressesUpdated;
+  @override
+  void Function(Map<String, dynamic>)? onRelayStateChanged;
   @override
   void Function(Map<String, dynamic>)? onGroupMessageReceived;
   @override
@@ -160,8 +162,11 @@ void main() {
           recipientPeerId: 'recipient',
         );
         expect(result, isNotNull, reason: 'Should succeed for ${entry.key}');
-        expect(result!.mediaType, entry.value,
-            reason: 'mediaType for ${entry.key}');
+        expect(
+          result!.mediaType,
+          entry.value,
+          reason: 'mediaType for ${entry.key}',
+        );
       }
     });
 
@@ -272,7 +277,12 @@ class _FakeMediaFileManager extends MediaFileManager {
   }
 
   static String _extFromMime(String mime) {
-    const m = {'image/jpeg': '.jpg', 'image/png': '.png', 'video/mp4': '.mp4', 'audio/mpeg': '.mp3'};
+    const m = {
+      'image/jpeg': '.jpg',
+      'image/png': '.png',
+      'video/mp4': '.mp4',
+      'audio/mpeg': '.mp3',
+    };
     return m[mime] ?? '';
   }
 }
@@ -299,7 +309,9 @@ class _ThrowingBridge implements Bridge {
   void Function(ConnectionState)? onPeerDisconnected;
   @override
   void Function(List<String> listenAddresses, List<String> circuitAddresses)?
-      onAddressesUpdated;
+  onAddressesUpdated;
+  @override
+  void Function(Map<String, dynamic>)? onRelayStateChanged;
   @override
   void Function(Map<String, dynamic>)? onGroupMessageReceived;
   @override

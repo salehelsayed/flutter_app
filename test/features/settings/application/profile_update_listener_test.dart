@@ -11,7 +11,11 @@ import 'package:flutter_app/features/settings/application/profile_update_listene
 // --- Fakes ---
 
 class _FakeBridge implements Bridge {
-  Map<String, dynamic> downloadResponse = {'ok': true, 'mime': 'image/jpeg', 'size': 1024};
+  Map<String, dynamic> downloadResponse = {
+    'ok': true,
+    'mime': 'image/jpeg',
+    'size': 1024,
+  };
 
   @override
   Future<String> send(String message) async {
@@ -36,7 +40,9 @@ class _FakeBridge implements Bridge {
   void Function(ConnectionState)? onPeerDisconnected;
   @override
   void Function(List<String> listenAddresses, List<String> circuitAddresses)?
-      onAddressesUpdated;
+  onAddressesUpdated;
+  @override
+  void Function(Map<String, dynamic>)? onRelayStateChanged;
   @override
   void Function(Map<String, dynamic>)? onGroupMessageReceived;
   @override
@@ -56,8 +62,7 @@ class _FakeContactRepo implements ContactRepository {
   }
 
   @override
-  Future<ContactModel?> getContact(String peerId) async =>
-      _contacts[peerId];
+  Future<ContactModel?> getContact(String peerId) async => _contacts[peerId];
 
   @override
   Future<List<ContactModel>> getAllContacts() async =>
@@ -68,8 +73,7 @@ class _FakeContactRepo implements ContactRepository {
       _contacts.values.where((c) => !c.isArchived).toList();
 
   @override
-  Future<void> deleteContact(String peerId) async =>
-      _contacts.remove(peerId);
+  Future<void> deleteContact(String peerId) async => _contacts.remove(peerId);
 
   @override
   Future<bool> contactExists(String peerId) async =>
@@ -105,17 +109,17 @@ ContactModel _makeContact(String peerId) {
   );
 }
 
-ChatMessage _makeProfileUpdateMessage(String senderPeerId, String avatarVersion) {
+ChatMessage _makeProfileUpdateMessage(
+  String senderPeerId,
+  String avatarVersion,
+) {
   return ChatMessage(
     from: senderPeerId,
     to: 'my-peer-id',
     content: jsonEncode({
       'type': 'profile_update',
       'version': '1',
-      'payload': {
-        'peerId': senderPeerId,
-        'avatarVersion': avatarVersion,
-      },
+      'payload': {'peerId': senderPeerId, 'avatarVersion': avatarVersion},
     }),
     timestamp: DateTime.now().toUtc().toIso8601String(),
     isIncoming: true,
@@ -165,9 +169,9 @@ void main() {
       listener.contactUpdatedStream.listen(updates.add);
 
       // Add contact with existing avatarVersion
-      final contact = _makeContact('peer-a').copyWith(
-        avatarVersion: '2026-02-21T12:00:00.000Z',
-      );
+      final contact = _makeContact(
+        'peer-a',
+      ).copyWith(avatarVersion: '2026-02-21T12:00:00.000Z');
       contactRepo.seed(contact);
 
       // Inject update with same version
@@ -185,13 +189,15 @@ void main() {
       listener.contactUpdatedStream.listen(updates.add);
 
       // Inject message with invalid content
-      profileUpdateController.add(ChatMessage(
-        from: 'peer-a',
-        to: 'my-peer-id',
-        content: 'not valid json {{{',
-        timestamp: DateTime.now().toUtc().toIso8601String(),
-        isIncoming: true,
-      ));
+      profileUpdateController.add(
+        ChatMessage(
+          from: 'peer-a',
+          to: 'my-peer-id',
+          content: 'not valid json {{{',
+          timestamp: DateTime.now().toUtc().toIso8601String(),
+          isIncoming: true,
+        ),
+      );
 
       await Future.delayed(const Duration(milliseconds: 100));
 
@@ -204,17 +210,19 @@ void main() {
       listener.contactUpdatedStream.listen(updates.add);
 
       // Inject message with missing payload fields
-      profileUpdateController.add(ChatMessage(
-        from: 'peer-a',
-        to: 'my-peer-id',
-        content: jsonEncode({
-          'type': 'profile_update',
-          'version': '1',
-          'payload': {},
-        }),
-        timestamp: DateTime.now().toUtc().toIso8601String(),
-        isIncoming: true,
-      ));
+      profileUpdateController.add(
+        ChatMessage(
+          from: 'peer-a',
+          to: 'my-peer-id',
+          content: jsonEncode({
+            'type': 'profile_update',
+            'version': '1',
+            'payload': {},
+          }),
+          timestamp: DateTime.now().toUtc().toIso8601String(),
+          isIncoming: true,
+        ),
+      );
 
       await Future.delayed(const Duration(milliseconds: 100));
 

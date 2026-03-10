@@ -19,11 +19,11 @@ class _CursorInboxBridge extends FakeBridge {
   final Map<String, _InboxPage> pages = {};
 
   void addPage(
-      String groupId,
-      String cursor,
-      List<Map<String, dynamic>> messages,
-      String nextCursor,
-      ) {
+    String groupId,
+    String cursor,
+    List<Map<String, dynamic>> messages,
+    String nextCursor,
+  ) {
     pages['$groupId:$cursor'] = _InboxPage(messages, nextCursor);
   }
 
@@ -83,194 +83,666 @@ void main() {
 
   group('Group resume recovery integration tests', () {
     test(
-        'member backgrounded during send receives missed group messages after resume',
-        () async {
-      // Arrange: Alice and Bob in a group.
-      final alice = GroupTestUser.create(
-        peerId: 'alice-peer',
-        username: 'Alice',
-        network: network,
-      );
-      final bob = GroupTestUser.create(
-        peerId: 'bob-peer',
-        username: 'Bob',
-        network: network,
-        bridge: _CursorInboxBridge(),
-      );
-      final bobBridge = bob.bridge as _CursorInboxBridge;
+      'member backgrounded during send receives missed group messages after resume',
+      () async {
+        // Arrange: Alice and Bob in a group.
+        final alice = GroupTestUser.create(
+          peerId: 'alice-peer',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'bob-peer',
+          username: 'Bob',
+          network: network,
+          bridge: _CursorInboxBridge(),
+        );
+        final bobBridge = bob.bridge as _CursorInboxBridge;
 
-      const groupId = 'group-resume-1';
-      await alice.createGroup(groupId: groupId, name: 'Resume Test');
-      await alice.addMember(groupId: groupId, invitee: bob);
+        const groupId = 'group-resume-1';
+        await alice.createGroup(groupId: groupId, name: 'Resume Test');
+        await alice.addMember(groupId: groupId, invitee: bob);
 
-      await bob.groupRepo.saveKey(GroupKeyInfo(
-        groupId: groupId,
-        keyGeneration: 1,
-        encryptedKey: 'test-key',
-        createdAt: DateTime.now().toUtc(),
-      ));
+        await bob.groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: groupId,
+            keyGeneration: 1,
+            encryptedKey: 'test-key',
+            createdAt: DateTime.now().toUtc(),
+          ),
+        );
 
-      alice.start();
-      bob.start();
+        alice.start();
+        bob.start();
 
-      // Verify normal messaging works.
-      await alice.sendGroupMessage(groupId: groupId, text: 'Before background');
-      await pump();
-      var bobMessages = await bob.loadGroupMessages(groupId);
-      expect(bobMessages.where((m) => m.isIncoming), hasLength(1));
+        // Verify normal messaging works.
+        await alice.sendGroupMessage(
+          groupId: groupId,
+          text: 'Before background',
+        );
+        await pump();
+        var bobMessages = await bob.loadGroupMessages(groupId);
+        expect(bobMessages.where((m) => m.isIncoming), hasLength(1));
 
-      // Simulate Bob backgrounding: unsubscribe from network.
-      network.unsubscribe(groupId, bob.peerId);
+        // Simulate Bob backgrounding: unsubscribe from network.
+        network.unsubscribe(groupId, bob.peerId);
 
-      // Alice sends while Bob is backgrounded.
-      await alice.sendGroupMessage(groupId: groupId, text: 'While backgrounded');
-      await pump();
+        // Alice sends while Bob is backgrounded.
+        await alice.sendGroupMessage(
+          groupId: groupId,
+          text: 'While backgrounded',
+        );
+        await pump();
 
-      // Bob should NOT have received the message.
-      bobMessages = await bob.loadGroupMessages(groupId);
-      expect(bobMessages.where((m) => m.isIncoming), hasLength(1));
+        // Bob should NOT have received the message.
+        bobMessages = await bob.loadGroupMessages(groupId);
+        expect(bobMessages.where((m) => m.isIncoming), hasLength(1));
 
-      // Simulate resume: drain offline inbox (with missed messages).
-      final ts = DateTime.now().toUtc().toIso8601String();
-      bobBridge.addPage(groupId, '', [
-        {
-          'groupId': groupId,
-          'senderId': 'alice-peer',
-          'senderUsername': 'Alice',
-          'keyEpoch': 0,
-          'text': 'While backgrounded',
-          'timestamp': ts,
-          'messageId': 'msg-missed-1',
-        },
-      ], '');
+        // Simulate resume: drain offline inbox (with missed messages).
+        final ts = DateTime.now().toUtc().toIso8601String();
+        bobBridge.addPage(groupId, '', [
+          {
+            'groupId': groupId,
+            'senderId': 'alice-peer',
+            'senderUsername': 'Alice',
+            'keyEpoch': 0,
+            'text': 'While backgrounded',
+            'timestamp': ts,
+            'messageId': 'msg-missed-1',
+          },
+        ], '');
 
-      await drainGroupOfflineInbox(
-        bridge: bob.bridge,
-        groupRepo: bob.groupRepo,
-        msgRepo: bob.msgRepo,
-      );
+        await drainGroupOfflineInbox(
+          bridge: bob.bridge,
+          groupRepo: bob.groupRepo,
+          msgRepo: bob.msgRepo,
+        );
 
-      // Bob should now have 2 incoming messages.
-      bobMessages = await bob.loadGroupMessages(groupId);
-      expect(bobMessages.where((m) => m.isIncoming), hasLength(2));
+        // Bob should now have 2 incoming messages.
+        bobMessages = await bob.loadGroupMessages(groupId);
+        expect(bobMessages.where((m) => m.isIncoming), hasLength(2));
 
-      // Re-subscribe Bob.
-      network.subscribe(groupId, bob.peerId);
+        // Re-subscribe Bob.
+        network.subscribe(groupId, bob.peerId);
 
-      // New live messages should still work.
-      await alice.sendGroupMessage(groupId: groupId, text: 'After resume');
-      await pump();
-      bobMessages = await bob.loadGroupMessages(groupId);
-      expect(bobMessages.where((m) => m.isIncoming), hasLength(3));
+        // New live messages should still work.
+        await alice.sendGroupMessage(groupId: groupId, text: 'After resume');
+        await pump();
+        bobMessages = await bob.loadGroupMessages(groupId);
+        expect(bobMessages.where((m) => m.isIncoming), hasLength(3));
 
-      alice.dispose();
-      bob.dispose();
-    });
+        alice.dispose();
+        bob.dispose();
+      },
+    );
 
     test(
-        'same message is not duplicated if both pubsub and group inbox deliver it',
-        () async {
-      final bob = GroupTestUser.create(
-        peerId: 'bob-peer',
-        username: 'Bob',
-        network: network,
-        bridge: _CursorInboxBridge(),
-      );
-      final bobBridge = bob.bridge as _CursorInboxBridge;
+      'same message is not duplicated if both pubsub and group inbox deliver it',
+      () async {
+        final bob = GroupTestUser.create(
+          peerId: 'bob-peer',
+          username: 'Bob',
+          network: network,
+          bridge: _CursorInboxBridge(),
+        );
+        final bobBridge = bob.bridge as _CursorInboxBridge;
 
-      const groupId = 'group-dedup-1';
-      const sharedMessageId = 'msg-dedup-shared';
-      final ts = DateTime.now().toUtc();
+        const groupId = 'group-dedup-1';
+        const sharedMessageId = 'msg-dedup-shared';
+        final ts = DateTime.now().toUtc();
 
-      // Set up Bob's group.
-      await bob.groupRepo.saveGroup(GroupModel(
-        id: groupId,
-        name: 'Dedup Test',
-        type: GroupType.chat,
-        topicName: 'topic-$groupId',
-        createdAt: ts,
-        createdBy: 'alice-peer',
-        myRole: GroupRole.member,
-      ));
-      await bob.groupRepo.saveMember(GroupMember(
-        groupId: groupId,
-        peerId: 'alice-peer',
-        username: 'Alice',
-        role: MemberRole.admin,
-        publicKey: 'pk-alice',
-        joinedAt: ts,
-      ));
-      await bob.groupRepo.saveMember(GroupMember(
-        groupId: groupId,
-        peerId: 'bob-peer',
-        username: 'Bob',
-        role: MemberRole.writer,
-        publicKey: 'pk-bob',
-        joinedAt: ts,
-      ));
-      await bob.groupRepo.saveKey(GroupKeyInfo(
-        groupId: groupId,
-        keyGeneration: 1,
-        encryptedKey: 'test-key',
-        createdAt: ts,
-      ));
+        // Set up Bob's group.
+        await bob.groupRepo.saveGroup(
+          GroupModel(
+            id: groupId,
+            name: 'Dedup Test',
+            type: GroupType.chat,
+            topicName: 'topic-$groupId',
+            createdAt: ts,
+            createdBy: 'alice-peer',
+            myRole: GroupRole.member,
+          ),
+        );
+        await bob.groupRepo.saveMember(
+          GroupMember(
+            groupId: groupId,
+            peerId: 'alice-peer',
+            username: 'Alice',
+            role: MemberRole.admin,
+            publicKey: 'pk-alice',
+            joinedAt: ts,
+          ),
+        );
+        await bob.groupRepo.saveMember(
+          GroupMember(
+            groupId: groupId,
+            peerId: 'bob-peer',
+            username: 'Bob',
+            role: MemberRole.writer,
+            publicKey: 'pk-bob',
+            joinedAt: ts,
+          ),
+        );
+        await bob.groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: groupId,
+            keyGeneration: 1,
+            encryptedKey: 'test-key',
+            createdAt: ts,
+          ),
+        );
 
-      bob.start();
-      network.subscribe(groupId, bob.peerId);
+        bob.start();
+        network.subscribe(groupId, bob.peerId);
 
-      // Simulate pubsub delivery with a known messageId.
-      final pubsubController = network.registerPeer('alice-pubsub-sim');
-      network.subscribe(groupId, 'alice-pubsub-sim');
+        // Simulate pubsub delivery with a known messageId.
+        final pubsubController = network.registerPeer('alice-pubsub-sim');
+        network.subscribe(groupId, 'alice-pubsub-sim');
 
-      // Deliver via pubsub (simulate what the listener receives).
-      await handleIncomingGroupMessage(
-        groupRepo: bob.groupRepo,
-        msgRepo: bob.msgRepo,
-        groupId: groupId,
-        senderId: 'alice-peer',
-        senderUsername: 'Alice',
-        keyEpoch: 0,
-        text: 'Dedup test msg',
-        timestamp: ts.toIso8601String(),
-        messageId: sharedMessageId,
-      );
+        // Deliver via pubsub (simulate what the listener receives).
+        await handleIncomingGroupMessage(
+          groupRepo: bob.groupRepo,
+          msgRepo: bob.msgRepo,
+          groupId: groupId,
+          senderId: 'alice-peer',
+          senderUsername: 'Alice',
+          keyEpoch: 0,
+          text: 'Dedup test msg',
+          timestamp: ts.toIso8601String(),
+          messageId: sharedMessageId,
+        );
 
-      var bobMessages = await bob.loadGroupMessages(groupId);
-      expect(bobMessages.where((m) => m.isIncoming).length, 1);
+        var bobMessages = await bob.loadGroupMessages(groupId);
+        expect(bobMessages.where((m) => m.isIncoming).length, 1);
 
-      // Now drain inbox which also has the same message with the same messageId.
-      bobBridge.addPage(groupId, '', [
-        {
-          'groupId': groupId,
-          'senderId': 'alice-peer',
-          'senderUsername': 'Alice',
-          'keyEpoch': 0,
-          'text': 'Dedup test msg',
-          'timestamp': ts.toIso8601String(),
-          'messageId': sharedMessageId,
-        },
-      ], '');
+        // Now drain inbox which also has the same message with the same messageId.
+        bobBridge.addPage(groupId, '', [
+          {
+            'groupId': groupId,
+            'senderId': 'alice-peer',
+            'senderUsername': 'Alice',
+            'keyEpoch': 0,
+            'text': 'Dedup test msg',
+            'timestamp': ts.toIso8601String(),
+            'messageId': sharedMessageId,
+          },
+        ], '');
 
-      await drainGroupOfflineInbox(
-        bridge: bob.bridge,
-        groupRepo: bob.groupRepo,
-        msgRepo: bob.msgRepo,
-      );
+        await drainGroupOfflineInbox(
+          bridge: bob.bridge,
+          groupRepo: bob.groupRepo,
+          msgRepo: bob.msgRepo,
+        );
 
-      // Still only 1 incoming message — deduplicated by messageId.
-      bobMessages = await bob.loadGroupMessages(groupId);
-      expect(
-        bobMessages.where((m) => m.isIncoming).length,
-        1,
-        reason: 'Message should not be duplicated by inbox drain',
-      );
+        // Still only 1 incoming message — deduplicated by messageId.
+        bobMessages = await bob.loadGroupMessages(groupId);
+        expect(
+          bobMessages.where((m) => m.isIncoming).length,
+          1,
+          reason: 'Message should not be duplicated by inbox drain',
+        );
 
-      pubsubController.close();
-      bob.dispose();
-    });
+        pubsubController.close();
+        bob.dispose();
+      },
+    );
 
-    test('watchdog restart rejoins topics and receives subsequent live messages',
-        () async {
+    test(
+      'watchdog restart rejoins topics and receives subsequent live messages',
+      () async {
+        final alice = GroupTestUser.create(
+          peerId: 'alice-peer',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'bob-peer',
+          username: 'Bob',
+          network: network,
+        );
+
+        const groupId = 'group-watchdog-1';
+        await alice.createGroup(groupId: groupId, name: 'Watchdog Test');
+        await alice.addMember(groupId: groupId, invitee: bob);
+
+        await bob.groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: groupId,
+            keyGeneration: 1,
+            encryptedKey: 'test-key',
+            createdAt: DateTime.now().toUtc(),
+          ),
+        );
+
+        alice.start();
+        bob.start();
+
+        // Normal messaging works.
+        await alice.sendGroupMessage(groupId: groupId, text: 'Before watchdog');
+        await pump();
+        var bobMessages = await bob.loadGroupMessages(groupId);
+        expect(bobMessages.where((m) => m.isIncoming), hasLength(1));
+
+        // Simulate watchdog restart: unsubscribe Bob (Go node restarted).
+        network.unsubscribe(groupId, bob.peerId);
+
+        // Rejoin with watchdog restart reason.
+        await rejoinGroupTopics(
+          bridge: bob.bridge,
+          groupRepo: bob.groupRepo,
+          reason: RejoinReason.watchdogRestart,
+        );
+
+        // Verify bridge received join command.
+        final joinCmds = bob.bridge.sentMessages
+            .map((m) => jsonDecode(m) as Map<String, dynamic>)
+            .where((m) => m['cmd'] == 'group:join')
+            .toList();
+        expect(joinCmds, isNotEmpty);
+
+        // Re-subscribe on fake network (in production, Go does this internally).
+        network.subscribe(groupId, bob.peerId);
+
+        // Live messages should work after rejoin.
+        await alice.sendGroupMessage(
+          groupId: groupId,
+          text: 'After watchdog restart',
+        );
+        await pump();
+        bobMessages = await bob.loadGroupMessages(groupId);
+        expect(bobMessages.where((m) => m.isIncoming), hasLength(2));
+
+        alice.dispose();
+        bob.dispose();
+      },
+    );
+
+    test(
+      'announcement reader backgrounded during send receives missed announces after resume',
+      () async {
+        final admin = GroupTestUser.create(
+          peerId: 'admin-peer',
+          username: 'Admin',
+          network: network,
+        );
+        final reader = GroupTestUser.create(
+          peerId: 'reader-peer',
+          username: 'Reader',
+          network: network,
+          bridge: _CursorInboxBridge(),
+        );
+        final readerBridge = reader.bridge as _CursorInboxBridge;
+
+        const groupId = 'group-announce-resume';
+        await admin.createGroup(
+          groupId: groupId,
+          name: 'Announcements',
+          type: GroupType.announcement,
+        );
+        await admin.addMember(groupId: groupId, invitee: reader);
+
+        await reader.groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: groupId,
+            keyGeneration: 1,
+            encryptedKey: 'test-key',
+            createdAt: DateTime.now().toUtc(),
+          ),
+        );
+
+        admin.start();
+        reader.start();
+
+        // Admin sends announcement — reader receives via pubsub.
+        await admin.sendGroupMessage(groupId: groupId, text: 'Announcement 1');
+        await pump();
+        var readerMessages = await reader.loadGroupMessages(groupId);
+        expect(readerMessages.where((m) => m.isIncoming), hasLength(1));
+
+        // Reader backgrounds.
+        network.unsubscribe(groupId, reader.peerId);
+
+        // Admin sends while reader is backgrounded.
+        await admin.sendGroupMessage(groupId: groupId, text: 'Announcement 2');
+        await pump();
+
+        // Reader should NOT have received it.
+        readerMessages = await reader.loadGroupMessages(groupId);
+        expect(readerMessages.where((m) => m.isIncoming), hasLength(1));
+
+        // Resume: drain inbox.
+        final ts = DateTime.now().toUtc().toIso8601String();
+        readerBridge.addPage(groupId, '', [
+          {
+            'groupId': groupId,
+            'senderId': 'admin-peer',
+            'senderUsername': 'Admin',
+            'keyEpoch': 0,
+            'text': 'Announcement 2',
+            'timestamp': ts,
+            'messageId': 'msg-announce-2',
+          },
+        ], '');
+
+        await drainGroupOfflineInbox(
+          bridge: reader.bridge,
+          groupRepo: reader.groupRepo,
+          msgRepo: reader.msgRepo,
+        );
+
+        // Reader should now have 2 incoming announcements.
+        readerMessages = await reader.loadGroupMessages(groupId);
+        expect(readerMessages.where((m) => m.isIncoming), hasLength(2));
+
+        admin.dispose();
+        reader.dispose();
+      },
+    );
+
+    test(
+      'group discovery remains live across ttl refresh window without manual rejoin',
+      () async {
+        // This is a structural test: verify that after rejoining,
+        // the topic subscription persists without needing manual re-rejoin.
+        final alice = GroupTestUser.create(
+          peerId: 'alice-peer',
+          username: 'Alice',
+          network: network,
+        );
+
+        const groupId = 'group-ttl-refresh';
+        await alice.createGroup(groupId: groupId, name: 'TTL Test');
+
+        await alice.groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: groupId,
+            keyGeneration: 1,
+            encryptedKey: 'test-key',
+            createdAt: DateTime.now().toUtc(),
+          ),
+        );
+
+        alice.start();
+
+        // Verify subscription is active.
+        expect(network.isSubscribed(groupId, alice.peerId), isTrue);
+
+        // Simulate time passing (no manual rejoin needed).
+        await pump();
+
+        // Subscription should still be active.
+        expect(network.isSubscribed(groupId, alice.peerId), isTrue);
+
+        alice.dispose();
+      },
+    );
+
+    test(
+      'fake group network delivers live messages without explicit relay simulation',
+      () async {
+        // Structural fake-network coverage only. Real Go dial policy is
+        // asserted in go-mknoon/node tests against live libp2p hosts.
+        final alice = GroupTestUser.create(
+          peerId: 'alice-peer',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'bob-peer',
+          username: 'Bob',
+          network: network,
+        );
+
+        const groupId = 'group-direct-path';
+        await alice.createGroup(groupId: groupId, name: 'Direct Test');
+        await alice.addMember(groupId: groupId, invitee: bob);
+
+        alice.start();
+        bob.start();
+
+        // Message delivery works directly (no relay setup needed in tests).
+        await alice.sendGroupMessage(groupId: groupId, text: 'Direct msg');
+        await pump();
+
+        final bobMessages = await bob.loadGroupMessages(groupId);
+        expect(bobMessages.where((m) => m.isIncoming), hasLength(1));
+
+        alice.dispose();
+        bob.dispose();
+      },
+    );
+
+    test(
+      'many joined groups resume without bursting recovery work all at once',
+      () async {
+        final user = GroupTestUser.create(
+          peerId: 'user-peer',
+          username: 'User',
+          network: network,
+          bridge: _CursorInboxBridge(),
+        );
+        final userBridge = user.bridge as _CursorInboxBridge;
+
+        // Create 5 groups.
+        final groupIds = List.generate(5, (i) => 'group-multi-$i');
+        for (final gid in groupIds) {
+          await user.createGroup(groupId: gid, name: 'Multi $gid');
+          await user.groupRepo.saveKey(
+            GroupKeyInfo(
+              groupId: gid,
+              keyGeneration: 1,
+              encryptedKey: 'key-$gid',
+              createdAt: DateTime.now().toUtc(),
+            ),
+          );
+
+          // Each group has one offline message.
+          final ts = DateTime.now().toUtc().toIso8601String();
+          userBridge.addPage(gid, '', [
+            {
+              'groupId': gid,
+              'senderId': 'other-peer',
+              'senderUsername': 'Other',
+              'keyEpoch': 0,
+              'text': 'Missed msg in $gid',
+              'timestamp': ts,
+              'messageId': 'msg-multi-$gid',
+            },
+          ], '');
+        }
+
+        user.start();
+
+        // Drain all groups' inboxes.
+        await drainGroupOfflineInbox(
+          bridge: user.bridge,
+          groupRepo: user.groupRepo,
+          msgRepo: user.msgRepo,
+        );
+
+        // All 5 groups should have been drained.
+        final retrieveCount = userBridge.commandLog
+            .where((c) => c == 'group:inboxRetrieveCursor')
+            .length;
+        expect(retrieveCount, 5);
+
+        // Verify each group has 1 message.
+        for (final gid in groupIds) {
+          final msgs = await user.msgRepo.getMessagesPage(gid);
+          expect(
+            msgs.length,
+            1,
+            reason: 'Group $gid should have 1 drained message',
+          );
+        }
+
+        user.dispose();
+      },
+    );
+
+    // =========================================================================
+    // Phase 6: Multi-page cursor and watchdog restart tests
+    // =========================================================================
+
+    test(
+      'resume drains missed group backlog exactly once across pages',
+      () async {
+        final user = GroupTestUser.create(
+          peerId: 'user-peer',
+          username: 'User',
+          network: network,
+          bridge: _CursorInboxBridge(),
+        );
+        final userBridge = user.bridge as _CursorInboxBridge;
+
+        const groupId = 'group-multipage';
+        await user.createGroup(groupId: groupId, name: 'Multi Page');
+        await user.groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: groupId,
+            keyGeneration: 1,
+            encryptedKey: 'test-key',
+            createdAt: DateTime.now().toUtc(),
+          ),
+        );
+
+        final ts = DateTime.now().toUtc().toIso8601String();
+
+        // Page 1: 2 messages, cursor points to page 2
+        userBridge.addPage(groupId, '', [
+          {
+            'groupId': groupId,
+            'senderId': 'alice-peer',
+            'senderUsername': 'Alice',
+            'keyEpoch': 0,
+            'text': 'Message 1',
+            'timestamp': ts,
+            'messageId': 'msg-page1-1',
+          },
+          {
+            'groupId': groupId,
+            'senderId': 'bob-peer',
+            'senderUsername': 'Bob',
+            'keyEpoch': 0,
+            'text': 'Message 2',
+            'timestamp': ts,
+            'messageId': 'msg-page1-2',
+          },
+        ], 'cursor-page-2');
+
+        // Page 2: 1 message, no more pages
+        userBridge.addPage(groupId, 'cursor-page-2', [
+          {
+            'groupId': groupId,
+            'senderId': 'alice-peer',
+            'senderUsername': 'Alice',
+            'keyEpoch': 0,
+            'text': 'Message 3',
+            'timestamp': ts,
+            'messageId': 'msg-page2-1',
+          },
+        ], '');
+
+        user.start();
+
+        await drainGroupOfflineInbox(
+          bridge: user.bridge,
+          groupRepo: user.groupRepo,
+          msgRepo: user.msgRepo,
+        );
+
+        // All 3 messages from both pages should be saved
+        final msgs = await user.msgRepo.getMessagesPage(groupId);
+        expect(
+          msgs.length,
+          3,
+          reason: 'All messages from both pages should be saved',
+        );
+
+        // Verify cursor commands: first page with cursor="" and second with cursor="cursor-page-2"
+        final cursorCmds = userBridge.sentMessages
+            .map((m) => jsonDecode(m) as Map<String, dynamic>)
+            .where((m) => m['cmd'] == 'group:inboxRetrieveCursor')
+            .toList();
+        expect(cursorCmds.length, 2, reason: 'Should have fetched 2 pages');
+        expect(cursorCmds[0]['payload']['cursor'], '');
+        expect(cursorCmds[1]['payload']['cursor'], 'cursor-page-2');
+
+        user.dispose();
+      },
+    );
+
+    test(
+      'multi page backlog uses cursor continuation without duplication',
+      () async {
+        final user = GroupTestUser.create(
+          peerId: 'user-peer',
+          username: 'User',
+          network: network,
+          bridge: _CursorInboxBridge(),
+        );
+        final userBridge = user.bridge as _CursorInboxBridge;
+
+        const groupId = 'group-nodup';
+        await user.createGroup(groupId: groupId, name: 'No Dup');
+        await user.groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: groupId,
+            keyGeneration: 1,
+            encryptedKey: 'test-key',
+            createdAt: DateTime.now().toUtc(),
+          ),
+        );
+
+        final ts = DateTime.now().toUtc().toIso8601String();
+        const sharedMsgId = 'msg-shared-id';
+
+        // Same message on both pages (cursor should prevent this, but test the handler dedup)
+        userBridge.addPage(groupId, '', [
+          {
+            'groupId': groupId,
+            'senderId': 'alice-peer',
+            'senderUsername': 'Alice',
+            'keyEpoch': 0,
+            'text': 'Same message',
+            'timestamp': ts,
+            'messageId': sharedMsgId,
+          },
+        ], 'cursor-2');
+
+        userBridge.addPage(groupId, 'cursor-2', [
+          {
+            'groupId': groupId,
+            'senderId': 'alice-peer',
+            'senderUsername': 'Alice',
+            'keyEpoch': 0,
+            'text': 'Same message',
+            'timestamp': ts,
+            'messageId': sharedMsgId,
+          },
+        ], '');
+
+        user.start();
+
+        await drainGroupOfflineInbox(
+          bridge: user.bridge,
+          groupRepo: user.groupRepo,
+          msgRepo: user.msgRepo,
+        );
+
+        // Despite same messageId on both pages, should be deduplicated
+        final msgs = await user.msgRepo.getMessagesPage(groupId);
+        expect(
+          msgs.length,
+          1,
+          reason: 'Duplicate messageId across pages should be deduplicated',
+        );
+
+        user.dispose();
+      },
+    );
+
+    test('watchdog restart rejoins topics and resumes live delivery', () async {
       final alice = GroupTestUser.create(
         peerId: 'alice-peer',
         username: 'Alice',
@@ -280,269 +752,84 @@ void main() {
         peerId: 'bob-peer',
         username: 'Bob',
         network: network,
+        bridge: _CursorInboxBridge(),
       );
+      final bobBridge = bob.bridge as _CursorInboxBridge;
 
-      const groupId = 'group-watchdog-1';
-      await alice.createGroup(groupId: groupId, name: 'Watchdog Test');
+      const groupId = 'group-watchdog-rejoin-drain';
+      await alice.createGroup(groupId: groupId, name: 'WD Rejoin');
       await alice.addMember(groupId: groupId, invitee: bob);
 
-      await bob.groupRepo.saveKey(GroupKeyInfo(
-        groupId: groupId,
-        keyGeneration: 1,
-        encryptedKey: 'test-key',
-        createdAt: DateTime.now().toUtc(),
-      ));
+      await bob.groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: groupId,
+          keyGeneration: 1,
+          encryptedKey: 'test-key',
+          createdAt: DateTime.now().toUtc(),
+        ),
+      );
 
       alice.start();
       bob.start();
 
-      // Normal messaging works.
-      await alice.sendGroupMessage(groupId: groupId, text: 'Before watchdog');
+      // Normal messaging works
+      await alice.sendGroupMessage(groupId: groupId, text: 'Before WD');
       await pump();
-      var bobMessages = await bob.loadGroupMessages(groupId);
-      expect(bobMessages.where((m) => m.isIncoming), hasLength(1));
+      var msgs = await bob.loadGroupMessages(groupId);
+      expect(msgs.where((m) => m.isIncoming), hasLength(1));
 
-      // Simulate watchdog restart: unsubscribe Bob (Go node restarted).
+      // Simulate watchdog: unsubscribe Bob
       network.unsubscribe(groupId, bob.peerId);
 
-      // Rejoin with watchdog restart reason.
+      // Alice sends while Bob is down
+      await alice.sendGroupMessage(groupId: groupId, text: 'During WD');
+      await pump();
+
+      // Bob missed the message
+      msgs = await bob.loadGroupMessages(groupId);
+      expect(msgs.where((m) => m.isIncoming), hasLength(1));
+
+      // Watchdog restart: rejoin + drain inbox
       await rejoinGroupTopics(
         bridge: bob.bridge,
         groupRepo: bob.groupRepo,
         reason: RejoinReason.watchdogRestart,
       );
 
-      // Verify bridge received join command.
-      final joinCmds = bob.bridge.sentMessages
-          .map((m) => jsonDecode(m) as Map<String, dynamic>)
-          .where((m) => m['cmd'] == 'group:join')
-          .toList();
-      expect(joinCmds, isNotEmpty);
-
-      // Re-subscribe on fake network (in production, Go does this internally).
-      network.subscribe(groupId, bob.peerId);
-
-      // Live messages should work after rejoin.
-      await alice.sendGroupMessage(
-          groupId: groupId, text: 'After watchdog restart');
-      await pump();
-      bobMessages = await bob.loadGroupMessages(groupId);
-      expect(bobMessages.where((m) => m.isIncoming), hasLength(2));
-
-      alice.dispose();
-      bob.dispose();
-    });
-
-    test(
-        'announcement reader backgrounded during send receives missed announces after resume',
-        () async {
-      final admin = GroupTestUser.create(
-        peerId: 'admin-peer',
-        username: 'Admin',
-        network: network,
-      );
-      final reader = GroupTestUser.create(
-        peerId: 'reader-peer',
-        username: 'Reader',
-        network: network,
-        bridge: _CursorInboxBridge(),
-      );
-      final readerBridge = reader.bridge as _CursorInboxBridge;
-
-      const groupId = 'group-announce-resume';
-      await admin.createGroup(
-        groupId: groupId,
-        name: 'Announcements',
-        type: GroupType.announcement,
-      );
-      await admin.addMember(groupId: groupId, invitee: reader);
-
-      await reader.groupRepo.saveKey(GroupKeyInfo(
-        groupId: groupId,
-        keyGeneration: 1,
-        encryptedKey: 'test-key',
-        createdAt: DateTime.now().toUtc(),
-      ));
-
-      admin.start();
-      reader.start();
-
-      // Admin sends announcement — reader receives via pubsub.
-      await admin.sendGroupMessage(
-          groupId: groupId, text: 'Announcement 1');
-      await pump();
-      var readerMessages = await reader.loadGroupMessages(groupId);
-      expect(readerMessages.where((m) => m.isIncoming), hasLength(1));
-
-      // Reader backgrounds.
-      network.unsubscribe(groupId, reader.peerId);
-
-      // Admin sends while reader is backgrounded.
-      await admin.sendGroupMessage(
-          groupId: groupId, text: 'Announcement 2');
-      await pump();
-
-      // Reader should NOT have received it.
-      readerMessages = await reader.loadGroupMessages(groupId);
-      expect(readerMessages.where((m) => m.isIncoming), hasLength(1));
-
-      // Resume: drain inbox.
       final ts = DateTime.now().toUtc().toIso8601String();
-      readerBridge.addPage(groupId, '', [
+      bobBridge.addPage(groupId, '', [
         {
           'groupId': groupId,
-          'senderId': 'admin-peer',
-          'senderUsername': 'Admin',
+          'senderId': 'alice-peer',
+          'senderUsername': 'Alice',
           'keyEpoch': 0,
-          'text': 'Announcement 2',
+          'text': 'During WD',
           'timestamp': ts,
-          'messageId': 'msg-announce-2',
+          'messageId': 'msg-wd-missed',
         },
       ], '');
 
       await drainGroupOfflineInbox(
-        bridge: reader.bridge,
-        groupRepo: reader.groupRepo,
-        msgRepo: reader.msgRepo,
+        bridge: bob.bridge,
+        groupRepo: bob.groupRepo,
+        msgRepo: bob.msgRepo,
       );
 
-      // Reader should now have 2 incoming announcements.
-      readerMessages = await reader.loadGroupMessages(groupId);
-      expect(readerMessages.where((m) => m.isIncoming), hasLength(2));
+      // Bob should now have 2 messages
+      msgs = await bob.loadGroupMessages(groupId);
+      expect(msgs.where((m) => m.isIncoming), hasLength(2));
 
-      admin.dispose();
-      reader.dispose();
-    });
+      // Re-subscribe on network
+      network.subscribe(groupId, bob.peerId);
 
-    test(
-        'group discovery remains live across ttl refresh window without manual rejoin',
-        () async {
-      // This is a structural test: verify that after rejoining,
-      // the topic subscription persists without needing manual re-rejoin.
-      final alice = GroupTestUser.create(
-        peerId: 'alice-peer',
-        username: 'Alice',
-        network: network,
-      );
-
-      const groupId = 'group-ttl-refresh';
-      await alice.createGroup(groupId: groupId, name: 'TTL Test');
-
-      await alice.groupRepo.saveKey(GroupKeyInfo(
-        groupId: groupId,
-        keyGeneration: 1,
-        encryptedKey: 'test-key',
-        createdAt: DateTime.now().toUtc(),
-      ));
-
-      alice.start();
-
-      // Verify subscription is active.
-      expect(network.isSubscribed(groupId, alice.peerId), isTrue);
-
-      // Simulate time passing (no manual rejoin needed).
+      // New messages should work
+      await alice.sendGroupMessage(groupId: groupId, text: 'After WD');
       await pump();
-
-      // Subscription should still be active.
-      expect(network.isSubscribed(groupId, alice.peerId), isTrue);
-
-      alice.dispose();
-    });
-
-    test(
-        'group peers with usable direct addresses form live links without forced relay dial',
-        () async {
-      // This test verifies that the FakeGroupPubSubNetwork correctly
-      // delivers messages between subscribed peers without requiring
-      // explicit relay simulation.
-      final alice = GroupTestUser.create(
-        peerId: 'alice-peer',
-        username: 'Alice',
-        network: network,
-      );
-      final bob = GroupTestUser.create(
-        peerId: 'bob-peer',
-        username: 'Bob',
-        network: network,
-      );
-
-      const groupId = 'group-direct-path';
-      await alice.createGroup(groupId: groupId, name: 'Direct Test');
-      await alice.addMember(groupId: groupId, invitee: bob);
-
-      alice.start();
-      bob.start();
-
-      // Message delivery works directly (no relay setup needed in tests).
-      await alice.sendGroupMessage(groupId: groupId, text: 'Direct msg');
-      await pump();
-
-      final bobMessages = await bob.loadGroupMessages(groupId);
-      expect(bobMessages.where((m) => m.isIncoming), hasLength(1));
+      msgs = await bob.loadGroupMessages(groupId);
+      expect(msgs.where((m) => m.isIncoming), hasLength(3));
 
       alice.dispose();
       bob.dispose();
-    });
-
-    test('many joined groups resume without bursting recovery work all at once',
-        () async {
-      final user = GroupTestUser.create(
-        peerId: 'user-peer',
-        username: 'User',
-        network: network,
-        bridge: _CursorInboxBridge(),
-      );
-      final userBridge = user.bridge as _CursorInboxBridge;
-
-      // Create 5 groups.
-      final groupIds = List.generate(5, (i) => 'group-multi-$i');
-      for (final gid in groupIds) {
-        await user.createGroup(groupId: gid, name: 'Multi $gid');
-        await user.groupRepo.saveKey(GroupKeyInfo(
-          groupId: gid,
-          keyGeneration: 1,
-          encryptedKey: 'key-$gid',
-          createdAt: DateTime.now().toUtc(),
-        ));
-
-        // Each group has one offline message.
-        final ts = DateTime.now().toUtc().toIso8601String();
-        userBridge.addPage(gid, '', [
-          {
-            'groupId': gid,
-            'senderId': 'other-peer',
-            'senderUsername': 'Other',
-            'keyEpoch': 0,
-            'text': 'Missed msg in $gid',
-            'timestamp': ts,
-            'messageId': 'msg-multi-$gid',
-          },
-        ], '');
-      }
-
-      user.start();
-
-      // Drain all groups' inboxes.
-      await drainGroupOfflineInbox(
-        bridge: user.bridge,
-        groupRepo: user.groupRepo,
-        msgRepo: user.msgRepo,
-      );
-
-      // All 5 groups should have been drained.
-      final retrieveCount = userBridge.commandLog
-          .where((c) => c == 'group:inboxRetrieveCursor')
-          .length;
-      expect(retrieveCount, 5);
-
-      // Verify each group has 1 message.
-      for (final gid in groupIds) {
-        final msgs = await user.msgRepo.getMessagesPage(gid);
-        expect(msgs.length, 1,
-            reason: 'Group $gid should have 1 drained message');
-      }
-
-      user.dispose();
     });
   });
 }

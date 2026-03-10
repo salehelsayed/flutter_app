@@ -76,6 +76,7 @@ func (n *Node) openMediaStream() (network.Stream, context.CancelFunc, error) {
 			cancel()
 			return nil, fmt.Errorf("open media stream: %w", err)
 		}
+		setStreamDeadline(s, MediaTimeout)
 
 		return &streamResult{stream: s, cancel: cancel}, nil
 	})
@@ -120,7 +121,8 @@ func (n *Node) MediaUpload(id, toPeerId, mime, filePath string, allowedPeers []s
 		return err
 	}
 	defer cancel()
-	defer s.Close()
+	streamOK := false
+	defer finishStream(s, &streamOK)
 
 	// Open and stat the local file
 	f, err := os.Open(filePath)
@@ -172,6 +174,7 @@ func (n *Node) MediaUpload(id, toPeerId, mime, filePath string, allowedPeers []s
 	}
 
 	log.Printf("[MEDIA] Uploaded blob %s (%d bytes) to %s", id, fi.Size(), toPeerId[:min(20, len(toPeerId))])
+	streamOK = true
 	return nil
 }
 
@@ -182,7 +185,8 @@ func (n *Node) MediaDownload(id, outputPath string) (mime string, size int64, er
 		return "", 0, sErr
 	}
 	defer cancel()
-	defer s.Close()
+	streamOK := false
+	defer finishStream(s, &streamOK)
 
 	// Send download request
 	resp, sErr := sendMediaRequest(s, &mediaRequest{
@@ -213,6 +217,7 @@ func (n *Node) MediaDownload(id, outputPath string) (mime string, size int64, er
 	}
 
 	log.Printf("[MEDIA] Downloaded blob %s (%d bytes, %s)", id, resp.Size, resp.Mime)
+	streamOK = true
 	return resp.Mime, resp.Size, nil
 }
 
@@ -223,7 +228,8 @@ func (n *Node) MediaDelete(id string) error {
 		return err
 	}
 	defer cancel()
-	defer s.Close()
+	streamOK := false
+	defer finishStream(s, &streamOK)
 
 	resp, err := sendMediaRequest(s, &mediaRequest{
 		Action: "delete",
@@ -238,6 +244,7 @@ func (n *Node) MediaDelete(id string) error {
 	}
 
 	log.Printf("[MEDIA] Deleted blob %s", id)
+	streamOK = true
 	return nil
 }
 
@@ -248,7 +255,8 @@ func (n *Node) MediaList() ([]MediaMeta, error) {
 		return nil, err
 	}
 	defer cancel()
-	defer s.Close()
+	streamOK := false
+	defer finishStream(s, &streamOK)
 
 	resp, err := sendMediaRequest(s, &mediaRequest{
 		Action: "list",
@@ -262,6 +270,7 @@ func (n *Node) MediaList() ([]MediaMeta, error) {
 	}
 
 	log.Printf("[MEDIA] Listed %d blob(s)", len(resp.Blobs))
+	streamOK = true
 	return resp.Blobs, nil
 }
 
@@ -274,7 +283,8 @@ func (n *Node) ProfileUpload(mime, filePath string) error {
 		return err
 	}
 	defer cancel()
-	defer s.Close()
+	streamOK := false
+	defer finishStream(s, &streamOK)
 
 	f, err := os.Open(filePath)
 	if err != nil {
@@ -319,6 +329,7 @@ func (n *Node) ProfileUpload(mime, filePath string) error {
 	}
 
 	log.Printf("[PROFILE] Uploaded profile (%d bytes, %s)", fi.Size(), mime)
+	streamOK = true
 	return nil
 }
 
@@ -329,7 +340,8 @@ func (n *Node) ProfileDownload(ownerPeerId, outputPath string) (mime string, siz
 		return "", 0, sErr
 	}
 	defer cancel()
-	defer s.Close()
+	streamOK := false
+	defer finishStream(s, &streamOK)
 
 	resp, sErr := sendMediaRequest(s, &mediaRequest{
 		Action: "profile_download",
@@ -357,5 +369,6 @@ func (n *Node) ProfileDownload(ownerPeerId, outputPath string) (mime string, siz
 	}
 
 	log.Printf("[PROFILE] Downloaded profile for %s (%d bytes, %s)", ownerPeerId[:min(20, len(ownerPeerId))], resp.Size, resp.Mime)
+	streamOK = true
 	return resp.Mime, resp.Size, nil
 }

@@ -110,7 +110,10 @@ class FakeBridge implements Bridge {
 
   @override
   void Function(List<String> listenAddresses, List<String> circuitAddresses)?
-      onAddressesUpdated;
+  onAddressesUpdated;
+
+  @override
+  void Function(Map<String, dynamic>)? onRelayStateChanged;
 
   @override
   void Function(Map<String, dynamic>)? onGroupMessageReceived;
@@ -158,10 +161,7 @@ class PassthroughCryptoBridge extends FakeBridge {
       commandLog.add(cmd!);
 
       final payload = parsed['payload'] as Map<String, dynamic>;
-      return jsonEncode({
-        'ok': true,
-        'plaintext': payload['ciphertext'],
-      });
+      return jsonEncode({'ok': true, 'plaintext': payload['ciphertext']});
     }
 
     // Delegate to FakeBridge for all other commands

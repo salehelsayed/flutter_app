@@ -152,6 +152,10 @@ abstract class P2PService {
     String? filename,
   });
 
+  /// The last recovery method used ('in_place', 'watchdog_restart', or null).
+  /// Exposed so that resume handlers can decide whether to rejoin group topics.
+  String? get lastRecoveryMethod;
+
   /// Dispose of the service and clean up resources.
   void dispose();
 }

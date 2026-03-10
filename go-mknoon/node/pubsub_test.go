@@ -7,9 +7,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	ma "github.com/multiformats/go-multiaddr"
 
@@ -1867,10 +1869,10 @@ func TestAnnouncementGroup_AdminPublishWithZeroPeersStillUsesDurableFallback(t *
 	}
 }
 
-// Test: Group discovery loop backs off repeated dial failures.
+// Test: Group discovery loop skips peers that became connected on a prior pass.
 // Verifies that filterDiscoveredPeers properly filters already-connected peers
 // to avoid redundant dial attempts.
-func TestGroupDiscoveryLoop_BacksOffRepeatedDialFailures(t *testing.T) {
+func TestGroupDiscoveryLoop_SkipsAlreadyConnectedPeersOnNextPass(t *testing.T) {
 	// When a peer is already connected, filterDiscoveredPeers should exclude it.
 	// This simulates the "backoff" behavior: on repeated discovery cycles,
 	// already-connected peers are not re-dialed.
@@ -1900,101 +1902,225 @@ func TestGroupDiscoveryLoop_BacksOffRepeatedDialFailures(t *testing.T) {
 
 // Test: Group discovery uses discovered addresses before relay fallback.
 func TestGroupDiscovery_UsesDiscoveredAddressesBeforeRelayFallback(t *testing.T) {
-	// This tests that filterDiscoveredPeers preserves addresses from discovery
-	// so that they can be added to the peerstore before attempting relay dial.
-	selfId, _ := peer.Decode("12D3KooWDpJ7As7BWAwRMfu1VU2WCqNjvq387JEYKDBj4kx6nXTN")
-	discoveredId, _ := peer.Decode("12D3KooWRby3kFPcEJBxLFasMBr1Y5sTpBLTpfhCoVkdCquN4CY1")
+	dialer := startLocalNodeForMultiRelayTest(t)
+	setFakeRelays(t, dialer)
 
-	directAddr, _ := ma.NewMultiaddr("/ip4/192.168.1.100/tcp/4001")
-	relayAddr, _ := ma.NewMultiaddr("/ip4/10.0.0.1/tcp/4001/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g/p2p-circuit")
-
-	discovered := []peer.AddrInfo{
-		{ID: discoveredId, Addrs: []ma.Multiaddr{directAddr, relayAddr}},
+	target := startLocalNodeForMultiRelayTest(t)
+	targetID, err := peer.Decode(target.PeerId())
+	if err != nil {
+		t.Fatalf("decode target peer ID: %v", err)
 	}
 
-	result := filterDiscoveredPeers(discovered, selfId, map[peer.ID]struct{}{})
-	if len(result) != 1 {
-		t.Fatalf("expected 1 peer, got %d", len(result))
+	result, err := dialer.connectGroupPeerPreferDirect(target.PeerId(), target.Host().Addrs())
+	if err != nil {
+		t.Fatalf("connectGroupPeerPreferDirect: %v", err)
 	}
-
-	// Verify both addresses are preserved — the caller should try direct first.
-	if len(result[0].Addrs) != 2 {
-		t.Fatalf("expected 2 addresses preserved, got %d", len(result[0].Addrs))
+	if result.Path != "direct" {
+		t.Fatalf("expected direct path, got %q", result.Path)
+	}
+	if result.AttemptedDirect != true {
+		t.Fatal("expected direct attempt to be recorded")
+	}
+	if result.UsedRelayFallback {
+		t.Fatal("expected relay fallback to remain unused when discovered direct addrs work")
+	}
+	if dialer.Host().Network().Connectedness(targetID) != network.Connected {
+		t.Fatalf("expected direct libp2p connection to %s", target.PeerId())
 	}
 }
 
 // Test: Known group member dial prefers existing or direct path before relay.
 func TestKnownGroupMemberDial_PrefersExistingOrDirectPathBeforeRelay(t *testing.T) {
-	// dialKnownGroupMembers checks connectedSet before dialing.
-	// This test verifies the filtering logic via the config member list.
+	dialer := startLocalNodeForMultiRelayTest(t)
+	setFakeRelays(t, dialer)
+
+	target := startLocalNodeForMultiRelayTest(t)
+	targetID, err := peer.Decode(target.PeerId())
+	if err != nil {
+		t.Fatalf("decode target peer ID: %v", err)
+	}
+
+	dialer.Host().Peerstore().AddAddrs(targetID, target.Host().Addrs(), time.Hour)
+
 	config := &GroupConfig{
 		Name:      "Direct Path Test",
 		GroupType: GroupTypeChat,
 		Members: []GroupMember{
-			{PeerId: "self-peer", Role: GroupRoleAdmin, PublicKey: "selfPk"},
-			{PeerId: "connected-peer", Role: GroupRoleWriter, PublicKey: "connPk"},
-			{PeerId: "new-peer", Role: GroupRoleWriter, PublicKey: "newPk"},
+			{PeerId: dialer.PeerId(), Role: GroupRoleAdmin, PublicKey: "selfPk"},
+			{PeerId: target.PeerId(), Username: "target", Role: GroupRoleWriter, PublicKey: "targetPk"},
 		},
-		CreatedBy: "self-peer",
+		CreatedBy: dialer.PeerId(),
 	}
 
-	// Verify all members are findable.
-	if findMember(config, "self-peer") == nil {
-		t.Error("self-peer should be found")
-	}
-	if findMember(config, "connected-peer") == nil {
-		t.Error("connected-peer should be found")
-	}
-	if findMember(config, "new-peer") == nil {
-		t.Error("new-peer should be found")
-	}
-	if findMember(config, "stranger") != nil {
-		t.Error("stranger should NOT be found")
+	dialer.groupConfigs = map[string]*GroupConfig{"group-direct": config}
+	dialer.dialKnownGroupMembers("group-direct")
+
+	if dialer.Host().Network().Connectedness(targetID) != network.Connected {
+		t.Fatalf("expected peerstore direct dial to connect to %s before relay fallback", target.PeerId())
 	}
 }
 
 // Test: Group recovery limiter caps concurrent discovery across groups.
 func TestGroupRecoveryLimiter_CapsConcurrentDiscoveryAcrossGroups(t *testing.T) {
-	// GroupDiscoveryInterval should be the same for all groups (30s).
-	// This test verifies the constant is set correctly — the actual
-	// concurrency limiting is done by the Go scheduler and context
-	// cancellation in groupPeerDiscoveryLoop.
-	if GroupDiscoveryInterval != 30*time.Second {
-		t.Errorf("expected GroupDiscoveryInterval=30s, got %v", GroupDiscoveryInterval)
-	}
-
-	// Each group gets its own discovery goroutine with its own context.
-	// The concurrency is bounded by the number of joined groups.
-	// Verify that groupDiscoveryCtx is used per-group.
 	n := NewNode()
-	n.groupDiscoveryCtx = make(map[string]context.CancelFunc)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
 
-	// Simulating 5 groups with discovery contexts.
-	for i := 0; i < 5; i++ {
-		_, cancel := context.WithCancel(context.Background())
-		n.groupDiscoveryCtx[fmt.Sprintf("group-%d", i)] = cancel
+	totalWorkers := GroupDiscoveryConcurrency + 3
+	started := make(chan struct{}, totalWorkers)
+	release := make(chan struct{})
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	current := 0
+	maxSeen := 0
+
+	for i := 0; i < totalWorkers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			releaseSlot, err := n.acquireGroupRecoverySlot(ctx)
+			if err != nil {
+				t.Errorf("acquireGroupRecoverySlot: %v", err)
+				return
+			}
+
+			mu.Lock()
+			current++
+			if current > maxSeen {
+				maxSeen = current
+			}
+			mu.Unlock()
+
+			started <- struct{}{}
+			<-release
+
+			mu.Lock()
+			current--
+			mu.Unlock()
+			releaseSlot()
+		}()
 	}
 
-	if len(n.groupDiscoveryCtx) != 5 {
-		t.Errorf("expected 5 discovery contexts, got %d", len(n.groupDiscoveryCtx))
+	for i := 0; i < GroupDiscoveryConcurrency; i++ {
+		select {
+		case <-started:
+		case <-ctx.Done():
+			t.Fatal("timed out waiting for initial discovery slots")
+		}
 	}
 
-	// Clean up.
-	for _, cancel := range n.groupDiscoveryCtx {
-		cancel()
+	select {
+	case <-started:
+		t.Fatalf("expected worker %d to wait for the recovery limiter", GroupDiscoveryConcurrency+1)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(release)
+	wg.Wait()
+
+	if maxSeen != GroupDiscoveryConcurrency {
+		t.Fatalf("max concurrent recovery work = %d, want %d", maxSeen, GroupDiscoveryConcurrency)
 	}
 }
 
 // Test: Group recovery limiter jitters burst after resume.
 func TestGroupRecoveryLimiter_JittersBurstAfterResume(t *testing.T) {
-	// The groupPeerDiscoveryLoop uses a ticker with GroupDiscoveryInterval.
-	// After a resume, all groups start their loops concurrently.
-	// The staggering is natural because each goroutine independently
-	// waits for relayReady before proceeding.
+	initialMin := positiveJitter(GroupRecoveryInitialJitter, func(int64) int64 { return 0 })
+	initialMid := positiveJitter(GroupRecoveryInitialJitter, func(n int64) int64 { return n / 2 })
+	initialMax := positiveJitter(GroupRecoveryInitialJitter, func(n int64) int64 { return n - 1 })
 
-	// Verify the interval is reasonable for jitter (not too fast).
-	if GroupDiscoveryInterval < 10*time.Second {
-		t.Errorf("GroupDiscoveryInterval too short for effective jitter: %v", GroupDiscoveryInterval)
+	if initialMin != 0 {
+		t.Fatalf("initial jitter min = %v, want 0", initialMin)
+	}
+	if initialMid <= 0 || initialMid >= GroupRecoveryInitialJitter {
+		t.Fatalf("initial jitter mid = %v, want between 0 and %v", initialMid, GroupRecoveryInitialJitter)
+	}
+	if initialMax >= GroupRecoveryInitialJitter {
+		t.Fatalf("initial jitter max = %v, want < %v", initialMax, GroupRecoveryInitialJitter)
+	}
+
+	low := jitterDuration(GroupDiscoveryInterval, GroupDiscoveryJitterFactor, func(int64) int64 { return 0 })
+	high := jitterDuration(GroupDiscoveryInterval, GroupDiscoveryJitterFactor, func(n int64) int64 { return n - 1 })
+
+	if low >= GroupDiscoveryInterval {
+		t.Fatalf("low jitter wait = %v, want below base interval %v", low, GroupDiscoveryInterval)
+	}
+	if high <= GroupDiscoveryInterval {
+		t.Fatalf("high jitter wait = %v, want above base interval %v", high, GroupDiscoveryInterval)
+	}
+}
+
+// Test: Group discovery backs off repeated dial failures and clears on success.
+func TestGroupDiscoveryLoop_BacksOffRepeatedDialFailures(t *testing.T) {
+	n := NewNode()
+	now := time.Unix(1700000000, 0)
+	const peerID = "peer-offline"
+
+	if allowed, _ := n.allowGroupPeerDial(peerID, now); !allowed {
+		t.Fatal("first dial should be allowed")
+	}
+
+	n.recordGroupPeerDialResult(peerID, false, now)
+	if allowed, retryIn := n.allowGroupPeerDial(peerID, now.Add(time.Second)); allowed {
+		t.Fatal("dial should be blocked during first cooldown")
+	} else if retryIn <= 0 || retryIn > GroupDiscoveryInterval {
+		t.Fatalf("first cooldown retryIn = %v, want within (0, %v]", retryIn, GroupDiscoveryInterval)
+	}
+
+	afterFirstCooldown := now.Add(GroupDiscoveryInterval)
+	if allowed, _ := n.allowGroupPeerDial(peerID, afterFirstCooldown); !allowed {
+		t.Fatal("dial should be allowed after first cooldown expires")
+	}
+
+	n.recordGroupPeerDialResult(peerID, false, afterFirstCooldown)
+	if allowed, retryIn := n.allowGroupPeerDial(peerID, afterFirstCooldown.Add(time.Second)); allowed {
+		t.Fatal("dial should be blocked during second cooldown")
+	} else if retryIn <= GroupDiscoveryInterval {
+		t.Fatalf("second cooldown retryIn = %v, want > %v", retryIn, GroupDiscoveryInterval)
+	}
+
+	n.recordGroupPeerDialResult(peerID, true, afterFirstCooldown.Add(2*time.Second))
+	if allowed, _ := n.allowGroupPeerDial(peerID, afterFirstCooldown.Add(2*time.Second)); !allowed {
+		t.Fatal("successful dial should clear cooldown state")
+	}
+}
+
+// Test: Group discovery backoff caps at maximum.
+func TestGroupDiscoveryBackoff_CapsAtMaximum(t *testing.T) {
+	if got := groupPeerDialBackoff(32); got != MaxGroupDiscoveryBackoff {
+		t.Fatalf("groupPeerDialBackoff cap = %v, want %v", got, MaxGroupDiscoveryBackoff)
+	}
+}
+
+// Test: countConnectedGroupMembers returns 0 for unknown group.
+func TestCountConnectedGroupMembers_UnknownGroup(t *testing.T) {
+	hexKey := generateTestKey(t)
+
+	n := NewNode()
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex:  hexKey,
+		RelayAddresses: []string{},
+		AutoRegister:   false,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer n.Stop()
+
+	count := n.countConnectedGroupMembers("nonexistent-group")
+	if count != 0 {
+		t.Errorf("expected 0 connected members for unknown group, got %d", count)
+	}
+}
+
+// Test: GroupDiscoveryConcurrency constant is reasonable.
+func TestGroupDiscoveryConcurrency_IsReasonable(t *testing.T) {
+	if GroupDiscoveryConcurrency < 1 {
+		t.Errorf("GroupDiscoveryConcurrency should be >= 1, got %d", GroupDiscoveryConcurrency)
+	}
+	if GroupDiscoveryConcurrency > 20 {
+		t.Errorf("GroupDiscoveryConcurrency too high for mobile: %d", GroupDiscoveryConcurrency)
 	}
 }
 

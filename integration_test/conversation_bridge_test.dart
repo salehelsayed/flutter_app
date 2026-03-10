@@ -32,6 +32,20 @@ import 'package:flutter_app/core/database/migrations/008_block_columns.dart';
 import 'package:flutter_app/core/database/migrations/009_quoted_message_id.dart';
 import 'package:flutter_app/core/database/migrations/010_media_attachments.dart';
 import 'package:flutter_app/core/database/migrations/011_avatar_version.dart';
+import 'package:flutter_app/core/database/migrations/012_transport_column.dart';
+import 'package:flutter_app/core/database/migrations/013_waveform_column.dart';
+import 'package:flutter_app/core/database/migrations/014_wire_envelope_column.dart';
+import 'package:flutter_app/core/database/migrations/015_message_status_cleanup.dart';
+import 'package:flutter_app/core/database/migrations/016_message_reactions.dart';
+import 'package:flutter_app/core/database/migrations/017_groups_tables.dart';
+import 'package:flutter_app/core/database/migrations/018_group_messages_tables.dart';
+import 'package:flutter_app/core/database/migrations/019_introductions_table.dart';
+import 'package:flutter_app/core/database/migrations/020_intro_banner_columns.dart';
+import 'package:flutter_app/core/database/migrations/021_contact_introduced_by.dart';
+import 'package:flutter_app/core/database/migrations/022_introduction_keys.dart';
+import 'package:flutter_app/core/database/migrations/023_introduction_recipient_keys.dart';
+import 'package:flutter_app/core/database/migrations/024_contact_introduced_by_peer_id.dart';
+import 'package:flutter_app/core/database/migrations/025_introduction_already_connected_status.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
@@ -69,10 +83,12 @@ void main() {
 
     // 1. Open real encrypted DB
     final secureKeyStore = _FakeSecureKeyStore();
+    final dbName =
+        'conversation_bridge_test_${DateTime.now().millisecondsSinceEpoch}.db';
     final db = await openEncryptedDatabase(
       secureKeyStore: secureKeyStore,
-      dbName: 'conversation_bridge_test.db',
-      version: 11,
+      dbName: dbName,
+      version: 25,
       onCreate: (db, version) async {
         await runIdentityTableMigration(db);
         await runMessagesTableMigration(db);
@@ -84,6 +100,20 @@ void main() {
         await runQuotedMessageIdMigration(db);
         await runMediaAttachmentsMigration(db);
         await runAvatarVersionMigration(db);
+        await runTransportColumnMigration(db);
+        await runWaveformColumnMigration(db);
+        await runWireEnvelopeMigration(db);
+        await runMessageStatusCleanupMigration(db);
+        await runMessageReactionsMigration(db);
+        await runGroupsTablesMigration(db);
+        await runGroupMessagesTablesMigration(db);
+        await runIntroductionsTableMigration(db);
+        await runIntroBannerColumnsMigration(db);
+        await runContactIntroducedByMigration(db);
+        await runIntroductionKeysMigration(db);
+        await runIntroductionRecipientKeysMigration(db);
+        await runContactIntroducedByPeerIdMigration(db);
+        await runIntroductionAlreadyConnectedMigration(db);
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) await runMessagesTableMigration(db);
@@ -95,6 +125,20 @@ void main() {
         if (oldVersion < 9) await runQuotedMessageIdMigration(db);
         if (oldVersion < 10) await runMediaAttachmentsMigration(db);
         if (oldVersion < 11) await runAvatarVersionMigration(db);
+        if (oldVersion < 12) await runTransportColumnMigration(db);
+        if (oldVersion < 13) await runWaveformColumnMigration(db);
+        if (oldVersion < 14) await runWireEnvelopeMigration(db);
+        if (oldVersion < 15) await runMessageStatusCleanupMigration(db);
+        if (oldVersion < 16) await runMessageReactionsMigration(db);
+        if (oldVersion < 17) await runGroupsTablesMigration(db);
+        if (oldVersion < 18) await runGroupMessagesTablesMigration(db);
+        if (oldVersion < 19) await runIntroductionsTableMigration(db);
+        if (oldVersion < 20) await runIntroBannerColumnsMigration(db);
+        if (oldVersion < 21) await runContactIntroducedByMigration(db);
+        if (oldVersion < 22) await runIntroductionKeysMigration(db);
+        if (oldVersion < 23) await runIntroductionRecipientKeysMigration(db);
+        if (oldVersion < 24) await runContactIntroducedByPeerIdMigration(db);
+        if (oldVersion < 25) await runIntroductionAlreadyConnectedMigration(db);
       },
     );
     print('[TEST] Database initialized');
@@ -139,11 +183,17 @@ void main() {
       dbDeleteMessagesForContact: (contactPeerId) =>
           dbDeleteMessagesForContact(db, contactPeerId),
       dbLoadMessagesPage: (contactPeerId, {limit = 50, beforeTimestamp}) =>
-          dbLoadMessagesPage(db, contactPeerId,
-              limit: limit, beforeTimestamp: beforeTimestamp),
+          dbLoadMessagesPage(
+            db,
+            contactPeerId,
+            limit: limit,
+            beforeTimestamp: beforeTimestamp,
+          ),
       dbLoadFailedOutgoingMessages: () => dbLoadFailedOutgoingMessages(db),
       dbLoadUnackedOutgoingMessages: ({required olderThan, limit = 50}) =>
           dbLoadUnackedOutgoingMessages(db, olderThan: olderThan, limit: limit),
+      dbLoadConversationThreadSummaries: (contactPeerIds) =>
+          dbLoadConversationThreadSummaries(db, contactPeerIds),
     );
 
     final bridge = GoBridgeClient();
@@ -159,10 +209,9 @@ void main() {
 
     // 3. Generate identity via real bridge
     print('[TEST] Generating identity via real bridge...');
-    final genResponse = await bridge.send(jsonEncode({
-      'cmd': 'identity.generate',
-      'payload': {},
-    }));
+    final genResponse = await bridge.send(
+      jsonEncode({'cmd': 'identity.generate', 'payload': {}}),
+    );
     final genResult = jsonDecode(genResponse) as Map<String, dynamic>;
     expect(genResult['ok'], true, reason: 'identity.generate should succeed');
 
@@ -173,14 +222,16 @@ void main() {
 
     // 4. Add a fake contact (the target peer — won't be reachable)
     const targetPeerId = '12D3KooWFakeTargetPeerForBridgeTest001';
-    await contactRepo.addContact(ContactModel(
-      peerId: targetPeerId,
-      publicKey: 'pk-fake-target',
-      rendezvous: '/dns4/relay/tcp/443/p2p/relay',
-      username: 'FakeTarget',
-      signature: 'sig-fake-target',
-      scannedAt: DateTime.now().toUtc().toIso8601String(),
-    ));
+    await contactRepo.addContact(
+      ContactModel(
+        peerId: targetPeerId,
+        publicKey: 'pk-fake-target',
+        rendezvous: '/dns4/relay/tcp/443/p2p/relay',
+        username: 'FakeTarget',
+        signature: 'sig-fake-target',
+        scannedAt: DateTime.now().toUtc().toIso8601String(),
+      ),
+    );
     print('[TEST] Fake contact added');
 
     // 5. Start real P2P node

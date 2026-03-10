@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -13,12 +14,12 @@ import (
 
 // peerState holds the running state of the test peer.
 type peerState struct {
-	node         *node.Node
-	collector    *messageCollector
-	identity     *identity.Identity
-	privateKeyHex string
-	mlKemPublicKey  string
-	mlKemSecretKey  string
+	node           *node.Node
+	collector      *messageCollector
+	identity       *identity.Identity
+	privateKeyHex  string
+	mlKemPublicKey string
+	mlKemSecretKey string
 }
 
 var state = &peerState{}
@@ -113,6 +114,18 @@ func handleCommand(cmd string, params map[string]interface{}) map[string]interfa
 
 	case "profile_download":
 		return cmdProfileDownload(params)
+
+	case "group_join":
+		return cmdGroupJoin(params)
+
+	case "group_leave":
+		return cmdGroupLeave(params)
+
+	case "group_publish":
+		return cmdGroupPublish(params)
+
+	case "group_inbox_store":
+		return cmdGroupInboxStore(params)
 
 	default:
 		return errResult(fmt.Sprintf("unknown command: %s", cmd))
@@ -214,6 +227,17 @@ func cmdStart(params map[string]interface{}) map[string]interface{} {
 		autoRegister = ar
 	}
 
+	var featureFlags *node.FeatureFlags
+	if rawFlags, ok := params["featureFlags"].(map[string]interface{}); ok {
+		featureFlags = &node.FeatureFlags{
+			EnableSharedRelayBackend:     boolFromMap(rawFlags, "enableSharedRelayBackend"),
+			EnableMultiRelayRouting:      boolFromMap(rawFlags, "enableMultiRelayRouting"),
+			EnableReservationAwareHealth: boolFromMap(rawFlags, "enableReservationAwareHealth"),
+			EnableInPlaceRelayRecovery:   boolFromMap(rawFlags, "enableInPlaceRelayRecovery"),
+			EnableResumeGroupRecovery:    boolFromMap(rawFlags, "enableResumeGroupRecovery"),
+		}
+	}
+
 	state.collector = newMessageCollector()
 	state.node = node.New(state.collector)
 
@@ -223,6 +247,7 @@ func cmdStart(params map[string]interface{}) map[string]interface{} {
 		Namespace:      namespace,
 		AutoRegister:   autoRegister,
 		ListenPort:     0,
+		FeatureFlags:   featureFlags,
 	}
 
 	nodeState, err := state.node.Start(cfg)
@@ -236,6 +261,15 @@ func cmdStart(params map[string]interface{}) map[string]interface{} {
 		"peerId":    nodeState.PeerId,
 		"addresses": nodeState.Addresses,
 	})
+}
+
+func boolFromMap(values map[string]interface{}, key string) bool {
+	raw, ok := values[key]
+	if !ok {
+		return false
+	}
+	value, ok := raw.(bool)
+	return ok && value
 }
 
 func cmdStop() map[string]interface{} {
@@ -791,6 +825,152 @@ func cmdProfileDownload(params map[string]interface{}) map[string]interface{} {
 	})
 }
 
+func cmdGroupJoin(params map[string]interface{}) map[string]interface{} {
+	if state.node == nil {
+		return errResult("node not started")
+	}
+
+	groupId, _ := params["groupId"].(string)
+	groupKey, _ := params["groupKey"].(string)
+	keyEpoch := intParam(params, "keyEpoch", 1)
+	rawConfig, ok := params["groupConfig"]
+
+	if groupId == "" || groupKey == "" || !ok {
+		return errResult("missing groupId, groupKey, or groupConfig")
+	}
+
+	configBytes, err := json.Marshal(rawConfig)
+	if err != nil {
+		return errResult(fmt.Sprintf("marshal groupConfig: %v", err))
+	}
+
+	var config node.GroupConfig
+	if err := json.Unmarshal(configBytes, &config); err != nil {
+		return errResult(fmt.Sprintf("unmarshal groupConfig: %v", err))
+	}
+
+	keyInfo := &node.GroupKeyInfo{
+		Key:      groupKey,
+		KeyEpoch: keyEpoch,
+	}
+
+	if err := state.node.JoinGroupTopic(groupId, &config, keyInfo); err != nil {
+		return errResult(fmt.Sprintf("group join: %v", err))
+	}
+
+	return okResult(nil)
+}
+
+func cmdGroupLeave(params map[string]interface{}) map[string]interface{} {
+	if state.node == nil {
+		return errResult("node not started")
+	}
+
+	groupId, _ := params["groupId"].(string)
+	if groupId == "" {
+		return errResult("missing groupId")
+	}
+
+	if err := state.node.LeaveGroupTopic(groupId); err != nil {
+		return errResult(fmt.Sprintf("group leave: %v", err))
+	}
+
+	return okResult(nil)
+}
+
+func cmdGroupPublish(params map[string]interface{}) map[string]interface{} {
+	if state.node == nil {
+		return errResult("node not started")
+	}
+	if state.identity == nil {
+		return errResult("no identity")
+	}
+
+	groupId, _ := params["groupId"].(string)
+	text, _ := params["text"].(string)
+	if groupId == "" || text == "" {
+		return errResult("missing groupId or text")
+	}
+
+	senderUsername := state.identity.PeerId[:8]
+	if u, ok := params["senderUsername"].(string); ok && u != "" {
+		senderUsername = u
+	}
+
+	messageId, _ := params["messageId"].(string)
+
+	msgId, err := state.node.PublishGroupMessage(
+		groupId,
+		state.identity.PrivateKey,
+		state.identity.PeerId,
+		state.identity.PublicKey,
+		senderUsername,
+		text,
+		messageId,
+		nil,
+	)
+	if err != nil {
+		return errResult(fmt.Sprintf("group publish: %v", err))
+	}
+
+	return okResult(map[string]interface{}{
+		"messageId": msgId,
+	})
+}
+
+func cmdGroupInboxStore(params map[string]interface{}) map[string]interface{} {
+	if state.node == nil {
+		return errResult("node not started")
+	}
+	if state.identity == nil {
+		return errResult("no identity")
+	}
+
+	groupId, _ := params["groupId"].(string)
+	text, _ := params["text"].(string)
+	if groupId == "" || text == "" {
+		return errResult("missing groupId or text")
+	}
+
+	senderUsername := state.identity.PeerId[:8]
+	if u, ok := params["senderUsername"].(string); ok && u != "" {
+		senderUsername = u
+	}
+
+	messageId, _ := params["messageId"].(string)
+	if messageId == "" {
+		messageId = fmt.Sprintf("%s-%d", state.identity.PeerId, time.Now().UnixNano())
+	}
+
+	timestamp, _ := params["timestamp"].(string)
+	if timestamp == "" {
+		timestamp = time.Now().UTC().Format(time.RFC3339Nano)
+	}
+
+	keyEpoch := intParam(params, "keyEpoch", 0)
+
+	payloadBytes, err := json.Marshal(map[string]interface{}{
+		"groupId":        groupId,
+		"senderId":       state.identity.PeerId,
+		"senderUsername": senderUsername,
+		"keyEpoch":       keyEpoch,
+		"text":           text,
+		"timestamp":      timestamp,
+		"messageId":      messageId,
+	})
+	if err != nil {
+		return errResult(fmt.Sprintf("marshal group inbox payload: %v", err))
+	}
+
+	if err := state.node.GroupInboxStore(groupId, string(payloadBytes)); err != nil {
+		return errResult(fmt.Sprintf("group inbox store: %v", err))
+	}
+
+	return okResult(map[string]interface{}{
+		"messageId": messageId,
+	})
+}
+
 // --- helpers ---
 
 func okResult(result map[string]interface{}) map[string]interface{} {
@@ -811,6 +991,13 @@ func errResult(msg string) map[string]interface{} {
 func floatParam(params map[string]interface{}, key string, defaultVal float64) float64 {
 	if v, ok := params[key].(float64); ok {
 		return v
+	}
+	return defaultVal
+}
+
+func intParam(params map[string]interface{}, key string, defaultVal int) int {
+	if v, ok := params[key].(float64); ok {
+		return int(v)
 	}
 	return defaultVal
 }

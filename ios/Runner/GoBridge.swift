@@ -143,6 +143,10 @@ class GoBridge: NSObject {
             runOnBackground({ BridgeGroupInboxStore(args ?? "") }, result: result)
         case "groupInboxRetrieve":
             runOnBackground({ BridgeGroupInboxRetrieve(args ?? "") }, result: result)
+        case "groupInboxRetrieveCursor":
+            runOnBackground({ BridgeGroupInboxRetrieveCursor(args ?? "") }, result: result)
+        case "groupAcknowledgeRecovery":
+            runOnBackground({ BridgeGroupAcknowledgeRecovery() }, result: result)
 
         default:
             result(FlutterMethodNotImplemented)

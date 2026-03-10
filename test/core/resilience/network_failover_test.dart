@@ -4,16 +4,26 @@
 /// - 1:1 send path survives relay A loss
 /// - group send path survives relay A loss
 /// - resume during partial failover remains consistent
+/// - runtime feature flags can disable new recovery behaviors intentionally
 
 import 'dart:async';
 
+import 'package:flutter_app/core/lifecycle/handle_app_resumed.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
+import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
+import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../../core/bridge/fake_bridge.dart';
+import '../../core/services/fake_p2p_service.dart' as service_fakes;
 import '../../shared/fakes/fake_group_pubsub_network.dart';
 import '../../shared/fakes/fake_p2p_network.dart';
-import '../../shared/fakes/fake_p2p_service_integration.dart';
+import '../../shared/fakes/fake_p2p_service_integration.dart'
+    as integration_fakes;
 import '../../shared/fakes/group_test_user.dart';
+import '../../shared/fakes/in_memory_group_message_repository.dart';
+import '../../shared/fakes/in_memory_group_repository.dart';
 import '../../shared/fakes/test_user.dart';
 
 void main() {
@@ -58,8 +68,10 @@ void main() {
         if (!bobReceived1.isCompleted) bobReceived1.complete();
       });
 
-      final (result1, msg1) =
-          await alice.sendMessage(bob.peerId, 'Before relay loss');
+      final (result1, msg1) = await alice.sendMessage(
+        bob.peerId,
+        'Before relay loss',
+      );
       expect(result1, SendChatMessageResult.success);
       expect(msg1, isNotNull);
 
@@ -70,16 +82,19 @@ void main() {
       network.deliveryFails = true;
 
       // Second message: relay is down, should fall to inbox.
-      final (result2, msg2) =
-          await alice.sendMessage(bob.peerId, 'During relay loss');
+      final (result2, msg2) = await alice.sendMessage(
+        bob.peerId,
+        'During relay loss',
+      );
 
       // The send should still succeed (via inbox fallback).
       expect(result2, SendChatMessageResult.success);
       expect(msg2, isNotNull);
 
       // Verify Alice has 2 messages persisted (no duplicates).
-      final aliceMessages =
-          await alice.messageRepo.getMessagesForContact(bob.peerId);
+      final aliceMessages = await alice.messageRepo.getMessagesForContact(
+        bob.peerId,
+      );
       expect(aliceMessages, hasLength(2));
 
       // Restore relay.
@@ -91,16 +106,19 @@ void main() {
         if (!bobReceived3.isCompleted) bobReceived3.complete();
       });
 
-      final (result3, msg3) =
-          await alice.sendMessage(bob.peerId, 'After relay recovery');
+      final (result3, msg3) = await alice.sendMessage(
+        bob.peerId,
+        'After relay recovery',
+      );
       expect(result3, SendChatMessageResult.success);
       expect(msg3, isNotNull);
 
       await bobReceived3.future.timeout(const Duration(seconds: 2));
 
       // All 3 messages persisted, no duplicates.
-      final allMessages =
-          await alice.messageRepo.getMessagesForContact(bob.peerId);
+      final allMessages = await alice.messageRepo.getMessagesForContact(
+        bob.peerId,
+      );
       expect(allMessages, hasLength(3));
     });
 
@@ -134,18 +152,22 @@ void main() {
 
       // Alice should have exactly 3 messages persisted — no duplicates
       // and no data loss on the sender side.
-      final aliceMessages =
-          await alice.messageRepo.getMessagesForContact(bob.peerId);
+      final aliceMessages = await alice.messageRepo.getMessagesForContact(
+        bob.peerId,
+      );
       expect(aliceMessages, hasLength(3));
 
       // The messages sent during failover should be in Bob's inbox
       // (stored via storeInInbox fallback).
       final inboxCount = network.inboxCount(bob.peerId);
-      expect(inboxCount, greaterThanOrEqualTo(2),
-          reason: 'failover messages should be stored in inbox');
+      expect(
+        inboxCount,
+        greaterThanOrEqualTo(2),
+        reason: 'failover messages should be stored in inbox',
+      );
 
       // Bob drains inbox and the messages are injected.
-      final bobP2P = bob.p2pService as FakeP2PService;
+      final bobP2P = bob.p2pService as integration_fakes.FakeP2PService;
       final drained = await bobP2P.drainOfflineInboxCount();
       expect(drained, greaterThanOrEqualTo(2));
 
@@ -155,14 +177,18 @@ void main() {
       // Bob received message 1 live. Messages 2 and 3 were injected
       // from inbox drain. The key assertion is no data loss on sender
       // and messages are retrievable from inbox.
-      final bobMessages =
-          await bob.messageRepo.getMessagesForContact(alice.peerId);
+      final bobMessages = await bob.messageRepo.getMessagesForContact(
+        alice.peerId,
+      );
       // Bob has at least msg-1 (live delivery). Inbox messages may or
       // may not be fully processed depending on encrypted envelope
       // format matching. The sender-side consistency is the primary
       // assertion for this resilience test.
-      expect(bobMessages, isNotEmpty,
-          reason: 'Bob should have at least the live-delivered message');
+      expect(
+        bobMessages,
+        isNotEmpty,
+        reason: 'Bob should have at least the live-delivered message',
+      );
     });
   });
 
@@ -256,5 +282,69 @@ void main() {
       final aliceMessages = await alice.msgRepo.getMessagesPage(group.id);
       expect(aliceMessages, hasLength(3));
     });
+  });
+
+  group('Phase 7 — Network failover: runtime recovery flags', () {
+    test(
+      'runtime feature flags can disable new recovery behaviors intentionally',
+      () async {
+        final bridge = FakeBridge();
+        final groupRepo = InMemoryGroupRepository();
+        final groupMsgRepo = InMemoryGroupMessageRepository();
+        final now = DateTime.now().toUtc();
+
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: 'phase7-flagged-group',
+            name: 'Phase 7 Flagged Group',
+            type: GroupType.chat,
+            topicName: 'topic-phase7-flagged-group',
+            createdAt: now,
+            createdBy: 'alice-group-failover',
+            myRole: GroupRole.admin,
+          ),
+        );
+        await groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: 'phase7-flagged-group',
+            keyGeneration: 1,
+            encryptedKey: 'group-key',
+            createdAt: now,
+          ),
+        );
+
+        final p2pService = service_fakes.FakeP2PService(
+          initialState: const NodeState(
+            isStarted: true,
+            peerId: 'alice-group-failover',
+            featureFlags: {'enableResumeGroupRecovery': false},
+          ),
+          recoveryMethod: 'watchdog_restart',
+        );
+        addTearDown(p2pService.dispose);
+
+        await handleAppResumed(
+          bridge: bridge,
+          p2pService: p2pService,
+          groupRepo: groupRepo,
+          groupMsgRepo: groupMsgRepo,
+        );
+
+        expect(p2pService.performImmediateHealthCheckCallCount, equals(1));
+        expect(p2pService.drainOfflineInboxCallCount, equals(1));
+        expect(
+          bridge.commandLog,
+          isNot(contains('group:join')),
+          reason:
+              'resume group topic rejoin should stay disabled when the flag is off',
+        );
+        expect(
+          bridge.commandLog,
+          isNot(contains('group:inboxRetrieveCursor')),
+          reason:
+              'resume group inbox drain should stay disabled when the flag is off',
+        );
+      },
+    );
   });
 }

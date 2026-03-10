@@ -6,16 +6,15 @@ import 'package:flutter_app/features/p2p/domain/models/connection_state.dart';
 
 const testBase64Key = 'AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=';
 const testPeerId = '12D3KooWTestPeerId';
-const relayPeerId =
-    '12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g';
+const relayPeerId = '12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g';
 
 /// Simulates the Go bridge through connect → background → resume phases.
 ///
 /// Phase progression:
-///   [online]  → node:status returns circuit addresses
-///   [degraded]→ node:status returns empty circuit addresses (relay dropped)
-///   [recovering] → peer:dial succeeds but immediate status still degraded
-///   [online]  → after simulated delay, addresses:updated fires
+///   [online]  → node:status returns relayState=online and circuit addresses
+///   [degraded]→ node:status returns relayState=degraded with no circuits
+///   [recovering] → relay:reconnect succeeds but status still reports recovering
+///   [online]  → after simulated delay, relay:state and addresses pushes fire
 class LifecycleBridge implements Bridge {
   bool _initialized = false;
 
@@ -78,12 +77,12 @@ class LifecycleBridge implements Bridge {
   // -- Phase 5: Structured recovery response fields --
 
   /// When true, relay:reconnect returns structured result fields
-  /// (`recoveryMethod`, `refreshed`) instead of bare `{ok: true}`.
+  /// (`recoveryMode`, `refreshed`) instead of bare `{ok: true}`.
   bool useStructuredRecoveryResponse = false;
 
-  /// The recovery method reported in structured relay:reconnect response.
-  /// 'in_place_refresh' or 'watchdog_restart'.
-  String structuredRecoveryMethod = 'in_place_refresh';
+  /// The recovery mode reported in structured relay:reconnect response.
+  /// 'in_place' or 'watchdog_restart'.
+  String structuredRecoveryMode = 'in_place';
 
   /// Number of consecutive relay:reconnect failures before the bridge
   /// returns a 'watchdog_restart' result. Used for escalation testing.
@@ -94,6 +93,9 @@ class LifecycleBridge implements Bridge {
   /// until [refreshFailuresBeforeWatchdog] is reached, then succeeds
   /// with 'watchdog_restart' method.
   bool simulateRefreshEscalation = false;
+
+  int _watchdogRestartCount = 0;
+  bool _needsGroupRecovery = false;
 
   @override
   bool get isInitialized => _initialized;
@@ -106,6 +108,8 @@ class LifecycleBridge implements Bridge {
   void Function(ConnectionState)? onPeerDisconnected;
   @override
   void Function(List<String>, List<String>)? onAddressesUpdated;
+  @override
+  void Function(Map<String, dynamic>)? onRelayStateChanged;
   @override
   void Function(Map<String, dynamic>)? onGroupMessageReceived;
   @override
@@ -152,6 +156,16 @@ class LifecycleBridge implements Bridge {
       case 'relay:reconnect':
         relayReconnectCallCount++;
         return jsonEncode(await _relayReconnectResponse());
+      case 'group:acknowledgeRecovery':
+        _needsGroupRecovery = false;
+        onRelayStateChanged?.call({
+          'relayState': phase == 'degraded' ? 'degraded' : 'online',
+          'healthyRelayCount': phase == 'degraded' ? 0 : 1,
+          'watchdogRestartCount': _watchdogRestartCount,
+          'needsGroupRecovery': false,
+          'reason': 'group_recovery_acknowledged',
+        });
+        return jsonEncode({'ok': true});
       case 'node:stop':
         return jsonEncode({'ok': true, 'stopped': true});
       case 'inbox:retrieve':
@@ -173,10 +187,7 @@ class LifecycleBridge implements Bridge {
     }
 
     if (simulateAlreadyStarted) {
-      return {
-        'ok': false,
-        'errorMessage': 'node already started',
-      };
+      return {'ok': false, 'errorMessage': 'node already started'};
     }
 
     // Phase-aware: if phase is 'degraded', start succeeds but with no
@@ -189,6 +200,10 @@ class LifecycleBridge implements Bridge {
         'listenAddresses': ['/ip4/127.0.0.1/tcp/1234'],
         'circuitAddresses': <String>[],
         'connections': <Map<String, dynamic>>[],
+        'relayState': 'degraded',
+        'healthyRelayCount': 0,
+        'watchdogRestartCount': _watchdogRestartCount,
+        'needsGroupRecovery': _needsGroupRecovery,
       };
     }
 
@@ -200,6 +215,10 @@ class LifecycleBridge implements Bridge {
       'listenAddresses': ['/ip4/127.0.0.1/tcp/1234'],
       'circuitAddresses': ['/p2p-circuit/p2p/$relayPeerId'],
       'connections': <Map<String, dynamic>>[],
+      'relayState': 'online',
+      'healthyRelayCount': 1,
+      'watchdogRestartCount': _watchdogRestartCount,
+      'needsGroupRecovery': _needsGroupRecovery,
     };
   }
 
@@ -213,6 +232,10 @@ class LifecycleBridge implements Bridge {
           'listenAddresses': ['/ip4/127.0.0.1/tcp/1234'],
           'circuitAddresses': ['/p2p-circuit/p2p/$relayPeerId'],
           'connections': <Map<String, dynamic>>[],
+          'relayState': 'online',
+          'healthyRelayCount': 1,
+          'watchdogRestartCount': _watchdogRestartCount,
+          'needsGroupRecovery': _needsGroupRecovery,
         };
 
       case 'degraded':
@@ -223,6 +246,10 @@ class LifecycleBridge implements Bridge {
           'listenAddresses': ['/ip4/127.0.0.1/tcp/1234'],
           'circuitAddresses': <String>[],
           'connections': <Map<String, dynamic>>[],
+          'relayState': 'degraded',
+          'healthyRelayCount': 0,
+          'watchdogRestartCount': _watchdogRestartCount,
+          'needsGroupRecovery': _needsGroupRecovery,
         };
 
       case 'recovering':
@@ -232,7 +259,7 @@ class LifecycleBridge implements Bridge {
 
           if (!eventChannelDead && !addressesPushFired) {
             addressesPushFired = true;
-            _fireAddressesUpdated();
+            _fireRecoveryOnlinePushes();
           }
 
           return {
@@ -242,6 +269,10 @@ class LifecycleBridge implements Bridge {
             'listenAddresses': ['/ip4/127.0.0.1/tcp/1234'],
             'circuitAddresses': ['/p2p-circuit/p2p/$relayPeerId'],
             'connections': <Map<String, dynamic>>[],
+            'relayState': 'online',
+            'healthyRelayCount': 1,
+            'watchdogRestartCount': _watchdogRestartCount,
+            'needsGroupRecovery': _needsGroupRecovery,
           };
         }
 
@@ -252,6 +283,10 @@ class LifecycleBridge implements Bridge {
           'listenAddresses': ['/ip4/127.0.0.1/tcp/1234'],
           'circuitAddresses': <String>[],
           'connections': <Map<String, dynamic>>[],
+          'relayState': 'recovering',
+          'healthyRelayCount': 0,
+          'watchdogRestartCount': _watchdogRestartCount,
+          'needsGroupRecovery': _needsGroupRecovery,
         };
 
       default:
@@ -286,10 +321,12 @@ class LifecycleBridge implements Bridge {
           if (phase == 'degraded') {
             phase = 'recovering';
           }
+          _watchdogRestartCount++;
+          _needsGroupRecovery = true;
           return {
             'ok': true,
             if (useStructuredRecoveryResponse) ...{
-              'recoveryMethod': 'watchdog_restart',
+              'recoveryMode': 'watchdog_restart',
               'refreshed': true,
             },
           };
@@ -312,9 +349,13 @@ class LifecycleBridge implements Bridge {
     // Phase 5: structured recovery response
     if (useStructuredRecoveryResponse) {
       _consecutiveRefreshFailures = 0;
+      if (structuredRecoveryMode == 'watchdog_restart') {
+        _watchdogRestartCount++;
+        _needsGroupRecovery = true;
+      }
       return {
         'ok': true,
-        'recoveryMethod': structuredRecoveryMethod,
+        'recoveryMode': structuredRecoveryMode,
         'refreshed': true,
       };
     }
@@ -336,7 +377,8 @@ class LifecycleBridge implements Bridge {
     if (_messageSendAttempts <= messageSendFailCount) {
       return {
         'ok': false,
-        'errorMessage': 'message send failed (injected fault, attempt $_messageSendAttempts)',
+        'errorMessage':
+            'message send failed (injected fault, attempt $_messageSendAttempts)',
       };
     }
     return {'ok': true, 'sent': true, 'reply': 'ack'};
@@ -347,6 +389,17 @@ class LifecycleBridge implements Bridge {
       ['/ip4/127.0.0.1/tcp/1234'],
       ['/p2p-circuit/p2p/$relayPeerId'],
     );
+  }
+
+  void _fireRecoveryOnlinePushes() {
+    onRelayStateChanged?.call({
+      'relayState': 'online',
+      'healthyRelayCount': 1,
+      'watchdogRestartCount': _watchdogRestartCount,
+      'needsGroupRecovery': _needsGroupRecovery,
+      'reason': 'relay_connected',
+    });
+    _fireAddressesUpdated();
   }
 
   // -- Test helpers --
@@ -390,7 +443,9 @@ class LifecycleBridge implements Bridge {
       _recoveryStartedAt = null;
     }
 
-    _fireAddressesUpdated();
+    if (!eventChannelDead) {
+      _fireRecoveryOnlinePushes();
+    }
   }
 
   // -- Recovery timing --
@@ -430,25 +485,30 @@ class LifecycleBridge implements Bridge {
 
     phase = 'online';
     addressesPushFired = true;
-    _fireAddressesUpdated();
+    if (!eventChannelDead) {
+      _fireRecoveryOnlinePushes();
+    }
   }
 
   /// Simulate a relay-state push event showing degradation.
-  /// This fires onAddressesUpdated with empty circuit addresses,
-  /// simulating Go pushing a relay:state event when the relay connection drops.
+  /// This fires the real relay:state callback instead of the legacy
+  /// addresses:updated fallback path.
   void simulateRelayStatePush({bool degraded = true}) {
     if (degraded) {
       phase = 'degraded';
       addressesPushFired = false;
       _recoveryAttempts = 0;
-      onAddressesUpdated?.call(
-        ['/ip4/127.0.0.1/tcp/1234'],
-        <String>[], // empty = relay lost
-      );
+      onRelayStateChanged?.call({
+        'relayState': 'degraded',
+        'healthyRelayCount': 0,
+        'watchdogRestartCount': _watchdogRestartCount,
+        'needsGroupRecovery': _needsGroupRecovery,
+        'reason': 'relay_disconnected',
+      });
     } else {
       phase = 'online';
       addressesPushFired = true;
-      _fireAddressesUpdated();
+      _fireRecoveryOnlinePushes();
     }
   }
 
@@ -479,14 +539,15 @@ class LifecycleBridge implements Bridge {
 
     // Phase 5: structured recovery
     useStructuredRecoveryResponse = false;
-    structuredRecoveryMethod = 'in_place_refresh';
+    structuredRecoveryMode = 'in_place';
     refreshFailuresBeforeWatchdog = 3;
     _consecutiveRefreshFailures = 0;
     simulateRefreshEscalation = false;
+    _watchdogRestartCount = 0;
+    _needsGroupRecovery = false;
 
     // Recovery timing
     _recoveryStartedAt = null;
     _lastRecoveryDuration = null;
   }
 }
-

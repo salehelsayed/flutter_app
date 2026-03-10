@@ -1,5 +1,20 @@
 package main
 
+import (
+	"os"
+	"strconv"
+	"strings"
+
+	"github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/relay"
+)
+
+const (
+	relayMaxReservationsEnv       = "RELAY_MAX_RESERVATIONS"
+	relayMaxConnectionsPerPeerEnv = "RELAY_MAX_CONNECTIONS_PER_PEER"
+	relayMaxInboxMessagesEnv      = "RELAY_MAX_INBOX_MESSAGES_PER_PEER"
+	relayMaxGroupInboxMessagesEnv = "RELAY_MAX_GROUP_INBOX_MESSAGES"
+)
+
 // ServerLimits holds configurable capacity limits for the relay server.
 // These replace the infinite relay limits with bounded, observable behavior.
 type ServerLimits struct {
@@ -15,8 +30,8 @@ type ServerLimits struct {
 	// per group inbox. When exceeded, the oldest are evicted.
 	MaxGroupInboxMessages int
 
-	// MaxConnectionsPerPeer is the maximum number of concurrent
-	// connections allowed from a single peer.
+	// MaxConnectionsPerPeer is the maximum number of concurrent relayed
+	// circuits allowed from a single peer.
 	MaxConnectionsPerPeer int
 }
 
@@ -25,10 +40,47 @@ type ServerLimits struct {
 func DefaultServerLimits() ServerLimits {
 	return ServerLimits{
 		MaxRelayReservations:    512,
-		MaxInboxMessagesPerPeer: 100,
-		MaxGroupInboxMessages:   500,
+		MaxInboxMessagesPerPeer: maxMessagesPerPeer,
+		MaxGroupInboxMessages:   maxMessagesPerGroup,
 		MaxConnectionsPerPeer:   8,
 	}
+}
+
+// loadServerLimitsFromEnv reads the finite relay and store limits from
+// environment variables, falling back to DefaultServerLimits().
+func loadServerLimitsFromEnv() ServerLimits {
+	defaults := DefaultServerLimits()
+
+	return ServerLimits{
+		MaxRelayReservations:    envIntOrDefault(relayMaxReservationsEnv, defaults.MaxRelayReservations),
+		MaxInboxMessagesPerPeer: envIntOrDefault(relayMaxInboxMessagesEnv, defaults.MaxInboxMessagesPerPeer),
+		MaxGroupInboxMessages:   envIntOrDefault(relayMaxGroupInboxMessagesEnv, defaults.MaxGroupInboxMessages),
+		MaxConnectionsPerPeer:   envIntOrDefault(relayMaxConnectionsPerPeerEnv, defaults.MaxConnectionsPerPeer),
+	}
+}
+
+func envIntOrDefault(key string, fallback int) int {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback
+	}
+
+	value, err := strconv.Atoi(raw)
+	if err != nil || value <= 0 {
+		return fallback
+	}
+	return value
+}
+
+// relayResourcesFromServerLimits translates the rollout config into the live
+// libp2p relay-service resource envelope.
+func relayResourcesFromServerLimits(limits ServerLimits) relay.Resources {
+	resources := relay.DefaultResources()
+	resources.Limit = relay.DefaultLimit()
+	resources.MaxReservations = limits.MaxRelayReservations
+	resources.MaxCircuits = limits.MaxConnectionsPerPeer
+	resources.MaxReservationsPerPeer = 1
+	return resources
 }
 
 // --- Inbox backend with configurable limit ---

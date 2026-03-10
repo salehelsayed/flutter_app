@@ -50,8 +50,9 @@ Future<Map<String, dynamic>> callGroupCreate(
   };
 
   try {
-    final responseJson =
-        await bridge.send(jsonEncode(request)).timeout(timeout);
+    final responseJson = await bridge
+        .send(jsonEncode(request))
+        .timeout(timeout);
     final response = jsonDecode(responseJson) as Map<String, dynamic>;
 
     emitFlowEvent(
@@ -93,15 +94,13 @@ Future<void> callGroupJoin(
 
   final request = {
     'cmd': 'group:join',
-    'payload': {
-      'groupId': groupId,
-      'topicName': topicName,
-    },
+    'payload': {'groupId': groupId, 'topicName': topicName},
   };
 
   try {
-    final responseJson =
-        await bridge.send(jsonEncode(request)).timeout(timeout);
+    final responseJson = await bridge
+        .send(jsonEncode(request))
+        .timeout(timeout);
     final response = jsonDecode(responseJson) as Map<String, dynamic>;
 
     if (response['ok'] != true) {
@@ -159,8 +158,9 @@ Future<void> callGroupJoinWithConfig(
   };
 
   try {
-    final responseJson =
-        await bridge.send(jsonEncode(request)).timeout(timeout);
+    final responseJson = await bridge
+        .send(jsonEncode(request))
+        .timeout(timeout);
     final response = jsonDecode(responseJson) as Map<String, dynamic>;
 
     if (response['ok'] != true) {
@@ -186,6 +186,52 @@ Future<void> callGroupJoinWithConfig(
   }
 }
 
+/// Calls the bridge to acknowledge that Flutter has finished any required
+/// group topic rejoin after recovery.
+Future<void> callGroupAcknowledgeRecovery(
+  Bridge bridge, {
+  Duration timeout = const Duration(seconds: 10),
+}) async {
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'GROUP_FL_BRIDGE_ACK_RECOVERY_REQUEST',
+    details: {},
+  );
+
+  final request = {
+    'cmd': 'group:acknowledgeRecovery',
+    'payload': <String, dynamic>{},
+  };
+
+  try {
+    final responseJson = await bridge
+        .send(jsonEncode(request))
+        .timeout(timeout);
+    final response = jsonDecode(responseJson) as Map<String, dynamic>;
+
+    if (response['ok'] != true) {
+      throw BridgeCommandException(
+        'group:acknowledgeRecovery',
+        response['errorCode']?.toString() ?? 'UNKNOWN',
+        response['errorMessage']?.toString(),
+      );
+    }
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_FL_BRIDGE_ACK_RECOVERY_RESPONSE',
+      details: {'ok': true},
+    );
+  } on TimeoutException {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_FL_BRIDGE_ACK_RECOVERY_RESPONSE',
+      details: {'ok': false, 'errorCode': 'BRIDGE_TIMEOUT'},
+    );
+    rethrow;
+  }
+}
+
 /// Calls the bridge to leave a group.
 Future<void> callGroupLeave(
   Bridge bridge,
@@ -202,14 +248,13 @@ Future<void> callGroupLeave(
 
   final request = {
     'cmd': 'group:leave',
-    'payload': {
-      'groupId': groupId,
-    },
+    'payload': {'groupId': groupId},
   };
 
   try {
-    final responseJson =
-        await bridge.send(jsonEncode(request)).timeout(timeout);
+    final responseJson = await bridge
+        .send(jsonEncode(request))
+        .timeout(timeout);
     final response = jsonDecode(responseJson) as Map<String, dynamic>;
 
     if (response['ok'] != true) {
@@ -279,14 +324,12 @@ Future<Map<String, dynamic>> callGroupPublish(
     payload['media'] = media;
   }
 
-  final request = {
-    'cmd': 'group:publish',
-    'payload': payload,
-  };
+  final request = {'cmd': 'group:publish', 'payload': payload};
 
   try {
-    final responseJson =
-        await bridge.send(jsonEncode(request)).timeout(timeout);
+    final responseJson = await bridge
+        .send(jsonEncode(request))
+        .timeout(timeout);
     final response = jsonDecode(responseJson) as Map<String, dynamic>;
 
     emitFlowEvent(
@@ -345,8 +388,9 @@ Future<Map<String, dynamic>> callGroupPublishReaction(
   };
 
   try {
-    final responseJson =
-        await bridge.send(jsonEncode(request)).timeout(timeout);
+    final responseJson = await bridge
+        .send(jsonEncode(request))
+        .timeout(timeout);
     final response = jsonDecode(responseJson) as Map<String, dynamic>;
 
     emitFlowEvent(
@@ -392,15 +436,13 @@ Future<void> callGroupUpdateConfig(
 
   final request = {
     'cmd': 'group:updateConfig',
-    'payload': {
-      'groupId': groupId,
-      'groupConfig': groupConfig,
-    },
+    'payload': {'groupId': groupId, 'groupConfig': groupConfig},
   };
 
   try {
-    final responseJson =
-        await bridge.send(jsonEncode(request)).timeout(timeout);
+    final responseJson = await bridge
+        .send(jsonEncode(request))
+        .timeout(timeout);
     final response = jsonDecode(responseJson) as Map<String, dynamic>;
 
     if (response['ok'] != true) {
@@ -446,14 +488,13 @@ Future<Map<String, dynamic>> callGroupRotateKey(
 
   final request = {
     'cmd': 'group:rotateKey',
-    'payload': {
-      'groupId': groupId,
-    },
+    'payload': {'groupId': groupId},
   };
 
   try {
-    final responseJson =
-        await bridge.send(jsonEncode(request)).timeout(timeout);
+    final responseJson = await bridge
+        .send(jsonEncode(request))
+        .timeout(timeout);
     final response = jsonDecode(responseJson) as Map<String, dynamic>;
 
     emitFlowEvent(
@@ -501,16 +542,13 @@ Future<void> callGroupUpdateKey(
 
   final request = {
     'cmd': 'group:updateKey',
-    'payload': {
-      'groupId': groupId,
-      'groupKey': groupKey,
-      'keyEpoch': keyEpoch,
-    },
+    'payload': {'groupId': groupId, 'groupKey': groupKey, 'keyEpoch': keyEpoch},
   };
 
   try {
-    final responseJson =
-        await bridge.send(jsonEncode(request)).timeout(timeout);
+    final responseJson = await bridge
+        .send(jsonEncode(request))
+        .timeout(timeout);
     final response = jsonDecode(responseJson) as Map<String, dynamic>;
 
     if (response['ok'] != true) {
@@ -553,10 +591,7 @@ Future<void> callGroupInboxStore(
 
   final request = {
     'cmd': 'group:inboxStore',
-    'payload': {
-      'groupId': groupId,
-      'message': message,
-    },
+    'payload': {'groupId': groupId, 'message': message},
   };
 
   try {
@@ -597,18 +632,17 @@ Future<List<Map<String, dynamic>>> callGroupInboxRetrieve(
 
   final request = {
     'cmd': 'group:inboxRetrieve',
-    'payload': {
-      'groupId': groupId,
-      'sinceTimestamp': sinceTimestamp,
-    },
+    'payload': {'groupId': groupId, 'sinceTimestamp': sinceTimestamp},
   };
 
   try {
-    final responseJson =
-        await bridge.send(jsonEncode(request)).timeout(timeout);
+    final responseJson = await bridge
+        .send(jsonEncode(request))
+        .timeout(timeout);
     final response = jsonDecode(responseJson) as Map<String, dynamic>;
 
-    final messages = (response['messages'] as List<dynamic>?)
+    final messages =
+        (response['messages'] as List<dynamic>?)
             ?.map((m) => Map<String, dynamic>.from(m as Map))
             .toList() ??
         [];
@@ -662,19 +696,17 @@ Future<GroupInboxPage> callGroupInboxRetrieveWithCursor(
 
   final request = {
     'cmd': 'group:inboxRetrieveCursor',
-    'payload': {
-      'groupId': groupId,
-      'cursor': cursor,
-      'limit': limit,
-    },
+    'payload': {'groupId': groupId, 'cursor': cursor, 'limit': limit},
   };
 
   try {
-    final responseJson =
-        await bridge.send(jsonEncode(request)).timeout(timeout);
+    final responseJson = await bridge
+        .send(jsonEncode(request))
+        .timeout(timeout);
     final response = jsonDecode(responseJson) as Map<String, dynamic>;
 
-    final messages = (response['messages'] as List<dynamic>?)
+    final messages =
+        (response['messages'] as List<dynamic>?)
             ?.map((m) => Map<String, dynamic>.from(m as Map))
             .toList() ??
         [];
@@ -714,14 +746,12 @@ Future<String> callGroupKeygen(
     details: {},
   );
 
-  final request = {
-    'cmd': 'group.keygen',
-    'payload': <String, dynamic>{},
-  };
+  final request = {'cmd': 'group.keygen', 'payload': <String, dynamic>{}};
 
   try {
-    final responseJson =
-        await bridge.send(jsonEncode(request)).timeout(timeout);
+    final responseJson = await bridge
+        .send(jsonEncode(request))
+        .timeout(timeout);
     final response = jsonDecode(responseJson) as Map<String, dynamic>;
 
     emitFlowEvent(
@@ -760,15 +790,13 @@ Future<Map<String, dynamic>> callGroupEncrypt(
 
   final request = {
     'cmd': 'group.encrypt',
-    'payload': {
-      'key': groupKey,
-      'plaintext': plaintext,
-    },
+    'payload': {'key': groupKey, 'plaintext': plaintext},
   };
 
   try {
-    final responseJson =
-        await bridge.send(jsonEncode(request)).timeout(timeout);
+    final responseJson = await bridge
+        .send(jsonEncode(request))
+        .timeout(timeout);
     final response = jsonDecode(responseJson) as Map<String, dynamic>;
 
     emitFlowEvent(
@@ -811,16 +839,13 @@ Future<String> callGroupDecrypt(
 
   final request = {
     'cmd': 'group.decrypt',
-    'payload': {
-      'key': groupKey,
-      'ciphertext': ciphertext,
-      'nonce': nonce,
-    },
+    'payload': {'key': groupKey, 'ciphertext': ciphertext, 'nonce': nonce},
   };
 
   try {
-    final responseJson =
-        await bridge.send(jsonEncode(request)).timeout(timeout);
+    final responseJson = await bridge
+        .send(jsonEncode(request))
+        .timeout(timeout);
     final response = jsonDecode(responseJson) as Map<String, dynamic>;
 
     emitFlowEvent(

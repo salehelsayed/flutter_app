@@ -57,16 +57,16 @@ class _FakeMessageRepository implements MessageRepository {
 
   @override
   Future<List<ConversationMessage>> getMessagesForContact(
-      String contactPeerId) async {
-    return store.values
-        .where((m) => m.contactPeerId == contactPeerId)
-        .toList()
+    String contactPeerId,
+  ) async {
+    return store.values.where((m) => m.contactPeerId == contactPeerId).toList()
       ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
   }
 
   @override
   Future<ConversationMessage?> getLatestMessageForContact(
-      String contactPeerId) async {
+    String contactPeerId,
+  ) async {
     final msgs = await getMessagesForContact(contactPeerId);
     return msgs.isEmpty ? null : msgs.last;
   }
@@ -98,8 +98,9 @@ class _FakeMessageRepository implements MessageRepository {
         .where((m) => m.contactPeerId == contactPeerId)
         .toList();
     if (beforeTimestamp != null) {
-      msgs =
-          msgs.where((m) => m.timestamp.compareTo(beforeTimestamp) < 0).toList();
+      msgs = msgs
+          .where((m) => m.timestamp.compareTo(beforeTimestamp) < 0)
+          .toList();
     }
     msgs.sort((a, b) => b.timestamp.compareTo(a.timestamp));
     return msgs.take(limit).toList().reversed.toList();
@@ -110,8 +111,7 @@ class _FakeMessageRepository implements MessageRepository {
   @override
   Future<List<ConversationMessage>> getUnackedOutgoingMessages({
     required Duration olderThan,
-  }) async =>
-      [];
+  }) async => [];
 }
 
 class _FakeP2PService implements P2PService {
@@ -120,13 +120,19 @@ class _FakeP2PService implements P2PService {
   @override
   void dispose() {}
   @override
-  Future<bool> dialPeer(String peerId, {List<String>? addresses, int? timeoutMs}) async => true;
+  Future<bool> dialPeer(
+    String peerId, {
+    List<String>? addresses,
+    int? timeoutMs,
+  }) async => true;
   @override
-  Future<DiscoveredPeer?> discoverPeer(String peerId, {int? timeoutMs}) async => null;
+  Future<DiscoveredPeer?> discoverPeer(String peerId, {int? timeoutMs}) async =>
+      null;
   @override
   Stream<ChatMessage> get messageStream => const Stream.empty();
   @override
-  Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) async => [];
+  Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) async =>
+      [];
   @override
   Future<bool> sendMessage(String peerId, String message) async => true;
   @override
@@ -134,8 +140,7 @@ class _FakeP2PService implements P2PService {
     String peerId,
     String message, {
     int? timeoutMs,
-  }) async =>
-      const SendMessageResult(sent: true, reply: 'received: ok');
+  }) async => const SendMessageResult(sent: true, reply: 'received: ok');
   @override
   Future<bool> startNode(String privateKeyBase64, String peerId) async => true;
   @override
@@ -159,8 +164,10 @@ class _FakeP2PService implements P2PService {
   bool isLocalPeer(String peerId) => false;
   @override
   Future<bool> sendLocalMessage(
-          String peerId, String message, String fromPeerId) async =>
-      false;
+    String peerId,
+    String message,
+    String fromPeerId,
+  ) async => false;
   @override
   Future<bool> sendLocalMedia({
     required String peerId,
@@ -171,13 +178,14 @@ class _FakeP2PService implements P2PService {
     int? durationMs,
     List<double>? waveform,
     String? filename,
-  }) async =>
-      false;
+  }) async => false;
   @override
   Future<bool> startNodeCore(String privateKeyBase64, String peerId) async =>
       false;
   @override
   Future<void> warmBackground() async {}
+  @override
+  String? get lastRecoveryMethod => null;
 }
 
 class _FakeBridge implements Bridge {
@@ -199,7 +207,9 @@ class _FakeBridge implements Bridge {
   void Function(String event)? onNodeEvent;
   @override
   void Function(List<String> listenAddresses, List<String> circuitAddresses)?
-      onAddressesUpdated;
+  onAddressesUpdated;
+  @override
+  void Function(Map<String, dynamic>)? onRelayStateChanged;
   @override
   void Function(Map<String, dynamic>)? onGroupMessageReceived;
   @override
@@ -215,33 +225,32 @@ class _FakeBridge implements Bridge {
 // ---------------------------------------------------------------------------
 
 ContactModel _contactB() => ContactModel(
-      peerId: 'peer-B',
-      publicKey: 'pk-B',
-      rendezvous: '/dns4/relay/tcp/443/p2p/relay',
-      username: 'Lina',
-      signature: 'sig-B',
-      scannedAt: '2026-03-01T10:00:00.000Z',
-    );
+  peerId: 'peer-B',
+  publicKey: 'pk-B',
+  rendezvous: '/dns4/relay/tcp/443/p2p/relay',
+  username: 'Lina',
+  signature: 'sig-B',
+  scannedAt: '2026-03-01T10:00:00.000Z',
+);
 
 ContactModel _contactC() => ContactModel(
-      peerId: 'peer-C',
-      publicKey: 'pk-C',
-      rendezvous: '/dns4/relay/tcp/443/p2p/relay',
-      username: 'Sarah',
-      signature: 'sig-C',
-      scannedAt: '2026-03-01T10:00:00.000Z',
-    );
+  peerId: 'peer-C',
+  publicKey: 'pk-C',
+  rendezvous: '/dns4/relay/tcp/443/p2p/relay',
+  username: 'Sarah',
+  signature: 'sig-C',
+  scannedAt: '2026-03-01T10:00:00.000Z',
+);
 
 IdentityModel _identity() => IdentityModel(
-      peerId: 'peer-A',
-      publicKey: 'pub-A',
-      privateKey: 'priv-A',
-      mnemonic12:
-          'one two three four five six seven eight nine ten eleven twelve',
-      username: 'Noor',
-      createdAt: '2026-03-01T09:00:00.000Z',
-      updatedAt: '2026-03-01T09:00:00.000Z',
-    );
+  peerId: 'peer-A',
+  publicKey: 'pub-A',
+  privateKey: 'priv-A',
+  mnemonic12: 'one two three four five six seven eight nine ten eleven twelve',
+  username: 'Noor',
+  createdAt: '2026-03-01T09:00:00.000Z',
+  updatedAt: '2026-03-01T09:00:00.000Z',
+);
 
 Future<(SendChatMessageResult, ConversationMessage?)> _noOpSendFn({
   required P2PService p2pService,
@@ -251,6 +260,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> _noOpSendFn({
   required String senderPeerId,
   required String senderUsername,
   String? messageId,
+  String? quotedMessageId,
   String? timestamp,
   Bridge? bridge,
   String? recipientMlKemPublicKey,
@@ -323,8 +333,10 @@ void main() {
           ),
         ),
       );
-      // Let initState async calls complete
+      // Let initState async calls complete, then render the post-frame
+      // updates scheduled by ConversationWired once the initial load finishes.
       await tester.pump(const Duration(milliseconds: 500));
+      await tester.pump();
     }
 
     testWidgets('banner shows when all deps wired', (tester) async {
@@ -341,8 +353,9 @@ void main() {
       }
     }
 
-    testWidgets('tapping "Make introductions" opens FriendPickerScreen',
-        (tester) async {
+    testWidgets('tapping "Make introductions" opens FriendPickerScreen', (
+      tester,
+    ) async {
       await pumpWired(tester);
 
       await tester.tap(find.text('Make introductions'));
@@ -366,8 +379,7 @@ void main() {
       expect(picker, findsOneWidget);
     });
 
-    testWidgets('select friend → tap Introduce → record saved',
-        (tester) async {
+    testWidgets('select friend → tap Introduce → record saved', (tester) async {
       await pumpWired(tester);
 
       await tester.tap(find.text('Make introductions'));
@@ -388,8 +400,9 @@ void main() {
       expect(intros.first.introducerUsername, 'Noor');
     });
 
-    testWidgets('tap does nothing when introductionRepository is null',
-        (tester) async {
+    testWidgets('tap does nothing when introductionRepository is null', (
+      tester,
+    ) async {
       await tester.pumpWidget(
         MaterialApp(
           home: ConversationWired(
@@ -405,6 +418,7 @@ void main() {
         ),
       );
       await tester.pump(const Duration(milliseconds: 500));
+      await tester.pump();
 
       final banner = find.byType(IntroBanner);
       if (banner.evaluate().isNotEmpty) {
@@ -449,16 +463,19 @@ void main() {
         ),
       );
       await tester.pump(const Duration(milliseconds: 500));
+      await tester.pump();
 
       expect(find.byType(IntroBanner), findsNothing);
     });
 
     testWidgets('picker excludes already-introduced friends', (tester) async {
-      await introRepo.saveIntroduction(_makeIntro(
-        introducerId: 'peer-A',
-        recipientId: 'peer-B',
-        introducedId: 'peer-C',
-      ));
+      await introRepo.saveIntroduction(
+        _makeIntro(
+          introducerId: 'peer-A',
+          recipientId: 'peer-B',
+          introducedId: 'peer-C',
+        ),
+      );
 
       await pumpWired(tester);
 

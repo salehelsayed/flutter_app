@@ -39,7 +39,9 @@ class _FakeBridge implements Bridge {
   void Function(ConnectionState)? onPeerDisconnected;
   @override
   void Function(List<String> listenAddresses, List<String> circuitAddresses)?
-      onAddressesUpdated;
+  onAddressesUpdated;
+  @override
+  void Function(Map<String, dynamic>)? onRelayStateChanged;
   @override
   void Function(Map<String, dynamic>)? onGroupMessageReceived;
   @override
@@ -56,11 +58,13 @@ class _FakeMediaAttachmentRepo implements MediaAttachmentRepository {
 
   @override
   Future<List<MediaAttachment>> getAttachmentsForMessage(
-      String messageId) async => [];
+    String messageId,
+  ) async => [];
 
   @override
   Future<Map<String, List<MediaAttachment>>> getAttachmentsForMessages(
-      List<String> messageIds) async => {};
+    List<String> messageIds,
+  ) async => {};
 
   @override
   Future<void> updateLocalPath(String id, String localPath) async {
@@ -68,8 +72,7 @@ class _FakeMediaAttachmentRepo implements MediaAttachmentRepository {
   }
 
   @override
-  Future<void> updateDownloadStatus(
-      String id, String downloadStatus) async {
+  Future<void> updateDownloadStatus(String id, String downloadStatus) async {
     downloadStatusUpdates.add((id, downloadStatus));
   }
 
@@ -327,7 +330,9 @@ class _ThrowingBridge implements Bridge {
   void Function(ConnectionState)? onPeerDisconnected;
   @override
   void Function(List<String> listenAddresses, List<String> circuitAddresses)?
-      onAddressesUpdated;
+  onAddressesUpdated;
+  @override
+  void Function(Map<String, dynamic>)? onRelayStateChanged;
   @override
   void Function(Map<String, dynamic>)? onGroupMessageReceived;
   @override

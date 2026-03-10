@@ -26,14 +26,18 @@ const (
 	PeerDialTimeout   = 2 * time.Second  // Peer-to-peer dial
 	RelayProbeTimeout = 5 * time.Second  // Relay probe via circuit
 	SendTimeout       = 15 * time.Second
-	DiscoverTimeout = 10 * time.Second
-	InboxTimeout    = 15 * time.Second
-	MediaTimeout    = 5 * time.Minute // large files need generous timeout
+	DiscoverTimeout   = 10 * time.Second
+	InboxTimeout      = 15 * time.Second
+	MediaTimeout      = 5 * time.Minute // large files need generous timeout
 
 	// PubSub.
-	GroupTopicPrefix       = "/mknoon/group/"
-	PubSubTimeout          = 30 * time.Second
-	GroupDiscoveryInterval = 30 * time.Second // periodic rendezvous re-discovery for group peers
+	GroupTopicPrefix           = "/mknoon/group/"
+	PubSubTimeout              = 30 * time.Second
+	GroupDiscoveryInterval     = 30 * time.Second // periodic rendezvous re-discovery for group peers
+	MaxGroupDiscoveryBackoff   = 5 * time.Minute  // max backoff for group peer discovery
+	GroupDiscoveryConcurrency  = 5                // max concurrent discovery goroutines
+	GroupDiscoveryJitterFactor = 4                // +/-25% interval jitter
+	GroupRecoveryInitialJitter = 3 * time.Second  // initial stagger for resume/watchdog bursts
 
 	// Inbox framing.
 	MaxFrameLen = 128 * 1024 // 128 KB, matches relay server
@@ -51,9 +55,9 @@ const (
 
 	// Stream-level deadlines applied after NewStream succeeds.
 	// These prevent hung connections from blocking goroutines forever.
-	StreamWriteDeadline  = 10 * time.Second
-	StreamReadDeadline   = 10 * time.Second
-	InboundReadDeadline  = 15 * time.Second // inbound reads may come from slow peers
+	StreamWriteDeadline = 10 * time.Second
+	StreamReadDeadline  = 10 * time.Second
+	InboundReadDeadline = 15 * time.Second // inbound reads may come from slow peers
 )
 
 // TimeoutProfile bundles per-operation timeout durations for a given
