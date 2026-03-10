@@ -54,7 +54,7 @@ void main() {
 
       expect(result, SendChatMessageResult.success);
       expect(msg, isNotNull);
-      expect(msg!.transport, 'wifi');
+      expect(msg!.transport, 'local');
       expect(aliceP2P.localSendCallCount, 1);
 
       // Bob received the message
@@ -84,7 +84,7 @@ void main() {
 
       expect(result1, SendChatMessageResult.success);
       expect(msg1, isNotNull);
-      expect(msg1!.transport, 'wifi');
+      expect(msg1!.transport, 'local');
 
       await bobReceived1.future.timeout(const Duration(seconds: 2));
       await sub1.cancel();
@@ -102,7 +102,7 @@ void main() {
 
       expect(result2, SendChatMessageResult.success);
       expect(msg2, isNotNull);
-      expect(msg2!.transport, 'relay');
+      expect(msg2!.transport, 'direct');
 
       await bobReceived2.future.timeout(const Duration(seconds: 2));
 
@@ -134,7 +134,7 @@ void main() {
 
       expect(result, SendChatMessageResult.success);
       expect(msg, isNotNull);
-      expect(msg!.transport, 'relay');
+      expect(msg!.transport, 'direct');
       expect(aliceP2P.localSendCallCount, 1);
 
       // Bob received via relay
@@ -191,7 +191,7 @@ void main() {
 
       // Assert transport sequence
       final transports = [m1!.transport, m2!.transport, m3!.transport];
-      expect(transports, ['wifi', 'relay', 'wifi']);
+      expect(transports, ['local', 'direct', 'local']);
 
       // All 3 messages delivered to Bob
       final bobMessages = await bob.loadConversationWith(alice.peerId);

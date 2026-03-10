@@ -568,6 +568,9 @@ void main() {
 
       expect(result, SendChatMessageResult.success);
       expect(message!.status, 'sent');
+      expect(message.transport, 'direct');
+      expect(message.wireEnvelope, isNotNull);
+      expect(p2pService.storeInInboxCallCount, 1);
     });
 
     test('success with empty reply sets status to sent', () async {
@@ -584,7 +587,36 @@ void main() {
 
       expect(result, SendChatMessageResult.success);
       expect(message!.status, 'sent');
+      expect(message.transport, 'direct');
+      expect(message.wireEnvelope, isNotNull);
+      expect(p2pService.storeInInboxCallCount, 1);
     });
+
+    test(
+      'unacked direct send hands off to inbox immediately when available',
+      () async {
+        p2pService = FakeP2PService(
+          sendMessageReply: null,
+          storeInInboxResult: true,
+        );
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Hello!',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message, isNotNull);
+        expect(message!.status, 'delivered');
+        expect(message.transport, 'inbox');
+        expect(message.wireEnvelope, isNull);
+        expect(p2pService.storeInInboxCallCount, 1);
+      },
+    );
 
     test('sends locally when peer is on local WiFi', () async {
       p2pService.localPeers.add('target-peer');
@@ -682,6 +714,45 @@ void main() {
         expect(message, isNotNull);
         // Should have sent without discover/dial (connection reuse)
         expect(p2pService.sendCallCount, 1);
+        expect(p2pService.discoverCallCount, 0);
+        expect(p2pService.dialCallCount, 0);
+      },
+    );
+
+    test(
+      'existing connected peer hands off unacked send to inbox on the same attempt',
+      () async {
+        p2pService = FakeP2PService(
+          currentState: NodeState(
+            isStarted: true,
+            connections: [
+              const p2p.ConnectionState(
+                peerId: 'target-peer',
+                multiaddrs: ['/ip4/127.0.0.1/tcp/4001'],
+                direction: 'outbound',
+                status: 'connected',
+              ),
+            ],
+          ),
+          sendMessageReply: null,
+          storeInInboxResult: true,
+        );
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Hello connected!',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message, isNotNull);
+        expect(message!.status, 'delivered');
+        expect(message.transport, 'inbox');
+        expect(p2pService.sendCallCount, 1);
+        expect(p2pService.storeInInboxCallCount, 1);
         expect(p2pService.discoverCallCount, 0);
         expect(p2pService.dialCallCount, 0);
       },

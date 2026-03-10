@@ -36,6 +36,7 @@ import 'package:flutter_app/features/identity/domain/models/identity_model.dart'
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
+import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
 
 import '../../../../core/bridge/fake_bridge.dart';
 import '../../../../core/secure_storage/fake_secure_key_store.dart';
@@ -2160,6 +2161,422 @@ void main() {
         expect(find.text('Record Video'), findsOneWidget);
       },
     );
+
+    testWidgets(
+      'inline reply shows session reply immediately before network completes',
+      (tester) async {
+        final originalOnError = FlutterError.onError;
+        FlutterError.onError = (details) {
+          if (details.toString().contains('overflowed')) return;
+          originalOnError?.call(details);
+        };
+        addTearDown(() => FlutterError.onError = originalOnError);
+
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+
+        // Seed a read incoming message so the card starts in collapsed mode
+        // with an inline reply input.
+        await messageRepo.saveMessage(
+          ConversationMessage(
+            id: 'msg-opt-1',
+            contactPeerId: 'contact-peer-id',
+            text: 'Hey from Bob',
+            senderPeerId: 'contact-peer-id',
+            timestamp: DateTime.now()
+                .subtract(const Duration(hours: 1))
+                .toUtc()
+                .toIso8601String(),
+            isIncoming: true,
+            status: 'read',
+            readAt: DateTime.now()
+                .subtract(const Duration(hours: 1))
+                .toUtc()
+                .toIso8601String(),
+            createdAt: DateTime.now()
+                .subtract(const Duration(hours: 1))
+                .toUtc()
+                .toIso8601String(),
+          ),
+        );
+
+        // Use a gated P2P service that blocks send operations
+        final gatedP2P = _GatedP2PService();
+        p2pService = gatedP2P;
+
+        await tester.pumpWidget(buildFeedWired());
+        await pumpFeedFrames(tester);
+
+        // Card should be collapsed with inline reply input
+        expect(find.byType(CollapsedModeCardBody), findsOneWidget);
+        expect(find.text('Continue...'), findsOneWidget);
+
+        // Type and send
+        await tester.enterText(find.byType(TextField).first, 'Quick reply');
+        await tester.pump();
+        final sendButton = find.byIcon(Icons.arrow_upward_rounded).first;
+        await tester.ensureVisible(sendButton);
+        await tester.pump();
+        await tester.tap(sendButton);
+
+        // Pump a few frames — but the P2P gate is still blocked,
+        // so sendChatMessage has NOT completed.
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
+
+        // The session reply text should already be visible (optimistic).
+        // RepliedIndicator renders "You replied Active now" for just-created
+        // SessionReply timestamps.
+        expect(
+          find.textContaining('You replied'),
+          findsOneWidget,
+          reason:
+              'Session reply should appear immediately, not after network completes',
+        );
+
+        // Clean up: complete the gate so the async send doesn't leak.
+        gatedP2P.sendGate.complete();
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
+      },
+    );
+
+    testWidgets(
+      'inline reply reverts session reply on send failure',
+      (tester) async {
+        final originalOnError = FlutterError.onError;
+        FlutterError.onError = (details) {
+          if (details.toString().contains('overflowed')) return;
+          originalOnError?.call(details);
+        };
+        addTearDown(() => FlutterError.onError = originalOnError);
+
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+
+        await messageRepo.saveMessage(
+          ConversationMessage(
+            id: 'msg-fail-1',
+            contactPeerId: 'contact-peer-id',
+            text: 'Hey from Bob',
+            senderPeerId: 'contact-peer-id',
+            timestamp: DateTime.now()
+                .subtract(const Duration(hours: 1))
+                .toUtc()
+                .toIso8601String(),
+            isIncoming: true,
+            status: 'read',
+            readAt: DateTime.now()
+                .subtract(const Duration(hours: 1))
+                .toUtc()
+                .toIso8601String(),
+            createdAt: DateTime.now()
+                .subtract(const Duration(hours: 1))
+                .toUtc()
+                .toIso8601String(),
+          ),
+        );
+
+        // P2P node not started → sendChatMessage returns nodeNotRunning
+        p2pService = FakeP2PService(
+          initialState: NodeState.stopped,
+        );
+
+        await tester.pumpWidget(buildFeedWired());
+        await pumpFeedFrames(tester);
+
+        expect(find.byType(CollapsedModeCardBody), findsOneWidget);
+
+        // Type and send
+        await tester.enterText(find.byType(TextField).first, 'Fail reply');
+        await tester.pump();
+        final sendButton = find.byIcon(Icons.arrow_upward_rounded).first;
+        await tester.ensureVisible(sendButton);
+        await tester.pump();
+        await tester.tap(sendButton);
+
+        // Pump through async send (returns immediately since node is stopped)
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
+
+        // Session reply should NOT remain (send failed, should be reverted)
+        // and a snackbar error should appear.
+        expect(
+          find.textContaining('failed to send'),
+          findsOneWidget,
+          reason: 'Error snackbar should appear on send failure',
+        );
+      },
+    );
+
+    testWidgets(
+      'group inline reply shows session reply immediately before network completes',
+      (tester) async {
+        final originalOnError = FlutterError.onError;
+        FlutterError.onError = (details) {
+          if (details.toString().contains('overflowed')) return;
+          originalOnError?.call(details);
+        };
+        addTearDown(() => FlutterError.onError = originalOnError);
+
+        identityRepo.seed(testIdentity);
+
+        final groupRepo = InMemoryGroupRepository();
+        final groupMsgRepo = InMemoryGroupMessageRepository();
+
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: 'g1',
+            name: 'Optimistic Group',
+            type: GroupType.chat,
+            topicName: '/mknoon/group/g1',
+            createdAt: DateTime(2026, 2, 1),
+            createdBy: 'admin',
+            myRole: GroupRole.member,
+          ),
+        );
+
+        // Seed a read message so the card starts in collapsed mode
+        // with an inline reply input.
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: 'gm-read-opt-1',
+            groupId: 'g1',
+            senderPeerId: 'other-peer',
+            senderUsername: 'OtherUser',
+            text: 'Old group message',
+            timestamp:
+                DateTime.now().subtract(const Duration(hours: 1)).toUtc(),
+            createdAt:
+                DateTime.now().subtract(const Duration(hours: 1)).toUtc(),
+            readAt: DateTime.now().subtract(const Duration(hours: 1)).toUtc(),
+          ),
+        );
+
+        final fakeGroupListener = _FakeGroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: groupMsgRepo,
+        );
+
+        // Use a gated bridge that blocks send operations so
+        // sendGroupMessage never completes during the assertion window.
+        final gatedBridge = _GatedBridge();
+        bridge = gatedBridge;
+
+        await tester.pumpWidget(
+          buildFeedWired(
+            groupRepository: groupRepo,
+            groupMessageRepository: groupMsgRepo,
+            groupMessageListener: fakeGroupListener,
+          ),
+        );
+        await pumpFeedFrames(tester);
+
+        // Card should be collapsed with inline reply input
+        expect(find.byType(CollapsedModeCardBody), findsOneWidget);
+        expect(find.text('Continue...'), findsOneWidget);
+
+        // Type and send
+        await tester.enterText(find.byType(TextField).first, 'Group reply');
+        await tester.pump();
+        final sendButton = find.byIcon(Icons.arrow_upward_rounded).first;
+        await tester.ensureVisible(sendButton);
+        await tester.pump();
+        await tester.tap(sendButton);
+
+        // Pump a few frames — the bridge gate is still blocked,
+        // so sendGroupMessage has NOT completed.
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
+
+        // The session reply should already be visible (optimistic).
+        expect(
+          find.textContaining('You replied'),
+          findsOneWidget,
+          reason:
+              'Group session reply should appear immediately, not after network completes',
+        );
+
+        // Clean up: complete the gate so the async send doesn't leak.
+        gatedBridge.sendGate.complete();
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
+      },
+    );
+
+    testWidgets(
+      'group inline reply reverts session reply on send failure',
+      (tester) async {
+        final originalOnError = FlutterError.onError;
+        FlutterError.onError = (details) {
+          if (details.toString().contains('overflowed')) return;
+          originalOnError?.call(details);
+        };
+        addTearDown(() => FlutterError.onError = originalOnError);
+
+        identityRepo.seed(testIdentity);
+
+        final groupRepo = InMemoryGroupRepository();
+        final groupMsgRepo = InMemoryGroupMessageRepository();
+
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: 'g1',
+            name: 'Fail Group',
+            type: GroupType.chat,
+            topicName: '/mknoon/group/g1',
+            createdAt: DateTime(2026, 2, 1),
+            createdBy: 'admin',
+            myRole: GroupRole.member,
+          ),
+        );
+
+        // Seed a read message so the card starts in collapsed mode
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: 'gm-read-fail-1',
+            groupId: 'g1',
+            senderPeerId: 'other-peer',
+            senderUsername: 'OtherUser',
+            text: 'Old group message',
+            timestamp:
+                DateTime.now().subtract(const Duration(hours: 1)).toUtc(),
+            createdAt:
+                DateTime.now().subtract(const Duration(hours: 1)).toUtc(),
+            readAt: DateTime.now().subtract(const Duration(hours: 1)).toUtc(),
+          ),
+        );
+
+        final fakeGroupListener = _FakeGroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: groupMsgRepo,
+        );
+
+        // Bridge that throws on send → sendGroupMessage returns error
+        bridge = FakeBridge()..throwOnSend = true;
+
+        await tester.pumpWidget(
+          buildFeedWired(
+            groupRepository: groupRepo,
+            groupMessageRepository: groupMsgRepo,
+            groupMessageListener: fakeGroupListener,
+          ),
+        );
+        await pumpFeedFrames(tester);
+
+        expect(find.byType(CollapsedModeCardBody), findsOneWidget);
+
+        // Type and send
+        await tester.enterText(find.byType(TextField).first, 'Group fail');
+        await tester.pump();
+        final sendButton = find.byIcon(Icons.arrow_upward_rounded).first;
+        await tester.ensureVisible(sendButton);
+        await tester.pump();
+        await tester.tap(sendButton);
+
+        // Pump through async send (throws immediately)
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
+
+        // Session reply should be reverted and error snackbar shown.
+        expect(
+          find.textContaining('failed to send'),
+          findsOneWidget,
+          reason: 'Error snackbar should appear on group send failure',
+        );
+        // No stale "You replied" should remain
+        expect(
+          find.textContaining('You replied'),
+          findsNothing,
+          reason: 'Session reply should be reverted on failure',
+        );
+      },
+    );
+
+    testWidgets(
+      'group inline reply shows session reply on success end-to-end',
+      (tester) async {
+        final originalOnError = FlutterError.onError;
+        FlutterError.onError = (details) {
+          if (details.toString().contains('overflowed')) return;
+          originalOnError?.call(details);
+        };
+        addTearDown(() => FlutterError.onError = originalOnError);
+
+        identityRepo.seed(testIdentity);
+
+        final groupRepo = InMemoryGroupRepository();
+        final groupMsgRepo = InMemoryGroupMessageRepository();
+
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: 'g1',
+            name: 'Success Group',
+            type: GroupType.chat,
+            topicName: '/mknoon/group/g1',
+            createdAt: DateTime(2026, 2, 1),
+            createdBy: 'admin',
+            myRole: GroupRole.member,
+          ),
+        );
+
+        // Seed a read message so the card starts in collapsed mode
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: 'gm-read-succ-1',
+            groupId: 'g1',
+            senderPeerId: 'other-peer',
+            senderUsername: 'OtherUser',
+            text: 'Old group message',
+            timestamp:
+                DateTime.now().subtract(const Duration(hours: 1)).toUtc(),
+            createdAt:
+                DateTime.now().subtract(const Duration(hours: 1)).toUtc(),
+            readAt: DateTime.now().subtract(const Duration(hours: 1)).toUtc(),
+          ),
+        );
+
+        final fakeGroupListener = _FakeGroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: groupMsgRepo,
+        );
+
+        // Default bridge returns ok → sendGroupMessage succeeds
+        await tester.pumpWidget(
+          buildFeedWired(
+            groupRepository: groupRepo,
+            groupMessageRepository: groupMsgRepo,
+            groupMessageListener: fakeGroupListener,
+          ),
+        );
+        await pumpFeedFrames(tester);
+
+        expect(find.byType(CollapsedModeCardBody), findsOneWidget);
+        expect(find.text('Continue...'), findsOneWidget);
+
+        // Type and send
+        await tester.enterText(find.byType(TextField).first, 'Group success');
+        await tester.pump();
+        final sendButton = find.byIcon(Icons.arrow_upward_rounded).first;
+        await tester.ensureVisible(sendButton);
+        await tester.pump();
+        await tester.tap(sendButton);
+
+        // Pump through the full async chain
+        await pumpFeedFrames(tester);
+
+        // Session reply should be visible
+        expect(
+          find.textContaining('You replied'),
+          findsOneWidget,
+          reason: 'Session reply should show after successful group send',
+        );
+        // Card should remain collapsed
+        expect(find.byType(CollapsedModeCardBody), findsOneWidget);
+      },
+    );
   });
 }
 
@@ -2452,6 +2869,60 @@ class _SpyGroupRepository extends InMemoryGroupRepository {
   void resetTracking() {
     getActiveGroupsCallCount = 0;
     getGroupCallCountById.clear();
+  }
+}
+
+/// [FakeP2PService] subclass whose send/discover/inbox methods block
+/// on a [Completer] so tests can assert UI state before the network
+/// operation completes.
+class _GatedP2PService extends FakeP2PService {
+  final Completer<void> sendGate = Completer<void>();
+
+  _GatedP2PService()
+      : super(
+          initialState: const NodeState(isStarted: true),
+          discoverPeerResult: const DiscoveredPeer(
+            id: 'contact-peer-id',
+            addresses: ['/ip4/127.0.0.1/tcp/4001'],
+          ),
+        );
+
+  @override
+  Future<SendMessageResult> sendMessageWithReply(
+    String peerId,
+    String message, {
+    int? timeoutMs,
+  }) async {
+    await sendGate.future;
+    return const SendMessageResult(sent: true, reply: 'ack');
+  }
+
+  @override
+  Future<DiscoveredPeer?> discoverPeer(
+    String peerId, {
+    int? timeoutMs,
+  }) async {
+    await sendGate.future;
+    return discoverPeerResult;
+  }
+
+  @override
+  Future<bool> storeInInbox(String toPeerId, String message) async {
+    await sendGate.future;
+    return true;
+  }
+}
+
+/// [FakeBridge] subclass whose [send] blocks on a [Completer] so tests
+/// can assert UI state while the bridge call (group publish, etc.) is
+/// still in flight.
+class _GatedBridge extends FakeBridge {
+  final Completer<void> sendGate = Completer<void>();
+
+  @override
+  Future<String> send(String message) async {
+    await sendGate.future;
+    return super.send(message);
   }
 }
 

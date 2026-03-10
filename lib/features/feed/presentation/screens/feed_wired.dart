@@ -957,11 +957,21 @@ class _FeedWiredState extends State<FeedWired> {
     final identity = _identity;
     if (identity == null) return;
 
+    // Optimistic: show session reply immediately before network send.
+    final quotedMsgId = _activeQuoteMessageIds[contactPeerId];
+    _draftTexts.remove(contactPeerId);
+    _activeQuoteMessageIds.remove(contactPeerId);
+    _sessionReplies.track(contactPeerId, SessionReply.justNow(text));
+    if (mounted) setState(() {});
+
     try {
       final contact = await widget.contactRepository.getContact(contactPeerId);
-      if (contact == null || !mounted) return;
+      if (contact == null || !mounted) {
+        _sessionReplies.clear(contactPeerId);
+        if (mounted) setState(() {});
+        return;
+      }
 
-      final quotedMsgId = _activeQuoteMessageIds[contactPeerId];
       final (result, message) = await sendChatMessage(
         p2pService: widget.p2pService,
         messageRepo: widget.messageRepository,
@@ -977,9 +987,6 @@ class _FeedWiredState extends State<FeedWired> {
       if (!mounted) return;
 
       if (result == SendChatMessageResult.success) {
-        _draftTexts.remove(contactPeerId);
-        _activeQuoteMessageIds.remove(contactPeerId);
-        _sessionReplies.track(contactPeerId, SessionReply.justNow(text));
         // Mark as read on successful inline reply
         await markConversationRead(
           messageRepo: widget.messageRepository,
@@ -998,6 +1005,9 @@ class _FeedWiredState extends State<FeedWired> {
         }
         await _loadTotalUnreadCount();
       } else {
+        // Revert optimistic session reply on failure.
+        _sessionReplies.clear(contactPeerId);
+        if (mounted) setState(() {});
         final errorText = result == SendChatMessageResult.encryptionRequired
             ? 'Cannot send: contact does not support encryption.'
             : 'Message failed to send. Try again.';
@@ -1010,6 +1020,9 @@ class _FeedWiredState extends State<FeedWired> {
         );
       }
     } catch (e) {
+      // Revert optimistic session reply on error.
+      _sessionReplies.clear(contactPeerId);
+      if (mounted) setState(() {});
       emitFlowEvent(
         layer: 'FL',
         event: 'FEED_FL_INLINE_SEND_ERROR',
@@ -1521,6 +1534,10 @@ class _FeedWiredState extends State<FeedWired> {
     final msgRepo = widget.groupMessageRepository;
     if (identity == null || groupRepo == null || msgRepo == null) return;
 
+    // Optimistic: show session reply immediately before network send.
+    _sessionReplies.track('group:$groupId', SessionReply.justNow(text));
+    if (mounted) setState(() {});
+
     try {
       final (result, message) = await sendGroupMessage(
         bridge: widget.bridge,
@@ -1537,11 +1554,13 @@ class _FeedWiredState extends State<FeedWired> {
       if (!mounted) return;
 
       if (result == SendGroupMessageResult.success) {
-        _sessionReplies.track('group:$groupId', SessionReply.justNow(text));
         await widget.groupMessageRepository?.markAsRead(groupId);
         await _refreshGroupFeedItem(groupId);
         await _loadTotalUnreadCount();
       } else {
+        // Revert optimistic session reply on failure.
+        _sessionReplies.clear('group:$groupId');
+        if (mounted) setState(() {});
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: const Text('Message failed to send. Try again.'),
@@ -1551,6 +1570,9 @@ class _FeedWiredState extends State<FeedWired> {
         );
       }
     } catch (e) {
+      // Revert optimistic session reply on error.
+      _sessionReplies.clear('group:$groupId');
+      if (mounted) setState(() {});
       emitFlowEvent(
         layer: 'FL',
         event: 'FEED_FL_GROUP_INLINE_SEND_ERROR',
