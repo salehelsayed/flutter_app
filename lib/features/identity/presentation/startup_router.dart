@@ -294,10 +294,9 @@ class _StartupRouterState extends State<StartupRouter> {
               callIdentityRestore: (mnemonic) =>
                   callIdentityRestore(bridge, mnemonic),
               callMlKemKeygen: () => callMlKemKeygen(bridge),
-              onNavigateToMain: () {
-                // Navigate and start P2P
-                Navigator.of(routeContext).pushReplacement(
-                  MaterialPageRoute(
+              onNavigateToMain: (progressContext) async {
+                Navigator.of(progressContext).pushAndRemoveUntil(
+                  buildStartupReplacementRoute<void>(
                     builder: (_) => FirstTimeExperienceWired(
                       repository: repository,
                       contactRepository: contactRepository,
@@ -325,6 +324,7 @@ class _StartupRouterState extends State<StartupRouter> {
                       shareIntentService: widget.shareIntentService,
                     ),
                   ),
+                  (_) => false,
                 );
 
                 StartupTiming.instance.mark('route_pushed');

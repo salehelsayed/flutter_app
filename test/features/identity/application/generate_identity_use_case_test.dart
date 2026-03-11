@@ -21,7 +21,8 @@ const _fakeIdentityJson = {
   'peerId': '12D3KooWTestPeerId',
   'publicKey': 'publicKeyBase64',
   'privateKey': 'privateKeyBase64',
-  'mnemonic12': 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about',
+  'mnemonic12':
+      'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about',
   'createdAt': '2024-01-01T00:00:00Z',
   'updatedAt': '2024-01-01T00:00:00Z',
 };
@@ -41,22 +42,30 @@ void main() {
     progressStages = [];
   });
 
-  test('success: generates identity, runs ML-KEM keygen, saves to repo', () async {
-    final result = await generateNewIdentity(
-      callGenerate: () async => {'ok': true, 'identity': _fakeIdentityJson},
-      callMlKemKeygen: () async => _fakeMlKemResponse,
-      repo: repo,
-      onProgress: (stage) => progressStages.add(stage),
-    );
+  test(
+    'success: generates identity, runs ML-KEM keygen, saves to repo',
+    () async {
+      final result = await generateNewIdentity(
+        callGenerate: () async => {'ok': true, 'identity': _fakeIdentityJson},
+        callMlKemKeygen: () async => _fakeMlKemResponse,
+        repo: repo,
+        onProgress: (stage) => progressStages.add(stage),
+      );
 
-    expect(result, equals(GenerateIdentityResult.success));
-    expect(repo.savedIdentity, isNotNull);
-    expect(repo.savedIdentity!.peerId, equals('12D3KooWTestPeerId'));
-    expect(repo.savedIdentity!.mlKemPublicKey, equals('mlkemPublicKeyBase64'));
-    expect(repo.savedIdentity!.mlKemSecretKey, equals('mlkemSecretKeyBase64'));
-    expect(progressStages, contains('generating_keys'));
-    expect(progressStages, contains('saving'));
-  });
+      expect(result, equals(GenerateIdentityResult.success));
+      expect(repo.savedIdentity, isNotNull);
+      expect(repo.savedIdentity!.peerId, equals('12D3KooWTestPeerId'));
+      expect(
+        repo.savedIdentity!.mlKemPublicKey,
+        equals('mlkemPublicKeyBase64'),
+      );
+      expect(
+        repo.savedIdentity!.mlKemSecretKey,
+        equals('mlkemSecretKeyBase64'),
+      );
+      expect(progressStages, equals(['generating_keys', 'saving']));
+    },
+  );
 
   test('coreLibError: bridge returns ok=false', () async {
     final result = await generateNewIdentity(
