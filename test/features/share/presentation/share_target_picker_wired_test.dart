@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -10,6 +11,7 @@ import 'package:flutter_app/core/services/share_intent_model.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
+import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
@@ -512,6 +514,149 @@ void main() {
     expect(find.text('launcher'), findsOneWidget);
     expect(find.text('Share with...'), findsNothing);
   });
+
+  testWidgets('shows loading indicator before targets finish loading', (
+    tester,
+  ) async {
+    final contactRepository = _SlowContactRepository();
+    final groupRepository = InMemoryGroupRepository();
+    final messageRepository = InMemoryMessageRepository();
+    final mediaAttachmentRepository = InMemoryMediaAttachmentRepository();
+    final identityRepository = FakeIdentityRepository();
+    final groupMessageRepository = InMemoryGroupMessageRepository();
+    identityRepository.seed(_makeIdentity());
+    contactRepository.addTestContact(activeContact);
+
+    final chatMessageListener = ChatMessageListener(
+      chatMessageStream: const Stream<ChatMessage>.empty(),
+      messageRepo: messageRepository,
+      contactRepo: contactRepository,
+    );
+    final groupMessageListener = GroupMessageListener(
+      groupRepo: groupRepository,
+      msgRepo: groupMessageRepository,
+    );
+
+    await tester.pumpWidget(
+      buildWidget(
+        contactRepository: contactRepository,
+        groupRepository: groupRepository,
+        messageRepository: messageRepository,
+        mediaAttachmentRepository: mediaAttachmentRepository,
+        identityRepository: identityRepository,
+        chatMessageListener: chatMessageListener,
+        groupMessageRepository: groupMessageRepository,
+        groupMessageListener: groupMessageListener,
+        shareIntent: const ShareIntent(
+          type: ShareIntentType.text,
+          text: 'Shared hello',
+        ),
+      ),
+    );
+
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(find.text('Alice'), findsNothing);
+
+    contactRepository.release();
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.text('Alice'), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+  });
+
+  testWidgets('loading indicator replaced by empty state when no contacts exist',
+      (tester) async {
+    final contactRepository = InMemoryContactRepository();
+    final groupRepository = InMemoryGroupRepository();
+    final messageRepository = InMemoryMessageRepository();
+    final mediaAttachmentRepository = InMemoryMediaAttachmentRepository();
+    final identityRepository = FakeIdentityRepository();
+    final groupMessageRepository = InMemoryGroupMessageRepository();
+    identityRepository.seed(_makeIdentity());
+
+    final chatMessageListener = ChatMessageListener(
+      chatMessageStream: const Stream<ChatMessage>.empty(),
+      messageRepo: messageRepository,
+      contactRepo: contactRepository,
+    );
+    final groupMessageListener = GroupMessageListener(
+      groupRepo: groupRepository,
+      msgRepo: groupMessageRepository,
+    );
+
+    await tester.pumpWidget(
+      buildWidget(
+        contactRepository: contactRepository,
+        groupRepository: groupRepository,
+        messageRepository: messageRepository,
+        mediaAttachmentRepository: mediaAttachmentRepository,
+        identityRepository: identityRepository,
+        chatMessageListener: chatMessageListener,
+        groupMessageRepository: groupMessageRepository,
+        groupMessageListener: groupMessageListener,
+        shareIntent: const ShareIntent(
+          type: ShareIntentType.text,
+          text: 'Shared hello',
+        ),
+      ),
+    );
+
+    // Initially shows loading
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+
+    // Pump to allow _loadTargets to complete
+    await tester.pump();
+    await tester.pump();
+
+    // Empty state shown, no spinner
+    expect(find.text('No contacts or groups yet'), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+  });
+
+  testWidgets('loading indicator clears on error', (tester) async {
+    final contactRepository = _ThrowingContactRepository();
+    final groupRepository = InMemoryGroupRepository();
+    final messageRepository = InMemoryMessageRepository();
+    final mediaAttachmentRepository = InMemoryMediaAttachmentRepository();
+    final identityRepository = FakeIdentityRepository();
+    final groupMessageRepository = InMemoryGroupMessageRepository();
+    identityRepository.seed(_makeIdentity());
+
+    final chatMessageListener = ChatMessageListener(
+      chatMessageStream: const Stream<ChatMessage>.empty(),
+      messageRepo: messageRepository,
+      contactRepo: contactRepository,
+    );
+    final groupMessageListener = GroupMessageListener(
+      groupRepo: groupRepository,
+      msgRepo: groupMessageRepository,
+    );
+
+    await tester.pumpWidget(
+      buildWidget(
+        contactRepository: contactRepository,
+        groupRepository: groupRepository,
+        messageRepository: messageRepository,
+        mediaAttachmentRepository: mediaAttachmentRepository,
+        identityRepository: identityRepository,
+        chatMessageListener: chatMessageListener,
+        groupMessageRepository: groupMessageRepository,
+        groupMessageListener: groupMessageListener,
+        shareIntent: const ShareIntent(
+          type: ShareIntentType.text,
+          text: 'Shared hello',
+        ),
+      ),
+    );
+
+    await tester.pump();
+    await tester.pump();
+
+    // No spinner stuck — empty state shown instead
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.text('No contacts or groups yet'), findsOneWidget);
+  });
 }
 
 ContactModel _makeContact(String peerId, String username) {
@@ -548,4 +693,27 @@ IdentityModel _makeIdentity() {
     createdAt: '2026-03-09T08:00:00.000Z',
     updatedAt: '2026-03-09T08:00:00.000Z',
   );
+}
+
+class _SlowContactRepository extends InMemoryContactRepository {
+  final Completer<void> _gate = Completer<void>();
+
+  void release() {
+    if (!_gate.isCompleted) {
+      _gate.complete();
+    }
+  }
+
+  @override
+  Future<List<ContactModel>> getActiveContacts() async {
+    await _gate.future;
+    return super.getActiveContacts();
+  }
+}
+
+class _ThrowingContactRepository extends InMemoryContactRepository {
+  @override
+  Future<List<ContactModel>> getActiveContacts() async {
+    throw Exception('Simulated contact loading error');
+  }
 }

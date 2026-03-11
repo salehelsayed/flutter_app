@@ -196,6 +196,40 @@ void main() {
       expect(find.text('Beta Group'), findsOneWidget);
     });
 
+    testWidgets('shows loading placeholders before groups resolve', (
+      tester,
+    ) async {
+      final slowGroupRepo = _SlowGroupRepository();
+      final g1 = makeGroup(id: 'g-1', name: 'Alpha Group');
+      await slowGroupRepo.saveGroup(g1);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: GroupListWired(
+            groupRepo: slowGroupRepo,
+            msgRepo: msgRepo,
+            groupMessageListener:
+                FakeGroupMessageListener(messageStreamController.stream),
+            bridge: bridge,
+            identityRepo: identityRepo,
+            contactRepo: contactRepo,
+            p2pService: p2pService,
+            groupInviteListener:
+                FakeGroupInviteListener(inviteStreamController.stream),
+          ),
+        ),
+      );
+
+      expect(find.byKey(const ValueKey('group-loading-row-0')), findsOneWidget);
+      expect(find.text('Alpha Group'), findsNothing);
+
+      slowGroupRepo.release();
+      await pumpFrames(tester);
+
+      expect(find.text('Alpha Group'), findsOneWidget);
+      expect(find.byKey(const ValueKey('group-loading-row-0')), findsNothing);
+    });
+
     testWidgets('refreshes group list when groupMessageListener emits',
         (tester) async {
       final g1 = makeGroup(id: 'g-1', name: 'Alpha Group');
@@ -291,5 +325,71 @@ void main() {
       // The unread badge should show "3"
       expect(find.text('3'), findsOneWidget);
     });
+
+    testWidgets('loading skeleton replaced by empty state when no groups', (
+      tester,
+    ) async {
+      // groupRepo is empty (no groups saved)
+      await tester.pumpWidget(buildWidget());
+      await pumpFrames(tester);
+
+      expect(find.text('No groups yet'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('group-loading-row-0')),
+        findsNothing,
+      );
+    });
+
+    testWidgets('loading clears on error', (tester) async {
+      final errorGroupRepo = _ThrowingGroupRepository();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: GroupListWired(
+            groupRepo: errorGroupRepo,
+            msgRepo: msgRepo,
+            groupMessageListener:
+                FakeGroupMessageListener(messageStreamController.stream),
+            bridge: bridge,
+            identityRepo: identityRepo,
+            contactRepo: contactRepo,
+            p2pService: p2pService,
+            groupInviteListener:
+                FakeGroupInviteListener(inviteStreamController.stream),
+          ),
+        ),
+      );
+      await pumpFrames(tester);
+
+      // No spinner stuck — empty state shown instead
+      expect(
+        find.byKey(const ValueKey('group-loading-row-0')),
+        findsNothing,
+      );
+      expect(find.text('No groups yet'), findsOneWidget);
+    });
   });
+}
+
+class _SlowGroupRepository extends InMemoryGroupRepository {
+  final Completer<void> _gate = Completer<void>();
+
+  void release() {
+    if (!_gate.isCompleted) {
+      _gate.complete();
+    }
+  }
+
+  @override
+  Future<List<GroupModel>> getActiveGroups() async {
+    await _gate.future;
+    return super.getActiveGroups();
+  }
+}
+
+class _ThrowingGroupRepository extends InMemoryGroupRepository {
+  @override
+  Future<List<GroupModel>> getActiveGroups() async {
+    throw Exception('Simulated group loading error');
+  }
 }
