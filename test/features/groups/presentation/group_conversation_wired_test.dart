@@ -10,7 +10,9 @@ import 'package:image_picker/image_picker.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_picker.dart';
 import 'package:flutter_app/core/media/video_process_result.dart';
+import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bubble.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/attachment_preview_strip.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
@@ -18,6 +20,7 @@ import 'package:flutter_app/features/conversation/domain/repositories/reaction_r
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/presentation/screens/group_conversation_screen.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
@@ -207,12 +210,14 @@ GroupMessage makeMessage({
   bool isIncoming = true,
   String senderPeerId = 'peer-alice',
   String senderUsername = 'Alice',
+  String? quotedMessageId,
 }) => GroupMessage(
   id: id,
   groupId: groupId,
   senderPeerId: senderPeerId,
   senderUsername: senderUsername,
   text: text,
+  quotedMessageId: quotedMessageId,
   timestamp: DateTime.now().toUtc(),
   isIncoming: isIncoming,
   createdAt: DateTime.now().toUtc(),
@@ -264,6 +269,7 @@ void main() {
       ImageProcessor? imageProcessor,
       FakeAudioRecorderService? audioRecorderService,
       MediaPicker? mediaPicker,
+      UploadMediaFn? uploadMediaFn,
       List<File>? initialAttachments,
       String? initialText,
       ReactionRepository? reactionRepo,
@@ -287,6 +293,7 @@ void main() {
           imageProcessor: imageProcessor,
           audioRecorderService: audioRecorderService,
           mediaPicker: mediaPicker,
+          uploadMediaFn: uploadMediaFn ?? uploadMedia,
           initialAttachments: initialAttachments,
           initialText: initialText,
           reactionRepo: reactionRepo,
@@ -349,6 +356,51 @@ void main() {
 
       // The sent message should appear in the list
       expect(find.text('Test message'), findsOneWidget);
+    });
+
+    testWidgets('swipe-to-reply sends quotedMessageId and clears preview', (
+      tester,
+    ) async {
+      final group = makeChatGroup();
+      await groupRepo.saveGroup(group);
+      await msgRepo.saveMessage(
+        makeMessage(
+          id: 'msg-parent',
+          text: 'Incoming parent',
+          groupId: group.id,
+          isIncoming: true,
+        ),
+      );
+
+      await tester.pumpWidget(buildWidget(group: group));
+      await pumpFrames(tester, count: 20);
+
+      expect(find.byType(SwipeToQuoteBubble), findsOneWidget);
+
+      final screen = tester.widget<GroupConversationScreen>(
+        find.byType(GroupConversationScreen),
+      );
+      screen.onQuoteReply!.call('msg-parent');
+      await tester.pump();
+
+      expect(find.text('Incoming parent'), findsWidgets);
+
+      await tester.enterText(find.byType(TextField), 'Reply to parent');
+      await pumpFrames(tester);
+      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+      await pumpFrames(tester, count: 20);
+
+      final publishMsg = bridge.sentMessages.firstWhere(
+        (m) => (jsonDecode(m) as Map)['cmd'] == 'group:publish',
+      );
+      final payload =
+          (jsonDecode(publishMsg) as Map)['payload'] as Map<String, dynamic>;
+      expect(payload['quotedMessageId'], 'msg-parent');
+
+      final savedMessages = await msgRepo.getMessagesPage(group.id);
+      final sent = savedMessages.firstWhere((m) => m.text == 'Reply to parent');
+      expect(sent.quotedMessageId, 'msg-parent');
+      expect(find.text('Incoming parent'), findsWidgets);
     });
 
     testWidgets(
@@ -722,6 +774,53 @@ void main() {
       expect(find.byType(TextField), findsNothing);
     });
 
+    testWidgets(
+      'read-only announcement members cannot keep hidden quote state',
+      (tester) async {
+        final writableGroup = makeAnnouncementGroup(role: GroupRole.admin);
+        await groupRepo.saveGroup(writableGroup);
+        await msgRepo.saveMessage(
+          makeMessage(
+            id: 'msg-parent',
+            text: 'Incoming announcement',
+            groupId: writableGroup.id,
+            isIncoming: true,
+          ),
+        );
+
+        await tester.pumpWidget(buildWidget(group: writableGroup));
+        await pumpFrames(tester, count: 20);
+
+        var screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(screen.onQuoteReply, isNotNull);
+
+        screen.onQuoteReply!.call('msg-parent');
+        await tester.pump();
+        expect(find.text('Incoming announcement'), findsWidgets);
+
+        final readOnlyGroup = makeAnnouncementGroup(role: GroupRole.member);
+        await groupRepo.saveGroup(readOnlyGroup);
+
+        await tester.pumpWidget(buildWidget(group: readOnlyGroup));
+        await pumpFrames(tester, count: 20);
+
+        screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(screen.onQuoteReply, isNull);
+        expect(find.byType(SwipeToQuoteBubble), findsNothing);
+        expect(find.byType(TextField), findsNothing);
+
+        await tester.pumpWidget(buildWidget(group: writableGroup));
+        await pumpFrames(tester, count: 20);
+
+        expect(find.text('Incoming announcement'), findsOneWidget);
+        expect(find.text('Replying to'), findsNothing);
+      },
+    );
+
     testWidgets('sets tracker active on init', (tester) async {
       final group = makeChatGroup();
       await groupRepo.saveGroup(group);
@@ -893,11 +992,162 @@ void main() {
       await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
       await pumpFrames(tester, count: 20);
 
-      // Message should still be visible
-      expect(find.text('Will fail'), findsOneWidget);
+      // Message should still be visible and the composer should keep the draft.
+      expect(find.text('Will fail'), findsWidgets);
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller?.text,
+        'Will fail',
+      );
 
       // Status should be 'failed' (error icon)
       expect(find.byIcon(Icons.error_outline_rounded), findsOneWidget);
+    });
+
+    testWidgets('upload failure restores quote draft and attachments', (
+      tester,
+    ) async {
+      final group = makeChatGroup();
+      await groupRepo.saveGroup(group);
+      await msgRepo.saveMessage(
+        makeMessage(
+          id: 'msg-parent-upload',
+          text: 'Upload parent',
+          groupId: group.id,
+          isIncoming: true,
+        ),
+      );
+
+      final tempDir = Directory.systemTemp.createTempSync(
+        'group_retry_upload_',
+      );
+      addTearDown(() {
+        if (tempDir.existsSync()) {
+          tempDir.deleteSync(recursive: true);
+        }
+      });
+      final attachment = File('${tempDir.path}/retry.jpg')
+        ..writeAsStringSync('image');
+
+      await tester.pumpWidget(
+        buildWidget(
+          group: group,
+          uploadMediaFn:
+              ({
+                required bridge,
+                required localFilePath,
+                required mime,
+                required recipientPeerId,
+                mediaFileManager,
+                width,
+                height,
+                durationMs,
+                waveform,
+                allowedPeers,
+              }) async => null,
+          initialAttachments: [attachment],
+        ),
+      );
+      await pumpFrames(tester, count: 20);
+
+      final screen = tester.widget<GroupConversationScreen>(
+        find.byType(GroupConversationScreen),
+      );
+      screen.onQuoteReply!.call('msg-parent-upload');
+      await tester.pump();
+
+      await tester.enterText(find.byType(TextField), 'Retry upload');
+      await pumpFrames(tester);
+      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+      await pumpFrames(tester, count: 10);
+
+      expect(find.byType(AttachmentPreviewStrip), findsOneWidget);
+      expect(find.text('Replying to'), findsOneWidget);
+      expect(find.text('Upload parent'), findsWidgets);
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller?.text,
+        'Retry upload',
+      );
+    });
+
+    testWidgets('publish failure restores quote draft and attachments', (
+      tester,
+    ) async {
+      final group = makeChatGroup();
+      await groupRepo.saveGroup(group);
+      await msgRepo.saveMessage(
+        makeMessage(
+          id: 'msg-parent-publish',
+          text: 'Publish parent',
+          groupId: group.id,
+          isIncoming: true,
+        ),
+      );
+
+      bridge = FakeBridge(
+        initialResponses: {
+          'group:publish': {'ok': false, 'errorCode': 'PUBLISH_FAILED'},
+        },
+      );
+
+      final tempDir = Directory.systemTemp.createTempSync(
+        'group_retry_publish_',
+      );
+      addTearDown(() {
+        if (tempDir.existsSync()) {
+          tempDir.deleteSync(recursive: true);
+        }
+      });
+      final attachment = File('${tempDir.path}/retry.jpg')
+        ..writeAsStringSync('image');
+
+      await tester.pumpWidget(
+        buildWidget(
+          group: group,
+          uploadMediaFn:
+              ({
+                required bridge,
+                required localFilePath,
+                required mime,
+                required recipientPeerId,
+                mediaFileManager,
+                width,
+                height,
+                durationMs,
+                waveform,
+                allowedPeers,
+              }) async => MediaAttachment(
+                id: 'uploaded-group-1',
+                messageId: '',
+                mime: mime,
+                size: 1,
+                mediaType: MediaAttachment.mediaTypeFromMime(mime),
+                localPath: localFilePath,
+                downloadStatus: 'done',
+                createdAt: DateTime.now().toUtc().toIso8601String(),
+              ),
+          initialAttachments: [attachment],
+        ),
+      );
+      await pumpFrames(tester, count: 20);
+
+      final screen = tester.widget<GroupConversationScreen>(
+        find.byType(GroupConversationScreen),
+      );
+      screen.onQuoteReply!.call('msg-parent-publish');
+      await tester.pump();
+
+      await tester.enterText(find.byType(TextField), 'Retry publish');
+      await pumpFrames(tester);
+      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+      await pumpFrames(tester, count: 20);
+
+      expect(find.byType(AttachmentPreviewStrip), findsOneWidget);
+      expect(find.text('Replying to'), findsOneWidget);
+      expect(find.text('Publish parent'), findsWidgets);
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller?.text,
+        'Retry publish',
+      );
     });
 
     // -----------------------------------------------------------------------
@@ -906,7 +1156,8 @@ void main() {
     // NOTE: uploadMedia() uses real File I/O (File.length()) which does not
     // complete inside Flutter's FakeAsync zone. Full upload→publish flow is
     // tested at the use case level in send_group_message_use_case_test.dart.
-    // These tests verify the optimistic UI pattern added in _onRecordStop.
+    // These tests verify the optimistic UI pattern and quote restoration
+    // behavior added in _onRecordStop.
     // -----------------------------------------------------------------------
 
     testWidgets(
@@ -917,6 +1168,7 @@ void main() {
         final recorder = FakeAudioRecorderService()
           ..fakeDurationMs = 3000
           ..fakeSizeBytes = 48000;
+        final uploadGate = Completer<void>();
 
         final gatedBridge = _GatedPublishBridge();
         bridge = gatedBridge;
@@ -926,6 +1178,33 @@ void main() {
             group: group,
             mediaRepo: mediaAttachmentRepo,
             audioRecorderService: recorder,
+            uploadMediaFn:
+                ({
+                  required bridge,
+                  required localFilePath,
+                  required mime,
+                  required recipientPeerId,
+                  mediaFileManager,
+                  width,
+                  height,
+                  durationMs,
+                  waveform,
+                  allowedPeers,
+                }) async {
+                  await uploadGate.future;
+                  return MediaAttachment(
+                    id: 'uploaded-voice-gated',
+                    messageId: '',
+                    mime: mime,
+                    size: 1,
+                    mediaType: MediaAttachment.mediaTypeFromMime(mime),
+                    localPath: localFilePath,
+                    downloadStatus: 'done',
+                    durationMs: durationMs,
+                    waveform: waveform,
+                    createdAt: DateTime.now().toUtc().toIso8601String(),
+                  );
+                },
           ),
         );
         await pumpFrames(tester, count: 20);
@@ -955,10 +1234,173 @@ void main() {
         expect(messages.first.isIncoming, false);
         expect(messages.first.senderPeerId, testIdentity.peerId);
 
+        uploadGate.complete();
         gatedBridge.publishGate.complete();
         await pumpFrames(tester, count: 20);
       },
     );
+
+    testWidgets('voice upload failure restores the quoted reply target', (
+      tester,
+    ) async {
+      final group = makeChatGroup();
+      await groupRepo.saveGroup(group);
+      await msgRepo.saveMessage(
+        makeMessage(
+          id: 'msg-parent-voice-upload',
+          text: 'Voice upload parent',
+          groupId: group.id,
+          isIncoming: true,
+        ),
+      );
+      final recorder = FakeAudioRecorderService()
+        ..fakeDurationMs = 3000
+        ..fakeSizeBytes = 48000
+        ..fakeOutputPath = '/tmp/group_voice_upload_reply.m4a';
+
+      await tester.pumpWidget(
+        buildWidget(
+          group: group,
+          audioRecorderService: recorder,
+          uploadMediaFn:
+              ({
+                required bridge,
+                required localFilePath,
+                required mime,
+                required recipientPeerId,
+                mediaFileManager,
+                width,
+                height,
+                durationMs,
+                waveform,
+                allowedPeers,
+              }) async => null,
+        ),
+      );
+      await pumpFrames(tester, count: 20);
+
+      final screen = tester.widget<GroupConversationScreen>(
+        find.byType(GroupConversationScreen),
+      );
+      screen.onQuoteReply!.call('msg-parent-voice-upload');
+      await tester.pump();
+
+      expect(find.text('Replying to'), findsOneWidget);
+
+      final startRecording = screen.onRecordStart! as Future<void> Function();
+      await startRecording();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      final recordingScreen = tester.widget<GroupConversationScreen>(
+        find.byType(GroupConversationScreen),
+      );
+      final stopRecording =
+          recordingScreen.onRecordStop! as Future<void> Function();
+      final stopFuture = stopRecording();
+      await tester.pump(const Duration(milliseconds: 300));
+      await stopFuture;
+      await pumpFrames(tester, count: 10);
+
+      final messages = await msgRepo.getMessagesPage(group.id);
+      final failed = messages.firstWhere(
+        (message) => message.id != 'msg-parent-voice-upload',
+      );
+
+      expect(failed.status, 'failed');
+      expect(failed.quotedMessageId, 'msg-parent-voice-upload');
+      expect(find.text('Replying to'), findsOneWidget);
+      expect(find.text('Voice upload parent'), findsWidgets);
+      expect(find.byIcon(Icons.error_outline_rounded), findsOneWidget);
+    });
+
+    testWidgets('voice publish failure restores the quoted reply target', (
+      tester,
+    ) async {
+      final group = makeChatGroup();
+      await groupRepo.saveGroup(group);
+      await msgRepo.saveMessage(
+        makeMessage(
+          id: 'msg-parent-voice-publish',
+          text: 'Voice publish parent',
+          groupId: group.id,
+          isIncoming: true,
+        ),
+      );
+      final recorder = FakeAudioRecorderService()
+        ..fakeDurationMs = 3000
+        ..fakeSizeBytes = 48000
+        ..fakeOutputPath = '/tmp/group_voice_publish_reply.m4a';
+      bridge = FakeBridge(
+        initialResponses: {
+          'group:publish': {'ok': false, 'errorCode': 'PUBLISH_FAILED'},
+        },
+      );
+
+      await tester.pumpWidget(
+        buildWidget(
+          group: group,
+          audioRecorderService: recorder,
+          uploadMediaFn:
+              ({
+                required bridge,
+                required localFilePath,
+                required mime,
+                required recipientPeerId,
+                mediaFileManager,
+                width,
+                height,
+                durationMs,
+                waveform,
+                allowedPeers,
+              }) async => MediaAttachment(
+                id: 'uploaded-voice-1',
+                messageId: '',
+                mime: mime,
+                size: 1,
+                mediaType: MediaAttachment.mediaTypeFromMime(mime),
+                localPath: localFilePath,
+                downloadStatus: 'done',
+                durationMs: durationMs,
+                waveform: waveform,
+                createdAt: DateTime.now().toUtc().toIso8601String(),
+              ),
+        ),
+      );
+      await pumpFrames(tester, count: 20);
+
+      final screen = tester.widget<GroupConversationScreen>(
+        find.byType(GroupConversationScreen),
+      );
+      screen.onQuoteReply!.call('msg-parent-voice-publish');
+      await tester.pump();
+
+      expect(find.text('Replying to'), findsOneWidget);
+
+      final startRecording = screen.onRecordStart! as Future<void> Function();
+      await startRecording();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      final recordingScreen = tester.widget<GroupConversationScreen>(
+        find.byType(GroupConversationScreen),
+      );
+      final stopRecording =
+          recordingScreen.onRecordStop! as Future<void> Function();
+      final stopFuture = stopRecording();
+      await tester.pump(const Duration(milliseconds: 300));
+      await stopFuture;
+      await pumpFrames(tester, count: 10);
+
+      final messages = await msgRepo.getMessagesPage(group.id);
+      final failed = messages.firstWhere(
+        (message) => message.id != 'msg-parent-voice-publish',
+      );
+
+      expect(failed.status, 'failed');
+      expect(failed.quotedMessageId, 'msg-parent-voice-publish');
+      expect(find.text('Replying to'), findsOneWidget);
+      expect(find.text('Voice publish parent'), findsWidgets);
+      expect(find.byIcon(Icons.error_outline_rounded), findsOneWidget);
+    });
 
     // Full upload→publish e2e is tested at the use case level:
     // - send_group_message_use_case_test: 'sends message with empty text and media'

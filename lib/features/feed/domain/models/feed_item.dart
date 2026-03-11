@@ -3,12 +3,7 @@ import 'package:flutter_app/features/conversation/domain/models/media_attachment
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 
 /// Types of feed items.
-enum FeedItemType {
-  connection,
-  message,
-  thread,
-  groupThread,
-}
+enum FeedItemType { connection, message, thread, groupThread }
 
 /// Conversation state for a thread card.
 enum ConversationState {
@@ -183,8 +178,9 @@ abstract class CardThreadFeedItem extends FeedItem {
   /// or tail context (last [maxPreview]) when all are read.
   List<ThreadMessage> get recentInteractionMessages {
     if (messages.isEmpty) return const [];
-    final firstUnreadIndex =
-        messages.indexWhere((m) => m.isUnread && m.isIncoming);
+    final firstUnreadIndex = messages.indexWhere(
+      (m) => m.isUnread && m.isIncoming,
+    );
     if (firstUnreadIndex >= 0) return messages.sublist(firstUnreadIndex);
     // No unread — show tail context
     if (messages.length <= maxPreview) return messages;
@@ -195,8 +191,9 @@ abstract class CardThreadFeedItem extends FeedItem {
   /// collapsed card (used to decide "View earlier messages" link).
   bool get hasEarlierInteractionHistory {
     if (messages.isEmpty) return false;
-    final firstUnreadIndex =
-        messages.indexWhere((m) => m.isUnread && m.isIncoming);
+    final firstUnreadIndex = messages.indexWhere(
+      (m) => m.isUnread && m.isIncoming,
+    );
     if (firstUnreadIndex > 0) return true;
     if (firstUnreadIndex == 0) return false;
     return messages.length > maxPreview;
@@ -277,6 +274,7 @@ class GroupThreadFeedItem extends CardThreadFeedItem {
   final String groupId;
   final String groupName;
   final GroupType groupType;
+  final GroupRole myRole;
   @override
   final List<ThreadMessage> messages;
   @override
@@ -290,6 +288,7 @@ class GroupThreadFeedItem extends CardThreadFeedItem {
     required this.groupId,
     required this.groupName,
     required this.groupType,
+    this.myRole = GroupRole.member,
     required this.messages,
     this.unreadCount = 0,
     this.conversationState = ConversationState.read,
@@ -307,6 +306,9 @@ class GroupThreadFeedItem extends CardThreadFeedItem {
   DateTime? get lastRepliedAt => null;
   @override
   bool get isUnreadCard => false;
+
+  bool get canWrite =>
+      groupType != GroupType.announcement || myRole == GroupRole.admin;
 
   /// Whether the thread contains any sent (outgoing) message.
   bool get hasSentMessage => messages.any((m) => !m.isIncoming);

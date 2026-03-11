@@ -11,10 +11,12 @@ import 'package:flutter_app/features/conversation/presentation/widgets/compose_a
 import 'package:flutter_app/features/conversation/presentation/widgets/full_emoji_picker.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/letter_card.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/reaction_bar.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bubble.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_type_badge.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
+import 'package:flutter_app/shared/widgets/media/media_preview_text.dart';
 
 /// Pure UI screen for group conversation.
 ///
@@ -48,6 +50,11 @@ class GroupConversationScreen extends StatelessWidget {
   final Map<String, List<MessageReaction>> reactions;
   final void Function(String messageId, String emoji)? onReactionSelected;
   final String? initialText;
+  final ValueChanged<String>? onDraftChanged;
+  final ValueChanged<String>? onQuoteReply;
+  final String? activeQuoteText;
+  final bool isActiveQuoteUnavailable;
+  final VoidCallback? onClearQuote;
 
   const GroupConversationScreen({
     super.key,
@@ -78,6 +85,11 @@ class GroupConversationScreen extends StatelessWidget {
     this.reactions = const {},
     this.onReactionSelected,
     this.initialText,
+    this.onDraftChanged,
+    this.onQuoteReply,
+    this.activeQuoteText,
+    this.isActiveQuoteUnavailable = false,
+    this.onClearQuote,
   });
 
   ConversationComposerViewState get _legacyComposerState =>
@@ -145,6 +157,10 @@ class GroupConversationScreen extends StatelessWidget {
             recordingDuration: composerState.recordingDuration,
             amplitudeValues: composerState.amplitudeValues,
             initialText: initialText,
+            onDraftChanged: onDraftChanged,
+            quotedText: activeQuoteText,
+            isQuoteUnavailable: isActiveQuoteUnavailable,
+            onClearQuote: onClearQuote,
           ),
       ],
     );
@@ -264,18 +280,23 @@ class GroupConversationScreen extends StatelessWidget {
         // Reversed list: index 0 = newest
         final message = messages[messages.length - 1 - index];
         final isSent = message.senderPeerId == ownPeerId;
+        final (quotedText, isQuoteUnavailable) = _resolveQuotedText(message);
 
-        return Padding(
+        Widget bubble = Padding(
           key: ValueKey('grp-msg-${message.id}'),
           padding: const EdgeInsets.only(bottom: 12),
           child: Builder(
             builder: (cardContext) => LetterCard(
               senderPeerId: message.senderPeerId,
-              senderName: isSent ? 'You' : (message.senderUsername ?? 'Unknown'),
+              senderName: isSent
+                  ? 'You'
+                  : (message.senderUsername ?? 'Unknown'),
               text: message.text,
               time: _formatTime(message.timestamp),
               isIncoming: !isSent,
               status: isSent ? message.status : null,
+              quotedText: quotedText,
+              isQuoteUnavailable: isQuoteUnavailable,
               media: mediaMap[message.id] ?? const [],
               onMediaTap: onMediaTap != null
                   ? (index) => onMediaTap!(message.id, index)
@@ -291,8 +312,43 @@ class GroupConversationScreen extends StatelessWidget {
             ),
           ),
         );
+
+        if (!isSent && canWrite && onQuoteReply != null) {
+          bubble = SwipeToQuoteBubble(
+            onQuoteTriggered: () => onQuoteReply!(message.id),
+            child: bubble,
+          );
+        }
+
+        return bubble;
       },
     );
+  }
+
+  (String?, bool) _resolveQuotedText(GroupMessage message) {
+    final quotedMessageId = message.quotedMessageId;
+    if (quotedMessageId == null || quotedMessageId.isEmpty) {
+      return (null, false);
+    }
+
+    final quoted = messages.cast<GroupMessage?>().firstWhere(
+      (candidate) => candidate?.id == quotedMessageId,
+      orElse: () => null,
+    );
+    if (quoted == null) {
+      return (null, true);
+    }
+
+    if (quoted.text.isNotEmpty) {
+      return (quoted.text, false);
+    }
+
+    final quotedMedia = mediaMap[quoted.id] ?? quoted.media;
+    if (quotedMedia.isNotEmpty) {
+      return (mediaPreviewText(quotedMedia), false);
+    }
+
+    return (null, true);
   }
 
   Widget _buildReadOnlyBanner() {
@@ -321,9 +377,7 @@ class GroupConversationScreen extends StatelessWidget {
 
     final messageReactions = reactions[messageId] ?? [];
     final ownReaction = ownPeerId != null
-        ? messageReactions
-            .where((r) => r.senderPeerId == ownPeerId)
-            .firstOrNull
+        ? messageReactions.where((r) => r.senderPeerId == ownPeerId).firstOrNull
         : null;
 
     showDialog(

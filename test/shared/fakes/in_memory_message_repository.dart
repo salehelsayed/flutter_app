@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_thread_summary.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
@@ -5,22 +7,31 @@ import 'package:flutter_app/features/conversation/domain/repositories/conversati
 
 /// In-memory [MessageRepository] for integration tests.
 class InMemoryMessageRepository
-    implements MessageRepository, ConversationThreadSummaryRepository {
+    implements
+        MessageRepository,
+        ConversationThreadSummaryRepository,
+        MessageRepositoryChangeSource {
   final Map<String, ConversationMessage> _messages = {};
+  final StreamController<ConversationMessage> _messageChangeController =
+      StreamController<ConversationMessage>.broadcast();
+
+  @override
+  Stream<ConversationMessage> get messageChanges =>
+      _messageChangeController.stream;
 
   @override
   Future<void> saveMessage(ConversationMessage message) async {
     _messages[message.id] = message;
+    _messageChangeController.add(message);
   }
 
   @override
   Future<List<ConversationMessage>> getMessagesForContact(
     String contactPeerId,
   ) async {
-    final list = _messages.values
-        .where((m) => m.contactPeerId == contactPeerId)
-        .toList()
-      ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+    final list =
+        _messages.values.where((m) => m.contactPeerId == contactPeerId).toList()
+          ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
     return list;
   }
 
@@ -36,7 +47,9 @@ class InMemoryMessageRepository
   Future<void> updateMessageStatus(String id, String status) async {
     final msg = _messages[id];
     if (msg != null) {
-      _messages[id] = msg.copyWith(status: status);
+      final updated = msg.copyWith(status: status);
+      _messages[id] = updated;
+      _messageChangeController.add(updated);
     }
   }
 
@@ -56,7 +69,9 @@ class InMemoryMessageRepository
     var count = 0;
     for (final entry in _messages.entries.toList()) {
       final m = entry.value;
-      if (m.contactPeerId == contactPeerId && m.isIncoming && m.readAt == null) {
+      if (m.contactPeerId == contactPeerId &&
+          m.isIncoming &&
+          m.readAt == null) {
         _messages[entry.key] = m.copyWith(readAt: now);
         count++;
       }
@@ -67,10 +82,12 @@ class InMemoryMessageRepository
   @override
   Future<int> getUnreadCountForContact(String contactPeerId) async {
     return _messages.values
-        .where((m) =>
-            m.contactPeerId == contactPeerId &&
-            m.isIncoming &&
-            m.readAt == null)
+        .where(
+          (m) =>
+              m.contactPeerId == contactPeerId &&
+              m.isIncoming &&
+              m.readAt == null,
+        )
         .length;
   }
 
@@ -124,11 +141,13 @@ class InMemoryMessageRepository
     required Duration olderThan,
   }) async {
     return _messages.values
-        .where((m) =>
-            m.status == 'sent' &&
-            !m.isIncoming &&
-            m.wireEnvelope != null &&
-            m.wireEnvelope!.isNotEmpty)
+        .where(
+          (m) =>
+              m.status == 'sent' &&
+              !m.isIncoming &&
+              m.wireEnvelope != null &&
+              m.wireEnvelope!.isNotEmpty,
+        )
         .toList()
       ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
   }
@@ -137,10 +156,11 @@ class InMemoryMessageRepository
   Future<ConversationThreadSummary> getConversationThreadSummary(
     String contactPeerId,
   ) async {
-    final messages = _messages.values
-        .where((message) => message.contactPeerId == contactPeerId)
-        .toList()
-      ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    final messages =
+        _messages.values
+            .where((message) => message.contactPeerId == contactPeerId)
+            .toList()
+          ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
     return ConversationThreadSummary(
       contactPeerId: contactPeerId,
       messageCount: messages.length,
@@ -157,10 +177,11 @@ class InMemoryMessageRepository
   ) async {
     final summaries = <String, ConversationThreadSummary>{};
     for (final contactPeerId in contactPeerIds.toSet()) {
-      final messages = _messages.values
-          .where((message) => message.contactPeerId == contactPeerId)
-          .toList()
-        ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+      final messages =
+          _messages.values
+              .where((message) => message.contactPeerId == contactPeerId)
+              .toList()
+            ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
       summaries[contactPeerId] = ConversationThreadSummary(
         contactPeerId: contactPeerId,
         messageCount: messages.length,

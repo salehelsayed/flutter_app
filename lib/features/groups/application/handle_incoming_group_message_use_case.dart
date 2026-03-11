@@ -22,6 +22,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
   required String text,
   required String timestamp,
   String? messageId,
+  String? quotedMessageId,
   List<Map<String, dynamic>>? media,
   MediaAttachmentRepository? mediaAttachmentRepo,
 }) async {
@@ -76,13 +77,19 @@ Future<GroupMessage?> handleIncomingGroupMessage({
   if (messageId != null && messageId.isNotEmpty) {
     final existsById = await msgRepo.existsByMessageId(messageId);
     if (existsById) {
+      await _enrichExistingDuplicateMessage(
+        msgRepo: msgRepo,
+        messageId: messageId,
+        quotedMessageId: quotedMessageId,
+        media: media,
+        mediaAttachmentRepo: mediaAttachmentRepo,
+      );
       emitFlowEvent(
         layer: 'FL',
         event: 'GROUP_HANDLE_INCOMING_MSG_DUPLICATE',
         details: {
           'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
-          'senderId':
-              senderId.length > 8 ? senderId.substring(0, 8) : senderId,
+          'senderId': senderId.length > 8 ? senderId.substring(0, 8) : senderId,
           'dedupeBy': 'messageId',
         },
       );
@@ -91,8 +98,12 @@ Future<GroupMessage?> handleIncomingGroupMessage({
   }
 
   // Fallback: content-based dedupe for messages without a messageId.
-  final isDuplicate =
-      await msgRepo.existsByContent(groupId, senderId, text, parsedTimestamp);
+  final isDuplicate = await msgRepo.existsByContent(
+    groupId,
+    senderId,
+    text,
+    parsedTimestamp,
+  );
   if (isDuplicate) {
     emitFlowEvent(
       layer: 'FL',
@@ -119,6 +130,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
     senderUsername: senderUsername,
     text: text,
     timestamp: parsedTimestamp,
+    quotedMessageId: quotedMessageId,
     keyGeneration: keyEpoch,
     status: 'delivered',
     isIncoming: true,
@@ -129,21 +141,67 @@ Future<GroupMessage?> handleIncomingGroupMessage({
   await msgRepo.saveMessage(message);
 
   // 7. Save media attachments (pending for relay download)
-  if (media != null && mediaAttachmentRepo != null) {
-    for (final m in media) {
-      final attachment = MediaAttachment.fromJson(m)
-          .copyWith(messageId: resolvedMessageId);
-      await mediaAttachmentRepo.saveAttachment(attachment);
-    }
-  }
+  await _saveIncomingMediaAttachments(
+    messageId: resolvedMessageId,
+    media: media,
+    mediaAttachmentRepo: mediaAttachmentRepo,
+  );
 
   emitFlowEvent(
     layer: 'FL',
     event: 'GROUP_HANDLE_INCOMING_MSG_SUCCESS',
     details: {
-      'messageId': resolvedMessageId.length > 8 ? resolvedMessageId.substring(0, 8) : resolvedMessageId,
+      'messageId': resolvedMessageId.length > 8
+          ? resolvedMessageId.substring(0, 8)
+          : resolvedMessageId,
     },
   );
 
   return message;
+}
+
+Future<void> _enrichExistingDuplicateMessage({
+  required GroupMessageRepository msgRepo,
+  required String messageId,
+  String? quotedMessageId,
+  List<Map<String, dynamic>>? media,
+  MediaAttachmentRepository? mediaAttachmentRepo,
+}) async {
+  final existing = await msgRepo.getMessage(messageId);
+  if (existing != null &&
+      (existing.quotedMessageId == null || existing.quotedMessageId!.isEmpty) &&
+      quotedMessageId != null &&
+      quotedMessageId.isNotEmpty) {
+    await msgRepo.saveMessage(
+      existing.copyWith(quotedMessageId: quotedMessageId),
+    );
+  }
+
+  await _saveIncomingMediaAttachments(
+    messageId: messageId,
+    media: media,
+    mediaAttachmentRepo: mediaAttachmentRepo,
+  );
+}
+
+Future<void> _saveIncomingMediaAttachments({
+  required String messageId,
+  List<Map<String, dynamic>>? media,
+  MediaAttachmentRepository? mediaAttachmentRepo,
+}) async {
+  if (media == null || mediaAttachmentRepo == null) return;
+
+  final existingAttachments = await mediaAttachmentRepo
+      .getAttachmentsForMessage(messageId);
+  final existingIds = existingAttachments
+      .map((attachment) => attachment.id)
+      .toSet();
+
+  for (final rawAttachment in media) {
+    final attachment = MediaAttachment.fromJson(
+      rawAttachment,
+    ).copyWith(messageId: messageId);
+    if (!existingIds.add(attachment.id)) continue;
+    await mediaAttachmentRepo.saveAttachment(attachment);
+  }
 }

@@ -10,16 +10,12 @@ abstract class MessageRepository {
   /// Retrieves all messages for a contact, ordered by timestamp ASC.
   ///
   /// Returns an empty list if no messages exist.
-  Future<List<ConversationMessage>> getMessagesForContact(
-    String contactPeerId,
-  );
+  Future<List<ConversationMessage>> getMessagesForContact(String contactPeerId);
 
   /// Retrieves the most recent message for a contact.
   ///
   /// Returns null if no messages exist for the contact.
-  Future<ConversationMessage?> getLatestMessageForContact(
-    String contactPeerId,
-  );
+  Future<ConversationMessage?> getLatestMessageForContact(String contactPeerId);
 
   /// Updates the delivery status of a message.
   Future<void> updateMessageStatus(String id, String status);
@@ -69,4 +65,12 @@ abstract class MessageRepository {
     int limit = 50,
     String? beforeTimestamp,
   });
+}
+
+/// Optional change stream for repository-backed message mutations.
+///
+/// Screens can use this to react to background status changes, such as retry
+/// success, without polling or reloading the full conversation/feed snapshot.
+abstract class MessageRepositoryChangeSource {
+  Stream<ConversationMessage> get messageChanges;
 }

@@ -31,11 +31,13 @@ void main() {
 
       // Connect as a client and send a message.
       final ws = await WebSocket.connect('ws://localhost:$port');
-      ws.add(jsonEncode({
-        'from': 'peerA',
-        'to': 'peerB',
-        'content': '{"type":"chat","version":"1","payload":{"text":"hello"}}',
-      }));
+      ws.add(
+        jsonEncode({
+          'from': 'peerA',
+          'to': 'peerB',
+          'content': '{"type":"chat","version":"1","payload":{"text":"hello"}}',
+        }),
+      );
 
       // Wait for ack.
       final ackRaw = await ws.first;
@@ -136,59 +138,144 @@ void main() {
         serverB.dispose();
       });
 
-      test('interactive local send timeout stays within bounded chat budget', () async {
-        final portA = await serverA.start();
-        final portB = await serverB.start();
+      test(
+        'interactive local send timeout stays within bounded chat budget',
+        () async {
+          final portA = await serverA.start();
+          final portB = await serverB.start();
 
-        // Sending should complete within a reasonable time
-        final stopwatch = Stopwatch()..start();
-        final sent = await serverA.sendMessage(
-          'localhost',
-          portB,
-          '{"text":"timeout test"}',
-          'peerA',
-          'peerB',
-        );
-        stopwatch.stop();
+          // Sending should complete within a reasonable time
+          final stopwatch = Stopwatch()..start();
+          final sent = await serverA.sendMessage(
+            'localhost',
+            portB,
+            '{"text":"timeout test"}',
+            'peerA',
+            'peerB',
+          );
+          stopwatch.stop();
 
-        expect(sent, isTrue);
-        // Local send should be fast (well under 5s ack timeout)
-        expect(stopwatch.elapsed.inSeconds, lessThan(5));
-      });
+          expect(sent, isTrue);
+          // Local send should be fast (well under 5s ack timeout)
+          expect(stopwatch.elapsed.inSeconds, lessThan(5));
+        },
+      );
 
-      test('slow ack removes stale pooled connection without blocking later sends', () async {
-        final portA = await serverA.start();
-        final portB = await serverB.start();
+      test(
+        'per-call timeout returns false before a delayed ack arrives',
+        () async {
+          final portA = await serverA.start();
+          final delayedPeer = _DelayedAckPeer(
+            ackDelayForMessage: (_) => const Duration(milliseconds: 350),
+          );
+          final delayedPort = await delayedPeer.start();
 
-        // First send establishes pooled connection
-        final sent1 = await serverA.sendMessage(
-          'localhost', portB, '{"text":"first"}', 'peerA', 'peerB',
-        );
-        expect(sent1, isTrue);
+          final stopwatch = Stopwatch()..start();
+          final sent = await serverA.sendMessage(
+            'localhost',
+            delayedPort,
+            '{"text":"timeout test"}',
+            'peerA',
+            'peerB',
+            timeoutMs: 120,
+          );
+          stopwatch.stop();
 
-        // Stop server B to simulate stale connection
-        await serverB.stop();
+          expect(sent, isFalse);
+          expect(stopwatch.elapsed.inMilliseconds, lessThan(300));
+          expect(delayedPeer.connectionCount, 1);
 
-        // Second send should fail (connection is stale) but not hang
-        final stopwatch = Stopwatch()..start();
-        final sent2 = await serverA.sendMessage(
-          'localhost', portB, '{"text":"stale"}', 'peerA', 'peerB',
-        );
-        stopwatch.stop();
+          await delayedPeer.stop();
+        },
+      );
 
-        expect(sent2, isFalse);
-        // Should fail relatively quickly, not hang
-        expect(stopwatch.elapsed.inSeconds, lessThan(10));
+      test(
+        'timed out send evicts pooled connection so the next send reconnects',
+        () async {
+          final portA = await serverA.start();
+          final delayedPeer = _DelayedAckPeer(
+            ackDelayForMessage: (messageCount) => messageCount == 1
+                ? const Duration(milliseconds: 300)
+                : Duration.zero,
+          );
+          final delayedPort = await delayedPeer.start();
 
-        // Restart B and verify new sends work
-        serverB = LocalWsServer(idleTimeout: const Duration(seconds: 2));
-        final newPortB = await serverB.start();
+          final firstSent = await serverA.sendMessage(
+            'localhost',
+            delayedPort,
+            '{"text":"first"}',
+            'peerA',
+            'peerB',
+            timeoutMs: 100,
+          );
+          expect(firstSent, isFalse);
 
-        final sent3 = await serverA.sendMessage(
-          'localhost', newPortB, '{"text":"fresh"}', 'peerA', 'peerB',
-        );
-        expect(sent3, isTrue);
-      });
+          await Future.delayed(const Duration(milliseconds: 350));
+
+          final secondSent = await serverA.sendMessage(
+            'localhost',
+            delayedPort,
+            '{"text":"second"}',
+            'peerA',
+            'peerB',
+            timeoutMs: 150,
+          );
+
+          expect(secondSent, isTrue);
+          expect(delayedPeer.connectionCount, 2);
+
+          await delayedPeer.stop();
+        },
+      );
+
+      test(
+        'slow ack removes stale pooled connection without blocking later sends',
+        () async {
+          final portA = await serverA.start();
+          final portB = await serverB.start();
+
+          // First send establishes pooled connection
+          final sent1 = await serverA.sendMessage(
+            'localhost',
+            portB,
+            '{"text":"first"}',
+            'peerA',
+            'peerB',
+          );
+          expect(sent1, isTrue);
+
+          // Stop server B to simulate stale connection
+          await serverB.stop();
+
+          // Second send should fail (connection is stale) but not hang
+          final stopwatch = Stopwatch()..start();
+          final sent2 = await serverA.sendMessage(
+            'localhost',
+            portB,
+            '{"text":"stale"}',
+            'peerA',
+            'peerB',
+          );
+          stopwatch.stop();
+
+          expect(sent2, isFalse);
+          // Should fail relatively quickly, not hang
+          expect(stopwatch.elapsed.inSeconds, lessThan(10));
+
+          // Restart B and verify new sends work
+          serverB = LocalWsServer(idleTimeout: const Duration(seconds: 2));
+          final newPortB = await serverB.start();
+
+          final sent3 = await serverA.sendMessage(
+            'localhost',
+            newPortB,
+            '{"text":"fresh"}',
+            'peerA',
+            'peerB',
+          );
+          expect(sent3, isTrue);
+        },
+      );
 
       test('media path is not forced into text-message timeout budget', () {
         // This is a design test — verifying the architecture distinction.
@@ -225,4 +312,61 @@ void main() {
       });
     });
   });
+}
+
+class _DelayedAckPeer {
+  final Duration Function(int messageCount) ackDelayForMessage;
+
+  HttpServer? _server;
+  final _sockets = <WebSocket>{};
+  bool _stopped = false;
+
+  int connectionCount = 0;
+  int _messageCount = 0;
+
+  _DelayedAckPeer({required this.ackDelayForMessage});
+
+  Future<int> start() async {
+    _stopped = false;
+    _server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    _server!.listen((request) async {
+      final ws = await WebSocketTransformer.upgrade(request);
+      connectionCount++;
+      _sockets.add(ws);
+      ws.listen(
+        (data) {
+          if (data is! String) return;
+          final payload = jsonDecode(data) as Map<String, dynamic>;
+          final nonce = payload['nonce'] as String?;
+          _messageCount++;
+          final delay = ackDelayForMessage(_messageCount);
+          Future.delayed(delay, () {
+            if (_stopped || ws.readyState != WebSocket.open) {
+              return;
+            }
+            try {
+              ws.add(
+                jsonEncode({'ack': true, if (nonce != null) 'nonce': nonce}),
+              );
+            } catch (_) {
+              // The client may have already timed out and closed the socket.
+            }
+          });
+        },
+        onDone: () => _sockets.remove(ws),
+        onError: (_) => _sockets.remove(ws),
+      );
+    });
+    return _server!.port;
+  }
+
+  Future<void> stop() async {
+    _stopped = true;
+    for (final socket in _sockets.toList()) {
+      await socket.close();
+    }
+    _sockets.clear();
+    await _server?.close(force: true);
+    _server = null;
+  }
 }

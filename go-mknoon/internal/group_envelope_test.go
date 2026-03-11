@@ -197,8 +197,8 @@ func TestGroupMessagePayloadWithMediaExtra(t *testing.T) {
 			"size": float64(12345),
 		},
 		map[string]interface{}{
-			"id":        "blob-2",
-			"mime":      "audio/mp4",
+			"id":         "blob-2",
+			"mime":       "audio/mp4",
 			"durationMs": float64(5000),
 		},
 	}
@@ -249,5 +249,37 @@ func TestGroupMessagePayloadWithMediaExtra(t *testing.T) {
 	}
 	if first["mime"] != "image/jpeg" {
 		t.Errorf("media[0].mime = %v, want image/jpeg", first["mime"])
+	}
+}
+
+func TestGroupMessagePayloadWithQuotedMessageIdExtra(t *testing.T) {
+	original := &GroupMessagePayload{
+		Text:      "Reply body",
+		Timestamp: "2026-03-11T10:00:00Z",
+		Username:  "alice",
+		Extra: map[string]interface{}{
+			"quotedMessageId": "parent-msg-1",
+			"messageId":       "msg-1",
+		},
+	}
+
+	data, err := MarshalGroupPayload(original)
+	if err != nil {
+		t.Fatalf("MarshalGroupPayload() error: %v", err)
+	}
+
+	parsed, err := ParseGroupPayload(data)
+	if err != nil {
+		t.Fatalf("ParseGroupPayload() error: %v", err)
+	}
+
+	if parsed.Extra == nil {
+		t.Fatal("Extra is nil after round-trip")
+	}
+	if got := parsed.Extra["quotedMessageId"]; got != "parent-msg-1" {
+		t.Fatalf("quotedMessageId = %v, want %q", got, "parent-msg-1")
+	}
+	if got := parsed.Extra["messageId"]; got != "msg-1" {
+		t.Fatalf("messageId = %v, want %q", got, "msg-1")
 	}
 }

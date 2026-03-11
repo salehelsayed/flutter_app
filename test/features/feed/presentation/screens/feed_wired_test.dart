@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -24,9 +25,11 @@ import 'package:flutter_app/features/feed/presentation/screens/feed_wired.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/feed_card.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/inline_reply_input.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/message_bubble.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bubble.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
 import 'package:flutter_app/features/introduction/application/introduction_listener.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/collapsed_mode_card_body.dart';
@@ -1290,8 +1293,12 @@ void main() {
             senderPeerId: 'other-peer',
             senderUsername: 'OtherUser',
             text: 'Old message',
-            timestamp: DateTime.now().subtract(const Duration(hours: 1)).toUtc(),
-            createdAt: DateTime.now().subtract(const Duration(hours: 1)).toUtc(),
+            timestamp: DateTime.now()
+                .subtract(const Duration(hours: 1))
+                .toUtc(),
+            createdAt: DateTime.now()
+                .subtract(const Duration(hours: 1))
+                .toUtc(),
             readAt: DateTime.now().subtract(const Duration(hours: 1)).toUtc(),
           ),
         );
@@ -2092,8 +2099,147 @@ void main() {
       expect(find.text('Replaced'), findsOneWidget);
     });
 
+    testWidgets('group card + button shows media picker bottom sheet', (
+      tester,
+    ) async {
+      final originalOnError = FlutterError.onError;
+      FlutterError.onError = (details) {
+        if (details.toString().contains('overflowed')) return;
+        originalOnError?.call(details);
+      };
+      addTearDown(() => FlutterError.onError = originalOnError);
+
+      identityRepo.seed(testIdentity);
+
+      final groupRepo = InMemoryGroupRepository();
+      final groupMsgRepo = InMemoryGroupMessageRepository();
+
+      await groupRepo.saveGroup(
+        GroupModel(
+          id: 'g-attach',
+          name: 'Attach Group',
+          type: GroupType.chat,
+          topicName: '/mknoon/group/g-attach',
+          createdAt: DateTime(2026, 2, 1),
+          createdBy: 'admin',
+          myRole: GroupRole.member,
+        ),
+      );
+
+      // Seed a read message so card is in collapsed mode (shows + button)
+      await groupMsgRepo.saveMessage(
+        GroupMessage(
+          id: 'gm-read-1',
+          groupId: 'g-attach',
+          senderPeerId: 'other-peer',
+          senderUsername: 'OtherUser',
+          text: 'Hello group',
+          timestamp: DateTime.now().toUtc(),
+          createdAt: DateTime.now().toUtc(),
+          readAt: DateTime.now().toUtc(),
+        ),
+      );
+
+      final fakeGroupListener = _FakeGroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: groupMsgRepo,
+      );
+
+      await tester.pumpWidget(
+        buildFeedWired(
+          groupRepository: groupRepo,
+          groupMessageRepository: groupMsgRepo,
+          groupMessageListener: fakeGroupListener,
+        ),
+      );
+      await pumpFeedFrames(tester, count: 6);
+
+      // The group card should be in collapsed mode with a + button
+      expect(find.byType(CollapsedModeCardBody), findsOneWidget);
+      expect(find.byIcon(Icons.add_rounded), findsOneWidget);
+
+      // Tap the + button
+      await tester.tap(find.byIcon(Icons.add_rounded));
+      await tester.pump(const Duration(milliseconds: 500));
+
+      // Should show bottom sheet with media options
+      expect(find.text('Media Library'), findsOneWidget);
+      expect(find.text('Take Photo'), findsOneWidget);
+      expect(find.text('Record Video'), findsOneWidget);
+    });
+
     testWidgets(
-      'group card + button shows media picker bottom sheet',
+      'swipe-to-reply shows preview and persists quotedMessageId on send',
+      (tester) async {
+        final originalOnError = FlutterError.onError;
+        FlutterError.onError = (details) {
+          if (details.toString().contains('overflowed')) return;
+          originalOnError?.call(details);
+        };
+        addTearDown(() => FlutterError.onError = originalOnError);
+
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+        p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true),
+        );
+
+        final originalTimestamp = DateTime.now()
+            .subtract(const Duration(minutes: 5))
+            .toUtc()
+            .toIso8601String();
+        await messageRepo.saveMessage(
+          ConversationMessage(
+            id: 'quoted-msg-1',
+            contactPeerId: 'contact-peer-id',
+            text: 'Quote this one',
+            senderPeerId: 'contact-peer-id',
+            timestamp: originalTimestamp,
+            isIncoming: true,
+            status: 'delivered',
+            createdAt: originalTimestamp,
+          ),
+        );
+
+        await tester.pumpWidget(buildFeedWired());
+        await pumpFeedFrames(tester);
+
+        expect(find.byType(SwipeToQuoteBubble), findsOneWidget);
+
+        final swipeBubble = tester.widget<SwipeToQuoteBubble>(
+          find.byType(SwipeToQuoteBubble).first,
+        );
+        swipeBubble.onQuoteTriggered();
+        await tester.pump();
+
+        expect(find.text('Replying to'), findsOneWidget);
+        expect(find.text('Quote this one'), findsOneWidget);
+
+        await tester.enterText(
+          find.byType(TextField).first,
+          'Quoted from feed',
+        );
+        await tester.pump();
+
+        final sendButton = find.byIcon(Icons.arrow_upward_rounded).first;
+        await tester.ensureVisible(sendButton);
+        await tester.pump();
+        await tester.tap(sendButton);
+        await tester.pump(const Duration(milliseconds: 200));
+
+        final sentMessages = await messageRepo.getMessagesForContact(
+          'contact-peer-id',
+        );
+        final sentReply = sentMessages
+            .where((message) => message.text == 'Quoted from feed')
+            .first;
+
+        expect(sentReply.quotedMessageId, 'quoted-msg-1');
+      },
+    );
+
+    testWidgets(
+      'group swipe-to-reply shows preview and persists quotedMessageId on send',
       (tester) async {
         final originalOnError = FlutterError.onError;
         FlutterError.onError = (details) {
@@ -2109,27 +2255,28 @@ void main() {
 
         await groupRepo.saveGroup(
           GroupModel(
-            id: 'g-attach',
-            name: 'Attach Group',
+            id: 'g1',
+            name: 'Quoted Group',
             type: GroupType.chat,
-            topicName: '/mknoon/group/g-attach',
+            topicName: '/mknoon/group/g1',
             createdAt: DateTime(2026, 2, 1),
             createdBy: 'admin',
             myRole: GroupRole.member,
           ),
         );
-
-        // Seed a read message so card is in collapsed mode (shows + button)
         await groupMsgRepo.saveMessage(
           GroupMessage(
-            id: 'gm-read-1',
-            groupId: 'g-attach',
+            id: 'gm-quoted-1',
+            groupId: 'g1',
             senderPeerId: 'other-peer',
             senderUsername: 'OtherUser',
-            text: 'Hello group',
-            timestamp: DateTime.now().toUtc(),
-            createdAt: DateTime.now().toUtc(),
-            readAt: DateTime.now().toUtc(),
+            text: 'Quote this group message',
+            timestamp: DateTime.now()
+                .subtract(const Duration(minutes: 5))
+                .toUtc(),
+            createdAt: DateTime.now()
+                .subtract(const Duration(minutes: 5))
+                .toUtc(),
           ),
         );
 
@@ -2145,20 +2292,44 @@ void main() {
             groupMessageListener: fakeGroupListener,
           ),
         );
-        await pumpFeedFrames(tester, count: 6);
+        await pumpFeedFrames(tester);
 
-        // The group card should be in collapsed mode with a + button
-        expect(find.byType(CollapsedModeCardBody), findsOneWidget);
-        expect(find.byIcon(Icons.add_rounded), findsOneWidget);
+        expect(find.byType(SwipeToQuoteBubble), findsOneWidget);
 
-        // Tap the + button
-        await tester.tap(find.byIcon(Icons.add_rounded));
-        await tester.pump(const Duration(milliseconds: 500));
+        final swipeBubble = tester.widget<SwipeToQuoteBubble>(
+          find.byType(SwipeToQuoteBubble).first,
+        );
+        swipeBubble.onQuoteTriggered();
+        await tester.pump();
 
-        // Should show bottom sheet with media options
-        expect(find.text('Media Library'), findsOneWidget);
-        expect(find.text('Take Photo'), findsOneWidget);
-        expect(find.text('Record Video'), findsOneWidget);
+        expect(find.text('Replying to'), findsOneWidget);
+        expect(find.text('Quote this group message'), findsWidgets);
+
+        await tester.enterText(
+          find.byType(TextField).first,
+          'Quoted group send',
+        );
+        await tester.pump();
+
+        final sendButton = find.byIcon(Icons.arrow_upward_rounded).first;
+        await tester.ensureVisible(sendButton);
+        await tester.pump();
+        await tester.tap(sendButton);
+        await tester.pump(const Duration(milliseconds: 200));
+        await tester.pump(const Duration(milliseconds: 200));
+
+        final publishMsg = bridge.sentMessages.firstWhere(
+          (message) => (jsonDecode(message) as Map)['cmd'] == 'group:publish',
+        );
+        final payload =
+            (jsonDecode(publishMsg) as Map)['payload'] as Map<String, dynamic>;
+        expect(payload['quotedMessageId'], 'gm-quoted-1');
+
+        final savedMessages = await groupMsgRepo.getMessagesPage('g1');
+        final sentReply = savedMessages
+            .where((message) => message.text == 'Quoted group send')
+            .first;
+        expect(sentReply.quotedMessageId, 'gm-quoted-1');
       },
     );
 
@@ -2241,8 +2412,93 @@ void main() {
       },
     );
 
+    testWidgets('inline reply restores quote and draft on send failure', (
+      tester,
+    ) async {
+      final originalOnError = FlutterError.onError;
+      FlutterError.onError = (details) {
+        if (details.toString().contains('overflowed')) return;
+        originalOnError?.call(details);
+      };
+      addTearDown(() => FlutterError.onError = originalOnError);
+
+      identityRepo.seed(testIdentity);
+      contactRepo.seed([testContact]);
+
+      await messageRepo.saveMessage(
+        ConversationMessage(
+          id: 'msg-fail-1',
+          contactPeerId: 'contact-peer-id',
+          text: 'Hey from Bob',
+          senderPeerId: 'contact-peer-id',
+          timestamp: DateTime.now()
+              .subtract(const Duration(hours: 1))
+              .toUtc()
+              .toIso8601String(),
+          isIncoming: true,
+          status: 'read',
+          readAt: DateTime.now()
+              .subtract(const Duration(hours: 1))
+              .toUtc()
+              .toIso8601String(),
+          createdAt: DateTime.now()
+              .subtract(const Duration(hours: 1))
+              .toUtc()
+              .toIso8601String(),
+        ),
+      );
+
+      // P2P node not started → sendChatMessage returns nodeNotRunning
+      p2pService = FakeP2PService(initialState: NodeState.stopped);
+
+      await tester.pumpWidget(buildFeedWired());
+      await pumpFeedFrames(tester);
+
+      expect(find.byType(CollapsedModeCardBody), findsOneWidget);
+      await tester.tap(find.text('Tap to expand'));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 300));
+
+      final swipeBubble = tester.widget<SwipeToQuoteBubble>(
+        find.byType(SwipeToQuoteBubble).first,
+      );
+      swipeBubble.onQuoteTriggered();
+      await tester.pump();
+
+      expect(find.text('Replying to'), findsOneWidget);
+      expect(find.text('Hey from Bob'), findsWidgets);
+
+      // Type and send
+      await tester.enterText(find.byType(TextField).first, 'Fail reply');
+      await tester.pump();
+      final sendButton = find.byIcon(Icons.arrow_upward_rounded).first;
+      await tester.ensureVisible(sendButton);
+      await tester.pump();
+      await tester.tap(sendButton);
+
+      // Pump through async send (returns immediately since node is stopped)
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // Session reply should NOT remain, but the composer should be restored
+      // so the user can retry without retyping or re-quoting.
+      expect(
+        find.textContaining('failed to send'),
+        findsOneWidget,
+        reason: 'Error snackbar should appear on send failure',
+      );
+      expect(find.textContaining('You replied'), findsNothing);
+      expect(find.text('Replying to'), findsOneWidget);
+      expect(find.text('Hey from Bob'), findsWidgets);
+      expect(
+        tester.widget<TextField>(find.byType(TextField).first).controller?.text,
+        'Fail reply',
+      );
+    });
+
     testWidgets(
-      'inline reply reverts session reply on send failure',
+      'group swipe-to-reply shows preview and persists quotedMessageId on send',
       (tester) async {
         final originalOnError = FlutterError.onError;
         FlutterError.onError = (details) {
@@ -2252,61 +2508,89 @@ void main() {
         addTearDown(() => FlutterError.onError = originalOnError);
 
         identityRepo.seed(testIdentity);
-        contactRepo.seed([testContact]);
 
-        await messageRepo.saveMessage(
-          ConversationMessage(
-            id: 'msg-fail-1',
-            contactPeerId: 'contact-peer-id',
-            text: 'Hey from Bob',
-            senderPeerId: 'contact-peer-id',
+        final groupRepo = InMemoryGroupRepository();
+        final groupMsgRepo = InMemoryGroupMessageRepository();
+
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: 'g-quote',
+            name: 'Quote Group',
+            type: GroupType.chat,
+            topicName: '/mknoon/group/g-quote',
+            createdAt: DateTime(2026, 2, 1),
+            createdBy: 'admin',
+            myRole: GroupRole.member,
+          ),
+        );
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: 'gm-parent',
+            groupId: 'g-quote',
+            senderPeerId: 'other-peer',
+            senderUsername: 'OtherUser',
+            text: 'Quote this group parent',
             timestamp: DateTime.now()
-                .subtract(const Duration(hours: 1))
-                .toUtc()
-                .toIso8601String(),
-            isIncoming: true,
-            status: 'read',
-            readAt: DateTime.now()
-                .subtract(const Duration(hours: 1))
-                .toUtc()
-                .toIso8601String(),
+                .subtract(const Duration(minutes: 5))
+                .toUtc(),
             createdAt: DateTime.now()
-                .subtract(const Duration(hours: 1))
-                .toUtc()
-                .toIso8601String(),
+                .subtract(const Duration(minutes: 5))
+                .toUtc(),
+            isIncoming: true,
           ),
         );
 
-        // P2P node not started → sendChatMessage returns nodeNotRunning
-        p2pService = FakeP2PService(
-          initialState: NodeState.stopped,
+        final fakeGroupListener = _FakeGroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: groupMsgRepo,
         );
 
-        await tester.pumpWidget(buildFeedWired());
+        await tester.pumpWidget(
+          buildFeedWired(
+            groupRepository: groupRepo,
+            groupMessageRepository: groupMsgRepo,
+            groupMessageListener: fakeGroupListener,
+          ),
+        );
         await pumpFeedFrames(tester);
 
-        expect(find.byType(CollapsedModeCardBody), findsOneWidget);
+        expect(find.byType(SwipeToQuoteBubble), findsOneWidget);
 
-        // Type and send
-        await tester.enterText(find.byType(TextField).first, 'Fail reply');
+        final swipeBubble = tester.widget<SwipeToQuoteBubble>(
+          find.byType(SwipeToQuoteBubble).first,
+        );
+        swipeBubble.onQuoteTriggered();
         await tester.pump();
+
+        expect(find.text('Replying to'), findsOneWidget);
+        expect(find.text('Quote this group parent'), findsWidgets);
+
+        await tester.enterText(
+          find.byType(TextField).first,
+          'Feed group reply',
+        );
+        await tester.pump();
+
         final sendButton = find.byIcon(Icons.arrow_upward_rounded).first;
         await tester.ensureVisible(sendButton);
         await tester.pump();
         await tester.tap(sendButton);
+        await pumpFeedFrames(tester);
 
-        // Pump through async send (returns immediately since node is stopped)
-        await tester.pump(const Duration(milliseconds: 100));
-        await tester.pump(const Duration(milliseconds: 100));
-        await tester.pump(const Duration(milliseconds: 100));
-
-        // Session reply should NOT remain (send failed, should be reverted)
-        // and a snackbar error should appear.
-        expect(
-          find.textContaining('failed to send'),
-          findsOneWidget,
-          reason: 'Error snackbar should appear on send failure',
+        final publishMsg = bridge.sentMessages.firstWhere(
+          (m) =>
+              (jsonDecode(m) as Map<String, dynamic>)['cmd'] == 'group:publish',
         );
+        final payload =
+            (jsonDecode(publishMsg) as Map<String, dynamic>)['payload']
+                as Map<String, dynamic>;
+        expect(payload['quotedMessageId'], 'gm-parent');
+
+        final savedMessages = await groupMsgRepo.getMessagesPage('g-quote');
+        final sentReply = savedMessages.firstWhere(
+          (message) => message.text == 'Feed group reply',
+        );
+        expect(sentReply.quotedMessageId, 'gm-parent');
       },
     );
 
@@ -2346,10 +2630,12 @@ void main() {
             senderPeerId: 'other-peer',
             senderUsername: 'OtherUser',
             text: 'Old group message',
-            timestamp:
-                DateTime.now().subtract(const Duration(hours: 1)).toUtc(),
-            createdAt:
-                DateTime.now().subtract(const Duration(hours: 1)).toUtc(),
+            timestamp: DateTime.now()
+                .subtract(const Duration(hours: 1))
+                .toUtc(),
+            createdAt: DateTime.now()
+                .subtract(const Duration(hours: 1))
+                .toUtc(),
             readAt: DateTime.now().subtract(const Duration(hours: 1)).toUtc(),
           ),
         );
@@ -2405,95 +2691,109 @@ void main() {
       },
     );
 
-    testWidgets(
-      'group inline reply reverts session reply on send failure',
-      (tester) async {
-        final originalOnError = FlutterError.onError;
-        FlutterError.onError = (details) {
-          if (details.toString().contains('overflowed')) return;
-          originalOnError?.call(details);
-        };
-        addTearDown(() => FlutterError.onError = originalOnError);
+    testWidgets('group inline reply restores quote and draft on send failure', (
+      tester,
+    ) async {
+      final originalOnError = FlutterError.onError;
+      FlutterError.onError = (details) {
+        if (details.toString().contains('overflowed')) return;
+        originalOnError?.call(details);
+      };
+      addTearDown(() => FlutterError.onError = originalOnError);
 
-        identityRepo.seed(testIdentity);
+      identityRepo.seed(testIdentity);
 
-        final groupRepo = InMemoryGroupRepository();
-        final groupMsgRepo = InMemoryGroupMessageRepository();
+      final groupRepo = InMemoryGroupRepository();
+      final groupMsgRepo = InMemoryGroupMessageRepository();
 
-        await groupRepo.saveGroup(
-          GroupModel(
-            id: 'g1',
-            name: 'Fail Group',
-            type: GroupType.chat,
-            topicName: '/mknoon/group/g1',
-            createdAt: DateTime(2026, 2, 1),
-            createdBy: 'admin',
-            myRole: GroupRole.member,
-          ),
-        );
+      await groupRepo.saveGroup(
+        GroupModel(
+          id: 'g1',
+          name: 'Fail Group',
+          type: GroupType.chat,
+          topicName: '/mknoon/group/g1',
+          createdAt: DateTime(2026, 2, 1),
+          createdBy: 'admin',
+          myRole: GroupRole.member,
+        ),
+      );
 
-        // Seed a read message so the card starts in collapsed mode
-        await groupMsgRepo.saveMessage(
-          GroupMessage(
-            id: 'gm-read-fail-1',
-            groupId: 'g1',
-            senderPeerId: 'other-peer',
-            senderUsername: 'OtherUser',
-            text: 'Old group message',
-            timestamp:
-                DateTime.now().subtract(const Duration(hours: 1)).toUtc(),
-            createdAt:
-                DateTime.now().subtract(const Duration(hours: 1)).toUtc(),
-            readAt: DateTime.now().subtract(const Duration(hours: 1)).toUtc(),
-          ),
-        );
+      // Seed a read message so the card starts in collapsed mode
+      await groupMsgRepo.saveMessage(
+        GroupMessage(
+          id: 'gm-read-fail-1',
+          groupId: 'g1',
+          senderPeerId: 'other-peer',
+          senderUsername: 'OtherUser',
+          text: 'Old group message',
+          timestamp: DateTime.now().subtract(const Duration(hours: 1)).toUtc(),
+          createdAt: DateTime.now().subtract(const Duration(hours: 1)).toUtc(),
+          readAt: DateTime.now().subtract(const Duration(hours: 1)).toUtc(),
+        ),
+      );
 
-        final fakeGroupListener = _FakeGroupMessageListener(
-          groupRepo: groupRepo,
-          msgRepo: groupMsgRepo,
-        );
+      final fakeGroupListener = _FakeGroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: groupMsgRepo,
+      );
 
-        // Bridge that throws on send → sendGroupMessage returns error
-        bridge = FakeBridge()..throwOnSend = true;
+      // Bridge that throws on send → sendGroupMessage returns error
+      bridge = FakeBridge()..throwOnSend = true;
 
-        await tester.pumpWidget(
-          buildFeedWired(
-            groupRepository: groupRepo,
-            groupMessageRepository: groupMsgRepo,
-            groupMessageListener: fakeGroupListener,
-          ),
-        );
-        await pumpFeedFrames(tester);
+      await tester.pumpWidget(
+        buildFeedWired(
+          groupRepository: groupRepo,
+          groupMessageRepository: groupMsgRepo,
+          groupMessageListener: fakeGroupListener,
+        ),
+      );
+      await pumpFeedFrames(tester);
 
-        expect(find.byType(CollapsedModeCardBody), findsOneWidget);
+      expect(find.byType(CollapsedModeCardBody), findsOneWidget);
+      await tester.tap(find.text('Tap to expand'));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 300));
 
-        // Type and send
-        await tester.enterText(find.byType(TextField).first, 'Group fail');
-        await tester.pump();
-        final sendButton = find.byIcon(Icons.arrow_upward_rounded).first;
-        await tester.ensureVisible(sendButton);
-        await tester.pump();
-        await tester.tap(sendButton);
+      final swipeBubble = tester.widget<SwipeToQuoteBubble>(
+        find.byType(SwipeToQuoteBubble).first,
+      );
+      swipeBubble.onQuoteTriggered();
+      await tester.pump();
 
-        // Pump through async send (throws immediately)
-        await tester.pump(const Duration(milliseconds: 100));
-        await tester.pump(const Duration(milliseconds: 100));
-        await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text('Replying to'), findsOneWidget);
+      expect(find.text('Old group message'), findsWidgets);
 
-        // Session reply should be reverted and error snackbar shown.
-        expect(
-          find.textContaining('failed to send'),
-          findsOneWidget,
-          reason: 'Error snackbar should appear on group send failure',
-        );
-        // No stale "You replied" should remain
-        expect(
-          find.textContaining('You replied'),
-          findsNothing,
-          reason: 'Session reply should be reverted on failure',
-        );
-      },
-    );
+      // Type and send
+      await tester.enterText(find.byType(TextField).first, 'Group fail');
+      await tester.pump();
+      final sendButton = find.byIcon(Icons.arrow_upward_rounded).first;
+      await tester.ensureVisible(sendButton);
+      await tester.pump();
+      await tester.tap(sendButton);
+
+      // Pump through async send (throws immediately)
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // Session reply should be reverted and the composer restored.
+      expect(
+        find.textContaining('failed to send'),
+        findsOneWidget,
+        reason: 'Error snackbar should appear on group send failure',
+      );
+      expect(
+        find.textContaining('You replied'),
+        findsNothing,
+        reason: 'Session reply should be reverted on failure',
+      );
+      expect(find.text('Replying to'), findsOneWidget);
+      expect(find.text('Old group message'), findsWidgets);
+      expect(
+        tester.widget<TextField>(find.byType(TextField).first).controller?.text,
+        'Group fail',
+      );
+    });
 
     testWidgets(
       'group inline reply shows session reply on success end-to-end',
@@ -2530,10 +2830,12 @@ void main() {
             senderPeerId: 'other-peer',
             senderUsername: 'OtherUser',
             text: 'Old group message',
-            timestamp:
-                DateTime.now().subtract(const Duration(hours: 1)).toUtc(),
-            createdAt:
-                DateTime.now().subtract(const Duration(hours: 1)).toUtc(),
+            timestamp: DateTime.now()
+                .subtract(const Duration(hours: 1))
+                .toUtc(),
+            createdAt: DateTime.now()
+                .subtract(const Duration(hours: 1))
+                .toUtc(),
             readAt: DateTime.now().subtract(const Duration(hours: 1)).toUtc(),
           ),
         );
@@ -2575,6 +2877,212 @@ void main() {
         );
         // Card should remain collapsed
         expect(find.byType(CollapsedModeCardBody), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'outgoing repository retry success updates the open feed card without reload',
+      (tester) async {
+        final originalOnError = FlutterError.onError;
+        FlutterError.onError = (details) {
+          if (details.toString().contains('overflowed')) return;
+          originalOnError?.call(details);
+        };
+        addTearDown(() => FlutterError.onError = originalOnError);
+
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+
+        final parent = ConversationMessage(
+          id: 'parent-retry',
+          contactPeerId: testContact.peerId,
+          text: 'Retry parent',
+          senderPeerId: testContact.peerId,
+          timestamp: '2026-02-01T10:00:00.000Z',
+          isIncoming: true,
+          status: 'read',
+          readAt: '2026-02-01T10:05:00.000Z',
+          createdAt: '2026-02-01T10:00:00.000Z',
+        );
+        final failedReply = ConversationMessage(
+          id: 'failed-retry',
+          contactPeerId: testContact.peerId,
+          text: 'Retry reply',
+          senderPeerId: testIdentity.peerId,
+          timestamp: '2026-02-01T10:06:00.000Z',
+          isIncoming: false,
+          status: 'failed',
+          quotedMessageId: 'parent-retry',
+          createdAt: '2026-02-01T10:06:00.000Z',
+        );
+        await messageRepo.saveMessage(parent);
+        await messageRepo.saveMessage(failedReply);
+
+        await tester.pumpWidget(buildFeedWired());
+        await pumpFeedFrames(tester);
+
+        await tester.tap(find.text('Tap to expand'));
+        await pumpFeedFrames(tester, count: 4);
+
+        expect(find.byIcon(Icons.error_outline_rounded), findsOneWidget);
+
+        await messageRepo.saveMessage(
+          failedReply.copyWith(status: 'delivered'),
+        );
+        await pumpFeedFrames(tester, count: 2);
+
+        expect(find.byIcon(Icons.error_outline_rounded), findsNothing);
+        expect(find.byIcon(Icons.done_all_rounded), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'incremental group updates preserve quoted replies in feed cards',
+      (tester) async {
+        final originalOnError = FlutterError.onError;
+        FlutterError.onError = (details) {
+          if (details.toString().contains('overflowed')) return;
+          originalOnError?.call(details);
+        };
+        addTearDown(() => FlutterError.onError = originalOnError);
+
+        identityRepo.seed(testIdentity);
+
+        final groupRepo = InMemoryGroupRepository();
+        final groupMsgRepo = InMemoryGroupMessageRepository();
+
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: 'g-quoted-refresh',
+            name: 'Quoted Refresh Group',
+            type: GroupType.chat,
+            topicName: '/mknoon/group/g-quoted-refresh',
+            createdAt: DateTime(2026, 2, 1),
+            createdBy: 'admin',
+            myRole: GroupRole.member,
+          ),
+        );
+        final parent = GroupMessage(
+          id: 'gm-parent-refresh',
+          groupId: 'g-quoted-refresh',
+          senderPeerId: 'other-peer',
+          senderUsername: 'OtherUser',
+          text: 'Parent quote source',
+          timestamp: DateTime.utc(2026, 2, 1, 10),
+          createdAt: DateTime.utc(2026, 2, 1, 10),
+          isIncoming: true,
+        );
+        await groupMsgRepo.saveMessage(parent);
+
+        final fakeGroupListener = _FakeGroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: groupMsgRepo,
+        );
+
+        await tester.pumpWidget(
+          buildFeedWired(
+            groupRepository: groupRepo,
+            groupMessageRepository: groupMsgRepo,
+            groupMessageListener: fakeGroupListener,
+          ),
+        );
+        await pumpFeedFrames(tester);
+
+        final beforeCount = find.text('Parent quote source').evaluate().length;
+
+        final reply = GroupMessage(
+          id: 'gm-reply-refresh',
+          groupId: 'g-quoted-refresh',
+          senderPeerId: 'other-peer',
+          senderUsername: 'OtherUser',
+          text: 'Reply with quote',
+          timestamp: DateTime.utc(2026, 2, 1, 10, 1),
+          createdAt: DateTime.utc(2026, 2, 1, 10, 1),
+          isIncoming: true,
+          quotedMessageId: 'gm-parent-refresh',
+        );
+        await groupMsgRepo.saveMessage(reply);
+        fakeGroupListener.emitGroupMessage(reply);
+
+        await pumpFeedFrames(tester, count: 3);
+
+        final bubbles = tester.widgetList<MessageBubble>(
+          find.byType(MessageBubble),
+        );
+        expect(
+          bubbles.any(
+            (bubble) =>
+                bubble.text == 'Reply with quote' &&
+                bubble.quotedText == 'Parent quote source',
+          ),
+          isTrue,
+        );
+        expect(
+          find.text('Parent quote source').evaluate().length,
+          greaterThan(beforeCount),
+        );
+      },
+    );
+
+    testWidgets(
+      'feed opens announcement admins with a writable group conversation',
+      (tester) async {
+        final originalOnError = FlutterError.onError;
+        FlutterError.onError = (details) {
+          if (details.toString().contains('overflowed')) return;
+          originalOnError?.call(details);
+        };
+        addTearDown(() => FlutterError.onError = originalOnError);
+
+        identityRepo.seed(testIdentity);
+
+        final groupRepo = InMemoryGroupRepository();
+        final groupMsgRepo = InMemoryGroupMessageRepository();
+        final adminGroup = GroupModel(
+          id: 'g-admin-announce',
+          name: 'Admin Announcements',
+          type: GroupType.announcement,
+          topicName: '/mknoon/group/g-admin-announce',
+          createdAt: DateTime(2026, 2, 1),
+          createdBy: 'admin-peer',
+          myRole: GroupRole.admin,
+        );
+        await groupRepo.saveGroup(adminGroup);
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: 'gm-admin-announce-1',
+            groupId: adminGroup.id,
+            senderPeerId: 'other-peer',
+            senderUsername: 'OtherUser',
+            text: 'Unread announcement',
+            timestamp: DateTime.utc(2026, 2, 1, 10),
+            createdAt: DateTime.utc(2026, 2, 1, 10),
+            isIncoming: true,
+          ),
+        );
+
+        final fakeGroupListener = _FakeGroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: groupMsgRepo,
+        );
+
+        await tester.pumpWidget(
+          buildFeedWired(
+            groupRepository: groupRepo,
+            groupMessageRepository: groupMsgRepo,
+            groupMessageListener: fakeGroupListener,
+          ),
+        );
+        await pumpFeedFrames(tester);
+
+        await tester.tap(find.text('View earlier messages'));
+        await pumpFeedFrames(tester, count: 4);
+
+        final pushed = tester.widget<GroupConversationWired>(
+          find.byType(GroupConversationWired),
+        );
+        expect(pushed.group.type, GroupType.announcement);
+        expect(pushed.group.myRole, GroupRole.admin);
       },
     );
   });
@@ -2879,13 +3387,13 @@ class _GatedP2PService extends FakeP2PService {
   final Completer<void> sendGate = Completer<void>();
 
   _GatedP2PService()
-      : super(
-          initialState: const NodeState(isStarted: true),
-          discoverPeerResult: const DiscoveredPeer(
-            id: 'contact-peer-id',
-            addresses: ['/ip4/127.0.0.1/tcp/4001'],
-          ),
-        );
+    : super(
+        initialState: const NodeState(isStarted: true),
+        discoverPeerResult: const DiscoveredPeer(
+          id: 'contact-peer-id',
+          addresses: ['/ip4/127.0.0.1/tcp/4001'],
+        ),
+      );
 
   @override
   Future<SendMessageResult> sendMessageWithReply(
@@ -2898,10 +3406,7 @@ class _GatedP2PService extends FakeP2PService {
   }
 
   @override
-  Future<DiscoveredPeer?> discoverPeer(
-    String peerId, {
-    int? timeoutMs,
-  }) async {
+  Future<DiscoveredPeer?> discoverPeer(String peerId, {int? timeoutMs}) async {
     await sendGate.future;
     return discoverPeerResult;
   }

@@ -15,6 +15,7 @@ import 'package:flutter_app/features/feed/presentation/widgets/feed_header.dart'
 import 'package:flutter_app/features/feed/presentation/widgets/feed_navigation_bar.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/session_divider.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
+import 'package:flutter_app/shared/widgets/media/media_preview_text.dart';
 
 /// Pure UI Feed screen.
 ///
@@ -57,7 +58,7 @@ class FeedScreen extends StatelessWidget {
   final void Function(String groupId, String text)? onGroupInlineSend;
   final void Function(GroupThreadFeedItem)? onGroupAttach;
   final void Function(String groupId, String messageId, String emoji)?
-      onGroupReactionSelected;
+  onGroupReactionSelected;
 
   const FeedScreen({
     super.key,
@@ -401,15 +402,16 @@ class FeedScreen extends StatelessWidget {
   }
 
   void _showGroupReactionBar(
-      BuildContext context, String groupId, String messageId) {
+    BuildContext context,
+    String groupId,
+    String messageId,
+  ) {
     final allReactions =
         reactionListenableForMessage?.call(messageId).value ??
-            reactions[messageId] ??
-            const [];
+        reactions[messageId] ??
+        const [];
     final ownReaction = userPeerId != null
-        ? allReactions
-            .where((r) => r.senderPeerId == userPeerId)
-            .firstOrNull
+        ? allReactions.where((r) => r.senderPeerId == userPeerId).firstOrNull
         : null;
 
     showDialog(
@@ -431,7 +433,10 @@ class FeedScreen extends StatelessWidget {
   }
 
   void _showGroupFullPicker(
-      BuildContext context, String groupId, String messageId) async {
+    BuildContext context,
+    String groupId,
+    String messageId,
+  ) async {
     final emoji = await showFullEmojiPicker(context);
     if (emoji != null) {
       onGroupReactionSelected?.call(groupId, messageId, emoji);
@@ -440,21 +445,39 @@ class FeedScreen extends StatelessWidget {
 
   Widget _buildFeedItemWidget(BuildContext context, FeedItem item) {
     if (item is GroupThreadFeedItem) {
+      final activeQuoteMessageId =
+          activeQuoteMessageIds?['group:${item.groupId}'];
+      final groupDraftKey = 'group:${item.groupId}';
+      final canWrite = item.canWrite;
       return FeedCard(
         key: ValueKey(item.id),
         thread: item,
+        canWrite: canWrite,
         sessionReply: sessionReplies?.get('group:${item.groupId}'),
         isExpanded: expandedCardId == item.id,
         onToggleExpand: onToggleExpand != null
             ? () => onToggleExpand!(item.id)
             : null,
-        onInlineSend: onGroupInlineSend != null
+        onInlineSend: canWrite && onGroupInlineSend != null
             ? (text) => onGroupInlineSend!(item.groupId, text)
             : null,
         onViewFullConversation: onGroupTap != null
             ? () => onGroupTap!(item)
             : null,
-        onAttach: onGroupAttach != null
+        initialText: draftTexts?[groupDraftKey] ?? '',
+        activeQuoteText: canWrite
+            ? _resolveActiveQuoteText(item, activeQuoteMessageId)
+            : null,
+        onDraftChanged: onDraftChanged != null
+            ? (text) => onDraftChanged!(groupDraftKey, text)
+            : null,
+        onQuoteReply: canWrite && onQuoteReply != null
+            ? (msgId) => onQuoteReply!('group:${item.groupId}', msgId)
+            : null,
+        onClearQuote: canWrite && onClearQuote != null
+            ? () => onClearQuote!('group:${item.groupId}')
+            : null,
+        onAttach: canWrite && onGroupAttach != null
             ? () => onGroupAttach!(item)
             : null,
         reactions: reactions,
@@ -465,7 +488,7 @@ class FeedScreen extends StatelessWidget {
             : null,
         onReactionTap: onGroupReactionSelected != null
             ? (msgId, emoji) =>
-                onGroupReactionSelected!(item.groupId, msgId, emoji)
+                  onGroupReactionSelected!(item.groupId, msgId, emoji)
             : null,
       );
     }
@@ -498,6 +521,7 @@ class FeedScreen extends StatelessWidget {
       );
     }
     if (item is ThreadFeedItem) {
+      final activeQuoteMessageId = activeQuoteMessageIds?[item.contactPeerId];
       return FeedCard(
         key: ValueKey(item.id),
         thread: item,
@@ -520,8 +544,12 @@ class FeedScreen extends StatelessWidget {
         onInputFocusChanged: onInputFocusChanged != null
             ? (hasFocus) => onInputFocusChanged!(item.contactPeerId, hasFocus)
             : null,
+        activeQuoteText: _resolveActiveQuoteText(item, activeQuoteMessageId),
         onQuoteReply: onQuoteReply != null
             ? (msgId) => onQuoteReply!(item.contactPeerId, msgId)
+            : null,
+        onClearQuote: onClearQuote != null
+            ? () => onClearQuote!(item.contactPeerId)
             : null,
         onAttach: onAttach != null ? () => onAttach!(item.contactPeerId) : null,
         reactions: reactions,
@@ -541,6 +569,21 @@ class FeedScreen extends StatelessWidget {
       'item',
       'Unsupported feed item type ${item.runtimeType}',
     );
+  }
+
+  String? _resolveActiveQuoteText(
+    CardThreadFeedItem item,
+    String? activeQuoteMessageId,
+  ) {
+    if (activeQuoteMessageId == null) return null;
+
+    final quoted = item.messages
+        .where((message) => message.id == activeQuoteMessageId)
+        .firstOrNull;
+    if (quoted == null) return 'Message unavailable';
+    if (quoted.text.isNotEmpty) return quoted.text;
+    if (quoted.media.isNotEmpty) return mediaPreviewText(quoted.media);
+    return 'Message unavailable';
   }
 }
 

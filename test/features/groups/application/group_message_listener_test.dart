@@ -42,13 +42,15 @@ void main() {
     sourceController = StreamController<Map<String, dynamic>>.broadcast();
 
     await groupRepo.saveGroup(testGroup);
-    await groupRepo.saveMember(GroupMember(
-      groupId: 'group-1',
-      peerId: 'peer-sender',
-      username: 'Sender',
-      role: MemberRole.writer,
-      joinedAt: DateTime.now().toUtc(),
-    ));
+    await groupRepo.saveMember(
+      GroupMember(
+        groupId: 'group-1',
+        peerId: 'peer-sender',
+        username: 'Sender',
+        role: MemberRole.writer,
+        joinedAt: DateTime.now().toUtc(),
+      ),
+    );
 
     listener = GroupMessageListener(
       groupRepo: groupRepo,
@@ -80,6 +82,26 @@ void main() {
     expect(msgRepo.count, 1);
     final latest = await msgRepo.getLatestMessage('group-1');
     expect(latest!.text, 'Hello group!');
+  });
+
+  test('forwards quotedMessageId from event into persisted message', () async {
+    listener.start(sourceController.stream);
+
+    sourceController.add({
+      'groupId': 'group-1',
+      'senderId': 'peer-sender',
+      'senderUsername': 'Sender',
+      'keyEpoch': 0,
+      'text': 'Quoted group reply',
+      'quotedMessageId': 'msg-parent-1',
+      'timestamp': DateTime.now().toUtc().toIso8601String(),
+    });
+
+    await Future.delayed(const Duration(milliseconds: 50));
+
+    final latest = await msgRepo.getLatestMessage('group-1');
+    expect(latest, isNotNull);
+    expect(latest!.quotedMessageId, 'msg-parent-1');
   });
 
   test('ignores message for unknown group', () async {
@@ -146,10 +168,7 @@ void main() {
     listener.start(sourceController.stream);
 
     // Missing required fields
-    sourceController.add({
-      'groupId': '',
-      'senderId': '',
-    });
+    sourceController.add({'groupId': '', 'senderId': ''});
 
     await Future.delayed(const Duration(milliseconds: 50));
 
@@ -237,26 +256,14 @@ void main() {
           'name': 'Test Group',
           'groupType': 'chat',
           'members': [
-            {
-              'peerId': 'peer-admin',
-              'role': 'admin',
-              'publicKey': 'pk-admin',
-            },
+            {'peerId': 'peer-admin', 'role': 'admin', 'publicKey': 'pk-admin'},
             {
               'peerId': 'peer-sender',
               'role': 'writer',
               'publicKey': 'pk-sender',
             },
-            {
-              'peerId': 'peer-dave',
-              'role': 'writer',
-              'publicKey': 'pk-dave',
-            },
-            {
-              'peerId': 'peer-eve',
-              'role': 'writer',
-              'publicKey': 'pk-eve',
-            },
+            {'peerId': 'peer-dave', 'role': 'writer', 'publicKey': 'pk-dave'},
+            {'peerId': 'peer-eve', 'role': 'writer', 'publicKey': 'pk-eve'},
           ],
           'createdBy': 'peer-admin',
           'createdAt': DateTime.now().toUtc().toIso8601String(),
@@ -331,90 +338,91 @@ void main() {
       await subscription.cancel();
     });
 
-    test('system message without bridge falls through as regular message',
-        () async {
-      // Create listener without bridge
-      final noBridgeListener = GroupMessageListener(
-        groupRepo: groupRepo,
-        msgRepo: msgRepo,
-      );
-      noBridgeListener.start(sourceController.stream);
+    test(
+      'system message without bridge falls through as regular message',
+      () async {
+        // Create listener without bridge
+        final noBridgeListener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+        );
+        noBridgeListener.start(sourceController.stream);
 
-      final sysText = jsonEncode({
-        '__sys': 'member_added',
-        'member': {'peerId': 'peer-charlie'},
-        'groupConfig': {},
-      });
+        final sysText = jsonEncode({
+          '__sys': 'member_added',
+          'member': {'peerId': 'peer-charlie'},
+          'groupConfig': {},
+        });
 
-      sourceController.add({
-        'groupId': 'group-1',
-        'senderId': 'peer-sender',
-        'senderUsername': 'Sender',
-        'keyEpoch': 0,
-        'text': sysText,
-        'timestamp': DateTime.now().toUtc().toIso8601String(),
-      });
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Sender',
+          'keyEpoch': 0,
+          'text': sysText,
+          'timestamp': DateTime.now().toUtc().toIso8601String(),
+        });
 
-      await Future.delayed(const Duration(milliseconds: 50));
+        await Future.delayed(const Duration(milliseconds: 50));
 
-      // Without bridge, treated as regular message and saved
-      expect(msgRepo.count, 1);
+        // Without bridge, treated as regular message and saved
+        expect(msgRepo.count, 1);
 
-      noBridgeListener.dispose();
-    });
+        noBridgeListener.dispose();
+      },
+    );
   });
 
   group('member_removed system messages', () {
-    test('member_removed removes other member and calls updateConfig',
-        () async {
-      // Verify the member exists first
-      final before = await groupRepo.getMember('group-1', 'peer-sender');
-      expect(before, isNotNull);
+    test(
+      'member_removed removes other member and calls updateConfig',
+      () async {
+        // Verify the member exists first
+        final before = await groupRepo.getMember('group-1', 'peer-sender');
+        expect(before, isNotNull);
 
-      listener.start(sourceController.stream);
+        listener.start(sourceController.stream);
 
-      final sysText = jsonEncode({
-        '__sys': 'member_removed',
-        'member': {
-          'peerId': 'peer-sender',
-          'username': 'Sender',
-        },
-        'groupConfig': {
-          'name': 'Test Group',
-          'groupType': 'chat',
-          'members': [
-            {
-              'peerId': 'peer-admin',
-              'role': 'admin',
-              'publicKey': 'pk-admin',
-            },
-          ],
-          'createdBy': 'peer-admin',
-          'createdAt': DateTime.now().toUtc().toIso8601String(),
-        },
-      });
+        final sysText = jsonEncode({
+          '__sys': 'member_removed',
+          'member': {'peerId': 'peer-sender', 'username': 'Sender'},
+          'groupConfig': {
+            'name': 'Test Group',
+            'groupType': 'chat',
+            'members': [
+              {
+                'peerId': 'peer-admin',
+                'role': 'admin',
+                'publicKey': 'pk-admin',
+              },
+            ],
+            'createdBy': 'peer-admin',
+            'createdAt': DateTime.now().toUtc().toIso8601String(),
+          },
+        });
 
-      sourceController.add({
-        'groupId': 'group-1',
-        'senderId': 'peer-admin',
-        'senderUsername': 'Admin',
-        'keyEpoch': 0,
-        'text': sysText,
-        'timestamp': DateTime.now().toUtc().toIso8601String(),
-      });
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'text': sysText,
+          'timestamp': DateTime.now().toUtc().toIso8601String(),
+        });
 
-      await Future.delayed(const Duration(milliseconds: 50));
+        await Future.delayed(const Duration(milliseconds: 50));
 
-      // System message should NOT be saved as a regular message
-      expect(msgRepo.count, 0);
+        // System message should NOT be saved as a regular message
+        expect(msgRepo.count, 0);
 
-      // Member should be removed from the group repo
-      final after = await groupRepo.getMember('group-1', 'peer-sender');
-      expect(after, isNull);
+        // Member should be removed from the group repo
+        final after = await groupRepo.getMember('group-1', 'peer-sender');
+        expect(after, isNull);
 
-      // Bridge should have received group:updateConfig
-      expect(bridge.commandLog, contains('group:updateConfig'));
-    });
+        // Bridge should have received group:updateConfig
+        expect(bridge.commandLog, contains('group:updateConfig'));
+      },
+    );
 
     test('member_removed is not emitted on groupMessageStream', () async {
       listener.start(sourceController.stream);
@@ -424,10 +432,7 @@ void main() {
 
       final sysText = jsonEncode({
         '__sys': 'member_removed',
-        'member': {
-          'peerId': 'peer-sender',
-          'username': 'Sender',
-        },
+        'member': {'peerId': 'peer-sender', 'username': 'Sender'},
         'groupConfig': {
           'name': 'Test Group',
           'groupType': 'chat',
@@ -454,74 +459,75 @@ void main() {
       await subscription.cancel();
     });
 
-    test('self-removal calls leaveGroup and emits on groupRemovedStream',
-        () async {
-      // Create a listener that knows its own peerId
-      final selfListener = GroupMessageListener(
-        groupRepo: groupRepo,
-        msgRepo: msgRepo,
-        bridge: bridge,
-        getSelfPeerId: () async => 'peer-self',
-      );
+    test(
+      'self-removal calls leaveGroup and emits on groupRemovedStream',
+      () async {
+        // Create a listener that knows its own peerId
+        final selfListener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          getSelfPeerId: () async => 'peer-self',
+        );
 
-      // Add self as a member of the group
-      await groupRepo.saveMember(GroupMember(
-        groupId: 'group-1',
-        peerId: 'peer-self',
-        username: 'Me',
-        role: MemberRole.writer,
-        joinedAt: DateTime.now().toUtc(),
-      ));
+        // Add self as a member of the group
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-self',
+            username: 'Me',
+            role: MemberRole.writer,
+            joinedAt: DateTime.now().toUtc(),
+          ),
+        );
 
-      selfListener.start(sourceController.stream);
+        selfListener.start(sourceController.stream);
 
-      final removedGroups = <String>[];
-      final sub = selfListener.groupRemovedStream.listen(removedGroups.add);
+        final removedGroups = <String>[];
+        final sub = selfListener.groupRemovedStream.listen(removedGroups.add);
 
-      final sysText = jsonEncode({
-        '__sys': 'member_removed',
-        'member': {
-          'peerId': 'peer-self',
-          'username': 'Me',
-        },
-        'groupConfig': {
-          'name': 'Test Group',
-          'groupType': 'chat',
-          'members': [
-            {'peerId': 'peer-admin', 'role': 'admin'},
-          ],
-          'createdBy': 'peer-admin',
-          'createdAt': DateTime.now().toUtc().toIso8601String(),
-        },
-      });
+        final sysText = jsonEncode({
+          '__sys': 'member_removed',
+          'member': {'peerId': 'peer-self', 'username': 'Me'},
+          'groupConfig': {
+            'name': 'Test Group',
+            'groupType': 'chat',
+            'members': [
+              {'peerId': 'peer-admin', 'role': 'admin'},
+            ],
+            'createdBy': 'peer-admin',
+            'createdAt': DateTime.now().toUtc().toIso8601String(),
+          },
+        });
 
-      sourceController.add({
-        'groupId': 'group-1',
-        'senderId': 'peer-admin',
-        'senderUsername': 'Admin',
-        'keyEpoch': 0,
-        'text': sysText,
-        'timestamp': DateTime.now().toUtc().toIso8601String(),
-      });
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'text': sysText,
+          'timestamp': DateTime.now().toUtc().toIso8601String(),
+        });
 
-      await Future.delayed(const Duration(milliseconds: 50));
+        await Future.delayed(const Duration(milliseconds: 50));
 
-      // Bridge should have received group:leave
-      expect(bridge.commandLog, contains('group:leave'));
+        // Bridge should have received group:leave
+        expect(bridge.commandLog, contains('group:leave'));
 
-      // Group should be deleted from local DB
-      final group = await groupRepo.getGroup('group-1');
-      expect(group, isNull);
+        // Group should be deleted from local DB
+        final group = await groupRepo.getGroup('group-1');
+        expect(group, isNull);
 
-      // groupRemovedStream should have emitted the group ID
-      expect(removedGroups, ['group-1']);
+        // groupRemovedStream should have emitted the group ID
+        expect(removedGroups, ['group-1']);
 
-      // No regular message saved
-      expect(msgRepo.count, 0);
+        // No regular message saved
+        expect(msgRepo.count, 0);
 
-      await sub.cancel();
-      selfListener.dispose();
-    });
+        await sub.cancel();
+        selfListener.dispose();
+      },
+    );
 
     test('handles key_rotated system message without error', () async {
       listener = GroupMessageListener(
@@ -531,10 +537,7 @@ void main() {
       );
       listener.start(sourceController.stream);
 
-      final sysText = jsonEncode({
-        '__sys': 'key_rotated',
-        'newKeyEpoch': 2,
-      });
+      final sysText = jsonEncode({'__sys': 'key_rotated', 'newKeyEpoch': 2});
 
       sourceController.add({
         'groupId': 'group-1',
@@ -565,10 +568,7 @@ void main() {
 
       final sysText = jsonEncode({
         '__sys': 'member_removed',
-        'member': {
-          'peerId': 'peer-sender',
-          'username': 'Sender',
-        },
+        'member': {'peerId': 'peer-sender', 'username': 'Sender'},
         'groupConfig': {
           'name': 'Test Group',
           'groupType': 'chat',
@@ -610,47 +610,48 @@ void main() {
   // Media forwarding tests
   // ---------------------------------------------------------------------------
   group('media forwarding', () {
-    test('forwards media field from event to handleIncomingGroupMessage',
-        () async {
-      final mediaRepo = InMemoryMediaAttachmentRepository();
-      final mediaListener = GroupMessageListener(
-        groupRepo: groupRepo,
-        msgRepo: msgRepo,
-        bridge: bridge,
-        mediaAttachmentRepo: mediaRepo,
-      );
-      final mediaSource =
-          StreamController<Map<String, dynamic>>.broadcast();
+    test(
+      'forwards media field from event to handleIncomingGroupMessage',
+      () async {
+        final mediaRepo = InMemoryMediaAttachmentRepository();
+        final mediaListener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          mediaAttachmentRepo: mediaRepo,
+        );
+        final mediaSource = StreamController<Map<String, dynamic>>.broadcast();
 
-      mediaListener.start(mediaSource.stream);
+        mediaListener.start(mediaSource.stream);
 
-      mediaSource.add({
-        'groupId': 'group-1',
-        'senderId': 'peer-sender',
-        'senderUsername': 'Sender',
-        'keyEpoch': 0,
-        'text': 'Photo message',
-        'timestamp': DateTime.now().toUtc().toIso8601String(),
-        'media': [
-          {
-            'id': 'blob-event-1',
-            'mime': 'image/jpeg',
-            'size': 12345,
-            'mediaType': 'image',
-            'downloadStatus': 'pending',
-            'createdAt': DateTime.now().toUtc().toIso8601String(),
-          },
-        ],
-      });
+        mediaSource.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Sender',
+          'keyEpoch': 0,
+          'text': 'Photo message',
+          'timestamp': DateTime.now().toUtc().toIso8601String(),
+          'media': [
+            {
+              'id': 'blob-event-1',
+              'mime': 'image/jpeg',
+              'size': 12345,
+              'mediaType': 'image',
+              'downloadStatus': 'pending',
+              'createdAt': DateTime.now().toUtc().toIso8601String(),
+            },
+          ],
+        });
 
-      await Future.delayed(const Duration(milliseconds: 100));
+        await Future.delayed(const Duration(milliseconds: 100));
 
-      expect(msgRepo.count, 1);
-      expect(mediaRepo.count, 1);
+        expect(msgRepo.count, 1);
+        expect(mediaRepo.count, 1);
 
-      mediaListener.dispose();
-      await mediaSource.close();
-    });
+        mediaListener.dispose();
+        await mediaSource.close();
+      },
+    );
 
     test('handles event without media field (backward compat)', () async {
       final mediaRepo = InMemoryMediaAttachmentRepository();
@@ -660,8 +661,7 @@ void main() {
         bridge: bridge,
         mediaAttachmentRepo: mediaRepo,
       );
-      final mediaSource =
-          StreamController<Map<String, dynamic>>.broadcast();
+      final mediaSource = StreamController<Map<String, dynamic>>.broadcast();
 
       mediaListener.start(mediaSource.stream);
 
@@ -854,47 +854,48 @@ void main() {
     });
 
     test(
-        'emits ReactionChange on groupReactionChangeStream for incoming add reaction',
-        () async {
-      final rxnListener = GroupMessageListener(
-        groupRepo: groupRepo,
-        msgRepo: msgRepo,
-        bridge: bridge,
-        reactionRepo: reactionRepo,
-      );
+      'emits ReactionChange on groupReactionChangeStream for incoming add reaction',
+      () async {
+        final rxnListener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          reactionRepo: reactionRepo,
+        );
 
-      rxnListener.start(
-        sourceController.stream,
-        incomingGroupReactions: reactionSource.stream,
-      );
+        rxnListener.start(
+          sourceController.stream,
+          incomingGroupReactions: reactionSource.stream,
+        );
 
-      final changes = <ReactionChange>[];
-      final sub = rxnListener.groupReactionChangeStream.listen(changes.add);
+        final changes = <ReactionChange>[];
+        final sub = rxnListener.groupReactionChangeStream.listen(changes.add);
 
-      reactionSource.add({
-        'groupId': 'group-1',
-        'senderId': 'peer-sender',
-        'reaction': jsonEncode({
-          'id': 'rxn-1',
-          'messageId': 'msg-1',
-          'emoji': '\u{1F44D}',
-          'action': 'add',
-          'senderPeerId': 'peer-sender',
-          'timestamp': '2026-01-01T00:00:00.000Z',
-        }),
-      });
+        reactionSource.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'reaction': jsonEncode({
+            'id': 'rxn-1',
+            'messageId': 'msg-1',
+            'emoji': '\u{1F44D}',
+            'action': 'add',
+            'senderPeerId': 'peer-sender',
+            'timestamp': '2026-01-01T00:00:00.000Z',
+          }),
+        });
 
-      await Future.delayed(const Duration(milliseconds: 50));
+        await Future.delayed(const Duration(milliseconds: 50));
 
-      expect(changes.length, 1);
-      expect(changes.first.type, ReactionChangeType.upserted);
-      expect(changes.first.messageId, 'msg-1');
-      expect(changes.first.reaction?.emoji, '\u{1F44D}');
-      expect(reactionRepo.saveReactionCallCount, 1);
+        expect(changes.length, 1);
+        expect(changes.first.type, ReactionChangeType.upserted);
+        expect(changes.first.messageId, 'msg-1');
+        expect(changes.first.reaction?.emoji, '\u{1F44D}');
+        expect(reactionRepo.saveReactionCallCount, 1);
 
-      await sub.cancel();
-      rxnListener.dispose();
-    });
+        await sub.cancel();
+        rxnListener.dispose();
+      },
+    );
 
     test('emits removal ReactionChange when action is remove', () async {
       final rxnListener = GroupMessageListener(
@@ -950,8 +951,7 @@ void main() {
       );
 
       final changes = <ReactionChange>[];
-      final sub =
-          noRepoListener.groupReactionChangeStream.listen(changes.add);
+      final sub = noRepoListener.groupReactionChangeStream.listen(changes.add);
 
       reactionSource.add({
         'groupId': 'group-1',

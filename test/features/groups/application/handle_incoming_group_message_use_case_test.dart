@@ -89,6 +89,27 @@ void main() {
     expect(latest!.text, 'Test message');
   });
 
+  test('persists quotedMessageId from incoming payload', () async {
+    final result = await handleIncomingGroupMessage(
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      groupId: 'group-1',
+      senderId: 'peer-sender',
+      senderUsername: 'Sender',
+      keyEpoch: 0,
+      text: 'Reply in group',
+      timestamp: DateTime.now().toUtc().toIso8601String(),
+      quotedMessageId: 'msg-parent-1',
+    );
+
+    expect(result, isNotNull);
+    expect(result!.quotedMessageId, 'msg-parent-1');
+
+    final saved = await msgRepo.getMessage(result.id);
+    expect(saved, isNotNull);
+    expect(saved!.quotedMessageId, 'msg-parent-1');
+  });
+
   test('still processes messages from unknown members', () async {
     // Message from non-member (stale member list)
     final result = await handleIncomingGroupMessage(
@@ -178,40 +199,136 @@ void main() {
   // ---------------------------------------------------------------------------
   // Phase 6: messageId-based dedupe tests
   // ---------------------------------------------------------------------------
-  test('deduplicates by messageId when pubsub and group inbox deliver same message',
-      () async {
+  test(
+    'deduplicates by messageId when pubsub and group inbox deliver same message',
+    () async {
+      final ts = DateTime.now().toUtc().toIso8601String();
+      const sharedMessageId = 'msg-shared-123';
+
+      // First delivery (e.g. from pubsub).
+      final result1 = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 0,
+        text: 'Hello!',
+        timestamp: ts,
+        messageId: sharedMessageId,
+      );
+      expect(result1, isNotNull);
+      expect(result1!.id, sharedMessageId);
+
+      // Second delivery (e.g. from group inbox drain) with the same messageId.
+      final result2 = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 0,
+        text: 'Hello!',
+        timestamp: ts,
+        messageId: sharedMessageId,
+      );
+      expect(
+        result2,
+        isNull,
+        reason: 'Duplicate by messageId should be skipped',
+      );
+      expect(msgRepo.count, 1, reason: 'Only one message should be saved');
+    },
+  );
+
+  test('duplicate replay enriches a missing quotedMessageId', () async {
+    const sharedMessageId = 'msg-quote-repair';
     final ts = DateTime.now().toUtc().toIso8601String();
-    const sharedMessageId = 'msg-shared-123';
 
-    // First delivery (e.g. from pubsub).
-    final result1 = await handleIncomingGroupMessage(
+    await handleIncomingGroupMessage(
       groupRepo: groupRepo,
       msgRepo: msgRepo,
       groupId: 'group-1',
       senderId: 'peer-sender',
       senderUsername: 'Sender',
       keyEpoch: 0,
-      text: 'Hello!',
+      text: 'Sparse live copy',
       timestamp: ts,
       messageId: sharedMessageId,
     );
-    expect(result1, isNotNull);
-    expect(result1!.id, sharedMessageId);
 
-    // Second delivery (e.g. from group inbox drain) with the same messageId.
-    final result2 = await handleIncomingGroupMessage(
+    final result = await handleIncomingGroupMessage(
       groupRepo: groupRepo,
       msgRepo: msgRepo,
       groupId: 'group-1',
       senderId: 'peer-sender',
       senderUsername: 'Sender',
       keyEpoch: 0,
-      text: 'Hello!',
+      text: 'Sparse live copy',
       timestamp: ts,
       messageId: sharedMessageId,
+      quotedMessageId: 'msg-parent-1',
     );
-    expect(result2, isNull, reason: 'Duplicate by messageId should be skipped');
-    expect(msgRepo.count, 1, reason: 'Only one message should be saved');
+
+    expect(result, isNull, reason: 'Replay is still a duplicate delivery');
+
+    final saved = await msgRepo.getMessage(sharedMessageId);
+    expect(saved, isNotNull);
+    expect(saved!.quotedMessageId, 'msg-parent-1');
+  });
+
+  test('duplicate replay saves missing media attachments', () async {
+    final mediaRepo = InMemoryMediaAttachmentRepository();
+    const sharedMessageId = 'msg-media-repair';
+    final ts = DateTime.now().toUtc().toIso8601String();
+    final media = [
+      {
+        'id': 'blob-repair-1',
+        'mime': 'image/png',
+        'size': 2048,
+        'mediaType': 'image',
+        'downloadStatus': 'pending',
+        'createdAt': ts,
+      },
+    ];
+
+    await handleIncomingGroupMessage(
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      groupId: 'group-1',
+      senderId: 'peer-sender',
+      senderUsername: 'Sender',
+      keyEpoch: 0,
+      text: '',
+      timestamp: ts,
+      messageId: sharedMessageId,
+      mediaAttachmentRepo: mediaRepo,
+    );
+
+    expect(mediaRepo.count, 0);
+
+    final result = await handleIncomingGroupMessage(
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      groupId: 'group-1',
+      senderId: 'peer-sender',
+      senderUsername: 'Sender',
+      keyEpoch: 0,
+      text: '',
+      timestamp: ts,
+      messageId: sharedMessageId,
+      media: media,
+      mediaAttachmentRepo: mediaRepo,
+    );
+
+    expect(result, isNull, reason: 'Replay is still a duplicate delivery');
+    expect(mediaRepo.count, 1);
+
+    final attachments = await mediaRepo.getAttachmentsForMessage(
+      sharedMessageId,
+    );
+    expect(attachments, hasLength(1));
+    expect(attachments.first.id, 'blob-repair-1');
   });
 
   test('duplicate group inbox replay does not resave media', () async {
@@ -304,8 +421,7 @@ void main() {
       expect(mediaRepo.count, 1);
 
       // Verify attachment has the message's ID
-      final attachments =
-          await mediaRepo.getAttachmentsForMessage(result!.id);
+      final attachments = await mediaRepo.getAttachmentsForMessage(result!.id);
       expect(attachments.length, 1);
       expect(attachments.first.mime, 'image/jpeg');
     });
@@ -401,6 +517,5 @@ void main() {
       expect(result2, isNull); // duplicate
       expect(mediaRepo.count, 1); // only saved once
     });
-
   });
 }

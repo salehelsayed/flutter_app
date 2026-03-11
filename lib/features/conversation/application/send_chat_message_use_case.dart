@@ -236,9 +236,12 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   // Local WiFi path (bounded by interactiveLocalBudget)
   if (isLocalPeer) {
     raceFutures.add(
-      _tryLocalSend(p2pService, targetPeerId, jsonString, senderPeerId).timeout(
-        interactiveLocalBudget,
-        onTimeout: () => _RaceResult.failed('local_timeout'),
+      _tryLocalSend(
+        p2pService,
+        targetPeerId,
+        jsonString,
+        senderPeerId,
+        timeoutMs: interactiveLocalBudget.inMilliseconds,
       ),
     );
   }
@@ -433,12 +436,14 @@ Future<_RaceResult> _tryLocalSend(
   P2PService p2pService,
   String targetPeerId,
   String jsonString,
-  String senderPeerId,
-) async {
+  String senderPeerId, {
+  required int timeoutMs,
+}) async {
   final localSent = await p2pService.sendLocalMessage(
     targetPeerId,
     jsonString,
     senderPeerId,
+    timeoutMs: timeoutMs,
   );
   if (localSent) {
     return _RaceResult.succeeded(via: 'local', acknowledged: true);

@@ -149,6 +149,7 @@ class _FeedWiredState extends State<FeedWired> {
   String? _activeFocusPeerId;
   StreamSubscription<ContactRequestModel>? _requestSubscription;
   StreamSubscription<ConversationMessage>? _chatSubscription;
+  StreamSubscription<ConversationMessage>? _repoChangeSubscription;
   StreamSubscription<ContactModel>? _contactUpdateSubscription;
   StreamSubscription<ReactionChange>? _reactionSubscription;
   StreamSubscription<dynamic>? _groupMessageSubscription;
@@ -160,6 +161,27 @@ class _FeedWiredState extends State<FeedWired> {
       ImageQualityPreference.compressed;
 
   List<FeedItem> get _feedItems => _feedStore.items;
+  String _groupQuoteKey(String groupId) => 'group:$groupId';
+
+  void _restoreFeedComposerState({
+    required String draftKey,
+    required String? quotedMessageId,
+    required String draftText,
+    required String sessionReplyKey,
+  }) {
+    _sessionReplies.clear(sessionReplyKey);
+    if (draftText.isEmpty) {
+      _draftTexts.remove(draftKey);
+    } else {
+      _draftTexts[draftKey] = draftText;
+    }
+    if (quotedMessageId == null || quotedMessageId.isEmpty) {
+      _activeQuoteMessageIds.remove(draftKey);
+    } else {
+      _activeQuoteMessageIds[draftKey] = quotedMessageId;
+    }
+    if (mounted) setState(() {});
+  }
 
   void _markFeedLoaded() {
     if (_feedLoaded || !mounted) return;
@@ -181,6 +203,7 @@ class _FeedWiredState extends State<FeedWired> {
     _loadTotalUnreadCount();
     _startListeningForContactRequests();
     _startListeningForChatMessages();
+    _startListeningForOutgoingMessageChanges();
     _startListeningForContactUpdates();
     _startListeningForReactions();
     _startListeningForGroupReactions();
@@ -502,6 +525,7 @@ class _FeedWiredState extends State<FeedWired> {
       isUnread: message.isIncoming && message.readAt == null,
       isIncoming: message.isIncoming,
       status: message.isIncoming ? null : message.status,
+      quotedMessageId: message.quotedMessageId,
       senderPeerId: message.senderPeerId,
       senderUsername: message.senderUsername,
       media: message.media,
@@ -584,6 +608,7 @@ class _FeedWiredState extends State<FeedWired> {
       groupId: group.id,
       groupName: group.name,
       groupType: group.type,
+      myRole: group.myRole,
       messages: messages,
       unreadCount: messages.where((message) => message.isUnread).length,
       conversationState: state,
@@ -851,6 +876,42 @@ class _FeedWiredState extends State<FeedWired> {
     );
   }
 
+  void _startListeningForOutgoingMessageChanges() {
+    final messageRepo = widget.messageRepository;
+    if (messageRepo is! MessageRepositoryChangeSource) {
+      return;
+    }
+
+    final changeSource = messageRepo as MessageRepositoryChangeSource;
+    _repoChangeSubscription = changeSource.messageChanges
+        .where(
+          (message) =>
+              !message.isIncoming &&
+              _shouldRefreshFromRepositoryChange(message.status),
+        )
+        .listen(
+          (message) {
+            if (!mounted) return;
+            unawaited(
+              _applyIncomingContactMessageToFeed(
+                message,
+                refreshUnreadCount: false,
+              ),
+            );
+          },
+          onError: (error) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'FEED_REPO_CHANGE_STREAM_ERROR',
+              details: {'error': error.toString()},
+            );
+          },
+        );
+  }
+
+  bool _shouldRefreshFromRepositoryChange(String status) =>
+      status == 'sent' || status == 'delivered';
+
   void _onIncomingChatMessage(ConversationMessage message) {
     if (!mounted) return;
     _sessionReplies.clear(message.contactPeerId);
@@ -959,6 +1020,7 @@ class _FeedWiredState extends State<FeedWired> {
 
     // Optimistic: show session reply immediately before network send.
     final quotedMsgId = _activeQuoteMessageIds[contactPeerId];
+    final draftText = text;
     _draftTexts.remove(contactPeerId);
     _activeQuoteMessageIds.remove(contactPeerId);
     _sessionReplies.track(contactPeerId, SessionReply.justNow(text));
@@ -967,8 +1029,12 @@ class _FeedWiredState extends State<FeedWired> {
     try {
       final contact = await widget.contactRepository.getContact(contactPeerId);
       if (contact == null || !mounted) {
-        _sessionReplies.clear(contactPeerId);
-        if (mounted) setState(() {});
+        _restoreFeedComposerState(
+          draftKey: contactPeerId,
+          quotedMessageId: quotedMsgId,
+          draftText: draftText,
+          sessionReplyKey: contactPeerId,
+        );
         return;
       }
 
@@ -1005,9 +1071,12 @@ class _FeedWiredState extends State<FeedWired> {
         }
         await _loadTotalUnreadCount();
       } else {
-        // Revert optimistic session reply on failure.
-        _sessionReplies.clear(contactPeerId);
-        if (mounted) setState(() {});
+        _restoreFeedComposerState(
+          draftKey: contactPeerId,
+          quotedMessageId: quotedMsgId,
+          draftText: draftText,
+          sessionReplyKey: contactPeerId,
+        );
         final errorText = result == SendChatMessageResult.encryptionRequired
             ? 'Cannot send: contact does not support encryption.'
             : 'Message failed to send. Try again.';
@@ -1020,9 +1089,12 @@ class _FeedWiredState extends State<FeedWired> {
         );
       }
     } catch (e) {
-      // Revert optimistic session reply on error.
-      _sessionReplies.clear(contactPeerId);
-      if (mounted) setState(() {});
+      _restoreFeedComposerState(
+        draftKey: contactPeerId,
+        quotedMessageId: quotedMsgId,
+        draftText: draftText,
+        sessionReplyKey: contactPeerId,
+      );
       emitFlowEvent(
         layer: 'FL',
         event: 'FEED_FL_INLINE_SEND_ERROR',
@@ -1320,21 +1392,37 @@ class _FeedWiredState extends State<FeedWired> {
     });
   }
 
-  void _onGroupTap(GroupThreadFeedItem groupThread) {
+  Future<GroupModel> _resolveGroupForThread(
+    GroupThreadFeedItem groupThread,
+  ) async {
     final groupRepo = widget.groupRepository;
-    final msgRepo = widget.groupMessageRepository;
-    final listener = widget.groupMessageListener;
-    if (groupRepo == null || msgRepo == null || listener == null) return;
+    final persisted = await groupRepo?.getGroup(groupThread.groupId);
+    if (persisted != null) {
+      return persisted;
+    }
 
-    final group = GroupModel(
+    return GroupModel(
       id: groupThread.groupId,
       name: groupThread.groupName,
       type: groupThread.groupType,
       topicName: '/mknoon/group/${groupThread.groupId}',
       createdAt: DateTime.now(),
       createdBy: '',
-      myRole: GroupRole.member,
+      myRole: groupThread.myRole,
     );
+  }
+
+  Future<void> _openGroupConversation(
+    GroupThreadFeedItem groupThread, {
+    List<File>? initialAttachments,
+  }) async {
+    final groupRepo = widget.groupRepository;
+    final msgRepo = widget.groupMessageRepository;
+    final listener = widget.groupMessageListener;
+    if (groupRepo == null || msgRepo == null || listener == null) return;
+
+    final group = await _resolveGroupForThread(groupThread);
+    if (!mounted) return;
 
     Navigator.of(context)
         .push(
@@ -1356,6 +1444,7 @@ class _FeedWiredState extends State<FeedWired> {
               audioRecorderService: widget.audioRecorderService,
               groupConversationTracker: widget.groupConversationTracker,
               reactionRepo: widget.reactionRepository,
+              initialAttachments: initialAttachments,
             ),
           ),
         )
@@ -1365,7 +1454,12 @@ class _FeedWiredState extends State<FeedWired> {
         });
   }
 
+  void _onGroupTap(GroupThreadFeedItem groupThread) {
+    unawaited(_openGroupConversation(groupThread));
+  }
+
   void _onGroupAttach(GroupThreadFeedItem groupThread) {
+    if (!groupThread.canWrite) return;
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: Colors.grey[900],
@@ -1439,11 +1533,6 @@ class _FeedWiredState extends State<FeedWired> {
     GroupThreadFeedItem groupThread, {
     required _MediaSource source,
   }) async {
-    final groupRepo = widget.groupRepository;
-    final msgRepo = widget.groupMessageRepository;
-    final listener = widget.groupMessageListener;
-    if (groupRepo == null || msgRepo == null || listener == null) return;
-
     try {
       final picker = ImagePicker();
       List<File> files;
@@ -1481,44 +1570,7 @@ class _FeedWiredState extends State<FeedWired> {
 
       if (!mounted) return;
 
-      final group = GroupModel(
-        id: groupThread.groupId,
-        name: groupThread.groupName,
-        type: groupThread.groupType,
-        topicName: '/mknoon/group/${groupThread.groupId}',
-        createdAt: DateTime.now(),
-        createdBy: '',
-        myRole: GroupRole.member,
-      );
-
-      Navigator.of(context)
-          .push(
-            MaterialPageRoute(
-              builder: (_) => GroupConversationWired(
-                group: group,
-                groupRepo: groupRepo,
-                msgRepo: msgRepo,
-                groupMessageListener: listener,
-                bridge: widget.bridge,
-                identityRepo: widget.repository,
-                contactRepo: widget.contactRepository,
-                p2pService: widget.p2pService,
-                mediaAttachmentRepo: widget.mediaAttachmentRepository,
-                mediaFileManager: widget.mediaFileManager,
-                imageProcessor: widget.imageProcessor,
-                qualityPreference: _qualityPreference,
-                videoQualityPreference: _videoQualityPreference,
-                audioRecorderService: widget.audioRecorderService,
-                groupConversationTracker: widget.groupConversationTracker,
-                reactionRepo: widget.reactionRepository,
-                initialAttachments: files,
-              ),
-            ),
-          )
-          .then((_) {
-          _sessionReplies.clear('group:${groupThread.groupId}');
-          unawaited(_refreshGroupFeedItem(groupThread.groupId));
-        });
+      await _openGroupConversation(groupThread, initialAttachments: files);
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -1535,6 +1587,11 @@ class _FeedWiredState extends State<FeedWired> {
     if (identity == null || groupRepo == null || msgRepo == null) return;
 
     // Optimistic: show session reply immediately before network send.
+    final quoteKey = _groupQuoteKey(groupId);
+    final quotedMsgId = _activeQuoteMessageIds[quoteKey];
+    final draftText = text;
+    _draftTexts.remove(quoteKey);
+    _activeQuoteMessageIds.remove(quoteKey);
     _sessionReplies.track('group:$groupId', SessionReply.justNow(text));
     if (mounted) setState(() {});
 
@@ -1549,6 +1606,7 @@ class _FeedWiredState extends State<FeedWired> {
         senderPublicKey: identity.publicKey,
         senderPrivateKey: identity.privateKey,
         senderUsername: identity.username,
+        quotedMessageId: quotedMsgId,
       );
 
       if (!mounted) return;
@@ -1558,9 +1616,12 @@ class _FeedWiredState extends State<FeedWired> {
         await _refreshGroupFeedItem(groupId);
         await _loadTotalUnreadCount();
       } else {
-        // Revert optimistic session reply on failure.
-        _sessionReplies.clear('group:$groupId');
-        if (mounted) setState(() {});
+        _restoreFeedComposerState(
+          draftKey: quoteKey,
+          quotedMessageId: quotedMsgId,
+          draftText: draftText,
+          sessionReplyKey: 'group:$groupId',
+        );
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: const Text('Message failed to send. Try again.'),
@@ -1570,9 +1631,12 @@ class _FeedWiredState extends State<FeedWired> {
         );
       }
     } catch (e) {
-      // Revert optimistic session reply on error.
-      _sessionReplies.clear('group:$groupId');
-      if (mounted) setState(() {});
+      _restoreFeedComposerState(
+        draftKey: quoteKey,
+        quotedMessageId: quotedMsgId,
+        draftText: draftText,
+        sessionReplyKey: 'group:$groupId',
+      );
       emitFlowEvent(
         layer: 'FL',
         event: 'FEED_FL_GROUP_INLINE_SEND_ERROR',
@@ -1679,7 +1743,10 @@ class _FeedWiredState extends State<FeedWired> {
   }
 
   Future<void> _onGroupReactionSelected(
-      String groupId, String messageId, String emoji) async {
+    String groupId,
+    String messageId,
+    String emoji,
+  ) async {
     final identity = _identity;
     if (identity == null) return;
 
@@ -1912,9 +1979,13 @@ class _FeedWiredState extends State<FeedWired> {
       return;
     }
 
-    // Clear quote when collapsing (1:1 only)
-    if (_expandedCardId == cardId && cardItem is ThreadFeedItem) {
-      _activeQuoteMessageIds.remove(cardItem.contactPeerId);
+    // Clear active quote when collapsing the current card.
+    if (_expandedCardId == cardId) {
+      if (cardItem is ThreadFeedItem) {
+        _activeQuoteMessageIds.remove(cardItem.contactPeerId);
+      } else if (cardItem is GroupThreadFeedItem) {
+        _activeQuoteMessageIds.remove(_groupQuoteKey(cardItem.groupId));
+      }
     }
 
     // Clear session reply when expanding so expanded messages become visible
@@ -1961,6 +2032,7 @@ class _FeedWiredState extends State<FeedWired> {
   void dispose() {
     _requestSubscription?.cancel();
     _chatSubscription?.cancel();
+    _repoChangeSubscription?.cancel();
     _contactUpdateSubscription?.cancel();
     _reactionSubscription?.cancel();
     _groupReactionSubscription?.cancel();

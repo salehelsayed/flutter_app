@@ -11,6 +11,7 @@ void main() {
       String? senderUsername = 'Alice',
       String text = 'Hello group',
       String timestamp = '2026-01-15T12:00:00.000Z',
+      String? quotedMessageId,
       int keyGeneration = 1,
       String status = 'sent',
       int isIncoming = 1,
@@ -24,6 +25,7 @@ void main() {
         'sender_username': senderUsername,
         'text': text,
         'timestamp': timestamp,
+        'quoted_message_id': quotedMessageId,
         'key_generation': keyGeneration,
         'status': status,
         'is_incoming': isIncoming,
@@ -43,11 +45,20 @@ void main() {
       expect(result['sender_username'], 'Alice');
       expect(result['text'], 'Hello group');
       expect(result['timestamp'], '2026-01-15T12:00:00.000Z');
+      expect(result['quoted_message_id'], isNull);
       expect(result['key_generation'], 1);
       expect(result['status'], 'sent');
       expect(result['is_incoming'], 1);
       expect(result['read_at'], isNull);
       expect(result['created_at'], '2026-01-15T12:00:00.000Z');
+    });
+
+    test('round-trip preserves quoted_message_id', () {
+      final map = makeMap(quotedMessageId: 'msg-parent-1');
+      final model = GroupMessage.fromMap(map);
+
+      expect(model.quotedMessageId, 'msg-parent-1');
+      expect(model.toMap()['quoted_message_id'], 'msg-parent-1');
     });
 
     test('isIncoming bool correctly converts from int', () {
@@ -113,6 +124,21 @@ void main() {
       expect(withMedia.media.first.id, 'att-1');
       // Original unchanged
       expect(msg.media, isEmpty);
+    });
+
+    test('copyWith preserves and replaces quotedMessageId', () {
+      final msg = GroupMessage.fromMap(
+        makeMap(quotedMessageId: 'msg-parent-1'),
+      );
+
+      expect(msg.quotedMessageId, 'msg-parent-1');
+
+      final cleared = msg.copyWith(quotedMessageId: null);
+      final replaced = msg.copyWith(quotedMessageId: 'msg-parent-2');
+
+      expect(cleared.quotedMessageId, isNull);
+      expect(replaced.quotedMessageId, 'msg-parent-2');
+      expect(msg.quotedMessageId, 'msg-parent-1');
     });
   });
 }

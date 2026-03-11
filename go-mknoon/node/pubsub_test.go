@@ -505,6 +505,67 @@ func TestPublishGroupMessage_BuildsCorrectEnvelope(t *testing.T) {
 	}
 }
 
+func TestBuildGroupMessageExtra_PreservesQuotedMessageId(t *testing.T) {
+	opts := map[string]interface{}{
+		"quotedMessageId": "parent-msg-1",
+		"media": []map[string]interface{}{
+			{"id": "blob-1", "mime": "image/jpeg"},
+		},
+	}
+
+	extra := buildGroupMessageExtra("msg-1", opts)
+
+	if got := extra["messageId"]; got != "msg-1" {
+		t.Fatalf("messageId = %v, want %q", got, "msg-1")
+	}
+	if got := extra["quotedMessageId"]; got != "parent-msg-1" {
+		t.Fatalf("quotedMessageId = %v, want %q", got, "parent-msg-1")
+	}
+	if _, ok := extra["media"]; !ok {
+		t.Fatal("expected media in extra")
+	}
+	if _, ok := opts["messageId"]; ok {
+		t.Fatal("buildGroupMessageExtra should not mutate the input opts map")
+	}
+}
+
+func TestBuildGroupMessageReceivedEvent_IncludesQuotedMessageId(t *testing.T) {
+	env := &internal.GroupEnvelope{
+		SenderId: "peer-sender",
+		KeyEpoch: 4,
+	}
+	payload := &internal.GroupMessagePayload{
+		Text:      "Reply body",
+		Timestamp: "2026-03-11T10:00:00Z",
+		Username:  "Alice",
+		Extra: map[string]interface{}{
+			"messageId":       "msg-1",
+			"quotedMessageId": "parent-msg-1",
+			"media": []interface{}{
+				map[string]interface{}{"id": "blob-1", "mime": "image/jpeg"},
+			},
+		},
+	}
+
+	event := buildGroupMessageReceivedEvent("group-1", env, payload)
+
+	if got := event["groupId"]; got != "group-1" {
+		t.Fatalf("groupId = %v, want %q", got, "group-1")
+	}
+	if got := event["messageId"]; got != "msg-1" {
+		t.Fatalf("messageId = %v, want %q", got, "msg-1")
+	}
+	if got := event["quotedMessageId"]; got != "parent-msg-1" {
+		t.Fatalf("quotedMessageId = %v, want %q", got, "parent-msg-1")
+	}
+	if got := event["senderUsername"]; got != "Alice" {
+		t.Fatalf("senderUsername = %v, want %q", got, "Alice")
+	}
+	if _, ok := event["media"]; !ok {
+		t.Fatal("expected media in received event")
+	}
+}
+
 // --- Validator logic tests (pure functions, no libp2p host needed) ---
 
 // validateGroupEnvelope is a pure-function version of the validator logic,

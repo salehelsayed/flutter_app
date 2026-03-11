@@ -7,6 +7,7 @@ import 'package:flutter_app/features/feed/presentation/widgets/collapsed_mode_ca
 import 'package:flutter_app/features/feed/presentation/widgets/feed_card.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/open_mode_card_body.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/scrollable_message_preview.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bubble.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 
 void main() {
@@ -57,6 +58,11 @@ void main() {
     bool feedLoaded = true,
     String? expandedCardId,
     SessionReplyTracker? sessionReplies,
+    Map<String, String>? activeQuoteMessageIds,
+    void Function(String contactPeerId)? onClearQuote,
+    void Function(String groupId, String text)? onGroupInlineSend,
+    void Function(String contactPeerId, String messageId)? onQuoteReply,
+    void Function(GroupThreadFeedItem)? onGroupAttach,
   }) {
     return MaterialApp(
       home: Scaffold(
@@ -70,6 +76,11 @@ void main() {
           expandedCardId: expandedCardId,
           onToggleExpand: (_) {},
           sessionReplies: sessionReplies,
+          activeQuoteMessageIds: activeQuoteMessageIds,
+          onClearQuote: onClearQuote,
+          onGroupInlineSend: onGroupInlineSend,
+          onQuoteReply: onQuoteReply,
+          onGroupAttach: onGroupAttach,
         ),
       ),
     );
@@ -237,6 +248,94 @@ void main() {
     },
   );
 
+  testWidgets('maps active quote id to visible preview text and dismisses it', (
+    tester,
+  ) async {
+    setPhoneViewport(tester);
+
+    final item = ThreadFeedItem(
+      id: 'thread_bob',
+      timestamp: DateTime.utc(2026, 3, 1, 10),
+      contactPeerId: 'bob-peer',
+      contactUsername: 'Bob',
+      conversationState: ConversationState.read,
+      messages: [
+        ThreadMessage(
+          id: 'bob-msg-1',
+          text: 'First quote target',
+          time: '12:00',
+          timestamp: DateTime.utc(2026, 3, 1, 9, 55),
+          isIncoming: true,
+        ),
+      ],
+    );
+    String? clearedPeerId;
+
+    await tester.pumpWidget(
+      buildFeedScreen(
+        feedItems: [item],
+        activeQuoteMessageIds: const {'bob-peer': 'bob-msg-1'},
+        onClearQuote: (contactPeerId) => clearedPeerId = contactPeerId,
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('Replying to'), findsOneWidget);
+    expect(find.text('First quote target'), findsWidgets);
+
+    await tester.tap(find.byIcon(Icons.close_rounded));
+    await tester.pump();
+
+    expect(clearedPeerId, 'bob-peer');
+  });
+
+  testWidgets(
+    'maps active group quote id to visible preview text and dismisses it',
+    (tester) async {
+      setPhoneViewport(tester);
+
+      final item = GroupThreadFeedItem(
+        id: 'group_thread_g1',
+        timestamp: DateTime.utc(2026, 3, 1, 10),
+        groupId: 'g1',
+        groupName: 'Group One',
+        groupType: GroupType.chat,
+        messages: [
+          ThreadMessage(
+            id: 'gm-1',
+            text: 'Quote this group message',
+            time: '12:00',
+            timestamp: DateTime.utc(2026, 3, 1, 9, 55),
+            isIncoming: true,
+            isUnread: true,
+            senderUsername: 'Alice',
+            senderPeerId: 'peer-alice',
+          ),
+        ],
+        unreadCount: 1,
+        conversationState: ConversationState.unread,
+      );
+      String? clearedKey;
+
+      await tester.pumpWidget(
+        buildFeedScreen(
+          feedItems: [item],
+          activeQuoteMessageIds: const {'group:g1': 'gm-1'},
+          onClearQuote: (contactPeerId) => clearedKey = contactPeerId,
+        ),
+      );
+      await tester.pump();
+
+      expect(find.text('Replying to'), findsOneWidget);
+      expect(find.text('Quote this group message'), findsWidgets);
+
+      await tester.tap(find.byIcon(Icons.close_rounded));
+      await tester.pump();
+
+      expect(clearedKey, 'group:g1');
+    },
+  );
+
   testWidgets(
     'group card with session reply shows collapsed mode instead of open mode',
     (tester) async {
@@ -274,9 +373,7 @@ void main() {
       );
 
       // Without session reply — should be in open mode
-      await tester.pumpWidget(
-        buildFeedScreen(feedItems: [groupItem]),
-      );
+      await tester.pumpWidget(buildFeedScreen(feedItems: [groupItem]));
       await tester.pump();
       expect(find.byType(OpenModeCardBody), findsOneWidget);
 
@@ -290,6 +387,54 @@ void main() {
       await tester.pump();
       expect(find.byType(CollapsedModeCardBody), findsOneWidget);
       expect(find.byType(OpenModeCardBody), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'announcement member group card stays read-only even when callbacks are provided',
+    (tester) async {
+      setPhoneViewport(tester);
+
+      final groupItem = GroupThreadFeedItem(
+        id: 'group_thread_announce',
+        timestamp: DateTime.utc(2026, 3, 1, 10),
+        groupId: 'announce',
+        groupName: 'Announcements',
+        groupType: GroupType.announcement,
+        myRole: GroupRole.member,
+        messages: [
+          ThreadMessage(
+            id: 'gm-announce-1',
+            text: 'Admin update',
+            time: '12:00',
+            timestamp: DateTime.utc(2026, 3, 1, 9, 55),
+            isIncoming: true,
+            isUnread: true,
+            senderUsername: 'Admin',
+            senderPeerId: 'peer-admin',
+          ),
+        ],
+        unreadCount: 1,
+        conversationState: ConversationState.unread,
+      );
+
+      await tester.pumpWidget(
+        buildFeedScreen(
+          feedItems: [groupItem],
+          onGroupInlineSend: (_, __) {},
+          onQuoteReply: (_, __) {},
+          onGroupAttach: (_) {},
+        ),
+      );
+      await tester.pump();
+
+      expect(
+        find.text('Only admins can send messages in this group'),
+        findsOneWidget,
+      );
+      expect(find.byType(TextField), findsNothing);
+      expect(find.byIcon(Icons.add_rounded), findsNothing);
+      expect(find.byType(SwipeToQuoteBubble), findsNothing);
     },
   );
 }

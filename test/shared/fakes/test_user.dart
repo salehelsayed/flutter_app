@@ -164,6 +164,7 @@ class TestUser {
       senderUsername: username,
       bridge: bridge,
       recipientMlKemPublicKey: await _mlKemKeyFor(targetPeerId),
+      quotedMessageId: quotedMessageId,
     );
   }
 
@@ -182,6 +183,8 @@ class TestUser {
       senderUsername: username,
       bridge: bridge,
       recipientMlKemPublicKey: await _mlKemKeyFor(targetPeerId),
+      mediaAttachments: attachments,
+      mediaAttachmentRepo: mediaAttachmentRepo,
     );
   }
 
@@ -191,8 +194,10 @@ class TestUser {
     String messageId,
     String emoji,
   ) async {
-    assert(reactionRepo != null,
-        'TestUser must be created with withReactions: true');
+    assert(
+      reactionRepo != null,
+      'TestUser must be created with withReactions: true',
+    );
     return send_reaction_uc.sendReaction(
       p2pService: p2pService,
       bridge: bridge,
@@ -211,8 +216,10 @@ class TestUser {
     String messageId,
     String emoji,
   ) async {
-    assert(reactionRepo != null,
-        'TestUser must be created with withReactions: true');
+    assert(
+      reactionRepo != null,
+      'TestUser must be created with withReactions: true',
+    );
     return remove_reaction_uc.removeReaction(
       p2pService: p2pService,
       bridge: bridge,

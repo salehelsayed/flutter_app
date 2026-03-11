@@ -10,6 +10,20 @@ import 'package:flutter_app/features/conversation/domain/models/media_attachment
 
 const _uuid = Uuid();
 
+typedef UploadMediaFn =
+    Future<MediaAttachment?> Function({
+      required Bridge bridge,
+      required String localFilePath,
+      required String mime,
+      required String recipientPeerId,
+      MediaFileManager? mediaFileManager,
+      int? width,
+      int? height,
+      int? durationMs,
+      List<double>? waveform,
+      List<String>? allowedPeers,
+    });
+
 /// Uploads a local file to the relay and returns a MediaAttachment on success.
 ///
 /// Called BEFORE sendChatMessage — the send use case receives

@@ -21,8 +21,8 @@ class LocalP2PService {
   LocalP2PService({
     required LocalDiscoveryService discovery,
     required LocalWsServer wsServer,
-  })  : _discovery = discovery,
-        _wsServer = wsServer;
+  }) : _discovery = discovery,
+       _wsServer = wsServer;
 
   /// Start the local WebSocket server and begin mDNS advertising/discovery.
   Future<void> start(String peerId) async {
@@ -43,11 +43,7 @@ class LocalP2PService {
     await _discovery.stopAdvertising();
     await _wsServer.stop();
 
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'LOCAL_P2P_SERVICE_STOP',
-      details: {},
-    );
+    emitFlowEvent(layer: 'FL', event: 'LOCAL_P2P_SERVICE_STOP', details: {});
   }
 
   /// Restart mDNS advertising (e.g. after iOS returns from background).
@@ -88,8 +84,9 @@ class LocalP2PService {
   Future<bool> sendMessage(
     String peerId,
     String content,
-    String fromPeerId,
-  ) async {
+    String fromPeerId, {
+    int? timeoutMs,
+  }) async {
     final peer = _discovery.getLocalPeer(peerId);
     if (peer == null) return false;
 
@@ -99,6 +96,7 @@ class LocalP2PService {
       content,
       fromPeerId,
       peerId,
+      timeoutMs: timeoutMs,
     );
   }
 

@@ -22,7 +22,8 @@ class FakeP2PService implements P2PService {
   @override
   Future<bool> startNode(String privateKeyBase64, String peerId) async => true;
   @override
-  Future<bool> startNodeCore(String privateKeyBase64, String peerId) async => false;
+  Future<bool> startNodeCore(String privateKeyBase64, String peerId) async =>
+      false;
   @override
   Future<void> warmBackground() async {}
   @override
@@ -30,16 +31,25 @@ class FakeP2PService implements P2PService {
   @override
   Future<bool> sendMessage(String peerId, String message) async => true;
   @override
-  Future<SendMessageResult> sendMessageWithReply(String peerId, String message, {int? timeoutMs}) async =>
-      const SendMessageResult(sent: true);
+  Future<SendMessageResult> sendMessageWithReply(
+    String peerId,
+    String message, {
+    int? timeoutMs,
+  }) async => const SendMessageResult(sent: true);
   @override
-  Future<DiscoveredPeer?> discoverPeer(String peerId, {int? timeoutMs}) async => null;
+  Future<DiscoveredPeer?> discoverPeer(String peerId, {int? timeoutMs}) async =>
+      null;
   @override
-  Future<bool> dialPeer(String peerId, {List<String>? addresses, int? timeoutMs}) async => true;
+  Future<bool> dialPeer(
+    String peerId, {
+    List<String>? addresses,
+    int? timeoutMs,
+  }) async => true;
   @override
   Future<bool> storeInInbox(String toPeerId, String message) async => false;
   @override
-  Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) async => [];
+  Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) async =>
+      [];
   @override
   Future<bool> registerPushToken(String token, String platform) async => true;
   @override
@@ -54,7 +64,12 @@ class FakeP2PService implements P2PService {
   @override
   bool isLocalPeer(String peerId) => false;
   @override
-  Future<bool> sendLocalMessage(String peerId, String message, String fromPeerId) async => false;
+  Future<bool> sendLocalMessage(
+    String peerId,
+    String message,
+    String fromPeerId, {
+    int? timeoutMs,
+  }) async => false;
   @override
   Future<bool> sendLocalMedia({
     required String peerId,
@@ -91,72 +106,87 @@ void main() {
     test('routes profile_update messages to profileUpdateStream', () async {
       final received = router.profileUpdateStream.first;
 
-      p2pService.inject(ChatMessage(
-        from: 'peer-a',
-        to: 'peer-b',
-        content: jsonEncode({
-          'type': 'profile_update',
-          'version': '1',
-          'payload': {
-            'peerId': 'peer-a',
-            'avatarVersion': '2026-02-21T12:00:00.000Z',
-          },
-        }),
-        timestamp: DateTime.now().toUtc().toIso8601String(),
-        isIncoming: true,
-      ));
+      p2pService.inject(
+        ChatMessage(
+          from: 'peer-a',
+          to: 'peer-b',
+          content: jsonEncode({
+            'type': 'profile_update',
+            'version': '1',
+            'payload': {
+              'peerId': 'peer-a',
+              'avatarVersion': '2026-02-21T12:00:00.000Z',
+            },
+          }),
+          timestamp: DateTime.now().toUtc().toIso8601String(),
+          isIncoming: true,
+        ),
+      );
 
       final msg = await received.timeout(const Duration(seconds: 1));
       expect(msg.from, 'peer-a');
       expect(msg.content, contains('"type":"profile_update"'));
     });
 
-    test('does not route profile_update to chatMessageStream or contactRequestStream', () async {
-      final contactRequests = <ChatMessage>[];
-      final chatMessages = <ChatMessage>[];
-      final profileUpdates = <ChatMessage>[];
-      final unknowns = <ChatMessage>[];
+    test(
+      'does not route profile_update to chatMessageStream or contactRequestStream',
+      () async {
+        final contactRequests = <ChatMessage>[];
+        final chatMessages = <ChatMessage>[];
+        final profileUpdates = <ChatMessage>[];
+        final unknowns = <ChatMessage>[];
 
-      router.contactRequestStream.listen(contactRequests.add);
-      router.chatMessageStream.listen(chatMessages.add);
-      router.profileUpdateStream.listen(profileUpdates.add);
-      router.unknownMessageStream.listen(unknowns.add);
+        router.contactRequestStream.listen(contactRequests.add);
+        router.chatMessageStream.listen(chatMessages.add);
+        router.profileUpdateStream.listen(profileUpdates.add);
+        router.unknownMessageStream.listen(unknowns.add);
 
-      p2pService.inject(ChatMessage(
-        from: 'peer-a',
-        to: 'peer-b',
-        content: jsonEncode({
-          'type': 'profile_update',
-          'version': '1',
-          'payload': {'peerId': 'peer-a', 'avatarVersion': '2026-02-21T12:00:00.000Z'},
-        }),
-        timestamp: DateTime.now().toUtc().toIso8601String(),
-        isIncoming: true,
-      ));
+        p2pService.inject(
+          ChatMessage(
+            from: 'peer-a',
+            to: 'peer-b',
+            content: jsonEncode({
+              'type': 'profile_update',
+              'version': '1',
+              'payload': {
+                'peerId': 'peer-a',
+                'avatarVersion': '2026-02-21T12:00:00.000Z',
+              },
+            }),
+            timestamp: DateTime.now().toUtc().toIso8601String(),
+            isIncoming: true,
+          ),
+        );
 
-      await Future.delayed(const Duration(milliseconds: 50));
+        await Future.delayed(const Duration(milliseconds: 50));
 
-      expect(profileUpdates.length, 1);
-      expect(contactRequests, isEmpty);
-      expect(chatMessages, isEmpty);
-      expect(unknowns, isEmpty);
-    });
+        expect(profileUpdates.length, 1);
+        expect(contactRequests, isEmpty);
+        expect(chatMessages, isEmpty);
+        expect(unknowns, isEmpty);
+      },
+    );
 
     test('ignores outgoing profile_update messages', () async {
       final profileUpdates = <ChatMessage>[];
       router.profileUpdateStream.listen(profileUpdates.add);
 
-      p2pService.inject(ChatMessage(
-        from: 'peer-b',
-        to: 'peer-a',
-        content: jsonEncode({
-          'type': 'profile_update',
-          'version': '1',
-          'payload': {'peerId': 'peer-b', 'avatarVersion': '2026-02-21T12:00:00.000Z'},
-        }),
-        timestamp: DateTime.now().toUtc().toIso8601String(),
-        isIncoming: false,
-      ));
+      p2pService.inject(
+        ChatMessage(
+          from: 'peer-b',
+          to: 'peer-a',
+          content: jsonEncode({
+            'type': 'profile_update',
+            'version': '1',
+            'payload': {
+              'peerId': 'peer-b',
+              'avatarVersion': '2026-02-21T12:00:00.000Z',
+            },
+          }),
+          timestamp: DateTime.now().toUtc().toIso8601String(),
+          isIncoming: false,
+        ),
+      );
 
       await Future.delayed(const Duration(milliseconds: 50));
 

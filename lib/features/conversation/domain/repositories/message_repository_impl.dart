@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
 import '../models/conversation_message.dart';
@@ -7,12 +9,15 @@ import 'message_repository.dart';
 
 /// Implementation of MessageRepository using database helper functions.
 class MessageRepositoryImpl
-    implements MessageRepository, ConversationThreadSummaryRepository {
+    implements
+        MessageRepository,
+        ConversationThreadSummaryRepository,
+        MessageRepositoryChangeSource {
   final Future<void> Function(Map<String, Object?> row) dbInsertMessage;
   final Future<List<Map<String, Object?>>> Function(String contactPeerId)
-      dbLoadMessagesForContact;
+  dbLoadMessagesForContact;
   final Future<Map<String, Object?>?> Function(String contactPeerId)
-      dbLoadLatestMessageForContact;
+  dbLoadLatestMessageForContact;
   final Future<void> Function(String id, String status) dbUpdateMessageStatus;
   final Future<Map<String, Object?>?> Function(String id) dbLoadMessage;
   final Future<int> Function(String contactPeerId) dbCountMessagesForContact;
@@ -25,15 +30,19 @@ class MessageRepositoryImpl
     String contactPeerId, {
     int limit,
     String? beforeTimestamp,
-  }) dbLoadMessagesPage;
+  })
+  dbLoadMessagesPage;
   final Future<List<Map<String, Object?>>> Function()
-      dbLoadFailedOutgoingMessages;
+  dbLoadFailedOutgoingMessages;
   final Future<List<Map<String, Object?>>> Function({
     required DateTime olderThan,
     int limit,
-  }) dbLoadUnackedOutgoingMessages;
+  })
+  dbLoadUnackedOutgoingMessages;
   final Future<List<Map<String, Object?>>> Function(List<String> contactPeerIds)
-      dbLoadConversationThreadSummaries;
+  dbLoadConversationThreadSummaries;
+  final StreamController<ConversationMessage> _messageChangeController =
+      StreamController<ConversationMessage>.broadcast();
 
   MessageRepositoryImpl({
     required this.dbInsertMessage,
@@ -54,11 +63,17 @@ class MessageRepositoryImpl
   });
 
   @override
+  Stream<ConversationMessage> get messageChanges =>
+      _messageChangeController.stream;
+
+  @override
   Future<void> saveMessage(ConversationMessage message) async {
     emitFlowEvent(
       layer: 'FL',
       event: 'MESSAGE_REPO_SAVE_START',
-      details: {'id': message.id.length > 8 ? message.id.substring(0, 8) : message.id},
+      details: {
+        'id': message.id.length > 8 ? message.id.substring(0, 8) : message.id,
+      },
     );
 
     try {
@@ -67,8 +82,11 @@ class MessageRepositoryImpl
       emitFlowEvent(
         layer: 'FL',
         event: 'MESSAGE_REPO_SAVE_SUCCESS',
-        details: {'id': message.id.length > 8 ? message.id.substring(0, 8) : message.id},
+        details: {
+          'id': message.id.length > 8 ? message.id.substring(0, 8) : message.id,
+        },
       );
+      _messageChangeController.add(message);
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -99,6 +117,10 @@ class MessageRepositoryImpl
   @override
   Future<void> updateMessageStatus(String id, String status) async {
     await dbUpdateMessageStatus(id, status);
+    final row = await dbLoadMessage(id);
+    if (row != null) {
+      _messageChangeController.add(ConversationMessage.fromMap(row));
+    }
   }
 
   @override

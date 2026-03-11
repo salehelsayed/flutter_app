@@ -94,8 +94,11 @@ class _FakeContactRepository implements ContactRepository {
 }
 
 class _FakeP2PService implements P2PService {
-  SendMessageResult sendWithReplyResult =
-      const SendMessageResult(sent: true, acked: true, reply: 'ack');
+  SendMessageResult sendWithReplyResult = const SendMessageResult(
+    sent: true,
+    acked: true,
+    reply: 'ack',
+  );
   bool throwOnSend = false;
   bool storeResult = true;
   bool throwOnStore = false;
@@ -133,17 +136,27 @@ class _FakeP2PService implements P2PService {
   Future<bool> stopNode() async => true;
   @override
   Future<SendMessageResult> sendMessageWithReply(
-      String peerId, String message, {int? timeoutMs}) async {
+    String peerId,
+    String message, {
+    int? timeoutMs,
+  }) async {
     if (throwOnSend) throw Exception('send error');
     sentToPeers.add(peerId);
     return sendWithReplyResult;
   }
+
   @override
-  Future<DiscoveredPeer?> discoverPeer(String peerId, {int? timeoutMs}) async => null;
+  Future<DiscoveredPeer?> discoverPeer(String peerId, {int? timeoutMs}) async =>
+      null;
   @override
-  Future<bool> dialPeer(String peerId, {List<String>? addresses, int? timeoutMs}) async => true;
+  Future<bool> dialPeer(
+    String peerId, {
+    List<String>? addresses,
+    int? timeoutMs,
+  }) async => true;
   @override
-  Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) async => [];
+  Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) async =>
+      [];
   @override
   Future<bool> registerPushToken(String token, String platform) async => true;
   @override
@@ -158,7 +171,12 @@ class _FakeP2PService implements P2PService {
   @override
   bool isLocalPeer(String peerId) => false;
   @override
-  Future<bool> sendLocalMessage(String peerId, String message, String fromPeerId) async => false;
+  Future<bool> sendLocalMessage(
+    String peerId,
+    String message,
+    String fromPeerId, {
+    int? timeoutMs,
+  }) async => false;
   @override
   Future<bool> sendLocalMedia({
     required String peerId,
@@ -194,7 +212,8 @@ IdentityModel _makeIdentity({String peerId = '12D3KooWTestPeerId123456'}) {
     peerId: peerId,
     publicKey: 'pk_base64',
     privateKey: 'sk_base64',
-    mnemonic12: 'word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12',
+    mnemonic12:
+        'word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12',
     createdAt: '2024-01-01T00:00:00Z',
     updatedAt: '2024-01-01T00:00:00Z',
   );
@@ -259,21 +278,23 @@ void main() {
       expect(result, isTrue);
     });
 
-    test('uploadFailed: returns false when bridge upload returns ok=false',
-        () async {
-      bridge.nextResponse = {'ok': false, 'errorMessage': 'upload failed'};
+    test(
+      'uploadFailed: returns false when bridge upload returns ok=false',
+      () async {
+        bridge.nextResponse = {'ok': false, 'errorMessage': 'upload failed'};
 
-      final result = await uploadProfilePicture(
-        bridge: bridge,
-        identityRepo: identityRepo,
-        contactRepo: contactRepo,
-        p2pService: p2pService,
-        filePath: sourceFile.path,
-        mime: 'image/jpeg',
-      );
+        final result = await uploadProfilePicture(
+          bridge: bridge,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          p2pService: p2pService,
+          filePath: sourceFile.path,
+          mime: 'image/jpeg',
+        );
 
-      expect(result, isFalse);
-    });
+        expect(result, isFalse);
+      },
+    );
 
     test('noIdentity: returns false when loadIdentity returns null', () async {
       bridge.nextResponse = {'ok': true};
@@ -308,7 +329,9 @@ void main() {
 
     test('copies file to avatars directory ({peerId}.jpg)', () async {
       bridge.nextResponse = {'ok': true};
-      identityRepo.identityResult = _makeIdentity(peerId: '12D3KooWCopyTest1234567');
+      identityRepo.identityResult = _makeIdentity(
+        peerId: '12D3KooWCopyTest1234567',
+      );
 
       await uploadProfilePicture(
         bridge: bridge,
@@ -319,8 +342,9 @@ void main() {
         mime: 'image/jpeg',
       );
 
-      final copied =
-          File('${tempDir.path}/media/avatars/12D3KooWCopyTest1234567.jpg');
+      final copied = File(
+        '${tempDir.path}/media/avatars/12D3KooWCopyTest1234567.jpg',
+      );
       expect(await copied.exists(), isTrue);
     });
 
@@ -380,8 +404,10 @@ void main() {
         mime: 'image/jpeg',
       );
 
-      expect(p2pService.sentToPeers,
-          containsAll(['12D3KooWContact_A_1234', '12D3KooWContact_B_1234']));
+      expect(
+        p2pService.sentToPeers,
+        containsAll(['12D3KooWContact_A_1234', '12D3KooWContact_B_1234']),
+      );
     });
 
     test('fallback: stores in inbox when direct send is unacked', () async {

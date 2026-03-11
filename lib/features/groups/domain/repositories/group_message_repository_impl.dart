@@ -13,23 +13,28 @@ class GroupMessageRepositoryImpl
     String groupId, {
     int limit,
     int offset,
-  }) dbLoadGroupMessagesPage;
+  })
+  dbLoadGroupMessagesPage;
   final Future<Map<String, Object?>?> Function(String id) dbLoadGroupMessage;
   final Future<Map<String, Object?>?> Function(String groupId)
-      dbLoadLatestGroupMessage;
+  dbLoadLatestGroupMessage;
   final Future<void> Function(String id, String status)
-      dbUpdateGroupMessageStatus;
+  dbUpdateGroupMessageStatus;
   final Future<int> Function(String groupId) dbCountGroupMessages;
   final Future<int> Function(String groupId) dbCountUnreadGroupMessages;
   final Future<int> Function() dbCountTotalUnreadGroupMessages;
   final Future<int> Function(String groupId) dbMarkGroupMessagesAsRead;
   final Future<void> Function(String id) dbDeleteGroupMessage;
   final Future<bool> Function(
-          String groupId, String senderPeerId, String text, String timestamp)
-      dbExistsGroupMessageByContent;
+    String groupId,
+    String senderPeerId,
+    String text,
+    String timestamp,
+  )
+  dbExistsGroupMessageByContent;
   final Future<int> Function(String groupId) dbDeleteGroupMessagesForGroup;
   final Future<List<Map<String, Object?>>> Function(List<String> groupIds)
-      dbLoadGroupThreadSummaries;
+  dbLoadGroupThreadSummaries;
 
   GroupMessageRepositoryImpl({
     required this.dbInsertGroupMessage,
@@ -70,8 +75,7 @@ class GroupMessageRepositoryImpl
         layer: 'FL',
         event: 'GROUP_MSG_REPO_SAVE_SUCCESS',
         details: {
-          'id':
-              message.id.length > 8 ? message.id.substring(0, 8) : message.id,
+          'id': message.id.length > 8 ? message.id.substring(0, 8) : message.id,
         },
       );
     } catch (e) {
@@ -149,7 +153,11 @@ class GroupMessageRepositoryImpl
 
   @override
   Future<bool> existsByContent(
-      String groupId, String senderPeerId, String text, DateTime timestamp) async {
+    String groupId,
+    String senderPeerId,
+    String text,
+    DateTime timestamp,
+  ) async {
     return dbExistsGroupMessageByContent(
       groupId,
       senderPeerId,
@@ -187,6 +195,7 @@ class GroupMessageRepositoryImpl
                 'sender_username': row['latest_sender_username'],
                 'text': row['latest_text'],
                 'timestamp': row['latest_timestamp'],
+                'quoted_message_id': row['latest_quoted_message_id'],
                 'key_generation': row['latest_key_generation'],
                 'status': row['latest_status'],
                 'is_incoming': row['latest_is_incoming'],

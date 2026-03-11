@@ -283,9 +283,8 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
       await tester.pump(const Duration(milliseconds: 100));
 
-      // FriendRow renders the username and @username
+      // FriendRow renders the current display name
       expect(find.text('Bob'), findsWidgets);
-      expect(find.text('@Bob'), findsWidgets);
     });
 
     testWidgets('cold load batches friend thread summaries', (tester) async {

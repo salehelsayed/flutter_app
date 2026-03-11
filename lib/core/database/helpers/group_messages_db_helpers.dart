@@ -89,7 +89,9 @@ Future<List<Map<String, Object?>>> dbLoadAllGroupMessages(
   emitFlowEvent(
     layer: 'DB',
     event: 'GROUP_MESSAGES_DB_LOAD_ALL_START',
-    details: {'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId},
+    details: {
+      'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+    },
   );
 
   try {
@@ -125,7 +127,9 @@ Future<Map<String, Object?>?> dbLoadLatestGroupMessage(
   emitFlowEvent(
     layer: 'DB',
     event: 'GROUP_MESSAGES_DB_LOAD_LATEST_START',
-    details: {'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId},
+    details: {
+      'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+    },
   );
 
   try {
@@ -173,8 +177,7 @@ Future<List<Map<String, Object?>>> dbLoadGroupThreadSummaries(
   if (groupIds.isEmpty) return const [];
 
   final placeholders = List.filled(groupIds.length, '?').join(', ');
-  final results = await db.rawQuery(
-    '''
+  final results = await db.rawQuery('''
     SELECT
       summary.group_id,
       summary.unread_count,
@@ -184,6 +187,7 @@ Future<List<Map<String, Object?>>> dbLoadGroupThreadSummaries(
       latest.sender_username AS latest_sender_username,
       latest.text AS latest_text,
       latest.timestamp AS latest_timestamp,
+      latest.quoted_message_id AS latest_quoted_message_id,
       latest.key_generation AS latest_key_generation,
       latest.status AS latest_status,
       latest.is_incoming AS latest_is_incoming,
@@ -212,9 +216,7 @@ Future<List<Map<String, Object?>>> dbLoadGroupThreadSummaries(
                  inner_latest.id DESC
         LIMIT 1
       )
-    ''',
-    groupIds,
-  );
+    ''', groupIds);
   return results;
 }
 
@@ -286,7 +288,9 @@ Future<int> dbCountUnreadGroupMessages(Database db, String groupId) async {
   emitFlowEvent(
     layer: 'DB',
     event: 'GROUP_MESSAGES_DB_COUNT_UNREAD_START',
-    details: {'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId},
+    details: {
+      'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+    },
   );
 
   try {
@@ -349,7 +353,9 @@ Future<int> dbMarkGroupMessagesAsRead(Database db, String groupId) async {
   emitFlowEvent(
     layer: 'DB',
     event: 'GROUP_MESSAGES_DB_MARK_READ_START',
-    details: {'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId},
+    details: {
+      'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+    },
   );
 
   try {
@@ -386,8 +392,7 @@ Future<bool> dbExistsGroupMessageByContent(
 ) async {
   final result = await db.query(
     'group_messages',
-    where:
-        'group_id = ? AND sender_peer_id = ? AND text = ? AND timestamp = ?',
+    where: 'group_id = ? AND sender_peer_id = ? AND text = ? AND timestamp = ?',
     whereArgs: [groupId, senderPeerId, text, timestamp],
     limit: 1,
   );
@@ -437,11 +442,7 @@ Future<void> dbDeleteGroupMessage(Database db, String id) async {
   );
 
   try {
-    await db.delete(
-      'group_messages',
-      where: 'id = ?',
-      whereArgs: [id],
-    );
+    await db.delete('group_messages', where: 'id = ?', whereArgs: [id]);
 
     emitFlowEvent(
       layer: 'DB',

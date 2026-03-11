@@ -22,8 +22,11 @@ class FeedCard extends StatefulWidget {
   final bool shouldRequestFocus;
   final ValueChanged<String>? onDraftChanged;
   final ValueChanged<bool>? onInputFocusChanged;
+  final String? activeQuoteText;
   final ValueChanged<String>? onQuoteReply;
+  final VoidCallback? onClearQuote;
   final VoidCallback? onAttach;
+  final bool canWrite;
   final Map<String, List<MessageReaction>> reactions;
   final ValueListenable<List<MessageReaction>>? Function(String messageId)?
   reactionListenableForMessage;
@@ -43,8 +46,11 @@ class FeedCard extends StatefulWidget {
     this.shouldRequestFocus = false,
     this.onDraftChanged,
     this.onInputFocusChanged,
+    this.activeQuoteText,
     this.onQuoteReply,
+    this.onClearQuote,
     this.onAttach,
+    this.canWrite = true,
     this.reactions = const {},
     this.reactionListenableForMessage,
     this.ownPeerId,
@@ -162,10 +168,13 @@ class _FeedCardState extends State<FeedCard> with TickerProviderStateMixin {
       onQuoteReply: widget.onQuoteReply,
       onSend: (text) => widget.onInlineSend?.call(text),
       sendEnabled: enabled,
+      canWrite: widget.canWrite,
       initialText: widget.initialText,
       shouldRequestFocus: widget.shouldRequestFocus,
       onDraftChanged: widget.onDraftChanged,
       onInputFocusChanged: widget.onInputFocusChanged,
+      activeQuoteText: widget.activeQuoteText,
+      onClearQuote: widget.onClearQuote,
       onAttach: widget.onAttach,
       reactions: widget.reactions,
       reactionListenableForMessage: widget.reactionListenableForMessage,
@@ -187,10 +196,13 @@ class _FeedCardState extends State<FeedCard> with TickerProviderStateMixin {
       onQuoteReply: widget.onQuoteReply,
       onSend: (text) => widget.onInlineSend?.call(text),
       sendEnabled: enabled,
+      canWrite: widget.canWrite,
       initialText: widget.initialText,
       shouldRequestFocus: widget.shouldRequestFocus,
       onDraftChanged: widget.onDraftChanged,
       onInputFocusChanged: widget.onInputFocusChanged,
+      activeQuoteText: widget.activeQuoteText,
+      onClearQuote: widget.onClearQuote,
       onAttach: widget.onAttach,
       reactions: widget.reactions,
       reactionListenableForMessage: widget.reactionListenableForMessage,

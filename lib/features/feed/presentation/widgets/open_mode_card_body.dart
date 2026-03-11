@@ -4,6 +4,7 @@ import 'package:flutter_app/core/theme/feed_colors.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/inline_reply_input.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/quote_preview_bar.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/scrollable_message_preview.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/unread_count_badge.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
@@ -19,10 +20,13 @@ class OpenModeCardBody extends StatelessWidget {
   final ValueChanged<String>? onQuoteReply;
   final ValueChanged<String>? onSend;
   final bool sendEnabled;
+  final bool canWrite;
   final String initialText;
   final bool shouldRequestFocus;
   final ValueChanged<String>? onDraftChanged;
   final ValueChanged<bool>? onInputFocusChanged;
+  final String? activeQuoteText;
+  final VoidCallback? onClearQuote;
   final VoidCallback? onAttach;
   final Map<String, List<MessageReaction>> reactions;
   final ValueListenable<List<MessageReaction>>? Function(String messageId)?
@@ -39,10 +43,13 @@ class OpenModeCardBody extends StatelessWidget {
     this.onQuoteReply,
     this.onSend,
     this.sendEnabled = true,
+    this.canWrite = true,
     this.initialText = '',
     this.shouldRequestFocus = false,
     this.onDraftChanged,
     this.onInputFocusChanged,
+    this.activeQuoteText,
+    this.onClearQuote,
     this.onAttach,
     this.reactions = const {},
     this.reactionListenableForMessage,
@@ -63,12 +70,13 @@ class OpenModeCardBody extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
           child: ScrollableMessagePreview(
             messages: thread.unreadMessages,
+            quoteLookupMessages: thread.messages,
             contactPeerId: thread.displayId,
             contactUsername: thread.displayName,
             hasEarlierHistory: true,
             onViewEarlier: onViewEarlier,
             onCollapse: onCollapse,
-            onQuoteReply: onQuoteReply,
+            onQuoteReply: canWrite ? onQuoteReply : null,
             reactions: reactions,
             reactionListenableForMessage: reactionListenableForMessage,
             ownPeerId: ownPeerId,
@@ -138,6 +146,10 @@ class OpenModeCardBody extends StatelessWidget {
   }
 
   Widget _buildFooter() {
+    if (!canWrite) {
+      return _buildReadOnlyBanner();
+    }
+
     return Container(
       decoration: const BoxDecoration(
         border: Border(
@@ -145,15 +157,42 @@ class OpenModeCardBody extends StatelessWidget {
         ),
       ),
       padding: const EdgeInsets.fromLTRB(16, 10, 16, 14),
-      child: InlineReplyInput(
-        hintText: 'Reply...',
-        onSend: (text) => onSend?.call(text),
-        enabled: sendEnabled,
-        initialText: initialText,
-        shouldRequestFocus: shouldRequestFocus,
-        onDraftChanged: onDraftChanged,
-        onFocusChanged: onInputFocusChanged,
-        onAttach: onAttach,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (activeQuoteText != null)
+            QuotePreviewBar(text: activeQuoteText!, onDismiss: onClearQuote),
+          InlineReplyInput(
+            hintText: 'Reply...',
+            onSend: (text) => onSend?.call(text),
+            enabled: sendEnabled,
+            initialText: initialText,
+            shouldRequestFocus: shouldRequestFocus,
+            onDraftChanged: onDraftChanged,
+            onFocusChanged: onInputFocusChanged,
+            onAttach: onAttach,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildReadOnlyBanner() {
+    return Container(
+      width: double.infinity,
+      decoration: const BoxDecoration(
+        border: Border(
+          top: BorderSide(color: Color.fromRGBO(255, 255, 255, 0.08)),
+        ),
+      ),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
+      child: const Text(
+        'Only admins can send messages in this group',
+        textAlign: TextAlign.center,
+        style: TextStyle(
+          fontSize: 13,
+          color: Color.fromRGBO(255, 255, 255, 0.45),
+        ),
       ),
     );
   }

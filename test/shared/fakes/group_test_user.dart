@@ -35,8 +35,8 @@ class GroupTestUser {
     required this.groupMessageListener,
     required FakeGroupPubSubNetwork network,
     required StreamController<Map<String, dynamic>> incomingController,
-  })  : _network = network,
-        _incomingController = incomingController;
+  }) : _network = network,
+       _incomingController = incomingController;
 
   factory GroupTestUser.create({
     required String peerId,
@@ -97,14 +97,16 @@ class GroupTestUser {
     );
     await groupRepo.saveGroup(group);
 
-    await groupRepo.saveMember(GroupMember(
-      groupId: groupId,
-      peerId: peerId,
-      username: username,
-      role: MemberRole.admin,
-      publicKey: publicKey,
-      joinedAt: now,
-    ));
+    await groupRepo.saveMember(
+      GroupMember(
+        groupId: groupId,
+        peerId: peerId,
+        username: username,
+        role: MemberRole.admin,
+        publicKey: publicKey,
+        joinedAt: now,
+      ),
+    );
 
     _network.subscribe(groupId, peerId);
 
@@ -122,14 +124,16 @@ class GroupTestUser {
     final now = DateTime.now().toUtc();
 
     // Save member to admin's local repo
-    await groupRepo.saveMember(GroupMember(
-      groupId: groupId,
-      peerId: invitee.peerId,
-      username: invitee.username,
-      role: MemberRole.writer,
-      publicKey: invitee.publicKey,
-      joinedAt: now,
-    ));
+    await groupRepo.saveMember(
+      GroupMember(
+        groupId: groupId,
+        peerId: invitee.peerId,
+        username: invitee.username,
+        role: MemberRole.writer,
+        publicKey: invitee.publicKey,
+        joinedAt: now,
+      ),
+    );
 
     // Save group + members to invitee's repos (simulates invite acceptance)
     final group = await groupRepo.getGroup(groupId);
@@ -152,6 +156,7 @@ class GroupTestUser {
   Future<GroupMessage?> sendGroupMessage({
     required String groupId,
     required String text,
+    String? quotedMessageId,
   }) async {
     final now = DateTime.now().toUtc();
     final messageId = '${peerId}_${now.millisecondsSinceEpoch}';
@@ -163,6 +168,7 @@ class GroupTestUser {
       senderUsername: username,
       text: text,
       timestamp: now,
+      quotedMessageId: quotedMessageId,
       keyGeneration: 0,
       status: 'sent',
       isIncoming: false,
@@ -177,6 +183,7 @@ class GroupTestUser {
       'keyEpoch': 0,
       'text': text,
       'timestamp': now.toIso8601String(),
+      if (quotedMessageId != null) 'quotedMessageId': quotedMessageId,
     };
     await _network.publish(groupId, peerId, envelope);
 
@@ -202,12 +209,14 @@ class GroupTestUser {
       'groupType': group.type.toValue(),
       if (group.description != null) 'description': group.description,
       'members': remainingMembers
-          .map((m) => {
-                'peerId': m.peerId,
-                'username': m.username,
-                'role': m.role.toValue(),
-                'publicKey': m.publicKey,
-              })
+          .map(
+            (m) => {
+              'peerId': m.peerId,
+              'username': m.username,
+              'role': m.role.toValue(),
+              'publicKey': m.publicKey,
+            },
+          )
           .toList(),
       'createdBy': group.createdBy,
       'createdAt': group.createdAt.toUtc().toIso8601String(),
@@ -215,10 +224,7 @@ class GroupTestUser {
 
     final sysText = jsonEncode({
       '__sys': 'member_removed',
-      'member': {
-        'peerId': memberPeerId,
-        'username': memberUsername,
-      },
+      'member': {'peerId': memberPeerId, 'username': memberUsername},
       'groupConfig': groupConfig,
     });
 
@@ -248,12 +254,14 @@ class GroupTestUser {
       'groupType': group.type.toValue(),
       if (group.description != null) 'description': group.description,
       'members': allMembers
-          .map((m) => {
-                'peerId': m.peerId,
-                'username': m.username,
-                'role': m.role.toValue(),
-                'publicKey': m.publicKey,
-              })
+          .map(
+            (m) => {
+              'peerId': m.peerId,
+              'username': m.username,
+              'role': m.role.toValue(),
+              'publicKey': m.publicKey,
+            },
+          )
           .toList(),
       'createdBy': group.createdBy,
       'createdAt': group.createdAt.toUtc().toIso8601String(),

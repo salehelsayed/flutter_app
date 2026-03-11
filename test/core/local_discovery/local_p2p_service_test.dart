@@ -96,6 +96,34 @@ void main() {
       remoteServer.dispose();
     });
 
+    test('sendMessage forwards timeoutMs to the WS transport', () async {
+      final recordingWsServer = _RecordingLocalWsServer();
+      service = LocalP2PService(
+        discovery: fakeDiscovery,
+        wsServer: recordingWsServer,
+      );
+
+      fakeDiscovery.addPeer(
+        LocalPeer(
+          peerId: 'remotePeer',
+          host: 'localhost',
+          port: 4040,
+          discoveredAt: DateTime.now().toUtc(),
+        ),
+      );
+
+      final sent = await service.sendMessage(
+        'remotePeer',
+        '{"text":"hi"}',
+        'myPeerId',
+        timeoutMs: 321,
+      );
+
+      expect(sent, isTrue);
+      expect(recordingWsServer.lastTimeoutMs, 321);
+      expect(recordingWsServer.lastToPeerId, 'remotePeer');
+    });
+
     test('sendMedia returns false when peer not discovered', () async {
       await service.start('myPeerId');
 
@@ -218,4 +246,23 @@ void main() {
       await ws.close();
     });
   });
+}
+
+class _RecordingLocalWsServer extends LocalWsServer {
+  int? lastTimeoutMs;
+  String? lastToPeerId;
+
+  @override
+  Future<bool> sendMessage(
+    String host,
+    int port,
+    String content,
+    String fromPeerId,
+    String toPeerId, {
+    int? timeoutMs,
+  }) async {
+    lastTimeoutMs = timeoutMs;
+    lastToPeerId = toPeerId;
+    return true;
+  }
 }

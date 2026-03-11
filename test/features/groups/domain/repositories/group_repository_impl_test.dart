@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:flutter_app/core/database/migrations/017_groups_tables.dart';
 import 'package:flutter_app/core/database/migrations/018_group_messages_tables.dart';
+import 'package:flutter_app/core/database/migrations/026_group_quoted_message_id.dart';
 import 'package:flutter_app/core/database/helpers/groups_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_members_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_keys_db_helpers.dart';
@@ -23,6 +24,7 @@ void main() {
     db = await openDatabase(inMemoryDatabasePath, version: 1);
     await runGroupsTablesMigration(db);
     await runGroupMessagesTablesMigration(db);
+    await runGroupQuotedMessageIdMigration(db);
 
     repo = GroupRepositoryImpl(
       dbInsertGroup: (row) => dbInsertGroup(db, row),

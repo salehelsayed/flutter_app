@@ -39,6 +39,7 @@ import 'package:flutter_app/features/groups/presentation/screens/group_info_wire
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 import 'package:flutter_app/shared/widgets/media/full_screen_image_viewer.dart';
+import 'package:flutter_app/shared/widgets/media/media_preview_text.dart';
 
 /// A pending media attachment with optional video metadata.
 class _PendingMedia {
@@ -76,6 +77,7 @@ class GroupConversationWired extends StatefulWidget {
   final List<File>? initialAttachments;
   final String? initialText;
   final ReactionRepository? reactionRepo;
+  final UploadMediaFn uploadMediaFn;
 
   const GroupConversationWired({
     super.key,
@@ -98,6 +100,7 @@ class GroupConversationWired extends StatefulWidget {
     this.initialAttachments,
     this.initialText,
     this.reactionRepo,
+    this.uploadMediaFn = uploadMedia,
   });
 
   @override
@@ -117,6 +120,8 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
   StreamSubscription<GroupMessage>? _messageSubscription;
   final ScrollController _scrollController = ScrollController();
   bool _initialLoadDone = false;
+  String? _activeQuoteMessageId;
+  String _draftText = '';
 
   // Media state
   List<_PendingMedia> _pendingAttachments = [];
@@ -142,6 +147,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
   @override
   void initState() {
     super.initState();
+    _draftText = widget.initialText ?? '';
     widget.groupConversationTracker?.setActive('group:${widget.group.id}');
     if (widget.initialAttachments != null &&
         widget.initialAttachments!.isNotEmpty) {
@@ -163,6 +169,16 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
     _loadMessages();
     _startListening();
     _startListeningForReactions();
+  }
+
+  @override
+  void didUpdateWidget(covariant GroupConversationWired oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final oldCanWrite = _canWriteForGroup(oldWidget.group);
+    final newCanWrite = _canWriteForGroup(widget.group);
+    if (oldCanWrite && !newCanWrite && _activeQuoteMessageId != null) {
+      _activeQuoteMessageId = null;
+    }
   }
 
   Future<void> _loadIdentity() async {
@@ -273,6 +289,13 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
 
     final hasAttachments = _pendingAttachments.isNotEmpty;
     if (text.isEmpty && !hasAttachments) return;
+    final draftText = text;
+    final quotedMessageId = _activeQuoteMessageId;
+    final composerSnapshot = _GroupComposerSnapshot(
+      draftText: draftText,
+      quotedMessageId: quotedMessageId,
+      pendingAttachments: List<_PendingMedia>.from(_pendingAttachments),
+    );
 
     // 1. Generate IDs upfront for optimistic display
     final messageId = _uuid.v4();
@@ -303,10 +326,14 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
     }
 
     _pendingAttachments = [];
+    _draftText = '';
     _updateComposerState(
       pendingAttachments: const [],
       isUploading: mediaToUpload.isNotEmpty,
     );
+    if (_activeQuoteMessageId != null && mounted) {
+      setState(() => _activeQuoteMessageId = null);
+    }
 
     // 3. Create optimistic message and display immediately
     final optimisticMessage = GroupMessage(
@@ -316,6 +343,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
       senderUsername: _senderUsername,
       text: text,
       timestamp: now,
+      quotedMessageId: quotedMessageId,
       status: 'sending',
       isIncoming: false,
       createdAt: now,
@@ -341,94 +369,117 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
       );
     }
 
-    // 5. Upload attachments (if any)
-    List<MediaAttachment>? uploadedAttachments;
-    if (mediaToUpload.isNotEmpty) {
-      final members = await widget.groupRepo.getMembers(widget.group.id);
-      final allowedPeers = members.map((m) => m.peerId).toList();
+    try {
+      // 5. Upload attachments (if any)
+      List<MediaAttachment>? uploadedAttachments;
+      if (mediaToUpload.isNotEmpty) {
+        final members = await widget.groupRepo.getMembers(widget.group.id);
+        final allowedPeers = members.map((m) => m.peerId).toList();
 
-      uploadedAttachments = [];
-      for (final pending in mediaToUpload) {
-        final mime = _mimeFromPath(pending.file.path);
-        final result = await uploadMedia(
-          bridge: widget.bridge,
-          localFilePath: pending.file.path,
-          mime: mime,
-          recipientPeerId: widget.group.id,
-          mediaFileManager: widget.mediaFileManager,
-          width: pending.width,
-          height: pending.height,
-          durationMs: pending.durationMs,
-          allowedPeers: allowedPeers,
-        );
-        if (result != null) {
-          uploadedAttachments.add(result);
-        } else {
-          // Upload failed — restore attachments and mark failed
-          if (mounted) {
-            _pendingAttachments = mediaToUpload;
-            _updateComposerState(
-              pendingAttachments: _pendingAttachmentFiles(),
-              isUploading: false,
-            );
-            _updateLocalMessageStatus(messageId, 'failed');
-            await _persistMessageStatus(messageId, 'failed');
-          }
-          return;
-        }
-      }
-      if (mounted) {
-        _updateComposerState(isUploading: false);
-      }
-    }
-
-    // 6. Publish via use case (network operations)
-    final (result, message) = await sendGroupMessage(
-      bridge: widget.bridge,
-      groupRepo: widget.groupRepo,
-      msgRepo: widget.msgRepo,
-      groupId: widget.group.id,
-      text: text,
-      senderPeerId: _ownPeerId!,
-      senderPublicKey: _senderPublicKey,
-      senderPrivateKey: _senderPrivateKey,
-      senderUsername: _senderUsername,
-      messageId: messageId,
-      timestamp: now,
-      mediaAttachments: uploadedAttachments,
-      mediaAttachmentRepo: widget.mediaAttachmentRepo,
-    );
-
-    if (!mounted) return;
-
-    // 7. Update status based on result
-    if (result == SendGroupMessageResult.success && message != null) {
-      // Resolve uploaded media paths for display
-      List<MediaAttachment>? displayMedia;
-      if (uploadedAttachments != null && widget.mediaFileManager != null) {
-        displayMedia = [];
-        for (final a in uploadedAttachments) {
-          if (a.localPath != null) {
-            final absPath = await widget.mediaFileManager!.resolveStoredPath(
-              a.localPath!,
-            );
-            displayMedia.add(a.copyWith(localPath: absPath));
+        uploadedAttachments = [];
+        for (final pending in mediaToUpload) {
+          final mime = _mimeFromPath(pending.file.path);
+          final result = await widget.uploadMediaFn(
+            bridge: widget.bridge,
+            localFilePath: pending.file.path,
+            mime: mime,
+            recipientPeerId: widget.group.id,
+            mediaFileManager: widget.mediaFileManager,
+            width: pending.width,
+            height: pending.height,
+            durationMs: pending.durationMs,
+            allowedPeers: allowedPeers,
+          );
+          if (result != null) {
+            uploadedAttachments.add(result);
           } else {
-            displayMedia.add(a);
+            if (mounted) {
+              await _restoreComposerSnapshot(composerSnapshot, messageId);
+            }
+            return;
           }
         }
+        if (mounted) {
+          _updateComposerState(isUploading: false);
+        }
       }
-      if (mounted) {
-        setState(() {
-          _upsertMessage(message);
-          if (displayMedia != null && displayMedia.isNotEmpty) {
-            _updateMediaForMessage(messageId, displayMedia);
+
+      final (result, message) = await sendGroupMessage(
+        bridge: widget.bridge,
+        groupRepo: widget.groupRepo,
+        msgRepo: widget.msgRepo,
+        groupId: widget.group.id,
+        text: text,
+        senderPeerId: _ownPeerId!,
+        senderPublicKey: _senderPublicKey,
+        senderPrivateKey: _senderPrivateKey,
+        senderUsername: _senderUsername,
+        messageId: messageId,
+        timestamp: now,
+        quotedMessageId: quotedMessageId,
+        mediaAttachments: uploadedAttachments,
+        mediaAttachmentRepo: widget.mediaAttachmentRepo,
+      );
+
+      if (!mounted) return;
+
+      if (result == SendGroupMessageResult.success && message != null) {
+        // Resolve uploaded media paths for display
+        List<MediaAttachment>? displayMedia;
+        if (uploadedAttachments != null && widget.mediaFileManager != null) {
+          displayMedia = [];
+          for (final a in uploadedAttachments) {
+            if (a.localPath != null) {
+              final absPath = await widget.mediaFileManager!.resolveStoredPath(
+                a.localPath!,
+              );
+              displayMedia.add(a.copyWith(localPath: absPath));
+            } else {
+              displayMedia.add(a);
+            }
           }
-        });
+        }
+        if (mounted) {
+          setState(() {
+            _upsertMessage(message);
+            if (displayMedia != null && displayMedia.isNotEmpty) {
+              _updateMediaForMessage(messageId, displayMedia);
+            }
+          });
+        }
+      } else {
+        await _restoreComposerSnapshot(composerSnapshot, messageId);
       }
-    } else {
-      _updateLocalMessageStatus(messageId, 'failed');
-      await _persistMessageStatus(messageId, 'failed');
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_CONV_FL_SEND_ERROR',
+        details: {'error': e.toString()},
+      );
+      if (!mounted) return;
+      await _restoreComposerSnapshot(composerSnapshot, messageId);
+    }
+  }
+
+  void _onDraftChanged(String text) {
+    if (_draftText == text) return;
+    setState(() => _draftText = text);
+  }
+
+  Future<void> _restoreComposerSnapshot(
+    _GroupComposerSnapshot snapshot,
+    String messageId,
+  ) async {
+    _draftText = snapshot.draftText;
+    _pendingAttachments = List<_PendingMedia>.from(snapshot.pendingAttachments);
+    _updateComposerState(
+      pendingAttachments: _pendingAttachmentFiles(),
+      isUploading: false,
+    );
+    _updateLocalMessageStatus(messageId, 'failed');
+    await _persistMessageStatus(messageId, 'failed');
+    if (mounted) {
+      setState(() => _activeQuoteMessageId = snapshot.quotedMessageId);
     }
   }
 
@@ -860,11 +911,18 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
   Future<void> _onRecordStop() async {
     final recorder = widget.audioRecorderService;
     if (recorder == null || !_isRecording) return;
+    final quotedMessageId = _activeQuoteMessageId;
 
-    await _durationSub?.cancel();
+    final durationSub = _durationSub;
     _durationSub = null;
-    await _amplitudeSub?.cancel();
+    if (durationSub != null) {
+      unawaited(durationSub.cancel());
+    }
+    final amplitudeSub = _amplitudeSub;
     _amplitudeSub = null;
+    if (amplitudeSub != null) {
+      unawaited(amplitudeSub.cancel());
+    }
     _amplitudeBuffer.reset();
 
     final waveform = downsampleWaveform(_waveformSamples, 50);
@@ -881,6 +939,10 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
     }
 
     if (recording == null || _ownPeerId == null) return;
+
+    if (quotedMessageId != null && mounted) {
+      setState(() => _activeQuoteMessageId = null);
+    }
 
     // 1. Generate IDs upfront for optimistic display
     final messageId = _uuid.v4();
@@ -909,6 +971,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
       senderUsername: _senderUsername,
       text: '',
       timestamp: now,
+      quotedMessageId: quotedMessageId,
       status: 'sending',
       isIncoming: false,
       createdAt: now,
@@ -939,7 +1002,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
     final members = await widget.groupRepo.getMembers(widget.group.id);
     final allowedPeers = members.map((m) => m.peerId).toList();
 
-    final voiceAttachment = await uploadMedia(
+    final voiceAttachment = await widget.uploadMediaFn(
       bridge: widget.bridge,
       localFilePath: recording.filePath,
       mime: recording.mime,
@@ -954,8 +1017,9 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
       if (mounted) {
         _updateComposerState(isUploading: false);
         _updateLocalMessageStatus(messageId, 'failed');
-        await _persistMessageStatus(messageId, 'failed');
       }
+      await _persistMessageStatus(messageId, 'failed');
+      _restoreActiveQuoteIfNeeded(quotedMessageId);
       return;
     }
 
@@ -976,6 +1040,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
       senderUsername: _senderUsername,
       messageId: messageId,
       timestamp: now,
+      quotedMessageId: quotedMessageId,
       mediaAttachments: [voiceAttachment],
       mediaAttachmentRepo: widget.mediaAttachmentRepo,
     );
@@ -1009,7 +1074,53 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
     } else {
       _updateLocalMessageStatus(messageId, 'failed');
       await _persistMessageStatus(messageId, 'failed');
+      _restoreActiveQuoteIfNeeded(quotedMessageId);
     }
+  }
+
+  void _restoreActiveQuoteIfNeeded(String? quotedMessageId) {
+    if (!mounted || quotedMessageId == null || quotedMessageId.isEmpty) return;
+    setState(() => _activeQuoteMessageId = quotedMessageId);
+  }
+
+  void _onQuoteReply(String messageId) {
+    if (!_canWrite) return;
+    setState(() {
+      _activeQuoteMessageId = messageId;
+    });
+  }
+
+  void _onClearQuote() {
+    if (_activeQuoteMessageId == null) return;
+    setState(() {
+      _activeQuoteMessageId = null;
+    });
+  }
+
+  (String?, bool) _resolveActiveQuotePreview() {
+    final activeQuoteMessageId = _activeQuoteMessageId;
+    if (activeQuoteMessageId == null || activeQuoteMessageId.isEmpty) {
+      return (null, false);
+    }
+
+    final quoted = _messages.cast<GroupMessage?>().firstWhere(
+      (message) => message?.id == activeQuoteMessageId,
+      orElse: () => null,
+    );
+    if (quoted == null) {
+      return (null, true);
+    }
+
+    if (quoted.text.isNotEmpty) {
+      return (quoted.text, false);
+    }
+
+    final quotedMedia = _mediaMap[quoted.id] ?? quoted.media;
+    if (quotedMedia.isNotEmpty) {
+      return (mediaPreviewText(quotedMedia), false);
+    }
+
+    return (null, true);
   }
 
   Future<void> _onRecordCancel() async {
@@ -1091,13 +1202,15 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
     );
   }
 
-  bool get _canWrite {
-    if (widget.group.type == GroupType.announcement &&
-        widget.group.myRole != GroupRole.admin) {
+  bool _canWriteForGroup(GroupModel group) {
+    if (group.type == GroupType.announcement &&
+        group.myRole != GroupRole.admin) {
       return false;
     }
     return true;
   }
+
+  bool get _canWrite => _canWriteForGroup(widget.group);
 
   static String _mimeFromPath(String path) {
     final ext = path.split('.').last.toLowerCase();
@@ -1136,7 +1249,8 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
   }
 
   void _startListeningForReactions() {
-    _reactionSubscription = widget.groupMessageListener
+    _reactionSubscription = widget
+        .groupMessageListener
         .groupReactionChangeStream
         .listen(_onIncomingReactionChange);
   }
@@ -1248,6 +1362,19 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
 
   @override
   Widget build(BuildContext context) {
+    if (!_canWrite && _activeQuoteMessageId != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || _canWrite || _activeQuoteMessageId == null) return;
+        setState(() {
+          _activeQuoteMessageId = null;
+        });
+      });
+    }
+
+    final (activeQuoteText, isActiveQuoteUnavailable) = _canWrite
+        ? _resolveActiveQuotePreview()
+        : (null, false);
+
     return GroupConversationScreen(
       group: widget.group,
       messages: _messages,
@@ -1274,7 +1401,24 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
       onReactionSelected: widget.reactionRepo != null
           ? _onReactionSelected
           : null,
-      initialText: widget.initialText,
+      initialText: _draftText,
+      onDraftChanged: _onDraftChanged,
+      onQuoteReply: _canWrite ? _onQuoteReply : null,
+      activeQuoteText: activeQuoteText,
+      isActiveQuoteUnavailable: isActiveQuoteUnavailable,
+      onClearQuote: _canWrite ? _onClearQuote : null,
     );
   }
+}
+
+class _GroupComposerSnapshot {
+  final String draftText;
+  final String? quotedMessageId;
+  final List<_PendingMedia> pendingAttachments;
+
+  const _GroupComposerSnapshot({
+    required this.draftText,
+    required this.quotedMessageId,
+    required this.pendingAttachments,
+  });
 }

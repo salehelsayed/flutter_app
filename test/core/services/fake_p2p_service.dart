@@ -202,8 +202,9 @@ class FakeP2PService implements P2PService {
   Future<bool> sendLocalMessage(
     String peerId,
     String message,
-    String fromPeerId,
-  ) async {
+    String fromPeerId, {
+    int? timeoutMs,
+  }) async {
     return false;
   }
 

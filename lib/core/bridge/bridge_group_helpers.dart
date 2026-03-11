@@ -297,6 +297,7 @@ Future<Map<String, dynamic>> callGroupPublish(
   required String senderPrivateKey,
   String senderUsername = '',
   String? messageId,
+  String? quotedMessageId,
   List<Map<String, dynamic>>? media,
   Duration timeout = const Duration(seconds: 10),
 }) async {
@@ -319,6 +320,9 @@ Future<Map<String, dynamic>> callGroupPublish(
   };
   if (messageId != null && messageId.isNotEmpty) {
     payload['messageId'] = messageId;
+  }
+  if (quotedMessageId != null && quotedMessageId.isNotEmpty) {
+    payload['quotedMessageId'] = quotedMessageId;
   }
   if (media != null && media.isNotEmpty) {
     payload['media'] = media;
@@ -595,7 +599,27 @@ Future<void> callGroupInboxStore(
   };
 
   try {
-    await bridge.send(jsonEncode(request)).timeout(timeout);
+    final responseJson = await bridge
+        .send(jsonEncode(request))
+        .timeout(timeout);
+    final response = jsonDecode(responseJson) as Map<String, dynamic>;
+
+    if (response['ok'] != true) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_FL_BRIDGE_INBOX_STORE_RESPONSE',
+        details: {
+          'ok': false,
+          'errorCode': response['errorCode'],
+          'errorMessage': response['errorMessage'],
+        },
+      );
+      throw BridgeCommandException(
+        'group:inboxStore',
+        response['errorCode']?.toString() ?? 'UNKNOWN',
+        response['errorMessage']?.toString(),
+      );
+    }
 
     emitFlowEvent(
       layer: 'FL',
@@ -641,6 +665,23 @@ Future<List<Map<String, dynamic>>> callGroupInboxRetrieve(
         .timeout(timeout);
     final response = jsonDecode(responseJson) as Map<String, dynamic>;
 
+    if (response['ok'] != true) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_FL_BRIDGE_INBOX_RETRIEVE_RESPONSE',
+        details: {
+          'ok': false,
+          'errorCode': response['errorCode'],
+          'errorMessage': response['errorMessage'],
+        },
+      );
+      throw BridgeCommandException(
+        'group:inboxRetrieve',
+        response['errorCode']?.toString() ?? 'UNKNOWN',
+        response['errorMessage']?.toString(),
+      );
+    }
+
     final messages =
         (response['messages'] as List<dynamic>?)
             ?.map((m) => Map<String, dynamic>.from(m as Map))
@@ -660,7 +701,7 @@ Future<List<Map<String, dynamic>>> callGroupInboxRetrieve(
       event: 'GROUP_FL_BRIDGE_INBOX_RETRIEVE_RESPONSE',
       details: {'ok': false, 'errorCode': 'BRIDGE_TIMEOUT'},
     );
-    return [];
+    rethrow;
   }
 }
 
@@ -705,6 +746,23 @@ Future<GroupInboxPage> callGroupInboxRetrieveWithCursor(
         .timeout(timeout);
     final response = jsonDecode(responseJson) as Map<String, dynamic>;
 
+    if (response['ok'] != true) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_FL_BRIDGE_INBOX_RETRIEVE_CURSOR_RESPONSE',
+        details: {
+          'ok': false,
+          'errorCode': response['errorCode'],
+          'errorMessage': response['errorMessage'],
+        },
+      );
+      throw BridgeCommandException(
+        'group:inboxRetrieveCursor',
+        response['errorCode']?.toString() ?? 'UNKNOWN',
+        response['errorMessage']?.toString(),
+      );
+    }
+
     final messages =
         (response['messages'] as List<dynamic>?)
             ?.map((m) => Map<String, dynamic>.from(m as Map))
@@ -729,7 +787,7 @@ Future<GroupInboxPage> callGroupInboxRetrieveWithCursor(
       event: 'GROUP_FL_BRIDGE_INBOX_RETRIEVE_CURSOR_RESPONSE',
       details: {'ok': false, 'errorCode': 'BRIDGE_TIMEOUT'},
     );
-    return const GroupInboxPage(messages: [], cursor: '');
+    rethrow;
   }
 }
 

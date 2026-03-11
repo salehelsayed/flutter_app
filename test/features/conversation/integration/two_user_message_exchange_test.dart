@@ -179,8 +179,11 @@ class FakeP2PService implements P2PService {
   }
 
   @override
-  Future<bool> dialPeer(String peerId, {List<String>? addresses, int? timeoutMs}) async =>
-      network.hasPeer(peerId);
+  Future<bool> dialPeer(
+    String peerId, {
+    List<String>? addresses,
+    int? timeoutMs,
+  }) async => network.hasPeer(peerId);
 
   @override
   Future<bool> storeInInbox(String toPeerId, String message) async {
@@ -202,13 +205,19 @@ class FakeP2PService implements P2PService {
   bool isLocalPeer(String peerId) => false;
 
   @override
-  Future<bool> sendLocalMessage(String peerId, String message, String fromPeerId) async => false;
+  Future<bool> sendLocalMessage(
+    String peerId,
+    String message,
+    String fromPeerId, {
+    int? timeoutMs,
+  }) async => false;
 
   @override
   bool isConnectedToPeer(String peerId) => false;
 
   @override
-  Future<RelayProbeResult> probeRelay(String peerId) async => RelayProbeResult.error;
+  Future<RelayProbeResult> probeRelay(String peerId) async =>
+      RelayProbeResult.error;
 
   @override
   Future<bool> sendLocalMedia({
@@ -223,7 +232,8 @@ class FakeP2PService implements P2PService {
   }) async => false;
 
   @override
-  Future<bool> startNodeCore(String privateKeyBase64, String peerId) async => false;
+  Future<bool> startNodeCore(String privateKeyBase64, String peerId) async =>
+      false;
 
   @override
   Future<void> warmBackground() async {}
@@ -316,7 +326,9 @@ class InMemoryMessageRepository implements MessageRepository {
         .where((m) => m.contactPeerId == contactPeerId)
         .toList();
     if (beforeTimestamp != null) {
-      messages = messages.where((m) => m.timestamp.compareTo(beforeTimestamp) < 0).toList();
+      messages = messages
+          .where((m) => m.timestamp.compareTo(beforeTimestamp) < 0)
+          .toList();
     }
     messages.sort((a, b) => b.timestamp.compareTo(a.timestamp));
     final page = messages.take(limit).toList();
@@ -798,34 +810,44 @@ void main() {
       await contactSub.cancel();
     });
 
-    test('existing direct connection wins over rediscovery on repeated sends', () async {
-      // First send
-      final (r1, _) = await alice.sendMessage(bob.peerId, 'First');
-      expect(r1, SendChatMessageResult.success);
+    test(
+      'existing direct connection wins over rediscovery on repeated sends',
+      () async {
+        // First send
+        final (r1, _) = await alice.sendMessage(bob.peerId, 'First');
+        expect(r1, SendChatMessageResult.success);
 
-      // Second send should reuse the existing path, not re-discover
-      final (r2, _) = await alice.sendMessage(bob.peerId, 'Second');
-      expect(r2, SendChatMessageResult.success);
+        // Second send should reuse the existing path, not re-discover
+        final (r2, _) = await alice.sendMessage(bob.peerId, 'Second');
+        expect(r2, SendChatMessageResult.success);
 
-      // Both messages should be in Alice's conversation
-      final aliceConvo = await alice.messageRepo.getMessagesForContact(bob.peerId);
-      expect(aliceConvo.length, 2);
-      expect(aliceConvo[0].text, 'First');
-      expect(aliceConvo[1].text, 'Second');
-    });
+        // Both messages should be in Alice's conversation
+        final aliceConvo = await alice.messageRepo.getMessagesForContact(
+          bob.peerId,
+        );
+        expect(aliceConvo.length, 2);
+        expect(aliceConvo[0].text, 'First');
+        expect(aliceConvo[1].text, 'Second');
+      },
+    );
 
-    test('peer moving from relay to shared wifi uses the fastest available path next', () async {
-      // First send via relay
-      final (r1, _) = await alice.sendMessage(bob.peerId, 'Via relay');
-      expect(r1, SendChatMessageResult.success);
+    test(
+      'peer moving from relay to shared wifi uses the fastest available path next',
+      () async {
+        // First send via relay
+        final (r1, _) = await alice.sendMessage(bob.peerId, 'Via relay');
+        expect(r1, SendChatMessageResult.success);
 
-      // Send again — should still work regardless of transport
-      final (r2, _) = await alice.sendMessage(bob.peerId, 'Via fastest');
-      expect(r2, SendChatMessageResult.success);
+        // Send again — should still work regardless of transport
+        final (r2, _) = await alice.sendMessage(bob.peerId, 'Via fastest');
+        expect(r2, SendChatMessageResult.success);
 
-      final aliceConvo = await alice.messageRepo.getMessagesForContact(bob.peerId);
-      expect(aliceConvo.length, 2);
-    });
+        final aliceConvo = await alice.messageRepo.getMessagesForContact(
+          bob.peerId,
+        );
+        expect(aliceConvo.length, 2);
+      },
+    );
 
     test(
       'Messages to offline peer are marked delivered after inbox store',

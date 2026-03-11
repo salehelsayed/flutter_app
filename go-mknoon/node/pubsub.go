@@ -163,18 +163,11 @@ func (n *Node) PublishGroupMessage(groupId, privateKeyB64, senderPeerId, senderP
 	}
 	timestamp := time.Now().UTC().Format(time.RFC3339Nano)
 
-	// Inject messageId into extras so the receiver gets the same ID.
-	extra := opts
-	if extra == nil {
-		extra = make(map[string]interface{})
-	}
-	extra["messageId"] = msgId
-
 	payload := &internal.GroupMessagePayload{
 		Text:      text,
 		Timestamp: timestamp,
 		Username:  senderUsername,
-		Extra:     extra,
+		Extra:     buildGroupMessageExtra(msgId, opts),
 	}
 
 	payloadJSON, err := internal.MarshalGroupPayload(payload)
@@ -459,23 +452,50 @@ func (n *Node) handleGroupSubscription(ctx context.Context, groupId string, sub 
 			continue
 		}
 
-		// Emit message event to Flutter.
-		event := map[string]interface{}{
-			"groupId":        groupId,
-			"senderId":       env.SenderId,
-			"senderUsername": payload.Username,
-			"keyEpoch":       env.KeyEpoch,
-			"text":           payload.Text,
-			"timestamp":      payload.Timestamp,
-		}
-		if media, ok := payload.Extra["media"]; ok {
-			event["media"] = media
-		}
-		if msgId, ok := payload.Extra["messageId"]; ok {
-			event["messageId"] = msgId
-		}
-		n.emitEvent("group_message:received", event)
+		n.emitEvent(
+			"group_message:received",
+			buildGroupMessageReceivedEvent(groupId, env, payload),
+		)
 	}
+}
+
+func buildGroupMessageExtra(messageId string, opts map[string]interface{}) map[string]interface{} {
+	if len(opts) == 0 {
+		return map[string]interface{}{
+			"messageId": messageId,
+		}
+	}
+
+	extra := make(map[string]interface{}, len(opts)+1)
+	for key, value := range opts {
+		extra[key] = value
+	}
+	extra["messageId"] = messageId
+	return extra
+}
+
+func buildGroupMessageReceivedEvent(groupId string, env *internal.GroupEnvelope, payload *internal.GroupMessagePayload) map[string]interface{} {
+	event := map[string]interface{}{
+		"groupId":        groupId,
+		"senderId":       env.SenderId,
+		"senderUsername": payload.Username,
+		"keyEpoch":       env.KeyEpoch,
+		"text":           payload.Text,
+		"timestamp":      payload.Timestamp,
+	}
+	if payload.Extra == nil {
+		return event
+	}
+	if media, ok := payload.Extra["media"]; ok {
+		event["media"] = media
+	}
+	if msgId, ok := payload.Extra["messageId"]; ok {
+		event["messageId"] = msgId
+	}
+	if quotedMessageId, ok := payload.Extra["quotedMessageId"]; ok {
+		event["quotedMessageId"] = quotedMessageId
+	}
+	return event
 }
 
 // isAllowedWriter checks whether a peer is allowed to publish messages

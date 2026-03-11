@@ -5,9 +5,9 @@ import '../../features/p2p/domain/models/send_message_result.dart';
 
 /// Result of a relay probe attempt.
 enum RelayProbeResult {
-  connected,      // Relay circuit established — peer is online
-  noReservation,  // Peer has no reservation — definitely offline
-  error,          // Network/bridge error — unknown state, fall through to dial
+  connected, // Relay circuit established — peer is online
+  noReservation, // Peer has no reservation — definitely offline
+  error, // Network/bridge error — unknown state, fall through to dial
 }
 
 /// Abstract interface for P2P networking service.
@@ -66,7 +66,11 @@ abstract class P2PService {
   ///   - [timeoutMs]: Optional timeout in milliseconds for stream write + ACK read
   ///
   /// Returns a [SendMessageResult] with sent status and optional reply/ack.
-  Future<SendMessageResult> sendMessageWithReply(String peerId, String message, {int? timeoutMs});
+  Future<SendMessageResult> sendMessageWithReply(
+    String peerId,
+    String message, {
+    int? timeoutMs,
+  });
 
   /// Discover a peer by their ID via rendezvous.
   ///
@@ -85,7 +89,11 @@ abstract class P2PService {
   ///   - [timeoutMs]: Optional dial timeout in milliseconds
   ///
   /// Returns true if connection was established.
-  Future<bool> dialPeer(String peerId, {List<String>? addresses, int? timeoutMs});
+  Future<bool> dialPeer(
+    String peerId, {
+    List<String>? addresses,
+    int? timeoutMs,
+  });
 
   /// Store a message in the offline inbox for a peer.
   ///
@@ -137,7 +145,12 @@ abstract class P2PService {
 
   /// Try to send a message to a local peer via WiFi WebSocket.
   /// Returns true if the peer acknowledged receipt.
-  Future<bool> sendLocalMessage(String peerId, String message, String fromPeerId);
+  Future<bool> sendLocalMessage(
+    String peerId,
+    String message,
+    String fromPeerId, {
+    int? timeoutMs,
+  });
 
   /// Send a media file to a local peer via WiFi HTTP PUT.
   /// Returns true if uploaded and SHA-256 verified by receiver.

@@ -12,6 +12,9 @@ class GroupMessagePayload {
   /// The sender's display name at the time of sending.
   final String? username;
 
+  /// The message ID being quoted, if any.
+  final String? quotedMessageId;
+
   /// Optional extra metadata.
   final Map<String, dynamic>? extra;
 
@@ -19,6 +22,7 @@ class GroupMessagePayload {
     required this.text,
     required this.timestamp,
     this.username,
+    this.quotedMessageId,
     this.extra,
   });
 
@@ -28,6 +32,7 @@ class GroupMessagePayload {
       text: json['text'] as String,
       timestamp: json['timestamp'] as String,
       username: json['username'] as String?,
+      quotedMessageId: json['quotedMessageId'] as String?,
       extra: json['extra'] != null
           ? Map<String, dynamic>.from(json['extra'] as Map)
           : null,
@@ -40,6 +45,7 @@ class GroupMessagePayload {
       'text': text,
       'timestamp': timestamp,
       if (username != null) 'username': username,
+      if (quotedMessageId != null) 'quotedMessageId': quotedMessageId,
       if (extra != null) 'extra': extra,
     };
   }

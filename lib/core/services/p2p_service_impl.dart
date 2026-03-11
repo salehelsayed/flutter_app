@@ -1362,10 +1362,16 @@ class P2PServiceImpl implements P2PService {
   Future<bool> sendLocalMessage(
     String peerId,
     String message,
-    String fromPeerId,
-  ) async {
+    String fromPeerId, {
+    int? timeoutMs,
+  }) async {
     if (_localP2P == null) return false;
-    return _localP2P.sendMessage(peerId, message, fromPeerId);
+    return _localP2P.sendMessage(
+      peerId,
+      message,
+      fromPeerId,
+      timeoutMs: timeoutMs,
+    );
   }
 
   @override

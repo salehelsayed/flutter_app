@@ -18,156 +18,158 @@ void main() {
   Future<void> pump() => Future.delayed(const Duration(milliseconds: 50));
 
   group('Multi-user group messaging smoke tests', () {
-    test('3 users: basic fan-out — sender does not receive own message',
-        () async {
-      // -- arrange --
-      final alice = GroupTestUser.create(
-        peerId: 'alice-peer',
-        username: 'Alice',
-        network: network,
-      );
-      final bob = GroupTestUser.create(
-        peerId: 'bob-peer',
-        username: 'Bob',
-        network: network,
-      );
-      final charlie = GroupTestUser.create(
-        peerId: 'charlie-peer',
-        username: 'Charlie',
-        network: network,
-      );
-
-      const groupId = 'group-1';
-      await alice.createGroup(groupId: groupId, name: 'Test Group');
-      await alice.addMember(groupId: groupId, invitee: bob);
-      await alice.addMember(groupId: groupId, invitee: charlie);
-
-      // Start listeners AFTER groups and members are set up
-      alice.start();
-      bob.start();
-      charlie.start();
-
-      // -- act --
-      await alice.sendGroupMessage(groupId: groupId, text: 'Hello group!');
-      await pump();
-
-      // -- assert --
-      final bobMessages = await bob.loadGroupMessages(groupId);
-      expect(bobMessages, hasLength(1));
-      expect(bobMessages.first.text, 'Hello group!');
-      expect(bobMessages.first.isIncoming, isTrue);
-
-      final charlieMessages = await charlie.loadGroupMessages(groupId);
-      expect(charlieMessages, hasLength(1));
-      expect(charlieMessages.first.text, 'Hello group!');
-      expect(charlieMessages.first.isIncoming, isTrue);
-
-      // Alice has 0 incoming (the network does not fan back to sender)
-      final aliceIncoming = (await alice.loadGroupMessages(groupId))
-          .where((m) => m.isIncoming)
-          .toList();
-      expect(aliceIncoming, isEmpty);
-
-      // Alice has 1 total message (her own outgoing, saved locally by sendGroupMessage)
-      final aliceAll = await alice.loadGroupMessages(groupId);
-      expect(aliceAll, hasLength(1));
-      expect(aliceAll.first.isIncoming, isFalse);
-
-      // -- cleanup --
-      alice.dispose();
-      bob.dispose();
-      charlie.dispose();
-    });
-
-    test('4 users: round-robin messaging — all receive from all others',
-        () async {
-      // -- arrange --
-      final admin = GroupTestUser.create(
-        peerId: 'admin-peer',
-        username: 'Admin',
-        network: network,
-      );
-      final bob = GroupTestUser.create(
-        peerId: 'bob-peer',
-        username: 'Bob',
-        network: network,
-      );
-      final charlie = GroupTestUser.create(
-        peerId: 'charlie-peer',
-        username: 'Charlie',
-        network: network,
-      );
-      final diana = GroupTestUser.create(
-        peerId: 'diana-peer',
-        username: 'Diana',
-        network: network,
-      );
-
-      const groupId = 'group-roundrobin';
-      await admin.createGroup(groupId: groupId, name: 'Round Robin');
-      await admin.addMember(groupId: groupId, invitee: bob);
-      await admin.addMember(groupId: groupId, invitee: charlie);
-      await admin.addMember(groupId: groupId, invitee: diana);
-
-      admin.start();
-      bob.start();
-      charlie.start();
-      diana.start();
-
-      // -- act: each user sends one message --
-      await admin.sendGroupMessage(groupId: groupId, text: 'From Admin');
-      await pump();
-      await bob.sendGroupMessage(groupId: groupId, text: 'From Bob');
-      await pump();
-      await charlie.sendGroupMessage(groupId: groupId, text: 'From Charlie');
-      await pump();
-      await diana.sendGroupMessage(groupId: groupId, text: 'From Diana');
-      await pump();
-
-      // -- assert --
-      // Each user should have 4 total messages: 1 outgoing + 3 incoming
-      for (final user in [admin, bob, charlie, diana]) {
-        final messages = await user.loadGroupMessages(groupId);
-        expect(
-          messages,
-          hasLength(4),
-          reason: '${user.username} should have 4 total messages',
+    test(
+      '3 users: basic fan-out — sender does not receive own message',
+      () async {
+        // -- arrange --
+        final alice = GroupTestUser.create(
+          peerId: 'alice-peer',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'bob-peer',
+          username: 'Bob',
+          network: network,
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'charlie-peer',
+          username: 'Charlie',
+          network: network,
         );
 
-        final incoming = messages.where((m) => m.isIncoming).toList();
-        final outgoing = messages.where((m) => !m.isIncoming).toList();
-        expect(
-          incoming,
-          hasLength(3),
-          reason: '${user.username} should have 3 incoming messages',
+        const groupId = 'group-1';
+        await alice.createGroup(groupId: groupId, name: 'Test Group');
+        await alice.addMember(groupId: groupId, invitee: bob);
+        await alice.addMember(groupId: groupId, invitee: charlie);
+
+        // Start listeners AFTER groups and members are set up
+        alice.start();
+        bob.start();
+        charlie.start();
+
+        // -- act --
+        await alice.sendGroupMessage(groupId: groupId, text: 'Hello group!');
+        await pump();
+
+        // -- assert --
+        final bobMessages = await bob.loadGroupMessages(groupId);
+        expect(bobMessages, hasLength(1));
+        expect(bobMessages.first.text, 'Hello group!');
+        expect(bobMessages.first.isIncoming, isTrue);
+
+        final charlieMessages = await charlie.loadGroupMessages(groupId);
+        expect(charlieMessages, hasLength(1));
+        expect(charlieMessages.first.text, 'Hello group!');
+        expect(charlieMessages.first.isIncoming, isTrue);
+
+        // Alice has 0 incoming (the network does not fan back to sender)
+        final aliceIncoming = (await alice.loadGroupMessages(
+          groupId,
+        )).where((m) => m.isIncoming).toList();
+        expect(aliceIncoming, isEmpty);
+
+        // Alice has 1 total message (her own outgoing, saved locally by sendGroupMessage)
+        final aliceAll = await alice.loadGroupMessages(groupId);
+        expect(aliceAll, hasLength(1));
+        expect(aliceAll.first.isIncoming, isFalse);
+
+        // -- cleanup --
+        alice.dispose();
+        bob.dispose();
+        charlie.dispose();
+      },
+    );
+
+    test(
+      '4 users: round-robin messaging — all receive from all others',
+      () async {
+        // -- arrange --
+        final admin = GroupTestUser.create(
+          peerId: 'admin-peer',
+          username: 'Admin',
+          network: network,
         );
-        expect(
-          outgoing,
-          hasLength(1),
-          reason: '${user.username} should have 1 outgoing message',
+        final bob = GroupTestUser.create(
+          peerId: 'bob-peer',
+          username: 'Bob',
+          network: network,
         );
-      }
+        final charlie = GroupTestUser.create(
+          peerId: 'charlie-peer',
+          username: 'Charlie',
+          network: network,
+        );
+        final diana = GroupTestUser.create(
+          peerId: 'diana-peer',
+          username: 'Diana',
+          network: network,
+        );
 
-      // Verify specific texts for Admin's incoming
-      final adminIncoming = (await admin.loadGroupMessages(groupId))
-          .where((m) => m.isIncoming)
-          .map((m) => m.text)
-          .toSet();
-      expect(adminIncoming, {'From Bob', 'From Charlie', 'From Diana'});
+        const groupId = 'group-roundrobin';
+        await admin.createGroup(groupId: groupId, name: 'Round Robin');
+        await admin.addMember(groupId: groupId, invitee: bob);
+        await admin.addMember(groupId: groupId, invitee: charlie);
+        await admin.addMember(groupId: groupId, invitee: diana);
 
-      // Verify Bob's incoming
-      final bobIncoming = (await bob.loadGroupMessages(groupId))
-          .where((m) => m.isIncoming)
-          .map((m) => m.text)
-          .toSet();
-      expect(bobIncoming, {'From Admin', 'From Charlie', 'From Diana'});
+        admin.start();
+        bob.start();
+        charlie.start();
+        diana.start();
 
-      // -- cleanup --
-      admin.dispose();
-      bob.dispose();
-      charlie.dispose();
-      diana.dispose();
-    });
+        // -- act: each user sends one message --
+        await admin.sendGroupMessage(groupId: groupId, text: 'From Admin');
+        await pump();
+        await bob.sendGroupMessage(groupId: groupId, text: 'From Bob');
+        await pump();
+        await charlie.sendGroupMessage(groupId: groupId, text: 'From Charlie');
+        await pump();
+        await diana.sendGroupMessage(groupId: groupId, text: 'From Diana');
+        await pump();
+
+        // -- assert --
+        // Each user should have 4 total messages: 1 outgoing + 3 incoming
+        for (final user in [admin, bob, charlie, diana]) {
+          final messages = await user.loadGroupMessages(groupId);
+          expect(
+            messages,
+            hasLength(4),
+            reason: '${user.username} should have 4 total messages',
+          );
+
+          final incoming = messages.where((m) => m.isIncoming).toList();
+          final outgoing = messages.where((m) => !m.isIncoming).toList();
+          expect(
+            incoming,
+            hasLength(3),
+            reason: '${user.username} should have 3 incoming messages',
+          );
+          expect(
+            outgoing,
+            hasLength(1),
+            reason: '${user.username} should have 1 outgoing message',
+          );
+        }
+
+        // Verify specific texts for Admin's incoming
+        final adminIncoming = (await admin.loadGroupMessages(
+          groupId,
+        )).where((m) => m.isIncoming).map((m) => m.text).toSet();
+        expect(adminIncoming, {'From Bob', 'From Charlie', 'From Diana'});
+
+        // Verify Bob's incoming
+        final bobIncoming = (await bob.loadGroupMessages(
+          groupId,
+        )).where((m) => m.isIncoming).map((m) => m.text).toSet();
+        expect(bobIncoming, {'From Admin', 'From Charlie', 'From Diana'});
+
+        // -- cleanup --
+        admin.dispose();
+        bob.dispose();
+        charlie.dispose();
+        diana.dispose();
+      },
+    );
 
     test('message to unknown group is ignored', () async {
       // -- arrange --
@@ -203,8 +205,11 @@ void main() {
       // Bob's listener received the envelope, but handleIncomingGroupMessage
       // returned null because Bob's groupRepo has no matching group.
       final bobMessages = await bob.loadGroupMessages(groupId);
-      expect(bobMessages, isEmpty,
-          reason: 'Bob should ignore messages to groups he does not know');
+      expect(
+        bobMessages,
+        isEmpty,
+        reason: 'Bob should ignore messages to groups he does not know',
+      );
 
       // Alice still has her outgoing
       final aliceMessages = await alice.loadGroupMessages(groupId);
@@ -243,31 +248,31 @@ void main() {
       charlie.start();
 
       // -- act: Alice sends BEFORE Charlie joins --
-      await alice.sendGroupMessage(
-          groupId: groupId, text: 'Before Charlie');
+      await alice.sendGroupMessage(groupId: groupId, text: 'Before Charlie');
       await pump();
 
       // Now Alice adds Charlie
       await alice.addMember(groupId: groupId, invitee: charlie);
 
       // Alice sends AFTER Charlie joined
-      await alice.sendGroupMessage(
-          groupId: groupId, text: 'After Charlie');
+      await alice.sendGroupMessage(groupId: groupId, text: 'After Charlie');
       await pump();
 
       // -- assert --
       // Bob was a member the whole time — should have both incoming messages
-      final bobMessages = (await bob.loadGroupMessages(groupId))
-          .where((m) => m.isIncoming)
-          .toList();
+      final bobMessages = (await bob.loadGroupMessages(
+        groupId,
+      )).where((m) => m.isIncoming).toList();
       expect(bobMessages, hasLength(2));
-      expect(bobMessages.map((m) => m.text).toList(),
-          ['Before Charlie', 'After Charlie']);
+      expect(bobMessages.map((m) => m.text).toList(), [
+        'Before Charlie',
+        'After Charlie',
+      ]);
 
       // Charlie joined late — should only have the message sent after joining
-      final charlieMessages = (await charlie.loadGroupMessages(groupId))
-          .where((m) => m.isIncoming)
-          .toList();
+      final charlieMessages = (await charlie.loadGroupMessages(
+        groupId,
+      )).where((m) => m.isIncoming).toList();
       expect(charlieMessages, hasLength(1));
       expect(charlieMessages.first.text, 'After Charlie');
 
@@ -324,6 +329,56 @@ void main() {
       bob.dispose();
     });
 
+    test('quoted reply propagates to all recipients', () async {
+      final alice = GroupTestUser.create(
+        peerId: 'alice-peer',
+        username: 'Alice',
+        network: network,
+      );
+      final bob = GroupTestUser.create(
+        peerId: 'bob-peer',
+        username: 'Bob',
+        network: network,
+      );
+
+      const groupId = 'group-quote';
+      await alice.createGroup(groupId: groupId, name: 'Quote Group');
+      await alice.addMember(groupId: groupId, invitee: bob);
+
+      alice.start();
+      bob.start();
+
+      final parent = await alice.sendGroupMessage(
+        groupId: groupId,
+        text: 'Original group message',
+      );
+      await pump();
+
+      await bob.sendGroupMessage(
+        groupId: groupId,
+        text: 'Quoted reply',
+        quotedMessageId: parent!.id,
+      );
+      await pump();
+
+      final aliceMessages = await alice.loadGroupMessages(groupId);
+      final aliceReply = aliceMessages.firstWhere(
+        (message) => message.text == 'Quoted reply',
+      );
+      expect(aliceReply.isIncoming, isTrue);
+      expect(aliceReply.quotedMessageId, parent.id);
+
+      final bobMessages = await bob.loadGroupMessages(groupId);
+      final bobReply = bobMessages.firstWhere(
+        (message) => message.text == 'Quoted reply',
+      );
+      expect(bobReply.isIncoming, isFalse);
+      expect(bobReply.quotedMessageId, parent.id);
+
+      alice.dispose();
+      bob.dispose();
+    });
+
     test('message is received after app restart with rejoin', () async {
       // -- arrange --
       final alice = GroupTestUser.create(
@@ -342,24 +397,25 @@ void main() {
       await alice.addMember(groupId: groupId, invitee: bob);
 
       // Store a key for Bob (simulates invite acceptance)
-      await bob.groupRepo.saveKey(GroupKeyInfo(
-        groupId: groupId,
-        keyGeneration: 1,
-        encryptedKey: 'test-key',
-        createdAt: DateTime.now().toUtc(),
-      ));
+      await bob.groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: groupId,
+          keyGeneration: 1,
+          encryptedKey: 'test-key',
+          createdAt: DateTime.now().toUtc(),
+        ),
+      );
 
       alice.start();
       bob.start();
 
       // Pre-restart: send and verify
-      await alice.sendGroupMessage(
-          groupId: groupId, text: 'Before restart');
+      await alice.sendGroupMessage(groupId: groupId, text: 'Before restart');
       await pump();
       expect(
-        (await bob.loadGroupMessages(groupId))
-            .where((m) => m.isIncoming)
-            .length,
+        (await bob.loadGroupMessages(
+          groupId,
+        )).where((m) => m.isIncoming).length,
         1,
       );
 
@@ -367,10 +423,7 @@ void main() {
       network.unsubscribe(groupId, bob.peerId);
 
       // -- act: rejoin (calls bridge, re-subscribe on fake network) --
-      await rejoinGroupTopics(
-        bridge: bob.bridge,
-        groupRepo: bob.groupRepo,
-      );
+      await rejoinGroupTopics(bridge: bob.bridge, groupRepo: bob.groupRepo);
 
       // Verify bridge got the correct join command
       final joinCmds = bob.bridge.sentMessages
@@ -387,26 +440,28 @@ void main() {
       final config = payload['groupConfig'] as Map<String, dynamic>;
       final members = config['members'] as List<dynamic>;
       for (final m in members) {
-        expect((m as Map)['publicKey'], isNotNull,
-            reason: 'publicKey required for Go validator');
+        expect(
+          (m as Map)['publicKey'],
+          isNotNull,
+          reason: 'publicKey required for Go validator',
+        );
       }
 
       // Re-subscribe on fake network (Go does this in production)
       network.subscribe(groupId, bob.peerId);
 
       // -- assert: Bob can receive messages after restart --
-      await alice.sendGroupMessage(
-          groupId: groupId, text: 'After restart');
+      await alice.sendGroupMessage(groupId: groupId, text: 'After restart');
       await pump();
 
-      final bobIncoming = (await bob.loadGroupMessages(groupId))
-          .where((m) => m.isIncoming)
-          .toList();
+      final bobIncoming = (await bob.loadGroupMessages(
+        groupId,
+      )).where((m) => m.isIncoming).toList();
       expect(bobIncoming, hasLength(2));
-      expect(
-        bobIncoming.map((m) => m.text).toSet(),
-        {'Before restart', 'After restart'},
-      );
+      expect(bobIncoming.map((m) => m.text).toSet(), {
+        'Before restart',
+        'After restart',
+      });
 
       // -- cleanup --
       alice.dispose();

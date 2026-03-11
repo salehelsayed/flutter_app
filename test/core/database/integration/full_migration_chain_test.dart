@@ -1,4 +1,4 @@
-/// Integration test: Full DB migration chain (v1 -> v16).
+/// Integration test: Full DB migration chain (v1 -> v26).
 ///
 /// Verifies:
 /// 1a. Fresh install creates all tables with correct schema
@@ -24,6 +24,16 @@ import 'package:flutter_app/core/database/migrations/013_waveform_column.dart';
 import 'package:flutter_app/core/database/migrations/014_wire_envelope_column.dart';
 import 'package:flutter_app/core/database/migrations/015_message_status_cleanup.dart';
 import 'package:flutter_app/core/database/migrations/016_message_reactions.dart';
+import 'package:flutter_app/core/database/migrations/017_groups_tables.dart';
+import 'package:flutter_app/core/database/migrations/018_group_messages_tables.dart';
+import 'package:flutter_app/core/database/migrations/019_introductions_table.dart';
+import 'package:flutter_app/core/database/migrations/020_intro_banner_columns.dart';
+import 'package:flutter_app/core/database/migrations/021_contact_introduced_by.dart';
+import 'package:flutter_app/core/database/migrations/022_introduction_keys.dart';
+import 'package:flutter_app/core/database/migrations/023_introduction_recipient_keys.dart';
+import 'package:flutter_app/core/database/migrations/024_contact_introduced_by_peer_id.dart';
+import 'package:flutter_app/core/database/migrations/025_introduction_already_connected_status.dart';
+import 'package:flutter_app/core/database/migrations/026_group_quoted_message_id.dart';
 import 'package:flutter_app/core/secure_storage/migrate_secrets_to_secure_storage.dart';
 
 import '../../../core/secure_storage/fake_secure_key_store.dart';
@@ -54,42 +64,62 @@ void main() {
     return rows.map((r) => r['name'] as String).toList();
   }
 
+  Future<void> runFreshInstallMigrations(Database db) async {
+    await runIdentityTableMigration(db);
+    await runMessagesTableMigration(db);
+    await runMlKemKeysMigration(db);
+    await runSecretNullChecksMigration(db);
+    await runReadAtColumnMigration(db);
+    await runArchiveColumnsMigration(db);
+    await runBlockColumnsMigration(db);
+    await runQuotedMessageIdMigration(db);
+    await runMediaAttachmentsMigration(db);
+    await runAvatarVersionMigration(db);
+    await runTransportColumnMigration(db);
+    await runWaveformColumnMigration(db);
+    await runWireEnvelopeMigration(db);
+    await runMessageStatusCleanupMigration(db);
+    await runMessageReactionsMigration(db);
+    await runGroupsTablesMigration(db);
+    await runGroupMessagesTablesMigration(db);
+    await runIntroductionsTableMigration(db);
+    await runIntroBannerColumnsMigration(db);
+    await runContactIntroducedByMigration(db);
+    await runIntroductionKeysMigration(db);
+    await runIntroductionRecipientKeysMigration(db);
+    await runContactIntroducedByPeerIdMigration(db);
+    await runIntroductionAlreadyConnectedMigration(db);
+    await runGroupQuotedMessageIdMigration(db);
+  }
+
   group('Full DB migration chain', () {
-    test('1a. Fresh install path creates all tables with correct schema',
-        () async {
+    test('1a. Fresh install path creates all tables with correct schema', () async {
       db = await databaseFactoryFfi.openDatabase(
         inMemoryDatabasePath,
         options: OpenDatabaseOptions(version: 1),
       );
 
       // Run the full fresh-install migration chain (matching main.dart onCreate)
-      await runIdentityTableMigration(db);
-      await runMessagesTableMigration(db);
-      await runMlKemKeysMigration(db);
-      // Skip 004 on fresh install — 005 already has nullable + CHECK
-      await runSecretNullChecksMigration(db);
-      await runReadAtColumnMigration(db);
-      await runArchiveColumnsMigration(db);
-      await runBlockColumnsMigration(db);
-      await runQuotedMessageIdMigration(db);
-      await runMediaAttachmentsMigration(db);
-      await runAvatarVersionMigration(db);
-      await runTransportColumnMigration(db);
-      await runWaveformColumnMigration(db);
-      await runWireEnvelopeMigration(db);
-      await runMessageStatusCleanupMigration(db);
-      await runMessageReactionsMigration(db);
+      await runFreshInstallMigrations(db);
 
-      // Verify: 6 tables exist
+      // Verify: current production tables exist
       final tables = await getTableNames(db);
-      expect(tables, containsAll([
-        'identity',
-        'contacts',
-        'contact_requests',
-        'messages',
-        'media_attachments',
-        'message_reactions',
-      ]));
+      expect(
+        tables,
+        containsAll([
+          'identity',
+          'contacts',
+          'contact_requests',
+          'messages',
+          'media_attachments',
+          'message_reactions',
+          'groups',
+          'group_members',
+          'group_keys',
+          'group_messages',
+          'introductions',
+        ]),
+      );
 
       // Verify: identity has CHECK constraints (insert non-null private_key throws)
       expect(
@@ -107,32 +137,41 @@ void main() {
 
       // Verify: messages has read_at, quoted_message_id, transport columns
       final msgCols = await getColumnNames(db, 'messages');
-      expect(msgCols, containsAll(['read_at', 'quoted_message_id', 'transport']));
+      expect(
+        msgCols,
+        containsAll(['read_at', 'quoted_message_id', 'transport']),
+      );
 
       // Verify: contacts has ml_kem_public_key, is_archived, is_blocked, avatar_version
       final contactCols = await getColumnNames(db, 'contacts');
-      expect(contactCols, containsAll([
-        'ml_kem_public_key',
-        'is_archived',
-        'is_blocked',
-        'avatar_version',
-      ]));
+      expect(
+        contactCols,
+        containsAll([
+          'ml_kem_public_key',
+          'is_archived',
+          'is_blocked',
+          'avatar_version',
+        ]),
+      );
 
       // Verify: media_attachments has all expected columns
       final mediaCols = await getColumnNames(db, 'media_attachments');
-      expect(mediaCols, containsAll([
-        'id',
-        'message_id',
-        'mime',
-        'size',
-        'media_type',
-        'width',
-        'height',
-        'duration_ms',
-        'local_path',
-        'download_status',
-        'created_at',
-      ]));
+      expect(
+        mediaCols,
+        containsAll([
+          'id',
+          'message_id',
+          'mime',
+          'size',
+          'media_type',
+          'width',
+          'height',
+          'duration_ms',
+          'local_path',
+          'download_status',
+          'created_at',
+        ]),
+      );
 
       // Verify: index exists on media_attachments
       final indexes = await db.rawQuery(
@@ -145,14 +184,17 @@ void main() {
 
       // Verify: message_reactions has all expected columns
       final reactionCols = await getColumnNames(db, 'message_reactions');
-      expect(reactionCols, containsAll([
-        'id',
-        'message_id',
-        'emoji',
-        'sender_peer_id',
-        'timestamp',
-        'created_at',
-      ]));
+      expect(
+        reactionCols,
+        containsAll([
+          'id',
+          'message_id',
+          'emoji',
+          'sender_peer_id',
+          'timestamp',
+          'created_at',
+        ]),
+      );
 
       // Verify: index exists on message_reactions
       final reactionIndexes = await db.rawQuery(
@@ -161,6 +203,19 @@ void main() {
       expect(
         reactionIndexes.map((r) => r['name'] as String),
         contains('idx_message_reactions_message'),
+      );
+
+      // Verify: group_messages includes quote support
+      final groupMessageCols = await getColumnNames(db, 'group_messages');
+      expect(
+        groupMessageCols,
+        containsAll([
+          'group_id',
+          'sender_peer_id',
+          'text',
+          'timestamp',
+          'quoted_message_id',
+        ]),
       );
     });
 
@@ -179,7 +234,8 @@ void main() {
         'peer_id': 'peer-abc',
         'public_key': 'pk-abc',
         'private_key': 'sk-abc',
-        'mnemonic12': 'word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12',
+        'mnemonic12':
+            'word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12',
         'username': 'TestUser',
         'created_at': '2026-01-01T00:00:00Z',
         'updated_at': '2026-01-01T00:00:00Z',
@@ -210,14 +266,21 @@ void main() {
       // Step 3: Migration 003 -> ML-KEM columns
       await runMlKemKeysMigration(db);
       final identityCols3 = await getColumnNames(db, 'identity');
-      expect(identityCols3, containsAll(['ml_kem_public_key', 'ml_kem_secret_key']));
+      expect(
+        identityCols3,
+        containsAll(['ml_kem_public_key', 'ml_kem_secret_key']),
+      );
       final contactCols3 = await getColumnNames(db, 'contacts');
       expect(contactCols3, contains('ml_kem_public_key'));
 
       // Step 4: Migration 004 -> nullable secrets
       await runNullifySecretColumnsMigration(db);
       // Verify private_key still has value (not yet migrated)
-      final identityRow4 = await db.query('identity', where: 'id = ?', whereArgs: [1]);
+      final identityRow4 = await db.query(
+        'identity',
+        where: 'id = ?',
+        whereArgs: [1],
+      );
       expect(identityRow4.first['private_key'], 'sk-abc');
 
       // Run secrets migration
@@ -232,7 +295,11 @@ void main() {
       );
 
       // Verify DB columns are null
-      final identityRow4b = await db.query('identity', where: 'id = ?', whereArgs: [1]);
+      final identityRow4b = await db.query(
+        'identity',
+        where: 'id = ?',
+        whereArgs: [1],
+      );
       expect(identityRow4b.first['private_key'], isNull);
       expect(identityRow4b.first['mnemonic12'], isNull);
 
@@ -265,7 +332,11 @@ void main() {
         'is_incoming': 1,
         'created_at': '2026-01-01T00:00:00Z',
       });
-      final msgBefore = await db.query('messages', where: 'id = ?', whereArgs: ['msg-1']);
+      final msgBefore = await db.query(
+        'messages',
+        where: 'id = ?',
+        whereArgs: ['msg-1'],
+      );
       expect(msgBefore.first['read_at'], isNull);
 
       // Step 7: Migration 007 -> archive columns
@@ -301,8 +372,11 @@ void main() {
       expect(msgCols12, contains('transport'));
 
       // Verify existing message (msg-1 from Step 6) has null transport
-      final existingMsg12 = await db.query('messages',
-          where: 'id = ?', whereArgs: ['msg-1']);
+      final existingMsg12 = await db.query(
+        'messages',
+        where: 'id = ?',
+        whereArgs: ['msg-1'],
+      );
       expect(existingMsg12.first['transport'], isNull);
 
       // Insert a message with transport='wifi' and verify
@@ -317,8 +391,11 @@ void main() {
         'created_at': '2026-02-01T00:00:00Z',
         'transport': 'wifi',
       });
-      final wifiMsg = await db.query('messages',
-          where: 'id = ?', whereArgs: ['msg-wifi-12']);
+      final wifiMsg = await db.query(
+        'messages',
+        where: 'id = ?',
+        whereArgs: ['msg-wifi-12'],
+      );
       expect(wifiMsg.first['transport'], 'wifi');
 
       // Step 13: Migration 013 -> waveform column
@@ -341,9 +418,17 @@ void main() {
 
       // Verify reaction table schema
       final reactionCols = await getColumnNames(db, 'message_reactions');
-      expect(reactionCols, containsAll([
-        'id', 'message_id', 'emoji', 'sender_peer_id', 'timestamp', 'created_at',
-      ]));
+      expect(
+        reactionCols,
+        containsAll([
+          'id',
+          'message_id',
+          'emoji',
+          'sender_peer_id',
+          'timestamp',
+          'created_at',
+        ]),
+      );
 
       // Verify UNIQUE constraint on (message_id, sender_peer_id)
       await db.insert('message_reactions', {
@@ -367,19 +452,76 @@ void main() {
         throwsA(anything),
       );
 
+      // Step 17: Migration 017 -> groups tables
+      await runGroupsTablesMigration(db);
+      final tables17 = await getTableNames(db);
+      expect(tables17, containsAll(['groups', 'group_members']));
+
+      // Step 18: Migration 018 -> group keys + group messages tables
+      await runGroupMessagesTablesMigration(db);
+      final tables18 = await getTableNames(db);
+      expect(tables18, containsAll(['group_keys', 'group_messages']));
+
+      // Step 19-25: introduction and contact provenance migrations
+      await runIntroductionsTableMigration(db);
+      await runIntroBannerColumnsMigration(db);
+      await runContactIntroducedByMigration(db);
+      await runIntroductionKeysMigration(db);
+      await runIntroductionRecipientKeysMigration(db);
+      await runContactIntroducedByPeerIdMigration(db);
+      await runIntroductionAlreadyConnectedMigration(db);
+
+      // Seed a v25-era group message before the v26 quote column exists.
+      await db.insert('group_messages', {
+        'id': 'group-msg-1',
+        'group_id': 'group-1',
+        'sender_peer_id': 'peer-abc',
+        'sender_username': 'Alice',
+        'text': 'Pre-v26 group message',
+        'timestamp': '2026-03-01T00:00:00Z',
+        'key_generation': 0,
+        'status': 'delivered',
+        'is_incoming': 1,
+        'created_at': '2026-03-01T00:00:00Z',
+      });
+
+      // Step 26: Migration 026 -> group quoted_message_id
+      await runGroupQuotedMessageIdMigration(db);
+      final groupCols26 = await getColumnNames(db, 'group_messages');
+      expect(groupCols26, contains('quoted_message_id'));
+
+      final existingGroupMessage = await db.query(
+        'group_messages',
+        where: 'id = ?',
+        whereArgs: ['group-msg-1'],
+      );
+      expect(existingGroupMessage.first['quoted_message_id'], isNull);
+
       // Final: verify seeded data is preserved
-      final identity = await db.query('identity', where: 'id = ?', whereArgs: [1]);
+      final identity = await db.query(
+        'identity',
+        where: 'id = ?',
+        whereArgs: [1],
+      );
       expect(identity.first['peer_id'], 'peer-abc');
       expect(identity.first['public_key'], 'pk-abc');
       expect(identity.first['username'], 'TestUser');
       // Secrets should be null (migrated to secure storage)
       expect(identity.first['private_key'], isNull);
 
-      final contact = await db.query('contacts', where: 'peer_id = ?', whereArgs: ['contact-1']);
+      final contact = await db.query(
+        'contacts',
+        where: 'peer_id = ?',
+        whereArgs: ['contact-1'],
+      );
       expect(contact.first['username'], 'ContactOne');
       expect(contact.first['public_key'], 'pk-c1');
 
-      final request = await db.query('contact_requests', where: 'peer_id = ?', whereArgs: ['req-1']);
+      final request = await db.query(
+        'contact_requests',
+        where: 'peer_id = ?',
+        whereArgs: ['req-1'],
+      );
       expect(request.first['username'], 'Requester');
       expect(request.first['status'], 'pending');
     });
@@ -410,6 +552,16 @@ void main() {
       await runWireEnvelopeMigration(db);
       await runMessageStatusCleanupMigration(db);
       await runMessageReactionsMigration(db);
+      await runGroupsTablesMigration(db);
+      await runGroupMessagesTablesMigration(db);
+      await runIntroductionsTableMigration(db);
+      await runIntroBannerColumnsMigration(db);
+      await runContactIntroducedByMigration(db);
+      await runIntroductionKeysMigration(db);
+      await runIntroductionRecipientKeysMigration(db);
+      await runContactIntroducedByPeerIdMigration(db);
+      await runIntroductionAlreadyConnectedMigration(db);
+      await runGroupQuotedMessageIdMigration(db);
 
       // Seed data
       await db.insert('identity', {
@@ -421,7 +573,7 @@ void main() {
         'updated_at': '2026-01-01',
       });
 
-      // Re-run idempotent migrations (006-016)
+      // Re-run idempotent migrations
       await runSecretNullChecksMigration(db);
       await runReadAtColumnMigration(db);
       await runArchiveColumnsMigration(db);
@@ -434,13 +586,101 @@ void main() {
       await runWireEnvelopeMigration(db);
       await runMessageStatusCleanupMigration(db);
       await runMessageReactionsMigration(db);
+      await runGroupsTablesMigration(db);
+      await runGroupMessagesTablesMigration(db);
+      await runGroupQuotedMessageIdMigration(db);
 
       // Re-run secrets migration (should be no-op)
       await migrateSecretsToSecureStorage(db: db, secureKeyStore: keyStore);
 
       // Data should be intact
-      final identity = await db.query('identity', where: 'id = ?', whereArgs: [1]);
+      final identity = await db.query(
+        'identity',
+        where: 'id = ?',
+        whereArgs: [1],
+      );
       expect(identity.first['peer_id'], 'peer-test');
     });
+
+    test(
+      '1d. v25 to v26 upgrade adds group quoted_message_id safely',
+      () async {
+        db = await databaseFactoryFfi.openDatabase(
+          inMemoryDatabasePath,
+          options: OpenDatabaseOptions(version: 25),
+        );
+
+        await runIdentityTableMigration(db);
+        await runMessagesTableMigration(db);
+        await runMlKemKeysMigration(db);
+        await runSecretNullChecksMigration(db);
+        await runReadAtColumnMigration(db);
+        await runArchiveColumnsMigration(db);
+        await runBlockColumnsMigration(db);
+        await runQuotedMessageIdMigration(db);
+        await runMediaAttachmentsMigration(db);
+        await runAvatarVersionMigration(db);
+        await runTransportColumnMigration(db);
+        await runWaveformColumnMigration(db);
+        await runWireEnvelopeMigration(db);
+        await runMessageStatusCleanupMigration(db);
+        await runMessageReactionsMigration(db);
+        await runGroupsTablesMigration(db);
+        await runGroupMessagesTablesMigration(db);
+        await runIntroductionsTableMigration(db);
+        await runIntroBannerColumnsMigration(db);
+        await runContactIntroducedByMigration(db);
+        await runIntroductionKeysMigration(db);
+        await runIntroductionRecipientKeysMigration(db);
+        await runContactIntroducedByPeerIdMigration(db);
+        await runIntroductionAlreadyConnectedMigration(db);
+
+        await db.insert('group_messages', {
+          'id': 'group-msg-v25',
+          'group_id': 'group-1',
+          'sender_peer_id': 'peer-a',
+          'sender_username': 'Alice',
+          'text': 'Legacy group message',
+          'timestamp': '2026-03-01T00:00:00Z',
+          'key_generation': 0,
+          'status': 'delivered',
+          'is_incoming': 1,
+          'created_at': '2026-03-01T00:00:00Z',
+        });
+
+        await runGroupQuotedMessageIdMigration(db);
+
+        final groupCols = await getColumnNames(db, 'group_messages');
+        expect(groupCols, contains('quoted_message_id'));
+
+        final legacyRow = await db.query(
+          'group_messages',
+          where: 'id = ?',
+          whereArgs: ['group-msg-v25'],
+        );
+        expect(legacyRow.first['quoted_message_id'], isNull);
+
+        await db.insert('group_messages', {
+          'id': 'group-msg-v26',
+          'group_id': 'group-1',
+          'sender_peer_id': 'peer-b',
+          'sender_username': 'Bob',
+          'text': 'Quoted upgrade reply',
+          'timestamp': '2026-03-02T00:00:00Z',
+          'quoted_message_id': 'group-msg-v25',
+          'key_generation': 0,
+          'status': 'delivered',
+          'is_incoming': 1,
+          'created_at': '2026-03-02T00:00:00Z',
+        });
+
+        final upgradedRow = await db.query(
+          'group_messages',
+          where: 'id = ?',
+          whereArgs: ['group-msg-v26'],
+        );
+        expect(upgradedRow.first['quoted_message_id'], 'group-msg-v25');
+      },
+    );
   });
 }

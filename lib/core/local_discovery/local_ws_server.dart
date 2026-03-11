@@ -109,16 +109,18 @@ class LocalWsServer {
       return;
     }
 
-    WebSocketTransformer.upgrade(request).then((WebSocket ws) {
-      _inboundConnections.add(ws);
-      ws.listen(
-        (data) => _handleInboundMessage(ws, data),
-        onDone: () => _inboundConnections.remove(ws),
-        onError: (_) => _inboundConnections.remove(ws),
-      );
-    }).catchError((_) {
-      // Not a WebSocket upgrade request — ignore.
-    });
+    WebSocketTransformer.upgrade(request)
+        .then((WebSocket ws) {
+          _inboundConnections.add(ws);
+          ws.listen(
+            (data) => _handleInboundMessage(ws, data),
+            onDone: () => _inboundConnections.remove(ws),
+            onError: (_) => _inboundConnections.remove(ws),
+          );
+        })
+        .catchError((_) {
+          // Not a WebSocket upgrade request — ignore.
+        });
   }
 
   void _handleMediaUpload(HttpRequest request, String mediaId) {
@@ -139,22 +141,25 @@ class LocalWsServer {
 
     mediaServer.handleUpload(request, mediaId).then((result) {
       final senderWs = _mediaWsSenders[mediaId];
-      if (senderWs != null &&
-          senderWs.readyState == WebSocket.open) {
+      if (senderWs != null && senderWs.readyState == WebSocket.open) {
         if (result.success) {
-          senderWs.add(jsonEncode({
-            'type': 'media_uploaded',
-            'id': mediaId,
-            'nonce': result.nonce,
-            'sha256Verified': true,
-          }));
+          senderWs.add(
+            jsonEncode({
+              'type': 'media_uploaded',
+              'id': mediaId,
+              'nonce': result.nonce,
+              'sha256Verified': true,
+            }),
+          );
         } else {
-          senderWs.add(jsonEncode({
-            'type': 'media_failed',
-            'id': mediaId,
-            'nonce': result.nonce,
-            'reason': result.reason,
-          }));
+          senderWs.add(
+            jsonEncode({
+              'type': 'media_failed',
+              'id': mediaId,
+              'nonce': result.nonce,
+              'reason': result.reason,
+            }),
+          );
         }
       }
       _mediaWsSenders.remove(mediaId);
@@ -184,10 +189,7 @@ class LocalWsServer {
 
       // Acknowledge receipt — echo back nonce for per-message correlation.
       final nonce = json['nonce'] as String?;
-      ws.add(jsonEncode({
-        'ack': true,
-        if (nonce != null) 'nonce': nonce,
-      }));
+      ws.add(jsonEncode({'ack': true, if (nonce != null) 'nonce': nonce}));
 
       final message = LocalChatMessage(
         from: from,
@@ -213,12 +215,14 @@ class LocalWsServer {
     final mediaServer = _mediaServer;
     if (mediaServer == null) {
       final nonce = json['nonce'] as String?;
-      ws.add(jsonEncode({
-        'type': 'media_offer_rejected',
-        'id': json['id'],
-        'nonce': nonce,
-        'reason': 'media_not_supported',
-      }));
+      ws.add(
+        jsonEncode({
+          'type': 'media_offer_rejected',
+          'id': json['id'],
+          'nonce': nonce,
+          'reason': 'media_not_supported',
+        }),
+      );
       return;
     }
 
@@ -228,19 +232,23 @@ class LocalWsServer {
       // Store the sender's WS for sending media_uploaded back later.
       _mediaWsSenders[offer.id] = ws;
 
-      ws.add(jsonEncode({
-        'type': 'media_offer_accepted',
-        'id': offer.id,
-        'token': offer.token,
-        'nonce': offer.nonce,
-      }));
+      ws.add(
+        jsonEncode({
+          'type': 'media_offer_accepted',
+          'id': offer.id,
+          'token': offer.token,
+          'nonce': offer.nonce,
+        }),
+      );
     } else {
-      ws.add(jsonEncode({
-        'type': 'media_offer_rejected',
-        'id': offer.id,
-        'nonce': offer.nonce,
-        'reason': 'validation_failed',
-      }));
+      ws.add(
+        jsonEncode({
+          'type': 'media_offer_rejected',
+          'id': offer.id,
+          'nonce': offer.nonce,
+          'reason': 'validation_failed',
+        }),
+      );
     }
   }
 
@@ -252,10 +260,19 @@ class LocalWsServer {
     int port,
     String content,
     String fromPeerId,
-    String toPeerId,
-  ) async {
+    String toPeerId, {
+    int? timeoutMs,
+  }) async {
+    final sendBudget = _resolveSendBudget(timeoutMs);
+    final deadline = DateTime.now().add(sendBudget);
+
     try {
-      final ws = await _getOrCreateConnection(toPeerId, host, port);
+      final ws = await _getOrCreateConnection(
+        toPeerId,
+        host,
+        port,
+        connectTimeout: _remainingBudget(deadline),
+      );
 
       // Generate a per-message nonce for ack correlation.
       final nonce = DateTime.now().microsecondsSinceEpoch.toRadixString(36);
@@ -279,17 +296,17 @@ class LocalWsServer {
       final pooled = _outboundPool[toPeerId];
       final ackStream = pooled?.ackStream ?? ws;
 
-      await ackStream.firstWhere(
-        (event) {
-          if (event is! String) return false;
-          try {
-            final json = jsonDecode(event) as Map<String, dynamic>;
-            return json['ack'] == true && json['nonce'] == nonce;
-          } catch (_) {
-            return false;
-          }
-        },
-      ).timeout(_ackTimeout);
+      await ackStream
+          .firstWhere((event) {
+            if (event is! String) return false;
+            try {
+              final json = jsonDecode(event) as Map<String, dynamic>;
+              return json['ack'] == true && json['nonce'] == nonce;
+            } catch (_) {
+              return false;
+            }
+          })
+          .timeout(_remainingBudget(deadline));
 
       _resetIdleTimer(toPeerId);
 
@@ -306,8 +323,14 @@ class LocalWsServer {
 
       emitFlowEvent(
         layer: 'FL',
-        event: 'LOCAL_WS_SEND_FAILED',
-        details: {'to': toPeerId, 'error': e.toString()},
+        event: e is TimeoutException
+            ? 'LOCAL_WS_SEND_TIMEOUT'
+            : 'LOCAL_WS_SEND_FAILED',
+        details: {
+          'to': toPeerId,
+          'error': e.toString(),
+          'timeoutMs': sendBudget.inMilliseconds,
+        },
       );
 
       return false;
@@ -371,8 +394,9 @@ class LocalWsServer {
   Future<WebSocket> _getOrCreateConnection(
     String peerId,
     String host,
-    int port,
-  ) async {
+    int port, {
+    Duration? connectTimeout,
+  }) async {
     final existing = _outboundPool[peerId];
     if (existing != null && existing.ws.readyState == WebSocket.open) {
       _resetIdleTimer(peerId);
@@ -382,8 +406,9 @@ class LocalWsServer {
     // Clean up stale entry if present.
     _removeFromPool(peerId);
 
-    final ws = await WebSocket.connect('ws://$host:$port')
-        .timeout(const Duration(seconds: 5));
+    final ws = await WebSocket.connect(
+      'ws://$host:$port',
+    ).timeout(connectTimeout ?? const Duration(seconds: 5));
 
     // Create a broadcast stream so multiple sends can each listen for acks
     // without hitting the single-subscription limitation of WebSocket streams.
@@ -406,6 +431,19 @@ class LocalWsServer {
     );
 
     return ws;
+  }
+
+  Duration _resolveSendBudget(int? timeoutMs) {
+    if (timeoutMs == null || timeoutMs <= 0) return _ackTimeout;
+    return Duration(milliseconds: timeoutMs);
+  }
+
+  Duration _remainingBudget(DateTime deadline) {
+    final remaining = deadline.difference(DateTime.now());
+    if (remaining <= Duration.zero) {
+      throw TimeoutException('Local send budget exhausted');
+    }
+    return remaining;
   }
 
   void _resetIdleTimer(String peerId) {
@@ -447,11 +485,7 @@ class LocalWsServer {
     _server = null;
     _boundPort = null;
 
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'LOCAL_WS_SERVER_STOPPED',
-      details: {},
-    );
+    emitFlowEvent(layer: 'FL', event: 'LOCAL_WS_SERVER_STOPPED', details: {});
   }
 
   void dispose() {

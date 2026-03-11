@@ -22,6 +22,9 @@ class GroupMessage {
   /// When the message was sent/received.
   final DateTime timestamp;
 
+  /// The message ID this message is quoting, if any.
+  final String? quotedMessageId;
+
   /// The key generation used to encrypt this message.
   final int keyGeneration;
 
@@ -47,6 +50,7 @@ class GroupMessage {
     this.senderUsername,
     required this.text,
     required this.timestamp,
+    this.quotedMessageId,
     this.keyGeneration = 0,
     this.status = 'sent',
     this.isIncoming = true,
@@ -64,6 +68,7 @@ class GroupMessage {
       senderUsername: map['sender_username'] as String?,
       text: map['text'] as String,
       timestamp: DateTime.parse(map['timestamp'] as String),
+      quotedMessageId: map['quoted_message_id'] as String?,
       keyGeneration: map['key_generation'] as int? ?? 0,
       status: map['status'] as String? ?? 'sent',
       isIncoming: (map['is_incoming'] as int? ?? 1) == 1,
@@ -83,6 +88,7 @@ class GroupMessage {
       'sender_username': senderUsername,
       'text': text,
       'timestamp': timestamp.toUtc().toIso8601String(),
+      'quoted_message_id': quotedMessageId,
       'key_generation': keyGeneration,
       'status': status,
       'is_incoming': isIncoming ? 1 : 0,
@@ -99,6 +105,7 @@ class GroupMessage {
     String? senderUsername,
     String? text,
     DateTime? timestamp,
+    Object? quotedMessageId = _sentinel,
     int? keyGeneration,
     String? status,
     bool? isIncoming,
@@ -113,6 +120,9 @@ class GroupMessage {
       senderUsername: senderUsername ?? this.senderUsername,
       text: text ?? this.text,
       timestamp: timestamp ?? this.timestamp,
+      quotedMessageId: quotedMessageId == _sentinel
+          ? this.quotedMessageId
+          : quotedMessageId as String?,
       keyGeneration: keyGeneration ?? this.keyGeneration,
       status: status ?? this.status,
       isIncoming: isIncoming ?? this.isIncoming,

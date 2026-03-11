@@ -9,6 +9,9 @@ void main() {
     bool hasAttachments = false,
     bool isProcessing = false,
     String? initialText,
+    String? quotedText,
+    bool isQuoteUnavailable = false,
+    VoidCallback? onClearQuote,
   }) {
     return MaterialApp(
       home: Scaffold(
@@ -21,6 +24,9 @@ void main() {
               hasAttachments: hasAttachments,
               isProcessing: isProcessing,
               initialText: initialText,
+              quotedText: quotedText,
+              isQuoteUnavailable: isQuoteUnavailable,
+              onClearQuote: onClearQuote,
             ),
           ],
         ),
@@ -48,6 +54,33 @@ void main() {
 
       final textField = tester.widget<TextField>(find.byType(TextField));
       expect(textField.controller?.text, isEmpty);
+    });
+
+    testWidgets('renders quote preview when quotedText is provided', (
+      tester,
+    ) async {
+      var cleared = false;
+      await tester.pumpWidget(
+        buildTestWidget(
+          quotedText: 'Quoted target',
+          onClearQuote: () => cleared = true,
+        ),
+      );
+
+      expect(find.text('Replying to'), findsOneWidget);
+      expect(find.text('Quoted target'), findsOneWidget);
+
+      await tester.tap(find.byIcon(Icons.close_rounded));
+      await tester.pump();
+
+      expect(cleared, isTrue);
+    });
+
+    testWidgets('shows unavailable quote preview fallback', (tester) async {
+      await tester.pumpWidget(buildTestWidget(isQuoteUnavailable: true));
+
+      expect(find.text('Replying to'), findsOneWidget);
+      expect(find.text('Message unavailable'), findsOneWidget);
     });
 
     testWidgets('shows attachment button', (tester) async {
@@ -114,6 +147,55 @@ void main() {
       final textField = tester.widget<TextField>(find.byType(TextField));
       expect(textField.controller?.text, '');
     });
+
+    testWidgets(
+      'restores draft when parent rehydrates initialText after send',
+      (tester) async {
+        String? sentText;
+        String? restoredDraft;
+        late StateSetter setHostState;
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: StatefulBuilder(
+                builder: (context, setState) {
+                  setHostState = setState;
+                  return Column(
+                    children: [
+                      const Spacer(),
+                      ComposeArea(
+                        onSend: (text) => sentText = text,
+                        initialText: restoredDraft,
+                      ),
+                    ],
+                  );
+                },
+              ),
+            ),
+          ),
+        );
+
+        await tester.enterText(find.byType(TextField), 'Retry me');
+        await tester.pumpAndSettle();
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await tester.pump();
+
+        expect(sentText, 'Retry me');
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).controller?.text,
+          '',
+        );
+
+        setHostState(() => restoredDraft = 'Retry me');
+        await tester.pump();
+
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).controller?.text,
+          'Retry me',
+        );
+      },
+    );
 
     testWidgets('attachment button fires onAttach callback', (tester) async {
       var attachPressed = false;
