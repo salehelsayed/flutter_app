@@ -45,6 +45,7 @@ import 'package:flutter_app/features/introduction/application/insert_intro_syste
 import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository.dart';
 import 'package:flutter_app/features/introduction/presentation/screens/friend_picker_wired.dart';
 import 'package:flutter_app/features/introduction/presentation/screens/sent_confirmation_wired.dart';
+import 'package:flutter_app/shared/widgets/media/media_preview_text.dart';
 import 'conversation_screen.dart';
 
 typedef SendChatMessageFn =
@@ -106,6 +107,7 @@ class ConversationWired extends StatefulWidget {
   final ReactionRepository? reactionRepo;
   final ReactionListener? reactionListener;
   final IntroductionRepository? introductionRepository;
+  final UploadMediaFn uploadMediaFn;
 
   const ConversationWired({
     super.key,
@@ -131,6 +133,7 @@ class ConversationWired extends StatefulWidget {
     this.reactionRepo,
     this.reactionListener,
     this.introductionRepository,
+    this.uploadMediaFn = uploadMedia,
   });
 
   @override
@@ -146,6 +149,7 @@ class _ConversationWiredState extends State<ConversationWired> {
   late ContactModel _contact;
   List<ConversationMessage> _messages = [];
   StreamSubscription<ConversationMessage>? _incomingSubscription;
+  StreamSubscription<ConversationMessage>? _repoChangeSubscription;
   StreamSubscription<ContactModel>? _contactUpdateSubscription;
   final _scrollController = ScrollController();
 
@@ -169,6 +173,8 @@ class _ConversationWiredState extends State<ConversationWired> {
   // Introduction banner state
   bool _showIntroBanner = false;
   bool _hasOtherFriends = false;
+  String? _activeQuoteMessageId;
+  String _draftText = '';
 
   ConversationComposerViewState get _composerViewState => _composerState.value;
 
@@ -180,6 +186,7 @@ class _ConversationWiredState extends State<ConversationWired> {
   void initState() {
     super.initState();
     _contact = widget.contact;
+    _draftText = widget.initialText ?? '';
     widget.conversationTracker?.setActive(widget.contact.peerId);
     if (widget.initialAttachments != null &&
         widget.initialAttachments!.isNotEmpty) {
@@ -203,6 +210,7 @@ class _ConversationWiredState extends State<ConversationWired> {
       _loadInitialPage().then((_) => _markAsRead());
     }
     _startListeningForMessages();
+    _startListeningForOutgoingMessageChanges();
     _startListeningForContactUpdates();
     _startListeningForReactions();
     _checkIntroBanner();
@@ -446,6 +454,38 @@ class _ConversationWiredState extends State<ConversationWired> {
         );
   }
 
+  void _startListeningForOutgoingMessageChanges() {
+    final messageRepo = widget.messageRepo;
+    if (messageRepo is! MessageRepositoryChangeSource) {
+      return;
+    }
+
+    final changeSource = messageRepo as MessageRepositoryChangeSource;
+    _repoChangeSubscription = changeSource.messageChanges
+        .where(
+          (message) =>
+              !message.isIncoming &&
+              message.contactPeerId == _contact.peerId &&
+              _shouldRefreshFromRepositoryChange(message.status),
+        )
+        .listen(
+          (message) {
+            if (!mounted) return;
+            setState(() => _upsertMessageById(message));
+          },
+          onError: (error) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'CONV_REPO_CHANGE_STREAM_ERROR',
+              details: {'error': error.toString()},
+            );
+          },
+        );
+  }
+
+  bool _shouldRefreshFromRepositoryChange(String status) =>
+      status == 'sent' || status == 'delivered';
+
   void _onIncomingMessage(ConversationMessage message) {
     if (!mounted) return;
     setState(() {
@@ -457,6 +497,27 @@ class _ConversationWiredState extends State<ConversationWired> {
     if (_showIntroBanner && _messages.length >= 3) {
       _onMaybeLater();
     }
+  }
+
+  void _onQuoteReply(String messageId) {
+    if (!mounted) return;
+    setState(() => _activeQuoteMessageId = messageId);
+  }
+
+  void _onClearQuote() {
+    if (!mounted) return;
+    setState(() => _activeQuoteMessageId = null);
+  }
+
+  (String?, bool) _resolveActiveQuotePreview() {
+    final quoteId = _activeQuoteMessageId;
+    if (quoteId == null) return (null, false);
+
+    final quoted = _messages.where((m) => m.id == quoteId).firstOrNull;
+    if (quoted == null) return (null, true);
+    if (quoted.text.isNotEmpty) return (quoted.text, false);
+    if (quoted.media.isNotEmpty) return (mediaPreviewText(quoted.media), false);
+    return (null, true);
   }
 
   void _startListeningForContactUpdates() {
@@ -501,6 +562,17 @@ class _ConversationWiredState extends State<ConversationWired> {
       },
     );
 
+    final draftText = text;
+    final quotedMessageId = _activeQuoteMessageId;
+    final composerSnapshot = _ComposerSnapshot(
+      draftText: draftText,
+      quotedMessageId: quotedMessageId,
+      pendingAttachments: List<_PendingMedia>.from(_pendingAttachments),
+    );
+    if (_activeQuoteMessageId != null && mounted) {
+      setState(() => _activeQuoteMessageId = null);
+    }
+
     // Capture and clear pending attachments
     final mediaToUpload = List<_PendingMedia>.from(_pendingAttachments);
     List<MediaAttachment>? optimisticMedia;
@@ -526,6 +598,7 @@ class _ConversationWiredState extends State<ConversationWired> {
     }
 
     _pendingAttachments = [];
+    _draftText = '';
     _updateComposerState(
       pendingAttachments: const [],
       isUploading: mediaToUpload.isNotEmpty,
@@ -541,6 +614,7 @@ class _ConversationWiredState extends State<ConversationWired> {
       status: 'sending',
       isIncoming: false,
       createdAt: now,
+      quotedMessageId: quotedMessageId,
       media: optimisticMedia ?? const [],
     );
 
@@ -561,156 +635,204 @@ class _ConversationWiredState extends State<ConversationWired> {
       );
     }
 
-    // Upload attachments if any
-    List<MediaAttachment>? uploadedAttachments;
-    if (mediaToUpload.isNotEmpty && widget.bridge != null) {
-      uploadedAttachments = [];
-      for (final media in mediaToUpload) {
-        final mime = _mimeFromPath(media.file.path);
-        final mediaId = _uuid.v4();
+    try {
+      // Upload attachments if any
+      List<MediaAttachment>? uploadedAttachments;
+      if (mediaToUpload.isNotEmpty && widget.bridge != null) {
+        uploadedAttachments = [];
+        for (final media in mediaToUpload) {
+          final mime = _mimeFromPath(media.file.path);
+          final mediaId = _uuid.v4();
 
-        // Try local WiFi first.
-        bool localSuccess = false;
-        if (widget.p2pService.isLocalPeer(_contact.peerId)) {
-          localSuccess = await widget.p2pService.sendLocalMedia(
-            peerId: _contact.peerId,
-            filePath: media.file.path,
-            mime: mime,
-            mediaId: mediaId,
-            fromPeerId: identity.peerId,
-            durationMs: media.durationMs,
-          );
-        }
-
-        if (localSuccess) {
-          uploadedAttachments.add(
-            MediaAttachment(
-              id: mediaId,
-              messageId: '',
+          // Try local WiFi first.
+          bool localSuccess = false;
+          if (widget.p2pService.isLocalPeer(_contact.peerId)) {
+            localSuccess = await widget.p2pService.sendLocalMedia(
+              peerId: _contact.peerId,
+              filePath: media.file.path,
               mime: mime,
-              size: await File(media.file.path).length(),
-              mediaType: MediaAttachment.mediaTypeFromMime(mime),
-              localPath: media.file.path,
-              downloadStatus: 'done',
-              createdAt: DateTime.now().toUtc().toIso8601String(),
+              mediaId: mediaId,
+              fromPeerId: identity.peerId,
+              durationMs: media.durationMs,
+            );
+          }
+
+          if (localSuccess) {
+            uploadedAttachments.add(
+              MediaAttachment(
+                id: mediaId,
+                messageId: '',
+                mime: mime,
+                size: await File(media.file.path).length(),
+                mediaType: MediaAttachment.mediaTypeFromMime(mime),
+                localPath: media.file.path,
+                downloadStatus: 'done',
+                createdAt: DateTime.now().toUtc().toIso8601String(),
+                width: media.width,
+                height: media.height,
+                durationMs: media.durationMs,
+              ),
+            );
+          } else {
+            final result = await widget.uploadMediaFn(
+              bridge: widget.bridge!,
+              localFilePath: media.file.path,
+              mime: mime,
+              recipientPeerId: _contact.peerId,
+              mediaFileManager: widget.mediaFileManager,
               width: media.width,
               height: media.height,
               durationMs: media.durationMs,
-            ),
-          );
-        } else {
-          // Fall back to relay upload.
-          final result = await uploadMedia(
-            bridge: widget.bridge!,
-            localFilePath: media.file.path,
-            mime: mime,
-            recipientPeerId: _contact.peerId,
-            mediaFileManager: widget.mediaFileManager,
-            width: media.width,
-            height: media.height,
-            durationMs: media.durationMs,
-          );
-
-          if (result == null) {
-            // Upload failed — restore attachments, mark message failed
-            if (mounted) {
-              _pendingAttachments = mediaToUpload;
-              _updateComposerState(
-                pendingAttachments: _pendingAttachmentFiles(),
-                isUploading: false,
-              );
-              _updateLocalMessageStatus(optimisticMessage.id, 'failed');
-              await _persistMessageStatus(optimisticMessage.id, 'failed');
-              messenger?.showSnackBar(
-                SnackBar(
-                  content: const Text('Failed to upload media. Try again.'),
-                  backgroundColor: Colors.red[700],
-                  behavior: SnackBarBehavior.floating,
-                ),
-              );
-            }
-            return;
-          }
-          uploadedAttachments.add(result);
-        }
-      }
-      if (mounted) {
-        _updateComposerState(isUploading: false);
-      }
-    }
-
-    // Re-read contact from DB to pick up ML-KEM key updates that may
-    // have arrived via reciprocal contact request since this screen opened.
-    if (widget.contactRepo != null) {
-      final fresh = await widget.contactRepo!.getContact(_contact.peerId);
-      if (fresh != null && mounted) {
-        setState(() => _contact = fresh);
-      }
-    }
-
-    final (result, message) = await widget.sendChatMessageFn(
-      p2pService: widget.p2pService,
-      messageRepo: widget.messageRepo,
-      targetPeerId: _contact.peerId,
-      text: text,
-      senderPeerId: identity.peerId,
-      senderUsername: identity.username,
-      messageId: optimisticMessage.id,
-      timestamp: optimisticMessage.timestamp,
-      bridge: widget.bridge,
-      recipientMlKemPublicKey: _contact.mlKemPublicKey,
-      mediaAttachments: uploadedAttachments,
-      mediaAttachmentRepo: widget.mediaAttachmentRepo,
-    );
-
-    if (!mounted) return;
-
-    if (message != null) {
-      // Resolve relative paths from uploaded attachments to absolute for display
-      List<MediaAttachment>? displayMedia;
-      if (uploadedAttachments != null && widget.mediaFileManager != null) {
-        displayMedia = [];
-        for (final a in uploadedAttachments) {
-          if (a.localPath != null) {
-            final absPath = await widget.mediaFileManager!.resolveStoredPath(
-              a.localPath!,
             );
-            displayMedia.add(a.copyWith(localPath: absPath));
-          } else {
-            displayMedia.add(a);
+
+            if (result == null) {
+              if (mounted) {
+                await _restoreComposerSnapshot(
+                  composerSnapshot,
+                  optimisticMessageId: optimisticMessage.id,
+                  messenger: messenger,
+                  snackText: 'Failed to upload media. Try again.',
+                );
+              }
+              return;
+            }
+            uploadedAttachments.add(result);
           }
         }
+        if (mounted) {
+          _updateComposerState(isUploading: false);
+        }
       }
-      final persistedMedia = displayMedia ?? optimisticMedia;
-      final messageWithMedia = persistedMedia != null
-          ? message.copyWith(media: persistedMedia)
-          : message;
-      setState(() {
-        _upsertMessageById(messageWithMedia);
-      });
-      _scrollToBottom();
-    } else {
-      final fallbackStatus = switch (result) {
-        SendChatMessageResult.success => 'sent',
-        _ => 'failed',
-      };
-      _updateLocalMessageStatus(optimisticMessage.id, fallbackStatus);
-      await _persistMessageStatus(optimisticMessage.id, fallbackStatus);
-    }
 
-    if (result != SendChatMessageResult.success) {
-      final snackText = switch (result) {
-        SendChatMessageResult.nodeNotRunning =>
-          'Network not connected. Message saved.',
-        SendChatMessageResult.peerNotFound =>
-          'Contact appears offline. Message saved.',
-        SendChatMessageResult.dialFailed =>
-          'Could not connect to contact. Message saved.',
-        SendChatMessageResult.invalidMessage => 'Message cannot be empty.',
-        SendChatMessageResult.encryptionRequired =>
-          'Cannot send: contact does not support encryption.',
-        _ => 'Failed to send message. Message saved.',
-      };
+      // Re-read contact from DB to pick up ML-KEM key updates that may
+      // have arrived via reciprocal contact request since this screen opened.
+      if (widget.contactRepo != null) {
+        final fresh = await widget.contactRepo!.getContact(_contact.peerId);
+        if (fresh != null && mounted) {
+          setState(() => _contact = fresh);
+        }
+      }
+
+      final (result, message) = await widget.sendChatMessageFn(
+        p2pService: widget.p2pService,
+        messageRepo: widget.messageRepo,
+        targetPeerId: _contact.peerId,
+        text: text,
+        senderPeerId: identity.peerId,
+        senderUsername: identity.username,
+        messageId: optimisticMessage.id,
+        timestamp: optimisticMessage.timestamp,
+        bridge: widget.bridge,
+        recipientMlKemPublicKey: _contact.mlKemPublicKey,
+        quotedMessageId: quotedMessageId,
+        mediaAttachments: uploadedAttachments,
+        mediaAttachmentRepo: widget.mediaAttachmentRepo,
+      );
+
+      if (!mounted) return;
+
+      if (message != null) {
+        // Resolve relative paths from uploaded attachments to absolute for display
+        List<MediaAttachment>? displayMedia;
+        if (uploadedAttachments != null && widget.mediaFileManager != null) {
+          displayMedia = [];
+          for (final a in uploadedAttachments) {
+            if (a.localPath != null) {
+              final absPath = await widget.mediaFileManager!.resolveStoredPath(
+                a.localPath!,
+              );
+              displayMedia.add(a.copyWith(localPath: absPath));
+            } else {
+              displayMedia.add(a);
+            }
+          }
+        }
+        final persistedMedia = displayMedia ?? optimisticMedia;
+        final messageWithMedia = message.copyWith(
+          quotedMessageId: quotedMessageId,
+          media: persistedMedia ?? message.media,
+        );
+        setState(() {
+          _upsertMessageById(messageWithMedia);
+        });
+        _scrollToBottom();
+      } else {
+        final fallbackStatus = switch (result) {
+          SendChatMessageResult.success => 'sent',
+          _ => 'failed',
+        };
+        _updateLocalMessageStatus(optimisticMessage.id, fallbackStatus);
+        await _persistMessageStatus(optimisticMessage.id, fallbackStatus);
+      }
+
+      if (result != SendChatMessageResult.success) {
+        final snackText = switch (result) {
+          SendChatMessageResult.nodeNotRunning =>
+            'Network not connected. Message saved.',
+          SendChatMessageResult.peerNotFound =>
+            'Contact appears offline. Message saved.',
+          SendChatMessageResult.dialFailed =>
+            'Could not connect to contact. Message saved.',
+          SendChatMessageResult.invalidMessage => 'Message cannot be empty.',
+          SendChatMessageResult.encryptionRequired =>
+            'Cannot send: contact does not support encryption.',
+          _ => 'Failed to send message. Message saved.',
+        };
+        await _restoreComposerSnapshot(
+          composerSnapshot,
+          optimisticMessageId: optimisticMessage.id,
+          messenger: messenger,
+          snackText: snackText,
+          showSnackBar: false,
+        );
+        messenger?.showSnackBar(
+          SnackBar(
+            content: Text(snackText),
+            backgroundColor: Colors.red[700],
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONV_FL_SEND_ERROR',
+        details: {'error': e.toString()},
+      );
+      if (!mounted) return;
+      await _restoreComposerSnapshot(
+        composerSnapshot,
+        optimisticMessageId: optimisticMessage.id,
+        messenger: messenger,
+        snackText: 'Failed to send message. Message saved.',
+      );
+    }
+  }
+
+  void _onDraftChanged(String text) {
+    if (_draftText == text) return;
+    setState(() => _draftText = text);
+  }
+
+  Future<void> _restoreComposerSnapshot(
+    _ComposerSnapshot snapshot, {
+    required String optimisticMessageId,
+    required ScaffoldMessengerState? messenger,
+    required String snackText,
+    bool showSnackBar = true,
+  }) async {
+    _draftText = snapshot.draftText;
+    _pendingAttachments = List<_PendingMedia>.from(snapshot.pendingAttachments);
+    _updateComposerState(
+      pendingAttachments: _pendingAttachmentFiles(),
+      isUploading: false,
+    );
+    _updateLocalMessageStatus(optimisticMessageId, 'failed');
+    await _persistMessageStatus(optimisticMessageId, 'failed');
+    if (mounted) {
+      setState(() => _activeQuoteMessageId = snapshot.quotedMessageId);
+    }
+    if (showSnackBar) {
       messenger?.showSnackBar(
         SnackBar(
           content: Text(snackText),
@@ -974,10 +1096,16 @@ class _ConversationWiredState extends State<ConversationWired> {
     final recorder = widget.audioRecorderService;
     if (recorder == null || !_isRecording) return;
 
-    await _durationSub?.cancel();
+    final durationSub = _durationSub;
     _durationSub = null;
-    await _amplitudeSub?.cancel();
+    if (durationSub != null) {
+      unawaited(durationSub.cancel());
+    }
+    final amplitudeSub = _amplitudeSub;
     _amplitudeSub = null;
+    if (amplitudeSub != null) {
+      unawaited(amplitudeSub.cancel());
+    }
     _amplitudeBuffer.reset();
 
     final waveform = downsampleWaveform(_waveformSamples, 50);
@@ -1007,6 +1135,10 @@ class _ConversationWiredState extends State<ConversationWired> {
     // Send the voice message
     final identity = _identity;
     if (identity == null) return;
+    final quotedMessageId = _activeQuoteMessageId;
+    if (quotedMessageId != null && mounted) {
+      setState(() => _activeQuoteMessageId = null);
+    }
 
     final now = DateTime.now().toUtc().toIso8601String();
     final optimisticMessage = ConversationMessage(
@@ -1018,6 +1150,7 @@ class _ConversationWiredState extends State<ConversationWired> {
       status: 'sending',
       isIncoming: false,
       createdAt: now,
+      quotedMessageId: quotedMessageId,
       media: [
         MediaAttachment(
           id: _uuid.v4(),
@@ -1099,6 +1232,7 @@ class _ConversationWiredState extends State<ConversationWired> {
           timestamp: optimisticMessage.timestamp,
           bridge: widget.bridge,
           recipientMlKemPublicKey: _contact.mlKemPublicKey,
+          quotedMessageId: quotedMessageId,
           mediaAttachments: [voiceAttachment],
           mediaAttachmentRepo: widget.mediaAttachmentRepo,
         );
@@ -1117,6 +1251,9 @@ class _ConversationWiredState extends State<ConversationWired> {
         } else {
           _updateLocalMessageStatus(optimisticMessage.id, 'failed');
           await _persistMessageStatus(optimisticMessage.id, 'failed');
+          if (quotedMessageId != null && mounted) {
+            setState(() => _activeQuoteMessageId = quotedMessageId);
+          }
         }
         return;
       }
@@ -1126,6 +1263,9 @@ class _ConversationWiredState extends State<ConversationWired> {
     if (bridge == null) {
       _updateLocalMessageStatus(optimisticMessage.id, 'failed');
       await _persistMessageStatus(optimisticMessage.id, 'failed');
+      if (quotedMessageId != null && mounted) {
+        setState(() => _activeQuoteMessageId = quotedMessageId);
+      }
       emitFlowEvent(
         layer: 'FL',
         event: 'CONV_FL_VOICE_SEND_NO_BRIDGE',
@@ -1158,6 +1298,7 @@ class _ConversationWiredState extends State<ConversationWired> {
       waveform: waveform,
       messageId: optimisticMessage.id,
       timestamp: optimisticMessage.timestamp,
+      quotedMessageId: quotedMessageId,
     );
 
     if (mounted) {
@@ -1181,6 +1322,9 @@ class _ConversationWiredState extends State<ConversationWired> {
     } else {
       _updateLocalMessageStatus(optimisticMessage.id, 'failed');
       await _persistMessageStatus(optimisticMessage.id, 'failed');
+      if (quotedMessageId != null && mounted) {
+        setState(() => _activeQuoteMessageId = quotedMessageId);
+      }
 
       if (mounted) {
         final snackText = switch (result) {
@@ -1203,10 +1347,16 @@ class _ConversationWiredState extends State<ConversationWired> {
     final recorder = widget.audioRecorderService;
     if (recorder == null || !_isRecording) return;
 
-    await _durationSub?.cancel();
+    final durationSub = _durationSub;
     _durationSub = null;
-    await _amplitudeSub?.cancel();
+    if (durationSub != null) {
+      unawaited(durationSub.cancel());
+    }
+    final amplitudeSub = _amplitudeSub;
     _amplitudeSub = null;
+    if (amplitudeSub != null) {
+      unawaited(amplitudeSub.cancel());
+    }
     _amplitudeBuffer.reset();
     _waveformSamples = [];
 
@@ -1689,6 +1839,7 @@ class _ConversationWiredState extends State<ConversationWired> {
     widget.conversationTracker?.clear();
     _scrollController.removeListener(_onScroll);
     _incomingSubscription?.cancel();
+    _repoChangeSubscription?.cancel();
     _contactUpdateSubscription?.cancel();
     _reactionSubscription?.cancel();
     _durationSub?.cancel();
@@ -1704,6 +1855,9 @@ class _ConversationWiredState extends State<ConversationWired> {
 
   @override
   Widget build(BuildContext context) {
+    final (activeQuoteText, isActiveQuoteUnavailable) =
+        _resolveActiveQuotePreview();
+
     return Scaffold(
       body: ConversationScreen(
         contactPeerId: _contact.peerId,
@@ -1732,7 +1886,8 @@ class _ConversationWiredState extends State<ConversationWired> {
             ? _onRecordCancel
             : null,
         composerStateListenable: _composerState,
-        initialText: widget.initialText,
+        initialText: _draftText,
+        onDraftChanged: _onDraftChanged,
         reactions: _reactions,
         onReactionSelected: widget.reactionRepo != null
             ? _onReactionSelected
@@ -1741,7 +1896,23 @@ class _ConversationWiredState extends State<ConversationWired> {
         bannerContactUsername: _contact.username,
         onMakeIntroductions: _onMakeIntroductions,
         onMaybeLater: _onMaybeLater,
+        onQuoteReply: _onQuoteReply,
+        activeQuoteText: activeQuoteText,
+        isActiveQuoteUnavailable: isActiveQuoteUnavailable,
+        onClearQuote: _onClearQuote,
       ),
     );
   }
+}
+
+class _ComposerSnapshot {
+  final String draftText;
+  final String? quotedMessageId;
+  final List<_PendingMedia> pendingAttachments;
+
+  const _ComposerSnapshot({
+    required this.draftText,
+    required this.quotedMessageId,
+    required this.pendingAttachments,
+  });
 }

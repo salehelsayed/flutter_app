@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_screen.dart';
 import 'package:flutter_app/features/introduction/application/check_intro_banner_use_case.dart';
 import 'package:flutter_app/features/introduction/presentation/widgets/intro_banner.dart';
@@ -12,7 +13,7 @@ Widget _buildScreen({
   String? bannerContactUsername,
   VoidCallback? onMakeIntroductions,
   VoidCallback? onMaybeLater,
-  List<dynamic> messages = const [],
+  List<ConversationMessage> messages = const [],
 }) {
   return MaterialApp(
     home: Scaffold(
@@ -20,7 +21,8 @@ Widget _buildScreen({
         contactPeerId: 'peer-B',
         contactUsername: 'Lina',
         connectionDate: 'March 6, 2026',
-        messages: const [],
+        messages: messages,
+        initialLoadDone: true,
         onSend: (_) {},
         onBack: () {},
         showIntroBanner: showIntroBanner,

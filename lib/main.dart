@@ -41,6 +41,7 @@ import 'package:flutter_app/core/database/migrations/022_introduction_keys.dart'
 import 'package:flutter_app/core/database/migrations/023_introduction_recipient_keys.dart';
 import 'package:flutter_app/core/database/migrations/024_contact_introduced_by_peer_id.dart';
 import 'package:flutter_app/core/database/migrations/025_introduction_already_connected_status.dart';
+import 'package:flutter_app/core/database/migrations/026_group_quoted_message_id.dart';
 import 'package:flutter_app/core/database/helpers/introductions_db_helpers.dart';
 import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository_impl.dart';
 import 'package:flutter_app/features/introduction/application/introduction_listener.dart';
@@ -136,7 +137,7 @@ void main() async {
   final db = await openEncryptedDatabase(
     secureKeyStore: secureKeyStore,
     dbName: 'identity.db',
-    version: 25,
+    version: 26,
     onCreate: (db, version) async {
       await runIdentityTableMigration(db);
       await runMessagesTableMigration(db);
@@ -163,6 +164,7 @@ void main() async {
       await runIntroductionRecipientKeysMigration(db);
       await runContactIntroducedByPeerIdMigration(db);
       await runIntroductionAlreadyConnectedMigration(db);
+      await runGroupQuotedMessageIdMigration(db);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) {
@@ -234,6 +236,9 @@ void main() async {
       }
       if (oldVersion < 25) {
         await runIntroductionAlreadyConnectedMigration(db);
+      }
+      if (oldVersion < 26) {
+        await runGroupQuotedMessageIdMigration(db);
       }
     },
   );
@@ -556,6 +561,7 @@ void main() async {
     contactRepo: contactRepository,
     bridge: bridge,
     msgRepo: groupMessageRepository,
+    mediaAttachmentRepo: mediaAttachmentRepository,
     getOwnMlKemSecretKey: () async {
       final identity = await repository.loadIdentity();
       return identity?.mlKemSecretKey;

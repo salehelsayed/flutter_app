@@ -54,7 +54,7 @@ void main() {
   testWidgets('shows type badges', (tester) async {
     await tester.pumpWidget(buildTestWidget(groups: testGroups));
 
-    expect(find.text('Chat'), findsOneWidget);
+    expect(find.text('Discussion'), findsOneWidget);
     expect(find.text('Announce'), findsOneWidget);
   });
 

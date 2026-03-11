@@ -80,8 +80,11 @@ class _AckDropP2PService implements P2PService {
       _inner.discoverPeer(peerId, timeoutMs: timeoutMs);
 
   @override
-  Future<bool> dialPeer(String peerId, {List<String>? addresses, int? timeoutMs}) =>
-      _inner.dialPeer(peerId, addresses: addresses, timeoutMs: timeoutMs);
+  Future<bool> dialPeer(
+    String peerId, {
+    List<String>? addresses,
+    int? timeoutMs,
+  }) => _inner.dialPeer(peerId, addresses: addresses, timeoutMs: timeoutMs);
 
   @override
   Future<bool> storeInInbox(String toPeerId, String message) =>
@@ -113,8 +116,12 @@ class _AckDropP2PService implements P2PService {
   bool isLocalPeer(String peerId) => _inner.isLocalPeer(peerId);
 
   @override
-  Future<bool> sendLocalMessage(String peerId, String msg, String from) =>
-      _inner.sendLocalMessage(peerId, msg, from);
+  Future<bool> sendLocalMessage(
+    String peerId,
+    String msg,
+    String from, {
+    int? timeoutMs,
+  }) => _inner.sendLocalMessage(peerId, msg, from, timeoutMs: timeoutMs);
 
   @override
   Future<bool> sendLocalMedia({
@@ -189,14 +196,14 @@ void main() {
       );
 
       // Cross-add contacts
-      bob.addContact(TestUser.create(
-        peerId: alicePeerId,
-        username: aliceUsername,
-        network: network,
-      ));
-      aliceContactRepo.addTestContact(
-        _makeContact(bob.peerId, bob.username),
+      bob.addContact(
+        TestUser.create(
+          peerId: alicePeerId,
+          username: aliceUsername,
+          network: network,
+        ),
       );
+      aliceContactRepo.addTestContact(_makeContact(bob.peerId, bob.username));
 
       bob.start();
     });
@@ -206,27 +213,33 @@ void main() {
       aliceP2P.dispose();
     });
 
-    test('message persisted with status "delivered" when inbox store succeeds', () async {
-      aliceP2P.dropAcks = true;
+    test(
+      'message persisted with status "delivered" when inbox store succeeds',
+      () async {
+        aliceP2P.dropAcks = true;
 
-      final (result, msg) = await sendChatMessage(
-        p2pService: aliceP2P,
-        messageRepo: aliceRepo,
-        targetPeerId: bob.peerId,
-        text: 'Hello Bob',
-        senderPeerId: alicePeerId,
-        senderUsername: aliceUsername,
-        bridge: encryptBridge,
-        recipientMlKemPublicKey: bobMlKemKey,
-      );
+        final (result, msg) = await sendChatMessage(
+          p2pService: aliceP2P,
+          messageRepo: aliceRepo,
+          targetPeerId: bob.peerId,
+          text: 'Hello Bob',
+          senderPeerId: alicePeerId,
+          senderUsername: aliceUsername,
+          bridge: encryptBridge,
+          recipientMlKemPublicKey: bobMlKemKey,
+        );
 
-      expect(result, SendChatMessageResult.success);
-      expect(msg, isNotNull);
-      expect(msg!.status, 'delivered'); // ACK lost → inbox safety net → delivered
+        expect(result, SendChatMessageResult.success);
+        expect(msg, isNotNull);
+        expect(
+          msg!.status,
+          'delivered',
+        ); // ACK lost → inbox safety net → delivered
 
-      // Exactly 1 message — no duplicates
-      expect(aliceRepo.count, 1);
-    });
+        // Exactly 1 message — no duplicates
+        expect(aliceRepo.count, 1);
+      },
+    );
 
     test('receiver gets the message despite ACK loss', () async {
       aliceP2P.dropAcks = true;
@@ -303,31 +316,39 @@ void main() {
       expect(messages.first.status, 'delivered');
     });
 
-    test('ACK drop on fast path results in status "delivered" when inbox succeeds', () async {
-      // Use the connected variant so fast path fires
-      final innerAlice =
-          FakeP2PService(peerId: alicePeerId, network: network);
-      final connectedP2P = _ConnectedAckDropP2PService(innerAlice);
-      connectedP2P.dropAcks = true;
+    test(
+      'ACK drop on fast path results in status "delivered" when inbox succeeds',
+      () async {
+        // Use the connected variant so fast path fires
+        final innerAlice = FakeP2PService(
+          peerId: alicePeerId,
+          network: network,
+        );
+        final connectedP2P = _ConnectedAckDropP2PService(innerAlice);
+        connectedP2P.dropAcks = true;
 
-      final fastRepo = InMemoryMessageRepository();
+        final fastRepo = InMemoryMessageRepository();
 
-      final (result, msg) = await sendChatMessage(
-        p2pService: connectedP2P,
-        messageRepo: fastRepo,
-        targetPeerId: bob.peerId,
-        text: 'fast path hello',
-        senderPeerId: alicePeerId,
-        senderUsername: aliceUsername,
-        bridge: encryptBridge,
-        recipientMlKemPublicKey: bobMlKemKey,
-      );
+        final (result, msg) = await sendChatMessage(
+          p2pService: connectedP2P,
+          messageRepo: fastRepo,
+          targetPeerId: bob.peerId,
+          text: 'fast path hello',
+          senderPeerId: alicePeerId,
+          senderUsername: aliceUsername,
+          bridge: encryptBridge,
+          recipientMlKemPublicKey: bobMlKemKey,
+        );
 
-      expect(result, SendChatMessageResult.success);
-      expect(msg!.status, 'delivered'); // ACK lost on fast path → inbox safety net
+        expect(result, SendChatMessageResult.success);
+        expect(
+          msg!.status,
+          'delivered',
+        ); // ACK lost on fast path → inbox safety net
 
-      connectedP2P.dispose();
-    });
+        connectedP2P.dispose();
+      },
+    );
 
     test('3 total failures fall through to inbox fallback', () async {
       aliceP2P.totalFailure = true;

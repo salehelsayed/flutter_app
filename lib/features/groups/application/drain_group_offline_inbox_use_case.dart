@@ -55,8 +55,7 @@ Future<void> drainGroupOfflineInbox({
         layer: 'FL',
         event: 'GROUP_DRAIN_OFFLINE_INBOX_GROUP_ERROR',
         details: {
-          'groupId':
-              group.id.length > 8 ? group.id.substring(0, 8) : group.id,
+          'groupId': group.id.length > 8 ? group.id.substring(0, 8) : group.id,
           'error': e.toString(),
         },
       );
@@ -111,7 +110,8 @@ Future<void> _drainGroupInbox({
             groupRepo: groupRepo,
             reactionRepo: reactionRepo!,
             groupId: groupId,
-            senderId: payload['senderId'] as String? ??
+            senderId:
+                payload['senderId'] as String? ??
                 (msg['from'] as String? ?? ''),
             reactionJson: reactionJson,
           );
@@ -130,9 +130,11 @@ Future<void> _drainGroupInbox({
         senderUsername: payload['senderUsername'] as String? ?? '',
         keyEpoch: payload['keyEpoch'] as int? ?? 0,
         text: payload['text'] as String? ?? '',
-        timestamp: payload['timestamp'] as String? ??
+        timestamp:
+            payload['timestamp'] as String? ??
             DateTime.now().toUtc().toIso8601String(),
         messageId: payload['messageId'] as String?,
+        quotedMessageId: payload['quotedMessageId'] as String?,
         media: media,
         mediaAttachmentRepo: mediaAttachmentRepo,
       );
@@ -148,8 +150,7 @@ Future<void> _drainGroupInbox({
         layer: 'FL',
         event: 'GROUP_DRAIN_OFFLINE_INBOX_FIRST_PAGE_DONE',
         details: {
-          'groupId':
-              groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
           'messageCount': totalMessages,
           'hasMore': true,
           'nextCursor': cursor.length > 8 ? cursor.substring(0, 8) : cursor,
@@ -180,7 +181,9 @@ Future<void> _drainGroupInbox({
 /// `senderId` key), which happens when the bridge returns pre-decoded
 /// messages or in test scenarios.
 Map<String, dynamic> decodeInboxMessage(
-    Map<String, dynamic> envelope, String fallbackGroupId) {
+  Map<String, dynamic> envelope,
+  String fallbackGroupId,
+) {
   // If the envelope contains a `message` string, decode it.
   final messageStr = envelope['message'];
   if (messageStr is String && messageStr.isNotEmpty) {

@@ -51,7 +51,8 @@ class GroupMessageListener {
   StreamSubscription<Map<String, dynamic>>? _reactionSubscription;
   final _messageController = StreamController<GroupMessage>.broadcast();
   final _removedController = StreamController<String>.broadcast();
-  final _reactionChangeController = StreamController<ReactionChange>.broadcast();
+  final _reactionChangeController =
+      StreamController<ReactionChange>.broadcast();
 
   GroupMessageListener({
     required GroupRepository groupRepo,
@@ -64,16 +65,16 @@ class GroupMessageListener {
     ActiveConversationTracker? groupConversationTracker,
     AppLifecycleState Function()? getAppLifecycleState,
     ReactionRepository? reactionRepo,
-  })  : _groupRepo = groupRepo,
-        _msgRepo = msgRepo,
-        _bridge = bridge,
-        _getSelfPeerId = getSelfPeerId,
-        _mediaAttachmentRepo = mediaAttachmentRepo,
-        _mediaFileManager = mediaFileManager,
-        _notificationService = notificationService,
-        _groupConversationTracker = groupConversationTracker,
-        _getAppLifecycleState = getAppLifecycleState,
-        _reactionRepo = reactionRepo;
+  }) : _groupRepo = groupRepo,
+       _msgRepo = msgRepo,
+       _bridge = bridge,
+       _getSelfPeerId = getSelfPeerId,
+       _mediaAttachmentRepo = mediaAttachmentRepo,
+       _mediaFileManager = mediaFileManager,
+       _notificationService = notificationService,
+       _groupConversationTracker = groupConversationTracker,
+       _getAppLifecycleState = getAppLifecycleState,
+       _reactionRepo = reactionRepo;
 
   /// Stream of new incoming group messages for the UI to listen to.
   Stream<GroupMessage> get groupMessageStream => _messageController.stream;
@@ -137,7 +138,8 @@ class GroupMessageListener {
       final senderUsername = data['senderUsername'] as String? ?? '';
       final keyEpoch = data['keyEpoch'] as int? ?? 0;
       final text = data['text'] as String? ?? '';
-      final timestamp = data['timestamp'] as String? ??
+      final timestamp =
+          data['timestamp'] as String? ??
           DateTime.now().toUtc().toIso8601String();
 
       if (groupId.isEmpty || senderId.isEmpty) {
@@ -158,6 +160,7 @@ class GroupMessageListener {
       final mediaRaw = data['media'] as List<dynamic>?;
       final media = mediaRaw?.cast<Map<String, dynamic>>();
       final wireMessageId = data['messageId'] as String?;
+      final wireQuotedMessageId = data['quotedMessageId'] as String?;
 
       final result = await handleIncomingGroupMessage(
         groupRepo: _groupRepo,
@@ -169,6 +172,7 @@ class GroupMessageListener {
         text: text,
         timestamp: timestamp,
         messageId: wireMessageId,
+        quotedMessageId: wireQuotedMessageId,
         media: media,
         mediaAttachmentRepo: _mediaAttachmentRepo,
       );
@@ -177,8 +181,9 @@ class GroupMessageListener {
         _messageController.add(result);
 
         // Show notification for incoming group messages (skip own messages)
-        final selfPeerId =
-            _getSelfPeerId != null ? await _getSelfPeerId!() : null;
+        final selfPeerId = _getSelfPeerId != null
+            ? await _getSelfPeerId!()
+            : null;
         if (senderId != selfPeerId &&
             _notificationService != null &&
             _groupConversationTracker != null &&
@@ -219,8 +224,9 @@ class GroupMessageListener {
   /// re-emits the message so the UI can update with resolved local paths.
   Future<void> _autoDownloadMedia(GroupMessage message) async {
     try {
-      final attachments =
-          await _mediaAttachmentRepo!.getAttachmentsForMessage(message.id);
+      final attachments = await _mediaAttachmentRepo!.getAttachmentsForMessage(
+        message.id,
+      );
       if (attachments.isEmpty) return;
 
       for (final attachment in attachments) {
@@ -284,8 +290,7 @@ class GroupMessageListener {
           layer: 'FL',
           event: 'GROUP_MESSAGE_LISTENER_KEY_ROTATED',
           details: {
-            'groupId':
-                groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+            'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
             'newKeyEpoch': parsed['newKeyEpoch'] ?? -1,
           },
         );
@@ -320,8 +325,7 @@ class GroupMessageListener {
         groupId: groupId,
         peerId: memberData['peerId'] as String,
         username: memberData['username'] as String?,
-        role:
-            MemberRole.fromValue(memberData['role'] as String? ?? 'writer'),
+        role: MemberRole.fromValue(memberData['role'] as String? ?? 'writer'),
         publicKey: memberData['publicKey'] as String?,
         mlKemPublicKey: memberData['mlKemPublicKey'] as String?,
         joinedAt: DateTime.now().toUtc(),
@@ -417,8 +421,7 @@ class GroupMessageListener {
           layer: 'FL',
           event: 'GROUP_MESSAGE_LISTENER_SELF_REMOVED',
           details: {
-            'groupId':
-                groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+            'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
           },
         );
 

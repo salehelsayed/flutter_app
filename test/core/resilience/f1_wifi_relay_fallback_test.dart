@@ -67,85 +67,185 @@ void main() {
       expect(alice.messageRepo.count, 1);
     });
 
-    test('WiFi disappears mid-session, next send falls through to relay',
-        () async {
-      final aliceP2P = alice.p2pService as FakeP2PService;
+    test(
+      'WiFi disappears mid-session, next send falls through to relay',
+      () async {
+        final aliceP2P = alice.p2pService as FakeP2PService;
 
-      // First message: WiFi path
-      aliceP2P.localPeers.add(bob.peerId);
+        // First message: WiFi path
+        aliceP2P.localPeers.add(bob.peerId);
 
-      final bobReceived1 = Completer<void>();
-      final sub1 = bob.chatListener.incomingMessageStream.listen((_) {
-        if (!bobReceived1.isCompleted) bobReceived1.complete();
-      });
+        final bobReceived1 = Completer<void>();
+        final sub1 = bob.chatListener.incomingMessageStream.listen((_) {
+          if (!bobReceived1.isCompleted) bobReceived1.complete();
+        });
 
-      final (result1, msg1) =
-          await alice.sendMessage(bob.peerId, 'WiFi message');
+        final (result1, msg1) = await alice.sendMessage(
+          bob.peerId,
+          'WiFi message',
+        );
 
-      expect(result1, SendChatMessageResult.success);
-      expect(msg1, isNotNull);
-      expect(msg1!.transport, 'local');
+        expect(result1, SendChatMessageResult.success);
+        expect(msg1, isNotNull);
+        expect(msg1!.transport, 'local');
 
-      await bobReceived1.future.timeout(const Duration(seconds: 2));
-      await sub1.cancel();
+        await bobReceived1.future.timeout(const Duration(seconds: 2));
+        await sub1.cancel();
 
-      // Second message: remove WiFi, falls to relay
-      aliceP2P.localPeers.remove(bob.peerId);
+        // Second message: remove WiFi, falls to relay
+        aliceP2P.localPeers.remove(bob.peerId);
 
-      final bobReceived2 = Completer<void>();
-      bob.chatListener.incomingMessageStream.listen((_) {
-        if (!bobReceived2.isCompleted) bobReceived2.complete();
-      });
+        final bobReceived2 = Completer<void>();
+        bob.chatListener.incomingMessageStream.listen((_) {
+          if (!bobReceived2.isCompleted) bobReceived2.complete();
+        });
 
-      final (result2, msg2) =
-          await alice.sendMessage(bob.peerId, 'Relay message');
+        final (result2, msg2) = await alice.sendMessage(
+          bob.peerId,
+          'Relay message',
+        );
 
-      expect(result2, SendChatMessageResult.success);
-      expect(msg2, isNotNull);
-      expect(msg2!.transport, 'direct');
+        expect(result2, SendChatMessageResult.success);
+        expect(msg2, isNotNull);
+        expect(msg2!.transport, 'direct');
 
-      await bobReceived2.future.timeout(const Duration(seconds: 2));
+        await bobReceived2.future.timeout(const Duration(seconds: 2));
 
-      // Both messages delivered to Bob, no duplicates
-      final bobMessages = await bob.loadConversationWith(alice.peerId);
-      expect(bobMessages, hasLength(2));
-      expect(bobMessages[0].text, 'WiFi message');
-      expect(bobMessages[1].text, 'Relay message');
+        // Both messages delivered to Bob, no duplicates
+        final bobMessages = await bob.loadConversationWith(alice.peerId);
+        expect(bobMessages, hasLength(2));
+        expect(bobMessages[0].text, 'WiFi message');
+        expect(bobMessages[1].text, 'Relay message');
 
-      // Alice has exactly 2 messages
-      final aliceMessages =
-          await alice.messageRepo.getMessagesForContact(bob.peerId);
-      expect(aliceMessages, hasLength(2));
-    });
+        // Alice has exactly 2 messages
+        final aliceMessages = await alice.messageRepo.getMessagesForContact(
+          bob.peerId,
+        );
+        expect(aliceMessages, hasLength(2));
+      },
+    );
 
-    test('WiFi send fails (localSendResult=false), falls through to relay',
-        () async {
-      final aliceP2P = alice.p2pService as FakeP2PService;
-      aliceP2P.localPeers.add(bob.peerId);
-      aliceP2P.localSendResult = false;
+    test(
+      'WiFi send fails (localSendResult=false), falls through to relay',
+      () async {
+        final aliceP2P = alice.p2pService as FakeP2PService;
+        aliceP2P.localPeers.add(bob.peerId);
+        aliceP2P.localSendResult = false;
 
-      final bobReceived = Completer<void>();
-      bob.chatListener.incomingMessageStream.listen((_) {
-        if (!bobReceived.isCompleted) bobReceived.complete();
-      });
+        final bobReceived = Completer<void>();
+        bob.chatListener.incomingMessageStream.listen((_) {
+          if (!bobReceived.isCompleted) bobReceived.complete();
+        });
 
-      final (result, msg) =
-          await alice.sendMessage(bob.peerId, 'Fallback to relay');
+        final (result, msg) = await alice.sendMessage(
+          bob.peerId,
+          'Fallback to relay',
+        );
 
-      expect(result, SendChatMessageResult.success);
-      expect(msg, isNotNull);
-      expect(msg!.transport, 'direct');
-      expect(aliceP2P.localSendCallCount, 1);
+        expect(result, SendChatMessageResult.success);
+        expect(msg, isNotNull);
+        expect(msg!.transport, 'direct');
+        expect(aliceP2P.localSendCallCount, 1);
 
-      // Bob received via relay
-      await bobReceived.future.timeout(const Duration(seconds: 2));
-      final bobMessages = await bob.loadConversationWith(alice.peerId);
-      expect(bobMessages, hasLength(1));
-      expect(bobMessages.first.text, 'Fallback to relay');
+        // Bob received via relay
+        await bobReceived.future.timeout(const Duration(seconds: 2));
+        final bobMessages = await bob.loadConversationWith(alice.peerId);
+        expect(bobMessages, hasLength(1));
+        expect(bobMessages.first.text, 'Fallback to relay');
 
-      // No duplicates
-      expect(alice.messageRepo.count, 1);
-    });
+        // No duplicates
+        expect(alice.messageRepo.count, 1);
+      },
+    );
+
+    test(
+      'WiFi timeout falls through to direct without duplicate delivery',
+      () async {
+        final aliceP2P = alice.p2pService as FakeP2PService;
+        aliceP2P.localPeers.add(bob.peerId);
+        aliceP2P.localAckDelay =
+            interactiveLocalBudget + const Duration(milliseconds: 200);
+
+        final bobReceived = Completer<void>();
+        bob.chatListener.incomingMessageStream.listen((_) {
+          if (!bobReceived.isCompleted) bobReceived.complete();
+        });
+
+        final (result, msg) = await alice.sendMessage(
+          bob.peerId,
+          'WiFi timeout to direct',
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(msg, isNotNull);
+        expect(msg!.transport, 'direct');
+        expect(aliceP2P.localSendCallCount, 1);
+        expect(
+          aliceP2P.lastLocalTimeoutMs,
+          interactiveLocalBudget.inMilliseconds,
+        );
+        expect(network.storeInInboxCallCount, 0);
+
+        await bobReceived.future.timeout(const Duration(seconds: 2));
+        await Future.delayed(
+          interactiveLocalBudget + const Duration(milliseconds: 250),
+        );
+
+        final bobMessages = await bob.loadConversationWith(alice.peerId);
+        expect(bobMessages, hasLength(1));
+        expect(bobMessages.first.text, 'WiFi timeout to direct');
+
+        final aliceMessages = await alice.messageRepo.getMessagesForContact(
+          bob.peerId,
+        );
+        expect(aliceMessages, hasLength(1));
+      },
+    );
+
+    test(
+      'WiFi timeout with no direct success falls back to inbox once',
+      () async {
+        final aliceP2P = alice.p2pService as FakeP2PService;
+        aliceP2P.localPeers.add(bob.peerId);
+        aliceP2P.localAckDelay =
+            interactiveLocalBudget + const Duration(milliseconds: 200);
+        aliceP2P.sendFailCount = 1;
+
+        final bobReceived = Completer<void>();
+        bob.chatListener.incomingMessageStream.listen((_) {
+          if (!bobReceived.isCompleted) bobReceived.complete();
+        });
+
+        final (result, msg) = await alice.sendMessage(
+          bob.peerId,
+          'WiFi timeout to inbox',
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(msg, isNotNull);
+        expect(msg!.transport, 'inbox');
+        expect(aliceP2P.localSendCallCount, 1);
+        expect(network.storeInInboxCallCount, 1);
+        expect(network.inboxCount(bob.peerId), 1);
+
+        final drained = await (bob.p2pService as FakeP2PService)
+            .drainOfflineInboxCount();
+        expect(drained, 1);
+        await bobReceived.future.timeout(const Duration(seconds: 2));
+        await Future.delayed(
+          interactiveLocalBudget + const Duration(milliseconds: 250),
+        );
+
+        final bobMessages = await bob.loadConversationWith(alice.peerId);
+        expect(bobMessages, hasLength(1));
+        expect(bobMessages.first.text, 'WiFi timeout to inbox');
+
+        final aliceMessages = await alice.messageRepo.getMessagesForContact(
+          bob.peerId,
+        );
+        expect(aliceMessages, hasLength(1));
+      },
+    );
 
     test('transport stable across WiFi/relay/WiFi transitions', () async {
       final aliceP2P = alice.p2pService as FakeP2PService;
@@ -198,8 +298,9 @@ void main() {
       expect(bobMessages, hasLength(3));
 
       // Alice has exactly 3 messages
-      final aliceMessages =
-          await alice.messageRepo.getMessagesForContact(bob.peerId);
+      final aliceMessages = await alice.messageRepo.getMessagesForContact(
+        bob.peerId,
+      );
       expect(aliceMessages, hasLength(3));
     });
   });

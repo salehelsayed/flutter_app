@@ -398,6 +398,27 @@ void main() {
       expect((payload['media'] as List)[0]['id'], 'blob-1');
     });
 
+    test('includes quotedMessageId when provided', () async {
+      bridge.responses['group:publish'] = {
+        'ok': true,
+        'messageId': 'msg-quoted-001',
+      };
+
+      await callGroupPublish(
+        bridge,
+        groupId: 'grp-quoted',
+        text: 'Reply to parent',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        quotedMessageId: 'msg-parent-1',
+      );
+
+      final sent = jsonDecode(bridge.lastSentMessage!) as Map<String, dynamic>;
+      final payload = sent['payload'] as Map<String, dynamic>;
+      expect(payload['quotedMessageId'], 'msg-parent-1');
+    });
+
     test('omits media when null', () async {
       bridge.responses['group:publish'] = {
         'ok': true,
@@ -795,6 +816,8 @@ void main() {
   // ---------------------------------------------------------------------------
   group('callGroupInboxStore', () {
     test('sends group:inboxStore with groupId and message', () async {
+      bridge.responses['group:inboxStore'] = {'ok': true};
+
       await callGroupInboxStore(bridge, 'grp-inbox-001', 'encrypted-msg-data');
 
       final sent = jsonDecode(bridge.lastSentMessage!) as Map<String, dynamic>;
@@ -803,6 +826,19 @@ void main() {
       final payload = sent['payload'] as Map<String, dynamic>;
       expect(payload['groupId'], equals('grp-inbox-001'));
       expect(payload['message'], equals('encrypted-msg-data'));
+    });
+
+    test('throws BridgeCommandException on ok:false', () async {
+      bridge.responses['group:inboxStore'] = {
+        'ok': false,
+        'errorCode': 'GROUP_INBOX_ERROR',
+        'errorMessage': 'store failed',
+      };
+
+      expect(
+        () => callGroupInboxStore(bridge, 'grp-inbox-fail', 'msg'),
+        throwsA(isA<BridgeCommandException>()),
+      );
     });
 
     test('rethrows TimeoutException on timeout', () async {
@@ -867,17 +903,31 @@ void main() {
       expect(messages, isEmpty);
     });
 
-    test('returns empty list on timeout', () async {
+    test('throws BridgeCommandException on ok:false', () async {
+      bridge.responses['group:inboxRetrieve'] = {
+        'ok': false,
+        'errorCode': 'GROUP_INBOX_ERROR',
+        'errorMessage': 'retrieve failed',
+      };
+
+      expect(
+        () => callGroupInboxRetrieve(bridge, 'grp-error', 0),
+        throwsA(isA<BridgeCommandException>()),
+      );
+    });
+
+    test('rethrows TimeoutException on timeout', () async {
       final slowBridge = _SlowBridge();
 
-      final messages = await callGroupInboxRetrieve(
-        slowBridge,
-        'grp-slow',
-        0,
-        timeout: const Duration(milliseconds: 1),
+      expect(
+        () => callGroupInboxRetrieve(
+          slowBridge,
+          'grp-slow',
+          0,
+          timeout: const Duration(milliseconds: 1),
+        ),
+        throwsA(isA<TimeoutException>()),
       );
-
-      expect(messages, isEmpty);
     });
   });
 
@@ -914,19 +964,37 @@ void main() {
       expect(payload['limit'], equals(25));
     });
 
-    test('returns empty page on timeout', () async {
+    test('rethrows TimeoutException on timeout', () async {
       final slowBridge = _SlowBridge();
 
-      final page = await callGroupInboxRetrieveWithCursor(
-        slowBridge,
-        'grp-slow-cursor',
-        '',
-        10,
-        timeout: const Duration(milliseconds: 1),
+      expect(
+        () => callGroupInboxRetrieveWithCursor(
+          slowBridge,
+          'grp-slow-cursor',
+          '',
+          10,
+          timeout: const Duration(milliseconds: 1),
+        ),
+        throwsA(isA<TimeoutException>()),
       );
+    });
 
-      expect(page.messages, isEmpty);
-      expect(page.cursor, isEmpty);
+    test('throws BridgeCommandException on ok:false', () async {
+      bridge.responses['group:inboxRetrieveCursor'] = {
+        'ok': false,
+        'errorCode': 'GROUP_INBOX_ERROR',
+        'errorMessage': 'cursor retrieve failed',
+      };
+
+      expect(
+        () => callGroupInboxRetrieveWithCursor(
+          bridge,
+          'grp-error-cursor',
+          '',
+          10,
+        ),
+        throwsA(isA<BridgeCommandException>()),
+      );
     });
   });
 

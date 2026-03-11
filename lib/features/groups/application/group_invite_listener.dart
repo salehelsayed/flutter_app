@@ -5,6 +5,7 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -24,6 +25,7 @@ class GroupInviteListener {
   final Bridge bridge;
   final Future<String?> Function() getOwnMlKemSecretKey;
   final GroupMessageRepository? msgRepo;
+  final MediaAttachmentRepository? mediaAttachmentRepo;
 
   StreamSubscription<ChatMessage>? _subscription;
   final _groupJoinedController = StreamController<GroupModel>.broadcast();
@@ -35,6 +37,7 @@ class GroupInviteListener {
     required this.bridge,
     required this.getOwnMlKemSecretKey,
     this.msgRepo,
+    this.mediaAttachmentRepo,
   });
 
   /// Stream of groups that the user has joined via invite.
@@ -89,12 +92,17 @@ class GroupInviteListener {
 
   /// Decodes an inbox message from the relay's envelope format.
   static Map<String, dynamic> _decodeInboxMessage(
-      Map<String, dynamic> envelope, String fallbackGroupId) {
+    Map<String, dynamic> envelope,
+    String fallbackGroupId,
+  ) {
     final messageStr = envelope['message'];
     if (messageStr is String && messageStr.isNotEmpty) {
       try {
         return jsonDecode(messageStr) as Map<String, dynamic>;
       } catch (_) {}
+    }
+    if (envelope.containsKey('senderId')) {
+      return envelope;
     }
     return {
       'groupId': fallbackGroupId,
@@ -112,32 +120,52 @@ class GroupInviteListener {
     if (repo == null) return;
 
     try {
-      final messages = await callGroupInboxRetrieve(bridge, groupId, 0);
+      const pageSize = 50;
+      var cursor = '';
+      var totalMessages = 0;
 
-      for (final msg in messages) {
-        // The relay returns {from, message, timestamp} where `message`
-        // is a JSON-encoded string with the actual message payload.
-        final payload = _decodeInboxMessage(msg, groupId);
-        await handleIncomingGroupMessage(
-          groupRepo: groupRepo,
-          msgRepo: repo,
-          groupId: payload['groupId'] as String? ?? groupId,
-          senderId: payload['senderId'] as String? ?? '',
-          senderUsername: payload['senderUsername'] as String? ?? '',
-          keyEpoch: payload['keyEpoch'] as int? ?? 0,
-          text: payload['text'] as String? ?? '',
-          timestamp: payload['timestamp'] as String? ??
-              DateTime.now().toUtc().toIso8601String(),
+      do {
+        final page = await callGroupInboxRetrieveWithCursor(
+          bridge,
+          groupId,
+          cursor,
+          pageSize,
         );
-      }
+
+        for (final msg in page.messages) {
+          // The relay returns {from, message, timestamp} where `message`
+          // is a JSON-encoded string with the actual message payload.
+          final payload = _decodeInboxMessage(msg, groupId);
+          final mediaRaw = payload['media'] as List<dynamic>?;
+          final media = mediaRaw?.cast<Map<String, dynamic>>();
+          await handleIncomingGroupMessage(
+            groupRepo: groupRepo,
+            msgRepo: repo,
+            groupId: payload['groupId'] as String? ?? groupId,
+            senderId: payload['senderId'] as String? ?? '',
+            senderUsername: payload['senderUsername'] as String? ?? '',
+            keyEpoch: payload['keyEpoch'] as int? ?? 0,
+            text: payload['text'] as String? ?? '',
+            timestamp:
+                payload['timestamp'] as String? ??
+                DateTime.now().toUtc().toIso8601String(),
+            messageId: payload['messageId'] as String?,
+            quotedMessageId: payload['quotedMessageId'] as String?,
+            media: media,
+            mediaAttachmentRepo: mediaAttachmentRepo,
+          );
+        }
+
+        totalMessages += page.messages.length;
+        cursor = page.cursor;
+      } while (cursor.isNotEmpty);
 
       emitFlowEvent(
         layer: 'FL',
         event: 'GROUP_INVITE_DRAIN_INBOX_DONE',
         details: {
-          'groupId':
-              groupId.length > 8 ? groupId.substring(0, 8) : groupId,
-          'messageCount': messages.length,
+          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+          'messageCount': totalMessages,
         },
       );
     } catch (e) {
@@ -145,8 +173,7 @@ class GroupInviteListener {
         layer: 'FL',
         event: 'GROUP_INVITE_DRAIN_INBOX_ERROR',
         details: {
-          'groupId':
-              groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
           'error': e.toString(),
         },
       );

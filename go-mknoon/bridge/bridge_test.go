@@ -1423,6 +1423,30 @@ func TestGroupPublish_MediaOnly_AcceptsEmptyText(t *testing.T) {
 	}
 }
 
+func TestBuildGroupPublishOpts_IncludesQuotedMessageId(t *testing.T) {
+	media := []map[string]interface{}{
+		{"id": "m1", "mime": "image/jpeg"},
+	}
+
+	opts := buildGroupPublishOpts(media, "parent-msg-1")
+	if opts == nil {
+		t.Fatal("expected publish opts, got nil")
+	}
+
+	if got := opts["quotedMessageId"]; got != "parent-msg-1" {
+		t.Fatalf("quotedMessageId = %v, want %q", got, "parent-msg-1")
+	}
+	if got, ok := opts["media"].([]map[string]interface{}); !ok || len(got) != 1 {
+		t.Fatalf("media = %#v, want one attachment", opts["media"])
+	}
+}
+
+func TestBuildGroupPublishOpts_EmptyReturnsNil(t *testing.T) {
+	if opts := buildGroupPublishOpts(nil, ""); opts != nil {
+		t.Fatalf("expected nil opts, got %#v", opts)
+	}
+}
+
 func TestGroupUpdateConfig_InvalidJSON(t *testing.T) {
 	withSingletonNode(t)
 	result := GroupUpdateConfig("not valid json")

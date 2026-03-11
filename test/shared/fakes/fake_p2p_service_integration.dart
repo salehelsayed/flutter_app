@@ -26,8 +26,14 @@ class FakeP2PService implements P2PService {
   /// Whether [sendLocalMessage] succeeds when the peer is local.
   bool localSendResult = true;
 
+  /// Delay before a local WiFi send is acknowledged.
+  Duration? localAckDelay;
+
   /// How many times [sendLocalMessage] has been called.
   int localSendCallCount = 0;
+
+  /// Last timeout passed to [sendLocalMessage].
+  int? lastLocalTimeoutMs;
 
   /// Current transport mode for test assertions.
   /// Can be 'wifi', 'relay', or 'inbox'. Defaults to 'relay'.
@@ -75,8 +81,10 @@ class FakeP2PService implements P2PService {
     for (final message in messages) {
       final ts = message['timestamp'];
       final timestamp = ts is int
-          ? DateTime.fromMillisecondsSinceEpoch(ts, isUtc: true)
-              .toIso8601String()
+          ? DateTime.fromMillisecondsSinceEpoch(
+              ts,
+              isUtc: true,
+            ).toIso8601String()
           : DateTime.now().toUtc().toIso8601String();
       injectIncomingMessage(
         ChatMessage(
@@ -140,8 +148,11 @@ class FakeP2PService implements P2PService {
   }
 
   @override
-  Future<bool> dialPeer(String peerId, {List<String>? addresses, int? timeoutMs}) async =>
-      network.hasPeer(peerId);
+  Future<bool> dialPeer(
+    String peerId, {
+    List<String>? addresses,
+    int? timeoutMs,
+  }) async => network.hasPeer(peerId);
 
   @override
   Future<bool> storeInInbox(String toPeerId, String message) async {
@@ -171,9 +182,25 @@ class FakeP2PService implements P2PService {
 
   @override
   Future<bool> sendLocalMessage(
-      String peerId, String message, String fromPeerId) async {
+    String peerId,
+    String message,
+    String fromPeerId, {
+    int? timeoutMs,
+  }) async {
     localSendCallCount++;
+    lastLocalTimeoutMs = timeoutMs;
     if (!localSendResult) return false;
+    final ackDelay = localAckDelay;
+    if (ackDelay != null) {
+      final budget = timeoutMs == null
+          ? null
+          : Duration(milliseconds: timeoutMs);
+      if (budget != null && ackDelay > budget) {
+        await Future.delayed(budget);
+        return false;
+      }
+      await Future.delayed(ackDelay);
+    }
     return network.deliver(fromPeerId, peerId, message);
   }
 

@@ -13,20 +13,24 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
+import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/features/conversation/presentation/screens/conversation_screen.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/attachment_preview_strip.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/conversation_header.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bubble.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
+import '../../../../core/bridge/fake_bridge.dart';
 import '../../../../shared/fakes/fake_audio_recorder_service.dart';
 import '../../../../shared/fakes/fake_media_picker.dart';
 
@@ -88,9 +92,16 @@ class FakeContactRepository implements ContactRepository {
   Future<void> setIntrosSentAt(String peerId, String timestamp) async {}
 }
 
-class FakeMessageRepository implements MessageRepository {
+class FakeMessageRepository
+    implements MessageRepository, MessageRepositoryChangeSource {
   final Map<String, ConversationMessage> store = {};
   int getMessagesPageCalls = 0;
+  final StreamController<ConversationMessage> _messageChangeController =
+      StreamController<ConversationMessage>.broadcast();
+
+  @override
+  Stream<ConversationMessage> get messageChanges =>
+      _messageChangeController.stream;
 
   @override
   Future<List<ConversationMessage>> getMessagesForContact(
@@ -116,13 +127,16 @@ class FakeMessageRepository implements MessageRepository {
   @override
   Future<void> saveMessage(ConversationMessage message) async {
     store[message.id] = message;
+    _messageChangeController.add(message);
   }
 
   @override
   Future<void> updateMessageStatus(String id, String status) async {
     final message = store[id];
     if (message == null) return;
-    store[id] = message.copyWith(status: status);
+    final updated = message.copyWith(status: status);
+    store[id] = updated;
+    _messageChangeController.add(updated);
   }
 
   @override
@@ -206,16 +220,22 @@ class FakeP2PService implements P2PService {
   void dispose() {}
 
   @override
-  Future<bool> dialPeer(String peerId, {List<String>? addresses, int? timeoutMs}) async => true;
+  Future<bool> dialPeer(
+    String peerId, {
+    List<String>? addresses,
+    int? timeoutMs,
+  }) async => true;
 
   @override
-  Future<DiscoveredPeer?> discoverPeer(String peerId, {int? timeoutMs}) async => null;
+  Future<DiscoveredPeer?> discoverPeer(String peerId, {int? timeoutMs}) async =>
+      null;
 
   @override
   Stream<ChatMessage> get messageStream => const Stream.empty();
 
   @override
-  Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) async => [];
+  Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) async =>
+      [];
 
   @override
   Future<bool> sendMessage(String peerId, String message) async => true;
@@ -262,8 +282,9 @@ class FakeP2PService implements P2PService {
   Future<bool> sendLocalMessage(
     String peerId,
     String message,
-    String fromPeerId,
-  ) async => false;
+    String fromPeerId, {
+    int? timeoutMs,
+  }) async => false;
 
   @override
   Future<bool> sendLocalMedia({
@@ -323,6 +344,9 @@ void main() {
     required ChatMessageListener chatListener,
     required SendChatMessageFn sendFn,
     P2PService? p2pService,
+    Bridge? bridge,
+    UploadMediaFn? uploadMediaFn,
+    MediaAttachmentRepository? mediaAttachmentRepo,
     FakeAudioRecorderService? audioRecorderService,
     ImageProcessor? imageProcessor,
     MediaPicker? mediaPicker,
@@ -337,7 +361,10 @@ void main() {
           messageRepo: messageRepo,
           chatMessageListener: chatListener,
           p2pService: p2pService ?? FakeP2PService(),
+          bridge: bridge,
           sendChatMessageFn: sendFn,
+          uploadMediaFn: uploadMediaFn ?? uploadMedia,
+          mediaAttachmentRepo: mediaAttachmentRepo,
           audioRecorderService: audioRecorderService,
           imageProcessor: imageProcessor,
           mediaPicker: mediaPicker,
@@ -1139,6 +1166,429 @@ void main() {
       expect(sendCalled, false);
       expect(messageRepo.store, isEmpty);
     });
+
+    testWidgets('swipe-to-reply sends quotedMessageId and clears preview', (
+      tester,
+    ) async {
+      final identityRepo = FakeIdentityRepository(makeIdentity());
+      final messageRepo = FakeMessageRepository();
+      final chatListener = ChatMessageListener(
+        chatMessageStream: const Stream.empty(),
+        messageRepo: messageRepo,
+        contactRepo: FakeContactRepository(),
+      );
+      final incoming = ConversationMessage(
+        id: 'incoming-1',
+        contactPeerId: makeContact().peerId,
+        senderPeerId: makeContact().peerId,
+        text: 'Original incoming',
+        timestamp: '2026-02-09T15:30:00.000Z',
+        status: 'delivered',
+        isIncoming: true,
+        createdAt: '2026-02-09T15:30:01.000Z',
+      );
+      await messageRepo.saveMessage(incoming);
+
+      String? capturedQuotedMessageId;
+
+      Future<(SendChatMessageResult, ConversationMessage?)> sendFn({
+        required P2PService p2pService,
+        required MessageRepository messageRepo,
+        required String targetPeerId,
+        required String text,
+        required String senderPeerId,
+        required String senderUsername,
+        String? messageId,
+        String? timestamp,
+        Bridge? bridge,
+        String? recipientMlKemPublicKey,
+        String? quotedMessageId,
+        List<MediaAttachment>? mediaAttachments,
+        MediaAttachmentRepository? mediaAttachmentRepo,
+      }) async {
+        capturedQuotedMessageId = quotedMessageId;
+        final delivered = ConversationMessage(
+          id: messageId!,
+          contactPeerId: targetPeerId,
+          senderPeerId: senderPeerId,
+          text: text,
+          timestamp: timestamp!,
+          status: 'delivered',
+          isIncoming: false,
+          createdAt: timestamp,
+          quotedMessageId: quotedMessageId,
+        );
+        await messageRepo.saveMessage(delivered);
+        return (SendChatMessageResult.success, delivered);
+      }
+
+      await pumpScreen(
+        tester,
+        identityRepo: identityRepo,
+        messageRepo: messageRepo,
+        chatListener: chatListener,
+        sendFn: sendFn,
+      );
+
+      expect(find.byType(SwipeToQuoteBubble), findsOneWidget);
+
+      final screen = tester.widget<ConversationScreen>(
+        find.byType(ConversationScreen),
+      );
+      screen.onQuoteReply!.call('incoming-1');
+      await tester.pump();
+
+      expect(find.text('Replying to'), findsOneWidget);
+      expect(find.text('Original incoming'), findsWidgets);
+
+      await tester.enterText(find.byType(TextField), 'Quoted response');
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(capturedQuotedMessageId, 'incoming-1');
+      expect(find.text('Replying to'), findsNothing);
+
+      final saved = messageRepo.store.values
+          .where((message) => message.text == 'Quoted response')
+          .first;
+      expect(saved.quotedMessageId, 'incoming-1');
+    });
+
+    testWidgets('swipe-to-reply voice send preserves quotedMessageId', (
+      tester,
+    ) async {
+      final identityRepo = FakeIdentityRepository(makeIdentity());
+      final messageRepo = FakeMessageRepository();
+      final chatListener = ChatMessageListener(
+        chatMessageStream: const Stream.empty(),
+        messageRepo: messageRepo,
+        contactRepo: FakeContactRepository(),
+      );
+      final recorder = FakeAudioRecorderService()
+        ..fakeDurationMs = 1200
+        ..fakeOutputPath = '/tmp/quoted_voice.m4a';
+      final incoming = ConversationMessage(
+        id: 'incoming-voice-1',
+        contactPeerId: makeContact().peerId,
+        senderPeerId: makeContact().peerId,
+        text: 'Quote this voice parent',
+        timestamp: '2026-02-09T15:30:00.000Z',
+        status: 'delivered',
+        isIncoming: true,
+        createdAt: '2026-02-09T15:30:01.000Z',
+      );
+      await messageRepo.saveMessage(incoming);
+
+      String? capturedQuotedMessageId;
+
+      Future<(SendChatMessageResult, ConversationMessage?)> sendFn({
+        required P2PService p2pService,
+        required MessageRepository messageRepo,
+        required String targetPeerId,
+        required String text,
+        required String senderPeerId,
+        required String senderUsername,
+        String? messageId,
+        String? timestamp,
+        Bridge? bridge,
+        String? recipientMlKemPublicKey,
+        String? quotedMessageId,
+        List<MediaAttachment>? mediaAttachments,
+        MediaAttachmentRepository? mediaAttachmentRepo,
+      }) async {
+        capturedQuotedMessageId = quotedMessageId;
+        final delivered = ConversationMessage(
+          id: messageId!,
+          contactPeerId: targetPeerId,
+          senderPeerId: senderPeerId,
+          text: text,
+          timestamp: timestamp!,
+          status: 'delivered',
+          isIncoming: false,
+          createdAt: timestamp,
+          quotedMessageId: quotedMessageId,
+          media: mediaAttachments ?? const [],
+        );
+        await messageRepo.saveMessage(delivered);
+        return (SendChatMessageResult.success, delivered);
+      }
+
+      await pumpScreen(
+        tester,
+        identityRepo: identityRepo,
+        messageRepo: messageRepo,
+        chatListener: chatListener,
+        sendFn: sendFn,
+        p2pService: FakeP2PService(localPeer: true, localMediaResult: true),
+        audioRecorderService: recorder,
+      );
+
+      final screen = tester.widget<ConversationScreen>(
+        find.byType(ConversationScreen),
+      );
+      screen.onQuoteReply!.call('incoming-voice-1');
+      await tester.pump();
+
+      expect(find.text('Replying to'), findsOneWidget);
+
+      final startRecording = screen.onRecordStart! as Future<void> Function();
+      await startRecording();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.byIcon(Icons.stop_rounded), findsOneWidget);
+      final recordingScreen = tester.widget<ConversationScreen>(
+        find.byType(ConversationScreen),
+      );
+      final stopRecording =
+          recordingScreen.onRecordStop! as Future<void> Function();
+      final stopFuture = stopRecording();
+      await tester.pump(const Duration(milliseconds: 300));
+      await stopFuture;
+
+      expect(capturedQuotedMessageId, 'incoming-voice-1');
+      expect(find.text('Replying to'), findsNothing);
+
+      final saved = messageRepo.store.values
+          .where((message) => message.id != 'incoming-voice-1')
+          .firstWhere((message) => !message.isIncoming);
+      expect(saved.quotedMessageId, 'incoming-voice-1');
+    });
+
+    testWidgets(
+      'repository change updates failed outgoing reply status in place',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        final contact = makeContact();
+        final parent = ConversationMessage(
+          id: 'parent-retry',
+          contactPeerId: contact.peerId,
+          senderPeerId: contact.peerId,
+          text: 'Original parent',
+          timestamp: '2026-02-09T15:29:00.000Z',
+          status: 'delivered',
+          isIncoming: true,
+          createdAt: '2026-02-09T15:29:01.000Z',
+        );
+        final failedReply = ConversationMessage(
+          id: 'failed-retry',
+          contactPeerId: contact.peerId,
+          senderPeerId: makeIdentity().peerId,
+          text: 'Retry me',
+          timestamp: '2026-02-09T15:30:00.000Z',
+          status: 'failed',
+          isIncoming: false,
+          createdAt: '2026-02-09T15:30:00.000Z',
+          quotedMessageId: 'parent-retry',
+        );
+        await messageRepo.saveMessage(parent);
+        await messageRepo.saveMessage(failedReply);
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+        );
+
+        expect(find.byIcon(Icons.error_outline_rounded), findsOneWidget);
+
+        await messageRepo.saveMessage(
+          failedReply.copyWith(status: 'delivered'),
+        );
+        await tester.pump(const Duration(milliseconds: 500));
+
+        expect(find.byIcon(Icons.error_outline_rounded), findsNothing);
+        expect(find.byIcon(Icons.done_all_rounded), findsOneWidget);
+      },
+    );
+
+    testWidgets('upload failure restores quote draft and attachments', (
+      tester,
+    ) async {
+      final identityRepo = FakeIdentityRepository(makeIdentity());
+      final messageRepo = FakeMessageRepository();
+      final chatListener = ChatMessageListener(
+        chatMessageStream: const Stream.empty(),
+        messageRepo: messageRepo,
+        contactRepo: FakeContactRepository(),
+      );
+      final incoming = ConversationMessage(
+        id: 'incoming-upload',
+        contactPeerId: makeContact().peerId,
+        senderPeerId: makeContact().peerId,
+        text: 'Upload parent',
+        timestamp: '2026-02-09T15:30:00.000Z',
+        status: 'delivered',
+        isIncoming: true,
+        createdAt: '2026-02-09T15:30:01.000Z',
+      );
+      await messageRepo.saveMessage(incoming);
+
+      final tempDir = Directory.systemTemp.createTempSync('conv_retry_upload_');
+      addTearDown(() {
+        if (tempDir.existsSync()) {
+          tempDir.deleteSync(recursive: true);
+        }
+      });
+      final attachment = File('${tempDir.path}/retry.jpg')
+        ..writeAsStringSync('image');
+
+      await pumpScreen(
+        tester,
+        identityRepo: identityRepo,
+        messageRepo: messageRepo,
+        chatListener: chatListener,
+        sendFn: _instantSuccessSendFn,
+        bridge: FakeBridge(),
+        uploadMediaFn:
+            ({
+              required bridge,
+              required localFilePath,
+              required mime,
+              required recipientPeerId,
+              mediaFileManager,
+              width,
+              height,
+              durationMs,
+              waveform,
+              allowedPeers,
+            }) async => null,
+        initialAttachments: [attachment],
+      );
+
+      final screen = tester.widget<ConversationScreen>(
+        find.byType(ConversationScreen),
+      );
+      screen.onQuoteReply!.call('incoming-upload');
+      await tester.pump();
+
+      await tester.enterText(find.byType(TextField), 'Retry upload');
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.byType(AttachmentPreviewStrip), findsOneWidget);
+      expect(find.text('Replying to'), findsOneWidget);
+      expect(find.text('Upload parent'), findsWidgets);
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller?.text,
+        'Retry upload',
+      );
+      expect(find.text('Failed to upload media. Try again.'), findsOneWidget);
+    });
+
+    testWidgets(
+      'send failure after upload restores quote draft and attachments',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        final incoming = ConversationMessage(
+          id: 'incoming-send-fail',
+          contactPeerId: makeContact().peerId,
+          senderPeerId: makeContact().peerId,
+          text: 'Send parent',
+          timestamp: '2026-02-09T15:30:00.000Z',
+          status: 'delivered',
+          isIncoming: true,
+          createdAt: '2026-02-09T15:30:01.000Z',
+        );
+        await messageRepo.saveMessage(incoming);
+
+        final tempDir = Directory.systemTemp.createTempSync('conv_retry_send_');
+        addTearDown(() {
+          if (tempDir.existsSync()) {
+            tempDir.deleteSync(recursive: true);
+          }
+        });
+        final attachment = File('${tempDir.path}/retry.jpg')
+          ..writeAsStringSync('image');
+
+        Future<(SendChatMessageResult, ConversationMessage?)> sendFn({
+          required P2PService p2pService,
+          required MessageRepository messageRepo,
+          required String targetPeerId,
+          required String text,
+          required String senderPeerId,
+          required String senderUsername,
+          String? messageId,
+          String? timestamp,
+          Bridge? bridge,
+          String? recipientMlKemPublicKey,
+          String? quotedMessageId,
+          List<MediaAttachment>? mediaAttachments,
+          MediaAttachmentRepository? mediaAttachmentRepo,
+        }) async => (SendChatMessageResult.sendFailed, null);
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: sendFn,
+          bridge: FakeBridge(),
+          uploadMediaFn:
+              ({
+                required bridge,
+                required localFilePath,
+                required mime,
+                required recipientPeerId,
+                mediaFileManager,
+                width,
+                height,
+                durationMs,
+                waveform,
+                allowedPeers,
+              }) async => MediaAttachment(
+                id: 'uploaded-1',
+                messageId: '',
+                mime: mime,
+                size: 1,
+                mediaType: MediaAttachment.mediaTypeFromMime(mime),
+                localPath: localFilePath,
+                downloadStatus: 'done',
+                createdAt: DateTime.now().toUtc().toIso8601String(),
+              ),
+          initialAttachments: [attachment],
+        );
+
+        final screen = tester.widget<ConversationScreen>(
+          find.byType(ConversationScreen),
+        );
+        screen.onQuoteReply!.call('incoming-send-fail');
+        await tester.pump();
+
+        await tester.enterText(find.byType(TextField), 'Retry send');
+        await tester.pump(const Duration(milliseconds: 300));
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
+
+        expect(find.byType(AttachmentPreviewStrip), findsOneWidget);
+        expect(find.text('Replying to'), findsOneWidget);
+        expect(find.text('Send parent'), findsWidgets);
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).controller?.text,
+          'Retry send',
+        );
+        expect(
+          find.text('Failed to send message. Message saved.'),
+          findsOneWidget,
+        );
+      },
+    );
   });
 }
 

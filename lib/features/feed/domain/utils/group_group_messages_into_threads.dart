@@ -19,9 +19,7 @@ List<GroupThreadFeedItem> groupGroupMessagesIntoThreads({
   if (allGroupMessages.isEmpty || groups.isEmpty) return [];
 
   // Build lookup map for groups
-  final groupMap = <String, GroupModel>{
-    for (final g in groups) g.id: g,
-  };
+  final groupMap = <String, GroupModel>{for (final g in groups) g.id: g};
 
   // Group messages by groupId
   final Map<String, List<GroupMessage>> byGroup = {};
@@ -40,11 +38,11 @@ List<GroupThreadFeedItem> groupGroupMessagesIntoThreads({
     final group = groupMap[groupId]!;
 
     // Derive conversation state from ALL messages for this group
-    final hasUnreadIncoming =
-        msgs.any((m) => m.isIncoming && m.readAt == null);
+    final hasUnreadIncoming = msgs.any((m) => m.isIncoming && m.readAt == null);
     final hasSentMessages = msgs.any((m) => !m.isIncoming);
-    final unreadIncomingCount =
-        msgs.where((m) => m.isIncoming && m.readAt == null).length;
+    final unreadIncomingCount = msgs
+        .where((m) => m.isIncoming && m.readAt == null)
+        .length;
 
     final ConversationState state;
     if (hasUnreadIncoming && hasSentMessages) {
@@ -60,18 +58,21 @@ List<GroupThreadFeedItem> groupGroupMessagesIntoThreads({
     final latestTs = msgs.last.timestamp;
 
     final threadMessages = msgs
-        .map((m) => ThreadMessage(
-              id: m.id,
-              text: m.text,
-              time: formatMessageTime(m.timestamp.toUtc().toIso8601String()),
-              timestamp: m.timestamp,
-              isUnread: m.isIncoming && m.readAt == null,
-              isIncoming: m.isIncoming,
-              status: m.isIncoming ? null : m.status,
-              senderUsername: m.senderUsername,
-              senderPeerId: m.senderPeerId,
-              media: m.media,
-            ))
+        .map(
+          (m) => ThreadMessage(
+            id: m.id,
+            text: m.text,
+            time: formatMessageTime(m.timestamp.toUtc().toIso8601String()),
+            timestamp: m.timestamp,
+            isUnread: m.isIncoming && m.readAt == null,
+            isIncoming: m.isIncoming,
+            status: m.isIncoming ? null : m.status,
+            quotedMessageId: m.quotedMessageId,
+            senderUsername: m.senderUsername,
+            senderPeerId: m.senderPeerId,
+            media: m.media,
+          ),
+        )
         .toList();
 
     final item = GroupThreadFeedItem(
@@ -80,6 +81,7 @@ List<GroupThreadFeedItem> groupGroupMessagesIntoThreads({
       groupId: groupId,
       groupName: group.name,
       groupType: group.type,
+      myRole: group.myRole,
       messages: threadMessages,
       unreadCount: unreadIncomingCount,
       conversationState: state,

@@ -25,8 +25,8 @@ final Uint8List _tinyPng = Uint8List.fromList([
 
 void main() {
   Widget wrap(Widget child) => MaterialApp(
-        home: Scaffold(body: SingleChildScrollView(child: child)),
-      );
+    home: Scaffold(body: SingleChildScrollView(child: child)),
+  );
 
   group('CollapsedModeCardBody', () {
     testWidgets('replied state shows reply indicator', (tester) async {
@@ -60,8 +60,9 @@ void main() {
       expect(find.byIcon(Icons.check_rounded), findsOneWidget);
     });
 
-    testWidgets('read state shows last received message, no check',
-        (tester) async {
+    testWidgets('read state shows last received message, no check', (
+      tester,
+    ) async {
       final thread = ThreadFeedItem(
         id: 'thread_1',
         timestamp: DateTime(2026, 2, 9, 15, 0),
@@ -84,8 +85,7 @@ void main() {
       expect(find.byIcon(Icons.check_rounded), findsNothing);
     });
 
-    testWidgets('session reply shows reply text with Just now',
-        (tester) async {
+    testWidgets('session reply shows reply text with Just now', (tester) async {
       final thread = ThreadFeedItem(
         id: 'thread_1',
         timestamp: DateTime(2026, 2, 9, 15, 0),
@@ -105,10 +105,9 @@ void main() {
 
       final reply = SessionReply(text: 'My quick reply', time: DateTime.now());
 
-      await tester.pumpWidget(wrap(CollapsedModeCardBody(
-        thread: thread,
-        sessionReply: reply,
-      )));
+      await tester.pumpWidget(
+        wrap(CollapsedModeCardBody(thread: thread, sessionReply: reply)),
+      );
 
       // Session reply text should be in the preview
       expect(find.text('My quick reply'), findsOneWidget);
@@ -157,10 +156,14 @@ void main() {
         conversationState: ConversationState.read,
       );
 
-      await tester.pumpWidget(wrap(CollapsedModeCardBody(
-        thread: thread,
-        onTapExpand: () => tapped = true,
-      )));
+      await tester.pumpWidget(
+        wrap(
+          CollapsedModeCardBody(
+            thread: thread,
+            onTapExpand: () => tapped = true,
+          ),
+        ),
+      );
 
       // Tap on the name (part of the GestureDetector area)
       await tester.tap(find.text('Alice'));
@@ -184,10 +187,9 @@ void main() {
         conversationState: ConversationState.read,
       );
 
-      await tester.pumpWidget(wrap(CollapsedModeCardBody(
-        thread: thread,
-        isExpanded: false,
-      )));
+      await tester.pumpWidget(
+        wrap(CollapsedModeCardBody(thread: thread, isExpanded: false)),
+      );
       expect(find.text('Tap to expand'), findsOneWidget);
     });
 
@@ -209,14 +211,15 @@ void main() {
         conversationState: ConversationState.read,
       );
 
-      await tester.pumpWidget(wrap(CollapsedModeCardBody(
-        thread: thread,
-        isExpanded: true,
-      )));
+      await tester.pumpWidget(
+        wrap(CollapsedModeCardBody(thread: thread, isExpanded: true)),
+      );
       expect(find.text('Tap to expand'), findsNothing);
     });
 
-    testWidgets('session reply still shows "Tap to expand" hint', (tester) async {
+    testWidgets('session reply still shows "Tap to expand" hint', (
+      tester,
+    ) async {
       final thread = ThreadFeedItem(
         id: 'thread_1',
         timestamp: DateTime(2026, 2, 9),
@@ -236,11 +239,15 @@ void main() {
 
       final reply = SessionReply(text: 'Quick reply', time: DateTime.now());
 
-      await tester.pumpWidget(wrap(CollapsedModeCardBody(
-        thread: thread,
-        sessionReply: reply,
-        isExpanded: false,
-      )));
+      await tester.pumpWidget(
+        wrap(
+          CollapsedModeCardBody(
+            thread: thread,
+            sessionReply: reply,
+            isExpanded: false,
+          ),
+        ),
+      );
       expect(find.text('Tap to expand'), findsOneWidget);
     });
   });
@@ -272,8 +279,9 @@ void main() {
       expect(find.text('Test Group'), findsOneWidget);
     });
 
-    testWidgets('preview label uses per-message senderUsername for group',
-        (tester) async {
+    testWidgets('preview label uses per-message senderUsername for group', (
+      tester,
+    ) async {
       final groupThread = GroupThreadFeedItem(
         id: 'g1',
         timestamp: DateTime(2026, 2, 9, 15, 0),
@@ -321,40 +329,88 @@ void main() {
       );
     }
 
-    testWidgets('isExpanded false does not show ScrollableMessagePreview',
-        (tester) async {
-      await tester.pumpWidget(wrap(CollapsedModeCardBody(
-        thread: _readThread(),
-        isExpanded: false,
-      )));
+    testWidgets('isExpanded false does not show ScrollableMessagePreview', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        wrap(CollapsedModeCardBody(thread: _readThread(), isExpanded: false)),
+      );
       expect(find.byType(ScrollableMessagePreview), findsNothing);
     });
 
-    testWidgets('isExpanded true shows ScrollableMessagePreview',
-        (tester) async {
-      await tester.pumpWidget(wrap(CollapsedModeCardBody(
-        thread: _readThread(),
-        isExpanded: true,
-      )));
+    testWidgets('isExpanded true shows ScrollableMessagePreview', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        wrap(CollapsedModeCardBody(thread: _readThread(), isExpanded: true)),
+      );
       expect(find.byType(ScrollableMessagePreview), findsOneWidget);
     });
 
     testWidgets('header still shows username when expanded', (tester) async {
-      await tester.pumpWidget(wrap(CollapsedModeCardBody(
-        thread: _readThread(),
-        isExpanded: true,
-      )));
+      await tester.pumpWidget(
+        wrap(CollapsedModeCardBody(thread: _readThread(), isExpanded: true)),
+      );
       expect(find.text('Alice'), findsOneWidget);
     });
 
-    testWidgets('InlineReplyInput still present when expanded',
-        (tester) async {
-      await tester.pumpWidget(wrap(CollapsedModeCardBody(
-        thread: _readThread(),
-        isExpanded: true,
-      )));
+    testWidgets('InlineReplyInput still present when expanded', (tester) async {
+      await tester.pumpWidget(
+        wrap(CollapsedModeCardBody(thread: _readThread(), isExpanded: true)),
+      );
       expect(find.text('Continue...'), findsOneWidget);
     });
+
+    testWidgets(
+      'expanded preview resolves reply quotes from full thread history',
+      (tester) async {
+        final thread = ThreadFeedItem(
+          id: 'thread_1',
+          timestamp: DateTime(2026, 2, 9, 15, 3),
+          contactPeerId: 'peer1',
+          contactUsername: 'Alice',
+          messages: [
+            ThreadMessage(
+              id: 'm1',
+              text: 'Older quoted message',
+              time: '3:00 PM',
+              timestamp: DateTime(2026, 2, 9, 15, 0),
+              isIncoming: true,
+            ),
+            ThreadMessage(
+              id: 'm2',
+              text: 'Message 2',
+              time: '3:01 PM',
+              timestamp: DateTime(2026, 2, 9, 15, 1),
+              isIncoming: true,
+            ),
+            ThreadMessage(
+              id: 'm3',
+              text: 'Message 3',
+              time: '3:02 PM',
+              timestamp: DateTime(2026, 2, 9, 15, 2),
+              isIncoming: true,
+            ),
+            ThreadMessage(
+              id: 'm4',
+              text: 'Latest reply',
+              time: '3:03 PM',
+              timestamp: DateTime(2026, 2, 9, 15, 3),
+              isIncoming: true,
+              quotedMessageId: 'm1',
+            ),
+          ],
+          conversationState: ConversationState.read,
+        );
+
+        await tester.pumpWidget(
+          wrap(CollapsedModeCardBody(thread: thread, isExpanded: true)),
+        );
+
+        expect(find.text('Older quoted message'), findsOneWidget);
+        expect(find.text('Message unavailable'), findsNothing);
+      },
+    );
 
     testWidgets('single-line preview hidden when expanded', (tester) async {
       final thread = ThreadFeedItem(
@@ -375,112 +431,135 @@ void main() {
       );
 
       // Not expanded: preview text visible as "Alice: Preview line text"
-      await tester.pumpWidget(wrap(CollapsedModeCardBody(
-        thread: thread,
-        isExpanded: false,
-      )));
+      await tester.pumpWidget(
+        wrap(CollapsedModeCardBody(thread: thread, isExpanded: false)),
+      );
       // The preview shows "Alice: " label and "Preview line text"
       expect(find.text('Preview line text'), findsOneWidget);
 
       // Expanded: preview text replaced by ScrollableMessagePreview
-      await tester.pumpWidget(wrap(CollapsedModeCardBody(
-        thread: thread,
-        isExpanded: true,
-      )));
+      await tester.pumpWidget(
+        wrap(CollapsedModeCardBody(thread: thread, isExpanded: true)),
+      );
       await tester.pumpAndSettle();
       expect(find.byType(ScrollableMessagePreview), findsOneWidget);
     });
 
-    testWidgets('tap header fires onTapExpand in expanded state',
-        (tester) async {
+    testWidgets('tap header fires onTapExpand in expanded state', (
+      tester,
+    ) async {
       var tapped = false;
-      await tester.pumpWidget(wrap(CollapsedModeCardBody(
-        thread: _readThread(),
-        isExpanded: true,
-        onTapExpand: () => tapped = true,
-      )));
+      await tester.pumpWidget(
+        wrap(
+          CollapsedModeCardBody(
+            thread: _readThread(),
+            isExpanded: true,
+            onTapExpand: () => tapped = true,
+          ),
+        ),
+      );
 
       await tester.tap(find.text('Alice'));
       expect(tapped, isTrue);
     });
 
     testWidgets('Collapse link present in expanded state', (tester) async {
-      await tester.pumpWidget(wrap(CollapsedModeCardBody(
-        thread: _readThread(),
-        isExpanded: true,
-        onCollapse: () {},
-      )));
+      await tester.pumpWidget(
+        wrap(
+          CollapsedModeCardBody(
+            thread: _readThread(),
+            isExpanded: true,
+            onCollapse: () {},
+          ),
+        ),
+      );
       expect(find.text('Collapse'), findsOneWidget);
     });
 
-    testWidgets('clearing session reply while expanded shows ScrollableMessagePreview',
-        (tester) async {
-      final thread = ThreadFeedItem(
-        id: 'thread_1',
-        timestamp: DateTime(2026, 2, 9, 15, 0),
-        contactPeerId: 'peer1',
-        contactUsername: 'Alice',
-        messages: [
-          ThreadMessage(
-            id: 'm1',
-            text: 'Hi',
-            time: '3:00 PM',
-            timestamp: DateTime(2026, 2, 9, 15, 0),
-            isIncoming: true,
+    testWidgets(
+      'clearing session reply while expanded shows ScrollableMessagePreview',
+      (tester) async {
+        final thread = ThreadFeedItem(
+          id: 'thread_1',
+          timestamp: DateTime(2026, 2, 9, 15, 0),
+          contactPeerId: 'peer1',
+          contactUsername: 'Alice',
+          messages: [
+            ThreadMessage(
+              id: 'm1',
+              text: 'Hi',
+              time: '3:00 PM',
+              timestamp: DateTime(2026, 2, 9, 15, 0),
+              isIncoming: true,
+            ),
+          ],
+          conversationState: ConversationState.replied,
+          lastRepliedAt: DateTime.now(),
+        );
+
+        final reply = SessionReply.justNow('My reply');
+
+        // Session reply + expanded → no ScrollableMessagePreview
+        await tester.pumpWidget(
+          wrap(
+            CollapsedModeCardBody(
+              thread: thread,
+              sessionReply: reply,
+              isExpanded: true,
+            ),
           ),
-        ],
-        conversationState: ConversationState.replied,
-        lastRepliedAt: DateTime.now(),
-      );
+        );
+        expect(find.byType(ScrollableMessagePreview), findsNothing);
 
-      final reply = SessionReply.justNow('My reply');
-
-      // Session reply + expanded → no ScrollableMessagePreview
-      await tester.pumpWidget(wrap(CollapsedModeCardBody(
-        thread: thread,
-        sessionReply: reply,
-        isExpanded: true,
-      )));
-      expect(find.byType(ScrollableMessagePreview), findsNothing);
-
-      // Clear session reply while still expanded → ScrollableMessagePreview appears
-      await tester.pumpWidget(wrap(CollapsedModeCardBody(
-        thread: thread,
-        sessionReply: null,
-        isExpanded: true,
-      )));
-      expect(find.byType(ScrollableMessagePreview), findsOneWidget);
-    });
-
-    testWidgets('session reply with isExpanded does not show ScrollableMessagePreview',
-        (tester) async {
-      final thread = ThreadFeedItem(
-        id: 'thread_1',
-        timestamp: DateTime(2026, 2, 9, 15, 0),
-        contactPeerId: 'peer1',
-        contactUsername: 'Alice',
-        messages: [
-          ThreadMessage(
-            id: 'm1',
-            text: 'Hi',
-            time: '3:00 PM',
-            timestamp: DateTime(2026, 2, 9, 15, 0),
-            isIncoming: true,
+        // Clear session reply while still expanded → ScrollableMessagePreview appears
+        await tester.pumpWidget(
+          wrap(
+            CollapsedModeCardBody(
+              thread: thread,
+              sessionReply: null,
+              isExpanded: true,
+            ),
           ),
-        ],
-        conversationState: ConversationState.unread,
-      );
+        );
+        expect(find.byType(ScrollableMessagePreview), findsOneWidget);
+      },
+    );
 
-      final reply = SessionReply.justNow('My reply');
-      await tester.pumpWidget(wrap(CollapsedModeCardBody(
-        thread: thread,
-        sessionReply: reply,
-        isExpanded: true,
-      )));
-      // Session reply overrides expanded — shows single-line preview, not ScrollableMessagePreview
-      expect(find.byType(ScrollableMessagePreview), findsNothing);
-      expect(find.text('My reply'), findsOneWidget);
-    });
+    testWidgets(
+      'session reply with isExpanded does not show ScrollableMessagePreview',
+      (tester) async {
+        final thread = ThreadFeedItem(
+          id: 'thread_1',
+          timestamp: DateTime(2026, 2, 9, 15, 0),
+          contactPeerId: 'peer1',
+          contactUsername: 'Alice',
+          messages: [
+            ThreadMessage(
+              id: 'm1',
+              text: 'Hi',
+              time: '3:00 PM',
+              timestamp: DateTime(2026, 2, 9, 15, 0),
+              isIncoming: true,
+            ),
+          ],
+          conversationState: ConversationState.unread,
+        );
+
+        final reply = SessionReply.justNow('My reply');
+        await tester.pumpWidget(
+          wrap(
+            CollapsedModeCardBody(
+              thread: thread,
+              sessionReply: reply,
+              isExpanded: true,
+            ),
+          ),
+        );
+        // Session reply overrides expanded — shows single-line preview, not ScrollableMessagePreview
+        expect(find.byType(ScrollableMessagePreview), findsNothing);
+        expect(find.text('My reply'), findsOneWidget);
+      },
+    );
   });
 
   group('CollapsedModeCardBody media thumbnail', () {
@@ -497,8 +576,9 @@ void main() {
       tmpDir.deleteSync(recursive: true);
     });
 
-    testWidgets('shows thumbnail when message has downloaded image + text',
-        (tester) async {
+    testWidgets('shows thumbnail when message has downloaded image + text', (
+      tester,
+    ) async {
       final thread = ThreadFeedItem(
         id: 'thread_1',
         timestamp: DateTime(2026, 2, 9, 15, 0),
@@ -536,8 +616,9 @@ void main() {
       expect(find.text('again'), findsOneWidget);
     });
 
-    testWidgets('shows icon fallback when media not yet downloaded',
-        (tester) async {
+    testWidgets('shows icon fallback when media not yet downloaded', (
+      tester,
+    ) async {
       final thread = ThreadFeedItem(
         id: 'thread_1',
         timestamp: DateTime(2026, 2, 9, 15, 0),
@@ -576,8 +657,9 @@ void main() {
       expect(find.text('again'), findsOneWidget);
     });
 
-    testWidgets('media-only message shows thumbnail + Photo label',
-        (tester) async {
+    testWidgets('media-only message shows thumbnail + Photo label', (
+      tester,
+    ) async {
       final thread = ThreadFeedItem(
         id: 'thread_1',
         timestamp: DateTime(2026, 2, 9, 15, 0),
@@ -616,95 +698,100 @@ void main() {
     });
 
     testWidgets(
-        'group card shows thumbnail when message has downloaded image',
-        (tester) async {
-      final groupThread = GroupThreadFeedItem(
-        id: 'g1',
-        timestamp: DateTime(2026, 2, 9, 15, 0),
-        groupId: 'group-abc',
-        groupName: 'Test Group',
-        groupType: GroupType.chat,
-        messages: [
-          ThreadMessage(
-            id: 'gm1',
-            text: 'photo here',
-            time: '3:00 PM',
-            timestamp: DateTime(2026, 2, 9, 15, 0),
-            isIncoming: true,
-            senderUsername: 'Hisam',
-            senderPeerId: 'peer-hisam',
-            media: [
-              MediaAttachment(
-                id: 'a1',
-                messageId: 'gm1',
-                mime: 'image/jpeg',
-                size: 1000,
-                mediaType: 'image',
-                localPath: imagePath,
-                downloadStatus: 'done',
-                createdAt: '2026-02-09T15:00:00Z',
-              ),
-            ],
-          ),
-        ],
-        conversationState: ConversationState.read,
-      );
+      'group card shows thumbnail when message has downloaded image',
+      (tester) async {
+        final groupThread = GroupThreadFeedItem(
+          id: 'g1',
+          timestamp: DateTime(2026, 2, 9, 15, 0),
+          groupId: 'group-abc',
+          groupName: 'Test Group',
+          groupType: GroupType.chat,
+          messages: [
+            ThreadMessage(
+              id: 'gm1',
+              text: 'photo here',
+              time: '3:00 PM',
+              timestamp: DateTime(2026, 2, 9, 15, 0),
+              isIncoming: true,
+              senderUsername: 'Hisam',
+              senderPeerId: 'peer-hisam',
+              media: [
+                MediaAttachment(
+                  id: 'a1',
+                  messageId: 'gm1',
+                  mime: 'image/jpeg',
+                  size: 1000,
+                  mediaType: 'image',
+                  localPath: imagePath,
+                  downloadStatus: 'done',
+                  createdAt: '2026-02-09T15:00:00Z',
+                ),
+              ],
+            ),
+          ],
+          conversationState: ConversationState.read,
+        );
 
-      await tester
-          .pumpWidget(wrap(CollapsedModeCardBody(thread: groupThread)));
+        await tester.pumpWidget(
+          wrap(CollapsedModeCardBody(thread: groupThread)),
+        );
 
-      // Thumbnail Image.file should be present
-      expect(find.byType(Image), findsOneWidget);
-      // Sender label should show
-      expect(find.textContaining('Hisam'), findsOneWidget);
-      // Text preview should still show
-      expect(find.text('photo here'), findsOneWidget);
-    });
+        // Thumbnail Image.file should be present
+        expect(find.byType(Image), findsOneWidget);
+        // Sender label should show
+        expect(find.textContaining('Hisam'), findsOneWidget);
+        // Text preview should still show
+        expect(find.text('photo here'), findsOneWidget);
+      },
+    );
 
     testWidgets(
-        'group card shows icon fallback when media not yet downloaded',
-        (tester) async {
-      final groupThread = GroupThreadFeedItem(
-        id: 'g1',
-        timestamp: DateTime(2026, 2, 9, 15, 0),
-        groupId: 'group-abc',
-        groupName: 'Test Group',
-        groupType: GroupType.chat,
-        messages: [
-          ThreadMessage(
-            id: 'gm1',
-            text: 'image coming',
-            time: '3:00 PM',
-            timestamp: DateTime(2026, 2, 9, 15, 0),
-            isIncoming: true,
-            senderUsername: 'Hisam',
-            senderPeerId: 'peer-hisam',
-            media: [
-              MediaAttachment(
-                id: 'a1',
-                messageId: 'gm1',
-                mime: 'image/jpeg',
-                size: 1000,
-                mediaType: 'image',
-                downloadStatus: 'pending',
-                createdAt: '2026-02-09T15:00:00Z',
-              ),
-            ],
-          ),
-        ],
-        conversationState: ConversationState.read,
-      );
+      'group card shows icon fallback when media not yet downloaded',
+      (tester) async {
+        final groupThread = GroupThreadFeedItem(
+          id: 'g1',
+          timestamp: DateTime(2026, 2, 9, 15, 0),
+          groupId: 'group-abc',
+          groupName: 'Test Group',
+          groupType: GroupType.chat,
+          messages: [
+            ThreadMessage(
+              id: 'gm1',
+              text: 'image coming',
+              time: '3:00 PM',
+              timestamp: DateTime(2026, 2, 9, 15, 0),
+              isIncoming: true,
+              senderUsername: 'Hisam',
+              senderPeerId: 'peer-hisam',
+              media: [
+                MediaAttachment(
+                  id: 'a1',
+                  messageId: 'gm1',
+                  mime: 'image/jpeg',
+                  size: 1000,
+                  mediaType: 'image',
+                  downloadStatus: 'pending',
+                  createdAt: '2026-02-09T15:00:00Z',
+                ),
+              ],
+            ),
+          ],
+          conversationState: ConversationState.read,
+        );
 
-      await tester
-          .pumpWidget(wrap(CollapsedModeCardBody(thread: groupThread)));
+        await tester.pumpWidget(
+          wrap(CollapsedModeCardBody(thread: groupThread)),
+        );
 
-      // Icon fallback instead of thumbnail
-      expect(find.byIcon(Icons.camera_alt_outlined), findsOneWidget);
-      expect(find.byType(Image), findsNothing);
-    });
+        // Icon fallback instead of thumbnail
+        expect(find.byIcon(Icons.camera_alt_outlined), findsOneWidget);
+        expect(find.byType(Image), findsNothing);
+      },
+    );
 
-    testWidgets('group card media-only message shows thumbnail + Photo label',
-        (tester) async {
+    testWidgets('group card media-only message shows thumbnail + Photo label', (
+      tester,
+    ) async {
       final groupThread = GroupThreadFeedItem(
         id: 'g1',
         timestamp: DateTime(2026, 2, 9, 15, 0),
@@ -737,8 +824,7 @@ void main() {
         conversationState: ConversationState.read,
       );
 
-      await tester
-          .pumpWidget(wrap(CollapsedModeCardBody(thread: groupThread)));
+      await tester.pumpWidget(wrap(CollapsedModeCardBody(thread: groupThread)));
 
       // Thumbnail should render
       expect(find.byType(Image), findsOneWidget);

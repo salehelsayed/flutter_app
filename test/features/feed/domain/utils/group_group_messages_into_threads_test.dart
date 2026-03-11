@@ -4,7 +4,11 @@ import 'package:flutter_app/features/feed/domain/utils/group_group_messages_into
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 
-GroupModel _makeGroup(String id, String name, {GroupType type = GroupType.chat}) {
+GroupModel _makeGroup(
+  String id,
+  String name, {
+  GroupType type = GroupType.chat,
+}) {
   return GroupModel(
     id: id,
     name: name,
@@ -24,6 +28,7 @@ GroupMessage _makeMsg({
   required DateTime timestamp,
   bool isIncoming = true,
   DateTime? readAt,
+  String? quotedMessageId,
 }) {
   return GroupMessage(
     id: id,
@@ -34,6 +39,7 @@ GroupMessage _makeMsg({
     timestamp: timestamp,
     isIncoming: isIncoming,
     readAt: readAt,
+    quotedMessageId: quotedMessageId,
     createdAt: timestamp,
   );
 }
@@ -52,8 +58,11 @@ void main() {
       final result = groupGroupMessagesIntoThreads(
         allGroupMessages: [
           _makeMsg(
-            id: 'm1', groupId: 'g1', senderPeerId: 'p1',
-            text: 'Hello', timestamp: DateTime(2026, 2, 9, 12, 0),
+            id: 'm1',
+            groupId: 'g1',
+            senderPeerId: 'p1',
+            text: 'Hello',
+            timestamp: DateTime(2026, 2, 9, 12, 0),
           ),
         ],
         groups: [],
@@ -62,18 +71,21 @@ void main() {
     });
 
     test('creates one thread per group', () {
-      final groups = [
-        _makeGroup('g1', 'Alpha'),
-        _makeGroup('g2', 'Beta'),
-      ];
+      final groups = [_makeGroup('g1', 'Alpha'), _makeGroup('g2', 'Beta')];
       final messages = [
         _makeMsg(
-          id: 'm1', groupId: 'g1', senderPeerId: 'p1',
-          text: 'Hello Alpha', timestamp: DateTime(2026, 2, 9, 12, 0),
+          id: 'm1',
+          groupId: 'g1',
+          senderPeerId: 'p1',
+          text: 'Hello Alpha',
+          timestamp: DateTime(2026, 2, 9, 12, 0),
         ),
         _makeMsg(
-          id: 'm2', groupId: 'g2', senderPeerId: 'p2',
-          text: 'Hello Beta', timestamp: DateTime(2026, 2, 9, 13, 0),
+          id: 'm2',
+          groupId: 'g2',
+          senderPeerId: 'p2',
+          text: 'Hello Beta',
+          timestamp: DateTime(2026, 2, 9, 13, 0),
         ),
       ];
 
@@ -91,8 +103,11 @@ void main() {
       final result = groupGroupMessagesIntoThreads(
         allGroupMessages: [
           _makeMsg(
-            id: 'm1', groupId: 'g1', senderPeerId: 'p1',
-            text: 'Unread', timestamp: DateTime(2026, 2, 9, 12, 0),
+            id: 'm1',
+            groupId: 'g1',
+            senderPeerId: 'p1',
+            text: 'Unread',
+            timestamp: DateTime(2026, 2, 9, 12, 0),
           ),
         ],
         groups: [_makeGroup('g1', 'Group')],
@@ -107,12 +122,18 @@ void main() {
       final result = groupGroupMessagesIntoThreads(
         allGroupMessages: [
           _makeMsg(
-            id: 'm1', groupId: 'g1', senderPeerId: 'p1',
-            text: 'From other', timestamp: DateTime(2026, 2, 9, 12, 0),
+            id: 'm1',
+            groupId: 'g1',
+            senderPeerId: 'p1',
+            text: 'From other',
+            timestamp: DateTime(2026, 2, 9, 12, 0),
           ),
           _makeMsg(
-            id: 'm2', groupId: 'g1', senderPeerId: 'me',
-            text: 'My reply', timestamp: DateTime(2026, 2, 9, 12, 5),
+            id: 'm2',
+            groupId: 'g1',
+            senderPeerId: 'me',
+            text: 'My reply',
+            timestamp: DateTime(2026, 2, 9, 12, 5),
             isIncoming: false,
           ),
         ],
@@ -126,13 +147,19 @@ void main() {
       final result = groupGroupMessagesIntoThreads(
         allGroupMessages: [
           _makeMsg(
-            id: 'm1', groupId: 'g1', senderPeerId: 'p1',
-            text: 'Read msg', timestamp: DateTime(2026, 2, 9, 12, 0),
+            id: 'm1',
+            groupId: 'g1',
+            senderPeerId: 'p1',
+            text: 'Read msg',
+            timestamp: DateTime(2026, 2, 9, 12, 0),
             readAt: DateTime(2026, 2, 9, 12, 1),
           ),
           _makeMsg(
-            id: 'm2', groupId: 'g1', senderPeerId: 'me',
-            text: 'Reply', timestamp: DateTime(2026, 2, 9, 12, 5),
+            id: 'm2',
+            groupId: 'g1',
+            senderPeerId: 'me',
+            text: 'Reply',
+            timestamp: DateTime(2026, 2, 9, 12, 5),
             isIncoming: false,
           ),
         ],
@@ -146,8 +173,11 @@ void main() {
       final result = groupGroupMessagesIntoThreads(
         allGroupMessages: [
           _makeMsg(
-            id: 'm1', groupId: 'g1', senderPeerId: 'p1',
-            text: 'Read', timestamp: DateTime(2026, 2, 9, 12, 0),
+            id: 'm1',
+            groupId: 'g1',
+            senderPeerId: 'p1',
+            text: 'Read',
+            timestamp: DateTime(2026, 2, 9, 12, 0),
             readAt: DateTime(2026, 2, 9, 12, 1),
           ),
         ],
@@ -164,13 +194,19 @@ void main() {
       ];
       final messages = [
         _makeMsg(
-          id: 'm1', groupId: 'g1', senderPeerId: 'p1',
-          text: 'Read', timestamp: DateTime(2026, 2, 9, 14, 0),
+          id: 'm1',
+          groupId: 'g1',
+          senderPeerId: 'p1',
+          text: 'Read',
+          timestamp: DateTime(2026, 2, 9, 14, 0),
           readAt: DateTime(2026, 2, 9, 14, 1),
         ),
         _makeMsg(
-          id: 'm2', groupId: 'g2', senderPeerId: 'p2',
-          text: 'Unread', timestamp: DateTime(2026, 2, 9, 10, 0),
+          id: 'm2',
+          groupId: 'g2',
+          senderPeerId: 'p2',
+          text: 'Unread',
+          timestamp: DateTime(2026, 2, 9, 10, 0),
         ),
       ];
 
@@ -189,8 +225,11 @@ void main() {
       final result = groupGroupMessagesIntoThreads(
         allGroupMessages: [
           _makeMsg(
-            id: 'm1', groupId: 'unknown-group', senderPeerId: 'p1',
-            text: 'Hello', timestamp: DateTime(2026, 2, 9, 12, 0),
+            id: 'm1',
+            groupId: 'unknown-group',
+            senderPeerId: 'p1',
+            text: 'Hello',
+            timestamp: DateTime(2026, 2, 9, 12, 0),
           ),
         ],
         groups: [_makeGroup('g1', 'Known Group')],
@@ -203,16 +242,25 @@ void main() {
       final result = groupGroupMessagesIntoThreads(
         allGroupMessages: [
           _makeMsg(
-            id: 'm3', groupId: 'g1', senderPeerId: 'p1',
-            text: 'Third', timestamp: DateTime(2026, 2, 9, 15, 0),
+            id: 'm3',
+            groupId: 'g1',
+            senderPeerId: 'p1',
+            text: 'Third',
+            timestamp: DateTime(2026, 2, 9, 15, 0),
           ),
           _makeMsg(
-            id: 'm1', groupId: 'g1', senderPeerId: 'p1',
-            text: 'First', timestamp: DateTime(2026, 2, 9, 12, 0),
+            id: 'm1',
+            groupId: 'g1',
+            senderPeerId: 'p1',
+            text: 'First',
+            timestamp: DateTime(2026, 2, 9, 12, 0),
           ),
           _makeMsg(
-            id: 'm2', groupId: 'g1', senderPeerId: 'p2',
-            text: 'Second', timestamp: DateTime(2026, 2, 9, 13, 0),
+            id: 'm2',
+            groupId: 'g1',
+            senderPeerId: 'p2',
+            text: 'Second',
+            timestamp: DateTime(2026, 2, 9, 13, 0),
           ),
         ],
         groups: [_makeGroup('g1', 'Group')],
@@ -228,22 +276,105 @@ void main() {
       final result = groupGroupMessagesIntoThreads(
         allGroupMessages: [
           _makeMsg(
-            id: 'm1', groupId: 'g1', senderPeerId: 'p1',
-            text: 'Hello', timestamp: DateTime(2026, 2, 9, 12, 0),
+            id: 'm1',
+            groupId: 'g1',
+            senderPeerId: 'p1',
+            text: 'Hello',
+            timestamp: DateTime(2026, 2, 9, 12, 0),
           ),
         ],
-        groups: [_makeGroup('g1', 'Announcements', type: GroupType.announcement)],
+        groups: [
+          _makeGroup('g1', 'Announcements', type: GroupType.announcement),
+        ],
       );
 
       expect(result[0].groupType, GroupType.announcement);
+    });
+
+    test('preserves myRole and derives canWrite for announcement groups', () {
+      final adminGroup = _makeGroup(
+        'g1',
+        'Announcements',
+        type: GroupType.announcement,
+      ).copyWith(myRole: GroupRole.admin);
+      final memberGroup = _makeGroup(
+        'g2',
+        'Announcements',
+        type: GroupType.announcement,
+      );
+
+      final result = groupGroupMessagesIntoThreads(
+        allGroupMessages: [
+          _makeMsg(
+            id: 'm1',
+            groupId: 'g1',
+            senderPeerId: 'p1',
+            text: 'Admin update',
+            timestamp: DateTime(2026, 2, 9, 12, 0),
+          ),
+          _makeMsg(
+            id: 'm2',
+            groupId: 'g2',
+            senderPeerId: 'p2',
+            text: 'Member update',
+            timestamp: DateTime(2026, 2, 9, 13, 0),
+          ),
+        ],
+        groups: [adminGroup, memberGroup],
+      );
+
+      expect(
+        result.singleWhere((item) => item.groupId == 'g1').myRole,
+        GroupRole.admin,
+      );
+      expect(
+        result.singleWhere((item) => item.groupId == 'g1').canWrite,
+        isTrue,
+      );
+      expect(
+        result.singleWhere((item) => item.groupId == 'g2').myRole,
+        GroupRole.member,
+      );
+      expect(
+        result.singleWhere((item) => item.groupId == 'g2').canWrite,
+        isFalse,
+      );
+    });
+
+    test('preserves quotedMessageId on projected thread messages', () {
+      final result = groupGroupMessagesIntoThreads(
+        allGroupMessages: [
+          _makeMsg(
+            id: 'm1',
+            groupId: 'g1',
+            senderPeerId: 'p1',
+            text: 'Parent',
+            timestamp: DateTime(2026, 2, 9, 12, 0),
+          ),
+          _makeMsg(
+            id: 'm2',
+            groupId: 'g1',
+            senderPeerId: 'p2',
+            text: 'Reply',
+            timestamp: DateTime(2026, 2, 9, 12, 1),
+            quotedMessageId: 'm1',
+          ),
+        ],
+        groups: [_makeGroup('g1', 'Quoted Group')],
+      );
+
+      expect(result.single.messages.last.quotedMessageId, 'm1');
     });
 
     test('thread id is group_thread_ + groupId', () {
       final result = groupGroupMessagesIntoThreads(
         allGroupMessages: [
           _makeMsg(
-            id: 'm1', groupId: 'abc-123', senderPeerId: 'p1',
-            text: 'Hello', timestamp: DateTime(2026, 2, 9, 12, 0),
+            id: 'm1',
+            groupId: 'abc-123',
+            senderPeerId: 'p1',
+            text: 'Hello',
+            timestamp: DateTime(2026, 2, 9, 12, 0),
           ),
         ],
         groups: [_makeGroup('abc-123', 'Group')],
@@ -256,12 +387,18 @@ void main() {
       final result = groupGroupMessagesIntoThreads(
         allGroupMessages: [
           _makeMsg(
-            id: 'm1', groupId: 'g1', senderPeerId: 'p1',
-            text: 'Old', timestamp: DateTime(2026, 2, 8, 12, 0),
+            id: 'm1',
+            groupId: 'g1',
+            senderPeerId: 'p1',
+            text: 'Old',
+            timestamp: DateTime(2026, 2, 8, 12, 0),
           ),
           _makeMsg(
-            id: 'm2', groupId: 'g1', senderPeerId: 'p1',
-            text: 'New', timestamp: DateTime(2026, 2, 9, 15, 0),
+            id: 'm2',
+            groupId: 'g1',
+            senderPeerId: 'p1',
+            text: 'New',
+            timestamp: DateTime(2026, 2, 9, 15, 0),
           ),
         ],
         groups: [_makeGroup('g1', 'Group')],
@@ -270,26 +407,35 @@ void main() {
       expect(result[0].timestamp, DateTime(2026, 2, 9, 15, 0));
     });
 
-    test('ThreadMessage includes senderUsername and senderPeerId from GroupMessage', () {
-      final result = groupGroupMessagesIntoThreads(
-        allGroupMessages: [
-          _makeMsg(
-            id: 'm1', groupId: 'g1', senderPeerId: 'peer-alice',
-            text: 'Hi from Alice', timestamp: DateTime(2026, 2, 9, 12, 0),
-          ),
-          _makeMsg(
-            id: 'm2', groupId: 'g1', senderPeerId: 'peer-bob',
-            text: 'Hi from Bob', timestamp: DateTime(2026, 2, 9, 12, 5),
-          ),
-        ],
-        groups: [_makeGroup('g1', 'Group')],
-      );
+    test(
+      'ThreadMessage includes senderUsername and senderPeerId from GroupMessage',
+      () {
+        final result = groupGroupMessagesIntoThreads(
+          allGroupMessages: [
+            _makeMsg(
+              id: 'm1',
+              groupId: 'g1',
+              senderPeerId: 'peer-alice',
+              text: 'Hi from Alice',
+              timestamp: DateTime(2026, 2, 9, 12, 0),
+            ),
+            _makeMsg(
+              id: 'm2',
+              groupId: 'g1',
+              senderPeerId: 'peer-bob',
+              text: 'Hi from Bob',
+              timestamp: DateTime(2026, 2, 9, 12, 5),
+            ),
+          ],
+          groups: [_makeGroup('g1', 'Group')],
+        );
 
-      expect(result[0].messages[0].senderPeerId, 'peer-alice');
-      expect(result[0].messages[0].senderUsername, 'User');
-      expect(result[0].messages[1].senderPeerId, 'peer-bob');
-      expect(result[0].messages[1].senderUsername, 'User');
-    });
+        expect(result[0].messages[0].senderPeerId, 'peer-alice');
+        expect(result[0].messages[0].senderUsername, 'User');
+        expect(result[0].messages[1].senderPeerId, 'peer-bob');
+        expect(result[0].messages[1].senderUsername, 'User');
+      },
+    );
 
     test('multiple unread groups sorted newest-first within above section', () {
       final groups = [
@@ -298,12 +444,18 @@ void main() {
       ];
       final messages = [
         _makeMsg(
-          id: 'm1', groupId: 'g1', senderPeerId: 'p1',
-          text: 'Msg', timestamp: DateTime(2026, 2, 9, 10, 0),
+          id: 'm1',
+          groupId: 'g1',
+          senderPeerId: 'p1',
+          text: 'Msg',
+          timestamp: DateTime(2026, 2, 9, 10, 0),
         ),
         _makeMsg(
-          id: 'm2', groupId: 'g2', senderPeerId: 'p2',
-          text: 'Msg', timestamp: DateTime(2026, 2, 9, 14, 0),
+          id: 'm2',
+          groupId: 'g2',
+          senderPeerId: 'p2',
+          text: 'Msg',
+          timestamp: DateTime(2026, 2, 9, 14, 0),
         ),
       ];
 

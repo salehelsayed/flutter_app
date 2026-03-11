@@ -32,7 +32,8 @@ class _FakeP2PService implements P2PService {
   @override
   Future<bool> startNode(String privateKeyBase64, String peerId) async => true;
   @override
-  Future<bool> startNodeCore(String privateKeyBase64, String peerId) async => true;
+  Future<bool> startNodeCore(String privateKeyBase64, String peerId) async =>
+      true;
   @override
   Future<void> warmBackground() async {}
   @override
@@ -40,16 +41,25 @@ class _FakeP2PService implements P2PService {
   @override
   Future<bool> sendMessage(String peerId, String message) async => true;
   @override
-  Future<SendMessageResult> sendMessageWithReply(String peerId, String message, {int? timeoutMs}) async =>
-      throw UnimplementedError();
+  Future<SendMessageResult> sendMessageWithReply(
+    String peerId,
+    String message, {
+    int? timeoutMs,
+  }) async => throw UnimplementedError();
   @override
-  Future<DiscoveredPeer?> discoverPeer(String peerId, {int? timeoutMs}) async => null;
+  Future<DiscoveredPeer?> discoverPeer(String peerId, {int? timeoutMs}) async =>
+      null;
   @override
-  Future<bool> dialPeer(String peerId, {List<String>? addresses, int? timeoutMs}) async => true;
+  Future<bool> dialPeer(
+    String peerId, {
+    List<String>? addresses,
+    int? timeoutMs,
+  }) async => true;
   @override
   Future<bool> storeInInbox(String toPeerId, String message) async => true;
   @override
-  Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) async => [];
+  Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) async =>
+      [];
   @override
   Future<void> performImmediateHealthCheck() async {}
   @override
@@ -62,7 +72,12 @@ class _FakeP2PService implements P2PService {
   @override
   bool isLocalPeer(String peerId) => false;
   @override
-  Future<bool> sendLocalMessage(String peerId, String message, String fromPeerId) async => false;
+  Future<bool> sendLocalMessage(
+    String peerId,
+    String message,
+    String fromPeerId, {
+    int? timeoutMs,
+  }) async => false;
   @override
   Future<bool> sendLocalMedia({
     required String peerId,
@@ -89,16 +104,18 @@ void main() {
   });
 
   group('registerPushToken', () {
-    test('success: returns success when token exists and registration succeeds',
-        () async {
-      final result = await registerPushToken(
-        p2pService: p2pService,
-        getTokenFn: () async => 'fcm_token_abc',
-        getPlatformFn: () => 'ios',
-      );
+    test(
+      'success: returns success when token exists and registration succeeds',
+      () async {
+        final result = await registerPushToken(
+          p2pService: p2pService,
+          getTokenFn: () async => 'fcm_token_abc',
+          getPlatformFn: () => 'ios',
+        );
 
-      expect(result, equals(RegisterPushTokenResult.success));
-    });
+        expect(result, equals(RegisterPushTokenResult.success));
+      },
+    );
 
     test('noToken: returns noToken when getTokenFn returns null', () async {
       final result = await registerPushToken(
@@ -110,18 +127,20 @@ void main() {
       expect(result, equals(RegisterPushTokenResult.noToken));
     });
 
-    test('failed: returns failed when p2pService.registerPushToken returns false',
-        () async {
-      p2pService.registerResult = false;
+    test(
+      'failed: returns failed when p2pService.registerPushToken returns false',
+      () async {
+        p2pService.registerResult = false;
 
-      final result = await registerPushToken(
-        p2pService: p2pService,
-        getTokenFn: () async => 'fcm_token_abc',
-        getPlatformFn: () => 'android',
-      );
+        final result = await registerPushToken(
+          p2pService: p2pService,
+          getTokenFn: () async => 'fcm_token_abc',
+          getPlatformFn: () => 'android',
+        );
 
-      expect(result, equals(RegisterPushTokenResult.failed));
-    });
+        expect(result, equals(RegisterPushTokenResult.failed));
+      },
+    );
 
     test('sends correct token and platform to p2pService', () async {
       await registerPushToken(

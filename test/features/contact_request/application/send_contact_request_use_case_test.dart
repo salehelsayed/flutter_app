@@ -64,8 +64,11 @@ class _FakeBridge extends Bridge {
 
 class _FakeP2PService implements P2PService {
   NodeState _state = const NodeState(isStarted: true, peerId: 'ownPeer');
-  SendMessageResult sendWithReplyResult =
-      const SendMessageResult(sent: true, acked: true, reply: 'ack');
+  SendMessageResult sendWithReplyResult = const SendMessageResult(
+    sent: true,
+    acked: true,
+    reply: 'ack',
+  );
   bool dialResult = true;
   DiscoveredPeer? discoveredPeer;
   bool localPeerResult = false;
@@ -101,25 +104,34 @@ class _FakeP2PService implements P2PService {
   }
 
   @override
-  Future<SendMessageResult> sendMessageWithReply(String pid, String msg, {int? timeoutMs}) async {
+  Future<SendMessageResult> sendMessageWithReply(
+    String pid,
+    String msg, {
+    int? timeoutMs,
+  }) async {
     lastSentPeerId = pid;
     lastSentMessage = msg;
     return sendWithReplyResult;
   }
 
   @override
-  Future<DiscoveredPeer?> discoverPeer(String peerId, {int? timeoutMs}) async => discoveredPeer;
+  Future<DiscoveredPeer?> discoverPeer(String peerId, {int? timeoutMs}) async =>
+      discoveredPeer;
 
   @override
-  Future<bool> dialPeer(String peerId, {List<String>? addresses, int? timeoutMs}) async =>
-      dialResult;
+  Future<bool> dialPeer(
+    String peerId, {
+    List<String>? addresses,
+    int? timeoutMs,
+  }) async => dialResult;
 
   @override
   Future<bool> storeInInbox(String toPeerId, String message) async =>
       storeInInboxResult;
 
   @override
-  Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) async => [];
+  Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) async =>
+      [];
 
   @override
   Future<bool> registerPushToken(String token, String platform) async => true;
@@ -141,8 +153,12 @@ class _FakeP2PService implements P2PService {
   bool isLocalPeer(String peerId) => localPeerResult;
 
   @override
-  Future<bool> sendLocalMessage(String pid, String msg, String from) async =>
-      localSendResult;
+  Future<bool> sendLocalMessage(
+    String pid,
+    String msg,
+    String from, {
+    int? timeoutMs,
+  }) async => localSendResult;
 
   @override
   Future<bool> sendLocalMedia({
@@ -171,7 +187,8 @@ final _testIdentity = IdentityModel(
   peerId: '12D3KooWOwnPeerIdForTesting',
   publicKey: 'ownPubKey',
   privateKey: 'ownPrivKey',
-  mnemonic12: 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about',
+  mnemonic12:
+      'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about',
   mlKemPublicKey: 'ownMlKemPub',
   createdAt: '2024-01-01T00:00:00Z',
   updatedAt: '2024-01-01T00:00:00Z',
@@ -204,7 +221,8 @@ void main() {
     expect(p2pService.lastSentPeerId, equals('targetPeer123456789'));
 
     // Verify the sent message is a proper contact_request envelope
-    final sent = jsonDecode(p2pService.lastSentMessage!) as Map<String, dynamic>;
+    final sent =
+        jsonDecode(p2pService.lastSentMessage!) as Map<String, dynamic>;
     expect(sent['type'], equals('contact_request'));
     expect(sent['version'], equals('1'));
     expect(sent['payload']['ns'], equals(_testIdentity.peerId));
@@ -256,65 +274,76 @@ void main() {
     expect(result, equals(SendContactRequestResult.signingError));
   });
 
-  test('sendFailed: falls back to inbox when peer not found and inbox also fails', () async {
-    p2pService.discoveredPeer = null;
-    p2pService.storeInInboxResult = false;
+  test(
+    'sendFailed: falls back to inbox when peer not found and inbox also fails',
+    () async {
+      p2pService.discoveredPeer = null;
+      p2pService.storeInInboxResult = false;
 
-    final result = await sendContactRequest(
-      p2pService: p2pService,
-      identityRepo: identityRepo,
-      bridge: bridge,
-      targetPeerId: 'targetPeer123456789',
-    );
+      final result = await sendContactRequest(
+        p2pService: p2pService,
+        identityRepo: identityRepo,
+        bridge: bridge,
+        targetPeerId: 'targetPeer123456789',
+      );
 
-    expect(result, equals(SendContactRequestResult.sendFailed));
-  });
+      expect(result, equals(SendContactRequestResult.sendFailed));
+    },
+  );
 
-  test('success via inbox fallback: stores in inbox when direct send fails', () async {
-    p2pService.discoveredPeer = null;
-    p2pService.storeInInboxResult = true;
+  test(
+    'success via inbox fallback: stores in inbox when direct send fails',
+    () async {
+      p2pService.discoveredPeer = null;
+      p2pService.storeInInboxResult = true;
 
-    final result = await sendContactRequest(
-      p2pService: p2pService,
-      identityRepo: identityRepo,
-      bridge: bridge,
-      targetPeerId: 'targetPeer123456789',
-    );
+      final result = await sendContactRequest(
+        p2pService: p2pService,
+        identityRepo: identityRepo,
+        bridge: bridge,
+        targetPeerId: 'targetPeer123456789',
+      );
 
-    expect(result, equals(SendContactRequestResult.success));
-  });
+      expect(result, equals(SendContactRequestResult.success));
+    },
+  );
 
-  test('success via local WiFi: sends via local P2P when peer is local', () async {
-    p2pService.localPeerResult = true;
-    p2pService.localSendResult = true;
+  test(
+    'success via local WiFi: sends via local P2P when peer is local',
+    () async {
+      p2pService.localPeerResult = true;
+      p2pService.localSendResult = true;
 
-    final result = await sendContactRequest(
-      p2pService: p2pService,
-      identityRepo: identityRepo,
-      bridge: bridge,
-      targetPeerId: 'targetPeer123456789',
-    );
+      final result = await sendContactRequest(
+        p2pService: p2pService,
+        identityRepo: identityRepo,
+        bridge: bridge,
+        targetPeerId: 'targetPeer123456789',
+      );
 
-    expect(result, equals(SendContactRequestResult.success));
-  });
+      expect(result, equals(SendContactRequestResult.success));
+    },
+  );
 
-  test('success via inbox fallback: unacked direct send falls back to inbox',
-      () async {
-    p2pService.sendWithReplyResult = const SendMessageResult(
-      sent: true,
-      acked: false,
-    );
-    p2pService.storeInInboxResult = true;
+  test(
+    'success via inbox fallback: unacked direct send falls back to inbox',
+    () async {
+      p2pService.sendWithReplyResult = const SendMessageResult(
+        sent: true,
+        acked: false,
+      );
+      p2pService.storeInInboxResult = true;
 
-    final result = await sendContactRequest(
-      p2pService: p2pService,
-      identityRepo: identityRepo,
-      bridge: bridge,
-      targetPeerId: 'targetPeer123456789',
-    );
+      final result = await sendContactRequest(
+        p2pService: p2pService,
+        identityRepo: identityRepo,
+        bridge: bridge,
+        targetPeerId: 'targetPeer123456789',
+      );
 
-    expect(result, equals(SendContactRequestResult.success));
-  });
+      expect(result, equals(SendContactRequestResult.success));
+    },
+  );
 
   // --- v2 encrypted contact request tests ---
 
@@ -331,7 +360,8 @@ void main() {
     expect(bridge.encryptCalled, isTrue);
 
     // Verify sent message is v2 envelope
-    final sent = jsonDecode(p2pService.lastSentMessage!) as Map<String, dynamic>;
+    final sent =
+        jsonDecode(p2pService.lastSentMessage!) as Map<String, dynamic>;
     expect(sent['type'], equals('contact_request'));
     expect(sent['version'], equals('2'));
     expect(sent['msgId'], isA<String>());
@@ -353,12 +383,14 @@ void main() {
       recipientPublicKey: 'recipientEdPubBase64',
     );
 
-    final sent = jsonDecode(p2pService.lastSentMessage!) as Map<String, dynamic>;
+    final sent =
+        jsonDecode(p2pService.lastSentMessage!) as Map<String, dynamic>;
     final msgId = sent['msgId'] as String;
     // UUID v4 format
     expect(
-      RegExp(r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$')
-          .hasMatch(msgId),
+      RegExp(
+        r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
+      ).hasMatch(msgId),
       isTrue,
       reason: 'msgId should be a valid UUID v4',
     );
@@ -373,26 +405,31 @@ void main() {
       recipientPublicKey: 'recipientEdPubBase64',
     );
 
-    final sent = jsonDecode(p2pService.lastSentMessage!) as Map<String, dynamic>;
+    final sent =
+        jsonDecode(p2pService.lastSentMessage!) as Map<String, dynamic>;
     final ts = sent['ts'] as String;
     expect(DateTime.tryParse(ts), isNotNull);
     expect(ts, endsWith('Z'));
   });
 
-  test('v2: signed payload is inside ciphertext, not visible at top level', () async {
-    await sendContactRequest(
-      p2pService: p2pService,
-      identityRepo: identityRepo,
-      bridge: bridge,
-      targetPeerId: 'targetPeer123456789',
-      recipientPublicKey: 'recipientEdPubBase64',
-    );
+  test(
+    'v2: signed payload is inside ciphertext, not visible at top level',
+    () async {
+      await sendContactRequest(
+        p2pService: p2pService,
+        identityRepo: identityRepo,
+        bridge: bridge,
+        targetPeerId: 'targetPeer123456789',
+        recipientPublicKey: 'recipientEdPubBase64',
+      );
 
-    final sent = jsonDecode(p2pService.lastSentMessage!) as Map<String, dynamic>;
-    expect(sent.containsKey('payload'), isFalse);
-    expect(sent.containsKey('sig'), isFalse);
-    expect(sent.containsKey('pk'), isFalse);
-  });
+      final sent =
+          jsonDecode(p2pService.lastSentMessage!) as Map<String, dynamic>;
+      expect(sent.containsKey('payload'), isFalse);
+      expect(sent.containsKey('sig'), isFalse);
+      expect(sent.containsKey('pk'), isFalse);
+    },
+  );
 
   test('v2: returns encryptionError when encryption fails', () async {
     bridge.encryptResponse = {
@@ -413,39 +450,45 @@ void main() {
     expect(result, equals(SendContactRequestResult.encryptionError));
   });
 
-  test('v2: returns encryptionError when encrypt response is malformed', () async {
-    // Bridge says ok:true but missing required fields
-    bridge.encryptResponse = {'ok': true};
+  test(
+    'v2: returns encryptionError when encrypt response is malformed',
+    () async {
+      // Bridge says ok:true but missing required fields
+      bridge.encryptResponse = {'ok': true};
 
-    final result = await sendContactRequest(
-      p2pService: p2pService,
-      identityRepo: identityRepo,
-      bridge: bridge,
-      targetPeerId: 'targetPeer123456789',
-      recipientPublicKey: 'recipientEdPubBase64',
-    );
+      final result = await sendContactRequest(
+        p2pService: p2pService,
+        identityRepo: identityRepo,
+        bridge: bridge,
+        targetPeerId: 'targetPeer123456789',
+        recipientPublicKey: 'recipientEdPubBase64',
+      );
 
-    expect(result, equals(SendContactRequestResult.encryptionError));
-  });
+      expect(result, equals(SendContactRequestResult.encryptionError));
+    },
+  );
 
-  test('v2: returns encryptionError when encrypt response has empty fields', () async {
-    bridge.encryptResponse = {
-      'ok': true,
-      'ephemeralPublicKey': '',
-      'ciphertext': 'ctBase64',
-      'nonce': 'nonceBase64',
-    };
+  test(
+    'v2: returns encryptionError when encrypt response has empty fields',
+    () async {
+      bridge.encryptResponse = {
+        'ok': true,
+        'ephemeralPublicKey': '',
+        'ciphertext': 'ctBase64',
+        'nonce': 'nonceBase64',
+      };
 
-    final result = await sendContactRequest(
-      p2pService: p2pService,
-      identityRepo: identityRepo,
-      bridge: bridge,
-      targetPeerId: 'targetPeer123456789',
-      recipientPublicKey: 'recipientEdPubBase64',
-    );
+      final result = await sendContactRequest(
+        p2pService: p2pService,
+        identityRepo: identityRepo,
+        bridge: bridge,
+        targetPeerId: 'targetPeer123456789',
+        recipientPublicKey: 'recipientEdPubBase64',
+      );
 
-    expect(result, equals(SendContactRequestResult.encryptionError));
-  });
+      expect(result, equals(SendContactRequestResult.encryptionError));
+    },
+  );
 
   test('v1: sends v1 when recipientPublicKey is null', () async {
     final result = await sendContactRequest(
@@ -459,7 +502,8 @@ void main() {
     expect(result, equals(SendContactRequestResult.success));
     expect(bridge.encryptCalled, isFalse);
 
-    final sent = jsonDecode(p2pService.lastSentMessage!) as Map<String, dynamic>;
+    final sent =
+        jsonDecode(p2pService.lastSentMessage!) as Map<String, dynamic>;
     expect(sent['version'], equals('1'));
     expect(sent['payload'], isA<Map>());
   });
@@ -477,7 +521,8 @@ void main() {
     expect(bridge.lastEncryptPayload!['msgId'], isA<String>());
     expect(bridge.lastEncryptPayload!['ts'], isA<String>());
     // Verify the msgId/ts in the encrypt payload match the envelope
-    final sent = jsonDecode(p2pService.lastSentMessage!) as Map<String, dynamic>;
+    final sent =
+        jsonDecode(p2pService.lastSentMessage!) as Map<String, dynamic>;
     expect(bridge.lastEncryptPayload!['msgId'], equals(sent['msgId']));
     expect(bridge.lastEncryptPayload!['ts'], equals(sent['ts']));
   });

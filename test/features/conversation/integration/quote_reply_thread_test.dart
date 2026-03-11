@@ -45,52 +45,53 @@ void main() {
   });
 
   group('Quote-reply thread', () {
-    test('5a. Alice sends, Bob quotes — reply arrives with quotedMessageId',
-        () async {
-      final bobReceived = <ConversationMessage>[];
-      final bobSub = bob.chatListener.incomingMessageStream.listen(
-        (msg) => bobReceived.add(msg),
-      );
+    test(
+      '5a. Alice sends, Bob quotes — reply arrives with quotedMessageId',
+      () async {
+        final bobReceived = <ConversationMessage>[];
+        final bobSub = bob.chatListener.incomingMessageStream.listen(
+          (msg) => bobReceived.add(msg),
+        );
 
-      // Alice sends original message
-      final (r1, sentMsg) = await alice.sendMessage(
-        bob.peerId,
-        'Hello Bob!',
-      );
-      expect(r1, SendChatMessageResult.success);
-      await Future.delayed(const Duration(milliseconds: 50));
+        // Alice sends original message
+        final (r1, sentMsg) = await alice.sendMessage(bob.peerId, 'Hello Bob!');
+        expect(r1, SendChatMessageResult.success);
+        await Future.delayed(const Duration(milliseconds: 50));
 
-      expect(bobReceived.length, 1);
-      final aliceMessageId = bobReceived.first.id;
+        expect(bobReceived.length, 1);
+        final aliceMessageId = bobReceived.first.id;
 
-      // Bob quotes Alice's message
-      final aliceReceived = <ConversationMessage>[];
-      final aliceSub = alice.chatListener.incomingMessageStream.listen(
-        (msg) => aliceReceived.add(msg),
-      );
+        // Bob quotes Alice's message
+        final aliceReceived = <ConversationMessage>[];
+        final aliceSub = alice.chatListener.incomingMessageStream.listen(
+          (msg) => aliceReceived.add(msg),
+        );
 
-      final (r2, _) = await bob.sendQuoteReply(
-        alice.peerId,
-        'Great to hear from you!',
-        aliceMessageId,
-      );
-      expect(r2, SendChatMessageResult.success);
-      await Future.delayed(const Duration(milliseconds: 50));
+        final (r2, _) = await bob.sendQuoteReply(
+          alice.peerId,
+          'Great to hear from you!',
+          aliceMessageId,
+        );
+        expect(r2, SendChatMessageResult.success);
+        await Future.delayed(const Duration(milliseconds: 50));
 
-      expect(aliceReceived.length, 1);
-      expect(aliceReceived.first.quotedMessageId, aliceMessageId);
-      expect(aliceReceived.first.text, 'Great to hear from you!');
+        expect(aliceReceived.length, 1);
+        expect(aliceReceived.first.quotedMessageId, aliceMessageId);
+        expect(aliceReceived.first.text, 'Great to hear from you!');
 
-      // Bob's repo has correct quotedMessageId
-      final bobConvo =
-          await bob.messageRepo.getMessagesForContact(alice.peerId);
-      final bobQuoteMsg =
-          bobConvo.where((m) => m.quotedMessageId != null).first;
-      expect(bobQuoteMsg.quotedMessageId, aliceMessageId);
+        // Bob's repo has correct quotedMessageId
+        final bobConvo = await bob.messageRepo.getMessagesForContact(
+          alice.peerId,
+        );
+        final bobQuoteMsg = bobConvo
+            .where((m) => m.quotedMessageId != null)
+            .first;
+        expect(bobQuoteMsg.quotedMessageId, aliceMessageId);
 
-      await bobSub.cancel();
-      await aliceSub.cancel();
-    });
+        await bobSub.cancel();
+        await aliceSub.cancel();
+      },
+    );
 
     test('5b. MessagePayload round-trip preserves quotedMessageId', () {
       final payload = MessagePayload(

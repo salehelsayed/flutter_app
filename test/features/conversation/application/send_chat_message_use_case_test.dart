@@ -36,6 +36,7 @@ class FakeP2PService implements P2PService {
   final Set<String> localPeers = {};
   bool localSendResult = true;
   int localSendCallCount = 0;
+  int? lastLocalSendTimeoutMs;
 
   /// Use [useNullDiscover] to explicitly request null discoverPeer results.
   FakeP2PService({
@@ -140,9 +141,11 @@ class FakeP2PService implements P2PService {
   Future<bool> sendLocalMessage(
     String peerId,
     String message,
-    String fromPeerId,
-  ) async {
+    String fromPeerId, {
+    int? timeoutMs,
+  }) async {
     localSendCallCount++;
+    lastLocalSendTimeoutMs = timeoutMs;
     lastSentPeerId = peerId;
     lastSentMessage = message;
     return localSendResult;
@@ -660,6 +663,28 @@ void main() {
       expect(p2pService.sendCallCount, 1);
     });
 
+    test('passes interactive local budget to the WiFi transport', () async {
+      p2pService.localPeers.add('target-peer');
+      p2pService.localSendResult = false;
+
+      final (result, message) = await sendChatMessage(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        targetPeerId: 'target-peer',
+        text: 'Hello timeout budget!',
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me',
+      );
+
+      expect(result, SendChatMessageResult.success);
+      expect(message, isNotNull);
+      expect(message!.transport, 'direct');
+      expect(
+        p2pService.lastLocalSendTimeoutMs,
+        interactiveLocalBudget.inMilliseconds,
+      );
+    });
+
     test('skips local send when peer is not on local WiFi', () async {
       // localPeers is empty by default
       final (result, message) = await sendChatMessage(
@@ -947,8 +972,9 @@ class _ThrowOnSendP2PService implements P2PService {
   Future<bool> sendLocalMessage(
     String peerId,
     String message,
-    String fromPeerId,
-  ) async => false;
+    String fromPeerId, {
+    int? timeoutMs,
+  }) async => false;
 
   @override
   bool isConnectedToPeer(String peerId) => false;
@@ -1052,8 +1078,9 @@ class _FlakyDiscoverP2PService implements P2PService {
   Future<bool> sendLocalMessage(
     String peerId,
     String message,
-    String fromPeerId,
-  ) async => false;
+    String fromPeerId, {
+    int? timeoutMs,
+  }) async => false;
 
   @override
   bool isConnectedToPeer(String peerId) => false;
@@ -1152,8 +1179,9 @@ class _SlowLocalFastDirectP2PService implements P2PService {
   Future<bool> sendLocalMessage(
     String peerId,
     String message,
-    String fromPeerId,
-  ) async {
+    String fromPeerId, {
+    int? timeoutMs,
+  }) async {
     // Simulate slow local send (3 seconds)
     await Future.delayed(const Duration(seconds: 3));
     return true;

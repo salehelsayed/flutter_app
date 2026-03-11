@@ -393,7 +393,7 @@ void main() {
     );
 
     test(
-      'skips message when contact has no ML-KEM key (encryptionRequired)',
+      'retries message without ML-KEM key using plaintext fallback',
       () async {
         identityRepo.seed(makeIdentity());
         messageRepo.seed([makeFailedMessage()]);
@@ -424,15 +424,16 @@ void main() {
           bridge: bridge,
         );
 
-        // encryptionRequired → message not retried successfully
-        expect(count, 0);
-        // sendMessageWithReply should never have been called
-        expect(p2pService.sendMessageWithReplyCallCount, 0);
+        expect(count, 1);
+        expect(
+          p2pService.sendMessageWithReplyCallCount,
+          greaterThanOrEqualTo(1),
+        );
       },
     );
 
     test(
-      'skips message when contact does not exist (encryptionRequired)',
+      'retries message when contact is missing using plaintext fallback',
       () async {
         identityRepo.seed(makeIdentity());
         messageRepo.seed([makeFailedMessage()]);
@@ -460,8 +461,11 @@ void main() {
           bridge: bridge,
         );
 
-        expect(count, 0);
-        expect(p2pService.sendMessageWithReplyCallCount, 0);
+        expect(count, 1);
+        expect(
+          p2pService.sendMessageWithReplyCallCount,
+          greaterThanOrEqualTo(1),
+        );
       },
     );
 

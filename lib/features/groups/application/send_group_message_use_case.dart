@@ -13,12 +13,7 @@ import 'package:flutter_app/features/groups/domain/repositories/group_message_re
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 
 /// Result of sending a group message.
-enum SendGroupMessageResult {
-  success,
-  groupNotFound,
-  unauthorized,
-  error,
-}
+enum SendGroupMessageResult { success, groupNotFound, unauthorized, error }
 
 /// Sends a message to a group.
 ///
@@ -39,6 +34,7 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
   required String senderUsername,
   String? messageId,
   DateTime? timestamp,
+  String? quotedMessageId,
   List<MediaAttachment>? mediaAttachments,
   MediaAttachmentRepository? mediaAttachmentRepo,
 }) async {
@@ -100,6 +96,7 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     senderPrivateKey: senderPrivateKey,
     senderUsername: senderUsername,
     messageId: resolvedMessageId,
+    quotedMessageId: quotedMessageId,
     media: mediaJson,
   );
   final inboxFuture = _safeInboxStore(
@@ -111,6 +108,7 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     text: text,
     timestamp: now,
     messageId: resolvedMessageId,
+    quotedMessageId: quotedMessageId,
     media: mediaJson,
   );
 
@@ -148,6 +146,7 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     senderUsername: senderUsername,
     text: text,
     timestamp: now,
+    quotedMessageId: quotedMessageId,
     keyGeneration: latestKey?.keyGeneration ?? 0,
     status: 'sent',
     isIncoming: false,
@@ -189,6 +188,7 @@ Future<void> _safeInboxStore({
   required String text,
   required DateTime timestamp,
   required String messageId,
+  String? quotedMessageId,
   List<Map<String, dynamic>>? media,
 }) async {
   try {
@@ -200,6 +200,8 @@ Future<void> _safeInboxStore({
       'text': text,
       'timestamp': timestamp.toIso8601String(),
       'messageId': messageId,
+      if (quotedMessageId != null && quotedMessageId.isNotEmpty)
+        'quotedMessageId': quotedMessageId,
       if (media != null && media.isNotEmpty) 'media': media,
     });
     await callGroupInboxStore(bridge, groupId, inboxPayload);

@@ -95,20 +95,30 @@ class _FakeP2PService implements P2PService {
   @override
   Future<bool> sendMessage(String peerId, String message) async => true;
   @override
-  Future<SendMessageResult> sendMessageWithReply(String pid, String msg, {int? timeoutMs}) async {
+  Future<SendMessageResult> sendMessageWithReply(
+    String pid,
+    String msg, {
+    int? timeoutMs,
+  }) async {
     lastSentPeerId = pid;
     lastSentMessage = msg;
     return const SendMessageResult(sent: true);
   }
+
   @override
   Future<DiscoveredPeer?> discoverPeer(String peerId, {int? timeoutMs}) async =>
       DiscoveredPeer(id: peerId, addresses: ['/ip4/127.0.0.1/tcp/4001']);
   @override
-  Future<bool> dialPeer(String peerId, {List<String>? addresses, int? timeoutMs}) async => true;
+  Future<bool> dialPeer(
+    String peerId, {
+    List<String>? addresses,
+    int? timeoutMs,
+  }) async => true;
   @override
   Future<bool> storeInInbox(String toPeerId, String message) async => false;
   @override
-  Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) async => [];
+  Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) async =>
+      [];
   @override
   Future<bool> registerPushToken(String token, String platform) async => true;
   @override
@@ -123,8 +133,12 @@ class _FakeP2PService implements P2PService {
   @override
   bool isLocalPeer(String peerId) => false;
   @override
-  Future<bool> sendLocalMessage(String pid, String msg, String from) async =>
-      false;
+  Future<bool> sendLocalMessage(
+    String pid,
+    String msg,
+    String from, {
+    int? timeoutMs,
+  }) async => false;
   @override
   Future<bool> sendLocalMedia({
     required String peerId,
@@ -160,15 +174,17 @@ final _testIdentity = IdentityModel(
 );
 
 void _seedPendingRequest(InMemoryContactRequestRepository repo) {
-  repo.addRequest(ContactRequestModel(
-    peerId: _bobPeerId,
-    publicKey: 'pk-bob',
-    rendezvous: '/dns4/relay/tcp/443/p2p/relay',
-    username: 'Bob',
-    signature: 'sig-bob',
-    status: ContactRequestStatus.pending,
-    receivedAt: '2026-01-01T00:00:00Z',
-  ));
+  repo.addRequest(
+    ContactRequestModel(
+      peerId: _bobPeerId,
+      publicKey: 'pk-bob',
+      rendezvous: '/dns4/relay/tcp/443/p2p/relay',
+      username: 'Bob',
+      signature: 'sig-bob',
+      status: ContactRequestStatus.pending,
+      receivedAt: '2026-01-01T00:00:00Z',
+    ),
+  );
 }
 
 void main() {
@@ -248,15 +264,17 @@ void main() {
 
   test('notPending: does not fire reciprocal when not pending', () async {
     // Seed as already-accepted
-    requestRepo.addRequest(ContactRequestModel(
-      peerId: _bobPeerId,
-      publicKey: 'pk-bob',
-      rendezvous: '/dns4/relay/tcp/443/p2p/relay',
-      username: 'Bob',
-      signature: 'sig-bob',
-      status: ContactRequestStatus.accepted,
-      receivedAt: '2026-01-01T00:00:00Z',
-    ));
+    requestRepo.addRequest(
+      ContactRequestModel(
+        peerId: _bobPeerId,
+        publicKey: 'pk-bob',
+        rendezvous: '/dns4/relay/tcp/443/p2p/relay',
+        username: 'Bob',
+        signature: 'sig-bob',
+        status: ContactRequestStatus.accepted,
+        receivedAt: '2026-01-01T00:00:00Z',
+      ),
+    );
 
     final result = await acceptAndReciprocateContactRequest(
       requestRepo: requestRepo,
@@ -315,7 +333,8 @@ void main() {
     await Future.delayed(const Duration(milliseconds: 200));
 
     expect(p2pService.lastSentMessage, isNotNull);
-    final sent = jsonDecode(p2pService.lastSentMessage!) as Map<String, dynamic>;
+    final sent =
+        jsonDecode(p2pService.lastSentMessage!) as Map<String, dynamic>;
     expect(sent['type'], equals('contact_request'));
     expect(sent['version'], equals('2'));
     expect(sent['encrypted'], isA<Map>());
@@ -334,15 +353,16 @@ void main() {
       p2pService: p2pService,
       identityRepo: identityRepo,
       bridge: bridge,
-      downloadProfilePictureFn: ({
-        required bridge,
-        required contactRepo,
-        required ownerPeerId,
-        required avatarVersion,
-      }) async {
-        capturedPeerId = ownerPeerId;
-        return null;
-      },
+      downloadProfilePictureFn:
+          ({
+            required bridge,
+            required contactRepo,
+            required ownerPeerId,
+            required avatarVersion,
+          }) async {
+            capturedPeerId = ownerPeerId;
+            return null;
+          },
       onProfileDownloaded: (c) => callbackContact = c,
     );
 
@@ -374,14 +394,15 @@ void main() {
       p2pService: p2pService,
       identityRepo: identityRepo,
       bridge: bridge,
-      downloadProfilePictureFn: ({
-        required bridge,
-        required contactRepo,
-        required ownerPeerId,
-        required avatarVersion,
-      }) async {
-        return fakeUpdated;
-      },
+      downloadProfilePictureFn:
+          ({
+            required bridge,
+            required contactRepo,
+            required ownerPeerId,
+            required avatarVersion,
+          }) async {
+            return fakeUpdated;
+          },
       onProfileDownloaded: (c) => callbackContact = c,
     );
 
@@ -390,30 +411,33 @@ void main() {
     expect(callbackContact, equals(fakeUpdated));
   });
 
-  test('success: downloadProfilePictureFn failure does not affect result',
-      () async {
-    _seedPendingRequest(requestRepo);
+  test(
+    'success: downloadProfilePictureFn failure does not affect result',
+    () async {
+      _seedPendingRequest(requestRepo);
 
-    final result = await acceptAndReciprocateContactRequest(
-      requestRepo: requestRepo,
-      contactRepo: contactRepo,
-      peerId: _bobPeerId,
-      p2pService: p2pService,
-      identityRepo: identityRepo,
-      bridge: bridge,
-      downloadProfilePictureFn: ({
-        required bridge,
-        required contactRepo,
-        required ownerPeerId,
-        required avatarVersion,
-      }) async {
-        throw Exception('download failed');
-      },
-    );
+      final result = await acceptAndReciprocateContactRequest(
+        requestRepo: requestRepo,
+        contactRepo: contactRepo,
+        peerId: _bobPeerId,
+        p2pService: p2pService,
+        identityRepo: identityRepo,
+        bridge: bridge,
+        downloadProfilePictureFn:
+            ({
+              required bridge,
+              required contactRepo,
+              required ownerPeerId,
+              required avatarVersion,
+            }) async {
+              throw Exception('download failed');
+            },
+      );
 
-    expect(result, AcceptContactRequestResult.success);
-    await Future.delayed(Duration.zero);
-  });
+      expect(result, AcceptContactRequestResult.success);
+      await Future.delayed(Duration.zero);
+    },
+  );
 
   test('notFound: does not call downloadProfilePictureFn', () async {
     bool wasCalled = false;
@@ -425,15 +449,16 @@ void main() {
       p2pService: p2pService,
       identityRepo: identityRepo,
       bridge: bridge,
-      downloadProfilePictureFn: ({
-        required bridge,
-        required contactRepo,
-        required ownerPeerId,
-        required avatarVersion,
-      }) async {
-        wasCalled = true;
-        return null;
-      },
+      downloadProfilePictureFn:
+          ({
+            required bridge,
+            required contactRepo,
+            required ownerPeerId,
+            required avatarVersion,
+          }) async {
+            wasCalled = true;
+            return null;
+          },
     );
 
     expect(result, AcceptContactRequestResult.notFound);

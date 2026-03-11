@@ -8,27 +8,29 @@ import 'package:flutter_app/shared/widgets/media/media_grid.dart';
 
 void main() {
   Widget wrap(Widget child) => MaterialApp(
-        home: Scaffold(
-          body: SingleChildScrollView(child: child),
-        ),
-      );
+    home: Scaffold(body: SingleChildScrollView(child: child)),
+  );
 
   ThreadMessage _msg(String id, {bool isUnread = true}) => ThreadMessage(
-        id: id,
-        text: 'Message $id',
-        time: '3:00 PM',
-        timestamp: DateTime(2026, 2, 9, 15, 0),
-        isUnread: isUnread,
-        isIncoming: true,
-      );
+    id: id,
+    text: 'Message $id',
+    time: '3:00 PM',
+    timestamp: DateTime(2026, 2, 9, 15, 0),
+    isUnread: isUnread,
+    isIncoming: true,
+  );
 
   group('ScrollableMessagePreview', () {
     testWidgets('<= 3 messages: Column layout, no hint', (tester) async {
-      await tester.pumpWidget(wrap(ScrollableMessagePreview(
-        messages: [_msg('1'), _msg('2')],
-        contactPeerId: 'peer1',
-        contactUsername: 'Alice',
-      )));
+      await tester.pumpWidget(
+        wrap(
+          ScrollableMessagePreview(
+            messages: [_msg('1'), _msg('2')],
+            contactPeerId: 'peer1',
+            contactUsername: 'Alice',
+          ),
+        ),
+      );
 
       expect(find.textContaining('Message 1'), findsOneWidget);
       expect(find.textContaining('Message 2'), findsOneWidget);
@@ -39,11 +41,15 @@ void main() {
     });
 
     testWidgets('> 3 messages: ListView with hint', (tester) async {
-      await tester.pumpWidget(wrap(ScrollableMessagePreview(
-        messages: [_msg('1'), _msg('2'), _msg('3'), _msg('4'), _msg('5')],
-        contactPeerId: 'peer1',
-        contactUsername: 'Alice',
-      )));
+      await tester.pumpWidget(
+        wrap(
+          ScrollableMessagePreview(
+            messages: [_msg('1'), _msg('2'), _msg('3'), _msg('4'), _msg('5')],
+            contactPeerId: 'peer1',
+            contactUsername: 'Alice',
+          ),
+        ),
+      );
 
       expect(find.byType(ListView), findsOneWidget);
       // Initial remaining = 5 - 3 = 2
@@ -51,11 +57,15 @@ void main() {
     });
 
     testWidgets('messages in oldest-first order', (tester) async {
-      await tester.pumpWidget(wrap(ScrollableMessagePreview(
-        messages: [_msg('first'), _msg('second'), _msg('third')],
-        contactPeerId: 'peer1',
-        contactUsername: 'Alice',
-      )));
+      await tester.pumpWidget(
+        wrap(
+          ScrollableMessagePreview(
+            messages: [_msg('first'), _msg('second'), _msg('third')],
+            contactPeerId: 'peer1',
+            contactUsername: 'Alice',
+          ),
+        ),
+      );
 
       expect(find.textContaining('Message first'), findsOneWidget);
       expect(find.textContaining('Message second'), findsOneWidget);
@@ -64,37 +74,50 @@ void main() {
 
     testWidgets('ViewEarlierLink shown when hasEarlierHistory', (tester) async {
       var tapped = false;
-      await tester.pumpWidget(wrap(ScrollableMessagePreview(
-        messages: [_msg('1')],
-        contactPeerId: 'peer1',
-        contactUsername: 'Alice',
-        hasEarlierHistory: true,
-        onViewEarlier: () => tapped = true,
-      )));
+      await tester.pumpWidget(
+        wrap(
+          ScrollableMessagePreview(
+            messages: [_msg('1')],
+            contactPeerId: 'peer1',
+            contactUsername: 'Alice',
+            hasEarlierHistory: true,
+            onViewEarlier: () => tapped = true,
+          ),
+        ),
+      );
 
       expect(find.text('View earlier messages'), findsOneWidget);
       await tester.tap(find.text('View earlier messages'));
       expect(tapped, isTrue);
     });
 
-    testWidgets('ViewEarlierLink not shown when hasEarlierHistory is false',
-        (tester) async {
-      await tester.pumpWidget(wrap(ScrollableMessagePreview(
-        messages: [_msg('1')],
-        contactPeerId: 'peer1',
-        contactUsername: 'Alice',
-        hasEarlierHistory: false,
-      )));
+    testWidgets('ViewEarlierLink not shown when hasEarlierHistory is false', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        wrap(
+          ScrollableMessagePreview(
+            messages: [_msg('1')],
+            contactPeerId: 'peer1',
+            contactUsername: 'Alice',
+            hasEarlierHistory: false,
+          ),
+        ),
+      );
 
       expect(find.text('View earlier messages'), findsNothing);
     });
 
     testWidgets('no scrollbar widget', (tester) async {
-      await tester.pumpWidget(wrap(ScrollableMessagePreview(
-        messages: [_msg('1'), _msg('2'), _msg('3'), _msg('4'), _msg('5')],
-        contactPeerId: 'peer1',
-        contactUsername: 'Alice',
-      )));
+      await tester.pumpWidget(
+        wrap(
+          ScrollableMessagePreview(
+            messages: [_msg('1'), _msg('2'), _msg('3'), _msg('4'), _msg('5')],
+            contactPeerId: 'peer1',
+            contactUsername: 'Alice',
+          ),
+        ),
+      );
 
       expect(find.byType(Scrollbar), findsNothing);
     });
@@ -122,11 +145,15 @@ void main() {
         media: media,
       );
 
-      await tester.pumpWidget(wrap(ScrollableMessagePreview(
-        messages: [msgWithMedia],
-        contactPeerId: 'peer1',
-        contactUsername: 'Alice',
-      )));
+      await tester.pumpWidget(
+        wrap(
+          ScrollableMessagePreview(
+            messages: [msgWithMedia],
+            contactPeerId: 'peer1',
+            contactUsername: 'Alice',
+          ),
+        ),
+      );
 
       // MediaGrid should appear inside the MessageBubble
       expect(find.byType(MediaGrid), findsOneWidget);
@@ -153,63 +180,115 @@ void main() {
         ),
       ];
 
-      await tester.pumpWidget(wrap(ScrollableMessagePreview(
-        messages: messages,
-        contactPeerId: 'peer1',
-        contactUsername: 'Alice',
-      )));
+      await tester.pumpWidget(
+        wrap(
+          ScrollableMessagePreview(
+            messages: messages,
+            contactPeerId: 'peer1',
+            contactUsername: 'Alice',
+          ),
+        ),
+      );
 
       // The quoted text should appear in the reply bubble's quote bar
       expect(find.text('Hello there'), findsWidgets);
     });
 
-    testWidgets('uses per-message senderLabel when ThreadMessage has senderUsername',
-        (tester) async {
-      final messages = [
-        ThreadMessage(
-          id: 'm1',
-          text: 'Hello from Sarah',
+    testWidgets(
+      'resolves quoted text from quoteLookupMessages when parent is outside preview slice',
+      (tester) async {
+        final quotedParent = ThreadMessage(
+          id: 'original',
+          text: 'Older read message',
+          time: '2:00 PM',
+          timestamp: DateTime(2026, 2, 9, 14, 0),
+          isIncoming: true,
+        );
+        final unreadReply = ThreadMessage(
+          id: 'reply',
+          text: 'Unread reply',
           time: '3:00 PM',
           timestamp: DateTime(2026, 2, 9, 15, 0),
           isUnread: true,
           isIncoming: true,
-          senderUsername: 'Sarah',
-          senderPeerId: 'peer-sarah',
-        ),
-      ];
+          quotedMessageId: 'original',
+        );
 
-      await tester.pumpWidget(wrap(ScrollableMessagePreview(
-        messages: messages,
-        contactPeerId: 'peer-fallback',
-        contactUsername: 'FallbackName',
-      )));
+        await tester.pumpWidget(
+          wrap(
+            ScrollableMessagePreview(
+              messages: [unreadReply],
+              quoteLookupMessages: [quotedParent, unreadReply],
+              contactPeerId: 'peer1',
+              contactUsername: 'Alice',
+            ),
+          ),
+        );
 
-      // Should show "Sarah" as the sender label, not "FallbackName"
-      expect(find.textContaining('Sarah'), findsOneWidget);
-    });
+        expect(find.text('Older read message'), findsOneWidget);
+        expect(find.text('Message unavailable'), findsNothing);
+      },
+    );
 
-    testWidgets('falls back to widget contactUsername when ThreadMessage has no senderUsername',
-        (tester) async {
-      final messages = [
-        ThreadMessage(
-          id: 'm1',
-          text: 'Hello',
-          time: '3:00 PM',
-          timestamp: DateTime(2026, 2, 9, 15, 0),
-          isUnread: true,
-          isIncoming: true,
-        ),
-      ];
+    testWidgets(
+      'uses per-message senderLabel when ThreadMessage has senderUsername',
+      (tester) async {
+        final messages = [
+          ThreadMessage(
+            id: 'm1',
+            text: 'Hello from Sarah',
+            time: '3:00 PM',
+            timestamp: DateTime(2026, 2, 9, 15, 0),
+            isUnread: true,
+            isIncoming: true,
+            senderUsername: 'Sarah',
+            senderPeerId: 'peer-sarah',
+          ),
+        ];
 
-      await tester.pumpWidget(wrap(ScrollableMessagePreview(
-        messages: messages,
-        contactPeerId: 'peer1',
-        contactUsername: 'Alice',
-      )));
+        await tester.pumpWidget(
+          wrap(
+            ScrollableMessagePreview(
+              messages: messages,
+              contactPeerId: 'peer-fallback',
+              contactUsername: 'FallbackName',
+            ),
+          ),
+        );
 
-      // Should show "Alice" as the sender label (widget default)
-      expect(find.textContaining('Alice'), findsOneWidget);
-    });
+        // Should show "Sarah" as the sender label, not "FallbackName"
+        expect(find.textContaining('Sarah'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'falls back to widget contactUsername when ThreadMessage has no senderUsername',
+      (tester) async {
+        final messages = [
+          ThreadMessage(
+            id: 'm1',
+            text: 'Hello',
+            time: '3:00 PM',
+            timestamp: DateTime(2026, 2, 9, 15, 0),
+            isUnread: true,
+            isIncoming: true,
+          ),
+        ];
+
+        await tester.pumpWidget(
+          wrap(
+            ScrollableMessagePreview(
+              messages: messages,
+              contactPeerId: 'peer1',
+              contactUsername: 'Alice',
+            ),
+          ),
+        );
+
+        // Should show "Alice" as the sender label (widget default)
+        expect(find.textContaining('Alice'), findsOneWidget);
+      },
+    );
 
     testWidgets('shows unavailable for unknown quoted message', (tester) async {
       final messages = [
@@ -224,11 +303,15 @@ void main() {
         ),
       ];
 
-      await tester.pumpWidget(wrap(ScrollableMessagePreview(
-        messages: messages,
-        contactPeerId: 'peer1',
-        contactUsername: 'Alice',
-      )));
+      await tester.pumpWidget(
+        wrap(
+          ScrollableMessagePreview(
+            messages: messages,
+            contactPeerId: 'peer1',
+            contactUsername: 'Alice',
+          ),
+        ),
+      );
 
       expect(find.text('Message unavailable'), findsOneWidget);
     });

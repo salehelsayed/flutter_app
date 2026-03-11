@@ -33,7 +33,7 @@ void main() {
     await tester.pumpWidget(buildTestWidget());
 
     expect(find.text('Test Group'), findsOneWidget);
-    expect(find.text('Chat'), findsOneWidget);
+    expect(find.text('Discussion'), findsOneWidget);
   });
 
   testWidgets('shows unread count when > 0', (tester) async {

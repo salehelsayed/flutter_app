@@ -1422,6 +1422,7 @@ func GroupPublish(paramsJSON string) (result string) {
 		SenderPrivateKey string                   `json:"senderPrivateKey"`
 		SenderUsername   string                   `json:"senderUsername"`
 		MessageId        string                   `json:"messageId,omitempty"`
+		QuotedMessageId  string                   `json:"quotedMessageId,omitempty"`
 		Media            []map[string]interface{} `json:"media,omitempty"`
 	}
 	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
@@ -1436,12 +1437,7 @@ func GroupPublish(paramsJSON string) (result string) {
 		return errJSON("INVALID_INPUT", "either text or media is required")
 	}
 
-	var opts map[string]interface{}
-	if len(params.Media) > 0 {
-		opts = map[string]interface{}{
-			"media": params.Media,
-		}
-	}
+	opts := buildGroupPublishOpts(params.Media, params.QuotedMessageId)
 
 	msgId, err := n.PublishGroupMessage(
 		params.GroupId,
@@ -1461,6 +1457,21 @@ func GroupPublish(paramsJSON string) (result string) {
 		"ok":        true,
 		"messageId": msgId,
 	})
+}
+
+func buildGroupPublishOpts(media []map[string]interface{}, quotedMessageId string) map[string]interface{} {
+	if len(media) == 0 && quotedMessageId == "" {
+		return nil
+	}
+
+	opts := make(map[string]interface{}, 2)
+	if len(media) > 0 {
+		opts["media"] = media
+	}
+	if quotedMessageId != "" {
+		opts["quotedMessageId"] = quotedMessageId
+	}
+	return opts
 }
 
 // GroupPublishReaction encrypts, signs, and publishes a reaction to a group topic.

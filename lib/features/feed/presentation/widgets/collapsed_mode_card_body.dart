@@ -8,6 +8,7 @@ import 'package:flutter_app/features/conversation/domain/models/message_reaction
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
 import 'package:flutter_app/features/feed/domain/models/session_reply.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/inline_reply_input.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/quote_preview_bar.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/replied_indicator.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/scrollable_message_preview.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
@@ -27,10 +28,13 @@ class CollapsedModeCardBody extends StatelessWidget {
   final ValueChanged<String>? onQuoteReply;
   final ValueChanged<String>? onSend;
   final bool sendEnabled;
+  final bool canWrite;
   final String initialText;
   final bool shouldRequestFocus;
   final ValueChanged<String>? onDraftChanged;
   final ValueChanged<bool>? onInputFocusChanged;
+  final String? activeQuoteText;
+  final VoidCallback? onClearQuote;
   final VoidCallback? onAttach;
   final Map<String, List<MessageReaction>> reactions;
   final ValueListenable<List<MessageReaction>>? Function(String messageId)?
@@ -50,10 +54,13 @@ class CollapsedModeCardBody extends StatelessWidget {
     this.onQuoteReply,
     this.onSend,
     this.sendEnabled = true,
+    this.canWrite = true,
     this.initialText = '',
     this.shouldRequestFocus = false,
     this.onDraftChanged,
     this.onInputFocusChanged,
+    this.activeQuoteText,
+    this.onClearQuote,
     this.onAttach,
     this.reactions = const {},
     this.reactionListenableForMessage,
@@ -212,8 +219,8 @@ class CollapsedModeCardBody extends StatelessWidget {
     final thumbAttachment = hasMedia
         ? _firstThumbnailAttachment(previewMsg.media)
         : null;
-    final thumbPath = (thumbAttachment != null &&
-            thumbAttachment.downloadStatus == 'done')
+    final thumbPath =
+        (thumbAttachment != null && thumbAttachment.downloadStatus == 'done')
         ? thumbAttachment.localPath
         : null;
 
@@ -272,12 +279,13 @@ class CollapsedModeCardBody extends StatelessWidget {
   Widget _buildExpandedContent() {
     return ScrollableMessagePreview(
       messages: thread.recentInteractionMessages,
+      quoteLookupMessages: thread.messages,
       contactPeerId: thread.displayId,
       contactUsername: thread.displayName,
       hasEarlierHistory: thread.hasEarlierInteractionHistory,
       onViewEarlier: onViewFullConversation,
       onCollapse: onCollapse,
-      onQuoteReply: onQuoteReply,
+      onQuoteReply: canWrite ? onQuoteReply : null,
       reactions: reactions,
       reactionListenableForMessage: reactionListenableForMessage,
       ownPeerId: ownPeerId,
@@ -328,6 +336,10 @@ class CollapsedModeCardBody extends StatelessWidget {
   }
 
   Widget _buildFooter() {
+    if (!canWrite) {
+      return _buildReadOnlyBanner();
+    }
+
     return Container(
       decoration: const BoxDecoration(
         border: Border(
@@ -335,15 +347,42 @@ class CollapsedModeCardBody extends StatelessWidget {
         ),
       ),
       padding: const EdgeInsets.fromLTRB(16, 10, 16, 14),
-      child: InlineReplyInput(
-        hintText: 'Continue...',
-        onSend: (text) => onSend?.call(text),
-        enabled: sendEnabled,
-        initialText: initialText,
-        shouldRequestFocus: shouldRequestFocus,
-        onDraftChanged: onDraftChanged,
-        onFocusChanged: onInputFocusChanged,
-        onAttach: onAttach,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (activeQuoteText != null)
+            QuotePreviewBar(text: activeQuoteText!, onDismiss: onClearQuote),
+          InlineReplyInput(
+            hintText: 'Continue...',
+            onSend: (text) => onSend?.call(text),
+            enabled: sendEnabled,
+            initialText: initialText,
+            shouldRequestFocus: shouldRequestFocus,
+            onDraftChanged: onDraftChanged,
+            onFocusChanged: onInputFocusChanged,
+            onAttach: onAttach,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildReadOnlyBanner() {
+    return Container(
+      width: double.infinity,
+      decoration: const BoxDecoration(
+        border: Border(
+          top: BorderSide(color: Color.fromRGBO(255, 255, 255, 0.08)),
+        ),
+      ),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
+      child: const Text(
+        'Only admins can send messages in this group',
+        textAlign: TextAlign.center,
+        style: TextStyle(
+          fontSize: 13,
+          color: Color.fromRGBO(255, 255, 255, 0.45),
+        ),
       ),
     );
   }

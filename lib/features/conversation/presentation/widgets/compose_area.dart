@@ -1,6 +1,7 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/utils/text_sanitizer.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/quote_preview_bar.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/recording_overlay.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/voice_record_button.dart';
 
@@ -21,6 +22,10 @@ class ComposeArea extends StatefulWidget {
   final Duration recordingDuration;
   final List<double> amplitudeValues;
   final String? initialText;
+  final ValueChanged<String>? onDraftChanged;
+  final String? quotedText;
+  final bool isQuoteUnavailable;
+  final VoidCallback? onClearQuote;
 
   const ComposeArea({
     super.key,
@@ -35,6 +40,10 @@ class ComposeArea extends StatefulWidget {
     this.recordingDuration = Duration.zero,
     this.amplitudeValues = const [],
     this.initialText,
+    this.onDraftChanged,
+    this.quotedText,
+    this.isQuoteUnavailable = false,
+    this.onClearQuote,
   });
 
   @override
@@ -89,6 +98,7 @@ class _ComposeAreaState extends State<ComposeArea>
       setState(() => _hasText = hasText);
       _updateSendButton();
     }
+    widget.onDraftChanged?.call(_controller.text);
   }
 
   void _updateSendButton() {
@@ -103,6 +113,19 @@ class _ComposeAreaState extends State<ComposeArea>
   @override
   void didUpdateWidget(ComposeArea oldWidget) {
     super.didUpdateWidget(oldWidget);
+    final nextText = widget.initialText ?? '';
+    final shouldRestoreClearedDraft =
+        _controller.text.isEmpty && nextText.isNotEmpty;
+    if ((nextText != (oldWidget.initialText ?? '') ||
+            shouldRestoreClearedDraft) &&
+        nextText != _controller.text) {
+      _controller.value = TextEditingValue(
+        text: nextText,
+        selection: TextSelection.collapsed(offset: nextText.length),
+      );
+      _hasText = nextText.trim().isNotEmpty;
+      _updateSendButton();
+    }
     if (oldWidget.hasAttachments != widget.hasAttachments) {
       _updateSendButton();
     }
@@ -137,6 +160,11 @@ class _ComposeAreaState extends State<ComposeArea>
   @override
   Widget build(BuildContext context) {
     final bottomPadding = MediaQuery.of(context).padding.bottom;
+    final showQuotePreview =
+        widget.quotedText != null || widget.isQuoteUnavailable;
+    final quotePreviewText = widget.isQuoteUnavailable
+        ? 'Message unavailable'
+        : widget.quotedText;
 
     return ClipRect(
       child: BackdropFilter(
@@ -151,172 +179,195 @@ class _ComposeAreaState extends State<ComposeArea>
               stops: [0.0, 0.2],
             ),
           ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              // Attachment button
-              Padding(
-                padding: const EdgeInsets.only(bottom: 3),
-                child: GestureDetector(
-                  onTap: widget.isProcessing || widget.isRecording
-                      ? null
-                      : widget.onAttach,
-                  behavior: HitTestBehavior.opaque,
-                  child: Container(
-                    width: 36,
-                    height: 36,
-                    decoration: BoxDecoration(
-                      color: Color.fromRGBO(
-                        255,
-                        255,
-                        255,
-                        widget.isProcessing ? 0.04 : 0.08,
-                      ),
-                      borderRadius: BorderRadius.circular(100),
-                      border: Border.all(
-                        color: Color.fromRGBO(
-                          255,
-                          255,
-                          255,
-                          widget.isProcessing ? 0.06 : 0.15,
+              if (showQuotePreview)
+                QuotePreviewBar(
+                  text: quotePreviewText!,
+                  onDismiss: widget.onClearQuote,
+                ),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  // Attachment button
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 3),
+                    child: GestureDetector(
+                      onTap: widget.isProcessing || widget.isRecording
+                          ? null
+                          : widget.onAttach,
+                      behavior: HitTestBehavior.opaque,
+                      child: Container(
+                        width: 36,
+                        height: 36,
+                        decoration: BoxDecoration(
+                          color: Color.fromRGBO(
+                            255,
+                            255,
+                            255,
+                            widget.isProcessing ? 0.04 : 0.08,
+                          ),
+                          borderRadius: BorderRadius.circular(100),
+                          border: Border.all(
+                            color: Color.fromRGBO(
+                              255,
+                              255,
+                              255,
+                              widget.isProcessing ? 0.06 : 0.15,
+                            ),
+                          ),
                         ),
-                      ),
-                    ),
-                    child: Center(
-                      child: Icon(
-                        Icons.add_rounded,
-                        size: 20,
-                        color: Color.fromRGBO(
-                          255,
-                          255,
-                          255,
-                          widget.isProcessing ? 0.15 : 0.5,
+                        child: Center(
+                          child: Icon(
+                            Icons.add_rounded,
+                            size: 20,
+                            color: Color.fromRGBO(
+                              255,
+                              255,
+                              255,
+                              widget.isProcessing ? 0.15 : 0.5,
+                            ),
+                          ),
                         ),
                       ),
                     ),
                   ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              // Text input or recording overlay
-              Expanded(
-                child: widget.isRecording
-                    ? RecordingOverlay(
-                        elapsed: widget.recordingDuration,
-                        onCancel: widget.onRecordCancel ?? () {},
-                        amplitudeValues: widget.amplitudeValues,
-                      )
-                    : AnimatedContainer(
-                        duration: const Duration(milliseconds: 200),
-                        constraints: const BoxConstraints(
-                          minHeight: 44,
-                          maxHeight: 160,
-                        ),
-                        decoration: BoxDecoration(
-                          color: const Color.fromRGBO(255, 255, 255, 0.06),
-                          borderRadius: BorderRadius.circular(22),
-                          border: Border.all(
-                            color: _hasFocus
-                                ? const Color.fromRGBO(255, 255, 255, 0.20)
-                                : const Color.fromRGBO(255, 255, 255, 0.10),
-                          ),
-                          boxShadow: _hasFocus
-                              ? const [
-                                  BoxShadow(
-                                    color:
-                                        Color.fromRGBO(255, 255, 255, 0.08),
-                                    blurRadius: 0,
-                                    spreadRadius: 1,
-                                  ),
-                                  BoxShadow(
-                                    color: Color.fromRGBO(0, 0, 0, 0.3),
-                                    blurRadius: 20,
-                                    offset: Offset(0, 4),
-                                  ),
-                                ]
-                              : null,
-                        ),
-                        child: TextField(
-                          controller: _controller,
-                          focusNode: _focusNode,
-                          maxLines: null,
-                          maxLength: maxMessageLength,
-                          enabled: !widget.isRecording,
-                          style: const TextStyle(
-                            fontSize: 15,
-                            color: Color.fromRGBO(255, 255, 255, 0.95),
-                            height: 1.5,
-                          ),
-                          decoration: InputDecoration(
-                            hintText: 'Write something...',
-                            hintStyle: TextStyle(
-                              fontSize: 15,
-                              color: Color.fromRGBO(
-                                255,
-                                255,
-                                255,
-                                _hasFocus ? 0.2 : 0.3,
-                              ),
+                  const SizedBox(width: 8),
+                  // Text input or recording overlay
+                  Expanded(
+                    child: widget.isRecording
+                        ? RecordingOverlay(
+                            elapsed: widget.recordingDuration,
+                            onCancel: widget.onRecordCancel ?? () {},
+                            amplitudeValues: widget.amplitudeValues,
+                          )
+                        : AnimatedContainer(
+                            duration: const Duration(milliseconds: 200),
+                            constraints: const BoxConstraints(
+                              minHeight: 44,
+                              maxHeight: 160,
                             ),
-                            border: InputBorder.none,
-                            counterText: '',
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 12,
-                            ),
-                          ),
-                        ),
-                      ),
-              ),
-              const SizedBox(width: 8),
-              // Mic button or Send button
-              Padding(
-                padding: const EdgeInsets.only(bottom: 3),
-                child: _shouldShowMicButton
-                    ? VoiceRecordButton(
-                        onTapDown: widget.onRecordStart!,
-                        onTapUp: widget.onRecordStop!,
-                        onTapCancel: widget.onRecordCancel ?? () {},
-                        isRecording: widget.isRecording,
-                      )
-                    : AnimatedBuilder(
-                        animation: _sendButtonController,
-                        builder: (context, child) {
-                          return Opacity(
-                            opacity: _sendOpacity.value,
-                            child: Transform.scale(
-                              scale: _sendScale.value,
-                              child: child,
-                            ),
-                          );
-                        },
-                        child: GestureDetector(
-                          onTap: !widget.isProcessing &&
-                                  (_hasText || widget.hasAttachments)
-                              ? _onSendPressed
-                              : null,
-                          child: Container(
-                            width: 36,
-                            height: 36,
                             decoration: BoxDecoration(
-                              color:
-                                  const Color.fromRGBO(29, 185, 84, 0.15),
-                              borderRadius: BorderRadius.circular(100),
+                              color: const Color.fromRGBO(255, 255, 255, 0.06),
+                              borderRadius: BorderRadius.circular(22),
                               border: Border.all(
-                                color:
-                                    const Color.fromRGBO(29, 185, 84, 0.3),
+                                color: _hasFocus
+                                    ? const Color.fromRGBO(255, 255, 255, 0.20)
+                                    : const Color.fromRGBO(255, 255, 255, 0.10),
                               ),
+                              boxShadow: _hasFocus
+                                  ? const [
+                                      BoxShadow(
+                                        color: Color.fromRGBO(
+                                          255,
+                                          255,
+                                          255,
+                                          0.08,
+                                        ),
+                                        blurRadius: 0,
+                                        spreadRadius: 1,
+                                      ),
+                                      BoxShadow(
+                                        color: Color.fromRGBO(0, 0, 0, 0.3),
+                                        blurRadius: 20,
+                                        offset: Offset(0, 4),
+                                      ),
+                                    ]
+                                  : null,
                             ),
-                            child: const Center(
-                              child: Icon(
-                                Icons.arrow_upward_rounded,
-                                size: 20,
-                                color: Color(0xFF1DB954),
+                            child: TextField(
+                              controller: _controller,
+                              focusNode: _focusNode,
+                              maxLines: null,
+                              maxLength: maxMessageLength,
+                              enabled: !widget.isRecording,
+                              style: const TextStyle(
+                                fontSize: 15,
+                                color: Color.fromRGBO(255, 255, 255, 0.95),
+                                height: 1.5,
+                              ),
+                              decoration: InputDecoration(
+                                hintText: 'Write something...',
+                                hintStyle: TextStyle(
+                                  fontSize: 15,
+                                  color: Color.fromRGBO(
+                                    255,
+                                    255,
+                                    255,
+                                    _hasFocus ? 0.2 : 0.3,
+                                  ),
+                                ),
+                                border: InputBorder.none,
+                                counterText: '',
+                                contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                  vertical: 12,
+                                ),
                               ),
                             ),
                           ),
-                        ),
-                      ),
+                  ),
+                  const SizedBox(width: 8),
+                  // Mic button or Send button
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 3),
+                    child: _shouldShowMicButton
+                        ? VoiceRecordButton(
+                            onTapDown: widget.onRecordStart!,
+                            onTapUp: widget.onRecordStop!,
+                            onTapCancel: widget.onRecordCancel ?? () {},
+                            isRecording: widget.isRecording,
+                          )
+                        : AnimatedBuilder(
+                            animation: _sendButtonController,
+                            builder: (context, child) {
+                              return Opacity(
+                                opacity: _sendOpacity.value,
+                                child: Transform.scale(
+                                  scale: _sendScale.value,
+                                  child: child,
+                                ),
+                              );
+                            },
+                            child: GestureDetector(
+                              onTap:
+                                  !widget.isProcessing &&
+                                      (_hasText || widget.hasAttachments)
+                                  ? _onSendPressed
+                                  : null,
+                              child: Container(
+                                width: 36,
+                                height: 36,
+                                decoration: BoxDecoration(
+                                  color: const Color.fromRGBO(
+                                    29,
+                                    185,
+                                    84,
+                                    0.15,
+                                  ),
+                                  borderRadius: BorderRadius.circular(100),
+                                  border: Border.all(
+                                    color: const Color.fromRGBO(
+                                      29,
+                                      185,
+                                      84,
+                                      0.3,
+                                    ),
+                                  ),
+                                ),
+                                child: const Center(
+                                  child: Icon(
+                                    Icons.arrow_upward_rounded,
+                                    size: 20,
+                                    color: Color(0xFF1DB954),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                  ),
+                ],
               ),
             ],
           ),

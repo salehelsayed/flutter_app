@@ -31,7 +31,7 @@ class _HalfOpenP2PService implements P2PService {
   int _failsRemaining;
 
   _HalfOpenP2PService(this._inner, {this.fastPathFailCount = 1})
-      : _failsRemaining = fastPathFailCount;
+    : _failsRemaining = fastPathFailCount;
 
   @override
   bool isConnectedToPeer(String peerId) => true; // stale — always "connected"
@@ -75,8 +75,11 @@ class _HalfOpenP2PService implements P2PService {
       _inner.discoverPeer(peerId, timeoutMs: timeoutMs);
 
   @override
-  Future<bool> dialPeer(String peerId, {List<String>? addresses, int? timeoutMs}) =>
-      _inner.dialPeer(peerId, addresses: addresses, timeoutMs: timeoutMs);
+  Future<bool> dialPeer(
+    String peerId, {
+    List<String>? addresses,
+    int? timeoutMs,
+  }) => _inner.dialPeer(peerId, addresses: addresses, timeoutMs: timeoutMs);
 
   @override
   Future<bool> storeInInbox(String toPeerId, String message) =>
@@ -105,8 +108,12 @@ class _HalfOpenP2PService implements P2PService {
   bool isLocalPeer(String peerId) => _inner.isLocalPeer(peerId);
 
   @override
-  Future<bool> sendLocalMessage(String peerId, String msg, String from) =>
-      _inner.sendLocalMessage(peerId, msg, from);
+  Future<bool> sendLocalMessage(
+    String peerId,
+    String msg,
+    String from, {
+    int? timeoutMs,
+  }) => _inner.sendLocalMessage(peerId, msg, from, timeoutMs: timeoutMs);
 
   @override
   Future<bool> sendLocalMedia({
@@ -165,11 +172,13 @@ void main() {
       );
 
       // Cross-add contacts
-      bob.addContact(TestUser.create(
-        peerId: alicePeerId,
-        username: aliceUsername,
-        network: network,
-      ));
+      bob.addContact(
+        TestUser.create(
+          peerId: alicePeerId,
+          username: aliceUsername,
+          network: network,
+        ),
+      );
       aliceContactRepo.addTestContact(
         ContactModel(
           peerId: bob.peerId,
@@ -189,48 +198,55 @@ void main() {
       bob.dispose();
     });
 
-    test('fast path failure falls through to retry loop and delivers',
-        () async {
-      final innerAlice =
-          FakeP2PService(peerId: alicePeerId, network: network);
-      final halfOpen = _HalfOpenP2PService(innerAlice, fastPathFailCount: 1);
+    test(
+      'fast path failure hands off to inbox and delivers after drain',
+      () async {
+        final innerAlice = FakeP2PService(
+          peerId: alicePeerId,
+          network: network,
+        );
+        final halfOpen = _HalfOpenP2PService(innerAlice, fastPathFailCount: 1);
 
-      final bobReceived = Completer<void>();
-      bob.chatListener.incomingMessageStream.listen((_) {
-        if (!bobReceived.isCompleted) bobReceived.complete();
-      });
+        final bobReceived = Completer<void>();
+        bob.chatListener.incomingMessageStream.listen((_) {
+          if (!bobReceived.isCompleted) bobReceived.complete();
+        });
 
-      final (result, msg) = await sendChatMessage(
-        p2pService: halfOpen,
-        messageRepo: aliceRepo,
-        targetPeerId: bob.peerId,
-        text: 'Hello through half-open',
-        senderPeerId: alicePeerId,
-        senderUsername: aliceUsername,
-        bridge: encryptBridge,
-        recipientMlKemPublicKey: bobMlKemKey,
-      );
+        final (result, msg) = await sendChatMessage(
+          p2pService: halfOpen,
+          messageRepo: aliceRepo,
+          targetPeerId: bob.peerId,
+          text: 'Hello through half-open',
+          senderPeerId: alicePeerId,
+          senderUsername: aliceUsername,
+          bridge: encryptBridge,
+          recipientMlKemPublicKey: bobMlKemKey,
+        );
 
-      expect(result, SendChatMessageResult.success);
-      expect(msg, isNotNull);
-      expect(msg!.status, 'delivered');
-      expect(msg.transport, 'relay');
+        expect(result, SendChatMessageResult.success);
+        expect(msg, isNotNull);
+        expect(msg!.status, 'delivered');
+        expect(msg.transport, 'inbox');
+        expect(network.inboxCount(bob.peerId), 1);
 
-      // Bob received the message
-      await bobReceived.future.timeout(const Duration(seconds: 2));
-      final bobMessages = await bob.loadConversationWith(alicePeerId);
-      expect(bobMessages, hasLength(1));
-      expect(bobMessages.first.text, 'Hello through half-open');
+        final drained = await (bob.p2pService as FakeP2PService)
+            .drainOfflineInboxCount();
+        expect(drained, 1);
 
-      // No duplicates
-      expect(aliceRepo.count, 1);
+        await bobReceived.future.timeout(const Duration(seconds: 2));
+        final bobMessages = await bob.loadConversationWith(alicePeerId);
+        expect(bobMessages, hasLength(1));
+        expect(bobMessages.first.text, 'Hello through half-open');
 
-      halfOpen.dispose();
-    });
+        // No duplicates
+        expect(aliceRepo.count, 1);
+
+        halfOpen.dispose();
+      },
+    );
 
     test('all 4 send attempts fail, message stored in inbox', () async {
-      final innerAlice =
-          FakeP2PService(peerId: alicePeerId, network: network);
+      final innerAlice = FakeP2PService(peerId: alicePeerId, network: network);
       // 1 fast path + 3 retries = 4 total failures
       final halfOpen = _HalfOpenP2PService(innerAlice, fastPathFailCount: 4);
 

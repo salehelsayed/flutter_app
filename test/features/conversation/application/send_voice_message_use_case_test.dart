@@ -5,16 +5,64 @@ import 'package:flutter_app/features/conversation/application/send_chat_message_
 import 'package:flutter_app/features/conversation/domain/models/audio_recording.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 
 import 'send_chat_message_use_case_test.dart'
-    show FakeP2PService, FakeMessageRepository, FakeMediaAttachmentRepository;
+    show FakeP2PService, FakeMessageRepository;
 import '../../../core/bridge/fake_bridge.dart';
+
+class _FakeMediaAttachmentRepository implements MediaAttachmentRepository {
+  final List<MediaAttachment> saved = [];
+
+  @override
+  Future<void> saveAttachment(MediaAttachment attachment) async {
+    saved.add(attachment);
+  }
+
+  @override
+  Future<int> deleteAttachmentsForContact(String contactPeerId) async => 0;
+
+  @override
+  Future<int> deleteAttachmentsForMessage(String messageId) async => 0;
+
+  @override
+  Future<List<MediaAttachment>> getAttachmentsForMessage(
+    String messageId,
+  ) async {
+    return saved
+        .where((attachment) => attachment.messageId == messageId)
+        .toList();
+  }
+
+  @override
+  Future<Map<String, List<MediaAttachment>>> getAttachmentsForMessages(
+    List<String> messageIds,
+  ) async {
+    final result = <String, List<MediaAttachment>>{};
+    for (final messageId in messageIds) {
+      final attachments = await getAttachmentsForMessage(messageId);
+      if (attachments.isNotEmpty) {
+        result[messageId] = attachments;
+      }
+    }
+    return result;
+  }
+
+  @override
+  Future<List<MediaAttachment>> getPendingDownloads() async => const [];
+
+  @override
+  Future<void> updateDownloadStatus(String id, String downloadStatus) async {}
+
+  @override
+  Future<void> updateLocalPath(String id, String localPath) async {}
+}
 
 void main() {
   late FakeP2PService p2pService;
   late FakeMessageRepository messageRepo;
   late FakeBridge bridge;
-  late FakeMediaAttachmentRepository mediaAttachmentRepo;
+  late _FakeMediaAttachmentRepository mediaAttachmentRepo;
   const mlKemKey = 'test-recipient-mlkem-pub-key';
 
   final tempDir = Directory.systemTemp.createTempSync('voice_test_');
@@ -22,7 +70,7 @@ void main() {
   setUp(() {
     p2pService = FakeP2PService();
     messageRepo = FakeMessageRepository();
-    mediaAttachmentRepo = FakeMediaAttachmentRepository();
+    mediaAttachmentRepo = _FakeMediaAttachmentRepository();
     bridge = FakeBridge(
       initialResponses: {
         'message.encrypt': {
@@ -205,6 +253,26 @@ void main() {
         );
 
         expect(result, SendVoiceMessageResult.success);
+      });
+
+      test('preserves quotedMessageId on the sent voice message', () async {
+        final recording = createRecording();
+
+        final (result, message) = await sendVoiceMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          recording: recording,
+          bridge: bridge,
+          recipientMlKemPublicKey: mlKemKey,
+          quotedMessageId: 'parent-voice-1',
+        );
+
+        expect(result, SendVoiceMessageResult.success);
+        expect(message!.quotedMessageId, 'parent-voice-1');
+        expect(messageRepo.saved.last.quotedMessageId, 'parent-voice-1');
       });
 
       test('returns uploadFailed when bridge upload fails', () async {

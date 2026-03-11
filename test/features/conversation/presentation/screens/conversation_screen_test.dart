@@ -8,6 +8,7 @@ import 'package:flutter_app/features/conversation/domain/models/media_attachment
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_screen.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/conversation_header.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/attachment_preview_strip.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bubble.dart';
 
 void main() {
   Widget buildTestWidget({
@@ -23,6 +24,10 @@ void main() {
     ValueChanged<int>? onRemoveAttachment,
     bool isBlocked = false,
     ValueListenable<ConversationComposerViewState>? composerStateListenable,
+    String? activeQuoteText,
+    bool isActiveQuoteUnavailable = false,
+    VoidCallback? onClearQuote,
+    ValueChanged<String>? onQuoteReply,
   }) {
     return MaterialApp(
       home: Scaffold(
@@ -43,6 +48,10 @@ void main() {
           onRemoveAttachment: onRemoveAttachment,
           isBlocked: isBlocked,
           composerStateListenable: composerStateListenable,
+          activeQuoteText: activeQuoteText,
+          isActiveQuoteUnavailable: isActiveQuoteUnavailable,
+          onClearQuote: onClearQuote,
+          onQuoteReply: onQuoteReply,
         ),
       ),
     );
@@ -55,6 +64,7 @@ void main() {
     String timestamp = '2026-02-09T15:30:00.000Z',
     String status = 'delivered',
     List<MediaAttachment> media = const [],
+    String? quotedMessageId,
   }) {
     return ConversationMessage(
       id: id,
@@ -68,6 +78,7 @@ void main() {
       isIncoming: isIncoming,
       createdAt: '2026-02-09T15:30:01.000Z',
       media: media,
+      quotedMessageId: quotedMessageId,
     );
   }
 
@@ -139,6 +150,90 @@ void main() {
       await pumpFrames(tester);
 
       expect(find.text('Write something...'), findsOneWidget);
+    });
+
+    testWidgets('shows active quote preview above composer and clears it', (
+      tester,
+    ) async {
+      var cleared = false;
+      await tester.pumpWidget(
+        buildTestWidget(
+          messages: [makeMessage()],
+          activeQuoteText: 'Quoted text preview',
+          onClearQuote: () => cleared = true,
+        ),
+      );
+      await pumpFrames(tester);
+
+      expect(find.text('Replying to'), findsOneWidget);
+      expect(find.text('Quoted text preview'), findsOneWidget);
+
+      await tester.tap(find.byIcon(Icons.close_rounded));
+      await tester.pump();
+
+      expect(cleared, isTrue);
+    });
+
+    testWidgets('wraps incoming messages with swipe-to-quote when enabled', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        buildTestWidget(
+          messages: [makeMessage(id: 'incoming-1', text: 'Swipe me')],
+          onQuoteReply: (_) {},
+        ),
+      );
+      await pumpFrames(tester);
+
+      expect(find.byType(SwipeToQuoteBubble), findsOneWidget);
+    });
+
+    testWidgets('does not wrap outgoing messages with swipe to quote', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        buildTestWidget(
+          messages: [
+            makeMessage(
+              id: 'outgoing-1',
+              isIncoming: false,
+              text: 'Do not swipe me',
+            ),
+          ],
+          onQuoteReply: (_) {},
+        ),
+      );
+      await pumpFrames(tester);
+
+      expect(find.byType(SwipeToQuoteBubble), findsNothing);
+    });
+
+    testWidgets('renders quoted replies and unavailable fallback in list', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        buildTestWidget(
+          messages: [
+            makeMessage(id: 'original', text: 'Original text'),
+            makeMessage(
+              id: 'reply',
+              text: 'Reply text',
+              isIncoming: false,
+              quotedMessageId: 'original',
+            ),
+            makeMessage(
+              id: 'missing',
+              text: 'Reply to missing',
+              quotedMessageId: 'missing-id',
+            ),
+          ],
+          initialLoadDone: true,
+        ),
+      );
+      await pumpFrames(tester);
+
+      expect(find.text('Original text'), findsWidgets);
+      expect(find.text('Message unavailable'), findsOneWidget);
     });
 
     testWidgets('header shows contact name', (tester) async {

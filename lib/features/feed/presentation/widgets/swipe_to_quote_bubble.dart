@@ -112,6 +112,7 @@ class _SwipeToQuoteBubbleState extends State<SwipeToQuoteBubble>
     final progress = (_dragOffset / _triggerWidth).clamp(0.0, 1.0);
 
     return GestureDetector(
+      behavior: HitTestBehavior.translucent,
       onHorizontalDragStart: _onDragStart,
       onHorizontalDragUpdate: _onDragUpdate,
       onHorizontalDragEnd: _onDragEnd,

@@ -20,6 +20,9 @@ import 'package:flutter_app/shared/widgets/media/media_preview_text.dart';
 /// ShaderMask gradient fade and [MoreMessagesHint].
 class ScrollableMessagePreview extends StatefulWidget {
   final List<ThreadMessage> messages;
+
+  /// Optional broader thread context used to resolve quoted parents.
+  final List<ThreadMessage>? quoteLookupMessages;
   final String contactPeerId;
   final String contactUsername;
   final bool hasEarlierHistory;
@@ -37,6 +40,7 @@ class ScrollableMessagePreview extends StatefulWidget {
   const ScrollableMessagePreview({
     super.key,
     required this.messages,
+    this.quoteLookupMessages,
     required this.contactPeerId,
     required this.contactUsername,
     this.hasEarlierHistory = false,
@@ -227,13 +231,11 @@ class _ScrollableMessagePreviewState extends State<ScrollableMessagePreview> {
   /// among sibling thread messages.
   (String?, bool) _resolveQuotedText(
     ThreadMessage msg,
-    List<ThreadMessage> allMessages,
+    Map<String, ThreadMessage> quoteLookupById,
   ) {
     if (msg.quotedMessageId == null) return (null, false);
 
-    final quoted = allMessages
-        .where((m) => m.id == msg.quotedMessageId)
-        .firstOrNull;
+    final quoted = quoteLookupById[msg.quotedMessageId];
 
     if (quoted == null) return (null, true); // unavailable
 
@@ -244,6 +246,10 @@ class _ScrollableMessagePreviewState extends State<ScrollableMessagePreview> {
 
   List<Widget> _buildMessageWidgets(List<ThreadMessage> messages) {
     final widgets = <Widget>[];
+    final quoteLookupById = {
+      for (final message in widget.quoteLookupMessages ?? messages)
+        message.id: message,
+    };
     for (var i = 0; i < messages.length; i++) {
       if (i > 0 &&
           hasSignificantTimeGap(
@@ -258,7 +264,7 @@ class _ScrollableMessagePreviewState extends State<ScrollableMessagePreview> {
       final msg = messages[i];
       final (quotedText, isQuoteUnavailable) = _resolveQuotedText(
         msg,
-        messages,
+        quoteLookupById,
       );
       final reactionsListenable = widget.reactionListenableForMessage?.call(
         msg.id,

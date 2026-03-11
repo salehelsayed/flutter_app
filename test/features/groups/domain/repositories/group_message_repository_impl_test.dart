@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:flutter_app/core/database/migrations/018_group_messages_tables.dart';
+import 'package:flutter_app/core/database/migrations/026_group_quoted_message_id.dart';
 import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository_impl.dart';
@@ -17,6 +18,7 @@ void main() {
   setUp(() async {
     db = await openDatabase(inMemoryDatabasePath, version: 1);
     await runGroupMessagesTablesMigration(db);
+    await runGroupQuotedMessageIdMigration(db);
 
     repo = GroupMessageRepositoryImpl(
       dbInsertGroupMessage: (row) => dbInsertGroupMessage(db, row),
@@ -36,7 +38,13 @@ void main() {
           dbMarkGroupMessagesAsRead(db, groupId),
       dbDeleteGroupMessage: (id) => dbDeleteGroupMessage(db, id),
       dbExistsGroupMessageByContent: (groupId, senderPeerId, text, timestamp) =>
-          dbExistsGroupMessageByContent(db, groupId, senderPeerId, text, timestamp),
+          dbExistsGroupMessageByContent(
+            db,
+            groupId,
+            senderPeerId,
+            text,
+            timestamp,
+          ),
       dbDeleteGroupMessagesForGroup: (groupId) =>
           dbDeleteGroupMessagesForGroup(db, groupId),
       dbLoadGroupThreadSummaries: (groupIds) =>
@@ -57,6 +65,7 @@ void main() {
     String? senderUsername = 'Alice',
     String text = 'Hello group',
     DateTime? timestamp,
+    String? quotedMessageId,
     int keyGeneration = 0,
     String status = 'sent',
     bool isIncoming = true,
@@ -70,6 +79,7 @@ void main() {
       senderUsername: senderUsername,
       text: text,
       timestamp: timestamp ?? now,
+      quotedMessageId: quotedMessageId,
       keyGeneration: keyGeneration,
       status: status,
       isIncoming: isIncoming,
@@ -91,6 +101,15 @@ void main() {
       expect(result.senderUsername, 'Alice');
     });
 
+    test('round-trip preserves quotedMessageId', () async {
+      final msg = makeMessage(quotedMessageId: 'msg-parent-1');
+      await repo.saveMessage(msg);
+
+      final result = await repo.getMessage('msg-001');
+      expect(result, isNotNull);
+      expect(result!.quotedMessageId, 'msg-parent-1');
+    });
+
     test('returns null for non-existent', () async {
       final result = await repo.getMessage('non-existent');
       expect(result, isNull);
@@ -99,18 +118,15 @@ void main() {
 
   group('getMessagesPage', () {
     test('returns messages in chronological order', () async {
-      await repo.saveMessage(makeMessage(
-        id: 'msg-1',
-        timestamp: DateTime.utc(2026, 1, 1),
-      ));
-      await repo.saveMessage(makeMessage(
-        id: 'msg-2',
-        timestamp: DateTime.utc(2026, 1, 2),
-      ));
-      await repo.saveMessage(makeMessage(
-        id: 'msg-3',
-        timestamp: DateTime.utc(2026, 1, 3),
-      ));
+      await repo.saveMessage(
+        makeMessage(id: 'msg-1', timestamp: DateTime.utc(2026, 1, 1)),
+      );
+      await repo.saveMessage(
+        makeMessage(id: 'msg-2', timestamp: DateTime.utc(2026, 1, 2)),
+      );
+      await repo.saveMessage(
+        makeMessage(id: 'msg-3', timestamp: DateTime.utc(2026, 1, 3)),
+      );
 
       final page = await repo.getMessagesPage('group-1');
       expect(page.length, 3);
@@ -121,10 +137,9 @@ void main() {
 
     test('respects limit parameter', () async {
       for (var i = 1; i <= 5; i++) {
-        await repo.saveMessage(makeMessage(
-          id: 'msg-$i',
-          timestamp: DateTime.utc(2026, 1, i),
-        ));
+        await repo.saveMessage(
+          makeMessage(id: 'msg-$i', timestamp: DateTime.utc(2026, 1, i)),
+        );
       }
 
       final page = await repo.getMessagesPage('group-1', limit: 3);
@@ -139,40 +154,71 @@ void main() {
     });
 
     test('returns the most recent message', () async {
-      await repo.saveMessage(makeMessage(
-        id: 'msg-old',
-        timestamp: DateTime.utc(2026, 1, 1),
-      ));
-      await repo.saveMessage(makeMessage(
-        id: 'msg-new',
-        timestamp: DateTime.utc(2026, 1, 2),
-      ));
+      await repo.saveMessage(
+        makeMessage(id: 'msg-old', timestamp: DateTime.utc(2026, 1, 1)),
+      );
+      await repo.saveMessage(
+        makeMessage(id: 'msg-new', timestamp: DateTime.utc(2026, 1, 2)),
+      );
 
       final result = await repo.getLatestMessage('group-1');
       expect(result!.id, 'msg-new');
     });
 
-    test('getGroupThreadSummaries returns latest rows and zero defaults', () async {
-      await repo.saveMessage(makeMessage(
-        id: 'msg-old',
-        groupId: 'group-1',
-        timestamp: DateTime.utc(2026, 1, 1),
-      ));
-      await repo.saveMessage(makeMessage(
-        id: 'msg-new',
-        groupId: 'group-1',
-        timestamp: DateTime.utc(2026, 1, 2),
-      ));
+    test(
+      'getGroupThreadSummaries returns latest rows and zero defaults',
+      () async {
+        await repo.saveMessage(
+          makeMessage(
+            id: 'msg-old',
+            groupId: 'group-1',
+            timestamp: DateTime.utc(2026, 1, 1),
+          ),
+        );
+        await repo.saveMessage(
+          makeMessage(
+            id: 'msg-new',
+            groupId: 'group-1',
+            timestamp: DateTime.utc(2026, 1, 2),
+          ),
+        );
 
-      final summaries = await repo.getGroupThreadSummaries([
-        'group-1',
-        'group-2',
-      ]);
+        final summaries = await repo.getGroupThreadSummaries([
+          'group-1',
+          'group-2',
+        ]);
 
-      expect(summaries['group-1']!.latestMessage!.id, 'msg-new');
-      expect(summaries['group-1']!.unreadCount, 2);
-      expect(summaries['group-2']!.latestMessage, isNull);
-      expect(summaries['group-2']!.unreadCount, 0);
+        expect(summaries['group-1']!.latestMessage!.id, 'msg-new');
+        expect(summaries['group-1']!.latestMessage!.quotedMessageId, isNull);
+        expect(summaries['group-1']!.unreadCount, 2);
+        expect(summaries['group-2']!.latestMessage, isNull);
+        expect(summaries['group-2']!.unreadCount, 0);
+      },
+    );
+
+    test('getGroupThreadSummaries preserves latest quotedMessageId', () async {
+      await repo.saveMessage(
+        makeMessage(
+          id: 'msg-parent',
+          groupId: 'group-1',
+          timestamp: DateTime.utc(2026, 1, 1),
+        ),
+      );
+      await repo.saveMessage(
+        makeMessage(
+          id: 'msg-reply',
+          groupId: 'group-1',
+          timestamp: DateTime.utc(2026, 1, 2),
+          quotedMessageId: 'msg-parent',
+        ),
+      );
+
+      final summaries = await repo.getGroupThreadSummaries(['group-1']);
+      expect(summaries['group-1']!.latestMessage!.id, 'msg-reply');
+      expect(
+        summaries['group-1']!.latestMessage!.quotedMessageId,
+        'msg-parent',
+      );
     });
   });
 
@@ -199,21 +245,19 @@ void main() {
 
   group('getUnreadCount', () {
     test('counts only unread incoming messages', () async {
-      await repo.saveMessage(makeMessage(
-        id: 'msg-unread',
-        isIncoming: true,
-        readAt: null,
-      ));
-      await repo.saveMessage(makeMessage(
-        id: 'msg-read',
-        isIncoming: true,
-        readAt: DateTime.utc(2026, 1, 15, 13),
-      ));
-      await repo.saveMessage(makeMessage(
-        id: 'msg-out',
-        isIncoming: false,
-        readAt: null,
-      ));
+      await repo.saveMessage(
+        makeMessage(id: 'msg-unread', isIncoming: true, readAt: null),
+      );
+      await repo.saveMessage(
+        makeMessage(
+          id: 'msg-read',
+          isIncoming: true,
+          readAt: DateTime.utc(2026, 1, 15, 13),
+        ),
+      );
+      await repo.saveMessage(
+        makeMessage(id: 'msg-out', isIncoming: false, readAt: null),
+      );
 
       final count = await repo.getUnreadCount('group-1');
       expect(count, 1);
@@ -222,18 +266,22 @@ void main() {
 
   group('getTotalUnreadCount', () {
     test('counts across all groups', () async {
-      await repo.saveMessage(makeMessage(
-        id: 'msg-g1',
-        groupId: 'group-1',
-        isIncoming: true,
-        readAt: null,
-      ));
-      await repo.saveMessage(makeMessage(
-        id: 'msg-g2',
-        groupId: 'group-2',
-        isIncoming: true,
-        readAt: null,
-      ));
+      await repo.saveMessage(
+        makeMessage(
+          id: 'msg-g1',
+          groupId: 'group-1',
+          isIncoming: true,
+          readAt: null,
+        ),
+      );
+      await repo.saveMessage(
+        makeMessage(
+          id: 'msg-g2',
+          groupId: 'group-2',
+          isIncoming: true,
+          readAt: null,
+        ),
+      );
 
       final count = await repo.getTotalUnreadCount();
       expect(count, 2);
@@ -242,11 +290,9 @@ void main() {
 
   group('markAsRead', () {
     test('marks unread incoming messages as read', () async {
-      await repo.saveMessage(makeMessage(
-        id: 'msg-unread',
-        isIncoming: true,
-        readAt: null,
-      ));
+      await repo.saveMessage(
+        makeMessage(id: 'msg-unread', isIncoming: true, readAt: null),
+      );
 
       await repo.markAsRead('group-1');
 
@@ -255,11 +301,9 @@ void main() {
     });
 
     test('does not mark outgoing messages', () async {
-      await repo.saveMessage(makeMessage(
-        id: 'msg-out',
-        isIncoming: false,
-        readAt: null,
-      ));
+      await repo.saveMessage(
+        makeMessage(id: 'msg-out', isIncoming: false, readAt: null),
+      );
 
       await repo.markAsRead('group-1');
 
@@ -290,78 +334,106 @@ void main() {
 
   group('existsByContent', () {
     test('returns true for exact match', () async {
-      await repo.saveMessage(makeMessage(
-        groupId: 'group-1',
-        senderPeerId: 'peer-sender',
-        text: 'Hello group',
-        timestamp: now,
-      ));
+      await repo.saveMessage(
+        makeMessage(
+          groupId: 'group-1',
+          senderPeerId: 'peer-sender',
+          text: 'Hello group',
+          timestamp: now,
+        ),
+      );
 
       final result = await repo.existsByContent(
-        'group-1', 'peer-sender', 'Hello group', now,
+        'group-1',
+        'peer-sender',
+        'Hello group',
+        now,
       );
       expect(result, isTrue);
     });
 
     test('returns false when no match exists', () async {
       final result = await repo.existsByContent(
-        'group-1', 'peer-sender', 'Hello group', now,
+        'group-1',
+        'peer-sender',
+        'Hello group',
+        now,
       );
       expect(result, isFalse);
     });
 
     test('returns false for different sender', () async {
-      await repo.saveMessage(makeMessage(
-        groupId: 'group-1',
-        senderPeerId: 'peer-sender',
-        text: 'Hello group',
-        timestamp: now,
-      ));
+      await repo.saveMessage(
+        makeMessage(
+          groupId: 'group-1',
+          senderPeerId: 'peer-sender',
+          text: 'Hello group',
+          timestamp: now,
+        ),
+      );
 
       final result = await repo.existsByContent(
-        'group-1', 'peer-other', 'Hello group', now,
+        'group-1',
+        'peer-other',
+        'Hello group',
+        now,
       );
       expect(result, isFalse);
     });
 
     test('returns false for different text', () async {
-      await repo.saveMessage(makeMessage(
-        groupId: 'group-1',
-        senderPeerId: 'peer-sender',
-        text: 'Hello group',
-        timestamp: now,
-      ));
+      await repo.saveMessage(
+        makeMessage(
+          groupId: 'group-1',
+          senderPeerId: 'peer-sender',
+          text: 'Hello group',
+          timestamp: now,
+        ),
+      );
 
       final result = await repo.existsByContent(
-        'group-1', 'peer-sender', 'Different text', now,
+        'group-1',
+        'peer-sender',
+        'Different text',
+        now,
       );
       expect(result, isFalse);
     });
 
     test('returns false for different timestamp', () async {
-      await repo.saveMessage(makeMessage(
-        groupId: 'group-1',
-        senderPeerId: 'peer-sender',
-        text: 'Hello group',
-        timestamp: now,
-      ));
+      await repo.saveMessage(
+        makeMessage(
+          groupId: 'group-1',
+          senderPeerId: 'peer-sender',
+          text: 'Hello group',
+          timestamp: now,
+        ),
+      );
 
       final result = await repo.existsByContent(
-        'group-1', 'peer-sender', 'Hello group', now.add(const Duration(seconds: 1)),
+        'group-1',
+        'peer-sender',
+        'Hello group',
+        now.add(const Duration(seconds: 1)),
       );
       expect(result, isFalse);
     });
 
     test('does not match across groups', () async {
-      await repo.saveMessage(makeMessage(
-        groupId: 'group-1',
-        senderPeerId: 'peer-sender',
-        text: 'Hello group',
-        timestamp: now,
-      ));
+      await repo.saveMessage(
+        makeMessage(
+          groupId: 'group-1',
+          senderPeerId: 'peer-sender',
+          text: 'Hello group',
+          timestamp: now,
+        ),
+      );
 
       final result = await repo.existsByContent(
-        'group-2', 'peer-sender', 'Hello group', now,
+        'group-2',
+        'peer-sender',
+        'Hello group',
+        now,
       );
       expect(result, isFalse);
     });

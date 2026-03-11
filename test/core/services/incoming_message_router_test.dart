@@ -39,16 +39,22 @@ class FakeP2PService implements P2PService {
   }) async => const SendMessageResult(sent: true);
 
   @override
-  Future<DiscoveredPeer?> discoverPeer(String peerId, {int? timeoutMs}) async => null;
+  Future<DiscoveredPeer?> discoverPeer(String peerId, {int? timeoutMs}) async =>
+      null;
 
   @override
-  Future<bool> dialPeer(String peerId, {List<String>? addresses, int? timeoutMs}) async => true;
+  Future<bool> dialPeer(
+    String peerId, {
+    List<String>? addresses,
+    int? timeoutMs,
+  }) async => true;
 
   @override
   Future<bool> storeInInbox(String toPeerId, String message) async => false;
 
   @override
-  Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) async => [];
+  Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) async =>
+      [];
 
   @override
   Future<bool> registerPushToken(String token, String platform) async => true;
@@ -73,8 +79,9 @@ class FakeP2PService implements P2PService {
   Future<bool> sendLocalMessage(
     String peerId,
     String message,
-    String fromPeerId,
-  ) async => false;
+    String fromPeerId, {
+    int? timeoutMs,
+  }) async => false;
 
   @override
   Future<bool> sendLocalMedia({
@@ -273,52 +280,58 @@ void main() {
     });
 
     // --- Cycle 3.2: v2 group_invite routing ---
-    test('routes v2 group_invite envelope (type in top-level) to groupInviteStream',
-        () async {
-      final groupInvites = <ChatMessage>[];
-      router.groupInviteStream.listen(groupInvites.add);
+    test(
+      'routes v2 group_invite envelope (type in top-level) to groupInviteStream',
+      () async {
+        final groupInvites = <ChatMessage>[];
+        router.groupInviteStream.listen(groupInvites.add);
 
-      // V2 envelope has type at top level
-      p2pService.inject(ChatMessage(
-        from: 'peer-a',
-        to: 'peer-b',
-        content: jsonEncode({
-          'type': 'group_invite',
-          'version': '2',
-          'senderPeerId': 'peer-a',
-          'encrypted': {
-            'kem': 'fakeKem',
-            'ciphertext': 'fakeCt',
-            'nonce': 'fakeNonce',
-          },
-        }),
-        timestamp: DateTime.now().toUtc().toIso8601String(),
-        isIncoming: true,
-      ));
+        // V2 envelope has type at top level
+        p2pService.inject(
+          ChatMessage(
+            from: 'peer-a',
+            to: 'peer-b',
+            content: jsonEncode({
+              'type': 'group_invite',
+              'version': '2',
+              'senderPeerId': 'peer-a',
+              'encrypted': {
+                'kem': 'fakeKem',
+                'ciphertext': 'fakeCt',
+                'nonce': 'fakeNonce',
+              },
+            }),
+            timestamp: DateTime.now().toUtc().toIso8601String(),
+            isIncoming: true,
+          ),
+        );
 
-      await Future.delayed(const Duration(milliseconds: 50));
+        await Future.delayed(const Duration(milliseconds: 50));
 
-      expect(groupInvites.length, 1);
-      expect(groupInvites.first.content, contains('"type":"group_invite"'));
-    });
+        expect(groupInvites.length, 1);
+        expect(groupInvites.first.content, contains('"type":"group_invite"'));
+      },
+    );
 
-    test('message_reaction not routed to chatMessageStream or unknownMessageStream',
-        () async {
-      final chatMessages = <ChatMessage>[];
-      final unknowns = <ChatMessage>[];
-      final reactions = <ChatMessage>[];
+    test(
+      'message_reaction not routed to chatMessageStream or unknownMessageStream',
+      () async {
+        final chatMessages = <ChatMessage>[];
+        final unknowns = <ChatMessage>[];
+        final reactions = <ChatMessage>[];
 
-      router.chatMessageStream.listen(chatMessages.add);
-      router.unknownMessageStream.listen(unknowns.add);
-      router.reactionStream.listen(reactions.add);
+        router.chatMessageStream.listen(chatMessages.add);
+        router.unknownMessageStream.listen(unknowns.add);
+        router.reactionStream.listen(reactions.add);
 
-      p2pService.inject(_makeMessage('message_reaction'));
+        p2pService.inject(_makeMessage('message_reaction'));
 
-      await Future.delayed(const Duration(milliseconds: 50));
+        await Future.delayed(const Duration(milliseconds: 50));
 
-      expect(reactions.length, 1);
-      expect(chatMessages, isEmpty);
-      expect(unknowns, isEmpty);
-    });
+        expect(reactions.length, 1);
+        expect(chatMessages, isEmpty);
+        expect(unknowns, isEmpty);
+      },
+    );
   });
 }

@@ -16,6 +16,7 @@ import 'package:flutter_app/features/conversation/presentation/widgets/full_emoj
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
 import 'package:flutter_app/features/introduction/presentation/widgets/intro_banner.dart';
 import 'package:flutter_app/features/introduction/presentation/widgets/intro_system_message.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bubble.dart';
 import 'package:flutter_app/shared/widgets/media/full_screen_image_viewer.dart';
 import 'package:flutter_app/shared/widgets/media/media_preview_text.dart';
 
@@ -100,6 +101,11 @@ class ConversationScreen extends StatefulWidget {
   final VoidCallback? onMakeIntroductions;
   final VoidCallback? onMaybeLater;
   final String? initialText;
+  final ValueChanged<String>? onDraftChanged;
+  final ValueChanged<String>? onQuoteReply;
+  final String? activeQuoteText;
+  final bool isActiveQuoteUnavailable;
+  final VoidCallback? onClearQuote;
 
   const ConversationScreen({
     super.key,
@@ -138,6 +144,11 @@ class ConversationScreen extends StatefulWidget {
     this.onMakeIntroductions,
     this.onMaybeLater,
     this.initialText,
+    this.onDraftChanged,
+    this.onQuoteReply,
+    this.activeQuoteText,
+    this.isActiveQuoteUnavailable = false,
+    this.onClearQuote,
   });
 
   @override
@@ -253,6 +264,10 @@ class _ConversationScreenState extends State<ConversationScreen> {
           recordingDuration: composerState.recordingDuration,
           amplitudeValues: composerState.amplitudeValues,
           initialText: widget.initialText,
+          onDraftChanged: widget.onDraftChanged,
+          quotedText: widget.activeQuoteText,
+          isQuoteUnavailable: widget.isActiveQuoteUnavailable,
+          onClearQuote: widget.onClearQuote,
         ),
       ],
     );
@@ -372,7 +387,8 @@ class _ConversationScreenState extends State<ConversationScreen> {
                 media: message.media,
                 reactions: messageReactions,
                 ownPeerId: widget.ownPeerId,
-                onLongPress: () => _showReactionBar(message.id, cardContext: cardContext),
+                onLongPress: () =>
+                    _showReactionBar(message.id, cardContext: cardContext),
                 onReactionTap: widget.onReactionSelected != null
                     ? (emoji) => widget.onReactionSelected!(message.id, emoji)
                     : null,
@@ -382,7 +398,8 @@ class _ConversationScreenState extends State<ConversationScreen> {
                         (a) => a.mediaType == 'image' || a.mediaType == 'video',
                       )
                       .toList();
-                  if (index < visual.length && visual[index].localPath != null) {
+                  if (index < visual.length &&
+                      visual[index].localPath != null) {
                     final allPaths = visual
                         .where(
                           (a) =>
@@ -409,18 +426,26 @@ class _ConversationScreenState extends State<ConversationScreen> {
             );
 
             final shouldAnimate = !widget.initialLoadDone || isNew;
+            Widget bubble = shouldAnimate
+                ? _AnimatedLetterCard(
+                    key: ValueKey(message.id),
+                    delayMs: 0,
+                    isNewMessage: isNew,
+                    child: letterCard,
+                  )
+                : letterCard;
+
+            if (message.isIncoming && widget.onQuoteReply != null) {
+              bubble = SwipeToQuoteBubble(
+                onQuoteTriggered: () => widget.onQuoteReply!(message.id),
+                child: bubble,
+              );
+            }
 
             return Padding(
               key: ValueKey('msg-${message.id}'),
               padding: const EdgeInsets.only(bottom: 16),
-              child: shouldAnimate
-                  ? _AnimatedLetterCard(
-                      key: ValueKey(message.id),
-                      delayMs: 0,
-                      isNewMessage: isNew,
-                      child: letterCard,
-                    )
-                  : letterCard,
+              child: bubble,
             );
         }
       },
