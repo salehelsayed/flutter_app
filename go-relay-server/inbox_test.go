@@ -366,3 +366,89 @@ func TestInboxStore_PaginatedRetrieveKeepsFIFOAcrossInstances(t *testing.T) {
 		t.Fatalf("expected continuation at 'msg-2', got %q", msgs2[0].Message)
 	}
 }
+
+func TestBuildPushMessage_IncludesAndroidAlertAndData(t *testing.T) {
+	msg := buildPushMessage("fcm-token", "peer-from")
+
+	if msg.Token != "fcm-token" {
+		t.Fatalf("token = %q, want %q", msg.Token, "fcm-token")
+	}
+	if msg.Data["type"] != "new_message" {
+		t.Fatalf("type = %q, want %q", msg.Data["type"], "new_message")
+	}
+	if msg.Data["from"] != "peer-from" {
+		t.Fatalf("from = %q, want %q", msg.Data["from"], "peer-from")
+	}
+	if msg.Data["title"] != pushNotificationTitle {
+		t.Fatalf("title = %q, want %q", msg.Data["title"], pushNotificationTitle)
+	}
+	if msg.Data["body"] != pushNotificationBody {
+		t.Fatalf("body = %q, want %q", msg.Data["body"], pushNotificationBody)
+	}
+
+	if msg.Android == nil {
+		t.Fatal("expected Android config")
+	}
+	if msg.Android.Priority != "high" {
+		t.Fatalf("priority = %q, want %q", msg.Android.Priority, "high")
+	}
+	if msg.Android.Notification == nil {
+		t.Fatal("expected Android notification payload")
+	}
+	if msg.Android.Notification.Title != pushNotificationTitle {
+		t.Fatalf(
+			"android title = %q, want %q",
+			msg.Android.Notification.Title,
+			pushNotificationTitle,
+		)
+	}
+	if msg.Android.Notification.Body != pushNotificationBody {
+		t.Fatalf(
+			"android body = %q, want %q",
+			msg.Android.Notification.Body,
+			pushNotificationBody,
+		)
+	}
+	if msg.Android.Notification.ChannelID != pushNotificationChannelID {
+		t.Fatalf(
+			"android channel = %q, want %q",
+			msg.Android.Notification.ChannelID,
+			pushNotificationChannelID,
+		)
+	}
+}
+
+func TestBuildPushMessage_PreservesIOSAlertPayload(t *testing.T) {
+	msg := buildPushMessage("fcm-token", "peer-from")
+
+	if msg.APNS == nil || msg.APNS.Payload == nil || msg.APNS.Payload.Aps == nil {
+		t.Fatal("expected APNS payload")
+	}
+	if msg.APNS.Headers["apns-push-type"] != "alert" {
+		t.Fatalf(
+			"apns-push-type = %q, want %q",
+			msg.APNS.Headers["apns-push-type"],
+			"alert",
+		)
+	}
+	if msg.APNS.Payload.Aps.Alert == nil {
+		t.Fatal("expected APNS alert")
+	}
+	if msg.APNS.Payload.Aps.Alert.Title != pushNotificationTitle {
+		t.Fatalf(
+			"apns title = %q, want %q",
+			msg.APNS.Payload.Aps.Alert.Title,
+			pushNotificationTitle,
+		)
+	}
+	if msg.APNS.Payload.Aps.Alert.Body != pushNotificationBody {
+		t.Fatalf(
+			"apns body = %q, want %q",
+			msg.APNS.Payload.Aps.Alert.Body,
+			pushNotificationBody,
+		)
+	}
+	if !msg.APNS.Payload.Aps.ContentAvailable {
+		t.Fatal("expected APNS content-available")
+	}
+}

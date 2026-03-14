@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
@@ -33,6 +35,7 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_app/features/p2p/application/start_node_use_case.dart';
 import 'package:flutter_app/features/push/application/request_push_permission_use_case.dart';
 import 'package:flutter_app/features/push/application/register_push_token_use_case.dart';
+import 'package:flutter_app/features/push/application/handle_initial_remote_message_use_case.dart';
 import 'package:flutter_app/core/utils/startup_timing.dart';
 import 'package:flutter_app/core/config/startup_config.dart';
 import 'package:flutter_app/features/groups/application/rejoin_group_topics_use_case.dart';
@@ -385,6 +388,7 @@ class _StartupRouterState extends State<StartupRouter> {
     if (result == StartNodeResult.success) {
       StartupTiming.instance.mark('p2p_startup_complete');
       StartupTiming.instance.printSummary();
+      unawaited(_handleInitialPushOpen());
       _registerPushToken();
 
       // Now that the Go node is running (pubsub initialized), rejoin group
@@ -404,6 +408,37 @@ class _StartupRouterState extends State<StartupRouter> {
           );
         }
       }
+    }
+  }
+
+  Future<void> _handleInitialPushOpen() async {
+    if (kIsWeb || Platform.isLinux || Platform.isWindows || Platform.isMacOS) {
+      return;
+    }
+
+    if (Firebase.apps.isEmpty) return;
+
+    try {
+      await handleInitialRemoteMessage(
+        getInitialMessage: FirebaseMessaging.instance.getInitialMessage,
+        onMessageOpened: (message) async {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'PUSH_INITIAL_MESSAGE_OPENED',
+            details: {
+              'messageId': message.messageId,
+              'dataKeys': message.data.keys.toList(),
+            },
+          );
+          await widget.p2pService.drainOfflineInbox();
+        },
+      );
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'PUSH_INITIAL_MESSAGE_ERROR',
+        details: {'error': e.toString()},
+      );
     }
   }
 
@@ -459,6 +494,8 @@ class _StartupRouterState extends State<StartupRouter> {
     if (kIsWeb || Platform.isLinux || Platform.isWindows || Platform.isMacOS) {
       return;
     }
+
+    if (Firebase.apps.isEmpty) return;
 
     try {
       final granted = await requestPushPermission();

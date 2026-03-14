@@ -24,6 +24,7 @@ void main() {
       expect(manifest, contains('android:mimeType="text/plain"'));
       expect(manifest, contains('android:mimeType="image/*"'));
       expect(manifest, contains('android:mimeType="video/*"'));
+      expect(manifest, contains('android:mimeType="*/*"'));
     });
   });
 

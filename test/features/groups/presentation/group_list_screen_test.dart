@@ -28,10 +28,12 @@ void main() {
 
   Widget buildTestWidget({
     List<GroupModel> groups = const [],
+    bool isLoading = false,
   }) {
     return MaterialApp(
       home: GroupListScreen(
         groups: groups,
+        isLoading: isLoading,
         onGroupTap: (_) {},
         onBack: () {},
       ),
@@ -50,6 +52,30 @@ void main() {
 
     expect(find.text('No groups yet'), findsOneWidget);
   });
+
+  testWidgets('shows loading placeholders while groups are loading', (
+    tester,
+  ) async {
+    await tester.pumpWidget(buildTestWidget(isLoading: true));
+
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(find.byKey(const ValueKey('group-loading-row-0')), findsOneWidget);
+    expect(find.byKey(const ValueKey('group-loading-row-1')), findsOneWidget);
+    expect(find.byKey(const ValueKey('group-loading-row-2')), findsOneWidget);
+    expect(find.text('No groups yet'), findsNothing);
+  });
+
+  testWidgets(
+    'shows group list when groups are available even if isLoading is still true',
+    (tester) async {
+      await tester.pumpWidget(
+        buildTestWidget(groups: testGroups, isLoading: true),
+      );
+
+      expect(find.text('Alpha Group'), findsOneWidget);
+      expect(find.byKey(const ValueKey('group-loading-row-0')), findsNothing);
+    },
+  );
 
   testWidgets('shows type badges', (tester) async {
     await tester.pumpWidget(buildTestWidget(groups: testGroups));

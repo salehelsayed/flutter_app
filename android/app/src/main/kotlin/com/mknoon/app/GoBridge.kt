@@ -1,4 +1,4 @@
-package com.example.flutter_app
+package com.mknoon.app
 
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel

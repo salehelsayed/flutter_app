@@ -71,6 +71,7 @@ class _GroupListWiredState extends State<GroupListWired> {
   List<GroupModel> _groups = [];
   Map<String, GroupMessage?> _latestMessages = {};
   Map<String, int> _unreadCounts = {};
+  bool _isLoading = true;
   StreamSubscription<GroupMessage>? _messageSubscription;
   StreamSubscription<GroupModel>? _inviteSubscription;
   final Set<String> _changedGroupIds = <String>{};
@@ -108,8 +109,12 @@ class _GroupListWiredState extends State<GroupListWired> {
         _groups = groups;
         _latestMessages = latestMessages;
         _unreadCounts = unreadCounts;
+        _isLoading = false;
       });
     } catch (e) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
       emitFlowEvent(
         layer: 'FL',
         event: 'GROUP_LIST_FL_LOAD_ERROR',
@@ -190,6 +195,7 @@ class _GroupListWiredState extends State<GroupListWired> {
       groups: _groups,
       latestMessages: _latestMessages,
       unreadCounts: _unreadCounts,
+      isLoading: _isLoading,
       onGroupTap: _onGroupTap,
       onBack: _onBack,
     );

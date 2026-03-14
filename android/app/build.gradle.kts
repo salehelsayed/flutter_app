@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("kotlin-android")
@@ -5,8 +7,46 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+val localProperties = Properties().apply {
+    val localPropertiesFile = rootProject.file("local.properties")
+    if (localPropertiesFile.exists()) {
+        localPropertiesFile.inputStream().use(::load)
+    }
+}
+
+val keystoreProperties = Properties().apply {
+    val keystorePropertiesFile = rootProject.file("key.properties")
+    if (keystorePropertiesFile.exists()) {
+        keystorePropertiesFile.inputStream().use(::load)
+    }
+}
+
+val androidApplicationId = providers.gradleProperty("androidApplicationId")
+    .orElse(localProperties.getProperty("android.applicationId") ?: "com.mknoon.app")
+    .get()
+val hasGoogleServicesConfig = file("google-services.json").exists()
+val keystorePropertiesFile = rootProject.file("key.properties")
+val hasReleaseSigning = keystorePropertiesFile.exists()
+val allowDebugSigningInRelease =
+    providers.gradleProperty("allowDebugSigningInRelease").orNull == "true"
+
+fun requireKeystoreProperty(name: String): String =
+    keystoreProperties.getProperty(name)?.takeIf { it.isNotBlank() }
+        ?: throw GradleException(
+            "Missing `$name` in android/key.properties for Android release signing."
+        )
+
+if (hasGoogleServicesConfig) {
+    apply(plugin = "com.google.gms.google-services")
+} else {
+    logger.warn(
+        "google-services.json not found in android/app. " +
+        "Android Firebase services will stay disabled until the file is added."
+    )
+}
+
 android {
-    namespace = "com.example.flutter_app"
+    namespace = "com.mknoon.app"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -20,11 +60,19 @@ android {
         jvmTarget = JavaVersion.VERSION_11.toString()
     }
 
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = file(requireKeystoreProperty("storeFile"))
+                storePassword = requireKeystoreProperty("storePassword")
+                keyAlias = requireKeystoreProperty("keyAlias")
+                keyPassword = requireKeystoreProperty("keyPassword")
+            }
+        }
+    }
+
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.example.flutter_app"
-        // You can update the following values to match your application needs.
-        // For more information, see: https://flutter.dev/to/review-gradle-config.
+        applicationId = androidApplicationId
         minSdk = 24
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
@@ -33,9 +81,10 @@ android {
 
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            when {
+                hasReleaseSigning -> signingConfig = signingConfigs.getByName("release")
+                allowDebugSigningInRelease -> signingConfig = signingConfigs.getByName("debug")
+            }
         }
     }
 }
@@ -90,6 +139,33 @@ tasks.register("buildGoAar") {
 
 tasks.named("preBuild") {
     dependsOn("buildGoAar")
+}
+
+if (!hasReleaseSigning && !allowDebugSigningInRelease) {
+    tasks.matching {
+        it.name in setOf("assembleRelease", "bundleRelease", "packageRelease")
+    }.configureEach {
+        doFirst {
+            throw GradleException(
+                "Android release builds require android/key.properties.\n" +
+                "Set storeFile, storePassword, keyAlias, and keyPassword.\n" +
+                "Use -PallowDebugSigningInRelease=true only for local smoke builds."
+            )
+        }
+    }
+}
+
+if (!hasGoogleServicesConfig) {
+    tasks.matching {
+        it.name in setOf("assembleRelease", "bundleRelease", "packageRelease")
+    }.configureEach {
+        doFirst {
+            throw GradleException(
+                "Android release builds require android/app/google-services.json.\n" +
+                    "Keep the file out of git, but inject it locally or in CI before release builds."
+            )
+        }
+    }
 }
 
 flutter {

@@ -15,6 +15,7 @@ class ComposeArea extends StatefulWidget {
   final VoidCallback? onAttach;
   final bool hasAttachments;
   final bool isProcessing;
+  final bool isSending;
   final VoidCallback? onRecordStart;
   final VoidCallback? onRecordStop;
   final VoidCallback? onRecordCancel;
@@ -33,6 +34,7 @@ class ComposeArea extends StatefulWidget {
     this.onAttach,
     this.hasAttachments = false,
     this.isProcessing = false,
+    this.isSending = false,
     this.onRecordStart,
     this.onRecordStop,
     this.onRecordCancel,
@@ -333,6 +335,7 @@ class _ComposeAreaState extends State<ComposeArea>
                             child: GestureDetector(
                               onTap:
                                   !widget.isProcessing &&
+                                      !widget.isSending &&
                                       (_hasText || widget.hasAttachments)
                                   ? _onSendPressed
                                   : null,

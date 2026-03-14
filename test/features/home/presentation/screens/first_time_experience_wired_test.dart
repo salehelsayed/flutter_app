@@ -12,6 +12,7 @@ import 'package:flutter_app/features/contact_request/domain/models/contact_reque
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/home/presentation/screens/first_time_experience_screen.dart';
 import 'package:flutter_app/features/home/presentation/screens/first_time_experience_wired.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 
@@ -133,6 +134,18 @@ void main() {
   }
 
   group('FirstTimeExperienceWired', () {
+    testWidgets('shows QR shimmer before post-frame QR generation completes', (
+      tester,
+    ) async {
+      identityRepo.seed(testIdentity);
+      bridge.responses['payload.sign'] = {'ok': true, 'signature': 'test-sig'};
+
+      await tester.pumpWidget(buildFTE());
+
+      expect(find.byKey(const ValueKey('qr-loading-shimmer')), findsOneWidget);
+      expect(find.byType(QrImageView), findsNothing);
+    });
+
     testWidgets('loads identity and generates QR data after first frame', (
       tester,
     ) async {
@@ -151,6 +164,22 @@ void main() {
 
       // The widget rendered without errors — find the screen
       expect(find.byType(FirstTimeExperienceScreen), findsOneWidget);
+    });
+
+    testWidgets('replaces shimmer with QR image after QR data loads', (
+      tester,
+    ) async {
+      identityRepo.seed(testIdentity);
+      bridge.responses['payload.sign'] = {'ok': true, 'signature': 'test-sig'};
+
+      await tester.pumpWidget(buildFTE());
+      expect(find.byKey(const ValueKey('qr-loading-shimmer')), findsOneWidget);
+
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.byType(QrImageView), findsOneWidget);
+      expect(find.byKey(const ValueKey('qr-loading-shimmer')), findsNothing);
     });
 
     testWidgets('displays username from loaded identity', (tester) async {

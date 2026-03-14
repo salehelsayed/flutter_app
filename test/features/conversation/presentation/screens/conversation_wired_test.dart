@@ -751,6 +751,83 @@ void main() {
       expect(messageRepo.store[sentMessageId!]!.status, 'delivered');
       expect(messageRepo.store[sentMessageId!]!.transport, 'inbox');
     });
+
+    testWidgets(
+      'guards against rapid duplicate sends and resets after success',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+
+        final gate = Completer<void>();
+        var sendCallCount = 0;
+
+        Future<(SendChatMessageResult, ConversationMessage?)> sendFn({
+          required P2PService p2pService,
+          required MessageRepository messageRepo,
+          required String targetPeerId,
+          required String text,
+          required String senderPeerId,
+          required String senderUsername,
+          String? messageId,
+          String? timestamp,
+          Bridge? bridge,
+          String? recipientMlKemPublicKey,
+          String? quotedMessageId,
+          List<MediaAttachment>? mediaAttachments,
+          MediaAttachmentRepository? mediaAttachmentRepo,
+        }) async {
+          sendCallCount += 1;
+          await gate.future;
+          final delivered = ConversationMessage(
+            id: messageId!,
+            contactPeerId: targetPeerId,
+            senderPeerId: senderPeerId,
+            text: text,
+            timestamp: timestamp!,
+            status: 'delivered',
+            isIncoming: false,
+            createdAt: timestamp,
+          );
+          await messageRepo.saveMessage(delivered);
+          return (SendChatMessageResult.success, delivered);
+        }
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: sendFn,
+        );
+
+        await tester.enterText(find.byType(TextField), 'First send');
+        await tester.pump(const Duration(milliseconds: 300));
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await tester.tap(
+          find.byIcon(Icons.arrow_upward_rounded),
+          warnIfMissed: false,
+        );
+        await tester.pump();
+
+        expect(sendCallCount, 1);
+        expect(find.text('First send'), findsOneWidget);
+
+        gate.complete();
+        await tester.pump(const Duration(milliseconds: 50));
+
+        await tester.enterText(find.byType(TextField), 'Second send');
+        await tester.pump(const Duration(milliseconds: 300));
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await tester.pump();
+
+        expect(sendCallCount, 2);
+      },
+    );
   });
 
   group('ConversationWired media props', () {

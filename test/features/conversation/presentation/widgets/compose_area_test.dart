@@ -8,6 +8,7 @@ void main() {
     VoidCallback? onAttach,
     bool hasAttachments = false,
     bool isProcessing = false,
+    bool isSending = false,
     String? initialText,
     String? quotedText,
     bool isQuoteUnavailable = false,
@@ -23,6 +24,7 @@ void main() {
               onAttach: onAttach,
               hasAttachments: hasAttachments,
               isProcessing: isProcessing,
+              isSending: isSending,
               initialText: initialText,
               quotedText: quotedText,
               isQuoteUnavailable: isQuoteUnavailable,
@@ -297,6 +299,23 @@ void main() {
           onSend: (text) => sentText = text,
           hasAttachments: true,
           isProcessing: true,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+      await tester.pump();
+
+      expect(sentText, isNull);
+    });
+
+    testWidgets('disables send button when isSending is true', (tester) async {
+      String? sentText;
+      await tester.pumpWidget(
+        buildTestWidget(
+          onSend: (text) => sentText = text,
+          hasAttachments: true,
+          isSending: true,
         ),
       );
       await tester.pumpAndSettle();

@@ -46,18 +46,23 @@ void main() {
           controller,
           contains('class ShareViewController: RSIShareViewController'),
         );
+        expect(runnerEntitlements, contains('group.com.mknoon.app.share'));
+        expect(extensionEntitlements, contains('group.com.mknoon.app.share'));
         expect(
-          runnerEntitlements,
-          contains('group.com.example.makerGenerated.share'),
-        );
-        expect(
-          extensionEntitlements,
-          contains('group.com.example.makerGenerated.share'),
+          project,
+          contains('CUSTOM_GROUP_ID = group.com.mknoon.app.share;'),
         );
         expect(
           project,
-          contains('CUSTOM_GROUP_ID = group.com.example.makerGenerated.share;'),
+          contains('PRODUCT_BUNDLE_IDENTIFIER = com.mknoon.app;'),
         );
+        expect(
+          project,
+          contains(
+            'PRODUCT_BUNDLE_IDENTIFIER = "com.mknoon.app.ShareExtension";',
+          ),
+        );
+        expect(project, isNot(contains('com.example.makerGenerated')));
         expect(
           project,
           contains('Share Extension/Share Extension.entitlements'),

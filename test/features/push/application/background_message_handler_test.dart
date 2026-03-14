@@ -20,17 +20,13 @@ void main() {
     });
 
     test('handles RemoteMessage with null messageId', () async {
-      const message = RemoteMessage(
-        data: {'type': 'inbox'},
-      );
+      const message = RemoteMessage(data: {'type': 'inbox'});
 
       await firebaseMessagingBackgroundHandler(message);
     });
 
     test('handles RemoteMessage with empty data map', () async {
-      const message = RemoteMessage(
-        messageId: 'msg-456',
-      );
+      const message = RemoteMessage(messageId: 'msg-456');
 
       await firebaseMessagingBackgroundHandler(message);
     });

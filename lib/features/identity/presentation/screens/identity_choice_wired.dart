@@ -165,8 +165,8 @@ class _IdentityChoiceWiredState extends State<IdentityChoiceWired> {
   @override
   Widget build(BuildContext context) {
     return IdentityChoiceScreen(
-      onNewHere: _isGeneratingIdentity ? () {} : _handleNewHere,
-      onLoadMyKey: _isGeneratingIdentity ? () {} : _handleLoadKey,
+      onNewHere: _isGeneratingIdentity ? null : _handleNewHere,
+      onLoadMyKey: _isGeneratingIdentity ? null : _handleLoadKey,
     );
   }
 }

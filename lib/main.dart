@@ -769,7 +769,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _setupForegroundPushListener();
+    _setupPushListeners();
     _setupNotificationTapHandler();
     _setupShareIntentHandling();
   }
@@ -993,8 +993,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     }
   }
 
-  void _setupForegroundPushListener() {
-    if (widget.isDesktop) return;
+  void _setupPushListeners() {
+    if (widget.isDesktop || Firebase.apps.isEmpty) return;
 
     try {
       FirebaseMessaging.onMessage.listen((message) {
@@ -1003,21 +1003,24 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           event: 'PUSH_FOREGROUND_MESSAGE_RECEIVED',
           details: {'messageId': message.messageId},
         );
-        widget.p2pService.drainOfflineInbox();
+        unawaited(widget.p2pService.drainOfflineInbox());
       });
 
       FirebaseMessaging.onMessageOpenedApp.listen((message) {
         emitFlowEvent(
           layer: 'FL',
           event: 'PUSH_MESSAGE_OPENED_APP',
-          details: {'messageId': message.messageId},
+          details: {
+            'messageId': message.messageId,
+            'dataKeys': message.data.keys.toList(),
+          },
         );
-        widget.p2pService.drainOfflineInbox();
+        unawaited(widget.p2pService.drainOfflineInbox());
       });
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
-        event: 'PUSH_FOREGROUND_LISTENER_ERROR',
+        event: 'PUSH_LISTENER_ERROR',
         details: {'error': e.toString()},
       );
     }
