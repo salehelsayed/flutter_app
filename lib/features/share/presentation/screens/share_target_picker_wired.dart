@@ -89,6 +89,7 @@ class ShareTargetPickerWired extends StatefulWidget {
 class _ShareTargetPickerWiredState extends State<ShareTargetPickerWired> {
   List<ContactModel> _contacts = [];
   List<GroupModel> _groups = [];
+  bool _isLoading = true;
   bool _isProcessing = false;
 
   @override
@@ -116,8 +117,12 @@ class _ShareTargetPickerWiredState extends State<ShareTargetPickerWired> {
       setState(() {
         _contacts = contacts;
         _groups = groups;
+        _isLoading = false;
       });
     } catch (e) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
       emitFlowEvent(
         layer: 'FL',
         event: 'SHARE_PICKER_LOAD_ERROR',
@@ -251,6 +256,7 @@ class _ShareTargetPickerWiredState extends State<ShareTargetPickerWired> {
       sharedFilePaths: widget.shareIntent.filePaths,
       contacts: _contacts,
       groups: _groups,
+      isLoading: _isLoading,
       onContactSelected: _onContactSelected,
       onGroupSelected: _onGroupSelected,
       onCancel: () => Navigator.of(context).pop(),

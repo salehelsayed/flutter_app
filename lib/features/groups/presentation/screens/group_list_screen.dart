@@ -13,6 +13,7 @@ class GroupListScreen extends StatelessWidget {
   final List<GroupModel> groups;
   final Map<String, GroupMessage?> latestMessages;
   final Map<String, int> unreadCounts;
+  final bool isLoading;
   final ValueChanged<GroupModel> onGroupTap;
   final VoidCallback onBack;
 
@@ -21,6 +22,7 @@ class GroupListScreen extends StatelessWidget {
     required this.groups,
     this.latestMessages = const {},
     this.unreadCounts = const {},
+    this.isLoading = false,
     required this.onGroupTap,
     required this.onBack,
   });
@@ -35,7 +37,11 @@ class GroupListScreen extends StatelessWidget {
             children: [
               _buildHeader(context),
               Expanded(
-                child: groups.isEmpty ? _buildEmptyState() : _buildList(),
+                child: groups.isNotEmpty
+                    ? _buildList()
+                    : isLoading
+                    ? _buildLoadingState()
+                    : _buildEmptyState(),
               ),
             ],
           ),
@@ -121,6 +127,30 @@ class GroupListScreen extends StatelessWidget {
     );
   }
 
+  Widget _buildLoadingState() {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+      children: const [
+        Center(
+          child: SizedBox(
+            width: 24,
+            height: 24,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: Colors.white54,
+            ),
+          ),
+        ),
+        SizedBox(height: 20),
+        _GroupLoadingRow(index: 0),
+        SizedBox(height: 12),
+        _GroupLoadingRow(index: 1),
+        SizedBox(height: 12),
+        _GroupLoadingRow(index: 2),
+      ],
+    );
+  }
+
   String _formatTime(DateTime timestamp) {
     final local = timestamp.toLocal();
     final hour = local.hour == 0
@@ -129,5 +159,87 @@ class GroupListScreen extends StatelessWidget {
     final minute = local.minute.toString().padLeft(2, '0');
     final period = local.hour < 12 ? 'AM' : 'PM';
     return '$hour:$minute $period';
+  }
+}
+
+class _GroupLoadingRow extends StatelessWidget {
+  final int index;
+
+  const _GroupLoadingRow({required this.index});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      key: ValueKey('group-loading-row-$index'),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      decoration: BoxDecoration(
+        color: const Color(0x14FFFFFF),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0x1FFFFFFF)),
+      ),
+      child: Row(
+        children: const [
+          _GroupLoadingAvatar(),
+          SizedBox(width: 14),
+          Expanded(child: _GroupLoadingTextBlock()),
+        ],
+      ),
+    );
+  }
+}
+
+class _GroupLoadingAvatar extends StatelessWidget {
+  const _GroupLoadingAvatar();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 48,
+      height: 48,
+      decoration: BoxDecoration(
+        color: const Color(0x12FFFFFF),
+        borderRadius: BorderRadius.circular(14),
+      ),
+    );
+  }
+}
+
+class _GroupLoadingTextBlock extends StatelessWidget {
+  const _GroupLoadingTextBlock();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _GroupLoadingBar(widthFactor: 0.42, height: 14),
+        SizedBox(height: 10),
+        _GroupLoadingBar(widthFactor: 0.68),
+        SizedBox(height: 10),
+        _GroupLoadingBar(widthFactor: 0.28, height: 10),
+      ],
+    );
+  }
+}
+
+class _GroupLoadingBar extends StatelessWidget {
+  final double widthFactor;
+  final double height;
+
+  const _GroupLoadingBar({required this.widthFactor, this.height = 12});
+
+  @override
+  Widget build(BuildContext context) {
+    return FractionallySizedBox(
+      widthFactor: widthFactor,
+      alignment: Alignment.centerLeft,
+      child: Container(
+        height: height,
+        decoration: BoxDecoration(
+          color: const Color(0x12FFFFFF),
+          borderRadius: BorderRadius.circular(height / 2),
+        ),
+      ),
+    );
   }
 }

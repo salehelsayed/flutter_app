@@ -15,61 +15,84 @@ void main() {
 
   group('IdentityChoiceScreen', () {
     testWidgets('renders BrandHeader', (tester) async {
-      await tester.pumpWidget(wrap(IdentityChoiceScreen(
-        onNewHere: () {},
-        onLoadMyKey: () {},
-      )));
+      await tester.pumpWidget(
+        wrap(IdentityChoiceScreen(onNewHere: () {}, onLoadMyKey: () {})),
+      );
       await pumpPastAnimations(tester);
       expect(find.byType(BrandHeader), findsOneWidget);
     });
 
     testWidgets('renders two ChoiceCards', (tester) async {
-      await tester.pumpWidget(wrap(IdentityChoiceScreen(
-        onNewHere: () {},
-        onLoadMyKey: () {},
-      )));
+      await tester.pumpWidget(
+        wrap(IdentityChoiceScreen(onNewHere: () {}, onLoadMyKey: () {})),
+      );
       await pumpPastAnimations(tester);
       expect(find.text("I'm new here"), findsOneWidget);
       expect(find.text('Load my key'), findsOneWidget);
     });
 
     testWidgets('renders "I\'m new here" card text', (tester) async {
-      await tester.pumpWidget(wrap(IdentityChoiceScreen(
-        onNewHere: () {},
-        onLoadMyKey: () {},
-      )));
+      await tester.pumpWidget(
+        wrap(IdentityChoiceScreen(onNewHere: () {}, onLoadMyKey: () {})),
+      );
       await pumpPastAnimations(tester);
       expect(find.text("I'm new here"), findsOneWidget);
       expect(find.text('Generate a fresh identity'), findsOneWidget);
     });
 
     testWidgets('renders "Load my key" card text', (tester) async {
-      await tester.pumpWidget(wrap(IdentityChoiceScreen(
-        onNewHere: () {},
-        onLoadMyKey: () {},
-      )));
+      await tester.pumpWidget(
+        wrap(IdentityChoiceScreen(onNewHere: () {}, onLoadMyKey: () {})),
+      );
       await pumpPastAnimations(tester);
       expect(find.text('Load my key'), findsOneWidget);
       expect(find.text('Restore from recovery phrase'), findsOneWidget);
     });
 
     testWidgets('renders privacy footer with lock icon', (tester) async {
-      await tester.pumpWidget(wrap(IdentityChoiceScreen(
-        onNewHere: () {},
-        onLoadMyKey: () {},
-      )));
+      await tester.pumpWidget(
+        wrap(IdentityChoiceScreen(onNewHere: () {}, onLoadMyKey: () {})),
+      );
       await pumpPastAnimations(tester);
       expect(find.byIcon(Icons.lock_outline), findsOneWidget);
       expect(find.text('Only you can read your messages'), findsOneWidget);
     });
 
     testWidgets('renders Scaffold with dark background', (tester) async {
-      await tester.pumpWidget(wrap(IdentityChoiceScreen(
-        onNewHere: () {},
-        onLoadMyKey: () {},
-      )));
+      await tester.pumpWidget(
+        wrap(IdentityChoiceScreen(onNewHere: () {}, onLoadMyKey: () {})),
+      );
       final scaffold = tester.widget<Scaffold>(find.byType(Scaffold));
       expect(scaffold.backgroundColor, const Color(0xFF000000));
+    });
+
+    testWidgets('dims choice cards when callbacks are null', (tester) async {
+      await tester.pumpWidget(
+        wrap(const IdentityChoiceScreen(onNewHere: null, onLoadMyKey: null)),
+      );
+      await pumpPastAnimations(tester);
+
+      final newHereOpacity = tester.widget<Opacity>(
+        find.byKey(const ValueKey("choice-card-opacity-I'm new here")),
+      );
+      final loadKeyOpacity = tester.widget<Opacity>(
+        find.byKey(const ValueKey('choice-card-opacity-Load my key')),
+      );
+
+      expect(newHereOpacity.opacity, 0.5);
+      expect(loadKeyOpacity.opacity, 0.5);
+    });
+
+    testWidgets('disabled choice cards ignore taps', (tester) async {
+      await tester.pumpWidget(
+        wrap(const IdentityChoiceScreen(onNewHere: null, onLoadMyKey: null)),
+      );
+      await pumpPastAnimations(tester);
+
+      await tester.tap(find.text("I'm new here"));
+      await tester.pump();
+
+      expect(find.byType(BrandHeader), findsOneWidget);
     });
   });
 }

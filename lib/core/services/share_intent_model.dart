@@ -12,14 +12,10 @@ class ShareIntent {
   /// Shared text content or URL (null for file-only shares).
   final String? text;
 
-  /// Local file paths for shared images/videos.
+  /// Local file paths for shared files.
   final List<String> filePaths;
 
-  const ShareIntent({
-    required this.type,
-    this.text,
-    this.filePaths = const [],
-  });
+  const ShareIntent({required this.type, this.text, this.filePaths = const []});
 
   /// Whether this intent contains text content.
   bool get hasText => text != null && text!.isNotEmpty;
@@ -29,8 +25,8 @@ class ShareIntent {
 
   /// Returns a copy with updated filePaths (used after cache-dir copy).
   ShareIntent copyWith({List<String>? filePaths}) => ShareIntent(
-        type: type,
-        text: text,
-        filePaths: filePaths ?? this.filePaths,
-      );
+    type: type,
+    text: text,
+    filePaths: filePaths ?? this.filePaths,
+  );
 }

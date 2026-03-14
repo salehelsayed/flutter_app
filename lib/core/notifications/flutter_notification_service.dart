@@ -1,4 +1,5 @@
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:flutter_app/core/notifications/local_notification_support.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
@@ -8,17 +9,14 @@ class FlutterNotificationService implements NotificationService {
   final FlutterLocalNotificationsPlugin _plugin =
       FlutterLocalNotificationsPlugin();
 
-  static const _channelId = 'mknoon_messages';
-  static const _channelName = 'Messages';
-  static const _channelDescription = 'Incoming message notifications';
-
   @override
   void Function(String contactPeerId)? onNotificationTap;
 
   @override
   Future<void> initialize() async {
-    const androidSettings =
-        AndroidInitializationSettings('@mipmap/ic_launcher');
+    const androidSettings = AndroidInitializationSettings(
+      '@mipmap/ic_launcher',
+    );
 
     const iosSettings = DarwinInitializationSettings(
       requestSoundPermission: true,
@@ -35,6 +33,7 @@ class FlutterNotificationService implements NotificationService {
       settings,
       onDidReceiveNotificationResponse: _onNotificationResponse,
     );
+    await ensureMknoonNotificationChannel(_plugin);
 
     emitFlowEvent(
       layer: 'FL',
@@ -66,26 +65,6 @@ class FlutterNotificationService implements NotificationService {
     required String senderUsername,
     required String messageText,
   }) async {
-    const androidDetails = AndroidNotificationDetails(
-      _channelId,
-      _channelName,
-      channelDescription: _channelDescription,
-      importance: Importance.high,
-      priority: Priority.high,
-      playSound: true,
-    );
-
-    const iosDetails = DarwinNotificationDetails(
-      presentSound: true,
-      presentAlert: true,
-      presentBadge: true,
-    );
-
-    const details = NotificationDetails(
-      android: androidDetails,
-      iOS: iosDetails,
-    );
-
     // One notification per conversation — updates on new messages
     final notificationId = contactPeerId.hashCode;
 
@@ -93,7 +72,7 @@ class FlutterNotificationService implements NotificationService {
       notificationId,
       senderUsername,
       messageText,
-      details,
+      mknoonMessagesNotificationDetails,
       payload: contactPeerId,
     );
 
@@ -115,26 +94,6 @@ class FlutterNotificationService implements NotificationService {
     required String body,
     String? payload,
   }) async {
-    const androidDetails = AndroidNotificationDetails(
-      _channelId,
-      _channelName,
-      channelDescription: _channelDescription,
-      importance: Importance.high,
-      priority: Priority.high,
-      playSound: true,
-    );
-
-    const iosDetails = DarwinNotificationDetails(
-      presentSound: true,
-      presentAlert: true,
-      presentBadge: true,
-    );
-
-    const details = NotificationDetails(
-      android: androidDetails,
-      iOS: iosDetails,
-    );
-
     // Use payload hashCode for notification ID so same-type notifications update
     final notificationId = (payload ?? title).hashCode;
 
@@ -142,17 +101,14 @@ class FlutterNotificationService implements NotificationService {
       notificationId,
       title,
       body,
-      details,
+      mknoonMessagesNotificationDetails,
       payload: payload,
     );
 
     emitFlowEvent(
       layer: 'FL',
       event: 'NOTIFICATION_SHOWN',
-      details: {
-        'title': title,
-        'payload': payload ?? '',
-      },
+      details: {'title': title, 'payload': payload ?? ''},
     );
   }
 

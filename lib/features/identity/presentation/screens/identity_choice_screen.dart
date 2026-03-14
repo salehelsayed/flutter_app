@@ -10,10 +10,10 @@ import 'package:flutter_app/features/identity/presentation/widgets/choice_card.d
 /// animated ambient backgrounds, and staggered entry animations.
 class IdentityChoiceScreen extends StatefulWidget {
   /// Callback invoked when user chooses to create a new identity.
-  final VoidCallback onNewHere;
+  final VoidCallback? onNewHere;
 
   /// Callback invoked when user chooses to restore from mnemonic.
-  final VoidCallback onLoadMyKey;
+  final VoidCallback? onLoadMyKey;
 
   const IdentityChoiceScreen({
     super.key,
@@ -51,15 +51,13 @@ class _IdentityChoiceScreenState extends State<IdentityChoiceScreen>
         curve: const Interval(0.0, 0.4, curve: Curves.easeOut),
       ),
     );
-    _headerSlideAnimation = Tween<Offset>(
-      begin: const Offset(0, -0.3),
-      end: Offset.zero,
-    ).animate(
-      CurvedAnimation(
-        parent: _animationController,
-        curve: const Interval(0.0, 0.4, curve: Curves.easeOut),
-      ),
-    );
+    _headerSlideAnimation =
+        Tween<Offset>(begin: const Offset(0, -0.3), end: Offset.zero).animate(
+          CurvedAnimation(
+            parent: _animationController,
+            curve: const Interval(0.0, 0.4, curve: Curves.easeOut),
+          ),
+        );
 
     // First card animation (fade in from bottom)
     _card1FadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
@@ -68,15 +66,13 @@ class _IdentityChoiceScreenState extends State<IdentityChoiceScreen>
         curve: const Interval(0.2, 0.6, curve: Curves.easeOut),
       ),
     );
-    _card1SlideAnimation = Tween<Offset>(
-      begin: const Offset(0, 0.3),
-      end: Offset.zero,
-    ).animate(
-      CurvedAnimation(
-        parent: _animationController,
-        curve: const Interval(0.2, 0.6, curve: Curves.easeOut),
-      ),
-    );
+    _card1SlideAnimation =
+        Tween<Offset>(begin: const Offset(0, 0.3), end: Offset.zero).animate(
+          CurvedAnimation(
+            parent: _animationController,
+            curve: const Interval(0.2, 0.6, curve: Curves.easeOut),
+          ),
+        );
 
     // Second card animation (fade in from bottom, staggered)
     _card2FadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
@@ -85,15 +81,13 @@ class _IdentityChoiceScreenState extends State<IdentityChoiceScreen>
         curve: const Interval(0.35, 0.75, curve: Curves.easeOut),
       ),
     );
-    _card2SlideAnimation = Tween<Offset>(
-      begin: const Offset(0, 0.3),
-      end: Offset.zero,
-    ).animate(
-      CurvedAnimation(
-        parent: _animationController,
-        curve: const Interval(0.35, 0.75, curve: Curves.easeOut),
-      ),
-    );
+    _card2SlideAnimation =
+        Tween<Offset>(begin: const Offset(0, 0.3), end: Offset.zero).animate(
+          CurvedAnimation(
+            parent: _animationController,
+            curve: const Interval(0.35, 0.75, curve: Curves.easeOut),
+          ),
+        );
 
     // Footer animation
     _footerFadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
@@ -124,7 +118,9 @@ class _IdentityChoiceScreenState extends State<IdentityChoiceScreen>
               builder: (context, constraints) {
                 return SingleChildScrollView(
                   child: ConstrainedBox(
-                    constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                    constraints: BoxConstraints(
+                      minHeight: constraints.maxHeight,
+                    ),
                     child: Column(
                       children: [
                         SizedBox(height: constraints.maxHeight * 0.12),
@@ -178,13 +174,17 @@ class _IdentityChoiceScreenState extends State<IdentityChoiceScreen>
                                     Icon(
                                       Icons.lock_outline,
                                       size: 14,
-                                      color: AppColors.textMuted.withValues(alpha: 0.6),
+                                      color: AppColors.textMuted.withValues(
+                                        alpha: 0.6,
+                                      ),
                                     ),
                                     const SizedBox(width: 6),
                                     Text(
                                       'Only you can read your messages',
                                       style: TextStyle(
-                                        color: AppColors.textMuted.withValues(alpha: 0.6),
+                                        color: AppColors.textMuted.withValues(
+                                          alpha: 0.6,
+                                        ),
                                         fontSize: 12,
                                       ),
                                     ),
@@ -194,7 +194,9 @@ class _IdentityChoiceScreenState extends State<IdentityChoiceScreen>
                                 Text(
                                   'Everything stays on your phone. Nobody is watching.',
                                   style: TextStyle(
-                                    color: AppColors.textMuted.withValues(alpha: 0.6),
+                                    color: AppColors.textMuted.withValues(
+                                      alpha: 0.6,
+                                    ),
                                     fontSize: 12,
                                   ),
                                   textAlign: TextAlign.center,

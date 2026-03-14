@@ -85,6 +85,7 @@ class ConversationScreen extends StatefulWidget {
   final bool isUploading;
   final ValueChanged<int>? onRemoveAttachment;
   final bool isProcessing;
+  final bool isSending;
   final double processingProgress;
   final VoidCallback? onRecordStart;
   final VoidCallback? onRecordStop;
@@ -128,6 +129,7 @@ class ConversationScreen extends StatefulWidget {
     this.isUploading = false,
     this.onRemoveAttachment,
     this.isProcessing = false,
+    this.isSending = false,
     this.processingProgress = 0.0,
     this.onRecordStart,
     this.onRecordStop,
@@ -257,6 +259,7 @@ class _ConversationScreenState extends State<ConversationScreen> {
           onAttach: widget.onAttach,
           hasAttachments: composerState.pendingAttachments.isNotEmpty,
           isProcessing: composerState.isProcessing,
+          isSending: widget.isSending,
           onRecordStart: widget.onRecordStart,
           onRecordStop: widget.onRecordStop,
           onRecordCancel: widget.onRecordCancel,

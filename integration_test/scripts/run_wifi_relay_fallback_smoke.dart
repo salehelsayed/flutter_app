@@ -25,13 +25,15 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import '_android_app_package.dart';
+
 // ---------------------------------------------------------------------------
 // Configuration
 // ---------------------------------------------------------------------------
 
 const _goMknoonDir = 'go-mknoon';
 const _testpeerBin = 'go-mknoon/bin/testpeer';
-const _appPackage = 'com.example.flutter_app';
+final _appPackage = resolveAndroidAppPackage();
 
 // ---------------------------------------------------------------------------
 // Run-scoped paths
@@ -84,13 +86,17 @@ String _adb() {
 Future<void> _deviceWriteFile(String devicePath, String content) async {
   if (_androidDeviceId != null) {
     final tmp = File(
-        '${Directory.systemTemp.path}/_adb_push_${DateTime.now().millisecondsSinceEpoch}');
+      '${Directory.systemTemp.path}/_adb_push_${DateTime.now().millisecondsSinceEpoch}',
+    );
     tmp.writeAsStringSync(content);
     try {
-      final r = await Process.run(
-        _adb(),
-        ['-s', _androidDeviceId!, 'push', tmp.path, devicePath],
-      );
+      final r = await Process.run(_adb(), [
+        '-s',
+        _androidDeviceId!,
+        'push',
+        tmp.path,
+        devicePath,
+      ]);
       if (r.exitCode != 0) {
         throw StateError('adb push failed: ${r.stderr}');
       }
@@ -107,12 +113,16 @@ Future<void> _deviceWriteFile(String devicePath, String content) async {
 Future<String?> _deviceReadFile(String devicePath) async {
   if (_androidDeviceId != null) {
     final tmp = File(
-        '${Directory.systemTemp.path}/_adb_pull_${DateTime.now().millisecondsSinceEpoch}');
+      '${Directory.systemTemp.path}/_adb_pull_${DateTime.now().millisecondsSinceEpoch}',
+    );
     try {
-      final r = await Process.run(
-        _adb(),
-        ['-s', _androidDeviceId!, 'pull', devicePath, tmp.path],
-      );
+      final r = await Process.run(_adb(), [
+        '-s',
+        _androidDeviceId!,
+        'pull',
+        devicePath,
+        tmp.path,
+      ]);
       if (r.exitCode != 0) return null;
       return tmp.readAsStringSync();
     } finally {
@@ -129,10 +139,13 @@ Future<String?> _deviceReadFile(String devicePath) async {
 
 Future<bool> _deviceFileExists(String devicePath) async {
   if (_androidDeviceId != null) {
-    final r = await Process.run(
-      _adb(),
-      ['-s', _androidDeviceId!, 'shell', 'ls', devicePath],
-    );
+    final r = await Process.run(_adb(), [
+      '-s',
+      _androidDeviceId!,
+      'shell',
+      'ls',
+      devicePath,
+    ]);
     return r.exitCode == 0;
   } else {
     return File(devicePath).existsSync();
@@ -142,35 +155,52 @@ Future<bool> _deviceFileExists(String devicePath) async {
 Future<String> _createDeviceTempDir(String deviceId) async {
   final ts = DateTime.now().millisecondsSinceEpoch;
   final deviceDir = '/data/local/tmp/e2e_smoke_$ts';
-  final r = await Process.run(
-    _adb(),
-    ['-s', deviceId, 'shell', 'mkdir', '-p', deviceDir],
-  );
+  final r = await Process.run(_adb(), [
+    '-s',
+    deviceId,
+    'shell',
+    'mkdir',
+    '-p',
+    deviceDir,
+  ]);
   if (r.exitCode != 0) {
     throw StateError('Failed to create device temp dir: ${r.stderr}');
   }
-  await Process.run(
-    _adb(),
-    ['-s', deviceId, 'shell', 'chmod', '777', deviceDir],
-  );
+  await Process.run(_adb(), [
+    '-s',
+    deviceId,
+    'shell',
+    'chmod',
+    '777',
+    deviceDir,
+  ]);
   return deviceDir;
 }
 
 Future<void> _cleanupDeviceTempDir(String deviceId, String deviceDir) async {
   try {
-    await Process.run(
-      _adb(),
-      ['-s', deviceId, 'shell', 'rm', '-rf', deviceDir],
-    );
+    await Process.run(_adb(), [
+      '-s',
+      deviceId,
+      'shell',
+      'rm',
+      '-rf',
+      deviceDir,
+    ]);
   } catch (_) {}
 }
 
 Future<String?> _appReadFile(String path) async {
   if (_androidDeviceId != null) {
-    final r = await Process.run(
-      _adb(),
-      ['-s', _androidDeviceId!, 'shell', 'run-as', _appPackage, 'cat', path],
-    );
+    final r = await Process.run(_adb(), [
+      '-s',
+      _androidDeviceId!,
+      'shell',
+      'run-as',
+      _appPackage,
+      'cat',
+      path,
+    ]);
     if (r.exitCode != 0) return null;
     return (r.stdout as String).trimRight();
   } else {
@@ -182,10 +212,15 @@ Future<String?> _appReadFile(String path) async {
 
 Future<bool> _appFileExists(String path) async {
   if (_androidDeviceId != null) {
-    final r = await Process.run(
-      _adb(),
-      ['-s', _androidDeviceId!, 'shell', 'run-as', _appPackage, 'ls', path],
-    );
+    final r = await Process.run(_adb(), [
+      '-s',
+      _androidDeviceId!,
+      'shell',
+      'run-as',
+      _appPackage,
+      'ls',
+      path,
+    ]);
     return r.exitCode == 0;
   } else {
     return File(path).existsSync();
@@ -194,10 +229,16 @@ Future<bool> _appFileExists(String path) async {
 
 Future<void> _cleanupAppWriteDir(String deviceId, String appWriteDir) async {
   try {
-    await Process.run(
-      _adb(),
-      ['-s', deviceId, 'shell', 'run-as', _appPackage, 'rm', '-rf', appWriteDir],
-    );
+    await Process.run(_adb(), [
+      '-s',
+      deviceId,
+      'shell',
+      'run-as',
+      _appPackage,
+      'rm',
+      '-rf',
+      appWriteDir,
+    ]);
   } catch (_) {}
 }
 
@@ -245,9 +286,9 @@ class TestPeer {
         .transform(utf8.decoder)
         .transform(const LineSplitter())
         .listen((line) {
-      _log('PEER-ERR', line);
-      stderrLines.add(line);
-    });
+          _log('PEER-ERR', line);
+          stderrLines.add(line);
+        });
   }
 
   void _handleLine(String line) {
@@ -260,8 +301,7 @@ class TestPeer {
         _log('EVENT', '${json['event']}: ${json['data']}');
         _events.add(json);
       } else {
-        _log('RESP',
-            line.length > 200 ? '${line.substring(0, 200)}...' : line);
+        _log('RESP', line.length > 200 ? '${line.substring(0, 200)}...' : line);
 
         if (_pending.isNotEmpty) {
           _pending.removeAt(0).complete(json);
@@ -279,10 +319,7 @@ class TestPeer {
     final completer = Completer<Map<String, dynamic>>();
     _pending.add(completer);
 
-    final request = {
-      'cmd': cmd,
-      if (params != null) 'params': params,
-    };
+    final request = {'cmd': cmd, if (params != null) 'params': params};
 
     final line = jsonEncode(request);
     _log('CMD', line.length > 200 ? '${line.substring(0, 200)}...' : line);
@@ -305,7 +342,8 @@ class TestPeer {
     final result = await command(cmd, params);
     if (result['ok'] != true) {
       throw StateError(
-          'Command "$cmd" failed: ${result['errorMessage'] ?? result}');
+        'Command "$cmd" failed: ${result['errorMessage'] ?? result}',
+      );
     }
     return result;
   }
@@ -322,8 +360,11 @@ class TestPeer {
       } catch (e) {
         if (attempt == maxAttempts) rethrow;
         final delay = baseDelay * attempt;
-        _log('RETRY', '$cmd attempt $attempt/$maxAttempts failed: $e '
-            '-- retrying in ${delay.inSeconds}s');
+        _log(
+          'RETRY',
+          '$cmd attempt $attempt/$maxAttempts failed: $e '
+              '-- retrying in ${delay.inSeconds}s',
+        );
         await Future.delayed(delay);
       }
     }
@@ -425,8 +466,13 @@ Future<List<_OrchestratorResult>> _runScenarios(
 
   if (flutterPeer == null) {
     _log('ORCH', 'ERROR: Flutter peer fixture not found after 120s');
-    results.add(_OrchestratorResult(
-        'SETUP', false, 'Flutter peer fixture not found after 120s'));
+    results.add(
+      _OrchestratorResult(
+        'SETUP',
+        false,
+        'Flutter peer fixture not found after 120s',
+      ),
+    );
     return results;
   }
 
@@ -509,10 +555,18 @@ Future<List<_OrchestratorResult>> _runScenarios(
     });
     final content = msg['content'] as String? ?? '';
     final hasS2 = content.contains('S2:');
-    results.add(_OrchestratorResult(
-        'S2', hasS2, hasS2 ? 'received Flutter S2 message' : 'wrong content'));
-    _log('ORCH', 'S2: ${hasS2 ? 'PASS' : 'FAIL'} -- '
-        'content=${content.length > 80 ? content.substring(0, 80) : content}');
+    results.add(
+      _OrchestratorResult(
+        'S2',
+        hasS2,
+        hasS2 ? 'received Flutter S2 message' : 'wrong content',
+      ),
+    );
+    _log(
+      'ORCH',
+      'S2: ${hasS2 ? 'PASS' : 'FAIL'} -- '
+          'content=${content.length > 80 ? content.substring(0, 80) : content}',
+    );
   } catch (e) {
     results.add(_OrchestratorResult('S2', false, 'wait failed: $e'));
     _log('ORCH', 'S2: wait failed: $e');
@@ -542,8 +596,13 @@ Future<List<_OrchestratorResult>> _runScenarios(
 
     if (!s3SentFound) {
       _log('ORCH', 'S3: Flutter never sent signal -- skipping retrieval');
-      results.add(_OrchestratorResult(
-          'S3', false, 'Flutter signal not received after 60s'));
+      results.add(
+        _OrchestratorResult(
+          'S3',
+          false,
+          'Flutter signal not received after 60s',
+        ),
+      );
     } else {
       // Restart CLI node and retrieve inbox.
       await peer.startNode();
@@ -565,12 +624,15 @@ Future<List<_OrchestratorResult>> _runScenarios(
         }
       }
 
-      results.add(_OrchestratorResult(
+      results.add(
+        _OrchestratorResult(
           'S3',
           s3Found,
           s3Found
               ? 'S3 message found in inbox'
-              : 'S3 not in inbox (${msgs.length} messages)'));
+              : 'S3 not in inbox (${msgs.length} messages)',
+        ),
+      );
       _log('ORCH', 'S3: ${s3Found ? 'PASS' : 'FAIL'}');
     }
   } catch (e) {
@@ -718,11 +780,9 @@ Future<bool> _runOnce({
   try {
     // Step 1: Build CLI test peer.
     _log('ORCH', 'Building CLI test peer...');
-    final buildResult = await Process.run(
-      'make',
-      ['testpeer'],
-      workingDirectory: _goMknoonDir,
-    );
+    final buildResult = await Process.run('make', [
+      'testpeer',
+    ], workingDirectory: _goMknoonDir);
     if (buildResult.exitCode != 0) {
       _log('ORCH', 'ERROR: Build failed:\n${buildResult.stderr}');
       return false;
@@ -748,10 +808,14 @@ Future<bool> _runOnce({
     // Step 7: Clear app data on Android.
     if (_androidDeviceId != null) {
       _log('ORCH', 'Clearing Android app data...');
-      await Process.run(
-        _adb(),
-        ['-s', _androidDeviceId!, 'shell', 'pm', 'clear', _appPackage],
-      );
+      await Process.run(_adb(), [
+        '-s',
+        _androidDeviceId!,
+        'shell',
+        'pm',
+        'clear',
+        _appPackage,
+      ]);
     }
 
     // Step 8: Launch Flutter smoke test.
@@ -814,7 +878,10 @@ Future<bool> _runOnce({
       logSink?.writeln('  ${r.name}: $status -- ${r.detail}');
     }
     _log('ORCH', '----------------------------------------');
-    _log('ORCH', '  $orchPassed/${orchResults.length} passed, $orchFailed failed');
+    _log(
+      'ORCH',
+      '  $orchPassed/${orchResults.length} passed, $orchFailed failed',
+    );
     _log('ORCH', '========================================');
 
     // Write peer stderr to log sink for artifact capture.
@@ -838,8 +905,11 @@ Future<bool> _runOnce({
     }
 
     final combinedExitCode = (flutterExitCode != 0 || orchFailed > 0) ? 1 : 0;
-    _log('ORCH', 'Done. Flutter=$flutterExitCode Orch=${orchFailed > 0 ? 1 : 0} '
-        'Combined=$combinedExitCode');
+    _log(
+      'ORCH',
+      'Done. Flutter=$flutterExitCode Orch=${orchFailed > 0 ? 1 : 0} '
+          'Combined=$combinedExitCode',
+    );
     return combinedExitCode == 0;
   } catch (e, st) {
     _log('ORCH', 'ERROR: $e\n$st');
@@ -896,8 +966,11 @@ void main(List<String> args) async {
   if (deviceId == null) {
     deviceId = await _detectDevice(platform);
     if (deviceId == null) {
-      _log('ORCH', 'ERROR: No $platform device found. '
-          'Start an emulator/simulator first.');
+      _log(
+        'ORCH',
+        'ERROR: No $platform device found. '
+            'Start an emulator/simulator first.',
+      );
       exit(1);
     }
   }

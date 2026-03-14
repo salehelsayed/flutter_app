@@ -106,20 +106,53 @@ class QRCodeSection extends StatelessWidget {
     return SizedBox(
       width: size,
       height: size,
-      child: TweenAnimationBuilder<double>(
-        tween: Tween(begin: 0.3, end: 0.7),
-        duration: const Duration(milliseconds: 800),
-        curve: Curves.easeInOut,
-        builder: (context, value, child) {
-          return Container(
-            margin: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.grey.withValues(alpha: value),
-              borderRadius: BorderRadius.circular(12),
-            ),
-          );
-        },
-        onEnd: () {},
+      child: const _PulsingShimmer(),
+    );
+  }
+}
+
+class _PulsingShimmer extends StatefulWidget {
+  const _PulsingShimmer();
+
+  @override
+  State<_PulsingShimmer> createState() => _PulsingShimmerState();
+}
+
+class _PulsingShimmerState extends State<_PulsingShimmer>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  late final Animation<double> _opacity;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 800),
+    )..repeat(reverse: true);
+    _opacity = Tween<double>(
+      begin: 0.3,
+      end: 0.7,
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut));
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: _opacity,
+      child: Container(
+        key: const ValueKey('qr-loading-shimmer'),
+        margin: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Colors.grey,
+          borderRadius: BorderRadius.circular(12),
+        ),
       ),
     );
   }

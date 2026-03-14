@@ -25,6 +25,10 @@ const (
 	// Group inbox constants.
 	maxMessagesPerGroup = 500
 	groupMessageTTL     = 7 * 24 * time.Hour
+
+	pushNotificationTitle     = "New Message"
+	pushNotificationBody      = "You have a new message"
+	pushNotificationChannelID = "mknoon_messages"
 )
 
 // --- Push service ---
@@ -105,31 +109,7 @@ func (ps *PushService) SendNotification(ctx context.Context, toPeerId, fromPeerI
 		return
 	}
 
-	msg := &messaging.Message{
-		Token: entry.Token,
-		Data: map[string]string{
-			"type": "new_message",
-			"from": fromPeerId,
-		},
-		Android: &messaging.AndroidConfig{
-			Priority: "high",
-		},
-		APNS: &messaging.APNSConfig{
-			Headers: map[string]string{
-				"apns-priority":  "10",
-				"apns-push-type": "alert",
-			},
-			Payload: &messaging.APNSPayload{
-				Aps: &messaging.Aps{
-					ContentAvailable: true,
-					Alert: &messaging.ApsAlert{
-						Title: "New Message",
-						Body:  "You have a new message",
-					},
-				},
-			},
-		},
-	}
+	msg := buildPushMessage(entry.Token, fromPeerId)
 
 	_, err := ps.client.Send(ctx, msg)
 	if err != nil {
@@ -146,6 +126,41 @@ func (ps *PushService) SendNotification(ctx context.Context, toPeerId, fromPeerI
 	}
 	pushSentCounter.WithLabelValues("success").Inc()
 	log.Printf("[PUSH] Notification sent to %s", toPeerId[:min(20, len(toPeerId))])
+}
+
+func buildPushMessage(token, fromPeerId string) *messaging.Message {
+	return &messaging.Message{
+		Token: token,
+		Data: map[string]string{
+			"type":  "new_message",
+			"from":  fromPeerId,
+			"title": pushNotificationTitle,
+			"body":  pushNotificationBody,
+		},
+		Android: &messaging.AndroidConfig{
+			Priority: "high",
+			Notification: &messaging.AndroidNotification{
+				Title:     pushNotificationTitle,
+				Body:      pushNotificationBody,
+				ChannelID: pushNotificationChannelID,
+			},
+		},
+		APNS: &messaging.APNSConfig{
+			Headers: map[string]string{
+				"apns-priority":  "10",
+				"apns-push-type": "alert",
+			},
+			Payload: &messaging.APNSPayload{
+				Aps: &messaging.Aps{
+					ContentAvailable: true,
+					Alert: &messaging.ApsAlert{
+						Title: pushNotificationTitle,
+						Body:  pushNotificationBody,
+					},
+				},
+			},
+		},
+	}
 }
 
 func (ps *PushService) TokenCount() int {

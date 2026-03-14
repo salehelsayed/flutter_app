@@ -34,6 +34,7 @@ void main() {
     List<String> sharedFilePaths = const [],
     List<ContactModel> contacts = const [],
     List<GroupModel> groups = const [],
+    bool isLoading = false,
     ValueChanged<ContactModel>? onContactSelected,
     ValueChanged<GroupModel>? onGroupSelected,
     VoidCallback? onCancel,
@@ -44,6 +45,7 @@ void main() {
         sharedFilePaths: sharedFilePaths,
         contacts: contacts,
         groups: groups,
+        isLoading: isLoading,
         onContactSelected: onContactSelected ?? (_) {},
         onGroupSelected: onGroupSelected ?? (_) {},
         onCancel: onCancel ?? () {},
@@ -159,4 +161,26 @@ void main() {
 
     expect(find.text('No contacts or groups yet'), findsOneWidget);
   });
+
+  testWidgets('shows loading indicator when isLoading is true', (tester) async {
+    await tester.pumpWidget(buildScreen(isLoading: true));
+
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(find.text('No contacts or groups yet'), findsNothing);
+  });
+
+  testWidgets(
+    'shows populated results even if isLoading remains true after data arrives',
+    (tester) async {
+      await tester.pumpWidget(
+        buildScreen(
+          isLoading: true,
+          contacts: [makeContact(peerId: 'alice', username: 'Alice')],
+        ),
+      );
+
+      expect(find.text('Alice'), findsOneWidget);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+    },
+  );
 }

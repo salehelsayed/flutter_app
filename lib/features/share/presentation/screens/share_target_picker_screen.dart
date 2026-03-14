@@ -16,6 +16,7 @@ class ShareTargetPickerScreen extends StatefulWidget {
   final List<String> sharedFilePaths;
   final List<ContactModel> contacts;
   final List<GroupModel> groups;
+  final bool isLoading;
   final ValueChanged<ContactModel> onContactSelected;
   final ValueChanged<GroupModel> onGroupSelected;
   final VoidCallback onCancel;
@@ -26,6 +27,7 @@ class ShareTargetPickerScreen extends StatefulWidget {
     this.sharedFilePaths = const [],
     required this.contacts,
     required this.groups,
+    this.isLoading = false,
     required this.onContactSelected,
     required this.onGroupSelected,
     required this.onCancel,
@@ -196,6 +198,14 @@ class _ShareTargetPickerScreenState extends State<ShareTargetPickerScreen> {
   Widget _buildTargetList() {
     final contacts = _filteredContacts;
     final groups = _filteredGroups;
+
+    if (contacts.isEmpty && groups.isEmpty && widget.isLoading) {
+      return const Center(
+        child: CircularProgressIndicator(
+          valueColor: AlwaysStoppedAnimation<Color>(Colors.white54),
+        ),
+      );
+    }
 
     if (contacts.isEmpty && groups.isEmpty) {
       return Center(

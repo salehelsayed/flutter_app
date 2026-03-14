@@ -26,13 +26,15 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import '_android_app_package.dart';
+
 // ---------------------------------------------------------------------------
 // Configuration
 // ---------------------------------------------------------------------------
 
 const _goMknoonDir = 'go-mknoon';
 const _testpeerBin = 'go-mknoon/bin/testpeer';
-const _appPackage = 'com.example.flutter_app';
+final _appPackage = resolveAndroidAppPackage();
 
 // ---------------------------------------------------------------------------
 // Run-scoped paths — unique temp directory per run for isolation + cleanup
@@ -40,9 +42,11 @@ const _appPackage = 'com.example.flutter_app';
 
 class _RunPaths {
   final Directory hostTempDir;
+
   /// On iOS: same as hostTempDir.path. On Android: a /data/local/tmp/ path.
   /// Orchestrator pushes files here via adb; the app can READ from here.
   final String deviceDir;
+
   /// On iOS: same as deviceDir. On Android: app's own cache dir.
   /// The app writes signals here; orchestrator reads via `run-as` on Android.
   final String appWriteDir;
@@ -64,7 +68,8 @@ class _RunPaths {
 
   // Host paths — files used by the Go testpeer process on the host machine.
   String get e8Downloaded => '${hostTempDir.path}/e2e_e8_downloaded.png';
-  String get g6FlutterProfile => '${hostTempDir.path}/e2e_g6_flutter_profile.png';
+  String get g6FlutterProfile =>
+      '${hostTempDir.path}/e2e_g6_flutter_profile.png';
   String get g6CliProfile => '${hostTempDir.path}/e2e_g6_cli_profile.png';
 }
 
@@ -100,17 +105,25 @@ String _adb() {
 /// Writes content to a file on the device (or host for iOS).
 Future<void> _deviceWriteFile(String devicePath, String content) async {
   if (_androidDeviceId != null) {
-    final tmp = File('${Directory.systemTemp.path}/_adb_push_${DateTime.now().millisecondsSinceEpoch}');
+    final tmp = File(
+      '${Directory.systemTemp.path}/_adb_push_${DateTime.now().millisecondsSinceEpoch}',
+    );
     tmp.writeAsStringSync(content);
     try {
-      final r = await Process.run(
-        _adb(), ['-s', _androidDeviceId!, 'push', tmp.path, devicePath],
-      );
+      final r = await Process.run(_adb(), [
+        '-s',
+        _androidDeviceId!,
+        'push',
+        tmp.path,
+        devicePath,
+      ]);
       if (r.exitCode != 0) {
         throw StateError('adb push failed: ${r.stderr}');
       }
     } finally {
-      try { tmp.deleteSync(); } catch (_) {}
+      try {
+        tmp.deleteSync();
+      } catch (_) {}
     }
   } else {
     File(devicePath).writeAsStringSync(content);
@@ -120,15 +133,23 @@ Future<void> _deviceWriteFile(String devicePath, String content) async {
 /// Reads a file from the device (or host for iOS). Returns null if not found.
 Future<String?> _deviceReadFile(String devicePath) async {
   if (_androidDeviceId != null) {
-    final tmp = File('${Directory.systemTemp.path}/_adb_pull_${DateTime.now().millisecondsSinceEpoch}');
+    final tmp = File(
+      '${Directory.systemTemp.path}/_adb_pull_${DateTime.now().millisecondsSinceEpoch}',
+    );
     try {
-      final r = await Process.run(
-        _adb(), ['-s', _androidDeviceId!, 'pull', devicePath, tmp.path],
-      );
+      final r = await Process.run(_adb(), [
+        '-s',
+        _androidDeviceId!,
+        'pull',
+        devicePath,
+        tmp.path,
+      ]);
       if (r.exitCode != 0) return null;
       return tmp.readAsStringSync();
     } finally {
-      try { tmp.deleteSync(); } catch (_) {}
+      try {
+        tmp.deleteSync();
+      } catch (_) {}
     }
   } else {
     final f = File(devicePath);
@@ -140,9 +161,13 @@ Future<String?> _deviceReadFile(String devicePath) async {
 /// Checks if a file exists on the device (or host for iOS).
 Future<bool> _deviceFileExists(String devicePath) async {
   if (_androidDeviceId != null) {
-    final r = await Process.run(
-      _adb(), ['-s', _androidDeviceId!, 'shell', 'ls', devicePath],
-    );
+    final r = await Process.run(_adb(), [
+      '-s',
+      _androidDeviceId!,
+      'shell',
+      'ls',
+      devicePath,
+    ]);
     return r.exitCode == 0;
   } else {
     return File(devicePath).existsSync();
@@ -153,25 +178,40 @@ Future<bool> _deviceFileExists(String devicePath) async {
 Future<String> _createDeviceTempDir(String deviceId) async {
   final ts = DateTime.now().millisecondsSinceEpoch;
   final deviceDir = '/data/local/tmp/e2e_transport_$ts';
-  final r = await Process.run(
-    _adb(), ['-s', deviceId, 'shell', 'mkdir', '-p', deviceDir],
-  );
+  final r = await Process.run(_adb(), [
+    '-s',
+    deviceId,
+    'shell',
+    'mkdir',
+    '-p',
+    deviceDir,
+  ]);
   if (r.exitCode != 0) {
     throw StateError('Failed to create device temp dir: ${r.stderr}');
   }
   // Make world-writable so the sandboxed Flutter app can write signal files.
-  await Process.run(
-    _adb(), ['-s', deviceId, 'shell', 'chmod', '777', deviceDir],
-  );
+  await Process.run(_adb(), [
+    '-s',
+    deviceId,
+    'shell',
+    'chmod',
+    '777',
+    deviceDir,
+  ]);
   return deviceDir;
 }
 
 /// Removes a directory on the device.
 Future<void> _cleanupDeviceTempDir(String deviceId, String deviceDir) async {
   try {
-    await Process.run(
-      _adb(), ['-s', deviceId, 'shell', 'rm', '-rf', deviceDir],
-    );
+    await Process.run(_adb(), [
+      '-s',
+      deviceId,
+      'shell',
+      'rm',
+      '-rf',
+      deviceDir,
+    ]);
   } catch (_) {}
 }
 
@@ -179,10 +219,15 @@ Future<void> _cleanupDeviceTempDir(String deviceId, String deviceDir) async {
 /// On iOS/desktop, falls back to direct file access.
 Future<String?> _appReadFile(String path) async {
   if (_androidDeviceId != null) {
-    final r = await Process.run(
-      _adb(), ['-s', _androidDeviceId!, 'shell',
-               'run-as', _appPackage, 'cat', path],
-    );
+    final r = await Process.run(_adb(), [
+      '-s',
+      _androidDeviceId!,
+      'shell',
+      'run-as',
+      _appPackage,
+      'cat',
+      path,
+    ]);
     if (r.exitCode != 0) return null;
     return (r.stdout as String).trimRight();
   } else {
@@ -195,10 +240,15 @@ Future<String?> _appReadFile(String path) async {
 /// Checks if a file exists in the app's private storage via `run-as`.
 Future<bool> _appFileExists(String path) async {
   if (_androidDeviceId != null) {
-    final r = await Process.run(
-      _adb(), ['-s', _androidDeviceId!, 'shell',
-               'run-as', _appPackage, 'ls', path],
-    );
+    final r = await Process.run(_adb(), [
+      '-s',
+      _androidDeviceId!,
+      'shell',
+      'run-as',
+      _appPackage,
+      'ls',
+      path,
+    ]);
     return r.exitCode == 0;
   } else {
     return File(path).existsSync();
@@ -208,10 +258,16 @@ Future<bool> _appFileExists(String path) async {
 /// Removes the app's e2e signal directory via `run-as`.
 Future<void> _cleanupAppWriteDir(String deviceId, String appWriteDir) async {
   try {
-    await Process.run(
-      _adb(), ['-s', deviceId, 'shell',
-               'run-as', _appPackage, 'rm', '-rf', appWriteDir],
-    );
+    await Process.run(_adb(), [
+      '-s',
+      deviceId,
+      'shell',
+      'run-as',
+      _appPackage,
+      'rm',
+      '-rf',
+      appWriteDir,
+    ]);
   } catch (_) {}
 }
 
@@ -291,10 +347,7 @@ class TestPeer {
     final completer = Completer<Map<String, dynamic>>();
     _pending.add(completer);
 
-    final request = {
-      'cmd': cmd,
-      if (params != null) 'params': params,
-    };
+    final request = {'cmd': cmd, if (params != null) 'params': params};
 
     final line = jsonEncode(request);
     _log('CMD', line.length > 200 ? '${line.substring(0, 200)}...' : line);
@@ -318,7 +371,8 @@ class TestPeer {
     final result = await command(cmd, params);
     if (result['ok'] != true) {
       throw StateError(
-          'Command "$cmd" failed: ${result['errorMessage'] ?? result}');
+        'Command "$cmd" failed: ${result['errorMessage'] ?? result}',
+      );
     }
     return result;
   }
@@ -336,8 +390,11 @@ class TestPeer {
       } catch (e) {
         if (attempt == maxAttempts) rethrow;
         final delay = baseDelay * attempt;
-        _log('RETRY', '$cmd attempt $attempt/$maxAttempts failed: $e '
-            '— retrying in ${delay.inSeconds}s');
+        _log(
+          'RETRY',
+          '$cmd attempt $attempt/$maxAttempts failed: $e '
+              '— retrying in ${delay.inSeconds}s',
+        );
         await Future.delayed(delay);
       }
     }
@@ -447,8 +504,13 @@ Future<List<_OrchestratorResult>> _runScenarios(
 
   if (flutterPeer == null) {
     _log('ORCH', 'ERROR: Flutter peer fixture not found after 120s');
-    results.add(_OrchestratorResult(
-        'SETUP', false, 'Flutter peer fixture not found after 120s'));
+    results.add(
+      _OrchestratorResult(
+        'SETUP',
+        false,
+        'Flutter peer fixture not found after 120s',
+      ),
+    );
     return results;
   }
 
@@ -600,8 +662,7 @@ Future<List<_OrchestratorResult>> _runScenarios(
       _log('ORCH', 'B3: store $i failed: $e');
     }
   }
-  results.add(_OrchestratorResult(
-      'B3', b3Count == 5, 'stored $b3Count/5'));
+  results.add(_OrchestratorResult('B3', b3Count == 5, 'stored $b3Count/5'));
   _log('ORCH', 'B3: stored $b3Count messages');
 
   // --- Scenario B5: Store inbox message with unknown sender ---
@@ -624,8 +685,9 @@ Future<List<_OrchestratorResult>> _runScenarios(
       'peerId': flutterPeerId,
       'envelope': envelope,
     });
-    results.add(_OrchestratorResult(
-        'B5', true, 'stored unknown-sender envelope'));
+    results.add(
+      _OrchestratorResult('B5', true, 'stored unknown-sender envelope'),
+    );
     _log('ORCH', 'B5: stored');
   } catch (e) {
     results.add(_OrchestratorResult('B5', false, 'store failed: $e'));
@@ -653,8 +715,7 @@ Future<List<_OrchestratorResult>> _runScenarios(
       await Future.delayed(const Duration(milliseconds: 500));
     }
   }
-  results.add(_OrchestratorResult(
-      'B6', b6Count == 60, 'stored $b6Count/60'));
+  results.add(_OrchestratorResult('B6', b6Count == 60, 'stored $b6Count/60'));
   _log('ORCH', 'B6: stored $b6Count messages');
 
   // --- Scenario G2: Store v2 encrypted in inbox ---
@@ -732,8 +793,9 @@ Future<List<_OrchestratorResult>> _runScenarios(
       'peerId': flutterPeerId,
       'text': largeText,
     });
-    results.add(_OrchestratorResult(
-        'E1', true, 'sent ${largeText.length} bytes'));
+    results.add(
+      _OrchestratorResult('E1', true, 'sent ${largeText.length} bytes'),
+    );
     _log('ORCH', 'E1: sent ${largeText.length} bytes');
   } catch (e) {
     results.add(_OrchestratorResult('E1', false, 'send failed: $e'));
@@ -773,8 +835,7 @@ Future<List<_OrchestratorResult>> _runScenarios(
       _log('ORCH', 'E4: send $i failed: $e');
     }
   }
-  results.add(_OrchestratorResult(
-      'E4', e4Count == 10, 'sent $e4Count/10'));
+  results.add(_OrchestratorResult('E4', e4Count == 10, 'sent $e4Count/10'));
   _log('ORCH', 'E4: sent $e4Count rapid messages');
 
   await Future.delayed(const Duration(seconds: 1));
@@ -790,7 +851,9 @@ Future<List<_OrchestratorResult>> _runScenarios(
     _log('ORCH', 'E6: sent garbage');
   } catch (e) {
     // send_raw may fail if the peer rejects it — that's also acceptable.
-    results.add(_OrchestratorResult('E6', true, 'send errored (acceptable): $e'));
+    results.add(
+      _OrchestratorResult('E6', true, 'send errored (acceptable): $e'),
+    );
     _log('ORCH', 'E6: send failed (expected): $e');
   }
 
@@ -820,8 +883,10 @@ Future<List<_OrchestratorResult>> _runScenarios(
       'version': '2',
       'senderPeerId': peer.peerId,
       'encrypted': {
-        'kem': 'dGhpcyBpcyBub3QgYSByZWFsIEtFTSBjaXBoZXJ0ZXh0IGJ1dCBpdCBsb29rcyBwbGF1c2libGU=',
-        'ciphertext': 'dGhpcyBpcyBub3QgcmVhbCBjaXBoZXJ0ZXh0IGVpdGhlciBidXQgaXQgaXMgYmFzZTY0',
+        'kem':
+            'dGhpcyBpcyBub3QgYSByZWFsIEtFTSBjaXBoZXJ0ZXh0IGJ1dCBpdCBsb29rcyBwbGF1c2libGU=',
+        'ciphertext':
+            'dGhpcyBpcyBub3QgcmVhbCBjaXBoZXJ0ZXh0IGVpdGhlciBidXQgaXQgaXMgYmFzZTY0',
         'nonce': 'bm90LWEtcmVhbC1ub25jZQ==',
       },
     });
@@ -831,8 +896,9 @@ Future<List<_OrchestratorResult>> _runScenarios(
     });
     _log('ORCH', 'E7b: stored plausible-but-wrong crypto envelope');
 
-    results.add(_OrchestratorResult(
-        'E7', true, 'stored 2 tampered v2 envelopes'));
+    results.add(
+      _OrchestratorResult('E7', true, 'stored 2 tampered v2 envelopes'),
+    );
   } catch (e) {
     results.add(_OrchestratorResult('E7', false, 'store failed: $e'));
     _log('ORCH', 'E7: store failed: $e');
@@ -865,10 +931,7 @@ Future<List<_OrchestratorResult>> _runScenarios(
   ];
   for (final text in e5Messages) {
     try {
-      await peer.commandOk('send_v1', {
-        'peerId': flutterPeerId,
-        'text': text,
-      });
+      await peer.commandOk('send_v1', {'peerId': flutterPeerId, 'text': text});
       e5Count++;
     } catch (e) {
       _log('ORCH', 'E5: send failed: $e');
@@ -954,8 +1017,13 @@ Future<List<_OrchestratorResult>> _runScenarios(
 
     if (!c1SentFound) {
       _log('ORCH', 'C1: Flutter never sent signal — skipping retrieval');
-      results.add(_OrchestratorResult(
-          'C1', false, 'Flutter signal not received after 60s'));
+      results.add(
+        _OrchestratorResult(
+          'C1',
+          false,
+          'Flutter signal not received after 60s',
+        ),
+      );
     } else {
       // Restart CLI node and retrieve inbox.
       await peer.startNode();
@@ -977,8 +1045,13 @@ Future<List<_OrchestratorResult>> _runScenarios(
         }
       }
 
-      results.add(_OrchestratorResult(
-          'C1', c1Found, c1Found ? 'C1 message found in inbox' : 'C1 not in inbox'));
+      results.add(
+        _OrchestratorResult(
+          'C1',
+          c1Found,
+          c1Found ? 'C1 message found in inbox' : 'C1 not in inbox',
+        ),
+      );
       _log('ORCH', 'C1: ${c1Found ? 'PASS' : 'FAIL'}');
     }
   } catch (e) {
@@ -1030,8 +1103,13 @@ Future<List<_OrchestratorResult>> _runScenarios(
       'text': 'A8b: Second reconnect',
     });
     _log('ORCH', 'A8: sent second message after second reconnect');
-    results.add(_OrchestratorResult(
-        'A8', true, 'both reconnect cycles + sends succeeded'));
+    results.add(
+      _OrchestratorResult(
+        'A8',
+        true,
+        'both reconnect cycles + sends succeeded',
+      ),
+    );
   } catch (e) {
     results.add(_OrchestratorResult('A8', false, 'error: $e'));
     _log('ORCH', 'A8: failed: $e');
@@ -1075,8 +1153,9 @@ Future<List<_OrchestratorResult>> _runScenarios(
     }
 
     if (!b8SentFound) {
-      results.add(_OrchestratorResult(
-          'B8', false, 'Flutter signal not received'));
+      results.add(
+        _OrchestratorResult('B8', false, 'Flutter signal not received'),
+      );
       _log('ORCH', 'B8: SKIP — Flutter signal not found');
     } else {
       await peer.startNode();
@@ -1102,10 +1181,15 @@ Future<List<_OrchestratorResult>> _runScenarios(
         }
       }
 
-      results.add(_OrchestratorResult('B8', foundV2,
+      results.add(
+        _OrchestratorResult(
+          'B8',
+          foundV2,
           foundV2
               ? 'v2 encrypted envelope found'
-              : 'no v2 envelope in ${msgs.length} messages'));
+              : 'no v2 envelope in ${msgs.length} messages',
+        ),
+      );
     }
   } catch (e) {
     results.add(_OrchestratorResult('B8', false, 'error: $e'));
@@ -1139,8 +1223,9 @@ Future<List<_OrchestratorResult>> _runScenarios(
     }
 
     if (e8BlobIdVal.isEmpty) {
-      results.add(_OrchestratorResult(
-          'E8', false, 'blob ID signal not received'));
+      results.add(
+        _OrchestratorResult('E8', false, 'blob ID signal not received'),
+      );
       _log('ORCH', 'E8: SKIP — no blob ID');
     } else {
       final dlResult = await peer.commandOk('media_download', {
@@ -1153,7 +1238,8 @@ Future<List<_OrchestratorResult>> _runScenarios(
       final listResult = await peer.commandOk('media_list');
       final blobs = listResult['blobs'] as List<dynamic>? ?? [];
       final blobFound = blobs.any(
-          (b) => (b as Map<String, dynamic>)['id'] == e8BlobIdVal);
+        (b) => (b as Map<String, dynamic>)['id'] == e8BlobIdVal,
+      );
       _log('ORCH', 'E8: media_list has blob=$blobFound');
 
       try {
@@ -1161,8 +1247,13 @@ Future<List<_OrchestratorResult>> _runScenarios(
       } catch (_) {}
 
       final pass = (dlSize as num) > 0 && blobFound;
-      results.add(_OrchestratorResult('E8', pass,
-          'downloaded size=$dlSize blobInList=$blobFound'));
+      results.add(
+        _OrchestratorResult(
+          'E8',
+          pass,
+          'downloaded size=$dlSize blobInList=$blobFound',
+        ),
+      );
     }
   } catch (e) {
     results.add(_OrchestratorResult('E8', false, 'error: $e'));
@@ -1186,8 +1277,9 @@ Future<List<_OrchestratorResult>> _runScenarios(
     }
 
     if (!g6FlutterUploadedFound) {
-      results.add(_OrchestratorResult(
-          'G6', false, 'Flutter upload signal not received'));
+      results.add(
+        _OrchestratorResult('G6', false, 'Flutter upload signal not received'),
+      );
       _log('ORCH', 'G6: SKIP — no upload signal');
     } else {
       // Download Flutter's profile.
@@ -1210,8 +1302,13 @@ Future<List<_OrchestratorResult>> _runScenarios(
       await _deviceWriteFile(paths.g6CliUploaded, 'uploaded');
 
       final pass = (dlSize as num) > 0;
-      results.add(_OrchestratorResult('G6', pass,
-          'downloaded Flutter profile size=$dlSize, uploaded CLI profile'));
+      results.add(
+        _OrchestratorResult(
+          'G6',
+          pass,
+          'downloaded Flutter profile size=$dlSize, uploaded CLI profile',
+        ),
+      );
     }
   } catch (e) {
     results.add(_OrchestratorResult('G6', false, 'error: $e'));
@@ -1252,23 +1349,40 @@ List<_OrchestratorResult> _verifyCliReceivedMessages(
 
   // A1: Flutter sent v1 plaintext — look for "A1:" in raw envelopes.
   final hasA1 = rawContents.any((c) => c.contains('"A1:'));
-  results.add(_OrchestratorResult(
-      'RECV-A1', hasA1, hasA1 ? 'v1 envelope received' : 'not found'));
+  results.add(
+    _OrchestratorResult(
+      'RECV-A1',
+      hasA1,
+      hasA1 ? 'v1 envelope received' : 'not found',
+    ),
+  );
   _log('VERIFY', 'RECV-A1: ${hasA1 ? 'PASS' : 'FAIL'}');
 
   // A4: Flutter sent v2 encrypted — look for version "2" AND Flutter's peer ID.
   // Matching both avoids false positives from non-A4 v2 messages.
-  final hasA4 = rawContents.any((c) =>
-      (c.contains('"version":"2"') || c.contains('"version": "2"')) &&
-      c.contains(flutterPeerId));
-  results.add(_OrchestratorResult(
-      'RECV-A4', hasA4, hasA4 ? 'v2 envelope from Flutter received' : 'not found'));
+  final hasA4 = rawContents.any(
+    (c) =>
+        (c.contains('"version":"2"') || c.contains('"version": "2"')) &&
+        c.contains(flutterPeerId),
+  );
+  results.add(
+    _OrchestratorResult(
+      'RECV-A4',
+      hasA4,
+      hasA4 ? 'v2 envelope from Flutter received' : 'not found',
+    ),
+  );
   _log('VERIFY', 'RECV-A4: ${hasA4 ? 'PASS' : 'FAIL'}');
 
   // A6: Flutter sent fast-path message — look for "A6:" in raw envelopes.
   final hasA6 = rawContents.any((c) => c.contains('"A6:'));
-  results.add(_OrchestratorResult(
-      'RECV-A6', hasA6, hasA6 ? 'fast-path envelope received' : 'not found'));
+  results.add(
+    _OrchestratorResult(
+      'RECV-A6',
+      hasA6,
+      hasA6 ? 'fast-path envelope received' : 'not found',
+    ),
+  );
   _log('VERIFY', 'RECV-A6: ${hasA6 ? 'PASS' : 'FAIL'}');
 
   return results;
@@ -1297,8 +1411,11 @@ void main(List<String> args) async {
   if (deviceId == null && platform != null) {
     deviceId = await _detectDevice(platform);
     if (deviceId == null) {
-      _log('ORCH', 'ERROR: No $platform device found. '
-          'Start an emulator/simulator first.');
+      _log(
+        'ORCH',
+        'ERROR: No $platform device found. '
+            'Start an emulator/simulator first.',
+      );
       exit(1);
     }
   }
@@ -1352,11 +1469,9 @@ void main(List<String> args) async {
   try {
     // Step 1: Build CLI test peer.
     _log('ORCH', 'Building CLI test peer...');
-    final buildResult = await Process.run(
-      'make',
-      ['testpeer'],
-      workingDirectory: _goMknoonDir,
-    );
+    final buildResult = await Process.run('make', [
+      'testpeer',
+    ], workingDirectory: _goMknoonDir);
     if (buildResult.exitCode != 0) {
       _log('ORCH', 'ERROR: Build failed:\n${buildResult.stderr}');
       exit(1);
@@ -1383,9 +1498,14 @@ void main(List<String> args) async {
     // On Android, clear app data to remove stale DBs from previous runs.
     if (_androidDeviceId != null) {
       _log('ORCH', 'Clearing Android app data...');
-      await Process.run(
-        _adb(), ['-s', _androidDeviceId!, 'shell', 'pm', 'clear', _appPackage],
-      );
+      await Process.run(_adb(), [
+        '-s',
+        _androidDeviceId!,
+        'shell',
+        'pm',
+        'clear',
+        _appPackage,
+      ]);
     }
     _log('ORCH', 'Launching Flutter integration test...');
 
@@ -1429,7 +1549,10 @@ void main(List<String> args) async {
     }
 
     // Step 9: Post-Flutter verification — check CLI peer received messages.
-    _log('ORCH', 'Post-Flutter verification: waiting 5s for in-flight messages...');
+    _log(
+      'ORCH',
+      'Post-Flutter verification: waiting 5s for in-flight messages...',
+    );
     await Future.delayed(const Duration(seconds: 5));
 
     try {
@@ -1442,8 +1565,9 @@ void main(List<String> args) async {
       orchResults.addAll(verifyResults);
     } catch (e) {
       _log('ORCH', 'Post-Flutter verification failed: $e');
-      orchResults.add(_OrchestratorResult(
-          'VERIFY', false, 'get_messages failed: $e'));
+      orchResults.add(
+        _OrchestratorResult('VERIFY', false, 'get_messages failed: $e'),
+      );
     }
 
     // G3: Exercise inbox_retrieve on CLI peer's own inbox.
@@ -1451,8 +1575,9 @@ void main(List<String> args) async {
     try {
       final inboxResult = await peer.commandOk('inbox_retrieve');
       final inboxCount = inboxResult['count'] ?? 0;
-      orchResults.add(_OrchestratorResult(
-          'G3', true, 'inbox_retrieve returned $inboxCount'));
+      orchResults.add(
+        _OrchestratorResult('G3', true, 'inbox_retrieve returned $inboxCount'),
+      );
       _log('ORCH', 'G3: inbox_retrieve count=$inboxCount');
     } catch (e) {
       orchResults.add(_OrchestratorResult('G3', false, 'error: $e'));
@@ -1466,8 +1591,9 @@ void main(List<String> args) async {
       final afterClear = await peer.commandOk('get_messages');
       final afterCount = afterClear['count'] ?? -1;
       final pass = afterCount == 0;
-      orchResults.add(_OrchestratorResult(
-          'G4', pass, 'count after clear=$afterCount'));
+      orchResults.add(
+        _OrchestratorResult('G4', pass, 'count after clear=$afterCount'),
+      );
       _log('ORCH', 'G4: count after clear=$afterCount');
     } catch (e) {
       orchResults.add(_OrchestratorResult('G4', false, 'error: $e'));
@@ -1485,16 +1611,20 @@ void main(List<String> args) async {
         });
         final restoredPeerId = restored['peerId'] as String?;
         final pass = restoredPeerId == originalPeerId;
-        orchResults.add(_OrchestratorResult(
-            'G5', pass, pass ? 'peerId matches' : 'mismatch: $restoredPeerId'));
+        orchResults.add(
+          _OrchestratorResult(
+            'G5',
+            pass,
+            pass ? 'peerId matches' : 'mismatch: $restoredPeerId',
+          ),
+        );
         _log('ORCH', 'G5: ${pass ? 'PASS' : 'FAIL'}');
       } catch (e) {
         orchResults.add(_OrchestratorResult('G5', false, 'error: $e'));
         _log('ORCH', 'G5: failed: $e');
       }
     } else {
-      orchResults.add(_OrchestratorResult(
-          'G5', false, 'no mnemonic saved'));
+      orchResults.add(_OrchestratorResult('G5', false, 'no mnemonic saved'));
       _log('ORCH', 'G5: SKIP — no mnemonic');
     }
 
@@ -1507,12 +1637,17 @@ void main(List<String> args) async {
     var orchFailed = 0;
     for (final r in orchResults) {
       final status = r.passed ? 'PASS' : 'FAIL';
-      if (r.passed) orchPassed++;
-      else orchFailed++;
+      if (r.passed)
+        orchPassed++;
+      else
+        orchFailed++;
       _log('ORCH', '  ${r.name}: $status — ${r.detail}');
     }
     _log('ORCH', '----------------------------------------');
-    _log('ORCH', '  $orchPassed/${orchResults.length} passed, $orchFailed failed');
+    _log(
+      'ORCH',
+      '  $orchPassed/${orchResults.length} passed, $orchFailed failed',
+    );
     _log('ORCH', '========================================');
 
     // Step 11: Cleanup.
@@ -1531,10 +1666,15 @@ void main(List<String> args) async {
 
     // Combined exit code: fail if either Flutter test OR orchestrator failed.
     final orchExitCode = orchFailed > 0 ? 1 : 0;
-    final combinedExitCode = (flutterExitCode != 0 || orchExitCode != 0) ? 1 : 0;
+    final combinedExitCode = (flutterExitCode != 0 || orchExitCode != 0)
+        ? 1
+        : 0;
 
-    _log('ORCH', 'Done. Flutter=$flutterExitCode Orch=$orchExitCode '
-        'Combined=$combinedExitCode');
+    _log(
+      'ORCH',
+      'Done. Flutter=$flutterExitCode Orch=$orchExitCode '
+          'Combined=$combinedExitCode',
+    );
     exit(combinedExitCode);
   } catch (e, st) {
     _log('ORCH', 'ERROR: $e\n$st');
@@ -1592,9 +1732,7 @@ Future<String?> _detectDevice(String platform) async {
       _log('ORCH', 'Found Android emulator: $id');
       return id;
     }
-    if (platform == 'ios' &&
-        targetPlatform.contains('ios') &&
-        isEmulator) {
+    if (platform == 'ios' && targetPlatform.contains('ios') && isEmulator) {
       final id = device['id'] as String;
       _log('ORCH', 'Found iOS simulator: $id');
       return id;

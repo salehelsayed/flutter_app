@@ -55,6 +55,12 @@ void main() {
     await tester.pump(const Duration(milliseconds: 1300));
   }
 
+  Opacity findChoiceCardOpacity(WidgetTester tester, String title) {
+    return tester.widget<Opacity>(
+      find.byKey(ValueKey('choice-card-opacity-$title')),
+    );
+  }
+
   group('IdentityChoiceWired', () {
     testWidgets(
       'tap on "I\'m new here" pushes progress route before generation completes',
@@ -180,6 +186,32 @@ void main() {
         );
       },
     );
+
+    testWidgets('buttons visually disable during identity generation handoff', (
+      tester,
+    ) async {
+      final repo = _FakeIdentityRepo();
+      final generateCompleter = Completer<Map<String, dynamic>>();
+
+      await tester.pumpWidget(
+        wrap(
+          IdentityChoiceWired(
+            repository: repo,
+            callIdentityGenerate: () => generateCompleter.future,
+            callIdentityRestore: (_) async => {'ok': true},
+            callMlKemKeygen: () async => _fakeMlKemResponse,
+            onNavigateToMain: (_) async {},
+          ),
+        ),
+      );
+      await pumpPastAnimations(tester);
+
+      await tester.tap(find.text("I'm new here"));
+      await tester.pump();
+
+      expect(findChoiceCardOpacity(tester, "I'm new here").opacity, 0.5);
+      expect(findChoiceCardOpacity(tester, 'Load my key').opacity, 0.5);
+    });
 
     testWidgets('progress route advances from generating_keys to saving', (
       tester,

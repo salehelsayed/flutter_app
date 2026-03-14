@@ -54,6 +54,7 @@ dependencies:
   firebase_messaging: ^15.1.6
   flutter_local_notifications: ^18.0.1
   receive_sharing_intent: ^1.8.1
+  sqflite_common_ffi: ^2.3.6
 
 dependency_overrides:
   # record 5.2.1 caps record_linux at <1.0.0, but record_platform_interface
@@ -66,7 +67,6 @@ dev_dependencies:
     sdk: flutter
   integration_test:
     sdk: flutter
-  sqflite_common_ffi: ^2.3.6
 
   # The "flutter_lints" package below contains a set of recommended lints to
   # encourage good coding practices. The lint set provided by the package is
