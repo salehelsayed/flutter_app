@@ -39,8 +39,11 @@ import 'package:flutter_app/features/identity/domain/repositories/identity_repos
 import 'package:flutter_app/features/qr_code/application/build_qr_payload_use_case.dart';
 import 'package:flutter_app/features/qr_code/presentation/screens/qr_scanner_wired.dart';
 import 'package:flutter_app/features/feed/presentation/screens/feed_wired.dart';
+import 'package:flutter_app/features/posts/application/nearby_location_service.dart';
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
+import 'package:flutter_app/features/posts/domain/repositories/contact_presence_snapshot_repository.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
+import 'package:flutter_app/features/posts/domain/repositories/posts_privacy_settings_repository.dart';
 import 'package:flutter_app/features/feed/presentation/navigation/feed_route_transition.dart';
 import 'package:flutter_app/features/share/application/settle_share_intent_flow.dart';
 import 'package:flutter_app/features/share/presentation/navigation/share_target_picker_route.dart';
@@ -76,6 +79,9 @@ class FirstTimeExperienceWired extends StatefulWidget {
   final ShareIntentService? shareIntentService;
   final AppShellController? appShellController;
   final PendingPostTargetStore? pendingPostTargetStore;
+  final PostsPrivacySettingsRepository? postsPrivacySettingsRepository;
+  final ContactPresenceSnapshotRepository? contactPresenceSnapshotRepository;
+  final NearbyLocationService? nearbyLocationService;
 
   const FirstTimeExperienceWired({
     super.key,
@@ -106,6 +112,9 @@ class FirstTimeExperienceWired extends StatefulWidget {
     this.shareIntentService,
     this.appShellController,
     this.pendingPostTargetStore,
+    this.postsPrivacySettingsRepository,
+    this.contactPresenceSnapshotRepository,
+    this.nearbyLocationService,
   });
 
   @override
@@ -232,6 +241,12 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
                 appShellController ?? _missingAppShellController(),
             pendingPostTargetStore:
                 pendingPostTargetStore ?? _missingPendingPostTargetStore(),
+            postsPrivacySettingsRepository:
+                widget.postsPrivacySettingsRepository ??
+                _missingPostsPrivacySettingsRepository(),
+            contactPresenceSnapshotRepository:
+                widget.contactPresenceSnapshotRepository,
+            nearbyLocationService: widget.nearbyLocationService,
           ),
         ),
       );
@@ -510,6 +525,7 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
           shareIntentService: widget.shareIntentService,
           appShellController: widget.appShellController,
           pendingPostTargetStore: widget.pendingPostTargetStore,
+          postsPrivacySettingsRepository: widget.postsPrivacySettingsRepository,
         ),
       ),
     );
@@ -530,6 +546,12 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
   Never _missingPendingPostTargetStore() {
     throw StateError(
       'FirstTimeExperienceWired requires pendingPostTargetStore before navigating to FeedWired.',
+    );
+  }
+
+  Never _missingPostsPrivacySettingsRepository() {
+    throw StateError(
+      'FirstTimeExperienceWired requires postsPrivacySettingsRepository before navigating to FeedWired.',
     );
   }
 

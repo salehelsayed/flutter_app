@@ -16,6 +16,9 @@ import 'package:flutter_app/features/contacts/domain/repositories/contact_reposi
 import 'package:flutter_app/features/home/application/identity_avatar_resolver.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
+import 'package:flutter_app/features/posts/application/nearby_location_service.dart';
+import 'package:flutter_app/features/posts/domain/models/posts_privacy_settings.dart';
+import 'package:flutter_app/features/posts/domain/repositories/posts_privacy_settings_repository.dart';
 import 'package:flutter_app/features/settings/application/upload_profile_picture_use_case.dart';
 import 'settings_screen.dart';
 
@@ -30,6 +33,8 @@ class SettingsWired extends StatefulWidget {
   final SecureKeyStore secureKeyStore;
   final ImageProcessor imageProcessor;
   final AppShellController appShellController;
+  final PostsPrivacySettingsRepository postsPrivacySettingsRepository;
+  final NearbyLocationService? nearbyLocationService;
 
   const SettingsWired({
     super.key,
@@ -40,6 +45,8 @@ class SettingsWired extends StatefulWidget {
     required this.secureKeyStore,
     required this.imageProcessor,
     required this.appShellController,
+    required this.postsPrivacySettingsRepository,
+    this.nearbyLocationService,
   });
 
   @override
@@ -57,6 +64,7 @@ class _SettingsWiredState extends State<SettingsWired> {
   ImageQualityPreference _currentQuality = ImageQualityPreference.compressed;
   ImageQualityPreference _currentVideoQuality =
       ImageQualityPreference.compressed;
+  PostsPrivacySettings _postsPrivacySettings = const PostsPrivacySettings();
 
   @override
   void initState() {
@@ -65,6 +73,7 @@ class _SettingsWiredState extends State<SettingsWired> {
     _loadIdentity();
     _loadQualityPreference();
     _loadVideoQualityPreference();
+    _loadPostsPrivacySettings();
   }
 
   Future<void> _loadIdentity() async {
@@ -167,6 +176,32 @@ class _SettingsWiredState extends State<SettingsWired> {
       secureKeyStore: widget.secureKeyStore,
       preference: newQuality,
     );
+  }
+
+  Future<void> _loadPostsPrivacySettings() async {
+    final settings = await widget.postsPrivacySettingsRepository.load();
+    if (!mounted) {
+      return;
+    }
+    setState(() => _postsPrivacySettings = settings);
+  }
+
+  Future<void> _onNearbySharingChanged(bool enabled) async {
+    if (enabled) {
+      final updated = _postsPrivacySettings.copyWith(sharingEnabled: true);
+      setState(() => _postsPrivacySettings = updated);
+      await widget.postsPrivacySettingsRepository.save(updated);
+      await widget.nearbyLocationService?.refreshInteractivelyFromSettings();
+      await _loadPostsPrivacySettings();
+      return;
+    }
+    await widget.nearbyLocationService?.handleSharingDisabled();
+    final updated = _postsPrivacySettings.copyWith(
+      sharingEnabled: false,
+      clearSnapshot: true,
+    );
+    setState(() => _postsPrivacySettings = updated);
+    await widget.postsPrivacySettingsRepository.save(updated);
   }
 
   Future<void> _onUsernameChanged(String newUsername) async {
@@ -297,6 +332,8 @@ class _SettingsWiredState extends State<SettingsWired> {
         onQualityChanged: _onQualityChanged,
         currentVideoQuality: _currentVideoQuality,
         onVideoQualityChanged: _onVideoQualityChanged,
+        isNearbySharingEnabled: _postsPrivacySettings.sharingEnabled,
+        onNearbySharingChanged: _onNearbySharingChanged,
         onSwitchView: _onSwitchView,
         activeTab: widget.appShellController.activeTab,
       ),

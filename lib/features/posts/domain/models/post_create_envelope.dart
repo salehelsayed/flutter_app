@@ -20,6 +20,11 @@ class PostCreateEnvelope {
   final PostAudience audience;
   final String expiresAt;
   final bool keepAvailable;
+  final int? nearbyDistanceM;
+  final int? nearbySenderLatE3;
+  final int? nearbySenderLngE3;
+  final String? nearbySenderCapturedAt;
+  final double? nearbySenderAccuracyM;
   final List<String> recipientPeerIds;
 
   const PostCreateEnvelope({
@@ -35,6 +40,11 @@ class PostCreateEnvelope {
     required this.audience,
     required this.expiresAt,
     required this.keepAvailable,
+    this.nearbyDistanceM,
+    this.nearbySenderLatE3,
+    this.nearbySenderLngE3,
+    this.nearbySenderCapturedAt,
+    this.nearbySenderAccuracyM,
     this.recipientPeerIds = const <String>[],
   });
 
@@ -52,6 +62,11 @@ class PostCreateEnvelope {
       audience: post.audience,
       expiresAt: post.expiresAt,
       keepAvailable: post.keepAvailable,
+      nearbyDistanceM: post.nearbyDistanceM,
+      nearbySenderLatE3: post.nearbySenderLatE3,
+      nearbySenderLngE3: post.nearbySenderLngE3,
+      nearbySenderCapturedAt: post.nearbySenderCapturedAt,
+      nearbySenderAccuracyM: post.nearbySenderAccuracyM,
       recipientPeerIds: const <String>[],
     );
   }
@@ -102,6 +117,7 @@ class PostCreateEnvelope {
       }
       final audienceJson = snapshot['audience'] as Map<String, dynamic>?;
       final audienceKind = audienceJson?['kind'] as String? ?? 'all_friends';
+      final radiusM = (audienceJson?['radius_m'] as num?)?.toInt();
       final selectedIds =
           (payload['selected_peer_ids'] as List<dynamic>? ?? const [])
               .map((value) => value.toString())
@@ -110,13 +126,24 @@ class PostCreateEnvelope {
           (payload['recipient_peer_ids'] as List<dynamic>? ?? const [])
               .map((value) => value.toString())
               .toList(growable: false);
-      final audience = PostAudience(
-        kind: audienceKind == 'pick_people'
-            ? PostAudienceKind.pickPeople
-            : PostAudienceKind.allFriends,
-        selectedPeerIds: selectedIds,
-        scopeLabel: audienceJson?['scope_label'] as String?,
-      );
+      final audience = switch (audienceKind) {
+        'pick_people' => PostAudience(
+          kind: PostAudienceKind.pickPeople,
+          selectedPeerIds: selectedIds,
+          scopeLabel: audienceJson?['scope_label'] as String?,
+        ),
+        'people_nearby' when radiusM != null => PostAudience(
+          kind: PostAudienceKind.peopleNearby,
+          radiusM: radiusM,
+          scopeLabel: audienceJson?['scope_label'] as String?,
+        ),
+        'all_friends' => PostAudience(
+          kind: PostAudienceKind.allFriends,
+          scopeLabel: audienceJson?['scope_label'] as String?,
+        ),
+        _ => throw const FormatException('invalid_audience'),
+      };
+      final nearbyContext = payload['nearby_context'] as Map<String, dynamic>?;
       final media = <PostMediaAttachmentModel>[];
       for (var index = 0; index < mediaJson.length; index++) {
         final attachment = PostMediaAttachmentModel.fromRenderableJson(
@@ -145,6 +172,13 @@ class PostCreateEnvelope {
         audience: audience,
         expiresAt: expiresAt,
         keepAvailable: (snapshot['keep_available'] as bool?) ?? false,
+        nearbyDistanceM: (nearbyContext?['distance_m'] as num?)?.toInt(),
+        nearbySenderLatE3: nearbyContext?['sender_lat_e3'] as int?,
+        nearbySenderLngE3: nearbyContext?['sender_lng_e3'] as int?,
+        nearbySenderCapturedAt:
+            nearbyContext?['sender_captured_at'] as String?,
+        nearbySenderAccuracyM:
+            (nearbyContext?['sender_accuracy_m'] as num?)?.toDouble(),
         recipientPeerIds: recipientPeerIds,
       );
     } catch (_) {
@@ -209,6 +243,7 @@ class PostCreateEnvelope {
   String toJson({
     List<String>? selectedPeerIds,
     List<String>? recipientPeerIds,
+    int? nearbyDistanceM,
   }) {
     final payload = <String, Object?>{
       'post_id': postId,
@@ -219,7 +254,7 @@ class PostCreateEnvelope {
         'post_created_at': createdAt,
         'audience': <String, Object?>{
           'kind': audience.kind.toWireValue(),
-          'radius_m': null,
+          'radius_m': audience.radiusM,
           'scope_label': audience.scopeLabel,
         },
         'text': text,
@@ -234,6 +269,14 @@ class PostCreateEnvelope {
         'selected_peer_ids': selectedPeerIds,
       if (recipientPeerIds != null && recipientPeerIds.isNotEmpty)
         'recipient_peer_ids': recipientPeerIds,
+      if (_hasNearbyContext)
+        'nearby_context': <String, Object?>{
+          'distance_m': nearbyDistanceM ?? this.nearbyDistanceM,
+          'sender_lat_e3': nearbySenderLatE3,
+          'sender_lng_e3': nearbySenderLngE3,
+          'sender_captured_at': nearbySenderCapturedAt,
+          'sender_accuracy_m': nearbySenderAccuracyM,
+        }..removeWhere((_, value) => value == null),
     };
     return jsonEncode({
       'type': 'post_create',
@@ -248,6 +291,7 @@ class PostCreateEnvelope {
   String toInnerJson({
     List<String>? selectedPeerIds,
     List<String>? recipientPeerIds,
+    int? nearbyDistanceM,
   }) {
     return jsonEncode({
       'post_id': postId,
@@ -258,7 +302,7 @@ class PostCreateEnvelope {
         'post_created_at': createdAt,
         'audience': <String, Object?>{
           'kind': audience.kind.toWireValue(),
-          'radius_m': null,
+          'radius_m': audience.radiusM,
           'scope_label': audience.scopeLabel,
         },
         'text': text,
@@ -273,6 +317,14 @@ class PostCreateEnvelope {
         'selected_peer_ids': selectedPeerIds,
       if (recipientPeerIds != null && recipientPeerIds.isNotEmpty)
         'recipient_peer_ids': recipientPeerIds,
+      if (_hasNearbyContext)
+        'nearby_context': <String, Object?>{
+          'distance_m': nearbyDistanceM ?? this.nearbyDistanceM,
+          'sender_lat_e3': nearbySenderLatE3,
+          'sender_lng_e3': nearbySenderLngE3,
+          'sender_captured_at': nearbySenderCapturedAt,
+          'sender_accuracy_m': nearbySenderAccuracyM,
+        }..removeWhere((_, value) => value == null),
     });
   }
 
@@ -313,11 +365,23 @@ class PostCreateEnvelope {
       visibleAt: createdAt,
       expiresAt: expiresAt,
       keepAvailable: keepAvailable,
+      nearbyDistanceM: nearbyDistanceM,
+      nearbySenderLatE3: nearbySenderLatE3,
+      nearbySenderLngE3: nearbySenderLngE3,
+      nearbySenderCapturedAt: nearbySenderCapturedAt,
+      nearbySenderAccuracyM: nearbySenderAccuracyM,
       isIncoming: isIncoming,
       isFocused: isFocused,
       deliveryStatus: deliveryStatus,
     );
   }
+
+  bool get _hasNearbyContext =>
+      nearbyDistanceM != null ||
+      nearbySenderLatE3 != null ||
+      nearbySenderLngE3 != null ||
+      nearbySenderCapturedAt != null ||
+      nearbySenderAccuracyM != null;
 
   static bool _isValidCreatedAt(String createdAt) {
     final timestamp = DateTime.tryParse(createdAt)?.toUtc();

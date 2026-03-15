@@ -36,6 +36,7 @@ import '../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../shared/fakes/in_memory_media_attachment_repository.dart';
 import '../../../shared/fakes/in_memory_message_repository.dart';
 import '../../../shared/fakes/in_memory_post_repository.dart';
+import '../../../shared/fakes/in_memory_posts_privacy_settings_repository.dart';
 import '../../contact_request/domain/repositories/fake_contact_request_repository.dart';
 import '../../identity/domain/repositories/fake_identity_repository.dart';
 
@@ -46,6 +47,7 @@ void main() {
   late InMemoryMessageRepository messageRepository;
   late InMemoryMediaAttachmentRepository mediaAttachmentRepository;
   late InMemoryPostRepository postRepository;
+  late InMemoryPostsPrivacySettingsRepository postsPrivacySettingsRepository;
   late FakeIdentityRepository identityRepository;
   late FakeP2PService p2pService;
   late FakeMediaFileManager mediaFileManager;
@@ -104,6 +106,7 @@ void main() {
     messageRepository = InMemoryMessageRepository();
     mediaAttachmentRepository = InMemoryMediaAttachmentRepository();
     postRepository = InMemoryPostRepository();
+    postsPrivacySettingsRepository = InMemoryPostsPrivacySettingsRepository();
     identityRepository = FakeIdentityRepository();
     p2pService = FakeP2PService();
     mediaFileManager = FakeMediaFileManager();
@@ -149,6 +152,7 @@ void main() {
   });
 
   tearDown(() {
+    postsPrivacySettingsRepository.dispose();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
           const MethodChannel('plugins.flutter.io/path_provider'),
@@ -206,6 +210,7 @@ void main() {
       groupMessageListener: groupMessageListener,
       appShellController: appShellController,
       pendingPostTargetStore: pendingPostTargetStore,
+      postsPrivacySettingsRepository: postsPrivacySettingsRepository,
     );
   }
 

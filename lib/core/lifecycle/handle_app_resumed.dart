@@ -12,6 +12,7 @@ import 'package:flutter_app/features/groups/application/rejoin_group_topics_use_
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
+import 'package:flutter_app/features/posts/application/nearby_location_service.dart';
 
 bool _resumeGroupRecoveryEnabled(P2PService p2pService) {
   return p2pService.currentState.featureFlags?['enableResumeGroupRecovery'] ??
@@ -33,6 +34,7 @@ Future<bool?> handleAppResumed({
   GroupMessageRepository? groupMsgRepo,
   MediaAttachmentRepository? mediaAttachmentRepo,
   ReactionRepository? reactionRepo,
+  NearbyLocationService? nearbyLocationService,
 }) async {
   final resumeStart = DateTime.now();
   debugPrint(
@@ -179,6 +181,25 @@ Future<bool?> handleAppResumed({
         '[RESUME] Step 4: retryIncompleteKeyExchanges() done '
         '(retried=$retried, took ${retryMs}ms)',
       );
+    }
+
+    if (nearbyLocationService != null) {
+      final nearbyStart = DateTime.now();
+      debugPrint('[RESUME] Step 5: refreshSilentlyOnResume() starting...');
+      try {
+        await nearbyLocationService.refreshSilentlyOnResume();
+        final nearbyMs = DateTime.now().difference(nearbyStart).inMilliseconds;
+        debugPrint(
+          '[RESUME] Step 5: refreshSilentlyOnResume() done '
+          '(took ${nearbyMs}ms)',
+        );
+      } catch (e) {
+        final nearbyMs = DateTime.now().difference(nearbyStart).inMilliseconds;
+        debugPrint(
+          '[RESUME] Step 5: refreshSilentlyOnResume() error '
+          'after ${nearbyMs}ms: $e',
+        );
+      }
     }
 
     final totalMs = DateTime.now().difference(resumeStart).inMilliseconds;

@@ -2,7 +2,6 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
@@ -20,6 +19,7 @@ import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
 import 'package:flutter_app/features/settings/presentation/screens/settings_wired.dart';
 import '../../../../core/secure_storage/fake_secure_key_store.dart';
+import '../../../../shared/fakes/in_memory_posts_privacy_settings_repository.dart';
 
 class FakeIdentityRepository implements IdentityRepository {
   IdentityModel? identity;
@@ -194,6 +194,7 @@ void main() {
     Bridge? bridge,
     ContactRepository? contactRepo,
     P2PService? p2pService,
+    InMemoryPostsPrivacySettingsRepository? postsPrivacySettingsRepository,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -205,6 +206,9 @@ void main() {
           secureKeyStore: FakeSecureKeyStore(),
           imageProcessor: ImageProcessor(compressFile: _noOpCompress),
           appShellController: AppShellController(),
+          postsPrivacySettingsRepository:
+              postsPrivacySettingsRepository ??
+              InMemoryPostsPrivacySettingsRepository(),
         ),
       ),
     );
@@ -357,6 +361,8 @@ void main() {
           secureKeyStore: store,
           imageProcessor: ImageProcessor(compressFile: _noOpCompress),
           appShellController: AppShellController(),
+          postsPrivacySettingsRepository:
+              InMemoryPostsPrivacySettingsRepository(),
         ),
       ),
     );
@@ -395,6 +401,8 @@ void main() {
                           compressFile: _noOpCompress,
                         ),
                         appShellController: AppShellController(),
+                        postsPrivacySettingsRepository:
+                            InMemoryPostsPrivacySettingsRepository(),
                       ),
                     ),
                   )

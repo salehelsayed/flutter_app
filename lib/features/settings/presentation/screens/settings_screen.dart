@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/feed_navigation_bar.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/settings_peer_id_card.dart';
+import 'package:flutter_app/features/settings/presentation/widgets/posts_nearby_settings_card.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/settings_profile_section.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/settings_recovery_phrase_card.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
@@ -33,6 +34,8 @@ class SettingsScreen extends StatelessWidget {
   final ValueChanged<ImageQualityPreference>? onQualityChanged;
   final ImageQualityPreference currentVideoQuality;
   final ValueChanged<ImageQualityPreference>? onVideoQualityChanged;
+  final bool isNearbySharingEnabled;
+  final ValueChanged<bool>? onNearbySharingChanged;
   final void Function(String) onSwitchView;
   final String activeTab;
 
@@ -56,6 +59,8 @@ class SettingsScreen extends StatelessWidget {
     this.onQualityChanged,
     this.currentVideoQuality = ImageQualityPreference.compressed,
     this.onVideoQualityChanged,
+    this.isNearbySharingEnabled = false,
+    this.onNearbySharingChanged,
     required this.onSwitchView,
     required this.activeTab,
   });
@@ -100,11 +105,19 @@ class SettingsScreen extends StatelessWidget {
                               height: 40,
                               decoration: BoxDecoration(
                                 shape: BoxShape.circle,
-                                color:
-                                    const Color.fromRGBO(255, 255, 255, 0.08),
+                                color: const Color.fromRGBO(
+                                  255,
+                                  255,
+                                  255,
+                                  0.08,
+                                ),
                                 border: Border.all(
                                   color: const Color.fromRGBO(
-                                      255, 255, 255, 0.12),
+                                    255,
+                                    255,
+                                    255,
+                                    0.12,
+                                  ),
                                 ),
                               ),
                               child: const Icon(
@@ -169,6 +182,13 @@ class SettingsScreen extends StatelessWidget {
                             onChanged: onVideoQualityChanged!,
                             label: 'Video Quality',
                             icon: Icons.videocam,
+                          ),
+                          const SizedBox(height: 24),
+                        ],
+                        if (onNearbySharingChanged != null) ...[
+                          PostsNearbySettingsCard(
+                            sharingEnabled: isNearbySharingEnabled,
+                            onChanged: onNearbySharingChanged!,
                           ),
                           const SizedBox(height: 24),
                         ],

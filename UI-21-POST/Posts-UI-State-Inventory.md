@@ -189,6 +189,8 @@ For these states, implementation follows:
 - Reshared trust context is the attribution line only.
 - Carousel interaction is horizontal swipe inside the card, with dots and counter badge.
 - Voice posts reuse existing recorder and playback language instead of inventing a second system.
+- Sender-side pinned-post controls are author-only.
+- The sender-visible destructive pin control is a single `Remove` action in v1. Do not show separate `Unpin` and `Delete` affordances.
 
 ## Acceptance Summary
 

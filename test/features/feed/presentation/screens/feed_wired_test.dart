@@ -53,6 +53,7 @@ import '../../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../../shared/fakes/in_memory_introduction_repository.dart';
 import '../../../../shared/fakes/in_memory_message_repository.dart';
 import '../../../../shared/fakes/in_memory_post_repository.dart';
+import '../../../../shared/fakes/in_memory_posts_privacy_settings_repository.dart';
 import '../../../contacts/domain/repositories/fake_contact_repository.dart';
 import '../../../contact_request/domain/repositories/fake_contact_request_repository.dart';
 import '../../../conversation/domain/repositories/fake_reaction_repository.dart';
@@ -68,6 +69,7 @@ void main() {
   late InMemoryMessageRepository messageRepo;
   late InMemoryMediaAttachmentRepository mediaAttachmentRepo;
   late InMemoryPostRepository postRepository;
+  late InMemoryPostsPrivacySettingsRepository postsPrivacySettingsRepository;
   late AppShellController appShellController;
   late PendingPostTargetStore pendingPostTargetStore;
   late FakeMediaFileManager mediaFileManager;
@@ -102,6 +104,7 @@ void main() {
     messageRepo = InMemoryMessageRepository();
     mediaAttachmentRepo = InMemoryMediaAttachmentRepository();
     postRepository = InMemoryPostRepository();
+    postsPrivacySettingsRepository = InMemoryPostsPrivacySettingsRepository();
     appShellController = AppShellController();
     pendingPostTargetStore = PendingPostTargetStore();
     mediaFileManager = FakeMediaFileManager();
@@ -133,6 +136,7 @@ void main() {
 
   tearDown(() {
     postRepository.dispose();
+    postsPrivacySettingsRepository.dispose();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
           const MethodChannel('plugins.flutter.io/path_provider'),
@@ -208,6 +212,7 @@ void main() {
         introductionListener: introductionListener,
         appShellController: appShellController,
         pendingPostTargetStore: pendingPostTargetStore,
+        postsPrivacySettingsRepository: postsPrivacySettingsRepository,
       ),
     );
   }

@@ -49,8 +49,12 @@ import 'package:flutter_app/core/services/share_intent_service.dart';
 import 'package:flutter_app/features/share/application/settle_share_intent_flow.dart';
 import 'package:flutter_app/features/share/presentation/navigation/share_target_picker_route.dart';
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
+import 'package:flutter_app/features/posts/application/nearby_location_service.dart';
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
+import 'package:flutter_app/features/posts/application/refresh_nearby_on_startup_use_case.dart';
+import 'package:flutter_app/features/posts/domain/repositories/contact_presence_snapshot_repository.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
+import 'package:flutter_app/features/posts/domain/repositories/posts_privacy_settings_repository.dart';
 
 /// Router widget that handles app startup navigation.
 ///
@@ -138,6 +142,9 @@ class StartupRouter extends StatefulWidget {
 
   final AppShellController appShellController;
   final PendingPostTargetStore pendingPostTargetStore;
+  final PostsPrivacySettingsRepository postsPrivacySettingsRepository;
+  final ContactPresenceSnapshotRepository? contactPresenceSnapshotRepository;
+  final NearbyLocationService? nearbyLocationService;
   final Future<void> Function(NotificationRouteTarget routeTarget)?
   onNotificationRouteTarget;
 
@@ -170,6 +177,9 @@ class StartupRouter extends StatefulWidget {
     this.shareIntentService,
     required this.appShellController,
     required this.pendingPostTargetStore,
+    required this.postsPrivacySettingsRepository,
+    this.contactPresenceSnapshotRepository,
+    this.nearbyLocationService,
     this.onNotificationRouteTarget,
   });
 
@@ -219,6 +229,11 @@ class _StartupRouterState extends State<StartupRouter> {
           await _ensureMlKemKeys();
           final contactCount = await contactRepository.getContactCount();
           if (!mounted) return;
+          unawaited(
+            refreshNearbyOnStartup(
+              nearbyLocationService: widget.nearbyLocationService,
+            ),
+          );
 
           emitFlowEvent(
             layer: 'FL',
@@ -254,6 +269,11 @@ class _StartupRouterState extends State<StartupRouter> {
               introductionListener: widget.introductionListener,
               appShellController: widget.appShellController,
               pendingPostTargetStore: widget.pendingPostTargetStore,
+              postsPrivacySettingsRepository:
+                  widget.postsPrivacySettingsRepository,
+              contactPresenceSnapshotRepository:
+                  widget.contactPresenceSnapshotRepository,
+              nearbyLocationService: widget.nearbyLocationService,
             ),
           );
 
@@ -270,6 +290,11 @@ class _StartupRouterState extends State<StartupRouter> {
         case StartupDecision.hasIdentityNoContacts:
           _setStartupStage(startupStageOpeningSetup);
           await _ensureMlKemKeys();
+          unawaited(
+            refreshNearbyOnStartup(
+              nearbyLocationService: widget.nearbyLocationService,
+            ),
+          );
           emitFlowEvent(
             layer: 'FL',
             event: 'ID_STARTUP_ROUTE_MAIN_NO_CONTACTS',
@@ -349,6 +374,11 @@ class _StartupRouterState extends State<StartupRouter> {
                       shareIntentService: widget.shareIntentService,
                       appShellController: widget.appShellController,
                       pendingPostTargetStore: widget.pendingPostTargetStore,
+                      postsPrivacySettingsRepository:
+                          widget.postsPrivacySettingsRepository,
+                      contactPresenceSnapshotRepository:
+                          widget.contactPresenceSnapshotRepository,
+                      nearbyLocationService: widget.nearbyLocationService,
                     ),
                   ),
                   (_) => false,
@@ -412,6 +442,11 @@ class _StartupRouterState extends State<StartupRouter> {
     if (result == StartNodeResult.success) {
       StartupTiming.instance.mark('p2p_startup_complete');
       StartupTiming.instance.printSummary();
+      unawaited(
+        refreshNearbyOnStartup(
+          nearbyLocationService: widget.nearbyLocationService,
+        ),
+      );
       unawaited(_handleInitialPushOpen());
       _registerPushToken();
 
@@ -615,6 +650,10 @@ class _StartupRouterState extends State<StartupRouter> {
         shareIntentService: shareIntentService,
         appShellController: widget.appShellController,
         pendingPostTargetStore: widget.pendingPostTargetStore,
+        postsPrivacySettingsRepository: widget.postsPrivacySettingsRepository,
+        contactPresenceSnapshotRepository:
+            widget.contactPresenceSnapshotRepository,
+        nearbyLocationService: widget.nearbyLocationService,
       ),
     );
 

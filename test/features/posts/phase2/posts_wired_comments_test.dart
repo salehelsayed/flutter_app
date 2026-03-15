@@ -11,6 +11,7 @@ import 'package:flutter_app/features/posts/presentation/screens/posts_wired.dart
 import '../../../shared/fakes/fake_p2p_network.dart';
 import '../../../shared/fakes/fake_p2p_service_integration.dart';
 import '../../../shared/fakes/in_memory_post_repository.dart';
+import '../../../shared/fakes/in_memory_posts_privacy_settings_repository.dart';
 import '../../contacts/domain/repositories/fake_contact_repository.dart';
 import '../../identity/domain/repositories/fake_identity_repository.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
@@ -19,6 +20,7 @@ void main() {
   late FakeIdentityRepository identityRepository;
   late FakeContactRepository contactRepository;
   late InMemoryPostRepository postRepository;
+  late InMemoryPostsPrivacySettingsRepository postsPrivacySettingsRepository;
   late PendingPostTargetStore pendingTargetStore;
   late FakeP2PNetwork network;
   late FakeP2PService p2pService;
@@ -38,6 +40,7 @@ void main() {
       );
     contactRepository = FakeContactRepository();
     postRepository = InMemoryPostRepository();
+    postsPrivacySettingsRepository = InMemoryPostsPrivacySettingsRepository();
     pendingTargetStore = PendingPostTargetStore();
     network = FakeP2PNetwork();
     p2pService = FakeP2PService(peerId: 'peer-self', network: network);
@@ -45,6 +48,7 @@ void main() {
 
   tearDown(() {
     postRepository.dispose();
+    postsPrivacySettingsRepository.dispose();
   });
 
   Widget buildWidget() {
@@ -57,6 +61,7 @@ void main() {
         activeTab: 'posts',
         onSwitchView: (_) {},
         pendingTargetStore: pendingTargetStore,
+        postsPrivacySettingsRepository: postsPrivacySettingsRepository,
       ),
     );
   }
@@ -111,7 +116,10 @@ void main() {
     final comments = await postRepository.loadComments('post-1');
     expect(comments, hasLength(1));
     expect(comments.single.body, 'I can lend one.');
-    expect((await postRepository.getPost('post-1'))?.lastEngagementAt, isNotNull);
+    expect(
+      (await postRepository.getPost('post-1'))?.lastEngagementAt,
+      isNotNull,
+    );
   });
 }
 

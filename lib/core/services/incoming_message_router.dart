@@ -25,6 +25,7 @@ class IncomingMessageRouter {
   final _postReactionController = StreamController<ChatMessage>.broadcast();
   final _postCommentReactionController =
       StreamController<ChatMessage>.broadcast();
+  final _postPresenceController = StreamController<ChatMessage>.broadcast();
   final _unknownController = StreamController<ChatMessage>.broadcast();
 
   IncomingMessageRouter({required this.p2pService});
@@ -65,6 +66,9 @@ class IncomingMessageRouter {
   /// Stream of incoming post_comment_reaction messages.
   Stream<ChatMessage> get postCommentReactionStream =>
       _postCommentReactionController.stream;
+
+  /// Stream of incoming post_presence_update messages.
+  Stream<ChatMessage> get postPresenceStream => _postPresenceController.stream;
 
   /// Stream of messages with unknown or unparseable types.
   Stream<ChatMessage> get unknownMessageStream => _unknownController.stream;
@@ -159,6 +163,8 @@ class IncomingMessageRouter {
           _postReactionController.add(message);
         case 'post_comment_reaction':
           _postCommentReactionController.add(message);
+        case 'post_presence_update':
+          _postPresenceController.add(message);
         case 'delivery_receipt':
           // Legacy envelope type kept for backward compatibility.
           // Delivery status is now sender-side inbox/direct semantics only.
@@ -209,6 +215,7 @@ class IncomingMessageRouter {
     _postCommentController.close();
     _postReactionController.close();
     _postCommentReactionController.close();
+    _postPresenceController.close();
     _unknownController.close();
   }
 }

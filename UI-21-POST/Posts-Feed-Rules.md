@@ -112,6 +112,8 @@ Sectioning uses `visible_at` in the local device timezone:
 
 - A post may appear both in the pinned section and in the normal feed during its first 24 hours after creation.
 - After 24 hours, if still pinned, it leaves the normal chronological feed and remains pinned only.
+- Shared pin-state changes are author-only. Only the original post author may send `post_pin_update` or `post_pin_remove`.
+- Sender-side pin removal is one visible `Remove` action in v1. If the post is still within 24 hours, it remains in the normal feed; if older, it disappears entirely from receiver-visible surfaces.
 - Removing the pin later does not resurrect an aged-out normal-feed card.
 - Local dismiss removes the pin from the receiver's pinned section only and does not affect other receivers.
 

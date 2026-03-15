@@ -1,13 +1,13 @@
 # Phase 0 Approval
 
-Status: Pending human sign-off  
+Status: Ratified  
 Prepared on: 2026-03-15  
 Prepared by: Codex  
 Default approval authority: requesting maintainer or delegated human feature owner  
 
-Approved by: 
-Approved on: 
-Approved artifact set: 
+Approved by: Saleh Elsayed
+Approved on: 2026-03-15
+Approved artifact set: Posts-Envelope-Schemas.md, Posts-Ingest-Flow.md, Posts-Feed-Rules.md, Posts-Nearby-Privacy-Contract.md, Posts-UI-State-Inventory.md
 
 ## Artifact Set To Ratify
 

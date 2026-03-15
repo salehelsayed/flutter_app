@@ -6,6 +6,7 @@ import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/downsample_waveform.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/posts/application/attach_post_media_use_case.dart';
+import 'package:flutter_app/features/posts/application/nearby_location_service.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/shared/widgets/media/recording_overlay.dart';
 
@@ -27,6 +28,9 @@ class ComposePostSheet extends StatefulWidget {
   final Future<List<PostMediaDraft>> Function()? onAttachMedia;
   final Future<PostMediaDraft?> Function()? onAttachVoice;
   final AudioRecorderService? audioRecorderService;
+  final NearbyComposeAvailability? nearbyAvailability;
+  final Future<NearbyComposeAvailability> Function()? onRefreshNearby;
+  final Future<bool> Function()? onOpenNearbySettings;
 
   const ComposePostSheet({
     super.key,
@@ -35,6 +39,9 @@ class ComposePostSheet extends StatefulWidget {
     this.onAttachMedia,
     this.onAttachVoice,
     this.audioRecorderService,
+    this.nearbyAvailability,
+    this.onRefreshNearby,
+    this.onOpenNearbySettings,
   });
 
   @override
@@ -44,6 +51,7 @@ class ComposePostSheet extends StatefulWidget {
 class _ComposePostSheetState extends State<ComposePostSheet> {
   final TextEditingController _textController = TextEditingController();
   PostAudienceKind _audienceKind = PostAudienceKind.allFriends;
+  int _nearbyRadiusM = 1000;
   final Set<String> _selectedPeerIds = <String>{};
   bool _isSubmitting = false;
   bool _isAttaching = false;
@@ -55,6 +63,22 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
   StreamSubscription<Duration>? _durationSubscription;
   StreamSubscription<double>? _amplitudeSubscription;
   List<double> _waveformSamples = <double>[];
+  NearbyComposeAvailability? _nearbyAvailability;
+  bool _isRefreshingNearby = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _nearbyAvailability = widget.nearbyAvailability;
+  }
+
+  @override
+  void didUpdateWidget(covariant ComposePostSheet oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.nearbyAvailability != widget.nearbyAvailability) {
+      _nearbyAvailability = widget.nearbyAvailability;
+    }
+  }
 
   bool get _canSubmit {
     if ((_textController.text.trim().isEmpty && _mediaDrafts.isEmpty) ||
@@ -67,6 +91,10 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
         _selectedPeerIds.isEmpty) {
       return false;
     }
+    if (_audienceKind == PostAudienceKind.peopleNearby &&
+        _nearbyAvailability?.state != NearbyComposeAvailabilityState.ready) {
+      return false;
+    }
     return true;
   }
 
@@ -75,6 +103,9 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
     setState(() => _isSubmitting = true);
     try {
       final audience = switch (_audienceKind) {
+        PostAudienceKind.peopleNearby => PostAudience.peopleNearby(
+          radiusM: _nearbyRadiusM,
+        ),
         PostAudienceKind.pickPeople => PostAudience.pickPeople(
           _selectedPeerIds.toList(),
         ),
@@ -262,6 +293,31 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
     setState(() => _mediaDrafts = const <PostMediaDraft>[]);
   }
 
+  Future<void> _refreshNearby() async {
+    if (widget.onRefreshNearby == null || _isRefreshingNearby) {
+      return;
+    }
+    setState(() => _isRefreshingNearby = true);
+    try {
+      final availability = await widget.onRefreshNearby!();
+      if (!mounted) {
+        return;
+      }
+      setState(() => _nearbyAvailability = availability);
+    } finally {
+      if (mounted) {
+        setState(() => _isRefreshingNearby = false);
+      }
+    }
+  }
+
+  Future<void> _openNearbySettings() async {
+    if (widget.onOpenNearbySettings == null) {
+      return;
+    }
+    await widget.onOpenNearbySettings!();
+  }
+
   @override
   Widget build(BuildContext context) {
     final contacts = widget.eligibleContacts
@@ -286,207 +342,359 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                const Text(
-                  'Create Post',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 20,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                TextField(
-                  controller: _textController,
-                  maxLines: 5,
-                  minLines: 4,
-                  onChanged: (_) => setState(() {}),
-                  decoration: InputDecoration(
-                    hintText: 'What do you want to share?',
-                    hintStyle: const TextStyle(
-                      color: Color.fromRGBO(255, 255, 255, 0.35),
-                    ),
-                    filled: true,
-                    fillColor: const Color(0xFF1A1E26),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(20),
-                      borderSide: BorderSide.none,
+                  const Text(
+                    'Create Post',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 20,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
-                  style: const TextStyle(color: Colors.white),
-                ),
-                const SizedBox(height: 16),
-                Wrap(
-                  spacing: 10,
-                  children: [
-                    ChoiceChip(
-                      label: const Text('All Friends'),
-                      selected: _audienceKind == PostAudienceKind.allFriends,
-                      onSelected: (_) {
-                        setState(() {
-                          _audienceKind = PostAudienceKind.allFriends;
-                          _selectedPeerIds.clear();
-                        });
-                      },
-                    ),
-                    ChoiceChip(
-                      label: const Text('Pick People'),
-                      selected: _audienceKind == PostAudienceKind.pickPeople,
-                      onSelected: (_) {
-                        setState(() {
-                          _audienceKind = PostAudienceKind.pickPeople;
-                        });
-                      },
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                Row(
-                  children: [
-                    OutlinedButton.icon(
-                      onPressed: widget.onAttachMedia == null || _isRecording
-                          ? null
-                          : _attachMedia,
-                      icon: const Icon(Icons.photo_library_outlined, size: 18),
-                      label: Text(_isAttaching ? 'Adding...' : 'Media'),
-                    ),
-                    const SizedBox(width: 10),
-                    OutlinedButton.icon(
-                      onPressed:
-                          (widget.onAttachVoice == null &&
-                              widget.audioRecorderService == null)
-                          ? null
-                          : _attachVoice,
-                      icon: const Icon(Icons.mic_none_rounded, size: 18),
-                      label: const Text('Voice'),
-                    ),
-                  ],
-                ),
-                if (_isRecording) ...[
-                  const SizedBox(height: 12),
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                        child: RecordingOverlay(
-                          elapsed: _recordingDuration,
-                          amplitudeValues: _recordingAmplitudes,
-                          onCancel: () {
-                            unawaited(_cancelVoiceRecording());
-                          },
-                        ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: _textController,
+                    maxLines: 5,
+                    minLines: 4,
+                    onChanged: (_) => setState(() {}),
+                    decoration: InputDecoration(
+                      hintText: 'What do you want to share?',
+                      hintStyle: const TextStyle(
+                        color: Color.fromRGBO(255, 255, 255, 0.35),
                       ),
-                      const SizedBox(width: 10),
-                      FilledButton.icon(
-                        onPressed: _stopVoiceRecording,
-                        icon: const Icon(Icons.stop_circle_outlined, size: 18),
-                        label: const Text('Stop'),
+                      filled: true,
+                      fillColor: const Color(0xFF1A1E26),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(20),
+                        borderSide: BorderSide.none,
+                      ),
+                    ),
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                  const SizedBox(height: 16),
+                  Wrap(
+                    spacing: 10,
+                    children: [
+                      ChoiceChip(
+                        label: const Text('All Friends'),
+                        selected: _audienceKind == PostAudienceKind.allFriends,
+                        onSelected: (_) {
+                          setState(() {
+                            _audienceKind = PostAudienceKind.allFriends;
+                            _selectedPeerIds.clear();
+                          });
+                        },
+                      ),
+                      ChoiceChip(
+                        label: const Text('People Nearby'),
+                        selected:
+                            _audienceKind == PostAudienceKind.peopleNearby,
+                        onSelected: (_) {
+                          setState(() {
+                            _audienceKind = PostAudienceKind.peopleNearby;
+                            _selectedPeerIds.clear();
+                          });
+                        },
+                      ),
+                      ChoiceChip(
+                        label: const Text('Pick People'),
+                        selected: _audienceKind == PostAudienceKind.pickPeople,
+                        onSelected: (_) {
+                          setState(() {
+                            _audienceKind = PostAudienceKind.pickPeople;
+                          });
+                        },
                       ),
                     ],
                   ),
-                ],
-                if (_mediaDrafts.isNotEmpty) ...[
-                  const SizedBox(height: 12),
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(14),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF1A1E26),
-                      borderRadius: BorderRadius.circular(18),
+                  if (_audienceKind == PostAudienceKind.peopleNearby) ...[
+                    const SizedBox(height: 16),
+                    const Text(
+                      'Radius',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
-                    child: Row(
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 10,
+                      children: <int>[500, 1000, 2000].map((radiusM) {
+                        final label = switch (radiusM) {
+                          500 => '500m',
+                          1000 => '1km',
+                          _ => '2km',
+                        };
+                        return ChoiceChip(
+                          label: Text(label),
+                          selected: _nearbyRadiusM == radiusM,
+                          onSelected: (_) {
+                            setState(() => _nearbyRadiusM = radiusM);
+                          },
+                        );
+                      }).toList(growable: false),
+                    ),
+                  ],
+                  if (_nearbyAvailability != null) ...[
+                    const SizedBox(height: 16),
+                    _NearbyComposeAvailabilityCard(
+                      availability: _nearbyAvailability!,
+                      isRefreshing: _isRefreshingNearby,
+                      onRefresh: widget.onRefreshNearby == null
+                          ? null
+                          : _refreshNearby,
+                      onOpenSettings: widget.onOpenNearbySettings == null
+                          ? null
+                          : _openNearbySettings,
+                    ),
+                  ],
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      OutlinedButton.icon(
+                        onPressed: widget.onAttachMedia == null || _isRecording
+                            ? null
+                            : _attachMedia,
+                        icon: const Icon(
+                          Icons.photo_library_outlined,
+                          size: 18,
+                        ),
+                        label: Text(_isAttaching ? 'Adding...' : 'Media'),
+                      ),
+                      const SizedBox(width: 10),
+                      OutlinedButton.icon(
+                        onPressed:
+                            (widget.onAttachVoice == null &&
+                                widget.audioRecorderService == null)
+                            ? null
+                            : _attachVoice,
+                        icon: const Icon(Icons.mic_none_rounded, size: 18),
+                        label: const Text('Voice'),
+                      ),
+                    ],
+                  ),
+                  if (_isRecording) ...[
+                    const SizedBox(height: 12),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Expanded(
-                          child: Text(
-                            _mediaDrafts.first.kind == 'voice'
-                                ? 'Voice attached'
-                                : '${_mediaDrafts.length} attachments',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w600,
-                            ),
+                          child: RecordingOverlay(
+                            elapsed: _recordingDuration,
+                            amplitudeValues: _recordingAmplitudes,
+                            onCancel: () {
+                              unawaited(_cancelVoiceRecording());
+                            },
                           ),
                         ),
-                        IconButton(
-                          onPressed: _clearDrafts,
+                        const SizedBox(width: 10),
+                        FilledButton.icon(
+                          onPressed: _stopVoiceRecording,
                           icon: const Icon(
-                            Icons.close_rounded,
-                            color: Colors.white70,
+                            Icons.stop_circle_outlined,
+                            size: 18,
                           ),
+                          label: const Text('Stop'),
                         ),
                       ],
                     ),
-                  ),
-                ],
-                if (_audienceKind == PostAudienceKind.pickPeople) ...[
-                  const SizedBox(height: 16),
-                  const Text(
-                    'Pick People',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  ConstrainedBox(
-                    constraints: const BoxConstraints(maxHeight: 220),
-                    child: ListView.separated(
-                      shrinkWrap: true,
-                      itemCount: contacts.length,
-                      separatorBuilder: (_, _) => const Divider(
-                        color: Color.fromRGBO(255, 255, 255, 0.06),
-                        height: 1,
+                  ],
+                  if (_mediaDrafts.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF1A1E26),
+                        borderRadius: BorderRadius.circular(18),
                       ),
-                      itemBuilder: (context, index) {
-                        final contact = contacts[index];
-                        final isSelected = _selectedPeerIds.contains(
-                          contact.peerId,
-                        );
-                        return CheckboxListTile(
-                          value: isSelected,
-                          dense: true,
-                          contentPadding: EdgeInsets.zero,
-                          controlAffinity: ListTileControlAffinity.trailing,
-                          title: Text(
-                            contact.username,
-                            style: const TextStyle(color: Colors.white),
-                          ),
-                          subtitle: Text(
-                            contact.peerId,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: Color.fromRGBO(255, 255, 255, 0.45),
-                              fontSize: 12,
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              _mediaDrafts.first.kind == 'voice'
+                                  ? 'Voice attached'
+                                  : '${_mediaDrafts.length} attachments',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
                           ),
-                          onChanged: (_) {
-                            setState(() {
-                              if (isSelected) {
-                                _selectedPeerIds.remove(contact.peerId);
-                              } else {
-                                _selectedPeerIds.add(contact.peerId);
-                              }
-                            });
-                          },
-                        );
-                      },
+                          IconButton(
+                            onPressed: _clearDrafts,
+                            icon: const Icon(
+                              Icons.close_rounded,
+                              color: Colors.white70,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                  if (_audienceKind == PostAudienceKind.pickPeople) ...[
+                    const SizedBox(height: 16),
+                    const Text(
+                      'Pick People',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxHeight: 220),
+                      child: ListView.separated(
+                        shrinkWrap: true,
+                        itemCount: contacts.length,
+                        separatorBuilder: (_, _) => const Divider(
+                          color: Color.fromRGBO(255, 255, 255, 0.06),
+                          height: 1,
+                        ),
+                        itemBuilder: (context, index) {
+                          final contact = contacts[index];
+                          final isSelected = _selectedPeerIds.contains(
+                            contact.peerId,
+                          );
+                          return CheckboxListTile(
+                            value: isSelected,
+                            dense: true,
+                            contentPadding: EdgeInsets.zero,
+                            controlAffinity: ListTileControlAffinity.trailing,
+                            title: Text(
+                              contact.username,
+                              style: const TextStyle(color: Colors.white),
+                            ),
+                            subtitle: Text(
+                              contact.peerId,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Color.fromRGBO(255, 255, 255, 0.45),
+                                fontSize: 12,
+                              ),
+                            ),
+                            onChanged: (_) {
+                              setState(() {
+                                if (isSelected) {
+                                  _selectedPeerIds.remove(contact.peerId);
+                                } else {
+                                  _selectedPeerIds.add(contact.peerId);
+                                }
+                              });
+                            },
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: _canSubmit ? _submit : null,
+                      child: Text(_isSubmitting ? 'Posting...' : 'Post'),
                     ),
                   ),
-                ],
-                const SizedBox(height: 20),
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton(
-                    onPressed: _canSubmit ? _submit : null,
-                    child: Text(_isSubmitting ? 'Posting...' : 'Post'),
-                  ),
-                ),
                 ],
               ),
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _NearbyComposeAvailabilityCard extends StatelessWidget {
+  final NearbyComposeAvailability availability;
+  final bool isRefreshing;
+  final VoidCallback? onRefresh;
+  final VoidCallback? onOpenSettings;
+
+  const _NearbyComposeAvailabilityCard({
+    required this.availability,
+    required this.isRefreshing,
+    this.onRefresh,
+    this.onOpenSettings,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final title = switch (availability.state) {
+      NearbyComposeAvailabilityState.sharingOff =>
+        'People Nearby is off in Settings',
+      NearbyComposeAvailabilityState.ready => 'People Nearby is ready',
+      NearbyComposeAvailabilityState.stale => 'Refresh nearby before posting',
+      NearbyComposeAvailabilityState.permissionRequired =>
+        'Allow location to use People Nearby',
+      NearbyComposeAvailabilityState.permissionDeniedForever =>
+        'Location permission is off',
+      NearbyComposeAvailabilityState.servicesOff => 'Turn on location services',
+    };
+
+    final subtitle = switch (availability.state) {
+      NearbyComposeAvailabilityState.sharingOff =>
+        'Turn it on in Settings before posting to nearby friends.',
+      NearbyComposeAvailabilityState.ready =>
+        'Your nearby snapshot is fresh enough to use for posting.',
+      NearbyComposeAvailabilityState.stale =>
+        'Refresh your nearby snapshot before using this audience.',
+      NearbyComposeAvailabilityState.permissionRequired =>
+        'Refresh nearby to grant location permission for nearby posts.',
+      NearbyComposeAvailabilityState.permissionDeniedForever =>
+        'Open system settings to re-enable location access.',
+      NearbyComposeAvailabilityState.servicesOff =>
+        'Enable location services, then refresh nearby again.',
+    };
+
+    final action = availability.canOpenSettings && onOpenSettings != null
+        ? TextButton(
+            onPressed: onOpenSettings,
+            child: const Text('Open Settings'),
+          )
+        : availability.canRefresh && onRefresh != null
+        ? TextButton(
+            onPressed: isRefreshing ? null : onRefresh,
+            child: Text(isRefreshing ? 'Refreshing...' : 'Refresh nearby'),
+          )
+        : null;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1A1E26),
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  subtitle,
+                  style: const TextStyle(
+                    color: Color.fromRGBO(255, 255, 255, 0.55),
+                    fontSize: 12,
+                    height: 1.35,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (action != null) ...[const SizedBox(width: 12), action],
+        ],
       ),
     );
   }
