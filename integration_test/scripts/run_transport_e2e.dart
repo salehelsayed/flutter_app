@@ -5,12 +5,13 @@
 // running on an iOS simulator or Android emulator.
 //
 // Usage:
-//   dart run integration_test/scripts/run_transport_e2e.dart [--device <id>] [--platform <ios|android>]
+//   dart run integration_test/scripts/run_transport_e2e.dart [--device <id>] [--platform <ios|android>] [--phase4-only]
 //
 // Examples:
 //   dart run integration_test/scripts/run_transport_e2e.dart -p ios
 //   dart run integration_test/scripts/run_transport_e2e.dart -p android
 //   dart run integration_test/scripts/run_transport_e2e.dart -d emulator-5554
+//   dart run integration_test/scripts/run_transport_e2e.dart -d emulator-5554 --phase4-only
 //
 // The script:
 //   1. Builds the Go CLI test peer binary
@@ -65,6 +66,11 @@ class _RunPaths {
   String get b8Sent => '$appWriteDir/e2e_b8_sent';
   String get e8BlobId => '$appWriteDir/e2e_e8_blobid';
   String get g6FlutterUploaded => '$appWriteDir/e2e_g6_flutter_uploaded';
+  String get phase4InitialReady => '$appWriteDir/e2e_phase4_initial_ready';
+  String get phase4Result => '$appWriteDir/e2e_phase4_result.json';
+
+  // Focused Phase 4 orchestrator → Flutter signal.
+  String get phase4CliUnregistered => '$deviceDir/e2e_phase4_cli_unregistered';
 
   // Host paths — files used by the Go testpeer process on the host machine.
   String get e8Downloaded => '${hostTempDir.path}/e2e_e8_downloaded.png';
@@ -130,50 +136,6 @@ Future<void> _deviceWriteFile(String devicePath, String content) async {
   }
 }
 
-/// Reads a file from the device (or host for iOS). Returns null if not found.
-Future<String?> _deviceReadFile(String devicePath) async {
-  if (_androidDeviceId != null) {
-    final tmp = File(
-      '${Directory.systemTemp.path}/_adb_pull_${DateTime.now().millisecondsSinceEpoch}',
-    );
-    try {
-      final r = await Process.run(_adb(), [
-        '-s',
-        _androidDeviceId!,
-        'pull',
-        devicePath,
-        tmp.path,
-      ]);
-      if (r.exitCode != 0) return null;
-      return tmp.readAsStringSync();
-    } finally {
-      try {
-        tmp.deleteSync();
-      } catch (_) {}
-    }
-  } else {
-    final f = File(devicePath);
-    if (!f.existsSync()) return null;
-    return f.readAsStringSync();
-  }
-}
-
-/// Checks if a file exists on the device (or host for iOS).
-Future<bool> _deviceFileExists(String devicePath) async {
-  if (_androidDeviceId != null) {
-    final r = await Process.run(_adb(), [
-      '-s',
-      _androidDeviceId!,
-      'shell',
-      'ls',
-      devicePath,
-    ]);
-    return r.exitCode == 0;
-  } else {
-    return File(devicePath).existsSync();
-  }
-}
-
 /// Creates a directory on the device. Returns the device path.
 Future<String> _createDeviceTempDir(String deviceId) async {
   final ts = DateTime.now().millisecondsSinceEpoch;
@@ -235,6 +197,21 @@ Future<String?> _appReadFile(String path) async {
     if (!f.existsSync()) return null;
     return f.readAsStringSync();
   }
+}
+
+Future<String?> _waitForAppFile(
+  String path, {
+  Duration timeout = const Duration(seconds: 60),
+}) async {
+  final deadline = DateTime.now().add(timeout);
+  while (DateTime.now().isBefore(deadline)) {
+    final content = await _appReadFile(path);
+    if (content != null && content.isNotEmpty) {
+      return content;
+    }
+    await Future.delayed(const Duration(milliseconds: 500));
+  }
+  return null;
 }
 
 /// Checks if a file exists in the app's private storage via `run-as`.
@@ -1388,6 +1365,115 @@ List<_OrchestratorResult> _verifyCliReceivedMessages(
   return results;
 }
 
+Future<List<_OrchestratorResult>> _runPhase4OnlyScenario(
+  TestPeer peer,
+  _RunPaths paths,
+) async {
+  final results = <_OrchestratorResult>[];
+
+  final flutterPeerId = await _waitForFlutterPeerId(
+    paths,
+    timeout: const Duration(seconds: 120),
+  );
+  if (flutterPeerId == null) {
+    return [
+      _OrchestratorResult(
+        'P4-FIXTURE',
+        false,
+        'Flutter fixture missing or unreadable',
+      ),
+    ];
+  }
+
+  _log(
+    'ORCH',
+    'Phase 4: waiting for Flutter to confirm initial discoverability...',
+  );
+  final ready = await _waitForAppFile(
+    paths.phase4InitialReady,
+    timeout: const Duration(seconds: 120),
+  );
+  if (ready == null) {
+    return [
+      _OrchestratorResult(
+        'P4-READY',
+        false,
+        'Flutter never confirmed initial discoverability',
+      ),
+    ];
+  }
+
+  await peer.commandOk('clear_messages');
+  await peer.commandOk('unregister', {
+    'namespace': 'mknoon:chat:${peer.peerId}',
+  });
+  await _deviceWriteFile(paths.phase4CliUnregistered, 'unregistered');
+  _log(
+    'ORCH',
+    'Phase 4: CLI personal namespace invalidated; waiting for Flutter result...',
+  );
+
+  final phase4ResultJson = await _waitForAppFile(
+    paths.phase4Result,
+    timeout: const Duration(seconds: 120),
+  );
+  if (phase4ResultJson == null) {
+    return [
+      _OrchestratorResult(
+        'P4-RESULT',
+        false,
+        'Flutter never wrote the Phase 4 result payload',
+      ),
+    ];
+  }
+
+  final payload = jsonDecode(phase4ResultJson) as Map<String, dynamic>;
+  final messageTransport = payload['messageTransport'] as String?;
+  final messageStatus = payload['messageStatus'] as String?;
+  final initialDiscoverable = payload['initialDiscoverable'] == true;
+  final discoverMissAfterUnregister =
+      payload['discoverMissAfterUnregister'] == true;
+  final livePathRecovered =
+      messageStatus == 'delivered' &&
+      messageTransport != null &&
+      messageTransport != 'inbox';
+
+  results.add(
+    _OrchestratorResult(
+      'P4-SYMPTOM',
+      initialDiscoverable && discoverMissAfterUnregister && livePathRecovered,
+      'initialDiscoverable=$initialDiscoverable '
+          'discoverMissAfterUnregister=$discoverMissAfterUnregister '
+          'status=$messageStatus transport=$messageTransport '
+          'bridgeOk=${payload['bridgeOk']}',
+    ),
+  );
+
+  try {
+    await peer.commandOk('wait_message', {
+      'fromPeerId': flutterPeerId,
+      'timeoutSec': 30,
+    });
+    results.add(
+      _OrchestratorResult(
+        'P4-RECV',
+        true,
+        'CLI received Flutter message without requiring restart',
+      ),
+    );
+  } catch (e) {
+    results.add(
+      _OrchestratorResult(
+        'P4-RECV',
+        false,
+        'CLI did not receive the recovered live send: $e',
+      ),
+    );
+  }
+
+  return results;
+}
+
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
@@ -1398,12 +1484,22 @@ void main(List<String> args) async {
   // Parse --device and --platform arguments.
   String? deviceId;
   String? platform;
-  for (var i = 0; i < args.length - 1; i++) {
+  var phase4Only = false;
+  for (var i = 0; i < args.length; i++) {
     if (args[i] == '--device' || args[i] == '-d') {
-      deviceId = args[i + 1];
+      if (i + 1 < args.length) {
+        deviceId = args[++i];
+      }
+      continue;
     }
     if (args[i] == '--platform' || args[i] == '-p') {
-      platform = args[i + 1];
+      if (i + 1 < args.length) {
+        platform = args[++i];
+      }
+      continue;
+    }
+    if (args[i] == '--phase4-only') {
+      phase4Only = true;
     }
   }
 
@@ -1515,6 +1611,7 @@ void main(List<String> args) async {
       '--dart-define=CLI_PEER_FIXTURE=${paths.cliFixture}',
       '--dart-define=E2E_TEMP_DIR=$deviceDir',
       '--dart-define=E2E_WRITE_DIR=$appWriteDir',
+      if (phase4Only) '--dart-define=E2E_PHASE4_ONLY=true',
     ];
     if (deviceId != null) {
       flutterArgs.addAll(['-d', deviceId]);
@@ -1527,7 +1624,9 @@ void main(List<String> args) async {
     );
 
     // Step 8: Run scenarios in parallel with the Flutter test.
-    final scenariosFuture = _runScenarios(peer, paths);
+    final scenariosFuture = phase4Only
+        ? _runPhase4OnlyScenario(peer, paths)
+        : _runScenarios(peer, paths);
 
     // Wait for Flutter test to complete.
     final flutterExitCode = await flutterProcess.exitCode;
@@ -1548,84 +1647,90 @@ void main(List<String> args) async {
       orchResults = [_OrchestratorResult('SCENARIOS', false, 'error: $e')];
     }
 
-    // Step 9: Post-Flutter verification — check CLI peer received messages.
-    _log(
-      'ORCH',
-      'Post-Flutter verification: waiting 5s for in-flight messages...',
-    );
-    await Future.delayed(const Duration(seconds: 5));
-
-    try {
-      final msgs = await peer.commandOk('get_messages');
-      final verifyResults = _verifyCliReceivedMessages(
-        msgs,
-        // Read Flutter peer ID from fixture if available.
-        await _readFlutterPeerId(paths) ?? 'unknown',
+    if (!phase4Only) {
+      // Step 9: Post-Flutter verification — check CLI peer received messages.
+      _log(
+        'ORCH',
+        'Post-Flutter verification: waiting 5s for in-flight messages...',
       );
-      orchResults.addAll(verifyResults);
-    } catch (e) {
-      _log('ORCH', 'Post-Flutter verification failed: $e');
-      orchResults.add(
-        _OrchestratorResult('VERIFY', false, 'get_messages failed: $e'),
-      );
-    }
+      await Future.delayed(const Duration(seconds: 5));
 
-    // G3: Exercise inbox_retrieve on CLI peer's own inbox.
-    _log('ORCH', 'Scenario G3: inbox_retrieve...');
-    try {
-      final inboxResult = await peer.commandOk('inbox_retrieve');
-      final inboxCount = inboxResult['count'] ?? 0;
-      orchResults.add(
-        _OrchestratorResult('G3', true, 'inbox_retrieve returned $inboxCount'),
-      );
-      _log('ORCH', 'G3: inbox_retrieve count=$inboxCount');
-    } catch (e) {
-      orchResults.add(_OrchestratorResult('G3', false, 'error: $e'));
-      _log('ORCH', 'G3: failed: $e');
-    }
-
-    // G4: Exercise clear_messages + verify get_messages returns 0.
-    _log('ORCH', 'Scenario G4: clear_messages + verify...');
-    try {
-      await peer.commandOk('clear_messages');
-      final afterClear = await peer.commandOk('get_messages');
-      final afterCount = afterClear['count'] ?? -1;
-      final pass = afterCount == 0;
-      orchResults.add(
-        _OrchestratorResult('G4', pass, 'count after clear=$afterCount'),
-      );
-      _log('ORCH', 'G4: count after clear=$afterCount');
-    } catch (e) {
-      orchResults.add(_OrchestratorResult('G4', false, 'error: $e'));
-      _log('ORCH', 'G4: failed: $e');
-    }
-
-    // G5: Exercise restore_identity — stop node, restore, verify peer ID matches.
-    _log('ORCH', 'Scenario G5: restore_identity...');
-    if (peer.mnemonic != null) {
       try {
-        final originalPeerId = peer.peerId;
-        await peer.stopNode();
-        final restored = await peer.commandOk('restore_identity', {
-          'mnemonic12': peer.mnemonic,
-        });
-        final restoredPeerId = restored['peerId'] as String?;
-        final pass = restoredPeerId == originalPeerId;
+        final msgs = await peer.commandOk('get_messages');
+        final verifyResults = _verifyCliReceivedMessages(
+          msgs,
+          // Read Flutter peer ID from fixture if available.
+          await _readFlutterPeerId(paths) ?? 'unknown',
+        );
+        orchResults.addAll(verifyResults);
+      } catch (e) {
+        _log('ORCH', 'Post-Flutter verification failed: $e');
+        orchResults.add(
+          _OrchestratorResult('VERIFY', false, 'get_messages failed: $e'),
+        );
+      }
+
+      // G3: Exercise inbox_retrieve on CLI peer's own inbox.
+      _log('ORCH', 'Scenario G3: inbox_retrieve...');
+      try {
+        final inboxResult = await peer.commandOk('inbox_retrieve');
+        final inboxCount = inboxResult['count'] ?? 0;
         orchResults.add(
           _OrchestratorResult(
-            'G5',
-            pass,
-            pass ? 'peerId matches' : 'mismatch: $restoredPeerId',
+            'G3',
+            true,
+            'inbox_retrieve returned $inboxCount',
           ),
         );
-        _log('ORCH', 'G5: ${pass ? 'PASS' : 'FAIL'}');
+        _log('ORCH', 'G3: inbox_retrieve count=$inboxCount');
       } catch (e) {
-        orchResults.add(_OrchestratorResult('G5', false, 'error: $e'));
-        _log('ORCH', 'G5: failed: $e');
+        orchResults.add(_OrchestratorResult('G3', false, 'error: $e'));
+        _log('ORCH', 'G3: failed: $e');
       }
-    } else {
-      orchResults.add(_OrchestratorResult('G5', false, 'no mnemonic saved'));
-      _log('ORCH', 'G5: SKIP — no mnemonic');
+
+      // G4: Exercise clear_messages + verify get_messages returns 0.
+      _log('ORCH', 'Scenario G4: clear_messages + verify...');
+      try {
+        await peer.commandOk('clear_messages');
+        final afterClear = await peer.commandOk('get_messages');
+        final afterCount = afterClear['count'] ?? -1;
+        final pass = afterCount == 0;
+        orchResults.add(
+          _OrchestratorResult('G4', pass, 'count after clear=$afterCount'),
+        );
+        _log('ORCH', 'G4: count after clear=$afterCount');
+      } catch (e) {
+        orchResults.add(_OrchestratorResult('G4', false, 'error: $e'));
+        _log('ORCH', 'G4: failed: $e');
+      }
+
+      // G5: Exercise restore_identity — stop node, restore, verify peer ID matches.
+      _log('ORCH', 'Scenario G5: restore_identity...');
+      if (peer.mnemonic != null) {
+        try {
+          final originalPeerId = peer.peerId;
+          await peer.stopNode();
+          final restored = await peer.commandOk('restore_identity', {
+            'mnemonic12': peer.mnemonic,
+          });
+          final restoredPeerId = restored['peerId'] as String?;
+          final pass = restoredPeerId == originalPeerId;
+          orchResults.add(
+            _OrchestratorResult(
+              'G5',
+              pass,
+              pass ? 'peerId matches' : 'mismatch: $restoredPeerId',
+            ),
+          );
+          _log('ORCH', 'G5: ${pass ? 'PASS' : 'FAIL'}');
+        } catch (e) {
+          orchResults.add(_OrchestratorResult('G5', false, 'error: $e'));
+          _log('ORCH', 'G5: failed: $e');
+        }
+      } else {
+        orchResults.add(_OrchestratorResult('G5', false, 'no mnemonic saved'));
+        _log('ORCH', 'G5: SKIP — no mnemonic');
+      }
     }
 
     // Step 10: Print orchestrator summary.
@@ -1765,6 +1870,23 @@ List<int> _minimalPngBytes() {
 Future<String?> _readFlutterPeerId(_RunPaths paths) async {
   try {
     final content = await _appReadFile(paths.flutterFixture);
+    if (content == null) return null;
+    final data = jsonDecode(content) as Map<String, dynamic>;
+    return data['peerId'] as String?;
+  } catch (_) {
+    return null;
+  }
+}
+
+Future<String?> _waitForFlutterPeerId(
+  _RunPaths paths, {
+  Duration timeout = const Duration(seconds: 60),
+}) async {
+  try {
+    final content = await _waitForAppFile(
+      paths.flutterFixture,
+      timeout: timeout,
+    );
     if (content == null) return null;
     final data = jsonDecode(content) as Map<String, dynamic>;
     return data['peerId'] as String?;

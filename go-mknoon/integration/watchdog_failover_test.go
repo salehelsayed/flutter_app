@@ -112,7 +112,7 @@ func TestPersonalNamespaceRecovery_ReRegistersAfterWatchdogRestart(t *testing.T)
 	flags := node.DefaultFeatureFlags()
 	flags.EnableInPlaceRelayRecovery = false
 
-	relayA, _ := startLocalRelayPairWithRegistrationTTL(t, 5)
+	relayA, _ := startLocalRelayPairWithRegistrationTTL(t, 3)
 	nodeA, peerIDA := startPersonalNodeWithExplicitInitialRegisterAndFlags(
 		t,
 		[]string{relayA.addr()},
@@ -126,8 +126,7 @@ func TestPersonalNamespaceRecovery_ReRegistersAfterWatchdogRestart(t *testing.T)
 
 	namespace := nodeA.Namespace()
 	waitForDiscoverablePeer(t, nodeB, namespace, peerIDA, 10*time.Second)
-
-	time.Sleep(4 * time.Second)
+	waitForPeerUndiscoverable(t, nodeB, namespace, peerIDA, 5*time.Second)
 
 	result, err := nodeA.ReconnectRelays()
 	if err != nil {
@@ -140,7 +139,6 @@ func TestPersonalNamespaceRecovery_ReRegistersAfterWatchdogRestart(t *testing.T)
 		t.Fatalf("expected watchdog_restart recovery, got %+v", result)
 	}
 
-	time.Sleep(2 * time.Second)
 	waitForDiscoverablePeer(t, nodeB, namespace, peerIDA, 3*time.Second)
 }
 

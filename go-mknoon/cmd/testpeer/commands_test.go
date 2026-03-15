@@ -216,6 +216,14 @@ func TestHandleCommandReconnectRelaysNotStarted(t *testing.T) {
 	}
 }
 
+func TestHandleCommandUnregisterNotStarted(t *testing.T) {
+	state = &peerState{}
+	result := handleCommand("unregister", nil)
+	if result["ok"] != false {
+		t.Error("expected ok=false without node")
+	}
+}
+
 // TestHandleCommandDisconnectNotStarted verifies error when node is not started.
 func TestHandleCommandDisconnectNotStarted(t *testing.T) {
 	state = &peerState{}

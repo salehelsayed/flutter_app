@@ -7,13 +7,15 @@
 //   dart run integration_test/scripts/run_soak_e2e.dart -d <simulator-id>
 //
 // Signal protocol:
+//   phase4_resume_and_send → run the deterministic stale-discoverability gate
+//                            and write phase4_result
 //   soak_send_next     → send a message to CLI peer
 //   soak_drain_inbox   → drain offline inbox
 //   soak_health_check  → call handleAppResumed
 //   soak_done          → exit the loop
 //   soak_stats         → written by this test with current counts
+//   phase4_result      → written by this test with transport/recovery evidence
 
-import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -35,35 +37,27 @@ import 'package:flutter_app/core/database/migrations/009_quoted_message_id.dart'
 import 'package:flutter_app/core/database/migrations/010_media_attachments.dart';
 import 'package:flutter_app/core/database/migrations/011_avatar_version.dart';
 import 'package:flutter_app/core/database/migrations/012_transport_column.dart';
-import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
+import 'package:flutter_app/core/database/migrations/013_waveform_column.dart';
+import 'package:flutter_app/core/database/migrations/014_wire_envelope_column.dart';
+import 'package:flutter_app/core/database/migrations/015_message_status_cleanup.dart';
+import 'package:flutter_app/core/database/migrations/016_message_reactions.dart';
+import 'package:flutter_app/core/database/migrations/017_groups_tables.dart';
+import 'package:flutter_app/core/database/migrations/018_group_messages_tables.dart';
+import 'package:flutter_app/core/database/migrations/019_introductions_table.dart';
+import 'package:flutter_app/core/database/migrations/020_intro_banner_columns.dart';
+import 'package:flutter_app/core/database/migrations/021_contact_introduced_by.dart';
+import 'package:flutter_app/core/database/migrations/022_introduction_keys.dart';
+import 'package:flutter_app/core/database/migrations/023_introduction_recipient_keys.dart';
+import 'package:flutter_app/core/database/migrations/024_contact_introduced_by_peer_id.dart';
+import 'package:flutter_app/core/database/migrations/025_introduction_already_connected_status.dart';
+import 'package:flutter_app/core/database/migrations/026_group_quoted_message_id.dart';
+import 'package:flutter_app/core/lifecycle/handle_app_resumed.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository_impl.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository_impl.dart';
-
-// ---------------------------------------------------------------------------
-// Test-only SecureKeyStore (in-memory)
-// ---------------------------------------------------------------------------
-class _FakeSecureKeyStore implements SecureKeyStore {
-  final Map<String, String> _store = {};
-
-  @override
-  Future<String?> read(String key) async => _store[key];
-
-  @override
-  Future<void> write(String key, String value) async => _store[key] = value;
-
-  @override
-  Future<void> delete(String key) async => _store.remove(key);
-
-  @override
-  Future<bool> containsKey(String key) async => _store.containsKey(key);
-
-  @override
-  Future<void> deleteAll() async => _store.clear();
-}
 
 // ---------------------------------------------------------------------------
 // Signal helpers
@@ -119,7 +113,6 @@ void main() {
     final cliMlKemPK = fixture['mlKemPublicKey'] as String?;
 
     // 2. Initialize local stack
-    final secureKeyStore = _FakeSecureKeyStore();
     final bridge = GoBridgeClient();
     await bridge.initialize();
 
@@ -141,7 +134,7 @@ void main() {
     databaseFactory = databaseFactoryFfi;
     final db = await openDatabase(
       inMemoryDatabasePath,
-      version: 12,
+      version: 26,
       onCreate: (db, version) async {
         await runIdentityTableMigration(db);
         await runMessagesTableMigration(db);
@@ -154,6 +147,20 @@ void main() {
         await runMediaAttachmentsMigration(db);
         await runAvatarVersionMigration(db);
         await runTransportColumnMigration(db);
+        await runWaveformColumnMigration(db);
+        await runWireEnvelopeMigration(db);
+        await runMessageStatusCleanupMigration(db);
+        await runMessageReactionsMigration(db);
+        await runGroupsTablesMigration(db);
+        await runGroupMessagesTablesMigration(db);
+        await runIntroductionsTableMigration(db);
+        await runIntroBannerColumnsMigration(db);
+        await runContactIntroducedByMigration(db);
+        await runIntroductionKeysMigration(db);
+        await runIntroductionRecipientKeysMigration(db);
+        await runContactIntroducedByPeerIdMigration(db);
+        await runIntroductionAlreadyConnectedMigration(db);
+        await runGroupQuotedMessageIdMigration(db);
       },
     );
 
@@ -245,15 +252,91 @@ void main() {
       }),
     );
 
+    Future<Map<String, dynamic>> buildStats({
+      required int sentCount,
+      required int drainCount,
+      required int healthCheckCount,
+      required int loopCount,
+    }) async {
+      final messages = await messageRepo.getMessagesForContact(cliPeerId);
+      final outgoing = messages.where((m) => !m.isIncoming).toList();
+      final incoming = messages.where((m) => m.isIncoming).toList();
+      final latestOutgoing = outgoing.isNotEmpty ? outgoing.last : null;
+      return {
+        'sentCount': sentCount,
+        'messageCount': messages.length,
+        'incomingCount': incoming.length,
+        'outgoingCount': outgoing.length,
+        'drainCount': drainCount,
+        'healthCheckCount': healthCheckCount,
+        'loopCount': loopCount,
+        'circuitCount': p2pService.currentState.circuitAddresses.length,
+        'lastRecoveryMethod': p2pService.lastRecoveryMethod,
+        'lastOutgoingTransport': latestOutgoing?.transport,
+        'lastOutgoingStatus': latestOutgoing?.status,
+        'lastOutgoingText': latestOutgoing?.text,
+      };
+    }
+
     // 3. Signal-driven loop
     int sentCount = 0;
-    int receivedCount = 0;
     int drainCount = 0;
     int healthCheckCount = 0;
     int loopCount = 0;
 
     while (!_signalExists('soak_done')) {
       loopCount++;
+
+      if (_signalExists('phase4_resume_and_send')) {
+        final requestRaw = _readSignal('phase4_resume_and_send');
+        _deleteSignal('phase4_resume_and_send');
+
+        final request = requestRaw == null || requestRaw.isEmpty
+            ? const <String, dynamic>{}
+            : jsonDecode(requestRaw) as Map<String, dynamic>;
+        final phase4Text =
+            request['text'] as String? ??
+            'phase4-live-after-stale-discoverability';
+
+        final discoveredBeforeResume = await p2pService.discoverPeer(cliPeerId);
+        final bridgeOk = await handleAppResumed(
+          bridge: bridge,
+          p2pService: p2pService,
+        );
+        final discoveredAfterResume = await p2pService.discoverPeer(cliPeerId);
+
+        final (sendResult, returnedMessage) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: cliPeerId,
+          text: phase4Text,
+          senderPeerId: myPeerId,
+          senderUsername: 'FlutterSoak',
+        );
+
+        final stored = await messageRepo.getMessagesForContact(cliPeerId);
+        final matching = stored
+            .where((m) => !m.isIncoming && m.text == phase4Text)
+            .toList();
+        final persisted = matching.isNotEmpty ? matching.last : null;
+
+        _writeSignal(
+          'phase4_result',
+          jsonEncode({
+            'text': phase4Text,
+            'discoverMissBeforeResume': discoveredBeforeResume == null,
+            'discoverMissAfterResume': discoveredAfterResume == null,
+            'bridgeOk': bridgeOk,
+            'sendResult': sendResult.name,
+            'returnedTransport': returnedMessage?.transport,
+            'persistedTransport': persisted?.transport,
+            'persistedStatus': persisted?.status,
+            'livePath': persisted != null && persisted.transport != 'inbox',
+            'circuitCount': p2pService.currentState.circuitAddresses.length,
+            'lastRecoveryMethod': p2pService.lastRecoveryMethod,
+          }),
+        );
+      }
 
       // Check for send signal
       if (_signalExists('soak_send_next')) {
@@ -282,40 +365,31 @@ void main() {
       if (_signalExists('soak_health_check')) {
         _deleteSignal('soak_health_check');
         healthCheckCount++;
-        await p2pService.performImmediateHealthCheck();
+        await handleAppResumed(bridge: bridge, p2pService: p2pService);
       }
 
       // Write stats periodically (every 10 loops)
       if (loopCount % 10 == 0) {
-        final msgCount = await messageRepo.getMessageCountForContact(cliPeerId);
-        _writeSignal(
-          'soak_stats',
-          jsonEncode({
-            'sentCount': sentCount,
-            'messageCount': msgCount,
-            'drainCount': drainCount,
-            'healthCheckCount': healthCheckCount,
-            'loopCount': loopCount,
-          }),
+        final stats = await buildStats(
+          sentCount: sentCount,
+          drainCount: drainCount,
+          healthCheckCount: healthCheckCount,
+          loopCount: loopCount,
         );
+        _writeSignal('soak_stats', jsonEncode(stats));
       }
 
       await Future.delayed(const Duration(milliseconds: 500));
     }
 
     // 4. Final stats
-    final finalMsgCount = await messageRepo.getMessageCountForContact(
-      cliPeerId,
+    final finalStats = await buildStats(
+      sentCount: sentCount,
+      drainCount: drainCount,
+      healthCheckCount: healthCheckCount,
+      loopCount: loopCount,
     );
-    _writeSignal(
-      'soak_final_stats',
-      jsonEncode({
-        'sentCount': sentCount,
-        'messageCount': finalMsgCount,
-        'drainCount': drainCount,
-        'healthCheckCount': healthCheckCount,
-      }),
-    );
+    _writeSignal('soak_final_stats', jsonEncode(finalStats));
 
     // Cleanup
     listener.dispose();
