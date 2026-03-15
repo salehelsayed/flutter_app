@@ -13,6 +13,7 @@ class PostCard extends StatelessWidget {
   final VoidCallback? onOpenComments;
   final VoidCallback? onToggleHeart;
   final VoidCallback? onPassAlong;
+  final VoidCallback? onPinPost;
   final bool showShareCount;
   final DateTime Function()? nowProvider;
 
@@ -23,6 +24,7 @@ class PostCard extends StatelessWidget {
     this.onOpenComments,
     this.onToggleHeart,
     this.onPassAlong,
+    this.onPinPost,
     this.showShareCount = false,
     this.nowProvider,
   });
@@ -175,6 +177,18 @@ class PostCard extends StatelessWidget {
                   onPressed: onPassAlong,
                   icon: const Icon(Icons.redo, size: 18),
                   label: const Text('Pass along'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: const Color(0xFF8FD6B5),
+                    padding: EdgeInsets.zero,
+                  ),
+                ),
+              ],
+              if (onPinPost != null) ...[
+                const SizedBox(width: 12),
+                TextButton.icon(
+                  onPressed: onPinPost,
+                  icon: const Icon(Icons.push_pin_outlined, size: 18),
+                  label: const Text('Pin'),
                   style: TextButton.styleFrom(
                     foregroundColor: const Color(0xFF8FD6B5),
                     padding: EdgeInsets.zero,

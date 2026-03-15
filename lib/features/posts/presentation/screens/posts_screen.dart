@@ -4,10 +4,12 @@ import 'package:flutter_app/features/feed/presentation/widgets/feed_navigation_b
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/post_card.dart';
+import 'package:flutter_app/features/posts/presentation/widgets/pinned_posts_section.dart';
 
 class PostsScreen extends StatelessWidget {
   final String username;
   final List<PostModel> posts;
+  final List<PostModel> pinnedPosts;
   final ScrollController? scrollController;
   final Map<String, GlobalKey> postKeys;
   final String? viewerPeerId;
@@ -17,13 +19,20 @@ class PostsScreen extends StatelessWidget {
   final void Function(PostModel post)? onOpenComments;
   final void Function(PostModel post)? onToggleHeart;
   final void Function(PostModel post)? onPassAlong;
+  final void Function(PostModel post)? onPinPost;
+  final void Function(PostModel post)? onDismissPin;
+  final void Function(PostModel post)? onMessageFromPin;
+  final void Function(PostModel post)? onEditPinnedPost;
+  final void Function(PostModel post)? onRemovePin;
   final String? focusedPostId;
   final String? statusMessage;
+  final Set<String> activePinnedPostIds;
 
   const PostsScreen({
     super.key,
     required this.username,
     required this.posts,
+    this.pinnedPosts = const <PostModel>[],
     this.scrollController,
     this.postKeys = const <String, GlobalKey>{},
     this.viewerPeerId,
@@ -33,8 +42,14 @@ class PostsScreen extends StatelessWidget {
     this.onOpenComments,
     this.onToggleHeart,
     this.onPassAlong,
+    this.onPinPost,
+    this.onDismissPin,
+    this.onMessageFromPin,
+    this.onEditPinnedPost,
+    this.onRemovePin,
     this.focusedPostId,
     this.statusMessage,
+    this.activePinnedPostIds = const <String>{},
   });
 
   @override
@@ -80,12 +95,26 @@ class PostsScreen extends StatelessWidget {
                         ),
                       ),
                     ),
-                  if (posts.isEmpty)
+                  if (pinnedPosts.isNotEmpty)
+                    SliverPadding(
+                      padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+                      sliver: SliverToBoxAdapter(
+                        child: PinnedPostsSection(
+                          posts: pinnedPosts,
+                          viewerPeerId: viewerPeerId,
+                          onDismiss: onDismissPin,
+                          onMessage: onMessageFromPin,
+                          onEdit: onEditPinnedPost,
+                          onRemove: onRemovePin,
+                        ),
+                      ),
+                    ),
+                  if (posts.isEmpty && pinnedPosts.isEmpty)
                     SliverFillRemaining(
                       hasScrollBody: false,
                       child: _EmptyState(onCompose: onCompose),
                     )
-                  else
+                  else if (posts.isNotEmpty)
                     for (final section in grouped.entries) ...[
                       SliverPadding(
                         padding: const EdgeInsets.fromLTRB(20, 8, 20, 10),
@@ -124,6 +153,13 @@ class PostsScreen extends StatelessWidget {
                                 onPassAlong: onPassAlong == null
                                     ? null
                                     : () => onPassAlong!(post),
+                                onPinPost:
+                                    onPinPost != null &&
+                                        viewerPeerId != null &&
+                                        post.authorPeerId == viewerPeerId &&
+                                        !activePinnedPostIds.contains(post.id)
+                                    ? () => onPinPost!(post)
+                                    : null,
                                 showShareCount:
                                     viewerPeerId != null &&
                                     post.authorPeerId == viewerPeerId,

@@ -1,6 +1,7 @@
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/posts/application/handle_incoming_post_comment_use_case.dart';
+import 'package:flutter_app/features/posts/application/handle_incoming_post_pins_use_case.dart';
 import 'package:flutter_app/features/posts/application/handle_incoming_post_reaction_use_case.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 
@@ -70,6 +71,44 @@ Future<int> reconcilePendingPostChildEvents({
         }
         if (result !=
             HandleIncomingPostCommentReactionResult.stagedPendingParent) {
+          await postRepo.deletePendingChildEvent(pendingEvent.eventId);
+        }
+      case 'post_pin_update':
+        final (result, _) = await handleIncomingPostPinUpdate(
+          message: ChatMessage(
+            from: pendingEvent.senderPeerId,
+            to: '',
+            content: pendingEvent.rawEnvelope,
+            timestamp: pendingEvent.createdAt,
+            isIncoming: true,
+          ),
+          postRepo: postRepo,
+          contactRepo: contactRepo,
+          allowStaging: false,
+        );
+        if (result == HandleIncomingPostPinUpdateResult.pinApplied) {
+          applied += 1;
+        }
+        if (result != HandleIncomingPostPinUpdateResult.stagedPendingParent) {
+          await postRepo.deletePendingChildEvent(pendingEvent.eventId);
+        }
+      case 'post_pin_remove':
+        final (result, _) = await handleIncomingPostPinRemove(
+          message: ChatMessage(
+            from: pendingEvent.senderPeerId,
+            to: '',
+            content: pendingEvent.rawEnvelope,
+            timestamp: pendingEvent.createdAt,
+            isIncoming: true,
+          ),
+          postRepo: postRepo,
+          contactRepo: contactRepo,
+          allowStaging: false,
+        );
+        if (result == HandleIncomingPostPinRemoveResult.pinRemoved) {
+          applied += 1;
+        }
+        if (result != HandleIncomingPostPinRemoveResult.stagedPendingParent) {
           await postRepo.deletePendingChildEvent(pendingEvent.eventId);
         }
       default:

@@ -7,6 +7,7 @@ import 'package:flutter_app/features/posts/domain/models/post_reaction_model.dar
 import 'package:flutter_app/features/posts/domain/models/post_recipient_delivery.dart';
 import 'package:flutter_app/features/posts/domain/models/post_pass_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_origin_model.dart';
+import 'package:flutter_app/features/posts/domain/models/post_pin_state_model.dart';
 
 abstract class PostRepository {
   Stream<String> get postChanges;
@@ -42,6 +43,11 @@ abstract class PostRepository {
   Future<List<PostCommentReactionModel>> loadCommentReactions(String commentId);
 
   Future<void> savePostMediaAttachment(PostMediaAttachmentModel attachment);
+
+  Future<void> replacePostMediaAttachments(
+    String postId,
+    List<PostMediaAttachmentModel> attachments,
+  );
 
   Future<List<PostMediaAttachmentModel>> loadPostMediaAttachments(
     String postId,
@@ -80,6 +86,18 @@ abstract class PostRepository {
   Future<void> savePostOrigin(PostOriginModel origin);
 
   Future<PostOriginModel?> getPostOrigin(String postId);
+
+  Future<void> savePostPinState(PostPinStateModel pinState);
+
+  Future<PostPinStateModel?> getPostPinState(String postId);
+
+  Future<List<PostPinStateModel>> loadActivePinStates();
+
+  Future<void> savePinDismissal(String postId, String dismissedAt);
+
+  Future<Set<String>> loadDismissedPinPostIds();
+
+  Future<void> clearPinDismissal(String postId);
 
   Future<void> markFocused(String postId);
 
