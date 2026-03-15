@@ -1,12 +1,17 @@
 import 'package:uuid/uuid.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/media/image_processor.dart';
+import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
+import 'package:flutter_app/features/posts/application/attach_post_media_use_case.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_create_envelope.dart';
+import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_recipient_delivery.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
@@ -32,6 +37,11 @@ Future<(SendPostResult, PostModel?)> sendPost({
   required String senderUsername,
   required String text,
   required PostAudience audience,
+  List<PostMediaDraft> mediaDrafts = const <PostMediaDraft>[],
+  SecureKeyStore? secureKeyStore,
+  ImageProcessor? imageProcessor,
+  MediaFileManager? mediaFileManager,
+  UploadPostMediaFn? uploadPostMediaFn,
   Bridge? bridge,
 }) async {
   emitFlowEvent(
@@ -40,7 +50,8 @@ Future<(SendPostResult, PostModel?)> sendPost({
     details: {'audienceKind': audience.kind.toWireValue()},
   );
 
-  if (text.trim().isEmpty) {
+  final hasMedia = mediaDrafts.isNotEmpty;
+  if (text.trim().isEmpty && !hasMedia) {
     return (SendPostResult.invalidPost, null);
   }
   if (!p2pService.currentState.isStarted) {
@@ -57,7 +68,7 @@ Future<(SendPostResult, PostModel?)> sendPost({
 
   final createdAt = DateTime.now().toUtc().toIso8601String();
   final expiresAt = DateTime.now().toUtc().add(_postExpiry).toIso8601String();
-  final post = PostModel(
+  var post = PostModel(
     id: 'post_${_uuid.v4()}',
     eventId: 'evt_${_uuid.v4()}',
     senderPeerId: senderPeerId,
@@ -69,10 +80,54 @@ Future<(SendPostResult, PostModel?)> sendPost({
     visibleAt: createdAt,
     expiresAt: expiresAt,
     keepAvailable: false,
+    mediaKind: _deriveDraftMediaKind(mediaDrafts),
     isIncoming: false,
     deliveryStatus: 'sending',
   );
   await postRepo.savePost(post);
+
+  for (final recipient in eligibleRecipients) {
+    await postRepo.saveRecipientDelivery(
+      PostRecipientDelivery(
+        postId: post.id,
+        recipientPeerId: recipient.peerId,
+        deliveryStatus: 'pending',
+        lastAttemptAt: createdAt,
+        deliveryPath: 'pending',
+        createdAt: createdAt,
+        updatedAt: createdAt,
+      ),
+    );
+  }
+
+  if (hasMedia) {
+    if (secureKeyStore == null || imageProcessor == null) {
+      final failedPost = post.copyWith(deliveryStatus: 'failed');
+      await postRepo.savePost(failedPost);
+      return (SendPostResult.sendFailed, failedPost);
+    }
+
+    final (mediaResult, attachments) = await attachPostMedia(
+      postId: post.id,
+      postRepo: postRepo,
+      secureKeyStore: secureKeyStore,
+      imageProcessor: imageProcessor,
+      mediaFileManager: mediaFileManager,
+      drafts: mediaDrafts,
+      uploadPostMediaFn: uploadPostMediaFn,
+      bridge: bridge,
+    );
+    if (mediaResult != AttachPostMediaResult.success) {
+      final failedPost = post.copyWith(deliveryStatus: 'failed');
+      await postRepo.savePost(failedPost);
+      return (SendPostResult.sendFailed, failedPost);
+    }
+    post = post.copyWith(
+      mediaKind: PostMediaAttachmentModel.deriveMediaKind(attachments),
+      media: attachments,
+    );
+    await postRepo.savePost(post);
+  }
 
   var successCount = 0;
   var failureCount = 0;
@@ -83,6 +138,9 @@ Future<(SendPostResult, PostModel?)> sendPost({
       post: post,
       bridge: bridge,
       recipient: recipient,
+      recipientPeerIds: eligibleRecipients
+          .map((eligibleRecipient) => eligibleRecipient.peerId)
+          .toList(growable: false),
     );
     final delivery = await _deliverToRecipient(
       p2pService: p2pService,
@@ -128,6 +186,17 @@ Future<(SendPostResult, PostModel?)> sendPost({
   return (result, updatedPost);
 }
 
+String _deriveDraftMediaKind(List<PostMediaDraft> mediaDrafts) {
+  if (mediaDrafts.isEmpty) {
+    return 'none';
+  }
+  final firstKind = mediaDrafts.first.kind;
+  if (firstKind == 'image' && mediaDrafts.length > 1) {
+    return 'image_carousel';
+  }
+  return firstKind;
+}
+
 Future<List<ContactModel>> _resolveEligibleRecipients({
   required ContactRepository contactRepo,
   required PostAudience audience,
@@ -157,11 +226,15 @@ Future<List<ContactModel>> _resolveEligibleRecipients({
 Future<String> _buildWireEnvelope({
   required PostModel post,
   required ContactModel recipient,
+  required List<String> recipientPeerIds,
   Bridge? bridge,
 }) async {
   final envelope = PostCreateEnvelope.fromPost(post);
   if (bridge == null || recipient.mlKemPublicKey == null) {
-    return envelope.toJson(selectedPeerIds: post.audience.selectedPeerIds);
+    return envelope.toJson(
+      selectedPeerIds: post.audience.selectedPeerIds,
+      recipientPeerIds: recipientPeerIds,
+    );
   }
 
   final encryptResult = await callEncryptMessage(
@@ -169,11 +242,15 @@ Future<String> _buildWireEnvelope({
     recipientMlKemPublicKey: recipient.mlKemPublicKey!,
     plaintext: envelope.toInnerJson(
       selectedPeerIds: post.audience.selectedPeerIds,
+      recipientPeerIds: recipientPeerIds,
     ),
   );
 
   if (encryptResult['ok'] != true) {
-    return envelope.toJson(selectedPeerIds: post.audience.selectedPeerIds);
+    return envelope.toJson(
+      selectedPeerIds: post.audience.selectedPeerIds,
+      recipientPeerIds: recipientPeerIds,
+    );
   }
 
   return PostCreateEnvelope.buildEncryptedEnvelope(

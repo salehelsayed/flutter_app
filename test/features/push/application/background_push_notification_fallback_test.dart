@@ -143,6 +143,25 @@ void main() {
       expect(fallback.payload, 'post:post-123');
     });
 
+    test('shows fallback for post_comment with comment payload routing', () {
+      const message = RemoteMessage(
+        data: {
+          'type': 'post_comment',
+          'post_id': 'post-123',
+          'comment_id': 'comment-7',
+          'title': 'Bob commented',
+          'body': 'I can lend one.',
+        },
+      );
+
+      expect(shouldShowBackgroundPushFallbackNotification(message), isTrue);
+
+      final fallback = buildBackgroundPushFallbackNotification(message);
+      expect(fallback.title, 'Bob commented');
+      expect(fallback.body, 'I can lend one.');
+      expect(fallback.payload, 'post_comment:post-123:comment-7');
+    });
+
     test('treats whitespace-only values as absent', () {
       const message = RemoteMessage(data: {'type': '  ', 'payload': '   '});
 

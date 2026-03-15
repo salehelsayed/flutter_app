@@ -7,6 +7,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/posts/application/handle_incoming_post_use_case.dart';
+import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 
@@ -17,6 +18,10 @@ class PostListener {
   final Bridge? bridge;
   final Future<String?> Function()? getOwnMlKemSecretKey;
   final NotificationService? notificationService;
+  final Future<PostMediaAttachmentModel> Function({
+    required PostMediaAttachmentModel attachment,
+    required String postId,
+  })? hydratePostMediaFn;
 
   StreamSubscription<ChatMessage>? _subscription;
   final _postController = StreamController<PostModel>.broadcast();
@@ -28,6 +33,7 @@ class PostListener {
     this.bridge,
     this.getOwnMlKemSecretKey,
     this.notificationService,
+    this.hydratePostMediaFn,
   });
 
   Stream<PostModel> get incomingPostStream => _postController.stream;
@@ -57,6 +63,7 @@ class PostListener {
       contactRepo: contactRepo,
       bridge: bridge,
       ownMlKemSecretKey: ownMlKemSecretKey,
+      hydratePostMediaFn: hydratePostMediaFn,
     );
     if (result != HandleIncomingPostResult.postCreated || post == null) {
       emitFlowEvent(

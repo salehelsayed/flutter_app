@@ -21,6 +21,10 @@ class IncomingMessageRouter {
   final _groupKeyUpdateController = StreamController<ChatMessage>.broadcast();
   final _introductionController = StreamController<ChatMessage>.broadcast();
   final _postCreateController = StreamController<ChatMessage>.broadcast();
+  final _postCommentController = StreamController<ChatMessage>.broadcast();
+  final _postReactionController = StreamController<ChatMessage>.broadcast();
+  final _postCommentReactionController =
+      StreamController<ChatMessage>.broadcast();
   final _unknownController = StreamController<ChatMessage>.broadcast();
 
   IncomingMessageRouter({required this.p2pService});
@@ -51,6 +55,16 @@ class IncomingMessageRouter {
 
   /// Stream of incoming post_create messages.
   Stream<ChatMessage> get postCreateStream => _postCreateController.stream;
+
+  /// Stream of incoming post_comment messages.
+  Stream<ChatMessage> get postCommentStream => _postCommentController.stream;
+
+  /// Stream of incoming post_reaction messages.
+  Stream<ChatMessage> get postReactionStream => _postReactionController.stream;
+
+  /// Stream of incoming post_comment_reaction messages.
+  Stream<ChatMessage> get postCommentReactionStream =>
+      _postCommentReactionController.stream;
 
   /// Stream of messages with unknown or unparseable types.
   Stream<ChatMessage> get unknownMessageStream => _unknownController.stream;
@@ -139,6 +153,12 @@ class IncomingMessageRouter {
           _introductionController.add(message);
         case 'post_create':
           _postCreateController.add(message);
+        case 'post_comment':
+          _postCommentController.add(message);
+        case 'post_reaction':
+          _postReactionController.add(message);
+        case 'post_comment_reaction':
+          _postCommentReactionController.add(message);
         case 'delivery_receipt':
           // Legacy envelope type kept for backward compatibility.
           // Delivery status is now sender-side inbox/direct semantics only.
@@ -186,6 +206,9 @@ class IncomingMessageRouter {
     _groupKeyUpdateController.close();
     _introductionController.close();
     _postCreateController.close();
+    _postCommentController.close();
+    _postReactionController.close();
+    _postCommentReactionController.close();
     _unknownController.close();
   }
 }

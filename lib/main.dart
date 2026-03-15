@@ -43,8 +43,14 @@ import 'package:flutter_app/core/database/migrations/024_contact_introduced_by_p
 import 'package:flutter_app/core/database/migrations/025_introduction_already_connected_status.dart';
 import 'package:flutter_app/core/database/migrations/026_group_quoted_message_id.dart';
 import 'package:flutter_app/core/database/migrations/027_posts_core.dart';
+import 'package:flutter_app/core/database/migrations/028_posts_engagement.dart';
 import 'package:flutter_app/core/database/helpers/introductions_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/post_comments_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/post_comment_reactions_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_feed_state_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/post_media_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/post_pending_child_events_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/post_reactions_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_recipients_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/posts_db_helpers.dart';
 import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository_impl.dart';
@@ -104,8 +110,12 @@ import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart'
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
 import 'package:flutter_app/features/push/application/background_message_handler.dart';
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
+import 'package:flutter_app/features/posts/application/download_post_media_use_case.dart';
+import 'package:flutter_app/features/posts/application/post_comment_listener.dart';
 import 'package:flutter_app/features/posts/application/post_listener.dart';
 import 'package:flutter_app/features/posts/application/post_notification_open_coordinator.dart';
+import 'package:flutter_app/features/posts/application/post_reaction_listener.dart';
+import 'package:flutter_app/features/posts/application/sweep_expired_posts_use_case.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository_impl.dart';
 
 void main() async {
@@ -148,7 +158,7 @@ void main() async {
   final db = await openEncryptedDatabase(
     secureKeyStore: secureKeyStore,
     dbName: 'identity.db',
-    version: 27,
+    version: 28,
     onCreate: (db, version) async {
       await runIdentityTableMigration(db);
       await runMessagesTableMigration(db);
@@ -177,6 +187,7 @@ void main() async {
       await runIntroductionAlreadyConnectedMigration(db);
       await runGroupQuotedMessageIdMigration(db);
       await runPostsCoreMigration(db);
+      await runPostsEngagementMigration(db);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) {
@@ -254,6 +265,9 @@ void main() async {
       }
       if (oldVersion < 27) {
         await runPostsCoreMigration(db);
+      }
+      if (oldVersion < 28) {
+        await runPostsEngagementMigration(db);
       }
     },
   );
@@ -342,10 +356,36 @@ void main() async {
     dbInsertPost: (row) => dbInsertPost(db, row),
     dbLoadPost: (postId) => dbLoadPost(db, postId),
     dbLoadPostsFeed: () => dbLoadPostsFeed(db),
+    dbLoadExpiredPosts: (nowIso) => dbLoadExpiredPosts(db, nowIso),
+    dbDeletePostCascade: (postId) => dbDeletePostCascade(db, postId),
     dbUpsertRecipientDelivery: (row) => dbUpsertPostRecipientDelivery(db, row),
     dbLoadRecipientDeliveries: (postId) =>
         dbLoadPostRecipientDeliveries(db, postId),
     dbMarkPostFocused: (postId) => dbMarkPostFocused(db, postId),
+    dbInsertPostComment: (row) => dbInsertPostComment(db, row),
+    dbLoadPostComment: (commentId) => dbLoadPostComment(db, commentId),
+    dbLoadPostComments: (postId) => dbLoadPostComments(db, postId),
+    dbInsertPendingChildEvent: (row) => dbInsertPendingPostChildEvent(db, row),
+    dbLoadPendingChildEvents: (postId) =>
+        dbLoadPendingPostChildEvents(db, postId),
+    dbDeletePendingChildEvent: (eventId) =>
+        dbDeletePendingPostChildEvent(db, eventId),
+    dbUpsertPostReaction: (row) => dbUpsertPostReaction(db, row),
+    dbLoadPostReaction: (reactionId) => dbLoadPostReaction(db, reactionId),
+    dbLoadPostReactions: (postId) => dbLoadPostReactions(db, postId),
+    dbUpsertCommentReaction: (row) => dbUpsertPostCommentReaction(db, row),
+    dbLoadCommentReaction: (reactionId) =>
+        dbLoadPostCommentReaction(db, reactionId),
+    dbLoadCommentReactions: (commentId) =>
+        dbLoadPostCommentReactions(db, commentId),
+    dbUpsertPostMedia: (row) => dbUpsertPostMediaAttachment(db, row),
+    dbLoadPostMedia: (postId) => dbLoadPostMediaAttachments(db, postId),
+    dbLoadPostMediaForPosts: (postIds) =>
+        dbLoadPostMediaAttachmentsForPosts(db, postIds),
+    dbUpdatePostMediaLocalPath: (mediaId, localPath) =>
+        dbUpdatePostMediaLocalPath(db, mediaId, localPath),
+    dbUpdatePostMediaDownloadStatus: (mediaId, downloadStatus) =>
+        dbUpdatePostMediaDownloadStatus(db, mediaId, downloadStatus),
   );
 
   // Create media attachment repository
@@ -544,6 +584,29 @@ void main() async {
       final identity = await repository.loadIdentity();
       return identity?.mlKemSecretKey;
     },
+    hydratePostMediaFn: ({required attachment, required postId}) {
+      return downloadPostMedia(
+        bridge: bridge,
+        postRepo: postRepository,
+        mediaFileManager: mediaFileManager,
+        attachment: attachment,
+      );
+    },
+  );
+
+  final postCommentListener = PostCommentListener(
+    postCommentStream: messageRouter.postCommentStream,
+    postRepo: postRepository,
+    contactRepo: contactRepository,
+    notificationService: notificationService,
+  );
+
+  final postReactionListener = PostReactionListener(
+    postReactionStream: messageRouter.postReactionStream,
+    postCommentReactionStream: messageRouter.postCommentReactionStream,
+    postRepo: postRepository,
+    contactRepo: contactRepository,
+    notificationService: notificationService,
   );
 
   // Create reaction listener
@@ -658,6 +721,8 @@ void main() async {
   contactRequestListener.start();
   chatMessageListener.start();
   postListener.start();
+  postCommentListener.start();
+  postReactionListener.start();
   reactionListener.start();
   profileUpdateListener.start();
   groupMessageListener.start(
@@ -689,6 +754,10 @@ void main() async {
 
   final shareIntentService = ShareIntentService();
   await shareIntentService.captureInitialIntent();
+  await sweepExpiredPosts(
+    postRepo: postRepository,
+    mediaFileManager: mediaFileManager,
+  );
 
   runApp(
     MyApp(
@@ -701,6 +770,8 @@ void main() async {
       mediaAttachmentRepository: mediaAttachmentRepository,
       chatMessageListener: chatMessageListener,
       postListener: postListener,
+      postCommentListener: postCommentListener,
+      postReactionListener: postReactionListener,
       reactionListener: reactionListener,
       profileUpdateListener: profileUpdateListener,
       messageRouter: messageRouter,
@@ -742,6 +813,8 @@ class MyApp extends StatefulWidget {
   final MediaAttachmentRepositoryImpl mediaAttachmentRepository;
   final ChatMessageListener chatMessageListener;
   final PostListener postListener;
+  final PostCommentListener postCommentListener;
+  final PostReactionListener postReactionListener;
   final ReactionListener reactionListener;
   final ProfileUpdateListener profileUpdateListener;
   final IncomingMessageRouter messageRouter;
@@ -782,6 +855,8 @@ class MyApp extends StatefulWidget {
     required this.mediaAttachmentRepository,
     required this.chatMessageListener,
     required this.postListener,
+    required this.postCommentListener,
+    required this.postReactionListener,
     required this.reactionListener,
     required this.profileUpdateListener,
     required this.messageRouter,
@@ -922,7 +997,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       return;
     }
 
-    if (routeTarget.kind == NotificationRouteTargetKind.post) {
+    if (routeTarget.kind == NotificationRouteTargetKind.post ||
+        routeTarget.kind == NotificationRouteTargetKind.postComment) {
       await _postNotificationOpenCoordinator.handleRouteTarget(
         routeTarget: routeTarget,
         drainOfflineInbox: widget.p2pService.drainOfflineInbox,
@@ -1066,6 +1142,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     widget.profileUpdateListener.dispose();
     widget.reactionListener.dispose();
     widget.postListener.dispose();
+    widget.postCommentListener.dispose();
+    widget.postReactionListener.dispose();
     widget.chatMessageListener.dispose();
     widget.contactRequestListener.dispose();
     _postNotificationOpenCoordinator.dispose();
@@ -1111,6 +1189,10 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         groupMsgRepo: widget.groupMessageRepository,
         mediaAttachmentRepo: widget.mediaAttachmentRepository,
         reactionRepo: widget.reactionRepository,
+      );
+      await sweepExpiredPosts(
+        postRepo: widget.postRepository,
+        mediaFileManager: widget.mediaFileManager,
       );
     } finally {
       _isResuming = false;

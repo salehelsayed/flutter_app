@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
+import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 
 class PostCreateEnvelope {
@@ -14,9 +15,12 @@ class PostCreateEnvelope {
   final String authorPeerId;
   final String authorUsername;
   final String text;
+  final String mediaKind;
+  final List<PostMediaAttachmentModel> media;
   final PostAudience audience;
   final String expiresAt;
   final bool keepAvailable;
+  final List<String> recipientPeerIds;
 
   const PostCreateEnvelope({
     required this.eventId,
@@ -26,9 +30,12 @@ class PostCreateEnvelope {
     required this.authorPeerId,
     required this.authorUsername,
     required this.text,
+    required this.mediaKind,
+    required this.media,
     required this.audience,
     required this.expiresAt,
     required this.keepAvailable,
+    this.recipientPeerIds = const <String>[],
   });
 
   factory PostCreateEnvelope.fromPost(PostModel post) {
@@ -40,9 +47,12 @@ class PostCreateEnvelope {
       authorPeerId: post.authorPeerId,
       authorUsername: post.authorUsername,
       text: post.text,
+      mediaKind: post.mediaKind,
+      media: post.media,
       audience: post.audience,
       expiresAt: post.expiresAt,
       keepAvailable: post.keepAvailable,
+      recipientPeerIds: const <String>[],
     );
   }
 
@@ -72,6 +82,9 @@ class PostCreateEnvelope {
       final authorPeerId = snapshot['author_peer_id'] as String?;
       final authorUsername = snapshot['author_username'] as String?;
       final text = snapshot['text'] as String?;
+      final mediaKind = snapshot['media_kind'] as String? ?? 'none';
+      final mediaJson = (snapshot['media'] as List<dynamic>? ?? const [])
+          .cast<Map<String, dynamic>>();
       final expiresAt = snapshot['expires_at'] as String?;
       if (postId == null ||
           snapshotPostId == null ||
@@ -93,6 +106,10 @@ class PostCreateEnvelope {
           (payload['selected_peer_ids'] as List<dynamic>? ?? const [])
               .map((value) => value.toString())
               .toList(growable: false);
+      final recipientPeerIds =
+          (payload['recipient_peer_ids'] as List<dynamic>? ?? const [])
+              .map((value) => value.toString())
+              .toList(growable: false);
       final audience = PostAudience(
         kind: audienceKind == 'pick_people'
             ? PostAudienceKind.pickPeople
@@ -100,6 +117,21 @@ class PostCreateEnvelope {
         selectedPeerIds: selectedIds,
         scopeLabel: audienceJson?['scope_label'] as String?,
       );
+      final media = <PostMediaAttachmentModel>[];
+      for (var index = 0; index < mediaJson.length; index++) {
+        final attachment = PostMediaAttachmentModel.fromRenderableJson(
+          mediaJson[index],
+          postId: postId,
+          position: index,
+        );
+        media.add(attachment);
+      }
+      if (!PostMediaAttachmentModel.isValidSnapshotMedia(
+        mediaKind: mediaKind,
+        media: media,
+      )) {
+        return null;
+      }
       return PostCreateEnvelope(
         eventId: eventId,
         createdAt: createdAt,
@@ -108,9 +140,12 @@ class PostCreateEnvelope {
         authorPeerId: authorPeerId,
         authorUsername: authorUsername,
         text: text,
+        mediaKind: mediaKind,
+        media: media,
         audience: audience,
         expiresAt: expiresAt,
         keepAvailable: (snapshot['keep_available'] as bool?) ?? false,
+        recipientPeerIds: recipientPeerIds,
       );
     } catch (_) {
       return null;
@@ -171,7 +206,10 @@ class PostCreateEnvelope {
     );
   }
 
-  String toJson({List<String>? selectedPeerIds}) {
+  String toJson({
+    List<String>? selectedPeerIds,
+    List<String>? recipientPeerIds,
+  }) {
     final payload = <String, Object?>{
       'post_id': postId,
       'snapshot': <String, Object?>{
@@ -185,13 +223,17 @@ class PostCreateEnvelope {
           'scope_label': audience.scopeLabel,
         },
         'text': text,
-        'media_kind': 'none',
-        'media': const <Object?>[],
+        'media_kind': mediaKind,
+        'media': media
+            .map((attachment) => attachment.toRenderableJson())
+            .toList(growable: false),
         'keep_available': keepAvailable,
         'expires_at': expiresAt,
       },
       if (selectedPeerIds != null && selectedPeerIds.isNotEmpty)
         'selected_peer_ids': selectedPeerIds,
+      if (recipientPeerIds != null && recipientPeerIds.isNotEmpty)
+        'recipient_peer_ids': recipientPeerIds,
     };
     return jsonEncode({
       'type': 'post_create',
@@ -203,7 +245,10 @@ class PostCreateEnvelope {
     });
   }
 
-  String toInnerJson({List<String>? selectedPeerIds}) {
+  String toInnerJson({
+    List<String>? selectedPeerIds,
+    List<String>? recipientPeerIds,
+  }) {
     return jsonEncode({
       'post_id': postId,
       'snapshot': <String, Object?>{
@@ -217,13 +262,17 @@ class PostCreateEnvelope {
           'scope_label': audience.scopeLabel,
         },
         'text': text,
-        'media_kind': 'none',
-        'media': const <Object?>[],
+        'media_kind': mediaKind,
+        'media': media
+            .map((attachment) => attachment.toRenderableJson())
+            .toList(growable: false),
         'keep_available': keepAvailable,
         'expires_at': expiresAt,
       },
       if (selectedPeerIds != null && selectedPeerIds.isNotEmpty)
         'selected_peer_ids': selectedPeerIds,
+      if (recipientPeerIds != null && recipientPeerIds.isNotEmpty)
+        'recipient_peer_ids': recipientPeerIds,
     });
   }
 
@@ -257,6 +306,8 @@ class PostCreateEnvelope {
       authorPeerId: authorPeerId,
       authorUsername: authorUsername,
       text: text,
+      mediaKind: mediaKind,
+      media: media,
       audience: audience,
       createdAt: createdAt,
       visibleAt: createdAt,
@@ -273,9 +324,7 @@ class PostCreateEnvelope {
     if (timestamp == null) {
       return false;
     }
-    final latestAllowed = DateTime.now()
-        .toUtc()
-        .add(_maxFutureClockSkew);
+    final latestAllowed = DateTime.now().toUtc().add(_maxFutureClockSkew);
     return !timestamp.isAfter(latestAllowed);
   }
 }

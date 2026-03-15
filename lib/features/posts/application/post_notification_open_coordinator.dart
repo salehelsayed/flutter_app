@@ -40,13 +40,16 @@ class PostNotificationOpenCoordinator {
     required NotificationRouteTarget routeTarget,
     required Future<void> Function() drainOfflineInbox,
   }) async {
-    if (routeTarget.kind != NotificationRouteTargetKind.post ||
+    if ((routeTarget.kind != NotificationRouteTargetKind.post &&
+            routeTarget.kind != NotificationRouteTargetKind.postComment) ||
         routeTarget.postId == null) {
       return;
     }
 
     final postId = routeTarget.postId!;
-    pendingTargetStore.setTarget(PostRouteTarget(postId: postId));
+    pendingTargetStore.setTarget(
+      PostRouteTarget(postId: postId, commentId: routeTarget.commentId),
+    );
     _revealedPostId = null;
     _armTimers(postId);
 

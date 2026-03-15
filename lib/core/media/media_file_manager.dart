@@ -37,6 +37,27 @@ class MediaFileManager {
     return p.join('media', contactPeerId, '$blobId$ext');
   }
 
+  /// Returns the absolute local file path for a Posts attachment.
+  Future<String> localPathForPostAttachment({
+    required String postId,
+    required String blobId,
+    required String mime,
+  }) async {
+    final dir = await _postMediaDir(postId);
+    final ext = _extensionFromMime(mime);
+    return p.join(dir.path, '$blobId$ext');
+  }
+
+  /// Returns the relative path for a Posts attachment (no leading slash).
+  String relativePathForPostAttachment({
+    required String postId,
+    required String blobId,
+    required String mime,
+  }) {
+    final ext = _extensionFromMime(mime);
+    return p.join('post_media', postId, '$blobId$ext');
+  }
+
   /// Resolves a stored path (relative or legacy absolute) to an absolute path.
   ///
   /// - Relative paths like `media/...` get prepended with the documents dir.
@@ -45,7 +66,10 @@ class MediaFileManager {
   /// - Other absolute paths are returned as-is.
   Future<String> resolveStoredPath(String storedPath) async {
     // New-style relative path
-    if (storedPath.startsWith('media/') || storedPath.startsWith('media\\')) {
+    if (storedPath.startsWith('media/') ||
+        storedPath.startsWith('media\\') ||
+        storedPath.startsWith('post_media/') ||
+        storedPath.startsWith('post_media\\')) {
       final appDir = await getApplicationDocumentsDirectory();
       return p.join(appDir.path, storedPath);
     }
@@ -53,6 +77,12 @@ class MediaFileManager {
     final mediaIndex = storedPath.indexOf('/media/');
     if (mediaIndex != -1) {
       final relativePortion = storedPath.substring(mediaIndex + 1);
+      final appDir = await getApplicationDocumentsDirectory();
+      return p.join(appDir.path, relativePortion);
+    }
+    final postMediaIndex = storedPath.indexOf('/post_media/');
+    if (postMediaIndex != -1) {
+      final relativePortion = storedPath.substring(postMediaIndex + 1);
       final appDir = await getApplicationDocumentsDirectory();
       return p.join(appDir.path, relativePortion);
     }
@@ -76,9 +106,25 @@ class MediaFileManager {
     }
   }
 
+  Future<void> deleteMediaForPost(String postId) async {
+    final dir = await _postMediaDir(postId);
+    if (await dir.exists()) {
+      await dir.delete(recursive: true);
+    }
+  }
+
   Future<Directory> _mediaDir(String contactPeerId) async {
     final appDir = await getApplicationDocumentsDirectory();
     final dir = Directory(p.join(appDir.path, 'media', contactPeerId));
+    if (!await dir.exists()) {
+      await dir.create(recursive: true);
+    }
+    return dir;
+  }
+
+  Future<Directory> _postMediaDir(String postId) async {
+    final appDir = await getApplicationDocumentsDirectory();
+    final dir = Directory(p.join(appDir.path, 'post_media', postId));
     if (!await dir.exists()) {
       await dir.create(recursive: true);
     }
