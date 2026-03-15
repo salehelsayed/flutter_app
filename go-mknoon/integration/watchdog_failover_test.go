@@ -108,6 +108,42 @@ func TestAllRelaysUnavailableEnterDegradedStateAndRecover(t *testing.T) {
 	}
 }
 
+func TestPersonalNamespaceRecovery_ReRegistersAfterWatchdogRestart(t *testing.T) {
+	flags := node.DefaultFeatureFlags()
+	flags.EnableInPlaceRelayRecovery = false
+
+	relayA, _ := startLocalRelayPairWithRegistrationTTL(t, 5)
+	nodeA, peerIDA := startPersonalNodeWithExplicitInitialRegisterAndFlags(
+		t,
+		[]string{relayA.addr()},
+		30*time.Second,
+		&flags,
+	)
+	nodeB, _ := startNodeWithRelays(t, []string{relayA.addr()}, nil, nil)
+	nodeA.SetWaitForCircuitAddressHookForTests(func(timeout time.Duration) bool {
+		return true
+	})
+
+	namespace := nodeA.Namespace()
+	waitForDiscoverablePeer(t, nodeB, namespace, peerIDA, 10*time.Second)
+
+	time.Sleep(4 * time.Second)
+
+	result, err := nodeA.ReconnectRelays()
+	if err != nil {
+		t.Fatalf("ReconnectRelays(): %v", err)
+	}
+	if !result.Success {
+		t.Fatalf("watchdog restart should restore personal discoverability, got %+v", result)
+	}
+	if result.RecoveryMode != "watchdog_restart" {
+		t.Fatalf("expected watchdog_restart recovery, got %+v", result)
+	}
+
+	time.Sleep(2 * time.Second)
+	waitForDiscoverablePeer(t, nodeB, namespace, peerIDA, 3*time.Second)
+}
+
 func TestRendezvousAndInboxStillWorkAfterRelayRestart(t *testing.T) {
 	relayA, relayB := startLocalRelayPair(t)
 	relayAddrs := []string{relayA.addr(), relayB.addr()}
