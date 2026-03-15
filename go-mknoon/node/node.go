@@ -70,6 +70,10 @@ type Node struct {
 	waitForCircuitAddressHook func(time.Duration) bool
 	rendezvousRegisterHook    func(string, []string) error
 	refreshRelaySessionHook   func() *RecoveryResult
+
+	// Phase 0 scaffolding for the personal rendezvous refresh loop.
+	// This is intentionally not wired into Start() yet.
+	personalRendezvousRefreshCancel context.CancelFunc
 }
 
 type connectionInfo struct {

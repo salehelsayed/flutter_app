@@ -508,6 +508,161 @@ func TestAutoRegister_DoesNotWaitForSlowSecondaryWarmAttempt(t *testing.T) {
 	}
 }
 
+func TestPersonalRendezvousRefreshLoop_DoesNotStartWhenAutoRegisterDisabled(t *testing.T) {
+	hexKey := generateTestKey(t)
+
+	n := NewNode()
+	registerCalled := make(chan struct{}, 1)
+
+	n.rendezvousRegisterHook = func(namespace string, serverAddresses []string) error {
+		registerCalled <- struct{}{}
+		return nil
+	}
+
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex: hexKey,
+		RelayAddresses: []string{
+			generateFakeRelayAddr(t, 19021),
+		},
+		AutoRegister: false,
+		Namespace:    "mknoon:chat:no-auto-register",
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer n.Stop()
+
+	n.startPersonalRendezvousRefreshLoop(10 * time.Millisecond)
+
+	select {
+	case <-registerCalled:
+		t.Fatal("personal rendezvous registration should not start when AutoRegister=false")
+	case <-time.After(60 * time.Millisecond):
+	}
+}
+
+func TestPersonalRendezvousRefreshLoop_StopsOnNodeStop(t *testing.T) {
+	hexKey := generateTestKey(t)
+
+	n := NewNode()
+	firstCallStarted := make(chan struct{})
+	callReleased := make(chan struct{})
+	var callCount atomic.Int32
+
+	n.waitForCircuitAddressHook = func(timeout time.Duration) bool {
+		return false
+	}
+	n.rendezvousRegisterHook = func(namespace string, serverAddresses []string) error {
+		if callCount.Add(1) == 1 {
+			close(firstCallStarted)
+			select {
+			case <-n.ctx.Done():
+			case <-callReleased:
+			}
+		}
+		return nil
+	}
+
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex: hexKey,
+		RelayAddresses: []string{
+			generateFakeRelayAddr(t, 19022),
+		},
+		AutoRegister: true,
+		Namespace:    "mknoon:chat:phase0-personal-refresh",
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	n.startPersonalRendezvousRefreshLoop(10 * time.Millisecond)
+
+	select {
+	case <-firstCallStarted:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("expected refresh loop to attempt a registration before Stop()")
+	}
+
+	if err := n.Stop(); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+
+	close(callReleased)
+	time.Sleep(40 * time.Millisecond)
+
+	if got := callCount.Load(); got != 1 {
+		t.Fatalf("expected exactly 1 registration attempt before stop, got %d", got)
+	}
+}
+
+func TestPersonalRendezvousRefreshLoop_DoesNotDuplicateConcurrentTicks(t *testing.T) {
+	hexKey := generateTestKey(t)
+
+	n := NewNode()
+	firstCallStarted := make(chan struct{})
+	releaseFirstCall := make(chan struct{})
+	var callCount atomic.Int32
+	var inFlight atomic.Int32
+	var maxInFlight atomic.Int32
+
+	n.waitForCircuitAddressHook = func(timeout time.Duration) bool {
+		return false
+	}
+	n.rendezvousRegisterHook = func(namespace string, serverAddresses []string) error {
+		current := inFlight.Add(1)
+		for {
+			existing := maxInFlight.Load()
+			if current <= existing {
+				break
+			}
+			if maxInFlight.CompareAndSwap(existing, current) {
+				break
+			}
+		}
+
+		callNumber := callCount.Add(1)
+		if callNumber == 1 {
+			close(firstCallStarted)
+			<-releaseFirstCall
+		}
+
+		inFlight.Add(-1)
+		return nil
+	}
+
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex: hexKey,
+		RelayAddresses: []string{
+			generateFakeRelayAddr(t, 19023),
+		},
+		AutoRegister: true,
+		Namespace:    "mknoon:chat:no-duplicate-ticks",
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer n.Stop()
+
+	n.startPersonalRendezvousRefreshLoop(10 * time.Millisecond)
+
+	select {
+	case <-firstCallStarted:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("expected first refresh-loop registration attempt to start")
+	}
+
+	time.Sleep(50 * time.Millisecond)
+
+	if got := callCount.Load(); got != 1 {
+		t.Fatalf("expected only 1 in-flight registration attempt while the first tick is blocked, got %d", got)
+	}
+	if got := maxInFlight.Load(); got != 1 {
+		t.Fatalf("expected at most 1 concurrent registration attempt, got %d", got)
+	}
+
+	close(releaseFirstCall)
+}
+
 // ---------------------------------------------------------------------------
 // Phase 4: Relay Session Manager and Reservation-Aware Health
 // ---------------------------------------------------------------------------
