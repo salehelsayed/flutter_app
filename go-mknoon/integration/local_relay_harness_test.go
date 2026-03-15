@@ -38,9 +38,10 @@ type localRelayInboxMessage struct {
 }
 
 type localRelaySharedState struct {
-	mu         sync.Mutex
-	rendezvous map[string]map[string]localRelayRegistration
-	inbox      map[string][]localRelayInboxMessage
+	mu                             sync.Mutex
+	rendezvous                     map[string]map[string]localRelayRegistration
+	inbox                          map[string][]localRelayInboxMessage
+	registrationTTLOverrideSeconds uint64
 }
 
 func newLocalRelaySharedState() *localRelaySharedState {
@@ -54,7 +55,9 @@ func (s *localRelaySharedState) register(namespace, peerID string, signedPeerRec
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if ttlSeconds == 0 {
+	if s.registrationTTLOverrideSeconds > 0 {
+		ttlSeconds = s.registrationTTLOverrideSeconds
+	} else if ttlSeconds == 0 {
 		ttlSeconds = 7200
 	}
 	if s.rendezvous[namespace] == nil {
@@ -224,6 +227,26 @@ func startLocalRelayPair(t *testing.T) (*localRelayServer, *localRelayServer) {
 	t.Helper()
 
 	shared := newLocalRelaySharedState()
+	return startLocalRelayPairWithSharedState(t, shared)
+}
+
+func startLocalRelayPairWithRegistrationTTL(
+	t *testing.T,
+	ttlSeconds uint64,
+) (*localRelayServer, *localRelayServer) {
+	t.Helper()
+
+	shared := newLocalRelaySharedState()
+	shared.registrationTTLOverrideSeconds = ttlSeconds
+	return startLocalRelayPairWithSharedState(t, shared)
+}
+
+func startLocalRelayPairWithSharedState(
+	t *testing.T,
+	shared *localRelaySharedState,
+) (*localRelayServer, *localRelayServer) {
+	t.Helper()
+
 	relayA := newLocalRelayServer(t, shared)
 	relayB := newLocalRelayServer(t, shared)
 	relayA.start()
@@ -243,6 +266,16 @@ func startNodeWithRelays(
 	cb node.EventCallback,
 	flags *node.FeatureFlags,
 ) (*node.Node, string) {
+	return startNodeWithRelayConfig(t, relayAddrs, cb, flags, nil)
+}
+
+func startNodeWithRelayConfig(
+	t *testing.T,
+	relayAddrs []string,
+	cb node.EventCallback,
+	flags *node.FeatureFlags,
+	configure func(*node.NodeConfig, string),
+) (*node.Node, string) {
 	t.Helper()
 
 	privHex, expectedPeerID := generatePrivateKeyHex(t)
@@ -259,6 +292,9 @@ func startNodeWithRelays(
 		RelayAddresses: append([]string(nil), relayAddrs...),
 		ListenPort:     0,
 		FeatureFlags:   flags,
+	}
+	if configure != nil {
+		configure(&cfg, expectedPeerID)
 	}
 
 	state, err := n.Start(cfg)
