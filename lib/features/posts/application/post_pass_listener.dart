@@ -4,6 +4,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/posts/application/handle_incoming_passed_post_use_case.dart';
+import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 
@@ -11,6 +12,11 @@ class PostPassListener {
   final Stream<ChatMessage> postPassStream;
   final PostRepository postRepo;
   final ContactRepository contactRepo;
+  final Future<PostMediaAttachmentModel> Function({
+    required PostMediaAttachmentModel attachment,
+    required String postId,
+  })?
+  hydratePostMediaFn;
 
   StreamSubscription<ChatMessage>? _subscription;
   final _postController = StreamController<PostModel>.broadcast();
@@ -19,6 +25,7 @@ class PostPassListener {
     required this.postPassStream,
     required this.postRepo,
     required this.contactRepo,
+    this.hydratePostMediaFn,
   });
 
   Stream<PostModel> get incomingPostPassStream => _postController.stream;
@@ -46,6 +53,7 @@ class PostPassListener {
         message: message,
         postRepo: postRepo,
         contactRepo: contactRepo,
+        hydratePostMediaFn: hydratePostMediaFn,
       );
       if (result == HandleIncomingPassedPostResult.passAccepted &&
           post != null) {
