@@ -12,6 +12,8 @@ class PostCard extends StatelessWidget {
   final bool isFocused;
   final VoidCallback? onOpenComments;
   final VoidCallback? onToggleHeart;
+  final VoidCallback? onPassAlong;
+  final bool showShareCount;
   final DateTime Function()? nowProvider;
 
   const PostCard({
@@ -20,6 +22,8 @@ class PostCard extends StatelessWidget {
     this.isFocused = false,
     this.onOpenComments,
     this.onToggleHeart,
+    this.onPassAlong,
+    this.showShareCount = false,
     this.nowProvider,
   });
 
@@ -29,6 +33,11 @@ class PostCard extends StatelessWidget {
         ? const Color(0xFF8FD6B5)
         : const Color.fromRGBO(255, 255, 255, 0.12);
     final scopeLabel = post.audience.scopeLabel;
+    final isPassedAlong = post.passedByUsername != null;
+    final canPassAlong =
+        onPassAlong != null &&
+        post.audience.kind != PostAudienceKind.pickPeople &&
+        post.senderPeerId == post.authorPeerId;
 
     return AnimatedContainer(
       duration: const Duration(milliseconds: 220),
@@ -50,6 +59,17 @@ class PostCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          if (isPassedAlong) ...[
+            Text(
+              '${post.passedByUsername!} passed this along',
+              style: const TextStyle(
+                color: Color(0xFF8FD6B5),
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
           Row(
             children: [
               Expanded(
@@ -63,7 +83,9 @@ class PostCard extends StatelessWidget {
                 ),
               ),
               Text(
-                _formatTimestamp(post.createdAt),
+                _formatTimestamp(
+                  isPassedAlong ? post.visibleAt : post.createdAt,
+                ),
                 style: const TextStyle(
                   color: Color.fromRGBO(255, 255, 255, 0.54),
                   fontSize: 12,
@@ -74,7 +96,7 @@ class PostCard extends StatelessWidget {
           const SizedBox(height: 8),
           Row(
             children: [
-              const _Badge(label: 'Direct Friend'),
+              if (!isPassedAlong) const _Badge(label: 'Direct Friend'),
               if (scopeLabel != null) ...[
                 const SizedBox(width: 8),
                 _Badge(label: scopeLabel),
@@ -147,9 +169,32 @@ class PostCard extends StatelessWidget {
                   fontWeight: FontWeight.w500,
                 ),
               ),
+              if (canPassAlong) ...[
+                const SizedBox(width: 12),
+                TextButton.icon(
+                  onPressed: onPassAlong,
+                  icon: const Icon(Icons.redo, size: 18),
+                  label: const Text('Pass along'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: const Color(0xFF8FD6B5),
+                    padding: EdgeInsets.zero,
+                  ),
+                ),
+              ],
             ],
           ),
           const SizedBox(height: 14),
+          if (showShareCount && post.shareCount > 0) ...[
+            Text(
+              _shareCountLabel(post.shareCount),
+              style: const TextStyle(
+                color: Color.fromRGBO(255, 255, 255, 0.54),
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
           Text(
             _confirmationCopy(post),
             style: const TextStyle(
@@ -198,6 +243,10 @@ class PostCard extends StatelessWidget {
 
   static String _heartCountLabel(int count) {
     return count == 1 ? '1 heart' : '$count hearts';
+  }
+
+  static String _shareCountLabel(int count) {
+    return count == 1 ? '1 share' : '$count shares';
   }
 
   static String _expiryCopy(String rawTimestamp, DateTime now) {

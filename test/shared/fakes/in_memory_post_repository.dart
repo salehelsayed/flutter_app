@@ -7,6 +7,8 @@ import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_pending_child_event.dart';
 import 'package:flutter_app/features/posts/domain/models/post_reaction_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_recipient_delivery.dart';
+import 'package:flutter_app/features/posts/domain/models/post_pass_model.dart';
+import 'package:flutter_app/features/posts/domain/models/post_origin_model.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 
 class InMemoryPostRepository implements PostRepository {
@@ -29,6 +31,10 @@ class InMemoryPostRepository implements PostRepository {
       <String, List<PostMediaAttachmentModel>>{};
   final Map<String, List<PostRecipientDelivery>> _deliveries =
       <String, List<PostRecipientDelivery>>{};
+  final Map<String, PostPassModel> _postPassesById = <String, PostPassModel>{};
+  final Map<String, List<PostPassModel>> _postPassesByPostId =
+      <String, List<PostPassModel>>{};
+  final Map<String, PostOriginModel> _postOrigins = <String, PostOriginModel>{};
   final Map<String, PostPendingChildEvent> _pendingChildEventsById =
       <String, PostPendingChildEvent>{};
   final Map<String, List<PostPendingChildEvent>> _pendingChildEventsByPostId =
@@ -46,14 +52,20 @@ class InMemoryPostRepository implements PostRepository {
   }
 
   @override
-  Future<PostModel?> getPost(String postId) async => _posts[postId];
+  Future<PostModel?> getPost(String postId) async {
+    final post = _posts[postId];
+    if (post == null) {
+      return null;
+    }
+    return _decoratePost(post);
+  }
 
   @override
   Future<bool> postExists(String postId) async => _posts.containsKey(postId);
 
   @override
   Future<List<PostModel>> loadFeed() async {
-    final posts = _posts.values.toList(growable: false)
+    final posts = _posts.values.map(_decoratePost).toList(growable: false)
       ..sort((a, b) {
         final visibleCompare = b.visibleAt.compareTo(a.visibleAt);
         if (visibleCompare != 0) {
@@ -71,7 +83,10 @@ class InMemoryPostRepository implements PostRepository {
   @override
   Future<List<PostModel>> loadExpiredPosts(String nowIso) async {
     return _posts.values
-        .where((post) => !post.keepAvailable && post.expiresAt.compareTo(nowIso) <= 0)
+        .where(
+          (post) =>
+              !post.keepAvailable && post.expiresAt.compareTo(nowIso) <= 0,
+        )
         .toList(growable: false)
       ..sort((a, b) => a.expiresAt.compareTo(b.expiresAt));
   }
@@ -92,6 +107,10 @@ class InMemoryPostRepository implements PostRepository {
       _postMediaById.remove(attachment.mediaId);
     });
     _deliveries.remove(postId);
+    _postOrigins.remove(postId);
+    _postPassesByPostId.remove(postId)?.forEach((pass) {
+      _postPassesById.remove(pass.passId);
+    });
     _pendingChildEventsByPostId.remove(postId)?.forEach((event) {
       _pendingChildEventsById.remove(event.eventId);
     });
@@ -340,6 +359,58 @@ class InMemoryPostRepository implements PostRepository {
   }
 
   @override
+  Future<void> savePostPass(PostPassModel pass) async {
+    _postPassesById[pass.passId] = pass;
+    final passes = _postPassesByPostId.putIfAbsent(
+      pass.postId,
+      () => <PostPassModel>[],
+    );
+    passes.removeWhere((existing) => existing.passId == pass.passId);
+    passes.add(pass);
+    passes.sort((a, b) {
+      final timestampCompare = b.passedAt.compareTo(a.passedAt);
+      if (timestampCompare != 0) {
+        return timestampCompare;
+      }
+      return b.passId.compareTo(a.passId);
+    });
+    _changes.add(pass.postId);
+  }
+
+  @override
+  Future<bool> postPassExists(String passId) async =>
+      _postPassesById.containsKey(passId);
+
+  @override
+  Future<List<PostPassModel>> loadPostPasses(String postId) async {
+    return List<PostPassModel>.from(_postPassesByPostId[postId] ?? const []);
+  }
+
+  @override
+  Future<int> loadPostPassCount(String postId) async {
+    return (_postPassesByPostId[postId] ?? const <PostPassModel>[]).length;
+  }
+
+  @override
+  Future<Map<String, int>> loadPostPassCounts(List<String> postIds) async {
+    return <String, int>{
+      for (final postId in postIds)
+        postId: (_postPassesByPostId[postId] ?? const <PostPassModel>[]).length,
+    };
+  }
+
+  @override
+  Future<void> savePostOrigin(PostOriginModel origin) async {
+    _postOrigins[origin.postId] = origin;
+    _changes.add(origin.postId);
+  }
+
+  @override
+  Future<PostOriginModel?> getPostOrigin(String postId) async {
+    return _postOrigins[postId];
+  }
+
+  @override
   Future<void> markFocused(String postId) async {
     final post = _posts[postId];
     if (post == null) {
@@ -352,5 +423,17 @@ class InMemoryPostRepository implements PostRepository {
   @override
   void dispose() {
     _changes.close();
+  }
+
+  PostModel _decoratePost(PostModel post) {
+    final origin = _postOrigins[post.id];
+    final passCount =
+        (_postPassesByPostId[post.id] ?? const <PostPassModel>[]).length;
+    return post.copyWith(
+      passedByPeerId: origin?.passerPeerId,
+      passedByUsername: origin?.passerUsername,
+      passedAt: origin?.passCreatedAt,
+      shareCount: passCount,
+    );
   }
 }

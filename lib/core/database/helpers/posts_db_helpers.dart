@@ -89,11 +89,23 @@ Future<Map<String, Object?>?> dbLoadPost(Database db, String postId) async {
     '''
       SELECT
         p.*,
+        po.origin_kind,
+        po.pass_id,
+        po.passer_peer_id,
+        po.passer_username,
+        po.pass_created_at,
+        COALESCE(pc.share_count, 0) AS share_count,
         COALESCE(fs.is_hidden, 0) AS is_hidden,
         COALESCE(fs.is_read, 0) AS is_read,
         COALESCE(fs.last_focused_at, '') AS last_focused_at
       FROM posts p
       LEFT JOIN post_feed_state fs ON fs.post_id = p.post_id
+      LEFT JOIN post_origin po ON po.post_id = p.post_id
+      LEFT JOIN (
+        SELECT post_id, COUNT(*) AS share_count
+        FROM post_passes
+        GROUP BY post_id
+      ) pc ON pc.post_id = p.post_id
       WHERE p.post_id = ?
       LIMIT 1
     ''',
@@ -109,11 +121,23 @@ Future<List<Map<String, Object?>>> dbLoadPostsFeed(Database db) async {
   return db.rawQuery('''
     SELECT
       p.*,
+      po.origin_kind,
+      po.pass_id,
+      po.passer_peer_id,
+      po.passer_username,
+      po.pass_created_at,
+      COALESCE(pc.share_count, 0) AS share_count,
       COALESCE(fs.is_hidden, 0) AS is_hidden,
       COALESCE(fs.is_read, 0) AS is_read,
       COALESCE(fs.last_focused_at, '') AS last_focused_at
     FROM posts p
     LEFT JOIN post_feed_state fs ON fs.post_id = p.post_id
+    LEFT JOIN post_origin po ON po.post_id = p.post_id
+    LEFT JOIN (
+      SELECT post_id, COUNT(*) AS share_count
+      FROM post_passes
+      GROUP BY post_id
+    ) pc ON pc.post_id = p.post_id
     WHERE COALESCE(fs.is_hidden, 0) = 0
     ORDER BY p.visible_at DESC, p.post_created_at DESC, p.post_id DESC
   ''');
@@ -127,11 +151,23 @@ Future<List<Map<String, Object?>>> dbLoadExpiredPosts(
     '''
       SELECT
         p.*,
+        po.origin_kind,
+        po.pass_id,
+        po.passer_peer_id,
+        po.passer_username,
+        po.pass_created_at,
+        COALESCE(pc.share_count, 0) AS share_count,
         COALESCE(fs.is_hidden, 0) AS is_hidden,
         COALESCE(fs.is_read, 0) AS is_read,
         COALESCE(fs.last_focused_at, '') AS last_focused_at
       FROM posts p
       LEFT JOIN post_feed_state fs ON fs.post_id = p.post_id
+      LEFT JOIN post_origin po ON po.post_id = p.post_id
+      LEFT JOIN (
+        SELECT post_id, COUNT(*) AS share_count
+        FROM post_passes
+        GROUP BY post_id
+      ) pc ON pc.post_id = p.post_id
       WHERE p.keep_available = 0
         AND p.expires_at <= ?
     ''',
@@ -172,10 +208,24 @@ Future<void> dbDeletePostCascade(Database db, String postId) async {
       whereArgs: <Object?>[postId],
     );
     await txn.delete(
+      'post_passes',
+      where: 'post_id = ?',
+      whereArgs: <Object?>[postId],
+    );
+    await txn.delete(
+      'post_origin',
+      where: 'post_id = ?',
+      whereArgs: <Object?>[postId],
+    );
+    await txn.delete(
       'post_feed_state',
       where: 'post_id = ?',
       whereArgs: <Object?>[postId],
     );
-    await txn.delete('posts', where: 'post_id = ?', whereArgs: <Object?>[postId]);
+    await txn.delete(
+      'posts',
+      where: 'post_id = ?',
+      whereArgs: <Object?>[postId],
+    );
   });
 }
