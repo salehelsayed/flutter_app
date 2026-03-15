@@ -19,7 +19,35 @@ void main() {
       ),
     );
 
-    expect(find.text('Pass along'), findsOneWidget);
+    expect(find.byIcon(Icons.redo), findsOneWidget);
+  });
+
+  testWidgets('wraps action clusters on narrow cards without overflowing', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: SizedBox(
+              width: 320,
+              child: PostCard(
+                post: _post(audience: PostAudience.allFriends()),
+                onOpenComments: () {},
+                onPassAlong: () {},
+                onPinPost: () {},
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(find.byIcon(Icons.chat_bubble_outline), findsOneWidget);
+    expect(find.byIcon(Icons.redo), findsOneWidget);
+    expect(find.byIcon(Icons.push_pin_outlined), findsOneWidget);
   });
 
   testWidgets('hides the pass-along action for Pick People posts', (
@@ -38,7 +66,7 @@ void main() {
       ),
     );
 
-    expect(find.text('Pass along'), findsNothing);
+    expect(find.byIcon(Icons.redo), findsNothing);
   });
 }
 

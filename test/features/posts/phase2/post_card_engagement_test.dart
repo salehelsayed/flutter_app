@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/post_card.dart';
@@ -38,9 +39,23 @@ void main() {
       ),
     );
 
-    expect(find.text('2 hearts'), findsOneWidget);
-    expect(find.text('3 comments'), findsOneWidget);
-    expect(find.text('Expires in 2h'), findsOneWidget);
+    expect(
+      tester
+          .widget<Text>(find.byKey(const ValueKey<String>('post-heart-count')))
+          .data,
+      '2',
+    );
+    expect(
+      tester
+          .widget<Text>(
+            find.byKey(const ValueKey<String>('post-comment-count')),
+          )
+          .data,
+      '3',
+    );
+    expect(find.byType(UserAvatar), findsOneWidget);
+    expect(find.text('Friend'), findsOneWidget);
+    expect(find.text('expires in 2h'), findsOneWidget);
 
     await tester.tap(find.byIcon(Icons.favorite));
     await tester.pump();

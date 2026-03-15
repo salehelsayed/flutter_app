@@ -63,35 +63,33 @@ void main() {
     );
   }
 
-  testWidgets('shows author pin action and adds the post to the pinned section', (
-    tester,
-  ) async {
-    await postRepository.savePost(
-      postPinBasePost(
-        authorPeerId: 'peer-bob',
-        authorUsername: 'Bob',
-      ),
-    );
-    await postRepository.saveRecipientDelivery(
-      const PostRecipientDelivery(
-        postId: 'post-1',
-        recipientPeerId: 'peer-cara',
-        deliveryStatus: 'delivered',
-        lastAttemptAt: '2026-03-15T10:16:00.000Z',
-        deliveryPath: 'direct',
-        createdAt: '2026-03-15T10:16:00.000Z',
-        updatedAt: '2026-03-15T10:16:00.000Z',
-      ),
-    );
+  testWidgets(
+    'shows author pin action and adds the post to the pinned section',
+    (tester) async {
+      await postRepository.savePost(
+        postPinBasePost(authorPeerId: 'peer-bob', authorUsername: 'Bob'),
+      );
+      await postRepository.saveRecipientDelivery(
+        const PostRecipientDelivery(
+          postId: 'post-1',
+          recipientPeerId: 'peer-cara',
+          deliveryStatus: 'delivered',
+          lastAttemptAt: '2026-03-15T10:16:00.000Z',
+          deliveryPath: 'direct',
+          createdAt: '2026-03-15T10:16:00.000Z',
+          updatedAt: '2026-03-15T10:16:00.000Z',
+        ),
+      );
 
-    await tester.pumpWidget(buildWidget());
-    await tester.pump();
+      await tester.pumpWidget(buildWidget());
+      await tester.pump();
 
-    expect(find.text('Pin'), findsOneWidget);
+      expect(find.byIcon(Icons.push_pin_outlined), findsOneWidget);
 
-    await tester.tap(find.text('Pin'));
-    await tester.pump();
+      await tester.tap(find.byIcon(Icons.push_pin_outlined));
+      await tester.pump();
 
-    expect(find.text('Pinned posts'), findsOneWidget);
-  });
+      expect(find.text('Pinned posts'), findsOneWidget);
+    },
+  );
 }

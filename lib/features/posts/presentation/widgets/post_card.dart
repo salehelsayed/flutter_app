@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 
+import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
+import 'package:flutter_app/shared/widgets/linkable_text.dart';
 import 'package:flutter_app/shared/widgets/media/audio_player_widget.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid_cell.dart';
@@ -31,9 +33,10 @@ class PostCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final now = (nowProvider ?? DateTime.now).call();
     final borderColor = isFocused
         ? const Color(0xFF8FD6B5)
-        : const Color.fromRGBO(255, 255, 255, 0.12);
+        : const Color.fromRGBO(255, 255, 255, 0.10);
     final scopeLabel = post.audience.scopeLabel;
     final isPassedAlong = post.passedByUsername != null;
     final canPassAlong =
@@ -43,18 +46,18 @@ class PostCard extends StatelessWidget {
 
     return AnimatedContainer(
       duration: const Duration(milliseconds: 220),
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
       decoration: BoxDecoration(
-        color: const Color(0xFF171A20),
-        borderRadius: BorderRadius.circular(24),
+        color: const Color.fromRGBO(8, 10, 14, 0.62),
+        borderRadius: BorderRadius.circular(28),
         border: Border.all(color: borderColor),
         boxShadow: [
           BoxShadow(
             color: isFocused
-                ? const Color.fromRGBO(143, 214, 181, 0.18)
-                : const Color.fromRGBO(0, 0, 0, 0.12),
-            blurRadius: 24,
-            offset: const Offset(0, 12),
+                ? const Color.fromRGBO(143, 214, 181, 0.16)
+                : const Color.fromRGBO(0, 0, 0, 0.10),
+            blurRadius: 28,
+            offset: const Offset(0, 16),
           ),
         ],
       ),
@@ -70,43 +73,62 @@ class PostCard extends StatelessWidget {
                 fontWeight: FontWeight.w600,
               ),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 10),
           ],
           Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              UserAvatar(peerId: post.authorPeerId, size: 42),
+              const SizedBox(width: 12),
               Expanded(
-                child: Text(
-                  post.authorUsername,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                  ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            post.authorUsername,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Text(
+                          _formatRelativeTimestamp(
+                            isPassedAlong ? post.visibleAt : post.createdAt,
+                            now,
+                          ),
+                          style: const TextStyle(
+                            color: Color.fromRGBO(255, 255, 255, 0.48),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w400,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        if (!isPassedAlong)
+                          const _Badge(label: 'Friend', isPrimary: true),
+                        if (scopeLabel != null) _Badge(label: scopeLabel),
+                      ],
+                    ),
+                  ],
                 ),
               ),
-              Text(
-                _formatTimestamp(
-                  isPassedAlong ? post.visibleAt : post.createdAt,
-                ),
-                style: const TextStyle(
-                  color: Color.fromRGBO(255, 255, 255, 0.54),
-                  fontSize: 12,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              if (!isPassedAlong) const _Badge(label: 'Direct Friend'),
-              if (scopeLabel != null) ...[
-                const SizedBox(width: 8),
-                _Badge(label: scopeLabel),
-              ],
             ],
           ),
           if (post.nearbyDistanceLabel != null) ...[
-            const SizedBox(height: 8),
+            const SizedBox(height: 10),
             Text(
               post.nearbyDistanceLabel!,
               style: const TextStyle(
@@ -116,151 +138,132 @@ class PostCard extends StatelessWidget {
               ),
             ),
           ],
-          const SizedBox(height: 14),
+          const SizedBox(height: 20),
           if (post.text.isNotEmpty)
-            Text(
-              post.text,
+            LinkableText(
+              text: post.text,
               style: const TextStyle(
-                color: Colors.white,
-                fontSize: 16,
-                height: 1.45,
+                color: Color.fromRGBO(255, 255, 255, 0.92),
+                fontSize: 17,
+                height: 1.58,
+                letterSpacing: 0.1,
               ),
             ),
           if (post.media.isNotEmpty) ...[
             const SizedBox(height: 16),
             _PostMediaContent(post: post),
           ],
+          const SizedBox(height: 14),
+          const Divider(
+            height: 1,
+            thickness: 1,
+            color: Color.fromRGBO(255, 255, 255, 0.08),
+          ),
           const SizedBox(height: 12),
-          Row(
-            children: [
-              IconButton(
-                onPressed: onToggleHeart,
-                icon: Icon(
-                  post.viewerHasHearted
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final actions = <Widget>[
+                _MetricAction(
+                  icon: post.viewerHasHearted
                       ? Icons.favorite
                       : Icons.favorite_border,
+                  onTap: onToggleHeart,
+                  color: post.viewerHasHearted
+                      ? const Color(0xFFEF7C8E)
+                      : const Color.fromRGBO(255, 255, 255, 0.55),
+                  label: post.heartCount.toString(),
+                  labelKey: const ValueKey<String>('post-heart-count'),
                 ),
-                color: post.viewerHasHearted
-                    ? const Color(0xFFEF7C8E)
-                    : const Color(0xFF8FD6B5),
-              ),
-              Text(
-                _heartCountLabel(post.heartCount),
+                _MetricAction(
+                  icon: Icons.chat_bubble_outline,
+                  onTap: onOpenComments,
+                  color: const Color.fromRGBO(255, 255, 255, 0.55),
+                  label: post.commentCount.toString(),
+                  labelKey: const ValueKey<String>('post-comment-count'),
+                ),
+                if (canPassAlong || (showShareCount && post.shareCount > 0))
+                  _MetricAction(
+                    icon: Icons.redo,
+                    onTap: onPassAlong,
+                    color: const Color.fromRGBO(255, 255, 255, 0.55),
+                    label: showShareCount ? post.shareCount.toString() : null,
+                    labelKey: const ValueKey<String>('post-share-count'),
+                  ),
+                if (onPinPost != null)
+                  _MetricAction(
+                    icon: Icons.push_pin_outlined,
+                    onTap: onPinPost,
+                    color: const Color.fromRGBO(255, 255, 255, 0.55),
+                  ),
+              ];
+
+              final expiry = Text(
+                _expiryCopy(post.expiresAt, now).toLowerCase(),
                 style: const TextStyle(
-                  color: Colors.white70,
-                  fontSize: 13,
+                  color: Color.fromRGBO(255, 255, 255, 0.38),
+                  fontSize: 12,
                   fontWeight: FontWeight.w500,
                 ),
-              ),
-              const SizedBox(width: 12),
-              TextButton.icon(
-                onPressed: onOpenComments,
-                icon: const Icon(Icons.chat_bubble_outline, size: 18),
-                label: const Text('Comments'),
-                style: TextButton.styleFrom(
-                  foregroundColor: const Color(0xFF8FD6B5),
-                  padding: EdgeInsets.zero,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Text(
-                _commentCountLabel(post.commentCount),
-                style: const TextStyle(
-                  color: Colors.white70,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-              if (canPassAlong) ...[
-                const SizedBox(width: 12),
-                TextButton.icon(
-                  onPressed: onPassAlong,
-                  icon: const Icon(Icons.redo, size: 18),
-                  label: const Text('Pass along'),
-                  style: TextButton.styleFrom(
-                    foregroundColor: const Color(0xFF8FD6B5),
-                    padding: EdgeInsets.zero,
+                textAlign: TextAlign.right,
+              );
+
+              if (constraints.maxWidth < 380) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Wrap(
+                      spacing: 18,
+                      runSpacing: 8,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: actions,
+                    ),
+                    const SizedBox(height: 10),
+                    Align(alignment: Alignment.centerRight, child: expiry),
+                  ],
+                );
+              }
+
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Expanded(
+                    child: Wrap(
+                      spacing: 18,
+                      runSpacing: 8,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: actions,
+                    ),
                   ),
-                ),
-              ],
-              if (onPinPost != null) ...[
-                const SizedBox(width: 12),
-                TextButton.icon(
-                  onPressed: onPinPost,
-                  icon: const Icon(Icons.push_pin_outlined, size: 18),
-                  label: const Text('Pin'),
-                  style: TextButton.styleFrom(
-                    foregroundColor: const Color(0xFF8FD6B5),
-                    padding: EdgeInsets.zero,
-                  ),
-                ),
-              ],
-            ],
-          ),
-          const SizedBox(height: 14),
-          if (showShareCount && post.shareCount > 0) ...[
-            Text(
-              _shareCountLabel(post.shareCount),
-              style: const TextStyle(
-                color: Color.fromRGBO(255, 255, 255, 0.54),
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(height: 8),
-          ],
-          Text(
-            _confirmationCopy(post),
-            style: const TextStyle(
-              color: Color.fromRGBO(255, 255, 255, 0.54),
-              fontSize: 12,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            _expiryCopy(post.expiresAt, (nowProvider ?? DateTime.now).call()),
-            style: const TextStyle(
-              color: Color.fromRGBO(255, 255, 255, 0.54),
-              fontSize: 12,
-            ),
+                  const SizedBox(width: 12),
+                  expiry,
+                ],
+              );
+            },
           ),
         ],
       ),
     );
   }
 
-  static String _formatTimestamp(String rawTimestamp) {
-    final timestamp = DateTime.tryParse(rawTimestamp)?.toLocal();
+  static String _formatRelativeTimestamp(String rawTimestamp, DateTime now) {
+    final timestamp = DateTime.tryParse(rawTimestamp)?.toUtc();
     if (timestamp == null) {
       return rawTimestamp;
     }
-    final hour = timestamp.hour == 0 || timestamp.hour == 12
-        ? 12
-        : timestamp.hour % 12;
-    final minute = timestamp.minute.toString().padLeft(2, '0');
-    final meridiem = timestamp.hour >= 12 ? 'PM' : 'AM';
-    return '$hour:$minute $meridiem';
-  }
-
-  static String _confirmationCopy(PostModel post) {
-    return switch (post.audience.kind) {
-      PostAudienceKind.peopleNearby => 'Shared with nearby friends',
-      _ when post.audience.selectedPeerIds.isNotEmpty =>
-        'Shared with ${post.audience.selectedPeerIds.length} people',
-      _ => 'Shared with all friends',
-    };
-  }
-
-  static String _commentCountLabel(int count) {
-    return count == 1 ? '1 comment' : '$count comments';
-  }
-
-  static String _heartCountLabel(int count) {
-    return count == 1 ? '1 heart' : '$count hearts';
-  }
-
-  static String _shareCountLabel(int count) {
-    return count == 1 ? '1 share' : '$count shares';
+    final diff = now.toUtc().difference(timestamp);
+    if (diff.inMinutes < 1) {
+      return 'just now';
+    }
+    if (diff.inMinutes < 60) {
+      return '${diff.inMinutes} min ago';
+    }
+    if (diff.inHours < 24) {
+      return '${diff.inHours}h ago';
+    }
+    if (diff.inDays < 7) {
+      return '${diff.inDays}d ago';
+    }
+    return '${(diff.inDays / 7).floor()}w ago';
   }
 
   static String _expiryCopy(String rawTimestamp, DateTime now) {
@@ -274,6 +277,10 @@ class PostCard extends StatelessWidget {
       return 'Expired';
     }
     if (diff.inDays >= 1) {
+      final remainingHours = diff.inHours - (diff.inDays * 24);
+      if (remainingHours > 0) {
+        return 'Expires in ${diff.inDays}d ${remainingHours}h';
+      }
       return 'Expires in ${diff.inDays}d';
     }
     if (diff.inHours >= 1) {
@@ -400,23 +407,85 @@ class _ImageCarouselState extends State<_ImageCarousel> {
 
 class _Badge extends StatelessWidget {
   final String label;
+  final bool isPrimary;
 
-  const _Badge({required this.label});
+  const _Badge({required this.label, this.isPrimary = false});
 
   @override
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: const Color.fromRGBO(255, 255, 255, 0.08),
+        color: isPrimary
+            ? const Color.fromRGBO(38, 190, 110, 0.12)
+            : const Color.fromRGBO(255, 255, 255, 0.06),
+        border: Border.all(
+          color: isPrimary
+              ? const Color.fromRGBO(38, 190, 110, 0.28)
+              : const Color.fromRGBO(255, 255, 255, 0.10),
+        ),
         borderRadius: BorderRadius.circular(999),
       ),
       child: Text(
         label,
-        style: const TextStyle(
-          color: Colors.white,
+        style: TextStyle(
+          color: isPrimary
+              ? const Color(0xFF24D36A)
+              : const Color.fromRGBO(255, 255, 255, 0.82),
           fontSize: 12,
           fontWeight: FontWeight.w500,
+        ),
+      ),
+    );
+  }
+}
+
+class _MetricAction extends StatelessWidget {
+  final IconData icon;
+  final VoidCallback? onTap;
+  final Color color;
+  final String? label;
+  final Key? labelKey;
+
+  const _MetricAction({
+    required this.icon,
+    required this.onTap,
+    required this.color,
+    this.label,
+    this.labelKey,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final resolvedColor = onTap == null
+        ? const Color.fromRGBO(255, 255, 255, 0.28)
+        : color;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(999),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 22, color: resolvedColor),
+              if (label != null) ...[
+                const SizedBox(width: 8),
+                Text(
+                  label!,
+                  key: labelKey,
+                  style: const TextStyle(
+                    color: Color.fromRGBO(255, 255, 255, 0.52),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ],
+          ),
         ),
       ),
     );
