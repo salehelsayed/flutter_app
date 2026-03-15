@@ -34,7 +34,7 @@ void main() {
       expect(find.text('James passed this along'), findsOneWidget);
       expect(find.text('Sarah'), findsOneWidget);
       expect(find.text('Shared nearby'), findsOneWidget);
-      expect(find.text('Direct Friend'), findsNothing);
+      expect(find.text('Friend'), findsNothing);
     },
   );
 }

@@ -83,7 +83,7 @@ void main() {
     await tester.pumpWidget(buildWidget());
     await tester.pump();
 
-    await tester.tap(find.text('Comments'));
+    await tester.tap(find.byIcon(Icons.chat_bubble_outline));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
 
@@ -104,7 +104,7 @@ void main() {
     await tester.pumpWidget(buildWidget());
     await tester.pump();
 
-    await tester.tap(find.text('Comments'));
+    await tester.tap(find.byIcon(Icons.chat_bubble_outline));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
 
