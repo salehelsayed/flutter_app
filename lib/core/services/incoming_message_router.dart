@@ -27,6 +27,8 @@ class IncomingMessageRouter {
       StreamController<ChatMessage>.broadcast();
   final _postPresenceController = StreamController<ChatMessage>.broadcast();
   final _postPassController = StreamController<ChatMessage>.broadcast();
+  final _postPinUpdateController = StreamController<ChatMessage>.broadcast();
+  final _postPinRemoveController = StreamController<ChatMessage>.broadcast();
   final _unknownController = StreamController<ChatMessage>.broadcast();
 
   IncomingMessageRouter({required this.p2pService});
@@ -73,6 +75,14 @@ class IncomingMessageRouter {
 
   /// Stream of incoming post_pass messages.
   Stream<ChatMessage> get postPassStream => _postPassController.stream;
+
+  /// Stream of incoming post_pin_update messages.
+  Stream<ChatMessage> get postPinUpdateStream =>
+      _postPinUpdateController.stream;
+
+  /// Stream of incoming post_pin_remove messages.
+  Stream<ChatMessage> get postPinRemoveStream =>
+      _postPinRemoveController.stream;
 
   /// Stream of messages with unknown or unparseable types.
   Stream<ChatMessage> get unknownMessageStream => _unknownController.stream;
@@ -171,6 +181,10 @@ class IncomingMessageRouter {
           _postPresenceController.add(message);
         case 'post_pass':
           _postPassController.add(message);
+        case 'post_pin_update':
+          _postPinUpdateController.add(message);
+        case 'post_pin_remove':
+          _postPinRemoveController.add(message);
         case 'delivery_receipt':
           // Legacy envelope type kept for backward compatibility.
           // Delivery status is now sender-side inbox/direct semantics only.
@@ -223,6 +237,8 @@ class IncomingMessageRouter {
     _postCommentReactionController.close();
     _postPresenceController.close();
     _postPassController.close();
+    _postPinUpdateController.close();
+    _postPinRemoveController.close();
     _unknownController.close();
   }
 }

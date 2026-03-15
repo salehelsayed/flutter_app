@@ -2120,6 +2120,13 @@ class _FeedWiredState extends State<FeedWired> {
             contactPresenceSnapshotRepository:
                 widget.contactPresenceSnapshotRepository,
             nearbyLocationService: widget.nearbyLocationService,
+            messageRepo: widget.messageRepository,
+            chatMessageListener: widget.chatMessageListener,
+            mediaAttachmentRepo: widget.mediaAttachmentRepository,
+            reactionRepo: widget.reactionRepository,
+            reactionListener: widget.reactionListener,
+            introductionRepository: widget.introductionRepository,
+            conversationTracker: widget.conversationTracker,
           )
         : FeedScreen(
             username: _username,

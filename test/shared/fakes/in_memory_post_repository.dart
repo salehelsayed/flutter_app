@@ -9,6 +9,7 @@ import 'package:flutter_app/features/posts/domain/models/post_reaction_model.dar
 import 'package:flutter_app/features/posts/domain/models/post_recipient_delivery.dart';
 import 'package:flutter_app/features/posts/domain/models/post_pass_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_origin_model.dart';
+import 'package:flutter_app/features/posts/domain/models/post_pin_state_model.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 
 class InMemoryPostRepository implements PostRepository {
@@ -39,6 +40,9 @@ class InMemoryPostRepository implements PostRepository {
       <String, PostPendingChildEvent>{};
   final Map<String, List<PostPendingChildEvent>> _pendingChildEventsByPostId =
       <String, List<PostPendingChildEvent>>{};
+  final Map<String, PostPinStateModel> _pinStates =
+      <String, PostPinStateModel>{};
+  final Map<String, String> _pinDismissals = <String, String>{};
   final StreamController<String> _changes =
       StreamController<String>.broadcast();
 
@@ -108,6 +112,8 @@ class InMemoryPostRepository implements PostRepository {
     });
     _deliveries.remove(postId);
     _postOrigins.remove(postId);
+    _pinStates.remove(postId);
+    _pinDismissals.remove(postId);
     _postPassesByPostId.remove(postId)?.forEach((pass) {
       _postPassesById.remove(pass.passId);
     });
@@ -240,6 +246,35 @@ class InMemoryPostRepository implements PostRepository {
       return a.mediaId.compareTo(b.mediaId);
     });
     _changes.add(attachment.postId);
+  }
+
+  @override
+  Future<void> replacePostMediaAttachments(
+    String postId,
+    List<PostMediaAttachmentModel> attachments,
+  ) async {
+    _postMediaByPostId.remove(postId)?.forEach((attachment) {
+      _postMediaById.remove(attachment.mediaId);
+    });
+    for (final attachment in attachments) {
+      _postMediaById[attachment.mediaId] = attachment;
+    }
+    _postMediaByPostId[postId] =
+        List<PostMediaAttachmentModel>.from(attachments)..sort((a, b) {
+          final positionCompare = a.position.compareTo(b.position);
+          if (positionCompare != 0) {
+            return positionCompare;
+          }
+          final timestampCompare = a.createdAt.compareTo(b.createdAt);
+          if (timestampCompare != 0) {
+            return timestampCompare;
+          }
+          return a.mediaId.compareTo(b.mediaId);
+        });
+    if (attachments.isEmpty) {
+      _postMediaByPostId.remove(postId);
+    }
+    _changes.add(postId);
   }
 
   @override
@@ -408,6 +443,50 @@ class InMemoryPostRepository implements PostRepository {
   @override
   Future<PostOriginModel?> getPostOrigin(String postId) async {
     return _postOrigins[postId];
+  }
+
+  @override
+  Future<void> savePostPinState(PostPinStateModel pinState) async {
+    _pinStates[pinState.postId] = pinState;
+    _changes.add(pinState.postId);
+  }
+
+  @override
+  Future<PostPinStateModel?> getPostPinState(String postId) async {
+    return _pinStates[postId];
+  }
+
+  @override
+  Future<List<PostPinStateModel>> loadActivePinStates() async {
+    final states =
+        _pinStates.values
+            .where((state) => state.isActive)
+            .toList(growable: false)
+          ..sort((a, b) {
+            final effectiveCompare = b.effectiveAt.compareTo(a.effectiveAt);
+            if (effectiveCompare != 0) {
+              return effectiveCompare;
+            }
+            return b.postId.compareTo(a.postId);
+          });
+    return states;
+  }
+
+  @override
+  Future<void> savePinDismissal(String postId, String dismissedAt) async {
+    _pinDismissals[postId] = dismissedAt;
+    _changes.add(postId);
+  }
+
+  @override
+  Future<Set<String>> loadDismissedPinPostIds() async {
+    return _pinDismissals.keys.toSet();
+  }
+
+  @override
+  Future<void> clearPinDismissal(String postId) async {
+    _pinDismissals.remove(postId);
+    _changes.add(postId);
   }
 
   @override

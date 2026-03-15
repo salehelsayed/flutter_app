@@ -31,6 +31,8 @@ class ComposePostSheet extends StatefulWidget {
   final NearbyComposeAvailability? nearbyAvailability;
   final Future<NearbyComposeAvailability> Function()? onRefreshNearby;
   final Future<bool> Function()? onOpenNearbySettings;
+  final int activePinCount;
+  final VoidCallback? onManagePins;
 
   const ComposePostSheet({
     super.key,
@@ -42,6 +44,8 @@ class ComposePostSheet extends StatefulWidget {
     this.nearbyAvailability,
     this.onRefreshNearby,
     this.onOpenNearbySettings,
+    this.activePinCount = 0,
+    this.onManagePins,
   });
 
   @override
@@ -350,6 +354,47 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                       fontWeight: FontWeight.w700,
                     ),
                   ),
+                  if (widget.activePinCount > 0) ...[
+                    const SizedBox(height: 14),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF1A1E26),
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(
+                          color: const Color.fromRGBO(143, 214, 181, 0.25),
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(
+                            Icons.push_pin_outlined,
+                            color: Color(0xFF8FD6B5),
+                            size: 18,
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              widget.activePinCount == 1
+                                  ? 'You already have 1 active pinned post'
+                                  : 'You already have ${widget.activePinCount} active pinned posts',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                          if (widget.onManagePins != null)
+                            TextButton(
+                              onPressed: widget.onManagePins,
+                              child: const Text('Manage'),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 16),
                   TextField(
                     controller: _textController,
@@ -419,20 +464,22 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                     const SizedBox(height: 8),
                     Wrap(
                       spacing: 10,
-                      children: <int>[500, 1000, 2000].map((radiusM) {
-                        final label = switch (radiusM) {
-                          500 => '500m',
-                          1000 => '1km',
-                          _ => '2km',
-                        };
-                        return ChoiceChip(
-                          label: Text(label),
-                          selected: _nearbyRadiusM == radiusM,
-                          onSelected: (_) {
-                            setState(() => _nearbyRadiusM = radiusM);
-                          },
-                        );
-                      }).toList(growable: false),
+                      children: <int>[500, 1000, 2000]
+                          .map((radiusM) {
+                            final label = switch (radiusM) {
+                              500 => '500m',
+                              1000 => '1km',
+                              _ => '2km',
+                            };
+                            return ChoiceChip(
+                              label: Text(label),
+                              selected: _nearbyRadiusM == radiusM,
+                              onSelected: (_) {
+                                setState(() => _nearbyRadiusM = radiusM);
+                              },
+                            );
+                          })
+                          .toList(growable: false),
                     ),
                   ],
                   if (_nearbyAvailability != null) ...[

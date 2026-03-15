@@ -7,16 +7,30 @@ import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_picker.dart';
+import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
+import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
+import 'package:flutter_app/features/conversation/application/reaction_listener.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
+import 'package:flutter_app/features/conversation/presentation/navigation/conversation_route_transition.dart';
+import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
+import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository.dart';
 import 'package:flutter_app/features/posts/application/attach_post_media_use_case.dart';
+import 'package:flutter_app/features/posts/application/dismiss_pin_use_case.dart';
+import 'package:flutter_app/features/posts/application/edit_pinned_post_use_case.dart';
 import 'package:flutter_app/features/posts/application/load_post_comments_use_case.dart';
+import 'package:flutter_app/features/posts/application/load_pinned_posts_use_case.dart';
 import 'package:flutter_app/features/posts/application/load_posts_feed_use_case.dart';
 import 'package:flutter_app/features/posts/application/nearby_location_service.dart';
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
 import 'package:flutter_app/features/posts/application/pass_post_along_use_case.dart';
+import 'package:flutter_app/features/posts/application/pin_post_use_case.dart';
+import 'package:flutter_app/features/posts/application/remove_pin_use_case.dart';
 import 'package:flutter_app/features/posts/application/send_post_comment_reaction_use_case.dart';
 import 'package:flutter_app/features/posts/application/send_post_comment_use_case.dart';
 import 'package:flutter_app/features/posts/application/send_post_reaction_use_case.dart';
@@ -31,6 +45,7 @@ import 'package:flutter_app/features/posts/domain/repositories/posts_privacy_set
 import 'package:flutter_app/features/posts/presentation/screens/posts_screen.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/comments_sheet.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/compose_post_sheet.dart';
+import 'package:flutter_app/features/posts/presentation/widgets/edit_pinned_post_sheet.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/pass_post_along_sheet.dart';
 
 class PostsWired extends StatefulWidget {
@@ -49,6 +64,13 @@ class PostsWired extends StatefulWidget {
   final PostsPrivacySettingsRepository postsPrivacySettingsRepository;
   final ContactPresenceSnapshotRepository? contactPresenceSnapshotRepository;
   final NearbyLocationService? nearbyLocationService;
+  final MessageRepository? messageRepo;
+  final ChatMessageListener? chatMessageListener;
+  final MediaAttachmentRepository? mediaAttachmentRepo;
+  final ReactionRepository? reactionRepo;
+  final ReactionListener? reactionListener;
+  final IntroductionRepository? introductionRepository;
+  final ActiveConversationTracker? conversationTracker;
 
   const PostsWired({
     super.key,
@@ -67,6 +89,13 @@ class PostsWired extends StatefulWidget {
     required this.postsPrivacySettingsRepository,
     this.contactPresenceSnapshotRepository,
     this.nearbyLocationService,
+    this.messageRepo,
+    this.chatMessageListener,
+    this.mediaAttachmentRepo,
+    this.reactionRepo,
+    this.reactionListener,
+    this.introductionRepository,
+    this.conversationTracker,
   });
 
   @override
@@ -77,6 +106,7 @@ class _PostsWiredState extends State<PostsWired> {
   String _username = 'Username';
   String? _peerId;
   List<PostModel> _posts = <PostModel>[];
+  List<PostModel> _pinnedPosts = <PostModel>[];
   String? _focusedPostId;
   final ScrollController _scrollController = ScrollController();
   final Map<String, GlobalKey> _postKeys = <String, GlobalKey>{};
@@ -90,7 +120,7 @@ class _PostsWiredState extends State<PostsWired> {
     unawaited(_loadIdentity());
     unawaited(_runFeedMaintenanceAndLoad());
     _postChangeSubscription = widget.postRepo.postChanges.listen((_) {
-      unawaited(_loadFeed());
+      unawaited(_loadSurface());
       _tryResolvePendingTarget();
     });
     widget.pendingTargetStore?.addListener(_onPendingTargetStoreChanged);
@@ -124,7 +154,7 @@ class _PostsWiredState extends State<PostsWired> {
       _username = identity.username;
       _peerId = identity.peerId;
     });
-    await _loadFeed();
+    await _loadSurface();
   }
 
   Future<void> _runFeedMaintenanceAndLoad() async {
@@ -135,22 +165,36 @@ class _PostsWiredState extends State<PostsWired> {
         mediaFileManager: mediaFileManager,
       );
     }
-    await _loadFeed();
+    await _loadSurface();
   }
 
-  Future<void> _loadFeed() async {
+  Future<void> _loadSurface() async {
     final feed = await loadPostsFeed(
       postRepo: widget.postRepo,
       mediaFileManager: widget.mediaFileManager,
       viewerPeerId: _peerId,
     );
+    final pinned = await loadPinnedPosts(
+      postRepo: widget.postRepo,
+      mediaFileManager: widget.mediaFileManager,
+      viewerPeerId: _peerId,
+    );
     if (!mounted) return;
-    setState(() => _posts = feed);
+    setState(() {
+      _posts = feed;
+      _pinnedPosts = pinned;
+    });
   }
 
   Future<void> _compose() async {
     final contacts = await widget.contactRepo.getActiveContacts();
     contacts.removeWhere((contact) => contact.isBlocked);
+    final viewerPeerId = _peerId;
+    final activePinCount = viewerPeerId == null
+        ? 0
+        : _pinnedPosts
+              .where((post) => post.authorPeerId == viewerPeerId)
+              .length;
     final postsPrivacySettings = await widget.postsPrivacySettingsRepository
         .load();
     final nearbyAvailability = await _loadNearbyComposeAvailability(
@@ -184,11 +228,22 @@ class _PostsWiredState extends State<PostsWired> {
             postsPrivacySettingsRepository:
                 widget.postsPrivacySettingsRepository,
           );
-          await _loadFeed();
+          await _loadSurface();
         },
         onAttachMedia: _pickMediaDrafts,
         audioRecorderService: widget.audioRecorderService,
         nearbyAvailability: nearbyAvailability,
+        activePinCount: activePinCount,
+        onManagePins: activePinCount == 0
+            ? null
+            : () {
+                Navigator.of(context).pop();
+                _scrollController.animateTo(
+                  0,
+                  duration: const Duration(milliseconds: 220),
+                  curve: Curves.easeOut,
+                );
+              },
         onRefreshNearby: widget.nearbyLocationService == null
             ? null
             : () => widget.nearbyLocationService!
@@ -305,7 +360,7 @@ class _PostsWiredState extends State<PostsWired> {
       senderUsername: _username,
       body: text,
     );
-    await _loadFeed();
+    await _loadSurface();
     return loadPostComments(
       postRepo: widget.postRepo,
       postId: post.id,
@@ -326,7 +381,7 @@ class _PostsWiredState extends State<PostsWired> {
       senderPeerId: peerId,
       isActive: !post.viewerHasHearted,
     );
-    await _loadFeed();
+    await _loadSurface();
   }
 
   Future<void> _passAlong(PostModel post) async {
@@ -360,7 +415,7 @@ class _PostsWiredState extends State<PostsWired> {
             senderUsername: _username,
             recipientPeerIds: recipientPeerIds,
           );
-          await _loadFeed();
+          await _loadSurface();
         },
       ),
     );
@@ -388,11 +443,107 @@ class _PostsWiredState extends State<PostsWired> {
       senderPeerId: peerId,
       isActive: isActive,
     );
-    await _loadFeed();
+    await _loadSurface();
     return loadPostComments(
       postRepo: widget.postRepo,
       postId: post.id,
       viewerPeerId: _peerId,
+    );
+  }
+
+  Future<void> _dismissPinnedPost(PostModel post) async {
+    await dismissPin(postRepo: widget.postRepo, postId: post.id);
+    await _loadSurface();
+  }
+
+  Future<void> _pinPost(PostModel post) async {
+    final peerId = _peerId;
+    if (peerId == null) {
+      return;
+    }
+    await pinPost(
+      p2pService: widget.p2pService,
+      postRepo: widget.postRepo,
+      postId: post.id,
+      senderPeerId: peerId,
+    );
+    await _loadSurface();
+  }
+
+  Future<void> _editPinnedPost(PostModel post) async {
+    final peerId = _peerId;
+    if (peerId == null || !mounted) {
+      return;
+    }
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => EditPinnedPostSheet(
+        initialText: post.text,
+        onSubmit: (text) async {
+          await editPinnedPost(
+            p2pService: widget.p2pService,
+            postRepo: widget.postRepo,
+            postId: post.id,
+            senderPeerId: peerId,
+            text: text,
+          );
+          await _loadSurface();
+        },
+      ),
+    );
+  }
+
+  Future<void> _removePinnedPost(PostModel post) async {
+    final peerId = _peerId;
+    if (peerId == null) {
+      return;
+    }
+    await removePin(
+      p2pService: widget.p2pService,
+      postRepo: widget.postRepo,
+      postId: post.id,
+      senderPeerId: peerId,
+    );
+    await _loadSurface();
+  }
+
+  Future<void> _messagePinnedPostAuthor(PostModel post) async {
+    final messageRepo = widget.messageRepo;
+    final chatListener = widget.chatMessageListener;
+    final mediaAttachmentRepo = widget.mediaAttachmentRepo;
+    if (messageRepo == null ||
+        chatListener == null ||
+        mediaAttachmentRepo == null ||
+        !mounted) {
+      return;
+    }
+    final contact = await widget.contactRepo.getContact(post.authorPeerId);
+    if (contact == null || !mounted) {
+      return;
+    }
+
+    await Navigator.of(context).push(
+      buildConversationSlideUpRoute(
+        builder: (_) => ConversationWired(
+          contact: contact,
+          identityRepo: widget.identityRepo,
+          messageRepo: messageRepo,
+          chatMessageListener: chatListener,
+          p2pService: widget.p2pService,
+          bridge: widget.bridge,
+          contactRepo: widget.contactRepo,
+          mediaAttachmentRepo: mediaAttachmentRepo,
+          mediaFileManager: widget.mediaFileManager,
+          imageProcessor: widget.imageProcessor,
+          conversationTracker: widget.conversationTracker,
+          audioRecorderService: widget.audioRecorderService,
+          reactionRepo: widget.reactionRepo,
+          reactionListener: widget.reactionListener,
+          introductionRepository: widget.introductionRepository,
+        ),
+      ),
     );
   }
 
@@ -423,9 +574,14 @@ class _PostsWiredState extends State<PostsWired> {
 
   @override
   Widget build(BuildContext context) {
+    final canMessagePinnedAuthors =
+        widget.messageRepo != null &&
+        widget.chatMessageListener != null &&
+        widget.mediaAttachmentRepo != null;
     return PostsScreen(
       username: _username,
       posts: _posts,
+      pinnedPosts: _pinnedPosts,
       viewerPeerId: _peerId,
       scrollController: _scrollController,
       postKeys: _postKeys,
@@ -435,8 +591,16 @@ class _PostsWiredState extends State<PostsWired> {
       onOpenComments: _openComments,
       onToggleHeart: _togglePostHeart,
       onPassAlong: _passAlong,
+      onPinPost: _pinPost,
+      onDismissPin: _dismissPinnedPost,
+      onMessageFromPin: canMessagePinnedAuthors
+          ? _messagePinnedPostAuthor
+          : null,
+      onEditPinnedPost: _editPinnedPost,
+      onRemovePin: _removePinnedPost,
       focusedPostId: _focusedPostId,
       statusMessage: widget.pendingTargetStore?.statusMessage,
+      activePinnedPostIds: _pinnedPosts.map((post) => post.id).toSet(),
     );
   }
 

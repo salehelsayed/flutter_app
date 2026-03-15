@@ -218,6 +218,16 @@ Future<void> dbDeletePostCascade(Database db, String postId) async {
       whereArgs: <Object?>[postId],
     );
     await txn.delete(
+      'post_pins',
+      where: 'post_id = ?',
+      whereArgs: <Object?>[postId],
+    );
+    await txn.delete(
+      'post_pin_dismissals',
+      where: 'post_id = ?',
+      whereArgs: <Object?>[postId],
+    );
+    await txn.delete(
       'post_feed_state',
       where: 'post_id = ?',
       whereArgs: <Object?>[postId],

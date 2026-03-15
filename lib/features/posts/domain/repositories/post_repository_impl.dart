@@ -10,6 +10,7 @@ import 'package:flutter_app/features/posts/domain/models/post_reaction_model.dar
 import 'package:flutter_app/features/posts/domain/models/post_recipient_delivery.dart';
 import 'package:flutter_app/features/posts/domain/models/post_pass_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_origin_model.dart';
+import 'package:flutter_app/features/posts/domain/models/post_pin_state_model.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 
 class PostRepositoryImpl implements PostRepository {
@@ -63,6 +64,16 @@ class PostRepositoryImpl implements PostRepository {
   dbUpdatePostMediaLocalPath;
   final Future<void> Function(String mediaId, String downloadStatus)?
   dbUpdatePostMediaDownloadStatus;
+  final Future<void> Function(String postId, List<Map<String, Object?>> rows)?
+  dbReplacePostMedia;
+  final Future<void> Function(Map<String, Object?> row)? dbUpsertPostPinState;
+  final Future<Map<String, Object?>?> Function(String postId)?
+  dbLoadPostPinState;
+  final Future<List<Map<String, Object?>>> Function()?
+  dbLoadActivePostPinStates;
+  final Future<void> Function(Map<String, Object?> row)? dbUpsertPinDismissal;
+  final Future<List<Map<String, Object?>>> Function()? dbLoadPinDismissals;
+  final Future<void> Function(String postId)? dbDeletePinDismissal;
 
   final StreamController<String> _postChangesController =
       StreamController<String>.broadcast();
@@ -100,6 +111,13 @@ class PostRepositoryImpl implements PostRepository {
     this.dbLoadPostMediaForPosts,
     this.dbUpdatePostMediaLocalPath,
     this.dbUpdatePostMediaDownloadStatus,
+    this.dbReplacePostMedia,
+    this.dbUpsertPostPinState,
+    this.dbLoadPostPinState,
+    this.dbLoadActivePostPinStates,
+    this.dbUpsertPinDismissal,
+    this.dbLoadPinDismissals,
+    this.dbDeletePinDismissal,
   });
 
   @override
@@ -262,6 +280,24 @@ class PostRepositoryImpl implements PostRepository {
     );
     await dbUpsert(attachment.toMap());
     _postChangesController.add(attachment.postId);
+  }
+
+  @override
+  Future<void> replacePostMediaAttachments(
+    String postId,
+    List<PostMediaAttachmentModel> attachments,
+  ) async {
+    final dbReplace = _require(
+      dbReplacePostMedia,
+      'Post media replacement is not configured for this repository.',
+    );
+    await dbReplace(
+      postId,
+      attachments
+          .map((attachment) => attachment.toMap())
+          .toList(growable: false),
+    );
+    _postChangesController.add(postId);
   }
 
   @override
@@ -445,6 +481,69 @@ class PostRepositoryImpl implements PostRepository {
     );
     final row = await dbLoad(postId);
     return row == null ? null : PostOriginModel.fromMap(row);
+  }
+
+  @override
+  Future<void> savePostPinState(PostPinStateModel pinState) async {
+    final dbUpsert = _require(
+      dbUpsertPostPinState,
+      'Post pins are not configured for this repository.',
+    );
+    await dbUpsert(pinState.toMap());
+    _postChangesController.add(pinState.postId);
+  }
+
+  @override
+  Future<PostPinStateModel?> getPostPinState(String postId) async {
+    final dbLoad = _require(
+      dbLoadPostPinState,
+      'Post pins are not configured for this repository.',
+    );
+    final row = await dbLoad(postId);
+    return row == null ? null : PostPinStateModel.fromMap(row);
+  }
+
+  @override
+  Future<List<PostPinStateModel>> loadActivePinStates() async {
+    final dbLoad = _require(
+      dbLoadActivePostPinStates,
+      'Post pins are not configured for this repository.',
+    );
+    final rows = await dbLoad();
+    return rows.map(PostPinStateModel.fromMap).toList(growable: false);
+  }
+
+  @override
+  Future<void> savePinDismissal(String postId, String dismissedAt) async {
+    final dbUpsert = _require(
+      dbUpsertPinDismissal,
+      'Pin dismissals are not configured for this repository.',
+    );
+    await dbUpsert(<String, Object?>{
+      'post_id': postId,
+      'dismissed_at': dismissedAt,
+    });
+    _postChangesController.add(postId);
+  }
+
+  @override
+  Future<Set<String>> loadDismissedPinPostIds() async {
+    final dbLoad = _require(
+      dbLoadPinDismissals,
+      'Pin dismissals are not configured for this repository.',
+    );
+    final rows = await dbLoad();
+    return rows.map((row) => row['post_id'] as String).toSet();
+  }
+
+  @override
+  Future<void> clearPinDismissal(String postId) async {
+    final dbDelete = _require(
+      dbDeletePinDismissal,
+      'Pin dismissals are not configured for this repository.',
+    );
+    await dbDelete(postId);
+    _postChangesController.add(postId);
   }
 
   @override

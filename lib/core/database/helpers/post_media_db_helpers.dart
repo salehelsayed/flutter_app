@@ -86,3 +86,24 @@ Future<void> dbUpdatePostMediaDownloadStatus(
     whereArgs: [mediaId],
   );
 }
+
+Future<void> dbReplacePostMediaAttachments(
+  Database db,
+  String postId,
+  List<Map<String, Object?>> rows,
+) async {
+  await db.transaction((txn) async {
+    await txn.delete(
+      'post_media_attachments',
+      where: 'post_id = ?',
+      whereArgs: <Object?>[postId],
+    );
+    for (final row in rows) {
+      await txn.insert(
+        'post_media_attachments',
+        row,
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    }
+  });
+}

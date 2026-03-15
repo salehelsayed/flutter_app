@@ -46,13 +46,16 @@ import 'package:flutter_app/core/database/migrations/027_posts_core.dart';
 import 'package:flutter_app/core/database/migrations/028_posts_engagement.dart';
 import 'package:flutter_app/core/database/migrations/029_posts_nearby.dart';
 import 'package:flutter_app/core/database/migrations/030_posts_pass_along.dart';
+import 'package:flutter_app/core/database/migrations/031_posts_pins.dart';
 import 'package:flutter_app/core/database/helpers/introductions_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_comments_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_comment_reactions_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_feed_state_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_location_presence_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/post_pin_dismissals_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_origin_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_passes_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/post_pins_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_privacy_state_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_media_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_pending_child_events_db_helpers.dart';
@@ -123,6 +126,7 @@ import 'package:flutter_app/features/posts/application/post_presence_listener.da
 import 'package:flutter_app/features/posts/application/post_comment_listener.dart';
 import 'package:flutter_app/features/posts/application/post_listener.dart';
 import 'package:flutter_app/features/posts/application/post_notification_open_coordinator.dart';
+import 'package:flutter_app/features/posts/application/post_pin_listener.dart';
 import 'package:flutter_app/features/posts/application/post_pass_listener.dart';
 import 'package:flutter_app/features/posts/application/post_reaction_listener.dart';
 import 'package:flutter_app/features/posts/application/sweep_expired_posts_use_case.dart';
@@ -170,7 +174,7 @@ void main() async {
   final db = await openEncryptedDatabase(
     secureKeyStore: secureKeyStore,
     dbName: 'identity.db',
-    version: 30,
+    version: 31,
     onCreate: (db, version) async {
       await runIdentityTableMigration(db);
       await runMessagesTableMigration(db);
@@ -202,6 +206,7 @@ void main() async {
       await runPostsEngagementMigration(db);
       await runPostsNearbyMigration(db);
       await runPostsPassAlongMigration(db);
+      await runPostsPinsMigration(db);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) {
@@ -288,6 +293,9 @@ void main() async {
       }
       if (oldVersion < 30) {
         await runPostsPassAlongMigration(db);
+      }
+      if (oldVersion < 31) {
+        await runPostsPinsMigration(db);
       }
     },
   );
@@ -413,6 +421,14 @@ void main() async {
         dbUpdatePostMediaLocalPath(db, mediaId, localPath),
     dbUpdatePostMediaDownloadStatus: (mediaId, downloadStatus) =>
         dbUpdatePostMediaDownloadStatus(db, mediaId, downloadStatus),
+    dbReplacePostMedia: (postId, rows) =>
+        dbReplacePostMediaAttachments(db, postId, rows),
+    dbUpsertPostPinState: (row) => dbUpsertPostPinState(db, row),
+    dbLoadPostPinState: (postId) => dbLoadPostPinState(db, postId),
+    dbLoadActivePostPinStates: () => dbLoadActivePostPinStates(db),
+    dbUpsertPinDismissal: (row) => dbUpsertPostPinDismissal(db, row),
+    dbLoadPinDismissals: () => dbLoadPostPinDismissals(db),
+    dbDeletePinDismissal: (postId) => dbDeletePostPinDismissal(db, postId),
   );
 
   final postsPrivacySettingsRepository = PostsPrivacySettingsRepositoryImpl(
@@ -691,6 +707,12 @@ void main() async {
       );
     },
   );
+  final postPinListener = PostPinListener(
+    postPinUpdateStream: messageRouter.postPinUpdateStream,
+    postPinRemoveStream: messageRouter.postPinRemoveStream,
+    postRepo: postRepository,
+    contactRepo: contactRepository,
+  );
 
   // Create reaction listener
   final reactionListener = ReactionListener(
@@ -808,6 +830,7 @@ void main() async {
   postReactionListener.start();
   postPresenceListener.start();
   postPassListener.start();
+  postPinListener.start();
   reactionListener.start();
   profileUpdateListener.start();
   groupMessageListener.start(
@@ -862,6 +885,7 @@ void main() async {
       postReactionListener: postReactionListener,
       postPresenceListener: postPresenceListener,
       postPassListener: postPassListener,
+      postPinListener: postPinListener,
       reactionListener: reactionListener,
       profileUpdateListener: profileUpdateListener,
       messageRouter: messageRouter,
@@ -910,6 +934,7 @@ class MyApp extends StatefulWidget {
   final PostReactionListener postReactionListener;
   final PostPresenceListener postPresenceListener;
   final PostPassListener postPassListener;
+  final PostPinListener postPinListener;
   final ReactionListener reactionListener;
   final ProfileUpdateListener profileUpdateListener;
   final IncomingMessageRouter messageRouter;
@@ -957,6 +982,7 @@ class MyApp extends StatefulWidget {
     required this.postReactionListener,
     required this.postPresenceListener,
     required this.postPassListener,
+    required this.postPinListener,
     required this.reactionListener,
     required this.profileUpdateListener,
     required this.messageRouter,
@@ -1248,6 +1274,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     widget.postReactionListener.dispose();
     widget.postPresenceListener.dispose();
     widget.postPassListener.dispose();
+    widget.postPinListener.dispose();
     widget.chatMessageListener.dispose();
     widget.contactRequestListener.dispose();
     _postNotificationOpenCoordinator.dispose();
