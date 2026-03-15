@@ -6,7 +6,7 @@ class FakeNotificationService implements NotificationService {
   bool initialized = false;
 
   @override
-  void Function(String contactPeerId)? onNotificationTap;
+  void Function(String payload)? onNotificationTap;
 
   @override
   Future<void> initialize() async {
@@ -19,11 +19,13 @@ class FakeNotificationService implements NotificationService {
     required String senderUsername,
     required String messageText,
   }) async {
-    shown.add(FakeNotification(
-      contactPeerId: contactPeerId,
-      senderUsername: senderUsername,
-      messageText: messageText,
-    ));
+    shown.add(
+      FakeNotification(
+        contactPeerId: contactPeerId,
+        senderUsername: senderUsername,
+        messageText: messageText,
+      ),
+    );
   }
 
   @override
@@ -32,14 +34,21 @@ class FakeNotificationService implements NotificationService {
     required String body,
     String? payload,
   }) async {
-    shownGeneric.add(FakeGenericNotification(
-      title: title,
-      body: body,
-      payload: payload,
-    ));
+    shownGeneric.add(
+      FakeGenericNotification(title: title, body: body, payload: payload),
+    );
   }
 
   final List<FakeGenericNotification> shownGeneric = [];
+
+  String? initialPayload;
+
+  @override
+  Future<String?> consumeInitialPayload() async {
+    final payload = initialPayload;
+    initialPayload = null;
+    return payload;
+  }
 
   @override
   void dispose() {}

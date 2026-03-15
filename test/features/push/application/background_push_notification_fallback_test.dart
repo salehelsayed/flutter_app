@@ -67,17 +67,13 @@ void main() {
     });
 
     test('skips fallback for group_message type without groupId', () {
-      const message = RemoteMessage(
-        data: {'type': 'group_message'},
-      );
+      const message = RemoteMessage(data: {'type': 'group_message'});
 
       expect(shouldShowBackgroundPushFallbackNotification(message), isFalse);
     });
 
     test('shows fallback for intros type', () {
-      const message = RemoteMessage(
-        data: {'type': 'intros'},
-      );
+      const message = RemoteMessage(data: {'type': 'intros'});
 
       expect(shouldShowBackgroundPushFallbackNotification(message), isTrue);
 
@@ -99,23 +95,24 @@ void main() {
     });
 
     test('skips fallback for unknown type without payload data key', () {
-      const message = RemoteMessage(
-        data: {'type': 'unknown_type'},
-      );
+      const message = RemoteMessage(data: {'type': 'unknown_type'});
 
       expect(shouldShowBackgroundPushFallbackNotification(message), isFalse);
     });
 
-    test('route key alone does not trigger fallback (only payload key does)',
-        () {
-      // shouldShow checks data['payload'], not data['route'].
-      // route is only used as a fallback in payload extraction.
-      const message = RemoteMessage(
-        data: {'type': 'custom', 'route': '/some/route'},
-      );
+    test(
+      'route key alone does not trigger fallback (only payload key does)',
+      () {
+        const message = RemoteMessage(
+          data: {'type': 'custom', 'route': '/some/route'},
+        );
 
-      expect(shouldShowBackgroundPushFallbackNotification(message), isFalse);
-    });
+        expect(shouldShowBackgroundPushFallbackNotification(message), isTrue);
+
+        final fallback = buildBackgroundPushFallbackNotification(message);
+        expect(fallback.payload, '/some/route');
+      },
+    );
 
     test('uses route as payload fallback when payload key is present', () {
       const message = RemoteMessage(
@@ -128,10 +125,26 @@ void main() {
       expect(fallback.payload, 'trigger');
     });
 
-    test('treats whitespace-only values as absent', () {
+    test('shows fallback for post_create with post payload routing', () {
       const message = RemoteMessage(
-        data: {'type': '  ', 'payload': '   '},
+        data: {
+          'type': 'post_create',
+          'post_id': 'post-123',
+          'title': 'Alice posted',
+          'body': 'Hello posts',
+        },
       );
+
+      expect(shouldShowBackgroundPushFallbackNotification(message), isTrue);
+
+      final fallback = buildBackgroundPushFallbackNotification(message);
+      expect(fallback.title, 'Alice posted');
+      expect(fallback.body, 'Hello posts');
+      expect(fallback.payload, 'post:post-123');
+    });
+
+    test('treats whitespace-only values as absent', () {
+      const message = RemoteMessage(data: {'type': '  ', 'payload': '   '});
 
       // type trims to null → falls through to payload check,
       // payload trims to null → should not show

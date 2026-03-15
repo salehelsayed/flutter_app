@@ -33,11 +33,14 @@ import 'package:flutter_app/features/groups/domain/repositories/group_repository
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository.dart';
 import 'package:flutter_app/features/introduction/application/introduction_listener.dart';
+import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/qr_code/application/build_qr_payload_use_case.dart';
 import 'package:flutter_app/features/qr_code/presentation/screens/qr_scanner_wired.dart';
 import 'package:flutter_app/features/feed/presentation/screens/feed_wired.dart';
+import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
+import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 import 'package:flutter_app/features/feed/presentation/navigation/feed_route_transition.dart';
 import 'package:flutter_app/features/share/application/settle_share_intent_flow.dart';
 import 'package:flutter_app/features/share/presentation/navigation/share_target_picker_route.dart';
@@ -51,6 +54,7 @@ class FirstTimeExperienceWired extends StatefulWidget {
   final ContactRequestRepository contactRequestRepository;
   final ContactRequestListener contactRequestListener;
   final MessageRepository messageRepository;
+  final PostRepository? postRepository;
   final MediaAttachmentRepository mediaAttachmentRepository;
   final ChatMessageListener chatMessageListener;
   final Bridge bridge;
@@ -70,6 +74,8 @@ class FirstTimeExperienceWired extends StatefulWidget {
   final IntroductionRepository? introductionRepository;
   final IntroductionListener? introductionListener;
   final ShareIntentService? shareIntentService;
+  final AppShellController? appShellController;
+  final PendingPostTargetStore? pendingPostTargetStore;
 
   const FirstTimeExperienceWired({
     super.key,
@@ -78,6 +84,7 @@ class FirstTimeExperienceWired extends StatefulWidget {
     required this.contactRequestRepository,
     required this.contactRequestListener,
     required this.messageRepository,
+    this.postRepository,
     required this.mediaAttachmentRepository,
     required this.chatMessageListener,
     required this.bridge,
@@ -97,6 +104,8 @@ class FirstTimeExperienceWired extends StatefulWidget {
     this.introductionRepository,
     this.introductionListener,
     this.shareIntentService,
+    this.appShellController,
+    this.pendingPostTargetStore,
   });
 
   @override
@@ -189,6 +198,9 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
     if (result == AcceptContactRequestResult.success ||
         result == AcceptContactRequestResult.notPending) {
       final navigator = Navigator.of(context);
+      final postRepository = widget.postRepository;
+      final appShellController = widget.appShellController;
+      final pendingPostTargetStore = widget.pendingPostTargetStore;
       navigator.pushReplacement(
         buildFeedSlideUpRoute(
           builder: (_) => FeedWired(
@@ -197,6 +209,7 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
             contactRequestRepository: widget.contactRequestRepository,
             contactRequestListener: widget.contactRequestListener,
             messageRepository: widget.messageRepository,
+            postRepository: postRepository ?? _missingPostRepository(),
             mediaAttachmentRepository: widget.mediaAttachmentRepository,
             chatMessageListener: widget.chatMessageListener,
             bridge: widget.bridge,
@@ -215,6 +228,10 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
             groupConversationTracker: widget.groupConversationTracker,
             introductionRepository: widget.introductionRepository,
             introductionListener: widget.introductionListener,
+            appShellController:
+                appShellController ?? _missingAppShellController(),
+            pendingPostTargetStore:
+                pendingPostTargetStore ?? _missingPendingPostTargetStore(),
           ),
         ),
       );
@@ -470,6 +487,7 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
           contactRequestRepository: widget.contactRequestRepository,
           contactRequestListener: widget.contactRequestListener,
           messageRepository: widget.messageRepository,
+          postRepository: widget.postRepository,
           mediaAttachmentRepository: widget.mediaAttachmentRepository,
           chatMessageListener: widget.chatMessageListener,
           identityRepository: widget.repository,
@@ -490,8 +508,28 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
           introductionRepository: widget.introductionRepository,
           introductionListener: widget.introductionListener,
           shareIntentService: widget.shareIntentService,
+          appShellController: widget.appShellController,
+          pendingPostTargetStore: widget.pendingPostTargetStore,
         ),
       ),
+    );
+  }
+
+  Never _missingPostRepository() {
+    throw StateError(
+      'FirstTimeExperienceWired requires postRepository before navigating to FeedWired.',
+    );
+  }
+
+  Never _missingAppShellController() {
+    throw StateError(
+      'FirstTimeExperienceWired requires appShellController before navigating to FeedWired.',
+    );
+  }
+
+  Never _missingPendingPostTargetStore() {
+    throw StateError(
+      'FirstTimeExperienceWired requires pendingPostTargetStore before navigating to FeedWired.',
     );
   }
 

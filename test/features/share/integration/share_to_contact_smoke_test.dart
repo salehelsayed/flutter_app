@@ -14,6 +14,7 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/attachment_preview_strip.dart';
+import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
@@ -22,6 +23,7 @@ import 'package:flutter_app/features/identity/domain/models/identity_model.dart'
 import 'package:flutter_app/features/identity/presentation/screens/identity_choice_wired.dart';
 import 'package:flutter_app/features/identity/presentation/startup_router.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
+import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
 import 'package:flutter_app/features/share/presentation/screens/share_target_picker_wired.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
@@ -33,6 +35,7 @@ import '../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../shared/fakes/in_memory_media_attachment_repository.dart';
 import '../../../shared/fakes/in_memory_message_repository.dart';
+import '../../../shared/fakes/in_memory_post_repository.dart';
 import '../../contact_request/domain/repositories/fake_contact_request_repository.dart';
 import '../../identity/domain/repositories/fake_identity_repository.dart';
 
@@ -42,6 +45,7 @@ void main() {
   late FakeContactRequestRepository contactRequestRepository;
   late InMemoryMessageRepository messageRepository;
   late InMemoryMediaAttachmentRepository mediaAttachmentRepository;
+  late InMemoryPostRepository postRepository;
   late FakeIdentityRepository identityRepository;
   late FakeP2PService p2pService;
   late FakeMediaFileManager mediaFileManager;
@@ -51,6 +55,8 @@ void main() {
   late InMemoryGroupMessageRepository groupMessageRepository;
   late GroupMessageListener groupMessageListener;
   late ImageProcessor imageProcessor;
+  late AppShellController appShellController;
+  late PendingPostTargetStore pendingPostTargetStore;
 
   final identityWithContacts = IdentityModel(
     peerId: 'my-peer-id-12345',
@@ -97,6 +103,7 @@ void main() {
     contactRequestRepository = FakeContactRequestRepository();
     messageRepository = InMemoryMessageRepository();
     mediaAttachmentRepository = InMemoryMediaAttachmentRepository();
+    postRepository = InMemoryPostRepository();
     identityRepository = FakeIdentityRepository();
     p2pService = FakeP2PService();
     mediaFileManager = FakeMediaFileManager();
@@ -107,6 +114,8 @@ void main() {
       groupRepo: groupRepository,
       msgRepo: groupMessageRepository,
     );
+    appShellController = AppShellController();
+    pendingPostTargetStore = PendingPostTargetStore();
     chatMessageListener = ChatMessageListener(
       chatMessageStream: const Stream<ChatMessage>.empty(),
       messageRepo: messageRepository,
@@ -183,6 +192,7 @@ void main() {
       contactRequestRepository: contactRequestRepository,
       contactRequestListener: contactRequestListener,
       messageRepository: messageRepository,
+      postRepository: postRepository,
       mediaAttachmentRepository: mediaAttachmentRepository,
       chatMessageListener: chatMessageListener,
       bridge: bridge,
@@ -194,6 +204,8 @@ void main() {
       groupRepository: groupRepository,
       groupMessageRepository: groupMessageRepository,
       groupMessageListener: groupMessageListener,
+      appShellController: appShellController,
+      pendingPostTargetStore: pendingPostTargetStore,
     );
   }
 

@@ -6,6 +6,8 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
+import 'package:flutter_app/core/notifications/notification_route_dispatch.dart';
+import 'package:flutter_app/core/notifications/notification_route_target.dart';
 import 'package:flutter_app/features/conversation/application/reaction_listener.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
@@ -46,6 +48,9 @@ import 'package:flutter_app/core/services/share_intent_model.dart';
 import 'package:flutter_app/core/services/share_intent_service.dart';
 import 'package:flutter_app/features/share/application/settle_share_intent_flow.dart';
 import 'package:flutter_app/features/share/presentation/navigation/share_target_picker_route.dart';
+import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
+import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
+import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 
 /// Router widget that handles app startup navigation.
 ///
@@ -71,6 +76,8 @@ class StartupRouter extends StatefulWidget {
 
   /// The message repository for conversation persistence.
   final MessageRepository messageRepository;
+
+  final PostRepository postRepository;
 
   /// The media attachment repository for media metadata.
   final MediaAttachmentRepository mediaAttachmentRepository;
@@ -129,6 +136,11 @@ class StartupRouter extends StatefulWidget {
   /// The share intent service for handling shared content from external apps.
   final ShareIntentService? shareIntentService;
 
+  final AppShellController appShellController;
+  final PendingPostTargetStore pendingPostTargetStore;
+  final Future<void> Function(NotificationRouteTarget routeTarget)?
+  onNotificationRouteTarget;
+
   const StartupRouter({
     super.key,
     required this.repository,
@@ -136,6 +148,7 @@ class StartupRouter extends StatefulWidget {
     required this.contactRequestRepository,
     required this.contactRequestListener,
     required this.messageRepository,
+    required this.postRepository,
     required this.mediaAttachmentRepository,
     required this.chatMessageListener,
     required this.bridge,
@@ -155,6 +168,9 @@ class StartupRouter extends StatefulWidget {
     this.introductionRepository,
     this.introductionListener,
     this.shareIntentService,
+    required this.appShellController,
+    required this.pendingPostTargetStore,
+    this.onNotificationRouteTarget,
   });
 
   @override
@@ -192,6 +208,7 @@ class _StartupRouterState extends State<StartupRouter> {
       final contactRequestRepository = widget.contactRequestRepository;
       final contactRequestListener = widget.contactRequestListener;
       final messageRepository = widget.messageRepository;
+      final postRepository = widget.postRepository;
       final mediaAttachmentRepository = widget.mediaAttachmentRepository;
       final chatMessageListener = widget.chatMessageListener;
       final p2pService = widget.p2pService;
@@ -216,6 +233,7 @@ class _StartupRouterState extends State<StartupRouter> {
               contactRequestRepository: contactRequestRepository,
               contactRequestListener: contactRequestListener,
               messageRepository: messageRepository,
+              postRepository: postRepository,
               mediaAttachmentRepository: mediaAttachmentRepository,
               chatMessageListener: chatMessageListener,
               bridge: bridge,
@@ -234,6 +252,8 @@ class _StartupRouterState extends State<StartupRouter> {
               groupConversationTracker: widget.groupConversationTracker,
               introductionRepository: widget.introductionRepository,
               introductionListener: widget.introductionListener,
+              appShellController: widget.appShellController,
+              pendingPostTargetStore: widget.pendingPostTargetStore,
             ),
           );
 
@@ -261,6 +281,7 @@ class _StartupRouterState extends State<StartupRouter> {
             contactRequestRepository: contactRequestRepository,
             contactRequestListener: contactRequestListener,
             messageRepository: messageRepository,
+            postRepository: postRepository,
             mediaAttachmentRepository: mediaAttachmentRepository,
             chatMessageListener: chatMessageListener,
             bridge: bridge,
@@ -306,6 +327,7 @@ class _StartupRouterState extends State<StartupRouter> {
                       contactRequestRepository: contactRequestRepository,
                       contactRequestListener: contactRequestListener,
                       messageRepository: messageRepository,
+                      postRepository: postRepository,
                       mediaAttachmentRepository: mediaAttachmentRepository,
                       chatMessageListener: chatMessageListener,
                       bridge: bridge,
@@ -325,6 +347,8 @@ class _StartupRouterState extends State<StartupRouter> {
                       introductionRepository: widget.introductionRepository,
                       introductionListener: widget.introductionListener,
                       shareIntentService: widget.shareIntentService,
+                      appShellController: widget.appShellController,
+                      pendingPostTargetStore: widget.pendingPostTargetStore,
                     ),
                   ),
                   (_) => false,
@@ -430,7 +454,17 @@ class _StartupRouterState extends State<StartupRouter> {
               'dataKeys': message.data.keys.toList(),
             },
           );
-          await widget.p2pService.drainOfflineInbox();
+          await routeRemoteNotificationOpen(
+            data: message.data,
+            onRouteTarget: (routeTarget) async {
+              if (widget.onNotificationRouteTarget == null) {
+                await widget.p2pService.drainOfflineInbox();
+                return;
+              }
+              await widget.onNotificationRouteTarget!(routeTarget);
+            },
+            onMissingRouteTarget: widget.p2pService.drainOfflineInbox,
+          );
         },
       );
     } catch (e) {
@@ -531,6 +565,7 @@ class _StartupRouterState extends State<StartupRouter> {
     required ContactRequestRepository contactRequestRepository,
     required ContactRequestListener contactRequestListener,
     required MessageRepository messageRepository,
+    required PostRepository postRepository,
     required MediaAttachmentRepository mediaAttachmentRepository,
     required ChatMessageListener chatMessageListener,
     required Bridge bridge,
@@ -558,6 +593,7 @@ class _StartupRouterState extends State<StartupRouter> {
         contactRequestRepository: contactRequestRepository,
         contactRequestListener: contactRequestListener,
         messageRepository: messageRepository,
+        postRepository: postRepository,
         mediaAttachmentRepository: mediaAttachmentRepository,
         chatMessageListener: chatMessageListener,
         bridge: bridge,
@@ -577,6 +613,8 @@ class _StartupRouterState extends State<StartupRouter> {
         introductionRepository: introductionRepository,
         introductionListener: introductionListener,
         shareIntentService: shareIntentService,
+        appShellController: widget.appShellController,
+        pendingPostTargetStore: widget.pendingPostTargetStore,
       ),
     );
 

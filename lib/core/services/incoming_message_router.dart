@@ -20,6 +20,7 @@ class IncomingMessageRouter {
   final _groupInviteController = StreamController<ChatMessage>.broadcast();
   final _groupKeyUpdateController = StreamController<ChatMessage>.broadcast();
   final _introductionController = StreamController<ChatMessage>.broadcast();
+  final _postCreateController = StreamController<ChatMessage>.broadcast();
   final _unknownController = StreamController<ChatMessage>.broadcast();
 
   IncomingMessageRouter({required this.p2pService});
@@ -46,8 +47,10 @@ class IncomingMessageRouter {
       _groupKeyUpdateController.stream;
 
   /// Stream of incoming introduction messages.
-  Stream<ChatMessage> get introductionStream =>
-      _introductionController.stream;
+  Stream<ChatMessage> get introductionStream => _introductionController.stream;
+
+  /// Stream of incoming post_create messages.
+  Stream<ChatMessage> get postCreateStream => _postCreateController.stream;
 
   /// Stream of messages with unknown or unparseable types.
   Stream<ChatMessage> get unknownMessageStream => _unknownController.stream;
@@ -134,6 +137,8 @@ class IncomingMessageRouter {
           _groupKeyUpdateController.add(message);
         case 'introduction':
           _introductionController.add(message);
+        case 'post_create':
+          _postCreateController.add(message);
         case 'delivery_receipt':
           // Legacy envelope type kept for backward compatibility.
           // Delivery status is now sender-side inbox/direct semantics only.
@@ -180,6 +185,7 @@ class IncomingMessageRouter {
     _groupInviteController.close();
     _groupKeyUpdateController.close();
     _introductionController.close();
+    _postCreateController.close();
     _unknownController.close();
   }
 }

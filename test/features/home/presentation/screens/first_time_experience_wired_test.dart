@@ -10,8 +10,10 @@ import 'package:flutter_app/core/services/share_intent_service.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
 import 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
+import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
 import 'package:flutter_app/features/home/presentation/screens/first_time_experience_screen.dart';
 import 'package:flutter_app/features/home/presentation/screens/first_time_experience_wired.dart';
+import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
@@ -22,6 +24,7 @@ import '../../../../core/services/fake_p2p_service.dart';
 import '../../../../shared/fakes/fake_media_file_manager.dart';
 import '../../../../shared/fakes/in_memory_media_attachment_repository.dart';
 import '../../../../shared/fakes/in_memory_message_repository.dart';
+import '../../../../shared/fakes/in_memory_post_repository.dart';
 import '../../../contacts/domain/repositories/fake_contact_repository.dart';
 import '../../../contact_request/domain/repositories/fake_contact_request_repository.dart';
 import '../../../identity/domain/repositories/fake_identity_repository.dart';
@@ -35,10 +38,13 @@ void main() {
   late FakeSecureKeyStore secureKeyStore;
   late InMemoryMessageRepository messageRepo;
   late InMemoryMediaAttachmentRepository mediaAttachmentRepo;
+  late InMemoryPostRepository postRepository;
   late FakeMediaFileManager mediaFileManager;
   late ImageProcessor imageProcessor;
   late ContactRequestListener contactRequestListener;
   late ChatMessageListener chatMessageListener;
+  late AppShellController appShellController;
+  late PendingPostTargetStore pendingPostTargetStore;
 
   final testIdentity = IdentityModel(
     peerId: 'test-peer-id-12345',
@@ -59,7 +65,10 @@ void main() {
     secureKeyStore = FakeSecureKeyStore();
     messageRepo = InMemoryMessageRepository();
     mediaAttachmentRepo = InMemoryMediaAttachmentRepository();
+    postRepository = InMemoryPostRepository();
     mediaFileManager = FakeMediaFileManager();
+    appShellController = AppShellController();
+    pendingPostTargetStore = PendingPostTargetStore();
     imageProcessor = ImageProcessor(
       compressFile:
           ({
@@ -121,6 +130,7 @@ void main() {
         contactRequestRepository: contactRequestRepo,
         contactRequestListener: overrideListener ?? contactRequestListener,
         messageRepository: messageRepo,
+        postRepository: postRepository,
         mediaAttachmentRepository: mediaAttachmentRepo,
         chatMessageListener: chatMessageListener,
         bridge: bridge,
@@ -129,6 +139,8 @@ void main() {
         imageProcessor: imageProcessor,
         secureKeyStore: secureKeyStore,
         shareIntentService: shareIntentService,
+        appShellController: appShellController,
+        pendingPostTargetStore: pendingPostTargetStore,
       ),
     );
   }

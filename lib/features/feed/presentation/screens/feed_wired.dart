@@ -43,6 +43,8 @@ import 'package:flutter_app/features/feed/application/feed_store.dart';
 import 'package:flutter_app/features/feed/application/load_contact_feed_snapshot_use_case.dart';
 import 'package:flutter_app/features/feed/application/load_feed_use_case.dart';
 import 'package:flutter_app/features/feed/application/load_group_feed_snapshot_use_case.dart';
+import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
+import 'package:flutter_app/features/feed/domain/models/app_shell_tab.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_route_changes.dart';
 import 'package:flutter_app/features/feed/domain/models/session_reply.dart';
@@ -67,6 +69,9 @@ import 'package:flutter_app/features/orbit/presentation/navigation/orbit_route_t
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_wired.dart';
 import 'package:flutter_app/features/settings/presentation/navigation/settings_route_transition.dart';
 import 'package:flutter_app/features/settings/presentation/screens/settings_wired.dart';
+import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
+import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
+import 'package:flutter_app/features/posts/presentation/screens/posts_wired.dart';
 import 'feed_screen.dart';
 
 enum _MediaSource { gallery, camera, videoCamera }
@@ -82,6 +87,7 @@ class FeedWired extends StatefulWidget {
   final ContactRequestRepository contactRequestRepository;
   final ContactRequestListener contactRequestListener;
   final MessageRepository messageRepository;
+  final PostRepository postRepository;
   final MediaAttachmentRepository mediaAttachmentRepository;
   final ChatMessageListener chatMessageListener;
   final Bridge bridge;
@@ -100,6 +106,8 @@ class FeedWired extends StatefulWidget {
   final ActiveConversationTracker? groupConversationTracker;
   final IntroductionRepository? introductionRepository;
   final IntroductionListener? introductionListener;
+  final AppShellController appShellController;
+  final PendingPostTargetStore pendingPostTargetStore;
 
   const FeedWired({
     super.key,
@@ -108,6 +116,7 @@ class FeedWired extends StatefulWidget {
     required this.contactRequestRepository,
     required this.contactRequestListener,
     required this.messageRepository,
+    required this.postRepository,
     required this.mediaAttachmentRepository,
     required this.chatMessageListener,
     required this.bridge,
@@ -126,6 +135,8 @@ class FeedWired extends StatefulWidget {
     this.groupConversationTracker,
     this.introductionRepository,
     this.introductionListener,
+    required this.appShellController,
+    required this.pendingPostTargetStore,
   });
 
   @override
@@ -137,7 +148,6 @@ class _FeedWiredState extends State<FeedWired> {
   Uint8List? _avatarBytes;
   String? _peerId;
   IdentityModel? _identity;
-  String _activeTab = 'feed';
   final FeedStore _feedStore = FeedStore();
   final ValueNotifier<int> _totalUnreadCountNotifier = ValueNotifier<int>(0);
   final FeedReactionStore _reactionStore = FeedReactionStore();
@@ -159,6 +169,8 @@ class _FeedWiredState extends State<FeedWired> {
   ImageQualityPreference _qualityPreference = ImageQualityPreference.compressed;
   ImageQualityPreference _videoQualityPreference =
       ImageQualityPreference.compressed;
+  bool _orbitRouteOpen = false;
+  String _orbitReturnTab = AppShellTab.feed;
 
   List<FeedItem> get _feedItems => _feedStore.items;
   String _groupQuoteKey(String groupId) => 'group:$groupId';
@@ -191,6 +203,7 @@ class _FeedWiredState extends State<FeedWired> {
   @override
   void initState() {
     super.initState();
+    widget.appShellController.addListener(_onShellChanged);
     emitFlowEvent(
       layer: 'FL',
       event: 'FEED_FL_SCREEN_INIT',
@@ -1841,6 +1854,7 @@ class _FeedWiredState extends State<FeedWired> {
               p2pService: widget.p2pService,
               secureKeyStore: widget.secureKeyStore,
               imageProcessor: widget.imageProcessor,
+              appShellController: widget.appShellController,
             ),
           ),
         )
@@ -1851,47 +1865,71 @@ class _FeedWiredState extends State<FeedWired> {
         });
   }
 
-  void _onSwitchView(String tab) {
-    if (tab == 'orbit') {
-      Navigator.of(context)
-          .push(
-            buildOrbitSlideUpRoute(
-              builder: (_) => OrbitWired(
-                identityRepo: widget.repository,
-                contactRepo: widget.contactRepository,
-                contactRequestRepo: widget.contactRequestRepository,
-                contactRequestListener: widget.contactRequestListener,
-                messageRepo: widget.messageRepository,
-                mediaAttachmentRepo: widget.mediaAttachmentRepository,
-                chatMessageListener: widget.chatMessageListener,
-                bridge: widget.bridge,
-                p2pService: widget.p2pService,
-                mediaFileManager: widget.mediaFileManager,
-                secureKeyStore: widget.secureKeyStore,
-                imageProcessor: widget.imageProcessor,
-                conversationTracker: widget.conversationTracker,
-                audioRecorderService: widget.audioRecorderService,
-                reactionRepository: widget.reactionRepository,
-                reactionListener: widget.reactionListener,
-                groupRepository: widget.groupRepository,
-                groupMessageRepository: widget.groupMessageRepository,
-                groupMessageListener: widget.groupMessageListener,
-                groupInviteListener: widget.groupInviteListener,
-                groupConversationTracker: widget.groupConversationTracker,
-                introductionRepository: widget.introductionRepository,
-                introductionListener: widget.introductionListener,
-              ),
-            ),
-          )
-          .then((result) {
-            final changes = result is FeedRouteChanges ? result : null;
-            unawaited(_applyRouteChanges(changes));
-          });
+  String get _activeTab => widget.appShellController.activeTab;
+
+  void _onShellChanged() {
+    if (!mounted) {
       return;
     }
-    setState(() {
-      _activeTab = tab;
-    });
+    final activeTab = widget.appShellController.activeTab;
+    if (activeTab != AppShellTab.orbit) {
+      _orbitReturnTab = activeTab;
+    }
+    if (activeTab == AppShellTab.orbit && !_orbitRouteOpen) {
+      _openOrbitRoute();
+      return;
+    }
+    setState(() {});
+  }
+
+  void _openOrbitRoute() {
+    _orbitRouteOpen = true;
+
+    Navigator.of(context)
+        .push(
+          buildOrbitSlideUpRoute(
+            builder: (_) => OrbitWired(
+              identityRepo: widget.repository,
+              contactRepo: widget.contactRepository,
+              contactRequestRepo: widget.contactRequestRepository,
+              contactRequestListener: widget.contactRequestListener,
+              messageRepo: widget.messageRepository,
+              postRepository: widget.postRepository,
+              mediaAttachmentRepo: widget.mediaAttachmentRepository,
+              chatMessageListener: widget.chatMessageListener,
+              bridge: widget.bridge,
+              p2pService: widget.p2pService,
+              mediaFileManager: widget.mediaFileManager,
+              secureKeyStore: widget.secureKeyStore,
+              imageProcessor: widget.imageProcessor,
+              conversationTracker: widget.conversationTracker,
+              audioRecorderService: widget.audioRecorderService,
+              reactionRepository: widget.reactionRepository,
+              reactionListener: widget.reactionListener,
+              groupRepository: widget.groupRepository,
+              groupMessageRepository: widget.groupMessageRepository,
+              groupMessageListener: widget.groupMessageListener,
+              groupInviteListener: widget.groupInviteListener,
+              groupConversationTracker: widget.groupConversationTracker,
+              introductionRepository: widget.introductionRepository,
+              introductionListener: widget.introductionListener,
+              appShellController: widget.appShellController,
+              pendingPostTargetStore: widget.pendingPostTargetStore,
+            ),
+          ),
+        )
+        .then((result) {
+          _orbitRouteOpen = false;
+          if (widget.appShellController.activeTab == AppShellTab.orbit) {
+            widget.appShellController.switchTo(_orbitReturnTab);
+          }
+          final changes = result is FeedRouteChanges ? result : null;
+          unawaited(_applyRouteChanges(changes));
+        });
+  }
+
+  void _onSwitchView(String tab) {
+    widget.appShellController.switchTo(tab);
   }
 
   Future<void> _onUsernameChanged(String newUsername) async {
@@ -2030,6 +2068,7 @@ class _FeedWiredState extends State<FeedWired> {
 
   @override
   void dispose() {
+    widget.appShellController.removeListener(_onShellChanged);
     _requestSubscription?.cancel();
     _chatSubscription?.cancel();
     _repoChangeSubscription?.cancel();
@@ -2047,43 +2086,54 @@ class _FeedWiredState extends State<FeedWired> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      resizeToAvoidBottomInset: false,
-      body: FeedScreen(
-        username: _username,
-        userAvatarBytes: _avatarBytes,
-        userPeerId: _peerId,
-        feedItems: _feedItems,
-        feedItemsListenable: _feedStore.itemsListenable,
-        feedLoaded: _feedLoaded,
-        onUsernameChanged: _onUsernameChanged,
-        p2pService: widget.p2pService,
-        onSwitchView: _onSwitchView,
-        activeTab: _activeTab,
-        onSendMessage: _onSendMessage,
-        onReplyToMessage: _onReplyToMessage,
-        totalUnreadCountListenable: _totalUnreadCountNotifier,
-        expandedCardId: _expandedCardId,
-        onToggleExpand: _onToggleExpand,
-        onInlineSend: _onInlineSend,
-        onViewFullConversation: _onViewFullConversation,
-        draftTexts: _draftTexts,
-        activeFocusPeerId: _activeFocusPeerId,
-        onDraftChanged: _onDraftChanged,
-        onInputFocusChanged: _onInputFocusChanged,
-        activeQuoteMessageIds: _activeQuoteMessageIds,
-        onQuoteReply: _onQuoteReply,
-        onClearQuote: _onClearQuote,
-        onAttach: _onAttach,
-        onAvatarTap: _onAvatarTap,
-        sessionReplies: _sessionReplies,
-        reactionListenableForMessage: _reactionStore.listenableForMessage,
-        onReactionSelected: _onReactionSelected,
-        onGroupTap: _onGroupTap,
-        onGroupInlineSend: _onGroupInlineSend,
-        onGroupAttach: _onGroupAttach,
-        onGroupReactionSelected: _onGroupReactionSelected,
-      ),
-    );
+    final activeTab = _activeTab;
+    final body = activeTab == AppShellTab.posts
+        ? PostsWired(
+            identityRepo: widget.repository,
+            contactRepo: widget.contactRepository,
+            postRepo: widget.postRepository,
+            p2pService: widget.p2pService,
+            bridge: widget.bridge,
+            onSwitchView: _onSwitchView,
+            activeTab: activeTab,
+            pendingTargetStore: widget.pendingPostTargetStore,
+          )
+        : FeedScreen(
+            username: _username,
+            userAvatarBytes: _avatarBytes,
+            userPeerId: _peerId,
+            feedItems: _feedItems,
+            feedItemsListenable: _feedStore.itemsListenable,
+            feedLoaded: _feedLoaded,
+            onUsernameChanged: _onUsernameChanged,
+            p2pService: widget.p2pService,
+            onSwitchView: _onSwitchView,
+            activeTab: activeTab,
+            onSendMessage: _onSendMessage,
+            onReplyToMessage: _onReplyToMessage,
+            totalUnreadCountListenable: _totalUnreadCountNotifier,
+            expandedCardId: _expandedCardId,
+            onToggleExpand: _onToggleExpand,
+            onInlineSend: _onInlineSend,
+            onViewFullConversation: _onViewFullConversation,
+            draftTexts: _draftTexts,
+            activeFocusPeerId: _activeFocusPeerId,
+            onDraftChanged: _onDraftChanged,
+            onInputFocusChanged: _onInputFocusChanged,
+            activeQuoteMessageIds: _activeQuoteMessageIds,
+            onQuoteReply: _onQuoteReply,
+            onClearQuote: _onClearQuote,
+            onAttach: _onAttach,
+            onAvatarTap: _onAvatarTap,
+            sessionReplies: _sessionReplies,
+            reactionListenableForMessage: _reactionStore.listenableForMessage,
+            onReactionSelected: _onReactionSelected,
+            onGroupTap: _onGroupTap,
+            onGroupInlineSend: _onGroupInlineSend,
+            onGroupAttach: _onGroupAttach,
+            onGroupReactionSelected: _onGroupReactionSelected,
+          );
+
+    return Scaffold(resizeToAvoidBottomInset: false, body: body);
   }
 }

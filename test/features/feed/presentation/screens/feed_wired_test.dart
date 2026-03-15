@@ -20,6 +20,7 @@ import 'package:flutter_app/features/conversation/domain/models/message_reaction
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/reaction_display.dart';
+import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_route_changes.dart';
 import 'package:flutter_app/features/feed/presentation/screens/feed_wired.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/feed_card.dart';
@@ -40,6 +41,7 @@ import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
+import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
 
 import '../../../../core/bridge/fake_bridge.dart';
 import '../../../../core/secure_storage/fake_secure_key_store.dart';
@@ -50,6 +52,7 @@ import '../../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../../shared/fakes/in_memory_introduction_repository.dart';
 import '../../../../shared/fakes/in_memory_message_repository.dart';
+import '../../../../shared/fakes/in_memory_post_repository.dart';
 import '../../../contacts/domain/repositories/fake_contact_repository.dart';
 import '../../../contact_request/domain/repositories/fake_contact_request_repository.dart';
 import '../../../conversation/domain/repositories/fake_reaction_repository.dart';
@@ -64,6 +67,9 @@ void main() {
   late FakeSecureKeyStore secureKeyStore;
   late InMemoryMessageRepository messageRepo;
   late InMemoryMediaAttachmentRepository mediaAttachmentRepo;
+  late InMemoryPostRepository postRepository;
+  late AppShellController appShellController;
+  late PendingPostTargetStore pendingPostTargetStore;
   late FakeMediaFileManager mediaFileManager;
   late ImageProcessor imageProcessor;
 
@@ -95,6 +101,9 @@ void main() {
     secureKeyStore = FakeSecureKeyStore();
     messageRepo = InMemoryMessageRepository();
     mediaAttachmentRepo = InMemoryMediaAttachmentRepository();
+    postRepository = InMemoryPostRepository();
+    appShellController = AppShellController();
+    pendingPostTargetStore = PendingPostTargetStore();
     mediaFileManager = FakeMediaFileManager();
     imageProcessor = ImageProcessor(
       compressFile:
@@ -123,6 +132,7 @@ void main() {
   });
 
   tearDown(() {
+    postRepository.dispose();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
           const MethodChannel('plugins.flutter.io/path_provider'),
@@ -181,6 +191,7 @@ void main() {
         contactRequestRepository: contactRequestRepo,
         contactRequestListener: crListener,
         messageRepository: effectiveMessageRepo,
+        postRepository: postRepository,
         mediaAttachmentRepository:
             mediaAttachmentRepository ?? mediaAttachmentRepo,
         chatMessageListener: cmListener,
@@ -195,6 +206,8 @@ void main() {
         groupMessageRepository: groupMessageRepository,
         groupMessageListener: groupMessageListener,
         introductionListener: introductionListener,
+        appShellController: appShellController,
+        pendingPostTargetStore: pendingPostTargetStore,
       ),
     );
   }
