@@ -332,6 +332,7 @@ class _PostsWiredState extends State<PostsWired> {
         post: post,
         comments: comments,
         focusedCommentId: focusCommentId,
+        viewerPeerId: _peerId,
         onSubmitComment: (text) => _submitComment(post, text),
         onToggleCommentHeart: (comment, isActive) =>
             _toggleCommentHeart(post, comment.id, isActive),

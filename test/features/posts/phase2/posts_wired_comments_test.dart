@@ -83,7 +83,7 @@ void main() {
     await tester.pumpWidget(buildWidget());
     await tester.pump();
 
-    await tester.tap(find.byIcon(Icons.chat_bubble_outline));
+    await tester.tap(find.byIcon(Icons.mode_comment_outlined));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
 
@@ -104,12 +104,12 @@ void main() {
     await tester.pumpWidget(buildWidget());
     await tester.pump();
 
-    await tester.tap(find.byIcon(Icons.chat_bubble_outline));
+    await tester.tap(find.byIcon(Icons.mode_comment_outlined));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
 
     await tester.enterText(find.byType(TextField), 'I can lend one.');
-    await tester.tap(find.byIcon(Icons.arrow_upward));
+    await tester.tap(find.byIcon(Icons.send_rounded));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
 

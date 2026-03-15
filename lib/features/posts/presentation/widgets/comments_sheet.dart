@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/posts/domain/models/post_comment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 
@@ -7,17 +8,20 @@ class CommentsSheet extends StatefulWidget {
   final PostModel post;
   final List<PostCommentModel> comments;
   final String? focusedCommentId;
+  final String? viewerPeerId;
   final Future<List<PostCommentModel>> Function(String text) onSubmitComment;
   final Future<List<PostCommentModel>> Function(
     PostCommentModel comment,
     bool isActive,
-  )? onToggleCommentHeart;
+  )?
+  onToggleCommentHeart;
 
   const CommentsSheet({
     super.key,
     required this.post,
     required this.comments,
     this.focusedCommentId,
+    this.viewerPeerId,
     required this.onSubmitComment,
     this.onToggleCommentHeart,
   });
@@ -132,53 +136,102 @@ class _CommentsSheetState extends State<CommentsSheet> {
                     ),
                   ),
                 ),
-                const SizedBox(height: 18),
+                const SizedBox(height: 16),
                 Container(
-                  padding: const EdgeInsets.all(16),
+                  padding: const EdgeInsets.fromLTRB(4, 0, 0, 0),
                   decoration: BoxDecoration(
                     color: const Color(0xFF1A1F27),
-                    borderRadius: BorderRadius.circular(22),
+                    borderRadius: BorderRadius.circular(24),
                   ),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              widget.post.authorUsername,
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 15,
-                                fontWeight: FontWeight.w600,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        UserAvatar(peerId: widget.post.authorPeerId, size: 42),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      widget.post.authorUsername,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 15,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    _formatRelativeTimestamp(
+                                      widget.post.createdAt,
+                                    ),
+                                    style: const TextStyle(
+                                      color: Color.fromRGBO(
+                                        255,
+                                        255,
+                                        255,
+                                        0.36,
+                                      ),
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w400,
+                                    ),
+                                  ),
+                                ],
                               ),
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              widget.post.text,
-                              style: const TextStyle(
-                                color: Colors.white70,
-                                fontSize: 14,
-                                height: 1.4,
+                              const SizedBox(height: 4),
+                              Text(
+                                widget.post.text,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: Color.fromRGBO(255, 255, 255, 0.48),
+                                  fontSize: 14,
+                                  height: 1.35,
+                                ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 18),
-                Text(
-                  '${comments.length} comments',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
+                        const SizedBox(width: 10),
+                        GestureDetector(
+                          onTap: () => Navigator.of(context).maybePop(),
+                          behavior: HitTestBehavior.opaque,
+                          child: Container(
+                            width: 36,
+                            height: 36,
+                            decoration: const BoxDecoration(
+                              color: Color.fromRGBO(255, 255, 255, 0.08),
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(
+                              Icons.close,
+                              size: 20,
+                              color: Color.fromRGBO(255, 255, 255, 0.52),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
                 const SizedBox(height: 14),
+                Text(
+                  '${comments.length} comments',
+                  style: const TextStyle(
+                    color: Color.fromRGBO(255, 255, 255, 0.54),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                const SizedBox(height: 12),
                 Expanded(
                   child: comments.isEmpty
                       ? const Center(
@@ -191,14 +244,19 @@ class _CommentsSheetState extends State<CommentsSheet> {
                         )
                       : ListView.separated(
                           itemCount: comments.length,
-                          separatorBuilder: (_, _) =>
-                              const SizedBox(height: 12),
+                          separatorBuilder: (_, _) => const Divider(
+                            height: 1,
+                            thickness: 1,
+                            color: Color.fromRGBO(255, 255, 255, 0.08),
+                          ),
                           itemBuilder: (context, index) {
                             final comment = comments[index];
                             return _CommentTile(
                               comment: comment,
                               isFocused: comment.id == widget.focusedCommentId,
-                              isHearting: _heartingCommentIds.contains(comment.id),
+                              isHearting: _heartingCommentIds.contains(
+                                comment.id,
+                              ),
                               onToggleHeart: widget.onToggleCommentHeart == null
                                   ? null
                                   : () => _toggleCommentHeart(comment),
@@ -208,39 +266,61 @@ class _CommentsSheetState extends State<CommentsSheet> {
                 ),
                 const SizedBox(height: 14),
                 Row(
-                  crossAxisAlignment: CrossAxisAlignment.end,
+                  crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
+                    UserAvatar(peerId: widget.viewerPeerId, size: 34),
+                    const SizedBox(width: 10),
                     Expanded(
-                      child: TextField(
-                        controller: _textController,
-                        minLines: 1,
-                        maxLines: 4,
-                        style: const TextStyle(color: Colors.white),
-                        decoration: InputDecoration(
-                          hintText: 'Add a comment',
-                          hintStyle: const TextStyle(
-                            color: Color.fromRGBO(255, 255, 255, 0.42),
-                          ),
-                          filled: true,
-                          fillColor: const Color(0xFF1A1F27),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(20),
-                            borderSide: BorderSide.none,
+                      child: Container(
+                        key: const ValueKey<String>('comments-composer-pill'),
+                        padding: const EdgeInsets.fromLTRB(18, 6, 6, 6),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF1A1F27),
+                          borderRadius: BorderRadius.circular(999),
+                          border: Border.all(
+                            color: const Color.fromRGBO(255, 255, 255, 0.06),
                           ),
                         ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    IconButton.filled(
-                      onPressed: _isSubmitting ? null : _submit,
-                      style: IconButton.styleFrom(
-                        backgroundColor: const Color(0xFF8FD6B5),
-                        foregroundColor: const Color(0xFF132118),
-                      ),
-                      icon: Icon(
-                        _isSubmitting
-                            ? Icons.hourglass_top
-                            : Icons.arrow_upward,
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            Expanded(
+                              child: TextField(
+                                controller: _textController,
+                                minLines: 1,
+                                maxLines: 4,
+                                style: const TextStyle(color: Colors.white),
+                                decoration: const InputDecoration(
+                                  hintText: 'Write a comment...',
+                                  hintStyle: TextStyle(
+                                    color: Color.fromRGBO(255, 255, 255, 0.42),
+                                  ),
+                                  border: InputBorder.none,
+                                  isCollapsed: true,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Material(
+                              color: const Color.fromRGBO(255, 255, 255, 0.08),
+                              shape: const CircleBorder(),
+                              child: IconButton(
+                                onPressed: _isSubmitting ? null : _submit,
+                                icon: Icon(
+                                  _isSubmitting
+                                      ? Icons.hourglass_top
+                                      : Icons.send_rounded,
+                                  color: const Color.fromRGBO(
+                                    255,
+                                    255,
+                                    255,
+                                    0.72,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ],
@@ -274,91 +354,129 @@ class _CommentTile extends StatelessWidget {
         : comment.authorUsername;
 
     return Container(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 4),
       decoration: BoxDecoration(
-        color: isFocused ? const Color(0xFF1D2A33) : const Color(0xFF171C23),
-        borderRadius: BorderRadius.circular(18),
+        color: isFocused
+            ? const Color.fromRGBO(143, 214, 181, 0.08)
+            : Colors.transparent,
+        borderRadius: BorderRadius.circular(20),
         border: isFocused
-            ? Border.all(color: const Color(0xFF8FD6B5))
+            ? Border.all(color: const Color.fromRGBO(143, 214, 181, 0.28))
             : null,
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          UserAvatar(peerId: comment.senderPeerId, size: 38),
+          const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  displayName,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                  ),
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        displayName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      _formatRelativeTimestamp(comment.commentedAt),
+                      style: const TextStyle(
+                        color: Color.fromRGBO(255, 255, 255, 0.32),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w400,
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 6),
+                const SizedBox(height: 4),
                 Text(
                   comment.body,
                   style: const TextStyle(
-                    color: Colors.white70,
-                    fontSize: 14,
+                    color: Color.fromRGBO(255, 255, 255, 0.82),
+                    fontSize: 15,
                     height: 1.35,
                   ),
-                ),
-                const SizedBox(height: 10),
-                Row(
-                  children: [
-                    IconButton(
-                      onPressed: onToggleHeart,
-                      visualDensity: VisualDensity.compact,
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints.tightFor(
-                        width: 28,
-                        height: 28,
-                      ),
-                      icon: Icon(
-                        comment.viewerHasHearted
-                            ? Icons.favorite
-                            : Icons.favorite_border,
-                        size: 18,
-                      ),
-                      color: comment.viewerHasHearted
-                          ? const Color(0xFFEF7C8E)
-                          : const Color(0xFF8FD6B5),
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      comment.heartCount == 1
-                          ? '1 heart'
-                          : '${comment.heartCount} hearts',
-                      style: const TextStyle(
-                        color: Color.fromRGBO(255, 255, 255, 0.54),
-                        fontSize: 12,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                    if (isHearting) ...[
-                      const SizedBox(width: 8),
-                      const SizedBox(
-                        width: 14,
-                        height: 14,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      ),
-                    ],
-                  ],
                 ),
               ],
             ),
           ),
           const SizedBox(width: 12),
-          const Icon(
-            Icons.favorite_border,
-            color: Color.fromRGBO(255, 255, 255, 0.48),
-            size: 18,
+          InkWell(
+            onTap: onToggleHeart,
+            borderRadius: BorderRadius.circular(999),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    comment.viewerHasHearted
+                        ? Icons.favorite
+                        : Icons.favorite_border,
+                    color: comment.viewerHasHearted
+                        ? const Color(0xFFEF7C8E)
+                        : const Color.fromRGBO(255, 255, 255, 0.36),
+                    size: 20,
+                  ),
+                  if (comment.heartCount > 0) ...[
+                    const SizedBox(width: 6),
+                    Text(
+                      comment.heartCount.toString(),
+                      style: const TextStyle(
+                        color: Color.fromRGBO(255, 255, 255, 0.36),
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                  if (isHearting) ...[
+                    const SizedBox(width: 6),
+                    const SizedBox(
+                      width: 12,
+                      height: 12,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  ],
+                ],
+              ),
+            ),
           ),
         ],
       ),
     );
   }
+}
+
+String _formatRelativeTimestamp(String rawTimestamp) {
+  final timestamp = DateTime.tryParse(rawTimestamp)?.toUtc();
+  if (timestamp == null) {
+    return rawTimestamp;
+  }
+  final diff = DateTime.now().toUtc().difference(timestamp);
+  if (diff.inSeconds < 0) {
+    return '';
+  }
+  if (diff.inMinutes < 1) {
+    return 'just now';
+  }
+  if (diff.inMinutes < 60) {
+    return diff.inMinutes == 1 ? '1 min ago' : '${diff.inMinutes} min ago';
+  }
+  if (diff.inHours < 24) {
+    return '${diff.inHours}h ago';
+  }
+  if (diff.inDays < 7) {
+    return '${diff.inDays}d ago';
+  }
+  return '${(diff.inDays / 7).floor()}w ago';
 }

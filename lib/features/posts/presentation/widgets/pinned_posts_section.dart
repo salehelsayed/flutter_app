@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 
 class PinnedPostsSection extends StatefulWidget {
@@ -199,16 +200,28 @@ class _PinnedPostCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            post.authorUsername,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 15,
-              fontWeight: FontWeight.w700,
-            ),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              UserAvatar(peerId: post.authorPeerId, size: 40),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(
+                    post.authorUsername,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
           if (post.text.isNotEmpty) ...[
-            const SizedBox(height: 8),
+            const SizedBox(height: 10),
             Text(
               post.text,
               style: const TextStyle(
@@ -258,11 +271,13 @@ class _PinnedAvatarStack extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final authors = <String>{
-      for (final post in posts) post.authorUsername,
-    }.toList(growable: false);
-    final visibleAuthors = authors.take(6).toList(growable: false);
-    final overflowCount = authors.length - visibleAuthors.length;
+    final authorsByPeerId = <String, PostModel>{};
+    for (final post in posts) {
+      authorsByPeerId.putIfAbsent(post.authorPeerId, () => post);
+    }
+    final authorPosts = authorsByPeerId.values.toList(growable: false);
+    final visibleAuthors = authorPosts.take(6).toList(growable: false);
+    final overflowCount = authorPosts.length - visibleAuthors.length;
     return SizedBox(
       width: 28.0 * visibleAuthors.length + (overflowCount > 0 ? 30 : 0),
       height: 28,
@@ -271,7 +286,7 @@ class _PinnedAvatarStack extends StatelessWidget {
           for (var index = 0; index < visibleAuthors.length; index++)
             Positioned(
               left: index * 20.0,
-              child: _AvatarBadge(label: visibleAuthors[index]),
+              child: _AvatarBadge(post: visibleAuthors[index]),
             ),
           if (overflowCount > 0)
             Positioned(
@@ -301,28 +316,27 @@ class _PinnedAvatarStack extends StatelessWidget {
 }
 
 class _AvatarBadge extends StatelessWidget {
-  final String label;
+  final PostModel post;
 
-  const _AvatarBadge({required this.label});
+  const _AvatarBadge({required this.post});
 
   @override
   Widget build(BuildContext context) {
-    final initial = label.isEmpty ? '?' : label.substring(0, 1).toUpperCase();
     return Container(
       width: 28,
       height: 28,
+      padding: const EdgeInsets.all(2),
       decoration: BoxDecoration(
-        color: const Color(0xFF8FD6B5),
+        color: const Color(0xFF0F141B),
         borderRadius: BorderRadius.circular(999),
         border: Border.all(color: const Color(0xFF151922), width: 2),
       ),
-      alignment: Alignment.center,
-      child: Text(
-        initial,
-        style: const TextStyle(
-          color: Color(0xFF111318),
-          fontSize: 12,
-          fontWeight: FontWeight.w700,
+      child: ClipOval(
+        child: UserAvatar(
+          peerId: post.authorPeerId,
+          size: 24,
+          showGlow: false,
+          showPhotoFrame: false,
         ),
       ),
     );

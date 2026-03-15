@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_comment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
@@ -42,7 +43,13 @@ void main() {
       expect(find.text('2 comments'), findsOneWidget);
       expect(find.text('I can lend one.'), findsOneWidget);
       expect(find.text('I have one too.'), findsOneWidget);
-      expect(find.text('Add a comment'), findsOneWidget);
+      expect(find.text('Write a comment...'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey<String>('comments-composer-pill')),
+        findsOneWidget,
+      );
+      expect(find.byType(UserAvatar), findsNWidgets(4));
+      expect(find.byIcon(Icons.close), findsOneWidget);
 
       final firstOffset = tester.getTopLeft(find.text('I can lend one.'));
       final secondOffset = tester.getTopLeft(find.text('I have one too.'));

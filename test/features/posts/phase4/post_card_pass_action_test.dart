@@ -19,7 +19,7 @@ void main() {
       ),
     );
 
-    expect(find.byIcon(Icons.redo), findsOneWidget);
+    expect(find.byIcon(Icons.repeat), findsOneWidget);
   });
 
   testWidgets('wraps action clusters on narrow cards without overflowing', (
@@ -45,9 +45,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(tester.takeException(), isNull);
-    expect(find.byIcon(Icons.chat_bubble_outline), findsOneWidget);
-    expect(find.byIcon(Icons.redo), findsOneWidget);
-    expect(find.byIcon(Icons.push_pin_outlined), findsOneWidget);
+    expect(find.byIcon(Icons.mode_comment_outlined), findsOneWidget);
+    expect(find.byIcon(Icons.repeat), findsOneWidget);
+    expect(find.byIcon(Icons.bookmark_border), findsOneWidget);
   });
 
   testWidgets('hides the pass-along action for Pick People posts', (
@@ -66,7 +66,7 @@ void main() {
       ),
     );
 
-    expect(find.byIcon(Icons.redo), findsNothing);
+    expect(find.byIcon(Icons.repeat), findsNothing);
   });
 }
 

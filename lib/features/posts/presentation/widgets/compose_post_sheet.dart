@@ -369,7 +369,7 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                       child: Row(
                         children: [
                           const Icon(
-                            Icons.push_pin_outlined,
+                            Icons.bookmark_border,
                             color: Color(0xFF8FD6B5),
                             size: 18,
                           ),

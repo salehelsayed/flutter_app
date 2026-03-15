@@ -62,6 +62,7 @@ Future<(RemovePinResult, PostPinStateModel?)> removePin({
     reason: 'removed',
     createdAt: now,
   );
+  await postRepo.savePost(post.copyWith(keepAvailable: false));
   await postRepo.savePostPinState(pinState);
   await postRepo.clearPinDismissal(post.id);
 

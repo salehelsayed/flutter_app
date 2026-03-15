@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
+import 'package:flutter_app/features/posts/domain/models/post_pin_state_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_recipient_delivery.dart';
 import 'package:flutter_app/features/posts/presentation/screens/posts_wired.dart';
 
@@ -84,12 +85,74 @@ void main() {
       await tester.pumpWidget(buildWidget());
       await tester.pump();
 
-      expect(find.byIcon(Icons.push_pin_outlined), findsOneWidget);
+      expect(find.byIcon(Icons.bookmark_border), findsOneWidget);
 
-      await tester.tap(find.byIcon(Icons.push_pin_outlined));
+      await tester.tap(find.byIcon(Icons.bookmark_border));
       await tester.pump();
 
       expect(find.text('Pinned posts'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'supports repeated author pin and remove cycles in the wired screen',
+    (tester) async {
+      await postRepository.savePost(
+        postPinBasePost(authorPeerId: 'peer-bob', authorUsername: 'Bob'),
+      );
+      await postRepository.saveRecipientDelivery(
+        const PostRecipientDelivery(
+          postId: 'post-1',
+          recipientPeerId: 'peer-cara',
+          deliveryStatus: 'delivered',
+          lastAttemptAt: '2026-03-15T10:16:00.000Z',
+          deliveryPath: 'direct',
+          createdAt: '2026-03-15T10:16:00.000Z',
+          updatedAt: '2026-03-15T10:16:00.000Z',
+        ),
+      );
+
+      await tester.pumpWidget(buildWidget());
+      await tester.pump();
+
+      await tester.tap(find.byIcon(Icons.bookmark_border));
+      await tester.pump();
+
+      expect(find.text('Pinned posts'), findsOneWidget);
+      expect(find.byIcon(Icons.bookmark_border), findsNothing);
+
+      await tester.tap(find.text('Pinned posts'));
+      await tester.pump();
+      await tester.tap(find.text('Remove'));
+      await tester.pump();
+
+      expect(find.text('Pinned posts'), findsNothing);
+      expect(find.byIcon(Icons.bookmark_border), findsOneWidget);
+      expect((await postRepository.getPost('post-1'))!.keepAvailable, isFalse);
+      expect(
+        (await postRepository.getPostPinState('post-1'))!.state,
+        'removed',
+      );
+
+      await tester.tap(find.byIcon(Icons.bookmark_border));
+      await tester.pump();
+
+      expect(find.text('Pinned posts'), findsOneWidget);
+      expect((await postRepository.getPost('post-1'))!.keepAvailable, isTrue);
+      expect((await postRepository.getPostPinState('post-1'))!.state, 'active');
+
+      await tester.tap(find.text('Pinned posts'));
+      await tester.pump();
+      await tester.tap(find.text('Remove'));
+      await tester.pump();
+
+      final finalPinState = await postRepository.getPostPinState('post-1');
+      expect(find.text('Pinned posts'), findsNothing);
+      expect(find.byIcon(Icons.bookmark_border), findsOneWidget);
+      expect((await postRepository.getPost('post-1'))!.keepAvailable, isFalse);
+      expect(finalPinState, isNotNull);
+      expect(finalPinState, isA<PostPinStateModel>());
+      expect(finalPinState!.state, 'removed');
     },
   );
 }

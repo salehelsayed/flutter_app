@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/pinned_posts_section.dart';
 
@@ -48,6 +49,7 @@ void main() {
     await tester.tap(find.text('Pinned posts'));
     await tester.pump();
 
+    expect(find.byType(UserAvatar), findsNWidgets(11));
     expect(find.text('Message Bob'), findsOneWidget);
     expect(find.text('Dismiss'), findsWidgets);
 
@@ -83,6 +85,7 @@ void main() {
     await tester.tap(find.text('Pinned posts'));
     await tester.pump();
 
+    expect(find.byType(UserAvatar), findsNWidgets(2));
     expect(find.text('Edit'), findsOneWidget);
     expect(find.text('Remove'), findsOneWidget);
     expect(find.textContaining('Message'), findsNothing);

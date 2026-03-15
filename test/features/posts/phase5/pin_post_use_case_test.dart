@@ -81,37 +81,40 @@ void main() {
     expect(storedPinState!.state, 'active');
   });
 
-  test('edits an active pin and reuses post_pin_update replace semantics', () async {
-    await seedSentPost(keepAvailable: true);
-    await pinPost(
-      p2pService: authorService,
-      postRepo: posts,
-      postId: 'post-1',
-      senderPeerId: 'peer-bob',
-    );
-    final received = receiverService.messageStream.first;
+  test(
+    'edits an active pin and reuses post_pin_update replace semantics',
+    () async {
+      await seedSentPost(keepAvailable: true);
+      await pinPost(
+        p2pService: authorService,
+        postRepo: posts,
+        postId: 'post-1',
+        senderPeerId: 'peer-bob',
+      );
+      final received = receiverService.messageStream.first;
 
-    final (result, pinState) = await editPinnedPost(
-      p2pService: authorService,
-      postRepo: posts,
-      postId: 'post-1',
-      senderPeerId: 'peer-bob',
-      text: 'Fresh blankets and hot tea available.',
-    );
+      final (result, pinState) = await editPinnedPost(
+        p2pService: authorService,
+        postRepo: posts,
+        postId: 'post-1',
+        senderPeerId: 'peer-bob',
+        text: 'Fresh blankets and hot tea available.',
+      );
 
-    expect(result, EditPinnedPostResult.success);
-    expect(pinState, isNotNull);
+      expect(result, EditPinnedPostResult.success);
+      expect(pinState, isNotNull);
 
-    final message = await received.timeout(const Duration(seconds: 1));
-    final envelope = PostPinUpdateEnvelope.fromJson(message.content);
-    final updatedPost = await posts.getPost('post-1');
+      final message = await received.timeout(const Duration(seconds: 1));
+      final envelope = PostPinUpdateEnvelope.fromJson(message.content);
+      final updatedPost = await posts.getPost('post-1');
 
-    expect(envelope, isNotNull);
-    expect(envelope!.snapshot.text, 'Fresh blankets and hot tea available.');
-    expect(updatedPost, isNotNull);
-    expect(updatedPost!.text, 'Fresh blankets and hot tea available.');
-    expect(updatedPost.keepAvailable, isTrue);
-  });
+      expect(envelope, isNotNull);
+      expect(envelope!.snapshot.text, 'Fresh blankets and hot tea available.');
+      expect(updatedPost, isNotNull);
+      expect(updatedPost!.text, 'Fresh blankets and hot tea available.');
+      expect(updatedPost.keepAvailable, isTrue);
+    },
+  );
 
   test('removes an active pin locally and sends post_pin_remove', () async {
     await seedSentPost(keepAvailable: true);
@@ -144,5 +147,90 @@ void main() {
     expect(storedPinState!.state, 'removed');
     expect(post, isNotNull);
     expect(post!.id, 'post-1');
+    expect(post.keepAvailable, isFalse);
+  });
+
+  test('supports repeated pin and remove cycles for the same post', () async {
+    await seedSentPost();
+
+    final firstPinReceived = receiverService.messageStream.first;
+    final (firstPinResult, firstPinState) = await pinPost(
+      p2pService: authorService,
+      postRepo: posts,
+      postId: 'post-1',
+      senderPeerId: 'peer-bob',
+      nowProvider: () => DateTime.parse('2026-03-15T11:20:00.000Z'),
+    );
+    final firstPinMessage = await firstPinReceived.timeout(
+      const Duration(seconds: 1),
+    );
+
+    expect(firstPinResult, PinPostResult.success);
+    expect(firstPinState, isNotNull);
+    expect(jsonDecode(firstPinMessage.content)['type'], 'post_pin_update');
+    expect((await posts.getPost('post-1'))!.keepAvailable, isTrue);
+    expect((await posts.getPostPinState('post-1'))!.state, 'active');
+
+    final firstRemoveReceived = receiverService.messageStream.first;
+    final (firstRemoveResult, firstRemoveState) = await removePin(
+      p2pService: authorService,
+      postRepo: posts,
+      postId: 'post-1',
+      senderPeerId: 'peer-bob',
+      nowProvider: () => DateTime.parse('2026-03-15T11:25:00.000Z'),
+    );
+    final firstRemoveMessage = await firstRemoveReceived.timeout(
+      const Duration(seconds: 1),
+    );
+
+    expect(firstRemoveResult, RemovePinResult.success);
+    expect(firstRemoveState, isNotNull);
+    expect(jsonDecode(firstRemoveMessage.content)['type'], 'post_pin_remove');
+    expect((await posts.getPost('post-1'))!.keepAvailable, isFalse);
+    expect((await posts.getPostPinState('post-1'))!.state, 'removed');
+
+    final secondPinReceived = receiverService.messageStream.first;
+    final (secondPinResult, secondPinState) = await pinPost(
+      p2pService: authorService,
+      postRepo: posts,
+      postId: 'post-1',
+      senderPeerId: 'peer-bob',
+      nowProvider: () => DateTime.parse('2026-03-15T11:40:00.000Z'),
+    );
+    final secondPinMessage = await secondPinReceived.timeout(
+      const Duration(seconds: 1),
+    );
+
+    expect(secondPinResult, PinPostResult.success);
+    expect(secondPinState, isNotNull);
+    expect(jsonDecode(secondPinMessage.content)['type'], 'post_pin_update');
+    expect((await posts.getPost('post-1'))!.keepAvailable, isTrue);
+    expect((await posts.getPostPinState('post-1'))!.state, 'active');
+    expect(
+      (await posts.getPostPinState('post-1'))!.effectiveAt,
+      '2026-03-15T11:40:00.000Z',
+    );
+
+    final secondRemoveReceived = receiverService.messageStream.first;
+    final (secondRemoveResult, secondRemoveState) = await removePin(
+      p2pService: authorService,
+      postRepo: posts,
+      postId: 'post-1',
+      senderPeerId: 'peer-bob',
+      nowProvider: () => DateTime.parse('2026-03-15T11:50:00.000Z'),
+    );
+    final secondRemoveMessage = await secondRemoveReceived.timeout(
+      const Duration(seconds: 1),
+    );
+
+    expect(secondRemoveResult, RemovePinResult.success);
+    expect(secondRemoveState, isNotNull);
+    expect(jsonDecode(secondRemoveMessage.content)['type'], 'post_pin_remove');
+    expect((await posts.getPost('post-1'))!.keepAvailable, isFalse);
+    expect((await posts.getPostPinState('post-1'))!.state, 'removed');
+    expect(
+      (await posts.getPostPinState('post-1'))!.effectiveAt,
+      '2026-03-15T11:50:00.000Z',
+    );
   });
 }
