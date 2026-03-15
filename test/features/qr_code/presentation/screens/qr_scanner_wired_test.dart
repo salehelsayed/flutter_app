@@ -25,6 +25,7 @@ import '../../../../shared/fakes/in_memory_contact_repository.dart';
 import '../../../../shared/fakes/in_memory_media_attachment_repository.dart';
 import '../../../../shared/fakes/in_memory_message_repository.dart';
 import '../../../../shared/fakes/in_memory_post_repository.dart';
+import '../../../../shared/fakes/in_memory_posts_privacy_settings_repository.dart';
 import '../../../contact_request/domain/repositories/fake_contact_request_repository.dart';
 import '../../../identity/domain/repositories/fake_identity_repository.dart';
 
@@ -41,6 +42,7 @@ void main() {
   late FakeMediaFileManager mediaFileManager;
   late FakeSecureKeyStore secureKeyStore;
   late InMemoryPostRepository postRepository;
+  late InMemoryPostsPrivacySettingsRepository postsPrivacySettingsRepository;
   late AppShellController appShellController;
   late PendingPostTargetStore pendingPostTargetStore;
   late ImageProcessor imageProcessor;
@@ -90,6 +92,7 @@ void main() {
     mediaFileManager = FakeMediaFileManager();
     secureKeyStore = FakeSecureKeyStore();
     postRepository = InMemoryPostRepository();
+    postsPrivacySettingsRepository = InMemoryPostsPrivacySettingsRepository();
     appShellController = AppShellController();
     pendingPostTargetStore = PendingPostTargetStore();
     imageProcessor = ImageProcessor(
@@ -133,6 +136,7 @@ void main() {
         shareIntentService: shareIntentService,
         appShellController: appShellController,
         pendingPostTargetStore: pendingPostTargetStore,
+        postsPrivacySettingsRepository: postsPrivacySettingsRepository,
       ),
     );
   }

@@ -123,6 +123,7 @@ child event arrives
 
 Rules:
 - Orphan child events are never dropped just because the parent post is missing at first arrival.
+- Parent-dependent validation still applies after staging. For `post_pin_update` and `post_pin_remove`, reconciliation must reject the event if `sender_peer_id` does not match the original post author for `post_id`.
 - Reconciliation must be idempotent.
 
 ## Flow 5: Duplicate and Conflict Handling
@@ -152,7 +153,9 @@ Rules:
 ### Pins
 
 - Current logical state keyed by `post_id`
+- Accept only author-originated pin events. `post_pin_update` and `post_pin_remove` are valid only when `sender_peer_id` matches the original post author for `post_id`.
 - Latest valid pin event wins
+- `post_pin_remove.reason` is the single v1 value `removed`
 - `post_pin_remove` tombstones active pin state only
 
 ### Presence

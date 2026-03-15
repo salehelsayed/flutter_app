@@ -74,11 +74,17 @@ Parsing rules:
 
 ### Direct posts and engagement
 
-- `post_create`, `post_comment`, `post_reaction`, `post_comment_reaction`, `post_pin_update`, and `post_pin_remove` must come from:
+- `post_create`, `post_comment`, `post_reaction`, and `post_comment_reaction` must come from:
   - the local user, or
   - a known direct contact
 - Blocked direct contacts are rejected before persistence.
 - Archived direct contacts may persist, but notification display is suppressed.
+
+### Pin lifecycle events
+
+- `post_pin_update` and `post_pin_remove` are author-only events.
+- The top-level `sender_peer_id` for either envelope must equal the original `post_create.snapshot.author_peer_id` for `post_id`.
+- A direct contact who is not the original post author may never mutate shared pin state for that post.
 
 ### Pass along
 
@@ -116,14 +122,18 @@ These are the explicit v1 defaults that the product spec did not define at wire 
 
 ### `post_pin_update`
 
+- Only the original post author may emit `post_pin_update`.
 - `post_pin_update` is authoritative replace semantics for the pinned projection of a post.
 - It carries the latest sender-approved renderable post snapshot for the pinned card and any mirrored normal-feed update.
+- Sender-side pinned-post edits in v1 reuse `post_pin_update`.
 - Receivers replace pinned-renderable fields with the snapshot in the latest valid `post_pin_update`.
 - It is not a field patch.
 
 ### `post_pin_remove`
 
+- Only the original post author may emit `post_pin_remove`.
 - `post_pin_remove` is an authoritative tombstone for pin state on one `post_id`.
+- The visible sender action is one v1 `Remove` action, so `reason` is a single canonical value in v1: `removed`.
 - It removes the post from the pinned section.
 - It does not delete the underlying post row. If the post is still within normal feed lifetime, it remains in the feed.
 
@@ -435,6 +445,8 @@ Required payload fields:
 
 Rules:
 - `state` must be `"active"` in v1.
+- Top-level `sender_peer_id` must equal the original post author for `post_id`.
+- `snapshot.author_peer_id` must equal the original post author for `post_id`.
 - `snapshot.keep_available` must be `true`.
 - V1 sender edits for active pinned posts reuse `post_pin_update`.
 - `post_pin_update` is the only transport contract for pinned-post content edits in v1.
@@ -451,7 +463,7 @@ Payload:
   "pin_event_id": "pin_evt_01JQ4VDTJSJ1Q8P5M8SPDT3E0N",
   "post_id": "post_01JQ4V7Y7B1E1S4J4N8J6R0HAB",
   "removed_at": "2026-03-15T11:25:00.000Z",
-  "reason": "sender_removed"
+  "reason": "removed"
 }
 ```
 
@@ -462,7 +474,8 @@ Required payload fields:
 - `reason`
 
 Rules:
-- `reason` is one of `sender_removed` or `sender_unpinned`.
+- Top-level `sender_peer_id` must equal the original post author for `post_id`.
+- `reason` must be `"removed"` in v1.
 - `post_pin_remove` beats any earlier active pin state for the same `post_id`.
 
 ## Receiver Acceptance Summary

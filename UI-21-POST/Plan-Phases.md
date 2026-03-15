@@ -224,6 +224,8 @@ Remaining cleanup before coding:
   - `post_comment_reaction` event shape, heart toggle semantics, and idempotency scope
   - `post_pin_update` authority, replace-versus-patch behavior, and remove or tombstone semantics
   - active pinned-post edit transport semantics in v1
+  - original-author-only authority for both `post_pin_update` and `post_pin_remove`
+  - one visible sender-side `Remove` action in v1, with one canonical `post_pin_remove.reason` value unless a later product change explicitly expands it
   - notification-open payload contract for post targets and comment-entry targets
   - pass-along engagement semantics for comments, hearts, delivery recipients, and expiry effects
 - [ ] Check in an ingest-flow artifact, for example `UI-21-POST/Posts-Ingest-Flow.md`, that covers:
@@ -288,6 +290,8 @@ Remaining cleanup before coding:
 - [ ] File existence is necessary but not sufficient. A reviewer must verify that `Posts-Envelope-Schemas.md` explicitly resolves the wire semantics the product spec does not define on its own:
   - `post_reaction` and `post_comment_reaction` event shape and toggle semantics
   - `post_pin_update` authority, replace-versus-patch behavior, and remove or tombstone semantics
+  - original-author-only authority for `post_pin_update` and `post_pin_remove`
+  - one visible sender-side `Remove` action in v1 with one canonical `post_pin_remove.reason`
   - per-recipient idempotency scope for `post_create` fanout and later engagement events
   - notification-open target payload contract for posts and comment-entry routing
   - pass-along engagement semantics for comments, hearts, and expiry effects
@@ -1231,6 +1235,8 @@ Outcome: standing offers behave correctly across normal feed, pinned section, di
   - `dismiss_pin_use_case.dart`
   - `edit_pinned_post_use_case.dart`
 - [ ] V1 sender edits for active pinned posts reuse `post_pin_update` with full-snapshot replace semantics. Do not add a separate `post_edit` envelope in v1.
+- [ ] Only the original post author may send `post_pin_update` or `post_pin_remove`.
+- [ ] The sender-visible destructive action stays a single `Remove` action in v1, backed by one canonical `post_pin_remove.reason`.
 - [ ] Add incoming handlers for `post_pin_update` and `post_pin_remove`.
 - [ ] Reuse the generic orphan child-event staging path from Phase 2 for early-arriving pin events. Do not create a second pin-only staging store.
 - [ ] Make sure a sender removal updates both the pinned section and the regular feed entry correctly.

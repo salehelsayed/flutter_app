@@ -35,6 +35,7 @@ import '../../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../../shared/fakes/in_memory_media_attachment_repository.dart';
 import '../../../../shared/fakes/in_memory_message_repository.dart';
+import '../../../../shared/fakes/in_memory_posts_privacy_settings_repository.dart';
 import '../../../contacts/domain/repositories/fake_contact_repository.dart';
 import '../../../contact_request/domain/repositories/fake_contact_request_repository.dart';
 import '../../../identity/domain/repositories/fake_identity_repository.dart';
@@ -53,6 +54,7 @@ void main() {
   late InMemoryGroupRepository groupRepo;
   late InMemoryGroupMessageRepository groupMsgRepo;
   late StreamController<GroupMessage> groupMessageStreamController;
+  late InMemoryPostsPrivacySettingsRepository postsPrivacySettingsRepository;
 
   final testIdentity = IdentityModel(
     peerId: 'test-peer-id-12345',
@@ -86,6 +88,7 @@ void main() {
     groupRepo = InMemoryGroupRepository();
     groupMsgRepo = InMemoryGroupMessageRepository();
     groupMessageStreamController = StreamController<GroupMessage>.broadcast();
+    postsPrivacySettingsRepository = InMemoryPostsPrivacySettingsRepository();
     imageProcessor = ImageProcessor(
       compressFile:
           ({
@@ -114,6 +117,7 @@ void main() {
 
   tearDown(() {
     groupMessageStreamController.close();
+    postsPrivacySettingsRepository.dispose();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
           const MethodChannel('plugins.flutter.io/path_provider'),
@@ -204,6 +208,7 @@ void main() {
       groupRepository: effectiveGroupRepo,
       groupMessageRepository: effectiveGroupMessageRepo,
       groupMessageListener: gmListener,
+      postsPrivacySettingsRepository: postsPrivacySettingsRepository,
       initialFilterTab: initialFilterTab,
       debugOnHeaderBuild: onHeaderBuild,
       debugOnListBuild: onListBuild,
@@ -713,25 +718,24 @@ void main() {
       expect(find.byIcon(Icons.add), findsOneWidget);
     });
 
-    testWidgets(
-      'tapping FAB opens menu with New Group and New Announce',
-      (tester) async {
-        setLargeTestSurface(tester);
-        suppressOverflowErrors();
-        identityRepo.seed(testIdentity);
+    testWidgets('tapping FAB opens menu with New Group and New Announce', (
+      tester,
+    ) async {
+      setLargeTestSurface(tester);
+      suppressOverflowErrors();
+      identityRepo.seed(testIdentity);
 
-        await tester.pumpWidget(buildOrbitWired());
-        await tester.pump(const Duration(milliseconds: 100));
-        await tester.pump(const Duration(milliseconds: 100));
-        await tester.pump(const Duration(milliseconds: 100));
+      await tester.pumpWidget(buildOrbitWired());
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
 
-        await tester.tap(find.byIcon(Icons.add));
-        await tester.pump(const Duration(milliseconds: 300));
+      await tester.tap(find.byIcon(Icons.add));
+      await tester.pump(const Duration(milliseconds: 300));
 
-        expect(find.text('New Group'), findsOneWidget);
-        expect(find.text('New Announce'), findsOneWidget);
-      },
-    );
+      expect(find.text('New Group'), findsOneWidget);
+      expect(find.text('New Announce'), findsOneWidget);
+    });
 
     testWidgets('displays group rows when groups exist', (tester) async {
       setLargeTestSurface(tester);

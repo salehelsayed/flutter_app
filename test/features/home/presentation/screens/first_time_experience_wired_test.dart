@@ -11,8 +11,10 @@ import 'package:flutter_app/features/contact_request/application/contact_request
 import 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
+import 'package:flutter_app/features/feed/presentation/screens/feed_wired.dart';
 import 'package:flutter_app/features/home/presentation/screens/first_time_experience_screen.dart';
 import 'package:flutter_app/features/home/presentation/screens/first_time_experience_wired.dart';
+import 'package:flutter_app/features/posts/application/nearby_location_service.dart';
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
@@ -22,9 +24,11 @@ import '../../../../core/bridge/fake_bridge.dart';
 import '../../../../core/secure_storage/fake_secure_key_store.dart';
 import '../../../../core/services/fake_p2p_service.dart';
 import '../../../../shared/fakes/fake_media_file_manager.dart';
+import '../../../../shared/fakes/in_memory_contact_presence_snapshot_repository.dart';
 import '../../../../shared/fakes/in_memory_media_attachment_repository.dart';
 import '../../../../shared/fakes/in_memory_message_repository.dart';
 import '../../../../shared/fakes/in_memory_post_repository.dart';
+import '../../../../shared/fakes/in_memory_posts_privacy_settings_repository.dart';
 import '../../../contacts/domain/repositories/fake_contact_repository.dart';
 import '../../../contact_request/domain/repositories/fake_contact_request_repository.dart';
 import '../../../identity/domain/repositories/fake_identity_repository.dart';
@@ -39,12 +43,16 @@ void main() {
   late InMemoryMessageRepository messageRepo;
   late InMemoryMediaAttachmentRepository mediaAttachmentRepo;
   late InMemoryPostRepository postRepository;
+  late InMemoryPostsPrivacySettingsRepository postsPrivacySettingsRepository;
+  late InMemoryContactPresenceSnapshotRepository
+  contactPresenceSnapshotRepository;
   late FakeMediaFileManager mediaFileManager;
   late ImageProcessor imageProcessor;
   late ContactRequestListener contactRequestListener;
   late ChatMessageListener chatMessageListener;
   late AppShellController appShellController;
   late PendingPostTargetStore pendingPostTargetStore;
+  late _FakeNearbyLocationService nearbyLocationService;
 
   final testIdentity = IdentityModel(
     peerId: 'test-peer-id-12345',
@@ -66,9 +74,13 @@ void main() {
     messageRepo = InMemoryMessageRepository();
     mediaAttachmentRepo = InMemoryMediaAttachmentRepository();
     postRepository = InMemoryPostRepository();
+    postsPrivacySettingsRepository = InMemoryPostsPrivacySettingsRepository();
+    contactPresenceSnapshotRepository =
+        InMemoryContactPresenceSnapshotRepository();
     mediaFileManager = FakeMediaFileManager();
     appShellController = AppShellController();
     pendingPostTargetStore = PendingPostTargetStore();
+    nearbyLocationService = _FakeNearbyLocationService();
     imageProcessor = ImageProcessor(
       compressFile:
           ({
@@ -112,6 +124,8 @@ void main() {
   });
 
   tearDown(() {
+    postsPrivacySettingsRepository.dispose();
+    contactPresenceSnapshotRepository.dispose();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
           const MethodChannel('plugins.flutter.io/path_provider'),
@@ -141,6 +155,9 @@ void main() {
         shareIntentService: shareIntentService,
         appShellController: appShellController,
         pendingPostTargetStore: pendingPostTargetStore,
+        postsPrivacySettingsRepository: postsPrivacySettingsRepository,
+        contactPresenceSnapshotRepository: contactPresenceSnapshotRepository,
+        nearbyLocationService: nearbyLocationService,
       ),
     );
   }
@@ -537,7 +554,124 @@ void main() {
         await requestController.close();
       },
     );
+
+    testWidgets('accept success forwards nearby dependencies into feed', (
+      tester,
+    ) async {
+      identityRepo.seed(testIdentity);
+      bridge.responses['payload.sign'] = {'ok': true, 'signature': 'test-sig'};
+      bridge.responses['contactrequest.encrypt'] = {
+        'ok': true,
+        'ephemeralPublicKey': 'ephemeral-pk',
+        'ciphertext': 'ciphertext',
+        'nonce': 'nonce',
+      };
+
+      final request = ContactRequestModel(
+        peerId: 'sender-peer-id-nearby',
+        publicKey: 'sender-pub-key',
+        rendezvous: '/p2p-circuit/relay',
+        username: 'Charlie',
+        signature: 'sender-sig',
+        receivedAt: DateTime.now().toUtc().toIso8601String(),
+      );
+      contactRequestRepo.seed([request]);
+
+      final requestController =
+          StreamController<ContactRequestModel>.broadcast();
+      final customListener = _FakeContactRequestListener(
+        requestStream: requestController.stream,
+      );
+
+      await tester.pumpWidget(buildFTE(overrideListener: customListener));
+      await tester.pump();
+      await tester.pump();
+
+      requestController.add(request);
+      await tester.pump();
+      await tester.pump();
+
+      await tester.tap(find.text('Accept'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pump();
+
+      final feedWired = tester.widget<FeedWired>(find.byType(FeedWired));
+      expect(
+        feedWired.contactPresenceSnapshotRepository,
+        same(contactPresenceSnapshotRepository),
+      );
+      expect(feedWired.nearbyLocationService, same(nearbyLocationService));
+
+      await requestController.close();
+    });
   });
+}
+
+class _FakeNearbyLocationService implements NearbyLocationService {
+  int loadComposeAvailabilityCallCount = 0;
+  int refreshSilentlyOnStartupCallCount = 0;
+  int refreshSilentlyOnResumeCallCount = 0;
+  int refreshSilentlyOnPostsOpenCallCount = 0;
+  int refreshInteractivelyFromSettingsCallCount = 0;
+  int refreshInteractivelyFromComposeCallCount = 0;
+  int handleSharingDisabledCallCount = 0;
+
+  @override
+  Future<NearbyComposeAvailability> loadComposeAvailability() async {
+    loadComposeAvailabilityCallCount++;
+    return const NearbyComposeAvailability(
+      state: NearbyComposeAvailabilityState.sharingOff,
+    );
+  }
+
+  @override
+  Future<NearbyComposeAvailability> refreshInteractivelyFromCompose() async {
+    refreshInteractivelyFromComposeCallCount++;
+    return const NearbyComposeAvailability(
+      state: NearbyComposeAvailabilityState.ready,
+    );
+  }
+
+  @override
+  Future<NearbyComposeAvailability> refreshInteractivelyFromSettings() async {
+    refreshInteractivelyFromSettingsCallCount++;
+    return const NearbyComposeAvailability(
+      state: NearbyComposeAvailabilityState.ready,
+    );
+  }
+
+  @override
+  Future<NearbyComposeAvailability> refreshSilentlyOnPostsOpen() async {
+    refreshSilentlyOnPostsOpenCallCount++;
+    return const NearbyComposeAvailability(
+      state: NearbyComposeAvailabilityState.stale,
+    );
+  }
+
+  @override
+  Future<NearbyComposeAvailability> refreshSilentlyOnResume() async {
+    refreshSilentlyOnResumeCallCount++;
+    return const NearbyComposeAvailability(
+      state: NearbyComposeAvailabilityState.stale,
+    );
+  }
+
+  @override
+  Future<NearbyComposeAvailability> refreshSilentlyOnStartup() async {
+    refreshSilentlyOnStartupCallCount++;
+    return const NearbyComposeAvailability(
+      state: NearbyComposeAvailabilityState.stale,
+    );
+  }
+
+  @override
+  Future<void> handleSharingDisabled() async {
+    handleSharingDisabledCallCount++;
+  }
+
+  @override
+  Future<bool> openAppSettings() async => true;
 }
 
 /// A minimal fake that exposes a controllable [requestStream] without

@@ -1,5 +1,7 @@
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/features/posts/application/nearby_eligibility_service.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
+import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 
@@ -35,6 +37,11 @@ Future<List<PostModel>> loadPostsFeed({
           commentCount: comments.length,
           heartCount: activeHeartCount,
           viewerHasHearted: viewerHasHearted,
+          nearbyDistanceLabel:
+              post.audience.kind == PostAudienceKind.peopleNearby &&
+                  post.nearbyDistanceM != null
+              ? formatNearbyDistanceLabel(post.nearbyDistanceM!)
+              : null,
         );
       }
       final resolvedAttachments = <PostMediaAttachmentModel>[];
@@ -59,6 +66,11 @@ Future<List<PostModel>> loadPostsFeed({
         commentCount: comments.length,
         heartCount: activeHeartCount,
         viewerHasHearted: viewerHasHearted,
+        nearbyDistanceLabel:
+            post.audience.kind == PostAudienceKind.peopleNearby &&
+                post.nearbyDistanceM != null
+            ? formatNearbyDistanceLabel(post.nearbyDistanceM!)
+            : null,
       );
     }),
   );

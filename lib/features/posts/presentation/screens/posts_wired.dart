@@ -14,15 +14,19 @@ import 'package:flutter_app/features/identity/domain/repositories/identity_repos
 import 'package:flutter_app/features/posts/application/attach_post_media_use_case.dart';
 import 'package:flutter_app/features/posts/application/load_post_comments_use_case.dart';
 import 'package:flutter_app/features/posts/application/load_posts_feed_use_case.dart';
+import 'package:flutter_app/features/posts/application/nearby_location_service.dart';
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
 import 'package:flutter_app/features/posts/application/send_post_comment_reaction_use_case.dart';
 import 'package:flutter_app/features/posts/application/send_post_comment_use_case.dart';
 import 'package:flutter_app/features/posts/application/send_post_reaction_use_case.dart';
 import 'package:flutter_app/features/posts/application/send_post_use_case.dart';
 import 'package:flutter_app/features/posts/application/sweep_expired_posts_use_case.dart';
-import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_comment_model.dart';
+import 'package:flutter_app/features/posts/domain/models/post_model.dart';
+import 'package:flutter_app/features/posts/domain/models/posts_privacy_settings.dart';
+import 'package:flutter_app/features/posts/domain/repositories/contact_presence_snapshot_repository.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
+import 'package:flutter_app/features/posts/domain/repositories/posts_privacy_settings_repository.dart';
 import 'package:flutter_app/features/posts/presentation/screens/posts_screen.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/comments_sheet.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/compose_post_sheet.dart';
@@ -40,6 +44,9 @@ class PostsWired extends StatefulWidget {
   final String activeTab;
   final void Function(String tab) onSwitchView;
   final PendingPostTargetStore? pendingTargetStore;
+  final PostsPrivacySettingsRepository postsPrivacySettingsRepository;
+  final ContactPresenceSnapshotRepository? contactPresenceSnapshotRepository;
+  final NearbyLocationService? nearbyLocationService;
 
   const PostsWired({
     super.key,
@@ -55,6 +62,9 @@ class PostsWired extends StatefulWidget {
     this.imageProcessor,
     this.audioRecorderService,
     this.pendingTargetStore,
+    required this.postsPrivacySettingsRepository,
+    this.contactPresenceSnapshotRepository,
+    this.nearbyLocationService,
   });
 
   @override
@@ -83,6 +93,10 @@ class _PostsWiredState extends State<PostsWired> {
     });
     widget.pendingTargetStore?.addListener(_onPendingTargetStoreChanged);
     _tryResolvePendingTarget();
+    final nearbyLocationService = widget.nearbyLocationService;
+    if (nearbyLocationService != null) {
+      unawaited(nearbyLocationService.refreshSilentlyOnPostsOpen());
+    }
   }
 
   @override
@@ -135,6 +149,11 @@ class _PostsWiredState extends State<PostsWired> {
   Future<void> _compose() async {
     final contacts = await widget.contactRepo.getActiveContacts();
     contacts.removeWhere((contact) => contact.isBlocked);
+    final postsPrivacySettings = await widget.postsPrivacySettingsRepository
+        .load();
+    final nearbyAvailability = await _loadNearbyComposeAvailability(
+      postsPrivacySettings,
+    );
     if (!mounted) return;
     await showModalBottomSheet<void>(
       context: context,
@@ -158,12 +177,38 @@ class _PostsWiredState extends State<PostsWired> {
             imageProcessor: widget.imageProcessor,
             mediaFileManager: widget.mediaFileManager,
             bridge: widget.bridge,
+            contactPresenceSnapshotRepository:
+                widget.contactPresenceSnapshotRepository,
+            postsPrivacySettingsRepository:
+                widget.postsPrivacySettingsRepository,
           );
           await _loadFeed();
         },
         onAttachMedia: _pickMediaDrafts,
         audioRecorderService: widget.audioRecorderService,
+        nearbyAvailability: nearbyAvailability,
+        onRefreshNearby: widget.nearbyLocationService == null
+            ? null
+            : () =>
+                widget.nearbyLocationService!.refreshInteractivelyFromCompose(),
+        onOpenNearbySettings: widget.nearbyLocationService == null
+            ? null
+            : widget.nearbyLocationService!.openAppSettings,
       ),
+    );
+  }
+
+  Future<NearbyComposeAvailability> _loadNearbyComposeAvailability(
+    PostsPrivacySettings settings,
+  ) async {
+    final nearbyLocationService = widget.nearbyLocationService;
+    if (nearbyLocationService != null) {
+      return nearbyLocationService.loadComposeAvailability();
+    }
+    return NearbyComposeAvailability(
+      state: settings.sharingEnabled
+          ? NearbyComposeAvailabilityState.ready
+          : NearbyComposeAvailabilityState.sharingOff,
     );
   }
 
@@ -237,7 +282,10 @@ class _PostsWiredState extends State<PostsWired> {
     );
   }
 
-  Future<List<PostCommentModel>> _submitComment(PostModel post, String text) async {
+  Future<List<PostCommentModel>> _submitComment(
+    PostModel post,
+    String text,
+  ) async {
     final peerId = _peerId;
     if (peerId == null) {
       return loadPostComments(

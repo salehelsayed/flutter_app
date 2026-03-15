@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
+import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/shared/widgets/media/audio_player_widget.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid.dart';
@@ -80,6 +81,17 @@ class PostCard extends StatelessWidget {
               ],
             ],
           ),
+          if (post.nearbyDistanceLabel != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              post.nearbyDistanceLabel!,
+              style: const TextStyle(
+                color: Color(0xFF8FD6B5),
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
           const SizedBox(height: 14),
           if (post.text.isNotEmpty)
             Text(
@@ -147,10 +159,7 @@ class PostCard extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           Text(
-            _expiryCopy(
-              post.expiresAt,
-              (nowProvider ?? DateTime.now).call(),
-            ),
+            _expiryCopy(post.expiresAt, (nowProvider ?? DateTime.now).call()),
             style: const TextStyle(
               color: Color.fromRGBO(255, 255, 255, 0.54),
               fontSize: 12,
@@ -176,6 +185,7 @@ class PostCard extends StatelessWidget {
 
   static String _confirmationCopy(PostModel post) {
     return switch (post.audience.kind) {
+      PostAudienceKind.peopleNearby => 'Shared with nearby friends',
       _ when post.audience.selectedPeerIds.isNotEmpty =>
         'Shared with ${post.audience.selectedPeerIds.length} people',
       _ => 'Shared with all friends',

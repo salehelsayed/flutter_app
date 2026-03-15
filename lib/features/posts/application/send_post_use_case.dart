@@ -9,12 +9,16 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/posts/application/attach_post_media_use_case.dart';
+import 'package:flutter_app/features/posts/application/nearby_eligibility_service.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_create_envelope.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_recipient_delivery.dart';
+import 'package:flutter_app/features/posts/domain/models/posts_privacy_settings.dart';
+import 'package:flutter_app/features/posts/domain/repositories/contact_presence_snapshot_repository.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
+import 'package:flutter_app/features/posts/domain/repositories/posts_privacy_settings_repository.dart';
 
 const _uuid = Uuid();
 const Duration _postExpiry = Duration(days: 3);
@@ -43,6 +47,8 @@ Future<(SendPostResult, PostModel?)> sendPost({
   MediaFileManager? mediaFileManager,
   UploadPostMediaFn? uploadPostMediaFn,
   Bridge? bridge,
+  ContactPresenceSnapshotRepository? contactPresenceSnapshotRepository,
+  PostsPrivacySettingsRepository? postsPrivacySettingsRepository,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -58,9 +64,17 @@ Future<(SendPostResult, PostModel?)> sendPost({
     return (SendPostResult.nodeNotRunning, null);
   }
 
+  final nearbySettings =
+      audience.kind == PostAudienceKind.peopleNearby &&
+          postsPrivacySettingsRepository != null
+      ? await postsPrivacySettingsRepository.load()
+      : null;
   final eligibleRecipients = await _resolveEligibleRecipients(
     contactRepo: contactRepo,
     audience: audience,
+    contactPresenceSnapshotRepository: contactPresenceSnapshotRepository,
+    postsPrivacySettingsRepository: postsPrivacySettingsRepository,
+    nearbySettings: nearbySettings,
   );
   if (eligibleRecipients.isEmpty) {
     return (SendPostResult.noEligibleRecipients, null);
@@ -81,6 +95,10 @@ Future<(SendPostResult, PostModel?)> sendPost({
     expiresAt: expiresAt,
     keepAvailable: false,
     mediaKind: _deriveDraftMediaKind(mediaDrafts),
+    nearbySenderLatE3: nearbySettings?.lastLocalLatE3,
+    nearbySenderLngE3: nearbySettings?.lastLocalLngE3,
+    nearbySenderCapturedAt: nearbySettings?.lastLocalCapturedAt,
+    nearbySenderAccuracyM: nearbySettings?.lastLocalAccuracyM,
     isIncoming: false,
     deliveryStatus: 'sending',
   );
@@ -90,7 +108,7 @@ Future<(SendPostResult, PostModel?)> sendPost({
     await postRepo.saveRecipientDelivery(
       PostRecipientDelivery(
         postId: post.id,
-        recipientPeerId: recipient.peerId,
+        recipientPeerId: recipient.contact.peerId,
         deliveryStatus: 'pending',
         lastAttemptAt: createdAt,
         deliveryPath: 'pending',
@@ -137,14 +155,15 @@ Future<(SendPostResult, PostModel?)> sendPost({
     final wireEnvelope = await _buildWireEnvelope(
       post: post,
       bridge: bridge,
-      recipient: recipient,
+      recipient: recipient.contact,
       recipientPeerIds: eligibleRecipients
-          .map((eligibleRecipient) => eligibleRecipient.peerId)
+          .map((eligibleRecipient) => eligibleRecipient.contact.peerId)
           .toList(growable: false),
+      nearbyDistanceM: recipient.distanceM,
     );
     final delivery = await _deliverToRecipient(
       p2pService: p2pService,
-      recipientPeerId: recipient.peerId,
+      recipientPeerId: recipient.contact.peerId,
       wireEnvelope: wireEnvelope,
     );
 
@@ -158,7 +177,7 @@ Future<(SendPostResult, PostModel?)> sendPost({
     await postRepo.saveRecipientDelivery(
       PostRecipientDelivery(
         postId: post.id,
-        recipientPeerId: recipient.peerId,
+        recipientPeerId: recipient.contact.peerId,
         deliveryStatus: delivery.deliveryStatus,
         lastAttemptAt: now,
         deliveryPath: delivery.deliveryPath,
@@ -197,28 +216,57 @@ String _deriveDraftMediaKind(List<PostMediaDraft> mediaDrafts) {
   return firstKind;
 }
 
-Future<List<ContactModel>> _resolveEligibleRecipients({
+Future<List<_ResolvedRecipient>> _resolveEligibleRecipients({
   required ContactRepository contactRepo,
   required PostAudience audience,
+  ContactPresenceSnapshotRepository? contactPresenceSnapshotRepository,
+  PostsPrivacySettingsRepository? postsPrivacySettingsRepository,
+  PostsPrivacySettings? nearbySettings,
 }) async {
-  final recipients = <ContactModel>[];
+  final recipients = <_ResolvedRecipient>[];
   switch (audience.kind) {
     case PostAudienceKind.allFriends:
       final contacts = await contactRepo.getActiveContacts();
-      recipients.addAll(contacts.where((contact) => !contact.isBlocked));
+      recipients.addAll(
+        contacts
+            .where((contact) => !contact.isBlocked)
+            .map((contact) => _ResolvedRecipient(contact: contact)),
+      );
+    case PostAudienceKind.peopleNearby:
+      final snapshotRepo = contactPresenceSnapshotRepository;
+      final privacyRepo = postsPrivacySettingsRepository;
+      final radiusM = audience.radiusM;
+      if (snapshotRepo == null || privacyRepo == null || radiusM == null) {
+        return const <_ResolvedRecipient>[];
+      }
+      final nearbyRecipients = await resolveNearbyEligibleRecipients(
+        contactRepo: contactRepo,
+        snapshotRepo: snapshotRepo,
+        privacySettingsRepo: privacyRepo,
+        radiusM: radiusM,
+        localSettings: nearbySettings,
+      );
+      recipients.addAll(
+        nearbyRecipients.map(
+          (entry) => _ResolvedRecipient(
+            contact: entry.contact,
+            distanceM: entry.distanceM,
+          ),
+        ),
+      );
     case PostAudienceKind.pickPeople:
       for (final peerId in audience.selectedPeerIds) {
         final contact = await contactRepo.getContact(peerId);
         if (contact == null || contact.isArchived || contact.isBlocked) {
           continue;
         }
-        recipients.add(contact);
+        recipients.add(_ResolvedRecipient(contact: contact));
       }
   }
 
-  final deduped = <String, ContactModel>{};
+  final deduped = <String, _ResolvedRecipient>{};
   for (final recipient in recipients) {
-    deduped[recipient.peerId] = recipient;
+    deduped[recipient.contact.peerId] = recipient;
   }
   return deduped.values.toList(growable: false);
 }
@@ -228,12 +276,14 @@ Future<String> _buildWireEnvelope({
   required ContactModel recipient,
   required List<String> recipientPeerIds,
   Bridge? bridge,
+  int? nearbyDistanceM,
 }) async {
   final envelope = PostCreateEnvelope.fromPost(post);
   if (bridge == null || recipient.mlKemPublicKey == null) {
     return envelope.toJson(
       selectedPeerIds: post.audience.selectedPeerIds,
       recipientPeerIds: recipientPeerIds,
+      nearbyDistanceM: nearbyDistanceM,
     );
   }
 
@@ -243,6 +293,7 @@ Future<String> _buildWireEnvelope({
     plaintext: envelope.toInnerJson(
       selectedPeerIds: post.audience.selectedPeerIds,
       recipientPeerIds: recipientPeerIds,
+      nearbyDistanceM: nearbyDistanceM,
     ),
   );
 
@@ -250,6 +301,7 @@ Future<String> _buildWireEnvelope({
     return envelope.toJson(
       selectedPeerIds: post.audience.selectedPeerIds,
       recipientPeerIds: recipientPeerIds,
+      nearbyDistanceM: nearbyDistanceM,
     );
   }
 
@@ -312,4 +364,11 @@ class _DeliveryAttempt {
     required this.deliveryPath,
     this.lastError,
   });
+}
+
+class _ResolvedRecipient {
+  final ContactModel contact;
+  final int? distanceM;
+
+  const _ResolvedRecipient({required this.contact, this.distanceM});
 }

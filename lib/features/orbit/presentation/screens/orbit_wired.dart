@@ -67,6 +67,7 @@ import 'package:flutter_app/features/feed/application/app_shell_controller.dart'
 import 'package:flutter_app/features/feed/domain/models/feed_route_changes.dart';
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
+import 'package:flutter_app/features/posts/domain/repositories/posts_privacy_settings_repository.dart';
 import 'orbit_screen.dart';
 
 /// Wired widget connecting OrbitScreen to business logic.
@@ -99,6 +100,7 @@ class OrbitWired extends StatefulWidget {
   final IntroductionListener? introductionListener;
   final AppShellController? appShellController;
   final PendingPostTargetStore? pendingPostTargetStore;
+  final PostsPrivacySettingsRepository? postsPrivacySettingsRepository;
   final String? initialFilterTab;
   final VoidCallback? debugOnHeaderBuild;
   final VoidCallback? debugOnListBuild;
@@ -131,6 +133,7 @@ class OrbitWired extends StatefulWidget {
     this.introductionListener,
     this.appShellController,
     this.pendingPostTargetStore,
+    this.postsPrivacySettingsRepository,
     this.initialFilterTab,
     this.debugOnHeaderBuild,
     this.debugOnListBuild,
@@ -1120,6 +1123,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
               introductionListener: widget.introductionListener,
               appShellController: widget.appShellController,
               pendingPostTargetStore: widget.pendingPostTargetStore,
+              postsPrivacySettingsRepository:
+                  widget.postsPrivacySettingsRepository,
             ),
           ),
         )

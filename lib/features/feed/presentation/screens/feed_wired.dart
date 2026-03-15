@@ -67,10 +67,13 @@ import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
 import 'package:flutter_app/features/orbit/presentation/navigation/orbit_route_transition.dart';
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_wired.dart';
+import 'package:flutter_app/features/posts/application/nearby_location_service.dart';
 import 'package:flutter_app/features/settings/presentation/navigation/settings_route_transition.dart';
 import 'package:flutter_app/features/settings/presentation/screens/settings_wired.dart';
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
+import 'package:flutter_app/features/posts/domain/repositories/contact_presence_snapshot_repository.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
+import 'package:flutter_app/features/posts/domain/repositories/posts_privacy_settings_repository.dart';
 import 'package:flutter_app/features/posts/presentation/screens/posts_wired.dart';
 import 'feed_screen.dart';
 
@@ -108,6 +111,9 @@ class FeedWired extends StatefulWidget {
   final IntroductionListener? introductionListener;
   final AppShellController appShellController;
   final PendingPostTargetStore pendingPostTargetStore;
+  final PostsPrivacySettingsRepository postsPrivacySettingsRepository;
+  final ContactPresenceSnapshotRepository? contactPresenceSnapshotRepository;
+  final NearbyLocationService? nearbyLocationService;
 
   const FeedWired({
     super.key,
@@ -137,6 +143,9 @@ class FeedWired extends StatefulWidget {
     this.introductionListener,
     required this.appShellController,
     required this.pendingPostTargetStore,
+    required this.postsPrivacySettingsRepository,
+    this.contactPresenceSnapshotRepository,
+    this.nearbyLocationService,
   });
 
   @override
@@ -1855,6 +1864,9 @@ class _FeedWiredState extends State<FeedWired> {
               secureKeyStore: widget.secureKeyStore,
               imageProcessor: widget.imageProcessor,
               appShellController: widget.appShellController,
+              postsPrivacySettingsRepository:
+                  widget.postsPrivacySettingsRepository,
+              nearbyLocationService: widget.nearbyLocationService,
             ),
           ),
         )
@@ -1915,6 +1927,8 @@ class _FeedWiredState extends State<FeedWired> {
               introductionListener: widget.introductionListener,
               appShellController: widget.appShellController,
               pendingPostTargetStore: widget.pendingPostTargetStore,
+              postsPrivacySettingsRepository:
+                  widget.postsPrivacySettingsRepository,
             ),
           ),
         )
@@ -2101,6 +2115,11 @@ class _FeedWiredState extends State<FeedWired> {
             onSwitchView: _onSwitchView,
             activeTab: activeTab,
             pendingTargetStore: widget.pendingPostTargetStore,
+            postsPrivacySettingsRepository:
+                widget.postsPrivacySettingsRepository,
+            contactPresenceSnapshotRepository:
+                widget.contactPresenceSnapshotRepository,
+            nearbyLocationService: widget.nearbyLocationService,
           )
         : FeedScreen(
             username: _username,

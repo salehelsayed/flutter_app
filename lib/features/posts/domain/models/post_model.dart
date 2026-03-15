@@ -19,6 +19,12 @@ class PostModel {
   final int commentCount;
   final int heartCount;
   final bool viewerHasHearted;
+  final int? nearbyDistanceM;
+  final int? nearbySenderLatE3;
+  final int? nearbySenderLngE3;
+  final String? nearbySenderCapturedAt;
+  final double? nearbySenderAccuracyM;
+  final String? nearbyDistanceLabel;
   final bool isIncoming;
   final bool isFocused;
   final String deliveryStatus;
@@ -41,6 +47,12 @@ class PostModel {
     this.commentCount = 0,
     this.heartCount = 0,
     this.viewerHasHearted = false,
+    this.nearbyDistanceM,
+    this.nearbySenderLatE3,
+    this.nearbySenderLngE3,
+    this.nearbySenderCapturedAt,
+    this.nearbySenderAccuracyM,
+    this.nearbyDistanceLabel,
     this.isIncoming = true,
     this.isFocused = false,
     this.deliveryStatus = 'available',
@@ -65,6 +77,13 @@ class PostModel {
       commentCount: map['comment_count'] as int? ?? 0,
       heartCount: map['heart_count'] as int? ?? 0,
       viewerHasHearted: (map['viewer_has_hearted'] as int? ?? 0) == 1,
+      nearbyDistanceM: (map['nearby_distance_m'] as num?)?.toInt(),
+      nearbySenderLatE3: map['nearby_sender_lat_e3'] as int?,
+      nearbySenderLngE3: map['nearby_sender_lng_e3'] as int?,
+      nearbySenderCapturedAt: map['nearby_sender_captured_at'] as String?,
+      nearbySenderAccuracyM:
+          (map['nearby_sender_accuracy_m'] as num?)?.toDouble(),
+      nearbyDistanceLabel: map['nearby_distance_label'] as String?,
       isIncoming: (map['is_incoming'] as int? ?? 1) == 1,
       isFocused: (map['is_focused'] as int? ?? 0) == 1,
       deliveryStatus:
@@ -89,6 +108,11 @@ class PostModel {
       'last_engagement_at': lastEngagementAt,
       'keep_available': keepAvailable ? 1 : 0,
       'media_kind': mediaKind,
+      'nearby_distance_m': nearbyDistanceM,
+      'nearby_sender_lat_e3': nearbySenderLatE3,
+      'nearby_sender_lng_e3': nearbySenderLngE3,
+      'nearby_sender_captured_at': nearbySenderCapturedAt,
+      'nearby_sender_accuracy_m': nearbySenderAccuracyM,
       'is_incoming': isIncoming ? 1 : 0,
       'is_focused': isFocused ? 1 : 0,
       'delivery_status': deliveryStatus,
@@ -106,6 +130,12 @@ class PostModel {
     int? commentCount,
     int? heartCount,
     bool? viewerHasHearted,
+    int? nearbyDistanceM,
+    int? nearbySenderLatE3,
+    int? nearbySenderLngE3,
+    String? nearbySenderCapturedAt,
+    double? nearbySenderAccuracyM,
+    String? nearbyDistanceLabel,
     bool? isFocused,
     String? deliveryStatus,
   }) {
@@ -127,6 +157,14 @@ class PostModel {
       commentCount: commentCount ?? this.commentCount,
       heartCount: heartCount ?? this.heartCount,
       viewerHasHearted: viewerHasHearted ?? this.viewerHasHearted,
+      nearbyDistanceM: nearbyDistanceM ?? this.nearbyDistanceM,
+      nearbySenderLatE3: nearbySenderLatE3 ?? this.nearbySenderLatE3,
+      nearbySenderLngE3: nearbySenderLngE3 ?? this.nearbySenderLngE3,
+      nearbySenderCapturedAt:
+          nearbySenderCapturedAt ?? this.nearbySenderCapturedAt,
+      nearbySenderAccuracyM:
+          nearbySenderAccuracyM ?? this.nearbySenderAccuracyM,
+      nearbyDistanceLabel: nearbyDistanceLabel ?? this.nearbyDistanceLabel,
       isIncoming: isIncoming,
       isFocused: isFocused ?? this.isFocused,
       deliveryStatus: deliveryStatus ?? this.deliveryStatus,

@@ -44,10 +44,13 @@ import 'package:flutter_app/core/database/migrations/025_introduction_already_co
 import 'package:flutter_app/core/database/migrations/026_group_quoted_message_id.dart';
 import 'package:flutter_app/core/database/migrations/027_posts_core.dart';
 import 'package:flutter_app/core/database/migrations/028_posts_engagement.dart';
+import 'package:flutter_app/core/database/migrations/029_posts_nearby.dart';
 import 'package:flutter_app/core/database/helpers/introductions_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_comments_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_comment_reactions_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_feed_state_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/post_location_presence_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/post_privacy_state_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_media_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_pending_child_events_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_reactions_db_helpers.dart';
@@ -111,12 +114,17 @@ import 'package:flutter_app/features/feed/application/app_shell_controller.dart'
 import 'package:flutter_app/features/push/application/background_message_handler.dart';
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
 import 'package:flutter_app/features/posts/application/download_post_media_use_case.dart';
+import 'package:flutter_app/features/posts/application/nearby_location_service.dart';
+import 'package:flutter_app/features/posts/application/publish_post_presence_update_use_case.dart';
+import 'package:flutter_app/features/posts/application/post_presence_listener.dart';
 import 'package:flutter_app/features/posts/application/post_comment_listener.dart';
 import 'package:flutter_app/features/posts/application/post_listener.dart';
 import 'package:flutter_app/features/posts/application/post_notification_open_coordinator.dart';
 import 'package:flutter_app/features/posts/application/post_reaction_listener.dart';
 import 'package:flutter_app/features/posts/application/sweep_expired_posts_use_case.dart';
+import 'package:flutter_app/features/posts/domain/repositories/contact_presence_snapshot_repository_impl.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository_impl.dart';
+import 'package:flutter_app/features/posts/domain/repositories/posts_privacy_settings_repository_impl.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -158,7 +166,7 @@ void main() async {
   final db = await openEncryptedDatabase(
     secureKeyStore: secureKeyStore,
     dbName: 'identity.db',
-    version: 28,
+    version: 29,
     onCreate: (db, version) async {
       await runIdentityTableMigration(db);
       await runMessagesTableMigration(db);
@@ -188,6 +196,7 @@ void main() async {
       await runGroupQuotedMessageIdMigration(db);
       await runPostsCoreMigration(db);
       await runPostsEngagementMigration(db);
+      await runPostsNearbyMigration(db);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) {
@@ -268,6 +277,9 @@ void main() async {
       }
       if (oldVersion < 28) {
         await runPostsEngagementMigration(db);
+      }
+      if (oldVersion < 29) {
+        await runPostsNearbyMigration(db);
       }
     },
   );
@@ -387,6 +399,20 @@ void main() async {
     dbUpdatePostMediaDownloadStatus: (mediaId, downloadStatus) =>
         dbUpdatePostMediaDownloadStatus(db, mediaId, downloadStatus),
   );
+
+  final postsPrivacySettingsRepository = PostsPrivacySettingsRepositoryImpl(
+    dbLoadPostPrivacyState: () => dbLoadPostPrivacyState(db),
+    dbUpsertPostPrivacyState: (row) => dbUpsertPostPrivacyState(db, row),
+  );
+  late final NearbyLocationService nearbyLocationService;
+  final contactPresenceSnapshotRepository =
+      ContactPresenceSnapshotRepositoryImpl(
+        dbLoadPostLocationPresence: (peerId) =>
+            dbLoadPostLocationPresence(db, peerId),
+        dbLoadAllPostLocationPresence: () => dbLoadAllPostLocationPresence(db),
+        dbUpsertPostLocationPresence: (row) =>
+            dbUpsertPostLocationPresence(db, row),
+      );
 
   // Create media attachment repository
   final mediaAttachmentRepository = MediaAttachmentRepositoryImpl(
@@ -532,6 +558,30 @@ void main() async {
     bridge: bridge,
     localP2PService: localP2PService,
   );
+  nearbyLocationService = NearbyLocationServiceImpl(
+    settingsRepository: postsPrivacySettingsRepository,
+    platformAdapter: GeolocatorNearbyLocationPlatformAdapter(),
+    publishPostPresenceUpdate:
+        ({
+          required status,
+          required capturedAt,
+          latE3,
+          lngE3,
+          accuracyM,
+          reason,
+        }) {
+          return publishPostPresenceUpdate(
+            p2pService: p2pService,
+            contactRepo: contactRepository,
+            status: status,
+            capturedAt: capturedAt,
+            latE3: latE3,
+            lngE3: lngE3,
+            accuracyM: accuracyM,
+            reason: reason,
+          );
+        },
+  );
 
   // Create message router — single subscription, routes by type
   final messageRouter = IncomingMessageRouter(p2pService: p2pService);
@@ -607,6 +657,11 @@ void main() async {
     postRepo: postRepository,
     contactRepo: contactRepository,
     notificationService: notificationService,
+  );
+  final postPresenceListener = PostPresenceListener(
+    postPresenceStream: messageRouter.postPresenceStream,
+    contactRepo: contactRepository,
+    snapshotRepo: contactPresenceSnapshotRepository,
   );
 
   // Create reaction listener
@@ -723,6 +778,7 @@ void main() async {
   postListener.start();
   postCommentListener.start();
   postReactionListener.start();
+  postPresenceListener.start();
   reactionListener.start();
   profileUpdateListener.start();
   groupMessageListener.start(
@@ -767,11 +823,15 @@ void main() async {
       contactRequestListener: contactRequestListener,
       messageRepository: messageRepository,
       postRepository: postRepository,
+      postsPrivacySettingsRepository: postsPrivacySettingsRepository,
+      contactPresenceSnapshotRepository: contactPresenceSnapshotRepository,
+      nearbyLocationService: nearbyLocationService,
       mediaAttachmentRepository: mediaAttachmentRepository,
       chatMessageListener: chatMessageListener,
       postListener: postListener,
       postCommentListener: postCommentListener,
       postReactionListener: postReactionListener,
+      postPresenceListener: postPresenceListener,
       reactionListener: reactionListener,
       profileUpdateListener: profileUpdateListener,
       messageRouter: messageRouter,
@@ -810,11 +870,15 @@ class MyApp extends StatefulWidget {
   final ContactRequestListener contactRequestListener;
   final MessageRepositoryImpl messageRepository;
   final PostRepositoryImpl postRepository;
+  final PostsPrivacySettingsRepositoryImpl postsPrivacySettingsRepository;
+  final ContactPresenceSnapshotRepositoryImpl contactPresenceSnapshotRepository;
+  final NearbyLocationService nearbyLocationService;
   final MediaAttachmentRepositoryImpl mediaAttachmentRepository;
   final ChatMessageListener chatMessageListener;
   final PostListener postListener;
   final PostCommentListener postCommentListener;
   final PostReactionListener postReactionListener;
+  final PostPresenceListener postPresenceListener;
   final ReactionListener reactionListener;
   final ProfileUpdateListener profileUpdateListener;
   final IncomingMessageRouter messageRouter;
@@ -852,11 +916,15 @@ class MyApp extends StatefulWidget {
     required this.contactRequestListener,
     required this.messageRepository,
     required this.postRepository,
+    required this.postsPrivacySettingsRepository,
+    required this.contactPresenceSnapshotRepository,
+    required this.nearbyLocationService,
     required this.mediaAttachmentRepository,
     required this.chatMessageListener,
     required this.postListener,
     required this.postCommentListener,
     required this.postReactionListener,
+    required this.postPresenceListener,
     required this.reactionListener,
     required this.profileUpdateListener,
     required this.messageRouter,
@@ -1037,6 +1105,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
               introductionListener: widget.introductionListener,
               appShellController: widget.appShellController,
               pendingPostTargetStore: widget.pendingPostTargetStore,
+              postsPrivacySettingsRepository:
+                  widget.postsPrivacySettingsRepository,
               initialFilterTab: 'intros',
             ),
           ),
@@ -1144,9 +1214,11 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     widget.postListener.dispose();
     widget.postCommentListener.dispose();
     widget.postReactionListener.dispose();
+    widget.postPresenceListener.dispose();
     widget.chatMessageListener.dispose();
     widget.contactRequestListener.dispose();
     _postNotificationOpenCoordinator.dispose();
+    widget.contactPresenceSnapshotRepository.dispose();
     widget.postRepository.dispose();
     widget.messageRouter.dispose();
     widget.p2pService.dispose();
@@ -1189,6 +1261,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         groupMsgRepo: widget.groupMessageRepository,
         mediaAttachmentRepo: widget.mediaAttachmentRepository,
         reactionRepo: widget.reactionRepository,
+        nearbyLocationService: widget.nearbyLocationService,
       );
       await sweepExpiredPosts(
         postRepo: widget.postRepository,
@@ -1274,6 +1347,10 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         shareIntentService: widget.shareIntentService,
         appShellController: widget.appShellController,
         pendingPostTargetStore: widget.pendingPostTargetStore,
+        postsPrivacySettingsRepository: widget.postsPrivacySettingsRepository,
+        contactPresenceSnapshotRepository:
+            widget.contactPresenceSnapshotRepository,
+        nearbyLocationService: widget.nearbyLocationService,
         onNotificationRouteTarget: _handleNotificationRouteTarget,
       ),
       debugShowCheckedModeBanner: false,

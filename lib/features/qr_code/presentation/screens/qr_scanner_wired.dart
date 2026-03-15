@@ -33,6 +33,7 @@ import 'package:flutter_app/features/feed/presentation/navigation/feed_route_tra
 import 'package:flutter_app/features/feed/presentation/screens/feed_wired.dart';
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
+import 'package:flutter_app/features/posts/domain/repositories/posts_privacy_settings_repository.dart';
 import 'package:flutter_app/features/share/application/settle_share_intent_flow.dart';
 import 'package:flutter_app/features/share/presentation/navigation/share_target_picker_route.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
@@ -79,6 +80,7 @@ class QRScannerWired extends StatelessWidget {
   final ShareIntentService? shareIntentService;
   final AppShellController? appShellController;
   final PendingPostTargetStore? pendingPostTargetStore;
+  final PostsPrivacySettingsRepository? postsPrivacySettingsRepository;
 
   const QRScannerWired({
     super.key,
@@ -111,6 +113,7 @@ class QRScannerWired extends StatelessWidget {
     this.shareIntentService,
     this.appShellController,
     this.pendingPostTargetStore,
+    this.postsPrivacySettingsRepository,
   });
 
   @override
@@ -359,6 +362,9 @@ class QRScannerWired extends StatelessWidget {
                         pendingPostTargetStore:
                             pendingPostTargetStore ??
                             _missingPendingPostTargetStore(),
+                        postsPrivacySettingsRepository:
+                            postsPrivacySettingsRepository ??
+                            _missingPostsPrivacySettingsRepository(),
                       ),
                     ),
                     (route) => false,
@@ -491,6 +497,12 @@ class QRScannerWired extends StatelessWidget {
   Never _missingPendingPostTargetStore() {
     throw StateError(
       'QRScannerWired requires pendingPostTargetStore before navigating to FeedWired.',
+    );
+  }
+
+  Never _missingPostsPrivacySettingsRepository() {
+    throw StateError(
+      'QRScannerWired requires postsPrivacySettingsRepository before navigating to FeedWired.',
     );
   }
 }

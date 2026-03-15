@@ -82,20 +82,7 @@ Future<(HandleIncomingPostResult, PostModel?)> handleIncomingPost({
     return (HandleIncomingPostResult.duplicate, null);
   }
 
-  final post = PostModel(
-    id: envelope.postId,
-    eventId: envelope.eventId,
-    senderPeerId: envelope.senderPeerId,
-    authorPeerId: envelope.authorPeerId,
-    authorUsername: envelope.authorUsername,
-    text: envelope.text,
-    audience: envelope.audience,
-    createdAt: envelope.createdAt,
-    visibleAt: envelope.createdAt,
-    expiresAt: envelope.expiresAt,
-    keepAvailable: envelope.keepAvailable,
-    mediaKind: envelope.mediaKind,
-    media: envelope.media,
+  final post = envelope.toPostModel(
     isIncoming: true,
     deliveryStatus: 'delivered',
   );

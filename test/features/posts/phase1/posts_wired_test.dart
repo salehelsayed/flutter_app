@@ -8,6 +8,7 @@ import 'package:flutter_app/features/posts/domain/models/post_route_target.dart'
 import 'package:flutter_app/features/posts/presentation/screens/posts_wired.dart';
 
 import '../../../shared/fakes/in_memory_post_repository.dart';
+import '../../../shared/fakes/in_memory_posts_privacy_settings_repository.dart';
 import '../../contacts/domain/repositories/fake_contact_repository.dart';
 import '../../identity/domain/repositories/fake_identity_repository.dart';
 import '../../../shared/fakes/fake_p2p_service_integration.dart';
@@ -36,6 +37,7 @@ void main() {
   late FakeIdentityRepository identityRepository;
   late FakeContactRepository contactRepository;
   late InMemoryPostRepository postRepository;
+  late InMemoryPostsPrivacySettingsRepository postsPrivacySettingsRepository;
   late PendingPostTargetStore pendingTargetStore;
   late FakeP2PService p2pService;
 
@@ -54,12 +56,14 @@ void main() {
       );
     contactRepository = FakeContactRepository();
     postRepository = InMemoryPostRepository();
+    postsPrivacySettingsRepository = InMemoryPostsPrivacySettingsRepository();
     pendingTargetStore = PendingPostTargetStore();
     p2pService = FakeP2PService(peerId: 'peer-self', network: FakeP2PNetwork());
   });
 
   tearDown(() {
     postRepository.dispose();
+    postsPrivacySettingsRepository.dispose();
   });
 
   Widget buildWidget() {
@@ -72,6 +76,7 @@ void main() {
         activeTab: 'posts',
         onSwitchView: (_) {},
         pendingTargetStore: pendingTargetStore,
+        postsPrivacySettingsRepository: postsPrivacySettingsRepository,
       ),
     );
   }
@@ -121,18 +126,21 @@ void main() {
     expect(pendingTargetStore.target, isNull);
   });
 
-  testWidgets('renders the pending-target fallback state supplied by the store', (
-    tester,
-  ) async {
-    pendingTargetStore.setTarget(const PostRouteTarget(postId: 'missing-post'));
-    pendingTargetStore.showStatus('Finishing catch-up...');
+  testWidgets(
+    'renders the pending-target fallback state supplied by the store',
+    (tester) async {
+      pendingTargetStore.setTarget(
+        const PostRouteTarget(postId: 'missing-post'),
+      );
+      pendingTargetStore.showStatus('Finishing catch-up...');
 
-    await tester.pumpWidget(buildWidget());
-    await tester.pump();
+      await tester.pumpWidget(buildWidget());
+      await tester.pump();
 
-    expect(find.text('Finishing catch-up...'), findsOneWidget);
-    expect(pendingTargetStore.target?.postId, 'missing-post');
-  });
+      expect(find.text('Finishing catch-up...'), findsOneWidget);
+      expect(pendingTargetStore.target?.postId, 'missing-post');
+    },
+  );
 }
 
 PostModel _post({required String id, required String text}) {

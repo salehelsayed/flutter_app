@@ -18,11 +18,47 @@ Future<void> dbInsertPost(Database db, Map<String, Object?> row) async {
     final hasLastEngagementAt = columns.any(
       (column) => column['name'] == 'last_engagement_at',
     );
+    final hasAudienceRadiusM = columns.any(
+      (column) => column['name'] == 'audience_radius_m',
+    );
+    final hasNearbyDistanceM = columns.any(
+      (column) => column['name'] == 'nearby_distance_m',
+    );
+    final hasNearbySenderLatE3 = columns.any(
+      (column) => column['name'] == 'nearby_sender_lat_e3',
+    );
+    final hasNearbySenderLngE3 = columns.any(
+      (column) => column['name'] == 'nearby_sender_lng_e3',
+    );
+    final hasNearbySenderCapturedAt = columns.any(
+      (column) => column['name'] == 'nearby_sender_captured_at',
+    );
+    final hasNearbySenderAccuracyM = columns.any(
+      (column) => column['name'] == 'nearby_sender_accuracy_m',
+    );
     if (!hasMediaKind) {
       insertRow.remove('media_kind');
     }
     if (!hasLastEngagementAt) {
       insertRow.remove('last_engagement_at');
+    }
+    if (!hasAudienceRadiusM) {
+      insertRow.remove('audience_radius_m');
+    }
+    if (!hasNearbyDistanceM) {
+      insertRow.remove('nearby_distance_m');
+    }
+    if (!hasNearbySenderLatE3) {
+      insertRow.remove('nearby_sender_lat_e3');
+    }
+    if (!hasNearbySenderLngE3) {
+      insertRow.remove('nearby_sender_lng_e3');
+    }
+    if (!hasNearbySenderCapturedAt) {
+      insertRow.remove('nearby_sender_captured_at');
+    }
+    if (!hasNearbySenderAccuracyM) {
+      insertRow.remove('nearby_sender_accuracy_m');
     }
     await db.insert(
       'posts',
