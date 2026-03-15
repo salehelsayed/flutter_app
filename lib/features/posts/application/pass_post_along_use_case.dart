@@ -4,6 +4,7 @@ import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
+import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_pass_envelope.dart';
 import 'package:flutter_app/features/posts/domain/models/post_pass_model.dart';
@@ -47,6 +48,22 @@ Future<(PassPostAlongResult, PostPassModel?)> passPostAlong({
     return (PassPostAlongResult.oneHopLimitReached, null);
   }
 
+  final snapshotMedia = post.media.isNotEmpty
+      ? post.media
+      : await postRepo.loadPostMediaAttachments(post.id);
+  final renderablePost = post.copyWith(
+    mediaKind: snapshotMedia.isEmpty
+        ? post.mediaKind
+        : PostMediaAttachmentModel.deriveMediaKind(snapshotMedia),
+    media: snapshotMedia,
+  );
+  if (!PostMediaAttachmentModel.isValidSnapshotMedia(
+    mediaKind: renderablePost.mediaKind,
+    media: renderablePost.media,
+  )) {
+    return (PassPostAlongResult.sendFailed, null);
+  }
+
   final explicitRecipients = await _resolveRecipients(
     contactRepo: contactRepo,
     peerIds: recipientPeerIds,
@@ -79,7 +96,7 @@ Future<(PassPostAlongResult, PostPassModel?)> passPostAlong({
     createdAt: now,
     isIncoming: false,
   );
-  final envelope = PostPassEnvelope.buildJson(pass: pass, post: post);
+  final envelope = PostPassEnvelope.buildJson(pass: pass, post: renderablePost);
 
   var delivered = false;
   for (final recipient in recipients.values) {

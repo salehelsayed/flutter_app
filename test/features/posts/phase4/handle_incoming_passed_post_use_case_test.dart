@@ -87,6 +87,91 @@ void main() {
   );
 
   test(
+    'persists renderable snapshot media attachments for passed-along posts',
+    () async {
+      contacts.addTestContact(_contact('peer-james', 'James'));
+
+      final (result, post) = await handleIncomingPassedPost(
+        message: _messageFromJson(
+          _postPassJson(
+            mediaKind: 'image',
+            media: <Object?>[
+              <String, Object?>{
+                'media_id': 'media-1',
+                'blob_id': 'blob-1',
+                'kind': 'image',
+                'mime': 'image/jpeg',
+                'size_bytes': 248120,
+                'width': 1440,
+                'height': 1080,
+              },
+            ],
+          ),
+          transportSender: 'peer-james',
+        ),
+        postRepo: posts,
+        contactRepo: contacts,
+      );
+
+      expect(result, HandleIncomingPassedPostResult.passAccepted);
+      expect(post, isNotNull);
+      final attachments = await posts.loadPostMediaAttachments('post-1');
+      expect(attachments, hasLength(1));
+      expect(attachments.single.blobId, 'blob-1');
+      expect(attachments.single.downloadStatus, 'pending');
+    },
+  );
+
+  test(
+    'hydrates passed-along media attachments when a media hydrator is provided',
+    () async {
+      contacts.addTestContact(_contact('peer-james', 'James'));
+      final hydratedBlobIds = <String>[];
+
+      final (result, post) = await handleIncomingPassedPost(
+        message: _messageFromJson(
+          _postPassJson(
+            mediaKind: 'image',
+            media: <Object?>[
+              <String, Object?>{
+                'media_id': 'media-1',
+                'blob_id': 'blob-1',
+                'kind': 'image',
+                'mime': 'image/jpeg',
+                'size_bytes': 248120,
+                'width': 1440,
+                'height': 1080,
+              },
+            ],
+          ),
+          transportSender: 'peer-james',
+        ),
+        postRepo: posts,
+        contactRepo: contacts,
+        hydratePostMediaFn: ({required attachment, required postId}) async {
+          hydratedBlobIds.add(attachment.blobId);
+          return attachment.copyWith(
+            localPath: 'post_media/$postId/${attachment.blobId}.jpg',
+            downloadStatus: 'done',
+          );
+        },
+      );
+
+      expect(result, HandleIncomingPassedPostResult.passAccepted);
+      expect(post, isNotNull);
+      expect(hydratedBlobIds, ['blob-1']);
+      expect(post!.media, hasLength(1));
+      expect(post.media.single.localPath, 'post_media/post-1/blob-1.jpg');
+      expect(post.media.single.downloadStatus, 'done');
+
+      final attachments = await posts.loadPostMediaAttachments('post-1');
+      expect(attachments, hasLength(1));
+      expect(attachments.single.downloadStatus, 'done');
+      expect(attachments.single.localPath, 'post_media/post-1/blob-1.jpg');
+    },
+  );
+
+  test(
     'merges repeated pass deliveries by original post identity and keeps the first attribution',
     () async {
       contacts.addTestContact(_contact('peer-james', 'James'));
@@ -238,6 +323,8 @@ Map<String, Object?> _postPassJson({
   String passId = 'pass-1',
   String eventId = 'evt-pass-1',
   String passedAt = '2026-03-15T11:15:00.000Z',
+  String mediaKind = 'none',
+  List<Object?> media = const <Object?>[],
 }) {
   return <String, Object?>{
     'type': 'post_pass',
@@ -262,8 +349,8 @@ Map<String, Object?> _postPassJson({
           'scope_label': 'Shared nearby',
         },
         'text': 'Lost dog near Neckar bridge.',
-        'media_kind': 'none',
-        'media': const <Object?>[],
+        'media_kind': mediaKind,
+        'media': media,
         'keep_available': false,
         'expires_at': '2026-03-18T10:15:30.000Z',
       },

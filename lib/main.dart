@@ -682,6 +682,14 @@ void main() async {
     postPassStream: messageRouter.postPassStream,
     postRepo: postRepository,
     contactRepo: contactRepository,
+    hydratePostMediaFn: ({required attachment, required postId}) {
+      return downloadPostMedia(
+        bridge: bridge,
+        postRepo: postRepository,
+        mediaFileManager: mediaFileManager,
+        attachment: attachment,
+      );
+    },
   );
 
   // Create reaction listener
