@@ -35,6 +35,19 @@ void main() {
       expect(harness.drainOfflineInboxCalls, 1);
     });
 
+    test('post-comment tap preserves the comment target before opening Posts', () async {
+      await routeNotificationPayload(
+        payload: 'post_comment:post-local:comment-1',
+        onRouteTarget: harness.handleRouteTarget,
+      );
+
+      expect(harness.pendingTargetStore.target?.postId, 'post-local');
+      expect(harness.pendingTargetStore.target?.commentId, 'comment-1');
+      expect(harness.appShellController.activeTab, AppShellTab.feed);
+      expect(harness.revealPostsSurfaceCalls, 0);
+      expect(harness.drainOfflineInboxCalls, 1);
+    });
+
     test('onMessageOpenedApp routes through the shared pending target flow', () async {
       await routeRemoteNotificationOpen(
         data: const <String, dynamic>{
@@ -46,6 +59,23 @@ void main() {
       );
 
       expect(harness.pendingTargetStore.target?.postId, 'post-opened-app');
+      expect(harness.appShellController.activeTab, AppShellTab.feed);
+      expect(harness.drainOfflineInboxCalls, 1);
+    });
+
+    test('post_comment remote opens route through the shared pending target flow', () async {
+      await routeRemoteNotificationOpen(
+        data: const <String, dynamic>{
+          'type': 'post_comment',
+          'post_id': 'post-opened-app',
+          'comment_id': 'comment-1',
+        },
+        onRouteTarget: harness.handleRouteTarget,
+        onMissingRouteTarget: harness.drainOfflineInbox,
+      );
+
+      expect(harness.pendingTargetStore.target?.postId, 'post-opened-app');
+      expect(harness.pendingTargetStore.target?.commentId, 'comment-1');
       expect(harness.appShellController.activeTab, AppShellTab.feed);
       expect(harness.drainOfflineInboxCalls, 1);
     });

@@ -1,4 +1,5 @@
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
+import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 
 class PostModel {
   final String id;
@@ -11,7 +12,13 @@ class PostModel {
   final String createdAt;
   final String visibleAt;
   final String expiresAt;
+  final String? lastEngagementAt;
   final bool keepAvailable;
+  final String mediaKind;
+  final List<PostMediaAttachmentModel> media;
+  final int commentCount;
+  final int heartCount;
+  final bool viewerHasHearted;
   final bool isIncoming;
   final bool isFocused;
   final String deliveryStatus;
@@ -27,7 +34,13 @@ class PostModel {
     required this.createdAt,
     required this.visibleAt,
     required this.expiresAt,
+    this.lastEngagementAt,
     this.keepAvailable = false,
+    this.mediaKind = 'none',
+    this.media = const <PostMediaAttachmentModel>[],
+    this.commentCount = 0,
+    this.heartCount = 0,
+    this.viewerHasHearted = false,
     this.isIncoming = true,
     this.isFocused = false,
     this.deliveryStatus = 'available',
@@ -46,7 +59,12 @@ class PostModel {
       visibleAt:
           map['visible_at'] as String? ?? map['post_created_at'] as String,
       expiresAt: map['expires_at'] as String,
+      lastEngagementAt: map['last_engagement_at'] as String?,
       keepAvailable: (map['keep_available'] as int? ?? 0) == 1,
+      mediaKind: map['media_kind'] as String? ?? 'none',
+      commentCount: map['comment_count'] as int? ?? 0,
+      heartCount: map['heart_count'] as int? ?? 0,
+      viewerHasHearted: (map['viewer_has_hearted'] as int? ?? 0) == 1,
       isIncoming: (map['is_incoming'] as int? ?? 1) == 1,
       isFocused: (map['is_focused'] as int? ?? 0) == 1,
       deliveryStatus:
@@ -68,7 +86,9 @@ class PostModel {
       'post_created_at': createdAt,
       'visible_at': visibleAt,
       'expires_at': expiresAt,
+      'last_engagement_at': lastEngagementAt,
       'keep_available': keepAvailable ? 1 : 0,
+      'media_kind': mediaKind,
       'is_incoming': isIncoming ? 1 : 0,
       'is_focused': isFocused ? 1 : 0,
       'delivery_status': deliveryStatus,
@@ -80,6 +100,12 @@ class PostModel {
     String? text,
     PostAudience? audience,
     String? expiresAt,
+    String? lastEngagementAt,
+    String? mediaKind,
+    List<PostMediaAttachmentModel>? media,
+    int? commentCount,
+    int? heartCount,
+    bool? viewerHasHearted,
     bool? isFocused,
     String? deliveryStatus,
   }) {
@@ -94,7 +120,13 @@ class PostModel {
       createdAt: createdAt,
       visibleAt: visibleAt,
       expiresAt: expiresAt ?? this.expiresAt,
+      lastEngagementAt: lastEngagementAt ?? this.lastEngagementAt,
       keepAvailable: keepAvailable,
+      mediaKind: mediaKind ?? this.mediaKind,
+      media: media ?? this.media,
+      commentCount: commentCount ?? this.commentCount,
+      heartCount: heartCount ?? this.heartCount,
+      viewerHasHearted: viewerHasHearted ?? this.viewerHasHearted,
       isIncoming: isIncoming,
       isFocused: isFocused ?? this.isFocused,
       deliveryStatus: deliveryStatus ?? this.deliveryStatus,

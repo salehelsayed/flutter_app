@@ -13,6 +13,8 @@ class PostsScreen extends StatelessWidget {
   final String activeTab;
   final void Function(String tab) onSwitchView;
   final VoidCallback onCompose;
+  final void Function(PostModel post)? onOpenComments;
+  final void Function(PostModel post)? onToggleHeart;
   final String? focusedPostId;
   final String? statusMessage;
 
@@ -25,6 +27,8 @@ class PostsScreen extends StatelessWidget {
     required this.activeTab,
     required this.onSwitchView,
     required this.onCompose,
+    this.onOpenComments,
+    this.onToggleHeart,
     this.focusedPostId,
     this.statusMessage,
   });
@@ -107,6 +111,12 @@ class PostsScreen extends StatelessWidget {
                                     postKeys[post.id] ??
                                     ValueKey<String>('post-${post.id}'),
                                 post: post,
+                                onOpenComments: onOpenComments == null
+                                    ? null
+                                    : () => onOpenComments!(post),
+                                onToggleHeart: onToggleHeart == null
+                                    ? null
+                                    : () => onToggleHeart!(post),
                                 isFocused:
                                     post.id == focusedPostId || post.isFocused,
                               );

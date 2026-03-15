@@ -66,7 +66,20 @@ class NotificationRouteTarget {
       return groupId.isEmpty ? null : NotificationRouteTarget.group(groupId);
     }
     if (payload.startsWith('post_comment:')) {
-      return null;
+      final remainder = payload.substring('post_comment:'.length).trim();
+      final segments = remainder.split(':');
+      if (segments.length < 2) {
+        return null;
+      }
+      final postId = segments.first.trim();
+      final commentId = segments.sublist(1).join(':').trim();
+      if (postId.isEmpty || commentId.isEmpty) {
+        return null;
+      }
+      return NotificationRouteTarget.postComment(
+        postId: postId,
+        commentId: commentId,
+      );
     }
     if (payload.startsWith('post:')) {
       final postId = payload.substring('post:'.length).trim();
@@ -96,7 +109,25 @@ class NotificationRouteTarget {
         );
         return postId == null ? null : NotificationRouteTarget.post(postId);
       case 'post_comment':
-        return null;
+        final postId = _trimToNull(
+          data['postId']?.toString() ?? data['post_id']?.toString(),
+        );
+        final commentId = _trimToNull(
+          data['commentId']?.toString() ?? data['comment_id']?.toString(),
+        );
+        if (postId == null || commentId == null) {
+          return null;
+        }
+        return NotificationRouteTarget.postComment(
+          postId: postId,
+          commentId: commentId,
+        );
+      case 'post_reaction':
+      case 'post_comment_reaction':
+        final postId = _trimToNull(
+          data['postId']?.toString() ?? data['post_id']?.toString(),
+        );
+        return postId == null ? null : NotificationRouteTarget.post(postId);
     }
 
     return fromPayload(
