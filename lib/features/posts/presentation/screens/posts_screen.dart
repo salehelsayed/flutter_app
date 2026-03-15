@@ -117,7 +117,7 @@ class PostsScreen extends StatelessWidget {
                   else if (posts.isNotEmpty)
                     for (final section in grouped.entries) ...[
                       SliverPadding(
-                        padding: const EdgeInsets.fromLTRB(20, 8, 20, 10),
+                        padding: const EdgeInsets.fromLTRB(8, 8, 8, 10),
                         sliver: SliverToBoxAdapter(
                           child: Text(
                             section.key,
@@ -129,51 +129,38 @@ class PostsScreen extends StatelessWidget {
                           ),
                         ),
                       ),
-                      SliverPadding(
-                        padding: const EdgeInsets.symmetric(horizontal: 20),
-                        sliver: SliverList(
-                          delegate: SliverChildBuilderDelegate(
-                            (context, index) {
-                              final itemIndex = index ~/ 2;
-                              if (index.isOdd) {
-                                return const SizedBox(height: 12);
-                              }
-                              final post = section.value[itemIndex];
-                              return PostCard(
-                                key:
-                                    postKeys[post.id] ??
-                                    ValueKey<String>('post-${post.id}'),
-                                post: post,
-                                onOpenComments: onOpenComments == null
-                                    ? null
-                                    : () => onOpenComments!(post),
-                                onToggleHeart: onToggleHeart == null
-                                    ? null
-                                    : () => onToggleHeart!(post),
-                                onPassAlong: onPassAlong == null
-                                    ? null
-                                    : () => onPassAlong!(post),
-                                onPinPost:
-                                    onPinPost != null &&
-                                        viewerPeerId != null &&
-                                        post.authorPeerId == viewerPeerId &&
-                                        !activePinnedPostIds.contains(post.id)
-                                    ? () => onPinPost!(post)
-                                    : null,
-                                showShareCount:
+                      SliverList(
+                        delegate: SliverChildBuilderDelegate((context, index) {
+                          final post = section.value[index];
+                          return PostCard(
+                            key:
+                                postKeys[post.id] ??
+                                ValueKey<String>('post-${post.id}'),
+                            post: post,
+                            onOpenComments: onOpenComments == null
+                                ? null
+                                : () => onOpenComments!(post),
+                            onToggleHeart: onToggleHeart == null
+                                ? null
+                                : () => onToggleHeart!(post),
+                            onPassAlong: onPassAlong == null
+                                ? null
+                                : () => onPassAlong!(post),
+                            onPinPost:
+                                onPinPost != null &&
                                     viewerPeerId != null &&
-                                    post.authorPeerId == viewerPeerId,
-                                isFocused:
-                                    post.id == focusedPostId || post.isFocused,
-                              );
-                            },
-                            childCount: section.value.isEmpty
-                                ? 0
-                                : (section.value.length * 2) - 1,
-                          ),
-                        ),
+                                    post.authorPeerId == viewerPeerId &&
+                                    !activePinnedPostIds.contains(post.id)
+                                ? () => onPinPost!(post)
+                                : null,
+                            showShareCount:
+                                viewerPeerId != null &&
+                                post.authorPeerId == viewerPeerId,
+                            isFocused:
+                                post.id == focusedPostId || post.isFocused,
+                          );
+                        }, childCount: section.value.length),
                       ),
-                      const SliverToBoxAdapter(child: SizedBox(height: 6)),
                     ],
                   SliverToBoxAdapter(
                     child: Padding(

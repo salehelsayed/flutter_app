@@ -17,6 +17,7 @@ class UserAvatar extends StatelessWidget {
   static final Map<String, ValueNotifier<String?>> _avatarPathNotifiers = {};
   static final Set<String> _resolvingPeerIds = <String>{};
   static final Set<String> _knownMissingPeerIds = <String>{};
+
   /// Monotonic counter appended to path to bust image cache on invalidation.
   static int _generation = 0;
 
@@ -97,8 +98,17 @@ class UserAvatar extends StatelessWidget {
   final String? peerId;
   final Uint8List? avatarBytes;
   final double size;
+  final bool showGlow;
+  final bool showPhotoFrame;
 
-  const UserAvatar({super.key, this.peerId, this.avatarBytes, this.size = 42});
+  const UserAvatar({
+    super.key,
+    this.peerId,
+    this.avatarBytes,
+    this.size = 42,
+    this.showGlow = true,
+    this.showPhotoFrame = true,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -158,7 +168,7 @@ class UserAvatar extends StatelessWidget {
 
   Widget _wrapWithGlow(Widget child) {
     final resolvedPeerId = peerId;
-    if (resolvedPeerId == null) return child;
+    if (resolvedPeerId == null || !showGlow) return child;
 
     final glowColor = RingAvatarGenerator.glowColorForPeerId(resolvedPeerId);
 
@@ -180,6 +190,13 @@ class UserAvatar extends StatelessWidget {
   }
 
   Widget _buildPhotoAvatar(Widget imageWidget) {
+    if (!showPhotoFrame) {
+      return SizedBox(
+        width: size,
+        height: size,
+        child: ClipOval(child: imageWidget),
+      );
+    }
     return Container(
       width: size,
       height: size,

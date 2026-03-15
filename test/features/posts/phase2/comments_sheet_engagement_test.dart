@@ -45,10 +45,12 @@ void main() {
       ),
     );
 
-    expect(find.text('2 hearts'), findsOneWidget);
+    expect(find.byIcon(Icons.favorite), findsOneWidget);
+    expect(find.text('2'), findsOneWidget);
+    expect(find.byIcon(Icons.favorite_border), findsNothing);
 
     await tester.enterText(find.byType(TextField), 'Count me in');
-    await tester.tap(find.byIcon(Icons.arrow_upward));
+    await tester.tap(find.byIcon(Icons.send_rounded));
     await tester.pump();
 
     expect(submittedText, 'Count me in');

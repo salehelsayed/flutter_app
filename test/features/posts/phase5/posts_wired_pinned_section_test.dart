@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
 import 'package:flutter_app/features/posts/domain/models/post_pin_state_model.dart';
 import 'package:flutter_app/features/posts/presentation/screens/posts_wired.dart';
@@ -91,6 +92,7 @@ void main() {
       await tester.tap(find.text('Pinned posts'));
       await tester.pump();
 
+      expect(find.byType(UserAvatar), findsNWidgets(3));
       expect(find.text('Dismiss'), findsOneWidget);
       expect(find.text('Message Bob'), findsNothing);
       expect(find.text('Need a ladder'), findsNWidgets(2));
@@ -100,6 +102,56 @@ void main() {
 
       expect(find.text('Pinned posts'), findsNothing);
       expect(find.text('Need a ladder'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'removes a recipient pinned section when the author unpins remotely',
+    (tester) async {
+      await postRepository.savePost(
+        postPinBasePost(text: 'Need a ladder', keepAvailable: true),
+      );
+      await postRepository.savePostPinState(
+        const PostPinStateModel(
+          postId: 'post-1',
+          eventId: 'evt-pin-1',
+          pinEventId: 'pin-evt-1',
+          senderPeerId: 'peer-bob',
+          state: 'active',
+          effectiveAt: '2026-03-15T11:20:00.000Z',
+          pinnedAt: '2026-03-15T11:20:00.000Z',
+          createdAt: '2026-03-15T11:20:00.000Z',
+        ),
+      );
+
+      await tester.pumpWidget(buildWidget());
+      await tester.pump();
+
+      expect(find.text('Pinned posts'), findsOneWidget);
+      expect(find.text('Need a ladder'), findsOneWidget);
+
+      await postRepository.savePost(
+        postPinBasePost(text: 'Need a ladder', keepAvailable: false),
+      );
+      await postRepository.savePostPinState(
+        const PostPinStateModel(
+          postId: 'post-1',
+          eventId: 'evt-pin-remove-1',
+          pinEventId: 'pin-remove-1',
+          senderPeerId: 'peer-bob',
+          state: 'removed',
+          effectiveAt: '2026-03-15T11:25:00.000Z',
+          removedAt: '2026-03-15T11:25:00.000Z',
+          reason: 'removed',
+          createdAt: '2026-03-15T11:25:00.000Z',
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.text('Pinned posts'), findsNothing);
+      expect(find.text('Need a ladder'), findsOneWidget);
+      expect(find.byType(UserAvatar), findsOneWidget);
     },
   );
 }

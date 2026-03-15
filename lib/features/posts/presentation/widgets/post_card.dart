@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:flutter_app/core/utils/ring_avatar_generator.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
@@ -10,6 +11,12 @@ import 'package:flutter_app/shared/widgets/media/media_grid.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid_cell.dart';
 
 class PostCard extends StatelessWidget {
+  static const Color _onlineDotColor = Color(0xFF1DB954);
+  static const Color _friendBadgeColor = Color(0xFF1DB954);
+  static const EdgeInsets _cardMargin = EdgeInsets.fromLTRB(8, 0, 8, 12);
+  static const EdgeInsets _cardPadding = EdgeInsets.all(16);
+  static const double _actionIconSize = 15;
+
   final PostModel post;
   final bool isFocused;
   final VoidCallback? onOpenComments;
@@ -35,8 +42,11 @@ class PostCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final now = (nowProvider ?? DateTime.now).call();
     final borderColor = isFocused
-        ? const Color(0xFF8FD6B5)
-        : const Color.fromRGBO(255, 255, 255, 0.10);
+        ? Colors.white.withOpacity(0.12)
+        : Colors.white.withOpacity(0.08);
+    final authorColor = RingAvatarGenerator.glowColorForPeerId(
+      post.authorPeerId,
+    );
     final scopeLabel = post.audience.scopeLabel;
     final isPassedAlong = post.passedByUsername != null;
     final canPassAlong =
@@ -44,203 +54,225 @@ class PostCard extends StatelessWidget {
         post.audience.kind != PostAudienceKind.pickPeople &&
         post.senderPeerId == post.authorPeerId;
 
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 220),
-      padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
-      decoration: BoxDecoration(
-        color: const Color.fromRGBO(8, 10, 14, 0.62),
-        borderRadius: BorderRadius.circular(28),
-        border: Border.all(color: borderColor),
-        boxShadow: [
-          BoxShadow(
-            color: isFocused
-                ? const Color.fromRGBO(143, 214, 181, 0.16)
-                : const Color.fromRGBO(0, 0, 0, 0.10),
-            blurRadius: 28,
-            offset: const Offset(0, 16),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (isPassedAlong) ...[
-            Text(
-              '${post.passedByUsername!} passed this along',
-              style: const TextStyle(
-                color: Color(0xFF8FD6B5),
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
+    return Padding(
+      padding: _cardMargin,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 220),
+        padding: _cardPadding,
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.03),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: borderColor, width: 1),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (isPassedAlong) ...[
+              Text(
+                '${post.passedByUsername!} passed this along',
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.48),
+                  fontSize: 10,
+                  fontWeight: FontWeight.w500,
+                ),
               ),
-            ),
-            const SizedBox(height: 10),
-          ],
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              UserAvatar(peerId: post.authorPeerId, size: 42),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+              const SizedBox(height: 8),
+            ],
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Stack(
+                  clipBehavior: Clip.none,
                   children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            post.authorUsername,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
+                    Container(
+                      width: 40,
+                      height: 40,
+                      foregroundDecoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: authorColor.withOpacity(0.27),
+                          width: 2,
                         ),
-                        const SizedBox(width: 10),
-                        Text(
-                          _formatRelativeTimestamp(
-                            isPassedAlong ? post.visibleAt : post.createdAt,
-                            now,
-                          ),
-                          style: const TextStyle(
-                            color: Color.fromRGBO(255, 255, 255, 0.48),
-                            fontSize: 12,
-                            fontWeight: FontWeight.w400,
-                          ),
-                        ),
-                      ],
+                      ),
+                      child: UserAvatar(
+                        peerId: post.authorPeerId,
+                        size: 40,
+                        showGlow: false,
+                        showPhotoFrame: false,
+                      ),
                     ),
-                    const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        if (!isPassedAlong)
-                          const _Badge(label: 'Friend', isPrimary: true),
-                        if (scopeLabel != null) _Badge(label: scopeLabel),
-                      ],
+                    Positioned(
+                      right: 0,
+                      bottom: 0,
+                      child: Container(
+                        width: 10,
+                        height: 10,
+                        decoration: BoxDecoration(
+                          color: _onlineDotColor,
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: const Color(0xFF0A0A0F),
+                            width: 2,
+                          ),
+                        ),
+                      ),
                     ),
                   ],
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Expanded(
+                            child: Text(
+                              post.authorUsername,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                          Text(
+                            _formatRelativeTimestamp(
+                              isPassedAlong ? post.visibleAt : post.createdAt,
+                              now,
+                            ),
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.30),
+                              fontSize: 11,
+                              fontWeight: FontWeight.w400,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 4,
+                        children: [
+                          if (!isPassedAlong)
+                            const _Badge(label: 'Friend', isPrimary: true),
+                          if (scopeLabel != null) _Badge(label: scopeLabel),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            if (post.nearbyDistanceLabel != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                post.nearbyDistanceLabel!,
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.46),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w500,
                 ),
               ),
             ],
-          ),
-          if (post.nearbyDistanceLabel != null) ...[
-            const SizedBox(height: 10),
-            Text(
-              post.nearbyDistanceLabel!,
-              style: const TextStyle(
-                color: Color(0xFF8FD6B5),
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
+            const SizedBox(height: 14),
+            if (post.text.isNotEmpty)
+              LinkableText(
+                text: post.text,
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.94),
+                  fontSize: 15,
+                  height: 1.55,
+                ),
               ),
-            ),
-          ],
-          const SizedBox(height: 20),
-          if (post.text.isNotEmpty)
-            LinkableText(
-              text: post.text,
-              style: const TextStyle(
-                color: Color.fromRGBO(255, 255, 255, 0.92),
-                fontSize: 17,
-                height: 1.58,
-                letterSpacing: 0.1,
+            if (post.media.isNotEmpty) ...[
+              const SizedBox(height: 14),
+              _PostMediaContent(post: post),
+            ],
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.only(top: 8),
+              decoration: BoxDecoration(
+                border: Border(
+                  top: BorderSide(color: Colors.white.withOpacity(0.05)),
+                ),
               ),
-            ),
-          if (post.media.isNotEmpty) ...[
-            const SizedBox(height: 16),
-            _PostMediaContent(post: post),
-          ],
-          const SizedBox(height: 14),
-          const Divider(
-            height: 1,
-            thickness: 1,
-            color: Color.fromRGBO(255, 255, 255, 0.08),
-          ),
-          const SizedBox(height: 12),
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final actions = <Widget>[
-                _MetricAction(
-                  icon: post.viewerHasHearted
-                      ? Icons.favorite
-                      : Icons.favorite_border,
-                  onTap: onToggleHeart,
-                  color: post.viewerHasHearted
-                      ? const Color(0xFFEF7C8E)
-                      : const Color.fromRGBO(255, 255, 255, 0.55),
-                  label: post.heartCount.toString(),
-                  labelKey: const ValueKey<String>('post-heart-count'),
-                ),
-                _MetricAction(
-                  icon: Icons.chat_bubble_outline,
-                  onTap: onOpenComments,
-                  color: const Color.fromRGBO(255, 255, 255, 0.55),
-                  label: post.commentCount.toString(),
-                  labelKey: const ValueKey<String>('post-comment-count'),
-                ),
-                if (canPassAlong || (showShareCount && post.shareCount > 0))
-                  _MetricAction(
-                    icon: Icons.redo,
-                    onTap: onPassAlong,
-                    color: const Color.fromRGBO(255, 255, 255, 0.55),
-                    label: showShareCount ? post.shareCount.toString() : null,
-                    labelKey: const ValueKey<String>('post-share-count'),
-                  ),
-                if (onPinPost != null)
-                  _MetricAction(
-                    icon: Icons.push_pin_outlined,
-                    onTap: onPinPost,
-                    color: const Color.fromRGBO(255, 255, 255, 0.55),
-                  ),
-              ];
-
-              final expiry = Text(
-                _expiryCopy(post.expiresAt, now).toLowerCase(),
-                style: const TextStyle(
-                  color: Color.fromRGBO(255, 255, 255, 0.38),
-                  fontSize: 12,
-                  fontWeight: FontWeight.w500,
-                ),
-                textAlign: TextAlign.right,
-              );
-
-              if (constraints.maxWidth < 380) {
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Wrap(
-                      spacing: 18,
-                      runSpacing: 8,
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      children: actions,
-                    ),
-                    const SizedBox(height: 10),
-                    Align(alignment: Alignment.centerRight, child: expiry),
-                  ],
-                );
-              }
-
-              return Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Expanded(
                     child: Wrap(
-                      spacing: 18,
-                      runSpacing: 8,
+                      spacing: 16,
+                      runSpacing: 6,
                       crossAxisAlignment: WrapCrossAlignment.center,
-                      children: actions,
+                      children: [
+                        _MetricAction(
+                          icon: Icons.favorite_border,
+                          onTap: onToggleHeart,
+                          color: Colors.white.withOpacity(
+                            post.viewerHasHearted ? 0.48 : 0.35,
+                          ),
+                          label: post.heartCount.toString(),
+                          labelKey: const ValueKey<String>('post-heart-count'),
+                          iconSize: _actionIconSize,
+                        ),
+                        _MetricAction(
+                          icon: Icons.mode_comment_outlined,
+                          onTap: onOpenComments,
+                          color: Colors.white.withOpacity(0.35),
+                          label: post.commentCount.toString(),
+                          labelKey: const ValueKey<String>(
+                            'post-comment-count',
+                          ),
+                          iconSize: _actionIconSize,
+                        ),
+                        if (canPassAlong ||
+                            (showShareCount && post.shareCount > 0))
+                          _MetricAction(
+                            icon: Icons.repeat,
+                            onTap: onPassAlong,
+                            color: Colors.white.withOpacity(0.35),
+                            label: showShareCount
+                                ? post.shareCount.toString()
+                                : null,
+                            labelKey: const ValueKey<String>(
+                              'post-share-count',
+                            ),
+                            iconSize: _actionIconSize,
+                          ),
+                      ],
                     ),
                   ),
                   const SizedBox(width: 12),
-                  expiry,
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(
+                      _expiryCopy(post.expiresAt, now).toLowerCase(),
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.25),
+                        fontSize: 10,
+                        fontWeight: FontWeight.w400,
+                      ),
+                      textAlign: TextAlign.right,
+                    ),
+                  ),
+                  if (onPinPost != null) ...[
+                    const SizedBox(width: 10),
+                    _MetricAction(
+                      icon: Icons.bookmark_border,
+                      onTap: onPinPost,
+                      color: Colors.white.withOpacity(0.30),
+                      iconSize: 14,
+                    ),
+                  ],
                 ],
-              );
-            },
-          ),
-        ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -413,27 +445,30 @@ class _Badge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final backgroundColor = isPrimary
+        ? PostCard._friendBadgeColor.withOpacity(0.13)
+        : Colors.white.withOpacity(0.03);
+    final borderColor = isPrimary
+        ? PostCard._friendBadgeColor.withOpacity(0.20)
+        : Colors.white.withOpacity(0.06);
+    final textColor = isPrimary
+        ? PostCard._friendBadgeColor
+        : Colors.white.withOpacity(0.52);
+
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       decoration: BoxDecoration(
-        color: isPrimary
-            ? const Color.fromRGBO(38, 190, 110, 0.12)
-            : const Color.fromRGBO(255, 255, 255, 0.06),
-        border: Border.all(
-          color: isPrimary
-              ? const Color.fromRGBO(38, 190, 110, 0.28)
-              : const Color.fromRGBO(255, 255, 255, 0.10),
-        ),
-        borderRadius: BorderRadius.circular(999),
+        color: backgroundColor,
+        border: Border.all(color: borderColor),
+        borderRadius: BorderRadius.circular(10),
       ),
       child: Text(
         label,
         style: TextStyle(
-          color: isPrimary
-              ? const Color(0xFF24D36A)
-              : const Color.fromRGBO(255, 255, 255, 0.82),
-          fontSize: 12,
+          color: textColor,
+          fontSize: 11,
           fontWeight: FontWeight.w500,
+          height: 1,
         ),
       ),
     );
@@ -446,6 +481,7 @@ class _MetricAction extends StatelessWidget {
   final Color color;
   final String? label;
   final Key? labelKey;
+  final double iconSize;
 
   const _MetricAction({
     required this.icon,
@@ -453,6 +489,7 @@ class _MetricAction extends StatelessWidget {
     required this.color,
     this.label,
     this.labelKey,
+    this.iconSize = 15,
   });
 
   @override
@@ -467,19 +504,19 @@ class _MetricAction extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(999),
         child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 4),
+          padding: const EdgeInsets.symmetric(vertical: 2),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(icon, size: 22, color: resolvedColor),
+              Icon(icon, size: iconSize, color: resolvedColor),
               if (label != null) ...[
-                const SizedBox(width: 8),
+                const SizedBox(width: 6),
                 Text(
                   label!,
                   key: labelKey,
-                  style: const TextStyle(
-                    color: Color.fromRGBO(255, 255, 255, 0.52),
-                    fontSize: 13,
+                  style: TextStyle(
+                    color: resolvedColor,
+                    fontSize: 11,
                     fontWeight: FontWeight.w500,
                   ),
                 ),

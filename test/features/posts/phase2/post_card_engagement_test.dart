@@ -57,7 +57,7 @@ void main() {
     expect(find.text('Friend'), findsOneWidget);
     expect(find.text('expires in 2h'), findsOneWidget);
 
-    await tester.tap(find.byIcon(Icons.favorite));
+    await tester.tap(find.byIcon(Icons.favorite_border));
     await tester.pump();
 
     expect(toggled, 1);

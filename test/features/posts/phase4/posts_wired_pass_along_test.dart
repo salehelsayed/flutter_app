@@ -87,7 +87,7 @@ void main() {
     await tester.pumpWidget(buildWidget());
     await tester.pump();
 
-    await tester.tap(find.byIcon(Icons.redo));
+    await tester.tap(find.byIcon(Icons.repeat));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
 

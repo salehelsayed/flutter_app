@@ -117,6 +117,7 @@ handleIncomingPostPinUpdate({
     pinnedAt: envelope.pinnedAt,
     createdAt: envelope.createdAt,
   );
+  await postRepo.clearPinDismissal(parent.id);
   await postRepo.savePostPinState(pinState);
   return (HandleIncomingPostPinUpdateResult.pinApplied, pinState);
 }
@@ -195,6 +196,7 @@ handleIncomingPostPinRemove({
     reason: envelope.reason,
     createdAt: envelope.createdAt,
   );
+  await postRepo.savePost(parent.copyWith(keepAvailable: false));
   await postRepo.savePostPinState(pinState);
   await postRepo.clearPinDismissal(parent.id);
   return (HandleIncomingPostPinRemoveResult.pinRemoved, pinState);
