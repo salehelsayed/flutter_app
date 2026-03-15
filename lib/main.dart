@@ -42,7 +42,11 @@ import 'package:flutter_app/core/database/migrations/023_introduction_recipient_
 import 'package:flutter_app/core/database/migrations/024_contact_introduced_by_peer_id.dart';
 import 'package:flutter_app/core/database/migrations/025_introduction_already_connected_status.dart';
 import 'package:flutter_app/core/database/migrations/026_group_quoted_message_id.dart';
+import 'package:flutter_app/core/database/migrations/027_posts_core.dart';
 import 'package:flutter_app/core/database/helpers/introductions_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/post_feed_state_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/post_recipients_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/posts_db_helpers.dart';
 import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository_impl.dart';
 import 'package:flutter_app/features/introduction/application/introduction_listener.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
@@ -80,7 +84,9 @@ import 'package:flutter_app/core/media/record_audio_recorder_service.dart';
 import 'package:flutter_app/core/lifecycle/handle_app_resumed.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/notifications/flutter_notification_service.dart';
+import 'package:flutter_app/core/notifications/notification_route_dispatch.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
+import 'package:flutter_app/core/notifications/notification_route_target.dart';
 import 'package:flutter_app/core/theme/app_theme.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/startup_timing.dart';
@@ -95,7 +101,12 @@ import 'package:flutter_app/features/groups/presentation/screens/group_conversat
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_wired.dart';
 import 'package:flutter_app/features/orbit/presentation/navigation/orbit_route_transition.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
+import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
 import 'package:flutter_app/features/push/application/background_message_handler.dart';
+import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
+import 'package:flutter_app/features/posts/application/post_listener.dart';
+import 'package:flutter_app/features/posts/application/post_notification_open_coordinator.dart';
+import 'package:flutter_app/features/posts/domain/repositories/post_repository_impl.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -137,7 +148,7 @@ void main() async {
   final db = await openEncryptedDatabase(
     secureKeyStore: secureKeyStore,
     dbName: 'identity.db',
-    version: 26,
+    version: 27,
     onCreate: (db, version) async {
       await runIdentityTableMigration(db);
       await runMessagesTableMigration(db);
@@ -165,6 +176,7 @@ void main() async {
       await runContactIntroducedByPeerIdMigration(db);
       await runIntroductionAlreadyConnectedMigration(db);
       await runGroupQuotedMessageIdMigration(db);
+      await runPostsCoreMigration(db);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) {
@@ -239,6 +251,9 @@ void main() async {
       }
       if (oldVersion < 26) {
         await runGroupQuotedMessageIdMigration(db);
+      }
+      if (oldVersion < 27) {
+        await runPostsCoreMigration(db);
       }
     },
   );
@@ -321,6 +336,16 @@ void main() async {
         dbLoadUnackedOutgoingMessages(db, olderThan: olderThan, limit: limit),
     dbLoadConversationThreadSummaries: (contactPeerIds) =>
         dbLoadConversationThreadSummaries(db, contactPeerIds),
+  );
+
+  final postRepository = PostRepositoryImpl(
+    dbInsertPost: (row) => dbInsertPost(db, row),
+    dbLoadPost: (postId) => dbLoadPost(db, postId),
+    dbLoadPostsFeed: () => dbLoadPostsFeed(db),
+    dbUpsertRecipientDelivery: (row) => dbUpsertPostRecipientDelivery(db, row),
+    dbLoadRecipientDeliveries: (postId) =>
+        dbLoadPostRecipientDeliveries(db, postId),
+    dbMarkPostFocused: (postId) => dbMarkPostFocused(db, postId),
   );
 
   // Create media attachment repository
@@ -488,6 +513,8 @@ void main() async {
   await notificationService.initialize();
   final conversationTracker = ActiveConversationTracker();
   final groupConversationTracker = ActiveConversationTracker();
+  final appShellController = AppShellController();
+  final pendingPostTargetStore = PendingPostTargetStore();
 
   // Create chat message listener
   final chatMessageListener = ChatMessageListener(
@@ -505,6 +532,18 @@ void main() async {
     conversationTracker: conversationTracker,
     getAppLifecycleState: () =>
         WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.resumed,
+  );
+
+  final postListener = PostListener(
+    postCreateStream: messageRouter.postCreateStream,
+    postRepo: postRepository,
+    contactRepo: contactRepository,
+    notificationService: notificationService,
+    bridge: bridge,
+    getOwnMlKemSecretKey: () async {
+      final identity = await repository.loadIdentity();
+      return identity?.mlKemSecretKey;
+    },
   );
 
   // Create reaction listener
@@ -618,6 +657,7 @@ void main() async {
   messageRouter.start();
   contactRequestListener.start();
   chatMessageListener.start();
+  postListener.start();
   reactionListener.start();
   profileUpdateListener.start();
   groupMessageListener.start(
@@ -657,8 +697,10 @@ void main() async {
       contactRequestRepository: contactRequestRepository,
       contactRequestListener: contactRequestListener,
       messageRepository: messageRepository,
+      postRepository: postRepository,
       mediaAttachmentRepository: mediaAttachmentRepository,
       chatMessageListener: chatMessageListener,
+      postListener: postListener,
       reactionListener: reactionListener,
       profileUpdateListener: profileUpdateListener,
       messageRouter: messageRouter,
@@ -673,6 +715,8 @@ void main() async {
       reactionRepository: reactionRepository,
       isDesktop: isDesktop,
       notificationService: notificationService,
+      appShellController: appShellController,
+      pendingPostTargetStore: pendingPostTargetStore,
       conversationTracker: conversationTracker,
       groupRepository: groupRepository,
       groupMessageRepository: groupMessageRepository,
@@ -694,8 +738,10 @@ class MyApp extends StatefulWidget {
   final ContactRequestRepositoryImpl contactRequestRepository;
   final ContactRequestListener contactRequestListener;
   final MessageRepositoryImpl messageRepository;
+  final PostRepositoryImpl postRepository;
   final MediaAttachmentRepositoryImpl mediaAttachmentRepository;
   final ChatMessageListener chatMessageListener;
+  final PostListener postListener;
   final ReactionListener reactionListener;
   final ProfileUpdateListener profileUpdateListener;
   final IncomingMessageRouter messageRouter;
@@ -710,6 +756,8 @@ class MyApp extends StatefulWidget {
   final bool isDesktop;
   final ReactionRepositoryImpl reactionRepository;
   final NotificationService notificationService;
+  final AppShellController appShellController;
+  final PendingPostTargetStore pendingPostTargetStore;
   final ActiveConversationTracker conversationTracker;
   final GroupRepositoryImpl groupRepository;
   final GroupMessageRepositoryImpl groupMessageRepository;
@@ -730,8 +778,10 @@ class MyApp extends StatefulWidget {
     required this.contactRequestRepository,
     required this.contactRequestListener,
     required this.messageRepository,
+    required this.postRepository,
     required this.mediaAttachmentRepository,
     required this.chatMessageListener,
+    required this.postListener,
     required this.reactionListener,
     required this.profileUpdateListener,
     required this.messageRouter,
@@ -746,6 +796,8 @@ class MyApp extends StatefulWidget {
     required this.reactionRepository,
     required this.isDesktop,
     required this.notificationService,
+    required this.appShellController,
+    required this.pendingPostTargetStore,
     required this.conversationTracker,
     required this.groupRepository,
     required this.groupMessageRepository,
@@ -764,14 +816,26 @@ class MyApp extends StatefulWidget {
 
 class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   bool _isResuming = false;
+  NotificationRouteTarget? _deferredNotificationRouteTarget;
+  late final PostNotificationOpenCoordinator _postNotificationOpenCoordinator;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _postNotificationOpenCoordinator = PostNotificationOpenCoordinator(
+      pendingTargetStore: widget.pendingPostTargetStore,
+      postRepository: widget.postRepository,
+      appShellController: widget.appShellController,
+      revealPostsSurface: _revealPostsSurface,
+    );
     _setupPushListeners();
     _setupNotificationTapHandler();
     _setupShareIntentHandling();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_flushDeferredNotificationRouteTarget());
+    });
+    unawaited(_handleInitialLocalNotificationLaunch());
   }
 
   void _setupShareIntentHandling() {
@@ -816,19 +880,58 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     widget.notificationService.onNotificationTap = _onNotificationTap;
   }
 
+  Future<void> _handleInitialLocalNotificationLaunch() async {
+    try {
+      await routeInitialLocalNotificationOpen(
+        consumeInitialPayload: widget.notificationService.consumeInitialPayload,
+        onRouteTarget: _handleNotificationRouteTarget,
+      );
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'INITIAL_LOCAL_NOTIFICATION_ROUTE_ERROR',
+        details: {'error': e.toString()},
+      );
+    }
+  }
+
   Future<void> _onNotificationTap(String payload) async {
     try {
-      // Handle introduction notification taps
-      if (payload == 'intros') {
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'NOTIFICATION_TAP_INTROS',
-          details: {},
-        );
+      await routeNotificationPayload(
+        payload: payload,
+        onRouteTarget: _handleNotificationRouteTarget,
+      );
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'NOTIFICATION_TAP_NAV_ERROR',
+        details: {'error': e.toString()},
+      );
+    }
+  }
 
-        final navigator = MyApp.navigatorKey.currentState;
-        if (navigator == null) return;
+  Future<void> _handleNotificationRouteTarget(
+    NotificationRouteTarget routeTarget,
+  ) async {
+    final navigator = MyApp.navigatorKey.currentState;
+    if (navigator == null) {
+      _deferredNotificationRouteTarget = routeTarget;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        unawaited(_flushDeferredNotificationRouteTarget());
+      });
+      return;
+    }
 
+    if (routeTarget.kind == NotificationRouteTargetKind.post) {
+      await _postNotificationOpenCoordinator.handleRouteTarget(
+        routeTarget: routeTarget,
+        drainOfflineInbox: widget.p2pService.drainOfflineInbox,
+      );
+      return;
+    }
+
+    switch (routeTarget.kind) {
+      case NotificationRouteTargetKind.intros:
         navigator.push(
           buildOrbitSlideUpRoute(
             builder: (_) => OrbitWired(
@@ -837,6 +940,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
               contactRequestRepo: widget.contactRequestRepository,
               contactRequestListener: widget.contactRequestListener,
               messageRepo: widget.messageRepository,
+              postRepository: widget.postRepository,
               mediaAttachmentRepo: widget.mediaAttachmentRepository,
               chatMessageListener: widget.chatMessageListener,
               bridge: widget.bridge,
@@ -855,22 +959,20 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
               groupConversationTracker: widget.groupConversationTracker,
               introductionRepository: widget.introductionRepository,
               introductionListener: widget.introductionListener,
+              appShellController: widget.appShellController,
+              pendingPostTargetStore: widget.pendingPostTargetStore,
               initialFilterTab: 'intros',
             ),
           ),
         );
         return;
-      }
-
-      // Handle group notification taps (prefixed with "group:")
-      if (payload.startsWith('group:')) {
-        final groupId = payload.substring(6);
-        final group = await widget.groupRepository.getGroup(groupId);
-        if (group == null) return;
-
-        final navigator = MyApp.navigatorKey.currentState;
-        if (navigator == null) return;
-
+      case NotificationRouteTargetKind.group:
+        final group = await widget.groupRepository.getGroup(
+          routeTarget.groupId!,
+        );
+        if (group == null) {
+          return;
+        }
         navigator.push(
           MaterialPageRoute(
             builder: (_) => GroupConversationWired(
@@ -892,42 +994,62 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           ),
         );
         return;
-      }
-
-      // Handle 1:1 notification taps
-      final contact = await widget.contactRepository.getContact(payload);
-      if (contact == null) return;
-
-      final navigator = MyApp.navigatorKey.currentState;
-      if (navigator == null) return;
-
-      navigator.push(
-        buildConversationSlideUpRoute(
-          builder: (_) => ConversationWired(
-            contact: contact,
-            identityRepo: widget.repository,
-            messageRepo: widget.messageRepository,
-            chatMessageListener: widget.chatMessageListener,
-            p2pService: widget.p2pService,
-            bridge: widget.bridge,
-            contactRepo: widget.contactRepository,
-            mediaAttachmentRepo: widget.mediaAttachmentRepository,
-            mediaFileManager: widget.mediaFileManager,
-            conversationTracker: widget.conversationTracker,
-            audioRecorderService: widget.audioRecorderService,
-            reactionRepo: widget.reactionRepository,
-            reactionListener: widget.reactionListener,
-            introductionRepository: widget.introductionRepository,
+      case NotificationRouteTargetKind.conversation:
+        final contact = await widget.contactRepository.getContact(
+          routeTarget.peerId!,
+        );
+        if (contact == null) {
+          return;
+        }
+        navigator.push(
+          buildConversationSlideUpRoute(
+            builder: (_) => ConversationWired(
+              contact: contact,
+              identityRepo: widget.repository,
+              messageRepo: widget.messageRepository,
+              chatMessageListener: widget.chatMessageListener,
+              p2pService: widget.p2pService,
+              bridge: widget.bridge,
+              contactRepo: widget.contactRepository,
+              mediaAttachmentRepo: widget.mediaAttachmentRepository,
+              mediaFileManager: widget.mediaFileManager,
+              conversationTracker: widget.conversationTracker,
+              audioRecorderService: widget.audioRecorderService,
+              reactionRepo: widget.reactionRepository,
+              reactionListener: widget.reactionListener,
+              introductionRepository: widget.introductionRepository,
+            ),
           ),
-        ),
-      );
-    } catch (e) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'NOTIFICATION_TAP_NAV_ERROR',
-        details: {'error': e.toString()},
-      );
+        );
+        return;
+      case NotificationRouteTargetKind.post:
+      case NotificationRouteTargetKind.postComment:
+        return;
     }
+  }
+
+  void _revealPostsSurface() {
+    final navigator = MyApp.navigatorKey.currentState;
+    if (navigator == null) {
+      return;
+    }
+    navigator.popUntil((route) => route.isFirst);
+  }
+
+  Future<void> _flushDeferredNotificationRouteTarget() async {
+    final routeTarget = _deferredNotificationRouteTarget;
+    if (routeTarget == null) {
+      return;
+    }
+    final navigator = MyApp.navigatorKey.currentState;
+    if (navigator == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        unawaited(_flushDeferredNotificationRouteTarget());
+      });
+      return;
+    }
+    _deferredNotificationRouteTarget = null;
+    await _handleNotificationRouteTarget(routeTarget);
   }
 
   @override
@@ -943,8 +1065,11 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     widget.groupMessageListener.dispose();
     widget.profileUpdateListener.dispose();
     widget.reactionListener.dispose();
+    widget.postListener.dispose();
     widget.chatMessageListener.dispose();
     widget.contactRequestListener.dispose();
+    _postNotificationOpenCoordinator.dispose();
+    widget.postRepository.dispose();
     widget.messageRouter.dispose();
     widget.p2pService.dispose();
     widget.bridge.dispose();
@@ -1015,7 +1140,13 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
             'dataKeys': message.data.keys.toList(),
           },
         );
-        unawaited(widget.p2pService.drainOfflineInbox());
+        unawaited(
+          routeRemoteNotificationOpen(
+            data: message.data,
+            onRouteTarget: _handleNotificationRouteTarget,
+            onMissingRouteTarget: widget.p2pService.drainOfflineInbox,
+          ),
+        );
       });
     } catch (e) {
       emitFlowEvent(
@@ -1039,6 +1170,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         contactRequestRepository: widget.contactRequestRepository,
         contactRequestListener: widget.contactRequestListener,
         messageRepository: widget.messageRepository,
+        postRepository: widget.postRepository,
         mediaAttachmentRepository: widget.mediaAttachmentRepository,
         chatMessageListener: widget.chatMessageListener,
         bridge: widget.bridge,
@@ -1058,6 +1190,9 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         introductionRepository: widget.introductionRepository,
         introductionListener: widget.introductionListener,
         shareIntentService: widget.shareIntentService,
+        appShellController: widget.appShellController,
+        pendingPostTargetStore: widget.pendingPostTargetStore,
+        onNotificationRouteTarget: _handleNotificationRouteTarget,
       ),
       debugShowCheckedModeBanner: false,
     );

@@ -63,7 +63,10 @@ import 'package:flutter_app/features/orbit/application/load_orbit_groups_use_cas
 import 'package:flutter_app/features/orbit/domain/models/orbit_group.dart';
 import 'package:flutter_app/features/qr_code/presentation/screens/qr_display_wired.dart';
 import 'package:flutter_app/features/qr_code/presentation/screens/qr_scanner_wired.dart';
+import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_route_changes.dart';
+import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
+import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 import 'orbit_screen.dart';
 
 /// Wired widget connecting OrbitScreen to business logic.
@@ -75,6 +78,7 @@ class OrbitWired extends StatefulWidget {
   final ContactRequestRepository contactRequestRepo;
   final ContactRequestListener contactRequestListener;
   final MessageRepository messageRepo;
+  final PostRepository? postRepository;
   final MediaAttachmentRepository mediaAttachmentRepo;
   final ChatMessageListener chatMessageListener;
   final Bridge bridge;
@@ -93,6 +97,8 @@ class OrbitWired extends StatefulWidget {
   final ActiveConversationTracker? groupConversationTracker;
   final IntroductionRepository? introductionRepository;
   final IntroductionListener? introductionListener;
+  final AppShellController? appShellController;
+  final PendingPostTargetStore? pendingPostTargetStore;
   final String? initialFilterTab;
   final VoidCallback? debugOnHeaderBuild;
   final VoidCallback? debugOnListBuild;
@@ -104,6 +110,7 @@ class OrbitWired extends StatefulWidget {
     required this.contactRequestRepo,
     required this.contactRequestListener,
     required this.messageRepo,
+    this.postRepository,
     required this.mediaAttachmentRepo,
     required this.chatMessageListener,
     required this.bridge,
@@ -122,6 +129,8 @@ class OrbitWired extends StatefulWidget {
     this.groupConversationTracker,
     this.introductionRepository,
     this.introductionListener,
+    this.appShellController,
+    this.pendingPostTargetStore,
     this.initialFilterTab,
     this.debugOnHeaderBuild,
     this.debugOnListBuild,
@@ -1089,6 +1098,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
               contactRequestRepository: widget.contactRequestRepo,
               contactRequestListener: widget.contactRequestListener,
               messageRepository: widget.messageRepo,
+              postRepository: widget.postRepository,
               mediaAttachmentRepository: widget.mediaAttachmentRepo,
               chatMessageListener: widget.chatMessageListener,
               identityRepository: widget.identityRepo,
@@ -1108,6 +1118,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
               groupConversationTracker: widget.groupConversationTracker,
               introductionRepository: widget.introductionRepository,
               introductionListener: widget.introductionListener,
+              appShellController: widget.appShellController,
+              pendingPostTargetStore: widget.pendingPostTargetStore,
             ),
           ),
         )

@@ -17,6 +17,7 @@ import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
+import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
 import 'package:flutter_app/features/settings/presentation/screens/settings_wired.dart';
 import '../../../../core/secure_storage/fake_secure_key_store.dart';
 
@@ -203,6 +204,7 @@ void main() {
           p2pService: p2pService ?? _FakeP2PService(),
           secureKeyStore: FakeSecureKeyStore(),
           imageProcessor: ImageProcessor(compressFile: _noOpCompress),
+          appShellController: AppShellController(),
         ),
       ),
     );
@@ -354,6 +356,7 @@ void main() {
           p2pService: _FakeP2PService(),
           secureKeyStore: store,
           imageProcessor: ImageProcessor(compressFile: _noOpCompress),
+          appShellController: AppShellController(),
         ),
       ),
     );
@@ -391,6 +394,7 @@ void main() {
                         imageProcessor: ImageProcessor(
                           compressFile: _noOpCompress,
                         ),
+                        appShellController: AppShellController(),
                       ),
                     ),
                   )

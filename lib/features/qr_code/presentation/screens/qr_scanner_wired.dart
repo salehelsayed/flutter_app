@@ -28,8 +28,11 @@ import 'package:flutter_app/features/groups/domain/repositories/group_repository
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository.dart';
 import 'package:flutter_app/features/introduction/application/introduction_listener.dart';
+import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
 import 'package:flutter_app/features/feed/presentation/navigation/feed_route_transition.dart';
 import 'package:flutter_app/features/feed/presentation/screens/feed_wired.dart';
+import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
+import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 import 'package:flutter_app/features/share/application/settle_share_intent_flow.dart';
 import 'package:flutter_app/features/share/presentation/navigation/share_target_picker_route.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
@@ -52,6 +55,7 @@ class QRScannerWired extends StatelessWidget {
   final ContactRequestRepository contactRequestRepository;
   final ContactRequestListener contactRequestListener;
   final MessageRepository messageRepository;
+  final PostRepository? postRepository;
   final MediaAttachmentRepository mediaAttachmentRepository;
   final ChatMessageListener chatMessageListener;
   final IdentityRepository identityRepository;
@@ -73,6 +77,8 @@ class QRScannerWired extends StatelessWidget {
   final IntroductionRepository? introductionRepository;
   final IntroductionListener? introductionListener;
   final ShareIntentService? shareIntentService;
+  final AppShellController? appShellController;
+  final PendingPostTargetStore? pendingPostTargetStore;
 
   const QRScannerWired({
     super.key,
@@ -81,6 +87,7 @@ class QRScannerWired extends StatelessWidget {
     required this.contactRequestRepository,
     required this.contactRequestListener,
     required this.messageRepository,
+    this.postRepository,
     required this.mediaAttachmentRepository,
     required this.chatMessageListener,
     required this.identityRepository,
@@ -102,6 +109,8 @@ class QRScannerWired extends StatelessWidget {
     this.introductionRepository,
     this.introductionListener,
     this.shareIntentService,
+    this.appShellController,
+    this.pendingPostTargetStore,
   });
 
   @override
@@ -325,6 +334,8 @@ class QRScannerWired extends StatelessWidget {
                         contactRequestRepository: contactRequestRepository,
                         contactRequestListener: contactRequestListener,
                         messageRepository: messageRepository,
+                        postRepository:
+                            postRepository ?? _missingPostRepository(),
                         mediaAttachmentRepository: mediaAttachmentRepository,
                         chatMessageListener: chatMessageListener,
                         bridge: bridge,
@@ -343,6 +354,11 @@ class QRScannerWired extends StatelessWidget {
                         groupConversationTracker: groupConversationTracker,
                         introductionRepository: introductionRepository,
                         introductionListener: introductionListener,
+                        appShellController:
+                            appShellController ?? _missingAppShellController(),
+                        pendingPostTargetStore:
+                            pendingPostTargetStore ??
+                            _missingPendingPostTargetStore(),
                       ),
                     ),
                     (route) => false,
@@ -457,6 +473,24 @@ class QRScannerWired extends StatelessWidget {
       groupMessageListener: groupMessageListener,
       groupConversationTracker: groupConversationTracker,
       introductionRepository: introductionRepository,
+    );
+  }
+
+  Never _missingPostRepository() {
+    throw StateError(
+      'QRScannerWired requires postRepository before navigating to FeedWired.',
+    );
+  }
+
+  Never _missingAppShellController() {
+    throw StateError(
+      'QRScannerWired requires appShellController before navigating to FeedWired.',
+    );
+  }
+
+  Never _missingPendingPostTargetStore() {
+    throw StateError(
+      'QRScannerWired requires pendingPostTargetStore before navigating to FeedWired.',
     );
   }
 }

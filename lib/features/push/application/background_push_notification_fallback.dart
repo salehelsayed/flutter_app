@@ -1,4 +1,5 @@
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter_app/core/notifications/notification_route_target.dart';
 
 const backgroundPushDefaultTitle = 'New Message';
 const backgroundPushDefaultBody = 'You have a new message';
@@ -18,13 +19,7 @@ class BackgroundPushNotificationFallback {
 bool shouldShowBackgroundPushFallbackNotification(RemoteMessage message) {
   if (message.notification != null) return false;
 
-  final type = _trimToNull(message.data['type']);
-  return switch (type) {
-    'new_message' => true,
-    'group_message' => _trimToNull(message.data['groupId']) != null,
-    'intros' => true,
-    _ => _trimToNull(message.data['payload']) != null,
-  };
+  return NotificationRouteTarget.fromRemoteMessageData(message.data) != null;
 }
 
 BackgroundPushNotificationFallback buildBackgroundPushFallbackNotification(
@@ -43,19 +38,9 @@ BackgroundPushNotificationFallback buildBackgroundPushFallbackNotification(
 }
 
 String? _payloadFromMessage(RemoteMessage message) {
-  final type = _trimToNull(message.data['type']);
-  switch (type) {
-    case 'new_message':
-      return _trimToNull(message.data['from']);
-    case 'group_message':
-      final groupId = _trimToNull(message.data['groupId']);
-      return groupId == null ? null : 'group:$groupId';
-    case 'intros':
-      return 'intros';
-  }
-
-  return _trimToNull(message.data['payload']) ??
-      _trimToNull(message.data['route']);
+  return NotificationRouteTarget.fromRemoteMessageData(
+    message.data,
+  )?.toPayload();
 }
 
 String? _trimToNull(String? value) {

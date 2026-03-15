@@ -21,7 +21,10 @@ abstract class NotificationService {
   });
 
   /// Callback invoked when the user taps a notification.
-  void Function(String contactPeerId)? onNotificationTap;
+  void Function(String payload)? onNotificationTap;
+
+  /// Returns the launch payload if the app was opened from a local notification.
+  Future<String?> consumeInitialPayload();
 
   /// Clean up resources.
   void dispose();

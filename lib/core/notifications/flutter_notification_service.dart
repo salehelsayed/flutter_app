@@ -8,9 +8,11 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 class FlutterNotificationService implements NotificationService {
   final FlutterLocalNotificationsPlugin _plugin =
       FlutterLocalNotificationsPlugin();
+  String? _initialPayload;
+  bool _initialPayloadConsumed = false;
 
   @override
-  void Function(String contactPeerId)? onNotificationTap;
+  void Function(String payload)? onNotificationTap;
 
   @override
   Future<void> initialize() async {
@@ -34,6 +36,8 @@ class FlutterNotificationService implements NotificationService {
       onDidReceiveNotificationResponse: _onNotificationResponse,
     );
     await ensureMknoonNotificationChannel(_plugin);
+    final launchDetails = await _plugin.getNotificationAppLaunchDetails();
+    _initialPayload = launchDetails?.notificationResponse?.payload;
 
     emitFlowEvent(
       layer: 'FL',
@@ -50,13 +54,20 @@ class FlutterNotificationService implements NotificationService {
       layer: 'FL',
       event: 'NOTIFICATION_TAPPED',
       details: {
-        'contactPeerId': payload.length > 10
-            ? payload.substring(0, 10)
-            : payload,
+        'payload': payload.length > 32 ? payload.substring(0, 32) : payload,
       },
     );
 
     onNotificationTap?.call(payload);
+  }
+
+  @override
+  Future<String?> consumeInitialPayload() async {
+    if (_initialPayloadConsumed) {
+      return null;
+    }
+    _initialPayloadConsumed = true;
+    return _initialPayload;
   }
 
   @override

@@ -8,6 +8,7 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
+import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
 import 'package:flutter_app/features/settings/application/image_quality_preference_use_cases.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -28,6 +29,7 @@ class SettingsWired extends StatefulWidget {
   final P2PService p2pService;
   final SecureKeyStore secureKeyStore;
   final ImageProcessor imageProcessor;
+  final AppShellController appShellController;
 
   const SettingsWired({
     super.key,
@@ -37,6 +39,7 @@ class SettingsWired extends StatefulWidget {
     required this.p2pService,
     required this.secureKeyStore,
     required this.imageProcessor,
+    required this.appShellController,
   });
 
   @override
@@ -259,7 +262,7 @@ class _SettingsWiredState extends State<SettingsWired> {
   }
 
   void _onSwitchView(String tab) {
-    // Pop back to Feed first, then let Feed handle navigation
+    widget.appShellController.switchTo(tab);
     Navigator.of(context).pop();
   }
 
@@ -295,7 +298,7 @@ class _SettingsWiredState extends State<SettingsWired> {
         currentVideoQuality: _currentVideoQuality,
         onVideoQualityChanged: _onVideoQualityChanged,
         onSwitchView: _onSwitchView,
-        activeTab: 'feed',
+        activeTab: widget.appShellController.activeTab,
       ),
     );
   }

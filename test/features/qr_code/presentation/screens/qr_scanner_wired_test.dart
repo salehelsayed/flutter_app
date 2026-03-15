@@ -9,9 +9,11 @@ import 'package:flutter_app/core/services/share_intent_model.dart';
 import 'package:flutter_app/core/services/share_intent_service.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
+import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
 import 'package:flutter_app/features/feed/presentation/screens/feed_wired.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
+import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
 import 'package:flutter_app/features/qr_code/presentation/screens/qr_scanner_screen.dart';
 import 'package:flutter_app/features/qr_code/presentation/screens/qr_scanner_wired.dart';
 
@@ -22,6 +24,7 @@ import '../../../../shared/fakes/fake_media_file_manager.dart';
 import '../../../../shared/fakes/in_memory_contact_repository.dart';
 import '../../../../shared/fakes/in_memory_media_attachment_repository.dart';
 import '../../../../shared/fakes/in_memory_message_repository.dart';
+import '../../../../shared/fakes/in_memory_post_repository.dart';
 import '../../../contact_request/domain/repositories/fake_contact_request_repository.dart';
 import '../../../identity/domain/repositories/fake_identity_repository.dart';
 
@@ -37,6 +40,9 @@ void main() {
   late FakeP2PService p2pService;
   late FakeMediaFileManager mediaFileManager;
   late FakeSecureKeyStore secureKeyStore;
+  late InMemoryPostRepository postRepository;
+  late AppShellController appShellController;
+  late PendingPostTargetStore pendingPostTargetStore;
   late ImageProcessor imageProcessor;
 
   const ownPeerId = 'own-peer-id-12345';
@@ -83,6 +89,9 @@ void main() {
     p2pService = FakeP2PService();
     mediaFileManager = FakeMediaFileManager();
     secureKeyStore = FakeSecureKeyStore();
+    postRepository = InMemoryPostRepository();
+    appShellController = AppShellController();
+    pendingPostTargetStore = PendingPostTargetStore();
     imageProcessor = ImageProcessor(
       compressFile:
           ({
@@ -105,6 +114,7 @@ void main() {
         contactRequestRepository: contactRequestRepository,
         contactRequestListener: contactRequestListener,
         messageRepository: messageRepository,
+        postRepository: postRepository,
         mediaAttachmentRepository: mediaAttachmentRepository,
         chatMessageListener: chatMessageListener,
         identityRepository: identityRepository,
@@ -121,6 +131,8 @@ void main() {
               required avatarVersion,
             }) async => null,
         shareIntentService: shareIntentService,
+        appShellController: appShellController,
+        pendingPostTargetStore: pendingPostTargetStore,
       ),
     );
   }
