@@ -1063,8 +1063,10 @@ func TestRecoveryCoalescing_PerformsSinglePersonalReregister(t *testing.T) {
 	const expectedNamespace = "mknoon:chat:phase2-coalesced"
 
 	n := NewNode()
-	registerStarted := make(chan struct{})
-	releaseRegister := make(chan struct{})
+	registers := make(chan string, 4)
+	refreshStarted := make(chan struct{})
+	releaseRefresh := make(chan struct{})
+	var refreshCalls atomic.Int32
 	var registerCalls atomic.Int32
 
 	n.warmRelayConnectionHook = func(info peer.AddrInfo) error {
@@ -1074,26 +1076,23 @@ func TestRecoveryCoalescing_PerformsSinglePersonalReregister(t *testing.T) {
 		return true
 	}
 	n.rendezvousRegisterHook = func(namespace string, serverAddresses []string) error {
-		switch registerCalls.Add(1) {
-		case 1:
-			return nil
-		case 2:
-			close(registerStarted)
-			select {
-			case <-releaseRegister:
-			case <-n.ctx.Done():
-			}
-		default:
-			t.Fatalf("unexpected overlapping personal register call %d for %s", registerCalls.Load(), namespace)
-		}
+		registerCalls.Add(1)
+		registers <- namespace
 		return nil
 	}
 	n.refreshRelaySessionHook = func() *RecoveryResult {
+		if refreshCalls.Add(1) == 1 {
+			close(refreshStarted)
+			select {
+			case <-releaseRefresh:
+			case <-n.ctx.Done():
+			}
+		}
 		return &RecoveryResult{
-			RecoveryMode:      "in_place",
-			Success:           true,
-			RelayState:        string(AggregateRelayOnline),
-			HealthyRelayCount: 1,
+			RecoveryMode: "in_place",
+			Success:      false,
+			ErrorCode:    "REFRESH_FAILED",
+			Reason:       "forced refresh failure",
 		}
 	}
 
@@ -1104,30 +1103,70 @@ func TestRecoveryCoalescing_PerformsSinglePersonalReregister(t *testing.T) {
 		},
 		AutoRegister:                      true,
 		Namespace:                         expectedNamespace,
-		PersonalRendezvousRefreshInterval: 10 * time.Millisecond,
+		PersonalRendezvousRefreshInterval: time.Hour,
 	})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	defer n.Stop()
 
+	if namespace := waitForPersonalRegisterCall(t, registers, 200*time.Millisecond); namespace != expectedNamespace {
+		t.Fatalf("initial personal register used namespace %q, want %q", namespace, expectedNamespace)
+	}
+	waitForPersonalRegisterIdle(t, n, 200*time.Millisecond)
+
+	type reconnectOutcome struct {
+		result *RecoveryResult
+		err    error
+	}
+	outcomes := make(chan reconnectOutcome, 2)
+
+	go func() {
+		result, err := n.ReconnectRelays()
+		outcomes <- reconnectOutcome{result: result, err: err}
+	}()
+
 	select {
-	case <-registerStarted:
+	case <-refreshStarted:
 	case <-time.After(200 * time.Millisecond):
-		t.Fatal("expected a periodic personal refresh register to start")
+		t.Fatal("expected first reconnect caller to begin the in-place refresh step")
 	}
 
-	result := n.RefreshRelaySession()
-	if !result.Success {
-		t.Fatalf("RefreshRelaySession() should succeed while a personal re-register is in flight, got %+v", result)
-	}
+	go func() {
+		result, err := n.ReconnectRelays()
+		outcomes <- reconnectOutcome{result: result, err: err}
+	}()
 
 	time.Sleep(40 * time.Millisecond)
-	if got := registerCalls.Load(); got != 2 {
-		t.Fatalf("expected initial register plus exactly 1 in-flight refresh call, got %d", got)
+	close(releaseRefresh)
+
+	for i := 0; i < 2; i++ {
+		outcome := <-outcomes
+		if outcome.err != nil {
+			t.Fatalf("ReconnectRelays() caller %d error: %v", i+1, outcome.err)
+		}
+		if outcome.result == nil {
+			t.Fatalf("ReconnectRelays() caller %d returned nil result", i+1)
+		}
+		if !outcome.result.Success || outcome.result.RecoveryMode != "watchdog_restart" {
+			t.Fatalf("ReconnectRelays() caller %d got %+v, want successful watchdog_restart", i+1, outcome.result)
+		}
 	}
 
-	close(releaseRegister)
+	if got := refreshCalls.Load(); got != 1 {
+		t.Fatalf("expected exactly 1 in-place refresh attempt across concurrent callers, got %d", got)
+	}
+	if got := registerCalls.Load(); got != 2 {
+		t.Fatalf("expected initial register plus exactly 1 watchdog re-register, got %d calls", got)
+	}
+	if namespace := waitForPersonalRegisterCall(t, registers, 200*time.Millisecond); namespace != expectedNamespace {
+		t.Fatalf("watchdog recovery personal register used namespace %q, want %q", namespace, expectedNamespace)
+	}
+
+	status := n.Status()
+	if got := status["watchdogRestartCount"]; got != 1 {
+		t.Fatalf("expected a single watchdog restart after concurrent reconnects, got %v", got)
+	}
 }
 
 // ---------------------------------------------------------------------------

@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -71,6 +72,8 @@ type Node struct {
 	waitForCircuitAddressHook func(time.Duration) bool
 	rendezvousRegisterHook    func(string, []string) error
 	refreshRelaySessionHook   func() *RecoveryResult
+	openChatStreamHook        func(context.Context, host.Host, peer.ID) (network.Stream, error)
+	recoverPeerForSendHook    func(host.Host, peer.ID, string, time.Duration) error
 
 	// Personal rendezvous refresh state.
 	personalRendezvousRefreshCancel context.CancelFunc
@@ -539,6 +542,55 @@ func (n *Node) warmRelayConnectionForStart(info peer.AddrInfo) error {
 // Returns a RecoveryResult describing what happened.
 func (n *Node) RefreshRelaySession() *RecoveryResult {
 	n.mu.RLock()
+	mgr := n.relaySessionMgr
+	n.mu.RUnlock()
+
+	recovery, isNew := mgr.BeginRecovery()
+	if !isNew {
+		return waitForSharedRecoveryResult(recovery)
+	}
+
+	result := n.refreshRelaySessionOwned()
+	mgr.CompleteRecovery(result, nil)
+	return result
+}
+
+func waitForSharedRecoveryResult(recovery *recoveryPromise) *RecoveryResult {
+	result, err := recovery.Wait()
+	if result != nil {
+		return result
+	}
+	if err != nil {
+		return &RecoveryResult{
+			RecoveryMode: "in_place",
+			Success:      false,
+			ErrorCode:    "RECOVERY_FAILED",
+			Reason:       err.Error(),
+		}
+	}
+	return &RecoveryResult{
+		RecoveryMode: "in_place",
+		Success:      false,
+		ErrorCode:    "RECOVERY_NIL",
+		Reason:       "coalesced recovery returned nil result",
+	}
+}
+
+func waitForSharedRecoveryOutcome(recovery *recoveryPromise) (*RecoveryResult, error) {
+	result, err := recovery.Wait()
+	if result != nil || err != nil {
+		return result, err
+	}
+	return &RecoveryResult{
+		RecoveryMode: "in_place",
+		Success:      false,
+		ErrorCode:    "RECOVERY_NIL",
+		Reason:       "coalesced recovery returned nil result",
+	}, nil
+}
+
+func (n *Node) refreshRelaySessionOwned() *RecoveryResult {
+	n.mu.RLock()
 	h := n.host
 	started := n.isStarted
 	relayAddrs := n.relayAddresses
@@ -554,23 +606,7 @@ func (n *Node) RefreshRelaySession() *RecoveryResult {
 		}
 	}
 
-	// Singleflight: if another recovery is already in progress, wait for it.
-	ch, isNew := mgr.BeginRecovery()
-	if !isNew {
-		// Wait for the in-progress recovery to complete.
-		result := <-ch
-		if result != nil {
-			return result
-		}
-		return &RecoveryResult{
-			RecoveryMode: "in_place",
-			Success:      false,
-			ErrorCode:    "RECOVERY_NIL",
-			Reason:       "coalesced recovery returned nil result",
-		}
-	}
-
-	// We own the recovery — perform in-place refresh.
+	// We own the shared recovery — perform in-place refresh.
 	log.Printf("[NODE] RefreshRelaySession: attempting in-place relay recovery")
 
 	var result *RecoveryResult
@@ -636,7 +672,6 @@ func (n *Node) RefreshRelaySession() *RecoveryResult {
 	}
 
 	result = n.finalizeRelayRecoveryResult(result, "relay refresh")
-	mgr.CompleteRecovery(result)
 	return result
 }
 
@@ -647,6 +682,21 @@ func (n *Node) RefreshRelaySession() *RecoveryResult {
 // session manager, so concurrent callers share one recovery attempt.
 // The return value now includes structured recovery fields.
 func (n *Node) ReconnectRelays() (*RecoveryResult, error) {
+	n.mu.RLock()
+	mgr := n.relaySessionMgr
+	n.mu.RUnlock()
+
+	recovery, isNew := mgr.BeginRecovery()
+	if !isNew {
+		return waitForSharedRecoveryOutcome(recovery)
+	}
+
+	result, err := n.reconnectRelaysOwned()
+	mgr.CompleteRecovery(result, err)
+	return result, err
+}
+
+func (n *Node) reconnectRelaysOwned() (*RecoveryResult, error) {
 	n.mu.RLock()
 	started := n.isStarted
 	cfg := n.lastConfig
@@ -662,8 +712,7 @@ func (n *Node) ReconnectRelays() (*RecoveryResult, error) {
 	flags := cfg.EffectiveFlags()
 
 	if flags.EnableInPlaceRelayRecovery {
-		// Try in-place recovery first (Phase 4).
-		result := n.RefreshRelaySession()
+		result := n.refreshRelaySessionOwned()
 		if result.Success {
 			log.Printf("[NODE] ReconnectRelays: in-place recovery succeeded")
 			return result, nil
@@ -675,7 +724,6 @@ func (n *Node) ReconnectRelays() (*RecoveryResult, error) {
 		log.Printf("[NODE] ReconnectRelays: in-place recovery disabled by feature flag, performing full restart")
 	}
 
-	// Fallback: full host restart (pre-Phase 4 behavior).
 	if err := n.Stop(); err != nil {
 		log.Printf("[NODE] ReconnectRelays: Stop() error (continuing): %v", err)
 	}
@@ -701,7 +749,6 @@ func (n *Node) ReconnectRelays() (*RecoveryResult, error) {
 	log.Printf("[NODE] ReconnectRelays: node restarted, peerId=%s, waiting for circuit addresses...",
 		state.PeerId)
 
-	// Wait for circuit addresses.
 	circuitOk := n.waitForCircuitAddress(10 * time.Second)
 	if circuitOk {
 		log.Printf("[NODE] ReconnectRelays: circuit addresses obtained ✓")
@@ -709,13 +756,9 @@ func (n *Node) ReconnectRelays() (*RecoveryResult, error) {
 		log.Printf("[NODE] ReconnectRelays: WARNING — no circuit addresses after 10s")
 	}
 
-	// Track the watchdog restart.
 	n.mu.RLock()
 	mgr := n.relaySessionMgr
 	n.mu.RUnlock()
-	if mgr != nil {
-		mgr.RecordWatchdogRestart()
-	}
 
 	watchdogResult := &RecoveryResult{
 		RecoveryMode:      "watchdog_restart",
@@ -766,6 +809,8 @@ func (n *Node) DialPeerWithTimeout(peerIdStr string, addresses []string, timeout
 
 	ctx, cancel := context.WithTimeout(n.ctx, timeout)
 	defer cancel()
+	ctx = network.WithDialPeerTimeout(ctx, timeout)
+	ctx = network.WithAllowLimitedConn(ctx, "peer-dial")
 
 	return h.Connect(ctx, ai)
 }
@@ -799,6 +844,8 @@ func (n *Node) DialPeer(peerIdStr string, addresses []string) error {
 
 	ctx, cancel := context.WithTimeout(n.ctx, PeerDialTimeout)
 	defer cancel()
+	ctx = network.WithDialPeerTimeout(ctx, PeerDialTimeout)
+	ctx = network.WithAllowLimitedConn(ctx, "peer-dial")
 
 	return h.Connect(ctx, ai)
 }
@@ -808,6 +855,10 @@ func (n *Node) DialPeer(peerIdStr string, addresses []string) error {
 // determine if a peer is online without a full discover/dial cycle.
 // Tries each configured relay in order until one succeeds.
 func (n *Node) DialPeerViaRelay(peerIdStr string) error {
+	return n.dialPeerViaRelayWithTimeout(peerIdStr, RelayProbeTimeout)
+}
+
+func (n *Node) dialPeerViaRelayWithTimeout(peerIdStr string, timeout time.Duration) error {
 	n.mu.RLock()
 	h := n.host
 	n.mu.RUnlock()
@@ -848,8 +899,10 @@ func (n *Node) DialPeerViaRelay(peerIdStr string) error {
 			Addrs: circuitAddrs,
 		}
 
-		ctx, cancel := context.WithTimeout(n.ctx, RelayProbeTimeout)
+		ctx, cancel := context.WithTimeout(n.ctx, timeout)
 		defer cancel()
+		ctx = network.WithDialPeerTimeout(ctx, timeout)
+		ctx = network.WithAllowLimitedConn(ctx, "relay-probe")
 
 		return h.Connect(ctx, ai)
 	})
@@ -871,6 +924,70 @@ func (n *Node) DisconnectPeer(peerIdStr string) error {
 	}
 
 	return h.Network().ClosePeer(pid)
+}
+
+func (n *Node) openChatStream(ctx context.Context, h host.Host, pid peer.ID) (network.Stream, error) {
+	if n.openChatStreamHook != nil {
+		return n.openChatStreamHook(ctx, h, pid)
+	}
+	return h.NewStream(ctx, pid, ChatProtocol)
+}
+
+func isRetryableChatStreamOpenError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	return strings.Contains(err.Error(), "failed to open stream")
+}
+
+func (n *Node) recoverPeerForSend(h host.Host, pid peer.ID, peerIdStr string, timeout time.Duration) error {
+	if n.recoverPeerForSendHook != nil {
+		return n.recoverPeerForSendHook(h, pid, peerIdStr, timeout)
+	}
+
+	if err := h.Network().ClosePeer(pid); err != nil {
+		log.Printf("[NODE] SendMessage: ClosePeer(%s) returned: %v", peerIdStr, err)
+	}
+
+	return n.dialPeerViaRelayWithTimeout(peerIdStr, timeout)
+}
+
+func (n *Node) openChatStreamForSend(
+	h host.Host,
+	pid peer.ID,
+	peerIdStr string,
+	timeout time.Duration,
+) (network.Stream, error) {
+	openAttempt := func() (network.Stream, error) {
+		ctx, cancel := context.WithTimeout(n.ctx, timeout)
+		defer cancel()
+		ctx = network.WithDialPeerTimeout(ctx, timeout)
+		ctx = network.WithAllowLimitedConn(ctx, "chat-send")
+		return n.openChatStream(ctx, h, pid)
+	}
+
+	s, err := openAttempt()
+	if err == nil || !isRetryableChatStreamOpenError(err) {
+		return s, err
+	}
+
+	log.Printf("[NODE] SendMessage: open stream to %s failed, attempting peer self-heal: %v", peerIdStr, err)
+
+	if healErr := n.recoverPeerForSend(h, pid, peerIdStr, timeout); healErr != nil {
+		log.Printf("[NODE] SendMessage: peer self-heal failed for %s: %v", peerIdStr, healErr)
+		return nil, err
+	}
+
+	s, retryErr := openAttempt()
+	if retryErr != nil {
+		log.Printf("[NODE] SendMessage: open stream still failing after self-heal for %s: %v", peerIdStr, retryErr)
+		return nil, retryErr
+	}
+
+	return s, nil
 }
 
 // SendMessage sends a message directly to a peer via the chat protocol.
@@ -897,10 +1014,7 @@ func (n *Node) SendMessage(peerIdStr string, message string, timeoutMs int) (str
 		timeout = time.Duration(timeoutMs) * time.Millisecond
 	}
 
-	ctx, cancel := context.WithTimeout(n.ctx, timeout)
-	defer cancel()
-
-	s, err := h.NewStream(ctx, pid, ChatProtocol)
+	s, err := n.openChatStreamForSend(h, pid, peerIdStr, timeout)
 	if err != nil {
 		return "", false, fmt.Errorf("open stream: %w", err)
 	}
@@ -947,10 +1061,7 @@ func (n *Node) SendMessageWithTimeout(peerIdStr string, message string, timeoutM
 		timeout = time.Duration(timeoutMs) * time.Millisecond
 	}
 
-	ctx, cancel := context.WithTimeout(n.ctx, timeout)
-	defer cancel()
-
-	s, err := h.NewStream(ctx, pid, ChatProtocol)
+	s, err := n.openChatStreamForSend(h, pid, peerIdStr, timeout)
 	if err != nil {
 		return "", fmt.Errorf("open stream: %w", err)
 	}

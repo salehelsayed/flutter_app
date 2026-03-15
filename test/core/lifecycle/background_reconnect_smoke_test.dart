@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/lifecycle/handle_app_resumed.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
@@ -97,10 +95,6 @@ void main() {
         // 1. Start the node
         await service.startNodeCore(testBase64Key, testPeerId);
         expect(healthFromState(service.currentState), ConnectionHealth.online);
-
-        final initialCircuit = List<String>.from(
-          service.currentState.circuitAddresses,
-        );
 
         // 2. Go to background — relay drops
         bridge.simulateBackground();
@@ -273,6 +267,49 @@ void main() {
         );
       }
     });
+
+    test(
+      'long background duration plus personal refresh still returns online and discoverable',
+      () async {
+        await service.startNodeCore(testBase64Key, testPeerId);
+        expect(healthFromState(service.currentState), ConnectionHealth.online);
+
+        bridge.useStructuredRecoveryResponse = true;
+        bridge.structuredRecoveryMode = 'in_place';
+
+        bridge.simulateBackground();
+        bridge.pollsUntilCircuitReady = 5;
+
+        await handleAppResumed(bridge: bridge, p2pService: service);
+
+        expect(
+          healthFromState(service.currentState),
+          ConnectionHealth.degraded,
+          reason:
+              'A long-idle resume can still be degraded after the first '
+              'reconnect poll',
+        );
+        expect(
+          service.lastRecoveryMethod,
+          equals('in_place'),
+          reason: 'Long-idle recovery should stay on the in-place path',
+        );
+
+        await service.performImmediateHealthCheck();
+        await service.performImmediateHealthCheck();
+
+        expect(healthFromState(service.currentState), ConnectionHealth.online);
+        expect(
+          service.currentState.circuitAddresses,
+          isNotEmpty,
+          reason:
+              'Healthy circuit addresses are the Flutter-side proxy for '
+              'restored discoverability after long background idle',
+        );
+        expect(service.lastRecoveryMethod, equals('in_place'));
+        expect(service.consecutiveRefreshFailures, 0);
+      },
+    );
 
     test(
       'handleAppResumed calls bridge checkHealth, health check, and drain',

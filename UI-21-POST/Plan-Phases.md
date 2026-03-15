@@ -1,10 +1,15 @@
 # Posts Implementation Checklist
 
-This plan assumes the product contract in `../kitchen/landing-screen-claude/neighbourhood_spec.md` is the source of truth and that Posts will ride on the existing app-level messaging transport before we add any dedicated libp2p protocol.
+This plan treats `../kitchen/landing-screen-claude/neighbourhood_spec.md` as the source of product intent. The approved Phase 0 artifact set under `UI-21-POST/`, including `Posts-UI-State-Inventory.md` and its incorporated screenshot references, is the source of implementation contract and visual acceptance for Posts.
 
 ## Working Rules
 
-- Build Posts as JSON envelopes over the existing direct send and offline inbox paths in `lib/core/services/p2p_service.dart`, `lib/core/services/p2p_service_impl.dart`, `lib/core/bridge/p2p_bridge_client.dart`, and `lib/core/bridge/go_bridge_client.dart`.
+- Build Posts as JSON envelopes over the existing direct send and offline inbox paths in `lib/core/services/p2p_service.dart`, `lib/core/services/p2p_service_impl.dart`, `lib/core/bridge/p2p_bridge_client.dart`, and `lib/core/bridge/go_bridge_client.dart`, but do not treat that as a bulk-broadcast primitive. Posts fanout is still app-owned, per-recipient delivery over single-peer send APIs.
+- Lock the delivery model early:
+  - `post_create` fanout is one envelope per recipient
+  - each recipient gets their own v2 encrypted envelope when an ML-KEM public key is available, otherwise the approved v1 plaintext fallback
+  - send, race, inbox fallback, and retry persistence stay feature-owned at the app layer
+  - partial recipient failure is expected and must not roll back already-persisted successful recipients
 - Do not add a new `go-mknoon/node/node.go` protocol in early phases unless an actual transport gap appears. For this feature, most complexity is product logic, persistence, and UI, not libp2p framing.
 - Keep every phase vertically complete: DB migration, router/listener wiring, sender flow, receiver flow, restart behavior, and tests.
 - Every phase that adds or changes schema must also bump the DB version in `lib/main.dart`, register the migration there, and add migration-regression coverage for upgrade paths.
@@ -35,6 +40,83 @@ This plan assumes the product contract in `../kitchen/landing-screen-claude/neig
   - location permissions or proximity eligibility
 - Refactor only after the new targeted tests are green. Keep refactors phase-scoped and rerun the targeted suite after each refactor step.
 - The implementation notes or PR for each phase must record the initial RED evidence: the exact failing test names or commands written before the implementation.
+
+## Phase Control Rules
+
+- Every phase must be split into 3-5 numbered internal slices.
+- Every slice must define:
+  - prerequisite harnesses or builders that must exist before production edits
+  - the RED tests written first for that slice
+  - the primary allowed edit set for that slice
+  - a mini exit gate before the next slice begins
+- A phase is not complete just because the end-to-end smoke test works once. Every internal slice mini gate and the phase command matrix must pass.
+- Every phase close-out must record:
+  - residual risks
+  - explicit deferrals
+  - next-phase prerequisites
+
+## Contract and Delivery Baseline
+
+- Phase 0 must lock the Posts wire contract before Phase 1 production code starts.
+- The contract artifacts may live as separate docs under `UI-21-POST/` or as locked appendices in this plan, but they must exist in-repo before Phase 1 coding.
+- If `neighbourhood_spec.md` and this plan disagree on a v1 product rule, Phase 0 must reconcile the product spec first and then produce the contract artifacts. Phase 1 must not choose between conflicting sources.
+- Raw screenshots help with UI implementation, but they do not satisfy the Phase 0 contract gate by themselves.
+- If any of these files are missing, the rollout is still blocked in Phase 0 and a Phase 1 implementer must stop rather than infer the missing contract inside Phase 1:
+  - `UI-21-POST/Posts-Envelope-Schemas.md`
+  - `UI-21-POST/Posts-Ingest-Flow.md`
+  - `UI-21-POST/Posts-Feed-Rules.md`
+  - `UI-21-POST/Posts-Nearby-Privacy-Contract.md`
+  - `UI-21-POST/Posts-UI-State-Inventory.md`
+  - `UI-21-POST/Phase-0-Approval.md`
+- The contract artifact set must include:
+  - exact payload schemas
+  - versioning rules
+  - required and optional fields
+  - sample JSON
+  - idempotency keys
+  - sender and trust validation rules
+  - feed ordering rules
+  - live, replay, and notification-ingest flow diagrams
+  - UI state inventory or acceptance snapshots
+  - explicit approved v1 defaults where the product spec is silent
+  - an approval record showing these defaults were ratified, not invented ad hoc during implementation
+- Minimum envelope coverage:
+  - `post_create`
+  - `post_comment`
+  - `post_reaction`
+  - `post_comment_reaction`
+  - `post_presence_update`
+  - `post_pass`
+  - `post_pin_update`
+  - `post_pin_remove`
+- Minimum common envelope fields to lock in Phase 0:
+  - `type`
+  - `version`
+  - `event_id`
+  - `created_at`
+  - `sender_peer_id`
+- Minimum entity ids to lock in Phase 0:
+  - `post_id`
+  - `comment_id`
+  - `reaction_id`
+  - `pass_id`
+  - `pin_event_id`
+  - or an explicitly approved equivalent naming scheme
+- Canonical convergence and dedupe rules that must be approved before Phase 1:
+  - live delivery, inbox replay, and wake-up drain all call the same typed ingest use case path
+  - duplicate `post_create` deliveries for the same `post_id` must never render twice
+  - child events that arrive before their parent post exists must be staged and reconciled later, not dropped
+  - mutable events such as pin updates must have an explicit conflict rule, for example latest approved event wins
+  - feed order must be driven by the approved Posts ordering rule, not by whichever transport path happened to deliver first
+
+## File Boundary Discipline
+
+- Every phase must define:
+  - inspect-first files
+  - primary edit zone
+  - avoid-unless-required files
+- Edits outside the primary edit zone require a written reason in the phase notes or PR.
+- Native bridge or Go files stay in the avoid-unless-required set until a phase explicitly proves an app-layer gap.
 
 ## UI Scope That Must Be Carried Through The Phases
 
@@ -68,6 +150,50 @@ This plan assumes the product contract in `../kitchen/landing-screen-claude/neig
   - own-post management states
 - [ ] If any of these UI pieces are intentionally deferred, note that explicitly in the phase exit gate instead of silently dropping them.
 
+## Reference Screenshots
+
+- The visual reference pack currently lives under `UI-21-POST/screenshots/`.
+- `Posts-UI-State-Inventory.md` is the normative UI acceptance artifact. Raw screenshots are authoritative only where they are explicitly incorporated there by filename.
+- Use the screenshot pack for spacing, hierarchy, sheet height, chip placement, card anatomy, and blocked-state presentation through that inventory artifact.
+- Primary screenshot-to-state mapping:
+  - `screenshots/01-default-feed.png`: default Posts feed
+  - `screenshots/02-friend-text-post.png`: direct-friend text card
+  - `screenshots/03-nearby-post-distance.png`: nearby card with distance label
+  - `screenshots/04-passed-along-post.png`: pass-along attribution card
+  - `screenshots/05-pinned-collapsed.png`: pinned section collapsed
+  - `screenshots/06-pinned-expanded.png`: pinned section expanded
+  - `screenshots/07-compose-default.png`: compose default state
+  - `screenshots/08-compose-nearby-stale.png`: compose blocked stale nearby state
+  - `screenshots/09-compose-nearby-ready.png`: compose nearby ready state
+  - `screenshots/10-compose-media.png`: compose with media attached
+  - `screenshots/11-compose-voice-recording.png`: Posts compose voice recording state
+  - `screenshots/12-compose-voice-draft.png`: Posts compose voice draft attached
+  - `screenshots/13-comments.png`: comments sheet
+  - `screenshots/14-caught-up.png`: caught-up or empty state
+  - `screenshots/15-voice-recording.png`: existing 1:1 voice-recording reference for recorder chrome reuse
+  - `screenshots/16-voice-message.png`: existing posted voice-message reference
+- `Posts-UI-State-Inventory.md` should reference these screenshots explicitly by filename. The contact-sheet images are convenience previews only, not the source of truth.
+
+## Phase 0 Artifact Index
+
+- `UI-21-POST/Posts-Envelope-Schemas.md`: normative wire contract, idempotency, and sender validation
+- `UI-21-POST/Posts-Ingest-Flow.md`: live, replay, notification-open, staging, and duplicate handling
+- `UI-21-POST/Posts-Feed-Rules.md`: feed ordering, pin ordering, overflow, and reorder triggers
+- `UI-21-POST/Posts-Nearby-Privacy-Contract.md`: nearby privacy semantics, persistence, TTL, refresh, and invalidation
+- `UI-21-POST/Posts-UI-State-Inventory.md`: screenshot-backed UI state inventory and fallback rules
+- `UI-21-POST/Phase-0-Approval.md`: human ratification record for unresolved v1 defaults
+
+## Phase 0 Approval Authority
+
+- Unresolved v1 defaults that are not explicitly stated in `neighbourhood_spec.md` must be approved by a named human, not self-approved by an implementation agent or review agent.
+- Default approval authority is the requesting maintainer or delegated human feature owner for this rollout.
+- The ratification artifact is `UI-21-POST/Phase-0-Approval.md`.
+- Phase 0 approval is not complete until that file records:
+  - the named human approver
+  - the approval date
+  - the exact artifact set being approved
+- AI-authored drafts may prepare the contract docs, but they do not count as final approval on their own.
+
 ## Phase 0 Assumptions
 
 - `Posts` is the final feature name.
@@ -78,11 +204,109 @@ This plan assumes the product contract in `../kitchen/landing-screen-claude/neig
 - Pinned posts have no preset expiry in v1.
 - There is no persistent privacy panel on the Posts feed.
 - Settings owns the persistent nearby/privacy controls, and compose shows nearby status only when it affects posting.
+- Contact eligibility rules are locked in v1:
+  - Posts audience selection uses active direct contacts only
+  - blocked contacts are excluded from `All Friends`, `Pick People`, and `People Nearby`
+  - archived contacts are excluded from audience pickers and nearby eligibility
+  - incoming Posts envelopes from blocked direct contacts are rejected before persistence
+  - incoming Posts envelopes from archived direct contacts may persist, but notifications are suppressed
 
 Remaining cleanup before coding:
 
 - [ ] Keep reshared trust context simple in v1: no mutual-friends badge on reshared posts, only the `passed this along` attribution line.
 - [ ] Keep reactions simple in v1: heart-only on posts and comments. Do not inherit the broader emoji-reaction model from chat.
+
+### Phase 0 Required Outputs
+
+- [ ] Check in an approved payload-contract artifact, for example `UI-21-POST/Posts-Envelope-Schemas.md`, that includes exact JSON schemas, required fields, sample payloads, versioning rules, and idempotency keys for every Posts envelope.
+- [ ] `Posts-Envelope-Schemas.md` must also include an explicit `Approved V1 Semantics` section that resolves:
+  - `post_reaction` event shape, heart toggle semantics, and idempotency scope
+  - `post_comment_reaction` event shape, heart toggle semantics, and idempotency scope
+  - `post_pin_update` authority, replace-versus-patch behavior, and remove or tombstone semantics
+  - active pinned-post edit transport semantics in v1
+  - notification-open payload contract for post targets and comment-entry targets
+  - pass-along engagement semantics for comments, hearts, delivery recipients, and expiry effects
+- [ ] Check in an ingest-flow artifact, for example `UI-21-POST/Posts-Ingest-Flow.md`, that covers:
+  - live delivery
+  - inbox replay
+  - notification-open routing
+  - out-of-order child-event staging
+  - duplicate delivery handling
+- [ ] Check in an approved feed-rules artifact that locks:
+  - feed ordering
+  - pin ordering
+  - duplicate-merge behavior
+  - conflict resolution for mutable events
+- [ ] `Posts-Feed-Rules.md` must also include an `Approved Ordering Keys and Tie-Breakers` section that resolves:
+  - direct-post ordering key
+  - pass-along ordering key
+  - pin ordering key
+  - collapsed-header overflow winner rules for pins and avatars
+  - whether edits, comments, pin updates, removals, or reshares reorder existing cards
+  - chronological section boundaries, timezone rules, and day-rollover behavior for `Right now`, `Earlier today`, and `Yesterday`
+- [ ] Check in an approved nearby/privacy contract artifact, for example `UI-21-POST/Posts-Nearby-Privacy-Contract.md`, that resolves:
+  - how the product promise of "~200m area" maps to the encoded coarse snapshot
+  - whether local nearby snapshots persist across app close
+  - what "sharing stops when app is closed" means in v1
+  - freshness TTL
+  - startup and resume refresh behavior
+  - invalidation rules when permission, sharing, or services change
+  - the final `post_presence_update` payload assumptions that later phases may rely on
+- [ ] Check in a UI state inventory or approved acceptance snapshots for:
+  - default feed
+  - direct-friend post card
+  - nearby post card
+  - pass-along post card
+  - compose default
+  - compose nearby blocked state
+  - media draft state
+  - voice draft state
+  - comments sheet
+  - pinned collapsed and expanded states
+  - and map each accepted state to the corresponding file under `UI-21-POST/screenshots/` where one exists
+- [ ] Check in a Phase 0 approval record at `UI-21-POST/Phase-0-Approval.md` that names the human approver and the approved artifact set.
+- [ ] Do not start Phase 1 until all six Phase 0 artifact files exist on disk and the approval record is filled in. If any are missing, the assignee is still doing Phase 0 work even if the intent was "start Phase 1".
+
+### Phase 0 Acceptance Commands
+
+- [ ] `test -f UI-21-POST/Posts-Envelope-Schemas.md`
+- [ ] `test -f UI-21-POST/Posts-Ingest-Flow.md`
+- [ ] `test -f UI-21-POST/Posts-UI-State-Inventory.md`
+- [ ] `test -f UI-21-POST/Posts-Feed-Rules.md`
+- [ ] `test -f UI-21-POST/Posts-Nearby-Privacy-Contract.md`
+- [ ] `test -f UI-21-POST/Phase-0-Approval.md`
+- [ ] `rg -n "Approved V1 Semantics|post_reaction|post_comment_reaction|post_pin_update|notification-open payload|pass-along engagement" UI-21-POST/Posts-Envelope-Schemas.md`
+- [ ] `rg -n "Approved Ordering Keys and Tie-Breakers|direct-post ordering key|pass-along ordering key|pin ordering key|overflow winner|reorder|Right now|Earlier today|Yesterday|timezone|rollover" UI-21-POST/Posts-Feed-Rules.md`
+- [ ] `rg -n "~200m|lat_e3|lng_e3|app close|sharing stops|freshness|startup|resume|invalidate|post_presence_update" UI-21-POST/Posts-Nearby-Privacy-Contract.md`
+- [ ] `rg -n "^Approved by: .+" UI-21-POST/Phase-0-Approval.md`
+- [ ] `rg -n "^Approved on: .+" UI-21-POST/Phase-0-Approval.md`
+- [ ] `rg -n "^Approved artifact set: .+" UI-21-POST/Phase-0-Approval.md`
+- [ ] `bash -lc '! rg -n "TBD|TODO|OPEN QUESTION|decide later|later decision" UI-21-POST/Posts-Envelope-Schemas.md UI-21-POST/Posts-Ingest-Flow.md UI-21-POST/Posts-Feed-Rules.md UI-21-POST/Posts-Nearby-Privacy-Contract.md UI-21-POST/Posts-UI-State-Inventory.md'`
+
+### Phase 0 Review Checklist
+
+- [ ] File existence is necessary but not sufficient. A reviewer must verify that `Posts-Envelope-Schemas.md` explicitly resolves the wire semantics the product spec does not define on its own:
+  - `post_reaction` and `post_comment_reaction` event shape and toggle semantics
+  - `post_pin_update` authority, replace-versus-patch behavior, and remove or tombstone semantics
+  - per-recipient idempotency scope for `post_create` fanout and later engagement events
+  - notification-open target payload contract for posts and comment-entry routing
+  - pass-along engagement semantics for comments, hearts, and expiry effects
+- [ ] A reviewer must reject Phase 0 if those semantics are merely engineer-proposed. The Phase 0 artifacts must record approved v1 defaults or approval owner and date, not just a drafted interpretation.
+- [ ] A reviewer must verify that `Posts-Feed-Rules.md` explicitly resolves the ordering and overflow rules the source spec leaves implicit:
+  - direct-post ordering key
+  - pass-along ordering key, including whether it sorts by original post time or pass time
+  - pin ordering
+  - which pins and avatars win collapsed-header overflow
+  - whether edits, pin updates, comments, or reshares reorder cards
+  - chronological section boundaries and timezone rollover behavior
+- [ ] A reviewer must verify that the nearby or privacy contract is reconciled before approving `post_presence_update`:
+  - how the product promise of "~200m" maps to the actual encoded coarse snapshot
+  - whether local nearby snapshots persist across app close
+  - whether "sharing stops when app is closed" means no new presence broadcast, immediate invalidation, or both
+  - freshness TTL and startup or resume refresh behavior
+  - the final sender and receiver semantics that the Phase 3 implementation details are allowed to assume
+- [ ] A reviewer must reject Phase 0 if the nearby/privacy contract leaves app-close behavior, snapshot persistence, or refresh behavior open to implementation interpretation.
+- [ ] A reviewer must reject Phase 0 if `Phase-0-Approval.md` does not name a human approver and the exact artifact set ratified.
 
 ### Agent Skills
 
@@ -94,6 +318,58 @@ Remaining cleanup before coding:
 
 Outcome: a real Posts tab where direct friends can publish text posts to `All Friends` or `Pick People`, receive them live or via inbox replay, and see them after app restart.
 
+Phase start condition: all required Phase 0 artifact files exist in `UI-21-POST/` and `Phase-0-Approval.md` is filled in by a named human approver. If not, stop and complete Phase 0 instead of backfilling contract decisions inside Phase 1 slices.
+
+### Internal Slices
+
+- Slice 1: contract lock, router, core schema, duplicate-create handling, and fake repo.
+  Prerequisite harnesses: in-memory Posts repository fake.
+  RED tests first: router parsing for `post_create`, duplicate `post_id` ingest, `027_posts_core` migration, fake repository contract tests.
+  Allowed edit zone: `lib/core/services/incoming_message_router.dart`, `lib/core/database/migrations/027_posts_core.dart`, `lib/core/database/helpers/posts_*`, `lib/features/posts/domain/**`, `lib/features/posts/application/handle_incoming_post_use_case.dart`, phase-local fakes.
+  Mini exit gate: `post_create` routes into one canonical ingest path and duplicate deliveries for the same `post_id` persist once.
+- Slice 2: sender flow plus direct live receiver ingest.
+  Prerequisite harnesses: in-memory Posts repository fake plus direct-delivery fake network harness and per-recipient delivery fixture.
+  RED tests first: `send_post_use_case` fanout, partial-recipient success plus inbox fallback, direct receiver ingest through `post_listener.dart`, repository round-trip for persisted posts and recipient delivery state.
+  Allowed edit zone: `lib/features/posts/**`, `lib/main.dart` listener construction or start points only, phase-local repository tests.
+  Mini exit gate: device A sends a direct-friend post, recipient statuses persist correctly, and device B renders the same local model without replay involved.
+- Slice 3: inbox replay plus notification-open target handoff.
+  Prerequisite harnesses: fake pending post-target store, notification-open harness, feed card focus or scroll helper.
+  RED tests first: inbox replay convergence, pending post-target routing from local tap, `onMessageOpenedApp`, `getInitialMessage`, and terminated local fallback launch, repo-observed target settle or timeout fallback, focused post selection after ingest.
+  Allowed edit zone: `lib/main.dart` including `_onNotificationTap`, `lib/features/identity/presentation/startup_router.dart`, `lib/core/lifecycle/handle_app_resumed.dart`, `lib/core/notifications/notification_service.dart`, `lib/core/notifications/flutter_notification_service.dart`, notification routing files, feed shell-owner files, integration fake harnesses.
+  Mini exit gate: replay and notification-open land on the same local post and focus it through the Posts tab.
+- Slice 4: shell ownership, Posts tab UI, compose, and Pick People.
+  Prerequisite harnesses: shell-controller test harness plus picker widget harness.
+  RED tests first: shell tab ownership tests, Posts tab switching, compose-sheet widget states, pick-people picker selection and submit states, blocked or archived contact exclusion in the picker.
+  Allowed edit zone: `lib/features/feed/**`, `lib/features/settings/**`, `lib/features/posts/presentation/**`, nav asset or manifest declarations, widget tests.
+  Mini exit gate: the app can open and return to the Posts tab without ad hoc tab switching in child screens.
+
+### Prerequisite Harnesses
+
+- [ ] In-memory Posts repository fake.
+- [ ] Fake pending post-target store or shell-controller test harness.
+- [ ] Notification-open harness for local tap, `onMessageOpenedApp`, and `getInitialMessage`.
+- [ ] Per-recipient delivery fixture or fake fanout harness for partial-success and inbox-fallback tests.
+- [ ] Feed card focus or scroll test helper for targeted post selection.
+
+### Scope Boundaries
+
+- Inspect first:
+  - `lib/main.dart`
+  - `lib/features/identity/presentation/startup_router.dart`
+  - `lib/core/services/incoming_message_router.dart`
+  - `lib/features/feed/presentation/widgets/feed_navigation_bar.dart`
+  - `lib/features/feed/presentation/screens/feed_wired.dart`
+  - `lib/features/settings/presentation/screens/settings_wired.dart`
+- Primary edit zone:
+  - `lib/features/posts/**`
+  - `lib/core/services/incoming_message_router.dart`
+  - `lib/main.dart`
+  - feed shell or tab-owner files under `lib/features/feed/`
+- Avoid unless required:
+  - `go-mknoon/**`
+  - unrelated conversation or group send logic
+  - existing chat media playback internals outside reuse wrappers
+
 ### Agent Skills
 
 - Primary: `$flutter-feature-module-implementer`
@@ -103,7 +379,11 @@ Outcome: a real Posts tab where direct friends can publish text posts to `All Fr
 ### Transport and routing
 
 - [ ] Extend `lib/core/services/incoming_message_router.dart` with a `postCreateStream` and route `type == 'post_create'`.
-- [ ] Keep `lib/core/services/p2p_service.dart` and `lib/core/services/p2p_service_impl.dart` unchanged at the API level. Reuse `sendMessageWithReply`, `storeInInbox`, and `drainOfflineInbox`.
+- [ ] Keep `lib/core/services/p2p_service.dart` and `lib/core/services/p2p_service_impl.dart` unchanged at the API level, but do not reduce Posts sending to one generic `sendMessage()` loop. Reuse the existing single-peer delivery semantics through a Posts-owned fanout orchestrator:
+  - per-recipient envelope build
+  - recipient-specific v2 ML-KEM encryption when available, otherwise approved v1 plaintext fallback
+  - direct send or race path first, then inbox fallback
+  - persisted per-recipient delivery status for partial success, retry, and restart visibility
 - [ ] Do not add new bridge commands in `lib/core/bridge/go_bridge_client.dart`, `lib/core/bridge/p2p_bridge_client.dart`, `go-mknoon/bridge/bridge.go`, or `go-mknoon/node/node.go` for this phase.
 
 ### Notifications and replay
@@ -116,10 +396,12 @@ Outcome: a real Posts tab where direct friends can publish text posts to `All Fr
   - local notification taps from `NotificationService.onNotificationTap`
   - warm-start opens from `FirebaseMessaging.onMessageOpenedApp`
   - terminated-start opens from `getInitialMessage` via `handleInitialRemoteMessage`
+  - terminated-start opens from Android local fallback notifications created in `background_message_handler.dart`
 - [ ] Keep that post-target flow explicit:
   - parse and store the target post id and optional focus state
   - trigger inbox drain
-  - wait for local Posts ingest to persist the target post
+  - do not treat `drainOfflineInbox()` return as replay-complete, because it only awaits the first inbox page before background continuation
+  - instead wait until the Posts repository or listener layer observes the target post locally, with a bounded timeout and fallback UI state
   - then select the Posts tab and scroll or focus the card
   - do not navigate directly to a post detail route before local ingest finishes
 - [ ] Add Posts notification handling by following the same local notification pattern already used by chat and groups:
@@ -127,7 +409,13 @@ Outcome: a real Posts tab where direct friends can publish text posts to `All Fr
   - `lib/core/notifications/flutter_notification_service.dart`
   - `lib/features/push/application/background_message_handler.dart`
 - [ ] Extend `lib/features/push/application/background_push_notification_fallback.dart` for post payloads instead of relying on the current closed message-type switch and generic fallback path.
-- [ ] Generalize notification payload routing so it can open a post target, not only a 1:1 contact/conversation target.
+- [ ] Generalize notification payload routing so it can open a post target, not only a 1:1 contact or conversation target.
+- [ ] Update `_MyAppState._onNotificationTap` in `lib/main.dart` so post payloads are explicitly dispatched instead of falling through to contact lookup.
+- [ ] Change the local notification callback contract from contact-specific naming to generic route-target payload semantics:
+  - `NotificationService.onNotificationTap`
+  - `FlutterNotificationService.onNotificationTap`
+  - any startup or fallback handoff that currently assumes the payload is a contact peer id
+- [ ] Add explicit cold-start recovery for terminated launches from local fallback notifications, not only live notification tap callbacks. If `flutter_local_notifications` needs app-launch details or a startup handoff path, build that in this phase and funnel it through the same pending post-target store.
 - [ ] Decide the initial tap target for a post notification in this phase: open the Posts tab and scroll to the post, not a conversation route.
 
 ### Database
@@ -142,6 +430,12 @@ Outcome: a real Posts tab where direct friends can publish text posts to `All Fr
   - `posts`
   - `post_recipients`
   - `post_feed_state` or equivalent local state for hide/read/delivery bookkeeping
+- [ ] Make `post_recipients` concrete enough for app-owned fanout and retry visibility:
+  - recipient peer id
+  - delivery status
+  - last attempt timestamp
+  - delivery path or ack state where relevant
+  - last error or retry bookkeeping
 - [ ] Keep post storage separate from `messages` and `media_attachments`. The existing conversation tables are optimized for thread chat, not broadcast posts.
 
 ### Domain and application
@@ -159,6 +453,15 @@ Outcome: a real Posts tab where direct friends can publish text posts to `All Fr
   - `lib/features/posts/application/handle_incoming_post_use_case.dart`
 - [ ] Add a listener similar to the existing message listeners:
   - `lib/features/posts/application/post_listener.dart`
+- [ ] Make `send_post_use_case.dart` own per-recipient fanout semantics instead of assuming a transport broadcast:
+  - build the eligible recipient set first
+  - exclude blocked and archived contacts from `All Friends`, `Pick People`, and later nearby qualification
+  - encrypt or serialize per recipient using the approved Phase 0 contract
+  - persist partial-recipient results without rolling back successful deliveries
+  - keep retry bookkeeping restart-safe through `post_recipients`
+- [ ] Make `post_listener.dart` enforce the sender-side contact rules on receive:
+  - reject blocked direct-contact senders before persistence
+  - suppress notifications for archived direct contacts while still allowing the repo policy above
 
 ### App wiring
 
@@ -192,6 +495,7 @@ Outcome: a real Posts tab where direct friends can publish text posts to `All Fr
   - `lib/features/posts/presentation/widgets/compose_post_sheet.dart`
 - [ ] Host the composer as a Posts-owned sheet or route. Do not model it on `lib/features/conversation/presentation/screens/conversation_wired.dart`, because chat compose is inline rather than a bottom sheet.
 - [ ] Use `lib/features/groups/presentation/screens/contact_picker_wired.dart` as the closest existing analogue for `Pick People`, then adapt it for active direct-contact multi-select. Do not reuse `share_target_picker_wired.dart`, which is for OS share intents.
+- [ ] Make the `Pick People` selector explicitly exclude blocked and archived contacts. Do not rely on whichever helper happens to power the first implementation.
 - [ ] Add Posts to `lib/features/feed/presentation/widgets/feed_navigation_bar.dart`.
 - [ ] Add a real Posts nav asset such as `assets/icons/nav_posts.svg` before wiring the tab. The nav bar is SVG-asset backed today.
 - [ ] Replace scattered bare tab strings with a shared tab-id constant or equivalent typed source of truth before adding `posts`.
@@ -227,6 +531,10 @@ Outcome: a real Posts tab where direct friends can publish text posts to `All Fr
 - [ ] Add router tests for `post_create`.
 - [ ] Add repository and migration tests for the new core tables.
 - [ ] Add integration-with-fakes coverage that proves live delivery and offline inbox replay converge into the same local repository path.
+- [ ] Add integration-with-fakes coverage that proves per-recipient partial failure is persisted correctly:
+  - one recipient succeeds while another falls back to inbox
+  - restart preserves retry-visible status
+  - successful recipients are not rolled back by later failures
 - [ ] Add a 2-device smoke flow: create post on device A, receive live on device B, then repeat with B offline and verify inbox replay on resume.
 - [ ] Add a push-wake smoke check: simulated remote wake-up triggers inbox drain and the post lands in the same local repository path as a live delivery.
 - [ ] Add notification tests that cover the explicit `post_create` fallback path in `background_push_notification_fallback.dart`.
@@ -234,13 +542,78 @@ Outcome: a real Posts tab where direct friends can publish text posts to `All Fr
   - local notification tap
   - `onMessageOpenedApp`
   - `getInitialMessage`
-  - all three must wait for local ingest, then land on the Posts tab with the target post focused
+  - Android terminated launch from a local fallback notification
+  - all four must wait for repo-observed local ingest or timeout fallback, then land on the Posts tab with the target post focused
+- [ ] Add sender-policy tests:
+  - blocked senders are rejected before persistence
+  - archived senders suppress notifications
+  - pickers exclude blocked and archived contacts
 - [ ] Add a repeatable simulator or CLI-backed Phase 1 smoke command under `integration_test/` or `integration_test/scripts/`.
 - [ ] Exit only when the Posts tab works without any debug-only shortcuts.
+
+### Required Acceptance Commands
+
+- [ ] If any referenced test directory, file, or smoke script does not exist at phase start, creating it is part of this phase deliverables.
+- [ ] `flutter test test/features/posts/phase1`
+- [ ] `flutter test test/core/services/incoming_message_router_posts_test.dart`
+- [ ] `flutter test integration_test/posts_phase1_fake_test.dart`
+- [ ] `bash integration_test/scripts/posts_phase1_smoke.sh`
 
 ## Phase 2: Comments, Reactions, Media, and Expiry
 
 Outcome: posts behave like a real feed item, not just a one-shot text broadcast, and normal posts age out according to the spec.
+
+### Internal Slices
+
+- Slice 1: comments base path, generic orphan child-event staging, reconciliation, and comment-sheet rendering.
+  Prerequisite harnesses: fake Posts engagement listener harness plus orphan-event fixture builder.
+  RED tests first: orphan comment event staging when parent post is missing, staged comment reconciliation after parent post ingest, comment persistence helpers, comment-sheet widget states.
+  Allowed edit zone: `lib/core/database/migrations/028_posts_engagement.dart`, `lib/core/database/helpers/post_comments_*`, new orphan-event helpers, `lib/features/posts/application/handle_incoming_post_use_case.dart`, `lib/features/posts/application/send_post_comment_use_case.dart`, `lib/features/posts/presentation/widgets/comments_sheet.dart`.
+  Mini exit gate: comments persist, replay, and render under one post without media, and orphan child events are staged instead of dropped.
+- Slice 2: heart-only reactions on posts and comments.
+  Prerequisite harnesses: fake Posts engagement listener harness plus recipient-set fixture builder.
+  RED tests first: post-heart idempotency, comment-heart idempotency, reaction fanout against the persisted recipient set, engagement listener update streams.
+  Allowed edit zone: `lib/features/posts/application/post_*reaction*`, `lib/features/posts/domain/**`, engagement listeners, reaction-related DB helpers, router tests.
+  Mini exit gate: repeated deliveries are idempotent and heart state stays consistent after restart.
+- Slice 3: media attach, upload, receive hydration, and restart restore.
+  Prerequisite harnesses: fake media upload or download adapter with `allowedPeers` inspection and attachment hydration fixture.
+  RED tests first: post-media upload metadata, `allowedPeers` built from the persisted recipient set, receive hydration from pending to local-path-ready, restart restore of hydrated cards, quality-preference-aware media processing.
+  Allowed edit zone: `lib/features/posts/application/attach_post_media_use_case.dart`, post-media helpers or repos, extracted shared media wrappers, `lib/core/media/**` wrappers touched for Posts reuse, `lib/features/settings/application/image_quality_preference_use_cases.dart` consumers in Posts compose, integration fixtures.
+  Mini exit gate: image, video, and voice posts hydrate into renderable local cards after replay and restart.
+- Slice 4: expiry lifecycle plus engagement-triggered extension.
+  Prerequisite harnesses: fake clock or time provider.
+  RED tests first: fake-clock countdown states, comment-triggered expiry extension, expired-post sweep, cleanup of expired attachment metadata and files.
+  Allowed edit zone: posts lifecycle helpers, expiry columns or repos, countdown widgets, cleanup use cases, fake clock harnesses.
+  Mini exit gate: countdown, comment-triggered expiry reset, and expired cleanup all agree on the same stored timestamps.
+
+### Prerequisite Harnesses
+
+- [ ] Fake Posts engagement listener harness.
+- [ ] Fake media upload or download adapter with `allowedPeers` inspection.
+- [ ] Attachment hydration fixture with pending and hydrated attachment states.
+- [ ] Fake clock or time provider for expiry tests.
+
+### Scope Boundaries
+
+- Inspect first:
+  - `lib/features/conversation/application/reaction_listener.dart`
+  - `lib/features/conversation/application/send_reaction_use_case.dart`
+  - `lib/features/conversation/application/chat_message_listener.dart`
+  - `lib/features/groups/application/group_message_listener.dart`
+  - `lib/features/conversation/application/upload_media_use_case.dart`
+  - `lib/core/media/media_file_manager.dart`
+  - `lib/features/settings/application/image_quality_preference_use_cases.dart`
+  - `lib/features/feed/presentation/screens/feed_wired.dart`
+  - `lib/features/conversation/presentation/screens/conversation_wired.dart`
+- Primary edit zone:
+  - `lib/features/posts/**`
+  - shared media wrappers or extracted helpers needed for Posts reuse
+  - `lib/main.dart`
+  - `lib/core/services/incoming_message_router.dart`
+- Avoid unless required:
+  - existing chat or group UI behavior outside shared-extraction work
+  - relay or Go upload transport
+  - unrelated settings or onboarding surfaces
 
 ### Agent Skills
 
@@ -265,11 +638,13 @@ Outcome: posts behave like a real feed item, not just a one-shot text broadcast,
   - `lib/core/database/helpers/post_reactions_db_helpers.dart`
   - `lib/core/database/helpers/post_comment_reactions_db_helpers.dart`
   - `lib/core/database/helpers/post_media_db_helpers.dart`
+  - `lib/core/database/helpers/post_pending_child_events_db_helpers.dart`
 - [ ] Add tables for:
   - `post_comments`
   - `post_reactions`
   - `post_comment_reactions`
   - `post_media_attachments`
+  - `post_pending_child_events`
 - [ ] Extend the `posts` schema or companion helpers for expiry bookkeeping:
   - `expires_at`
   - `last_engagement_at`
@@ -287,6 +662,10 @@ Outcome: posts behave like a real feed item, not just a one-shot text broadcast,
 ### Domain and application
 
 - [ ] Add models and repos for comments, comment counts, heart-only reactions, comment-heart state, post media, and expiry lifecycle.
+- [ ] Implement one generic orphan child-event staging path in this phase and reuse it later for pin events instead of creating phase-specific staging logic:
+  - stage child envelopes keyed by `post_id`, `event_type`, and `event_id`
+  - reconcile staged rows immediately after a parent post is ingested
+  - delete or mark staged rows as consumed after successful reconciliation
 - [ ] Add a typed Posts engagement listener layer instead of treating router streams as the final ingress step:
   - `post_comment_listener.dart`
   - `post_reaction_listener.dart`
@@ -302,6 +681,8 @@ Outcome: posts behave like a real feed item, not just a one-shot text broadcast,
   - `send_post_comment_reaction_use_case.dart`
   - `load_post_comments_use_case.dart`
   - `attach_post_media_use_case.dart`
+  - `stage_orphan_post_child_event_use_case.dart`
+  - `reconcile_pending_post_child_events_use_case.dart`
 - [ ] Add expiry lifecycle use cases:
   - reset or extend expiry when a new comment lands
   - sweep expired posts and their local attachments
@@ -331,8 +712,14 @@ Outcome: posts behave like a real feed item, not just a one-shot text broadcast,
   - `lib/features/conversation/presentation/widgets/recording_overlay.dart`
   - `lib/shared/widgets/media/audio_player_widget.dart`
   - `lib/shared/widgets/media/*`
+- [ ] Honor the app's existing media quality preferences in Posts compose:
+  - load image and video quality from `image_quality_preference_use_cases.dart`
+  - pass those preferences through the same processing path used by current media compose flows
+  - do not invent Posts-only image or video quality settings in v1
 - [ ] If `RecordingOverlay` is reused directly, extract or move the shared recorder chrome out of `lib/features/conversation/` first. Do not create a long-term cross-feature import from Posts into a conversation-only presentation folder.
-- [ ] Fix the existing `AudioRecorderService.start()` signature mismatch before routing Posts recording through the interface.
+- [ ] Fix the existing `AudioRecorderService.start()` signature mismatch before routing Posts recording through the interface, but lock behavior instead of just types:
+  - preserve the current default-path fallback behavior used by the production recorder when the caller does not provide a meaningful path
+  - update the interface, implementation, fakes, and tests together so Posts and existing chat or group recording flows stay consistent
 
 ### App wiring
 
@@ -356,7 +743,7 @@ Outcome: posts behave like a real feed item, not just a one-shot text broadcast,
 - [ ] Reuse shared media viewers where possible instead of duplicating image and video presentation logic.
 - [ ] Cover the spec's image-post variant:
   - multi-image carousel
-  - swipe navigation
+  - horizontal swipe navigation inside the card, matching the reference interaction in the `Noor` post from the `30-posts` mock
   - dot indicators
   - current-image counter badge
 - [ ] Cover the spec's video-post variant:
@@ -375,6 +762,7 @@ Outcome: posts behave like a real feed item, not just a one-shot text broadcast,
 - [ ] It is acceptable for Posts to use a different entry gesture than 1:1 chat. Reuse the recorder stack even if Posts starts recording from a dedicated `Voice` attachment button instead of the chat mic's long-press affordance.
 - [ ] After stopping a recording, show the voice clip as an attached draft preview in compose before posting. Do not send immediately on record stop unless the product contract changes.
 - [ ] Update the compose sheet to support attachments while staying within the spec's "one media type per post" rule.
+- [ ] Keep Posts media attach behavior aligned with existing Settings-driven quality behavior for both image and video processing.
 - [ ] Add heart-only reactions on comments inside the comments sheet.
 - [ ] Render the expiry footer and countdown state on cards, and update it when comments extend the post lifetime.
 
@@ -386,19 +774,82 @@ Outcome: posts behave like a real feed item, not just a one-shot text broadcast,
   - `send_post_comment`, `send_post_reaction`, `send_post_comment_reaction`, expiry lifecycle, `load_post_comments`, and media-attach use cases
   - comments-sheet, image-carousel, video-card, expiry-footer, and compose-attachment widget states
 - [ ] Add payload parsing tests for `post_comment`, `post_reaction`, and `post_comment_reaction`.
+- [ ] Add staging tests for orphan child events:
+  - missing-parent comment stages instead of dropping
+  - missing-parent reaction stages instead of dropping
+  - parent post ingest reconciles and clears staged rows
 - [ ] Add DB tests that verify comment insertion resets expiry bookkeeping and expired posts clean up attached media rows.
 - [ ] Add integration-with-fakes coverage for comment replay after offline drain, reaction idempotency, comment-heart idempotency, expiry sweep, notification routing, and media metadata restore after restart.
 - [ ] Add integration tests that prove the persisted post recipient set is reused for:
   - comment fanout
   - reaction fanout
   - media `allowedPeers`
+- [ ] Add media-processing tests that prove Posts uses the stored image and video quality preferences instead of hard-coded compression defaults.
 - [ ] Add 2-device tests for image, video, and voice post delivery, comment replay after offline inbox drain, comment-heart behavior, reaction idempotency, and hydrated media restore after restart.
 - [ ] Add a repeatable simulator or CLI-backed media-post smoke command that covers image, video, and voice flows.
 - [ ] Exit only when media posts, comment hearts, and expiry lifecycle all behave correctly after restart and replay.
 
+### Required Acceptance Commands
+
+- [ ] If any referenced test directory, file, or smoke script does not exist at phase start, creating it is part of this phase deliverables.
+- [ ] `flutter test test/features/posts/phase2`
+- [ ] `flutter test test/core/services/incoming_message_router_posts_engagement_test.dart`
+- [ ] `flutter test integration_test/posts_phase2_fake_test.dart`
+- [ ] `bash integration_test/scripts/posts_phase2_smoke.sh`
+
 ## Phase 3: People Nearby and Privacy
 
 Outcome: nearby-scoped posts work with real location privacy rules instead of a UI-only radius selector.
+
+### Internal Slices
+
+- Slice 1: DB-backed nearby privacy state plus Settings controls.
+  Prerequisite harnesses: fake nearby-settings repository fixture plus widget harness for Settings and compose availability.
+  RED tests first: DB-backed nearby-sharing state reads and writes, Settings toggles through the repository, compose availability reflects the stored state without a second preference source.
+  Allowed edit zone: nearby DB helpers or repos, `lib/features/settings/**`, `lib/features/posts/domain/posts_privacy_settings.dart`, related widget tests.
+  Mini exit gate: one stored source of truth drives compose availability and Settings state.
+- Slice 2: local location service, permission flow, and silent lifecycle refresh rules.
+  Prerequisite harnesses: fake location service, fake permission-state adapter, lifecycle harness for startup and resume without prompts.
+  RED tests first: startup or resume refresh never prompts, compose or Settings-triggered refresh may prompt, denied and denied-forever transitions behave correctly.
+  Allowed edit zone: `lib/features/posts/application/nearby_location_service.dart`, `lib/core/lifecycle/handle_app_resumed.dart`, startup hooks, Android manifest or iOS plist changes, permission harnesses.
+  Mini exit gate: startup and resume refresh do not prompt, while compose and Settings can.
+- Slice 3: nearby presence ingest and friend-snapshot persistence.
+  Prerequisite harnesses: fake permission-state adapter plus nearby presence event fixture builder.
+  RED tests first: `post_presence_update` validation, direct-friend snapshot persistence, immediate invalidation when sharing is disabled or services are lost.
+  Allowed edit zone: nearby-presence listener, router, nearby DB helpers, `lib/main.dart` listener wiring, presence integration tests.
+  Mini exit gate: direct-friend presence updates persist and invalidation happens immediately on sharing or permission loss.
+- Slice 4: sender qualification, recipient persistence, distance labels, and replay safety.
+  Prerequisite harnesses: fake location service, fake clock or freshness builder, replay fixture builder.
+  RED tests first: radius qualification, blocked or archived contact exclusion, persisted recipient locking, distance label rendering from stored snapshots, offline replay without requalification.
+  Allowed edit zone: nearby eligibility service or use cases, posts repositories, nearby UI widgets, replay tests.
+  Mini exit gate: recipients are locked at send time and replay never recomputes eligibility.
+
+### Prerequisite Harnesses
+
+- [ ] Fake location service with deterministic coordinates.
+- [ ] Fake permission-state adapter covering granted, denied, denied forever, and services-off.
+- [ ] Fake clock or freshness builder.
+- [ ] Lifecycle harness for startup and resume without prompts.
+
+### Scope Boundaries
+
+- Inspect first:
+  - `lib/core/lifecycle/handle_app_resumed.dart`
+  - `lib/features/identity/presentation/startup_router.dart`
+  - `lib/features/contacts/domain/models/contact_model.dart`
+  - `lib/features/settings/presentation/screens/settings_wired.dart`
+  - `lib/features/settings/presentation/screens/settings_screen.dart`
+  - secure-storage preference helpers under `lib/features/settings/application/`
+- Primary edit zone:
+  - `lib/features/posts/**`
+  - settings files needed for nearby controls
+  - `lib/main.dart`
+  - `lib/core/lifecycle/handle_app_resumed.dart`
+  - `lib/core/services/incoming_message_router.dart`
+- Avoid unless required:
+  - conversation/contact persistence unrelated to nearby
+  - general preference helpers for non-Posts settings
+  - Go bridge or native location code beyond manifest or plist changes
 
 ### Agent Skills
 
@@ -410,11 +861,16 @@ Why this is a real phase: `lib/features/contacts/domain/models/contact_model.dar
 
 ### Product and data model
 
+- [ ] These Phase 3 implementation details are not self-authorizing. Phase 0 must reconcile the nearby/privacy contract in the product spec and contract artifacts before `post_presence_update` is approved.
 - [ ] Lock the Phase 3 implementation contract before coding:
   - use `geolocator` in `pubspec.yaml` for foreground location access and distance calculation in v1
   - do not add `permission_handler`; keep permission flow inside the location service layer
   - do not add background location, geofencing, or always-on tracking in v1
 - [ ] Keep the audience rule as sender-side recipient selection using the freshest known friend locations.
+- [ ] Nearby eligibility inherits the Phase 1 contact policy:
+  - only active direct contacts may qualify
+  - blocked contacts never qualify
+  - archived contacts do not qualify for nearby fanout in v1
 - [ ] Represent shared nearby presence as a rounded coordinate snapshot, not precise live tracking:
   - store and transmit `lat_e3` and `lng_e3` rounded to 3 decimal places
   - include `captured_at` and reported `accuracy_m`
@@ -543,9 +999,64 @@ Why this is a real phase: `lib/features/contacts/domain/models/contact_model.dar
 - [ ] Add a repeatable simulator smoke command for permission flow plus nearby send eligibility.
 - [ ] Exit only when nearby posts are privacy-correct, not just visually labeled.
 
+### Required Acceptance Commands
+
+- [ ] If any referenced test directory, file, or smoke script does not exist at phase start, creating it is part of this phase deliverables.
+- [ ] `flutter test test/features/posts/phase3`
+- [ ] `flutter test test/core/services/incoming_message_router_posts_presence_test.dart`
+- [ ] `flutter test integration_test/posts_phase3_fake_test.dart`
+- [ ] `bash integration_test/scripts/posts_phase3_smoke.sh`
+
 ## Phase 4: Pass Along and Extended-Network Delivery
 
 Outcome: a friend can explicitly pass a post along, and the receiver sees trustworthy attribution instead of system-driven stranger discovery.
+
+### Internal Slices
+
+- Slice 1: pass contract, original snapshot shape, and trust validation.
+  Prerequisite harnesses: original-post snapshot fixture plus sender-mismatch fixture builder.
+  RED tests first: invalid payload shape, transport sender mismatch rejection, unknown direct-contact passing friend rejection, original snapshot parsing.
+  Allowed edit zone: pass models, pass payload schema tests, `handle_incoming_passed_post_use_case.dart`, router tests.
+  Mini exit gate: invalid or mismatched pass envelopes are rejected before persistence.
+- Slice 2: sender pass flow and explicit one-hop rule.
+  Prerequisite harnesses: three-peer fake network builder plus eligible-post pass fixture.
+  RED tests first: eligible post pass flow, blocked pass action for `Pick People`, one-hop rule enforcement, outgoing payload snapshot completeness.
+  Allowed edit zone: pass send use case, Posts card pass action UI, pass-related repos, widget tests.
+  Mini exit gate: only eligible posts can be passed and the payload contains the renderable original snapshot.
+- Slice 3: receiver ingest, local dedupe, and feed rendering.
+  Prerequisite harnesses: duplicate-delivery injector plus original-post snapshot fixture.
+  RED tests first: duplicate pass deliveries merge by original post identity, stable attribution after merge, friend-of-friend render from the embedded original snapshot.
+  Allowed edit zone: Posts feed loading or merge helpers, pass repos, dedupe logic, receiver widget tests, fake network duplication fixtures.
+  Mini exit gate: duplicate pass deliveries merge into one local item with stable attribution.
+- Slice 4: original-author share counts and related UI states.
+  Prerequisite harnesses: share-count fixture builder.
+  RED tests first: sender-only share count visibility, receiver non-visibility, persisted share-count updates after new pass events.
+  Allowed edit zone: author-management widgets, pass repos, own-post models, widget tests.
+  Mini exit gate: the original author sees share counts without exposing them as social proof to receivers.
+
+### Prerequisite Harnesses
+
+- [ ] Three-peer fake network builder.
+- [ ] Duplicate-delivery injector for pass envelopes.
+- [ ] Original-post snapshot fixture for receiver rendering tests.
+
+### Scope Boundaries
+
+- Inspect first:
+  - `lib/features/conversation/application/handle_incoming_chat_message_use_case.dart`
+  - `lib/features/groups/application/handle_incoming_group_invite_use_case.dart`
+  - `lib/features/feed/application/load_feed_use_case.dart`
+  - `lib/features/feed/application/feed_store.dart`
+  - `lib/features/contacts/domain/models/contact_model.dart`
+- Primary edit zone:
+  - `lib/features/posts/**`
+  - `lib/core/services/incoming_message_router.dart`
+  - `lib/main.dart`
+  - feed-loading code touched only if Posts snapshots need explicit merge points
+- Avoid unless required:
+  - existing contact or introduction rules outside trust validation parallels
+  - group chat reconstruction logic
+  - Go or bridge transport framing
 
 ### Agent Skills
 
@@ -578,6 +1089,11 @@ Outcome: a friend can explicitly pass a post along, and the receiver sees trustw
 - [ ] Add use cases:
   - `pass_post_along_use_case.dart`
   - `handle_incoming_passed_post_use_case.dart`
+- [ ] Before Phase 4 coding starts, lock the pass-along engagement model in the approved Phase 0 contract artifacts:
+  - whether pass recipients can comment and heart
+  - who receives those engagement events
+  - whether those events reset the original post expiry
+  - whether pass-along expands the post's effective engagement recipient set or uses a narrower author or passer-scoped rule
 - [ ] Enforce spec rules in application code, not UI only:
   - pass-along is a single extra hop in v1
   - transport sender must match the passing friend in the payload
@@ -625,9 +1141,62 @@ Outcome: a friend can explicitly pass a post along, and the receiver sees trustw
 - [ ] Add a repeatable simulator or CLI-backed 3-device pass-along smoke command.
 - [ ] Exit only when the trust chain is visible and rules are enforced serverless.
 
+### Required Acceptance Commands
+
+- [ ] If any referenced test directory, file, or smoke script does not exist at phase start, creating it is part of this phase deliverables.
+- [ ] `flutter test test/features/posts/phase4`
+- [ ] `flutter test test/core/services/incoming_message_router_posts_pass_test.dart`
+- [ ] `flutter test integration_test/posts_phase4_fake_test.dart`
+- [ ] `bash integration_test/scripts/posts_phase4_smoke.sh`
+
 ## Phase 5: Pinned Posts and Lifecycle Controls
 
 Outcome: standing offers behave correctly across normal feed, pinned section, dismissal, sender edits, and sender removal.
+
+### Internal Slices
+
+- Slice 1: pin router contract, schema, and persistence.
+  Prerequisite harnesses: pin-event fixtures plus orphan child-event staging reuse fixture.
+  RED tests first: pin-envelope routing and parsing, orphan pin-event staging before parent post exists, staged pin-event reconciliation after parent post ingest, pin dedupe rules.
+  Allowed edit zone: `lib/core/services/incoming_message_router.dart`, pin DB helpers, orphan child-event staging reuse, router tests, pin fixture builders.
+  Mini exit gate: `post_pin_update` and `post_pin_remove` route, persist, and dedupe correctly.
+- Slice 2: sender pin, edit, and remove flows.
+  Prerequisite harnesses: sender pin-event fixtures.
+  RED tests first: sender pin creation, sender edit propagation, sender remove propagation, sender-side state transitions.
+  Allowed edit zone: pin send or edit use cases, pin repositories, sender management widgets, related tests.
+  Mini exit gate: sender-side actions update local state and outgoing envelopes consistently.
+- Slice 3: receiver pinned section, dismiss, and restart restore.
+  Prerequisite harnesses: local dismissal fixture and persistence builder.
+  RED tests first: local-only dismiss persistence, restart restore for active pins and dismissals, normal-feed plus pinned-section consistency.
+  Allowed edit zone: receiver pin widgets, pin repositories, restart tests, pinned-section builders.
+  Mini exit gate: receiver dismiss is local-only and restart-safe.
+- Slice 4: collapsed-header details, active-pins banner, and `Message [name]` action.
+  Prerequisite harnesses: pinned-section widget harness with collapsed and expanded states.
+  RED tests first: stacked-avatar header states, active-pins compose banner, `Message [name]` button behavior and visibility, overflow badge rendering.
+  Allowed edit zone: Posts pinned widgets, compose widgets, widget tests only for pinned UI chrome.
+  Mini exit gate: all pinned-specific UI states render from persisted state, not ad hoc widget logic.
+
+### Prerequisite Harnesses
+
+- [ ] Pin-event fixtures for `post_pin_update` and `post_pin_remove`.
+- [ ] Local dismissal fixture and persistence builder.
+- [ ] Pinned-section widget harness with collapsed and expanded states.
+
+### Scope Boundaries
+
+- Inspect first:
+  - `lib/core/services/incoming_message_router.dart`
+  - `test/core/services/incoming_message_router_test.dart`
+  - current Posts widgets under `lib/features/posts/presentation/widgets/`
+- Primary edit zone:
+  - `lib/features/posts/**`
+  - `lib/core/services/incoming_message_router.dart`
+  - `lib/main.dart`
+  - router tests and Posts widget tests
+- Avoid unless required:
+  - unrelated feed-thread card logic outside shared styling helpers
+  - chat or group pin analogues if they are not shared
+  - native transport layers
 
 ### Agent Skills
 
@@ -661,7 +1230,9 @@ Outcome: standing offers behave correctly across normal feed, pinned section, di
   - `remove_pin_use_case.dart`
   - `dismiss_pin_use_case.dart`
   - `edit_pinned_post_use_case.dart`
+- [ ] V1 sender edits for active pinned posts reuse `post_pin_update` with full-snapshot replace semantics. Do not add a separate `post_edit` envelope in v1.
 - [ ] Add incoming handlers for `post_pin_update` and `post_pin_remove`.
+- [ ] Reuse the generic orphan child-event staging path from Phase 2 for early-arriving pin events. Do not create a second pin-only staging store.
 - [ ] Make sure a sender removal updates both the pinned section and the regular feed entry correctly.
 
 ### UI
@@ -684,6 +1255,7 @@ Outcome: standing offers behave correctly across normal feed, pinned section, di
   - sender edit/remove propagation
   - pinned-section, stacked-avatar header, compose-banner, and local-dismiss widget states
 - [ ] Add router tests for `post_pin_update` and `post_pin_remove`.
+- [ ] Add staging tests for orphan pin events that arrive before the parent post.
 - [ ] Add tests for local dismiss persistence.
 - [ ] Add tests for sender edit/remove propagation.
 - [ ] Add tests for the sender-only active-pins banner and `Message [name]` pinned-card action.
@@ -692,7 +1264,56 @@ Outcome: standing offers behave correctly across normal feed, pinned section, di
 - [ ] Add a repeatable simulator or CLI-backed pinned-post lifecycle smoke command.
 - [ ] Exit only when pinned posts behave as standing offers, not duplicated or orphaned records.
 
+### Required Acceptance Commands
+
+- [ ] If any referenced test directory, file, or smoke script does not exist at phase start, creating it is part of this phase deliverables.
+- [ ] `flutter test test/features/posts/phase5`
+- [ ] `flutter test test/core/services/incoming_message_router_posts_pins_test.dart`
+- [ ] `flutter test integration_test/posts_phase5_fake_test.dart`
+- [ ] `bash integration_test/scripts/posts_phase5_smoke.sh`
+
 ## Final Hardening Gate
+
+Outcome: all phase deliverables, command matrices, and carry-forward items are consolidated into a repeatable regression gate that is strong enough for unattended execution and review.
+
+### Internal Slices
+
+- Slice 1: build missing test trees, smoke scripts, and regression harnesses referenced by earlier phases.
+  Prerequisite harnesses: shared regression script wrapper plus empty end-to-end fixture builder.
+  RED tests first: missing-path checks for phase command targets, failing smoke-script entrypoints, empty regression harness placeholders.
+  Allowed edit zone: `test/features/posts/**`, `test/core/services/**`, `integration_test/**`, `integration_test/scripts/**`, supporting test-only builders or fixtures.
+  Mini exit gate: every referenced phase command target exists on disk and fails for product reasons only, not because the file or script is missing.
+- Slice 2: run and stabilize the full Posts regression matrix across routing, replay, notifications, media, nearby, pass-along, and pins.
+  Prerequisite harnesses: aggregate Posts fake-network builder plus end-to-end fixture builder.
+  RED tests first: full-sequence end-to-end regression, replay or dedupe regressions, notification-open regressions, restart-recovery regressions.
+  Allowed edit zone: test harnesses and scripts first, then minimal bug-fix edits in `lib/features/posts/**`, `lib/main.dart`, feed shell-owner files, and router wiring if tests expose real regressions.
+  Mini exit gate: the end-to-end Posts regression suite passes without phase-local skips or manual data surgery.
+- Slice 3: finalize residual-risk ledger, explicit deferrals, and conditional native regression coverage.
+  Prerequisite harnesses: residual-risk artifact template plus conditional native regression wrapper.
+  RED tests first: conditional native regression commands if app-layer changes forced native edits, plus checks that residual-risk and deferral artifacts exist.
+  Allowed edit zone: `UI-21-POST/**`, regression docs, Go tests only if native code changed, smoke scripts or CI wrappers for final command execution.
+  Mini exit gate: residual risks, deferrals, and next-phase or post-launch prerequisites are written down, and native regression is either green or explicitly not applicable.
+
+### Prerequisite Harnesses
+
+- [ ] Aggregate Posts fake-network builder that can cover live, replay, duplicate delivery, and notification-open cases in one suite.
+- [ ] Shared regression script wrapper for running the per-phase smoke scripts in sequence.
+- [ ] End-to-end fixture builder that can seed posts, comments, nearby state, pass-along, and pins without manual setup.
+
+### Scope Boundaries
+
+- Inspect first:
+  - `test/features/posts/**`
+  - `test/core/services/**`
+  - `integration_test/**`
+  - `integration_test/scripts/**`
+  - `UI-21-POST/**`
+- Primary edit zone:
+  - test trees, integration harnesses, smoke scripts, and regression docs
+  - minimal production fixes only where the regression matrix exposes a real bug
+- Avoid unless required:
+  - broad feature refactors unrelated to failing regressions
+  - Go or bridge changes unless app-layer verification proves a native regression is relevant
 
 ### Agent Skills
 
@@ -719,6 +1340,15 @@ Outcome: standing offers behave correctly across normal feed, pinned section, di
   - `go-mknoon/integration/local_relay_harness_test.go`
   - additional `go-mknoon/integration/*` tests only when a native behavior changes
 - [ ] Keep at least one repeatable CLI or simulator command per user-visible Posts smoke scenario and document those commands in the phase notes or PR.
+
+### Required Acceptance Commands
+
+- [ ] If any referenced test directory, file, or smoke script does not exist at hardening start, creating it is part of the hardening deliverables.
+- [ ] `flutter test test/features/posts`
+- [ ] `flutter test test/core/services`
+- [ ] `flutter test integration_test/posts_full_regression_test.dart`
+- [ ] `bash integration_test/scripts/posts_full_regression_smoke.sh`
+- [ ] If native bridge or Go files changed in this phase: `if [ -d go-mknoon ]; then (cd go-mknoon && go test ./...); fi`
 
 ## Recommended Delivery Order
 

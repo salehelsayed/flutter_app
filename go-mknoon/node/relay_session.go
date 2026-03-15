@@ -68,9 +68,8 @@ type RelaySessionManager struct {
 	aggregateState AggregateRelayState
 
 	// Singleflight gate for recovery — only one recovery runs at a time.
-	recovering   bool
-	recoveryCh   chan *RecoveryResult
-	recoveryOnce sync.Once
+	recovering bool
+	recovery   *recoveryPromise
 
 	// Counts for diagnostics.
 	watchdogRestartCount int
@@ -88,6 +87,12 @@ type RecoveryResult struct {
 	Reason            string `json:"reason,omitempty"`
 	RelayState        string `json:"relayState"`
 	HealthyRelayCount int    `json:"healthyRelayCount"`
+}
+
+type recoveryPromise struct {
+	done   chan struct{}
+	result *RecoveryResult
+	err    error
 }
 
 // NewRelaySessionManager creates a new relay session manager.
@@ -299,41 +304,53 @@ func (m *RelaySessionManager) HasReservation() bool {
 
 // --- Recovery Coalescing ---
 
-// BeginRecovery attempts to start a recovery operation. If one is already
-// in progress, it returns the existing channel to wait on (singleflight pattern).
-// Returns (channel, isNew). If isNew is true, the caller is responsible for
-// completing the recovery and calling CompleteRecovery.
-func (m *RelaySessionManager) BeginRecovery() (chan *RecoveryResult, bool) {
+// BeginRecovery attempts to start a recovery operation. If one is already in
+// progress, it returns the existing promise to wait on (singleflight pattern).
+// Returns (promise, isNew). If isNew is true, the caller owns the recovery and
+// must eventually call CompleteRecovery.
+func (m *RelaySessionManager) BeginRecovery() (*recoveryPromise, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	if m.recovering {
-		// Return existing channel — caller should wait on it.
-		return m.recoveryCh, false
+		return m.recovery, false
 	}
 
 	m.recovering = true
-	m.recoveryCh = make(chan *RecoveryResult, 1)
+	m.recovery = &recoveryPromise{done: make(chan struct{})}
 	m.aggregateState = AggregateRelayRecovering
 
-	return m.recoveryCh, true
+	return m.recovery, true
 }
 
-// CompleteRecovery signals that recovery is done and broadcasts the result
-// to all waiting callers.
-func (m *RelaySessionManager) CompleteRecovery(result *RecoveryResult) {
+// Wait blocks until the shared recovery completes and returns the final
+// structured outcome to every waiter.
+func (p *recoveryPromise) Wait() (*RecoveryResult, error) {
+	if p == nil {
+		return nil, nil
+	}
+	<-p.done
+	return p.result, p.err
+}
+
+// CompleteRecovery signals that recovery is done and publishes the result to
+// all waiting callers.
+func (m *RelaySessionManager) CompleteRecovery(result *RecoveryResult, err error) {
 	m.mu.Lock()
-	ch := m.recoveryCh
+	recovery := m.recovery
 	m.recovering = false
 	if result != nil && result.RecoveryMode == "watchdog_restart" {
 		m.watchdogRestartCount++
+		m.needsGroupRecovery = true
 	}
 	m.recomputeAggregateLocked()
+	m.recovery = nil
 	m.mu.Unlock()
 
-	if ch != nil {
-		ch <- result
-		close(ch)
+	if recovery != nil {
+		recovery.result = result
+		recovery.err = err
+		close(recovery.done)
 	}
 }
 
@@ -592,9 +609,12 @@ func (m *RelaySessionManager) Reset() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.sessions = make(map[string]*RelaySessionState)
+	if m.recovering {
+		m.aggregateState = AggregateRelayRecovering
+		return
+	}
 	m.aggregateState = AggregateRelayStarting
-	m.recovering = false
-	m.recoveryCh = nil
+	m.recovery = nil
 }
 
 // --- Placeholder for autorelay metrics tracer hook ---

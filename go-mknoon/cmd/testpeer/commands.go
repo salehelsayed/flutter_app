@@ -55,6 +55,9 @@ func handleCommand(cmd string, params map[string]interface{}) map[string]interfa
 	case "register":
 		return cmdRegister(params)
 
+	case "unregister":
+		return cmdUnregister(params)
+
 	case "discover":
 		return cmdDiscover(params)
 
@@ -338,6 +341,23 @@ func cmdRegister(params map[string]interface{}) map[string]interface{} {
 
 	if err := state.node.RendezvousRegister(namespace, nil); err != nil {
 		return errResult(fmt.Sprintf("register: %v", err))
+	}
+	return okResult(map[string]interface{}{
+		"namespace": namespace,
+	})
+}
+
+func cmdUnregister(params map[string]interface{}) map[string]interface{} {
+	if state.node == nil {
+		return errResult("node not started")
+	}
+	namespace, _ := params["namespace"].(string)
+	if namespace == "" {
+		namespace = state.node.Namespace()
+	}
+
+	if err := state.node.RendezvousUnregister(namespace, nil); err != nil {
+		return errResult(fmt.Sprintf("unregister: %v", err))
 	}
 	return okResult(map[string]interface{}{
 		"namespace": namespace,

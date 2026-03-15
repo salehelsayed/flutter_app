@@ -18,6 +18,7 @@ class FakeP2PService implements P2PService {
   String? sendMessageReply;
   bool shouldThrow;
   bool storeInInboxResult;
+  RelayProbeResult probeRelayResult;
 
   DiscoveredPeer? discoverPeerResult;
   bool dialPeerResult;
@@ -25,6 +26,7 @@ class FakeP2PService implements P2PService {
   int discoverCallCount = 0;
   int dialCallCount = 0;
   int sendCallCount = 0;
+  int probeRelayCallCount = 0;
   int storeInInboxCallCount = 0;
 
   String? lastSentPeerId;
@@ -45,6 +47,7 @@ class FakeP2PService implements P2PService {
     this.sendMessageReply = 'received: ok',
     this.shouldThrow = false,
     this.storeInInboxResult = false,
+    this.probeRelayResult = RelayProbeResult.error,
     DiscoveredPeer? discoverPeerResult,
     bool useNullDiscover = false,
     this.dialPeerResult = true,
@@ -155,8 +158,10 @@ class FakeP2PService implements P2PService {
   bool isConnectedToPeer(String peerId) => false;
 
   @override
-  Future<RelayProbeResult> probeRelay(String peerId) async =>
-      RelayProbeResult.error;
+  Future<RelayProbeResult> probeRelay(String peerId) async {
+    probeRelayCallCount++;
+    return probeRelayResult;
+  }
 
   @override
   Future<bool> sendLocalMedia({
@@ -622,7 +627,8 @@ void main() {
     );
 
     test('sends locally when peer is on local WiFi', () async {
-      p2pService.localPeers.add('target-peer');
+      p2pService = FakeP2PService(useNullDiscover: true)
+        ..localPeers.add('target-peer');
 
       final (result, message) = await sendChatMessage(
         p2pService: p2pService,
@@ -638,6 +644,7 @@ void main() {
       expect(message!.status, 'delivered');
       // Local send was attempted (race includes local + direct)
       expect(p2pService.localSendCallCount, 1);
+      expect(p2pService.probeRelayCallCount, 0);
     });
 
     test('falls through to relay when local send fails', () async {
@@ -706,6 +713,147 @@ void main() {
     });
   });
 
+  group('Phase 3 — relay probe recovery', () {
+    test(
+      'discover miss then relay probe connected sends live without inbox',
+      () async {
+        p2pService = FakeP2PService(useNullDiscover: true);
+        p2pService.probeRelayResult = RelayProbeResult.connected;
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Hello through probe',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message, isNotNull);
+        expect(message!.status, 'delivered');
+        expect(message.transport, 'direct');
+        expect(p2pService.discoverCallCount, 1);
+        expect(p2pService.dialCallCount, 0);
+        expect(p2pService.probeRelayCallCount, 1);
+        expect(p2pService.sendCallCount, 1);
+        expect(p2pService.storeInInboxCallCount, 0);
+      },
+    );
+
+    test(
+      'dial failed then relay probe connected sends live without inbox',
+      () async {
+        p2pService = FakeP2PService(dialPeerResult: false);
+        p2pService.probeRelayResult = RelayProbeResult.connected;
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Hello after dial failure',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message, isNotNull);
+        expect(message!.status, 'delivered');
+        expect(message.transport, 'direct');
+        expect(p2pService.discoverCallCount, 1);
+        expect(p2pService.dialCallCount, 1);
+        expect(p2pService.probeRelayCallCount, 1);
+        expect(p2pService.sendCallCount, 1);
+        expect(p2pService.storeInInboxCallCount, 0);
+      },
+    );
+
+    test(
+      'discover miss then relay probe noReservation falls to inbox',
+      () async {
+        p2pService = FakeP2PService(
+          useNullDiscover: true,
+          storeInInboxResult: true,
+        );
+        p2pService.probeRelayResult = RelayProbeResult.noReservation;
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Hello queued after no reservation',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message, isNotNull);
+        expect(message!.status, 'delivered');
+        expect(message.transport, 'inbox');
+        expect(p2pService.probeRelayCallCount, 1);
+        expect(p2pService.sendCallCount, 0);
+        expect(p2pService.storeInInboxCallCount, 1);
+      },
+    );
+
+    test(
+      'discover miss then relay probe error preserves inbox fallback',
+      () async {
+        p2pService = FakeP2PService(
+          useNullDiscover: true,
+          storeInInboxResult: true,
+        );
+        p2pService.probeRelayResult = RelayProbeResult.error;
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Hello fallback after probe error',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message, isNotNull);
+        expect(message!.status, 'delivered');
+        expect(message.transport, 'inbox');
+        expect(p2pService.probeRelayCallCount, 1);
+        expect(p2pService.sendCallCount, 0);
+        expect(p2pService.storeInInboxCallCount, 1);
+      },
+    );
+
+    test(
+      'probe-connected send with lost ACK still uses inbox safety net',
+      () async {
+        p2pService = FakeP2PService(
+          useNullDiscover: true,
+          sendMessageReply: null,
+          storeInInboxResult: true,
+        );
+        p2pService.probeRelayResult = RelayProbeResult.connected;
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Hello with lost ack',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message, isNotNull);
+        expect(message!.status, 'delivered');
+        expect(message.transport, 'inbox');
+        expect(p2pService.probeRelayCallCount, 1);
+        expect(p2pService.sendCallCount, 1);
+        expect(p2pService.storeInInboxCallCount, 1);
+      },
+    );
+  });
+
   // ─── Phase 1: Interactive Send Path Tests ─────────────────────────
   group('Phase 1 — interactive send path', () {
     test(
@@ -741,6 +889,7 @@ void main() {
         expect(p2pService.sendCallCount, 1);
         expect(p2pService.discoverCallCount, 0);
         expect(p2pService.dialCallCount, 0);
+        expect(p2pService.probeRelayCallCount, 0);
       },
     );
 
@@ -856,6 +1005,7 @@ void main() {
         expect(message, isNotNull);
         // Direct discover/dial/send succeeded without relay gates
         expect(p2pService.discoverCallCount, 1);
+        expect(p2pService.probeRelayCallCount, 0);
       },
     );
 

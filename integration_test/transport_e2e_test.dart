@@ -6,11 +6,11 @@
 //
 // Launch with orchestrator:
 //   dart run integration_test/scripts/run_transport_e2e.dart -d <simulator-id>
+//   dart run integration_test/scripts/run_transport_e2e.dart -d <simulator-id> --phase4-only
 //
 // Or standalone (self-contained tests only):
 //   flutter test integration_test/transport_e2e_test.dart -d <simulator-id>
 
-import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -32,15 +32,29 @@ import 'package:flutter_app/core/database/migrations/009_quoted_message_id.dart'
 import 'package:flutter_app/core/database/migrations/010_media_attachments.dart';
 import 'package:flutter_app/core/database/migrations/011_avatar_version.dart';
 import 'package:flutter_app/core/database/migrations/012_transport_column.dart';
+import 'package:flutter_app/core/database/migrations/013_waveform_column.dart';
+import 'package:flutter_app/core/database/migrations/014_wire_envelope_column.dart';
+import 'package:flutter_app/core/database/migrations/015_message_status_cleanup.dart';
+import 'package:flutter_app/core/database/migrations/016_message_reactions.dart';
+import 'package:flutter_app/core/database/migrations/017_groups_tables.dart';
+import 'package:flutter_app/core/database/migrations/018_group_messages_tables.dart';
+import 'package:flutter_app/core/database/migrations/019_introductions_table.dart';
+import 'package:flutter_app/core/database/migrations/020_intro_banner_columns.dart';
+import 'package:flutter_app/core/database/migrations/021_contact_introduced_by.dart';
+import 'package:flutter_app/core/database/migrations/022_introduction_keys.dart';
+import 'package:flutter_app/core/database/migrations/023_introduction_recipient_keys.dart';
+import 'package:flutter_app/core/database/migrations/024_contact_introduced_by_peer_id.dart';
+import 'package:flutter_app/core/database/migrations/025_introduction_already_connected_status.dart';
+import 'package:flutter_app/core/database/migrations/026_group_quoted_message_id.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
+import 'package:flutter_app/core/lifecycle/handle_app_resumed.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository_impl.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
-import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository_impl.dart';
 
 // ---------------------------------------------------------------------------
@@ -73,6 +87,11 @@ String _readSignalPath(String name) => '$_readDir/$name';
 
 /// Path for writing Flutter→orchestrator signals.
 String _writeSignalPath(String name) => '$_writeDir/$name';
+
+const _phase4Only = bool.fromEnvironment(
+  'E2E_PHASE4_ONLY',
+  defaultValue: false,
+);
 
 // ---------------------------------------------------------------------------
 // CLI peer fixture loader
@@ -143,7 +162,7 @@ Future<_TestStack> _setupStack() async {
   final db = await openEncryptedDatabase(
     secureKeyStore: secureKeyStore,
     dbName: dbName,
-    version: 12,
+    version: 26,
     onCreate: (db, version) async {
       await runIdentityTableMigration(db);
       await runMessagesTableMigration(db);
@@ -156,6 +175,20 @@ Future<_TestStack> _setupStack() async {
       await runMediaAttachmentsMigration(db);
       await runAvatarVersionMigration(db);
       await runTransportColumnMigration(db);
+      await runWaveformColumnMigration(db);
+      await runWireEnvelopeMigration(db);
+      await runMessageStatusCleanupMigration(db);
+      await runMessageReactionsMigration(db);
+      await runGroupsTablesMigration(db);
+      await runGroupMessagesTablesMigration(db);
+      await runIntroductionsTableMigration(db);
+      await runIntroBannerColumnsMigration(db);
+      await runContactIntroducedByMigration(db);
+      await runIntroductionKeysMigration(db);
+      await runIntroductionRecipientKeysMigration(db);
+      await runContactIntroducedByPeerIdMigration(db);
+      await runIntroductionAlreadyConnectedMigration(db);
+      await runGroupQuotedMessageIdMigration(db);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) await runMessagesTableMigration(db);
@@ -168,9 +201,23 @@ Future<_TestStack> _setupStack() async {
       if (oldVersion < 10) await runMediaAttachmentsMigration(db);
       if (oldVersion < 11) await runAvatarVersionMigration(db);
       if (oldVersion < 12) await runTransportColumnMigration(db);
+      if (oldVersion < 13) await runWaveformColumnMigration(db);
+      if (oldVersion < 14) await runWireEnvelopeMigration(db);
+      if (oldVersion < 15) await runMessageStatusCleanupMigration(db);
+      if (oldVersion < 16) await runMessageReactionsMigration(db);
+      if (oldVersion < 17) await runGroupsTablesMigration(db);
+      if (oldVersion < 18) await runGroupMessagesTablesMigration(db);
+      if (oldVersion < 19) await runIntroductionsTableMigration(db);
+      if (oldVersion < 20) await runIntroBannerColumnsMigration(db);
+      if (oldVersion < 21) await runContactIntroducedByMigration(db);
+      if (oldVersion < 22) await runIntroductionKeysMigration(db);
+      if (oldVersion < 23) await runIntroductionRecipientKeysMigration(db);
+      if (oldVersion < 24) await runContactIntroducedByPeerIdMigration(db);
+      if (oldVersion < 25) await runIntroductionAlreadyConnectedMigration(db);
+      if (oldVersion < 26) await runGroupQuotedMessageIdMigration(db);
     },
   );
-  print('[TEST] Database initialized (version 12 with transport column)');
+  print('[TEST] Database initialized (version 26)');
 
   final contactRepo = ContactRepositoryImpl(
     dbLoadAllContacts: () => dbLoadAllContacts(db),
@@ -382,6 +429,146 @@ class _ScenarioResult {
   _ScenarioResult(this.name, this.passed, this.detail);
 }
 
+Future<bool> _waitForSignalFile(
+  String name, {
+  Duration timeout = const Duration(seconds: 60),
+}) async {
+  final deadline = DateTime.now().add(timeout);
+  final path = _readSignalPath(name);
+  while (DateTime.now().isBefore(deadline)) {
+    if (File(path).existsSync()) {
+      return true;
+    }
+    await Future.delayed(const Duration(milliseconds: 500));
+  }
+  return false;
+}
+
+Future<bool> _waitForDiscoverabilityState(
+  P2PServiceImpl p2pService,
+  String peerId, {
+  required bool shouldBeDiscoverable,
+  Duration timeout = const Duration(seconds: 60),
+}) async {
+  final deadline = DateTime.now().add(timeout);
+  while (DateTime.now().isBefore(deadline)) {
+    final peer = await p2pService.discoverPeer(peerId, timeoutMs: 2000);
+    if ((peer != null) == shouldBeDiscoverable) {
+      return true;
+    }
+    await Future.delayed(const Duration(milliseconds: 500));
+  }
+  return false;
+}
+
+Future<void> _runPhase4LongRunningScenario(_TestStack stack) async {
+  final cliPeerId = stack.cliPeerId;
+  if (cliPeerId == null) {
+    fail('Phase 4 real-stack validation requires a CLI peer fixture.');
+  }
+
+  Directory(_writeDir).createSync(recursive: true);
+  final resultFile = File(_writeSignalPath('e2e_phase4_result.json'));
+  final result = <String, dynamic>{
+    'scenario': 'phase4_personal_discoverability',
+  };
+
+  try {
+    final initiallyDiscoverable = await _waitForDiscoverabilityState(
+      stack.p2pService,
+      cliPeerId,
+      shouldBeDiscoverable: true,
+      timeout: const Duration(seconds: 90),
+    );
+    result['initialDiscoverable'] = initiallyDiscoverable;
+    if (!initiallyDiscoverable) {
+      fail('CLI peer never became discoverable before Phase 4 invalidation.');
+    }
+
+    File(
+      _writeSignalPath('e2e_phase4_initial_ready'),
+    ).writeAsStringSync('ready');
+    print('[TEST] Phase 4: initial CLI discoverability confirmed');
+
+    final unregisterSignalSeen = await _waitForSignalFile(
+      'e2e_phase4_cli_unregistered',
+      timeout: const Duration(seconds: 90),
+    );
+    result['cliUnregisterSignalSeen'] = unregisterSignalSeen;
+    if (!unregisterSignalSeen) {
+      fail('Phase 4 orchestrator never signaled CLI unregister.');
+    }
+
+    final discoverMissAfterUnregister = await _waitForDiscoverabilityState(
+      stack.p2pService,
+      cliPeerId,
+      shouldBeDiscoverable: false,
+      timeout: const Duration(seconds: 90),
+    );
+    result['discoverMissAfterUnregister'] = discoverMissAfterUnregister;
+    if (!discoverMissAfterUnregister) {
+      fail(
+        'CLI peer remained discoverable after personal namespace invalidation.',
+      );
+    }
+
+    final bridgeOk = await handleAppResumed(
+      bridge: stack.bridge,
+      p2pService: stack.p2pService,
+    );
+    result['bridgeOk'] = bridgeOk;
+    result['lastRecoveryMethod'] = stack.p2pService.lastRecoveryMethod;
+
+    final (sendResult, _) = await sendChatMessage(
+      p2pService: stack.p2pService,
+      messageRepo: stack.messageRepo,
+      targetPeerId: cliPeerId,
+      text: 'P4: live send after stale discoverability',
+      senderPeerId: stack.ownPeerId,
+      senderUsername: 'FlutterE2E',
+      bridge: stack.bridge,
+      recipientMlKemPublicKey: stack.cliMlKemPublicKey,
+    );
+
+    final stored = await stack.messageRepo.getMessagesForContact(cliPeerId);
+    final outgoing = stored
+        .where(
+          (message) =>
+              !message.isIncoming &&
+              message.text.contains(
+                'P4: live send after stale discoverability',
+              ),
+        )
+        .toList();
+    final latest = outgoing.isNotEmpty ? outgoing.last : null;
+
+    result['sendResult'] = sendResult.toString();
+    result['messageStatus'] = latest?.status;
+    result['messageTransport'] = latest?.transport;
+
+    print(
+      '[TEST] Phase 4: sendResult=${result['sendResult']} '
+      'status=${result['messageStatus']} transport=${result['messageTransport']}',
+    );
+
+    expect(sendResult, SendChatMessageResult.success);
+    expect(
+      latest,
+      isNotNull,
+      reason: 'Recovered send should persist an outgoing row.',
+    );
+    expect(latest!.status, equals('delivered'));
+    expect(
+      latest.transport,
+      isNot(equals('inbox')),
+      reason:
+          'Recovered live delivery must stay off inbox after discover miss.',
+    );
+  } finally {
+    resultFile.writeAsStringSync(jsonEncode(result));
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Main test suite
 // ---------------------------------------------------------------------------
@@ -404,6 +591,15 @@ void main() {
     final hasCli = stack.cliPeerId != null;
     if (!hasCli) {
       print('[TEST] No CLI peer — running self-contained scenarios only');
+    }
+
+    if (_phase4Only) {
+      try {
+        await _runPhase4LongRunningScenario(stack);
+      } finally {
+        await stack.teardown();
+      }
+      return;
     }
 
     final results = <_ScenarioResult>[];
@@ -1536,6 +1732,10 @@ void main() {
       await stack.teardown();
     }
   });
+
+  if (_phase4Only) {
+    return;
+  }
 
   // =========================================================================
   // Self-contained: no CLI peer needed

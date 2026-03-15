@@ -18,6 +18,12 @@ const Duration interactiveLocalBudget = Duration(milliseconds: 1500);
 /// Interactive send budget for the overall direct send path.
 const Duration interactiveDirectBudget = Duration(seconds: 4);
 
+/// After a successful relay probe, allow one immediate retry before inbox
+/// fallback. This targets stale-discoverability recovery without slowing the
+/// normal foreground send race.
+const int relayProbeSendAttempts = 2;
+const Duration relayProbeRetryBackoff = Duration(milliseconds: 250);
+
 /// Result of sending a chat message.
 enum SendChatMessageResult {
   success,
@@ -37,7 +43,8 @@ const _uuid = Uuid();
 /// 2. Checks P2P node is running
 /// 3. Builds MessagePayload with UUID
 /// 4. Serializes to JSON envelope
-/// 5. Discovers peer, dials, sends via p2pService (with 3x retries)
+/// 5. Reuses an existing connection, races local WiFi with direct relay send,
+///    and probes the relay only when discoverability is stale
 /// 6. Persists via messageRepo.saveMessage()
 ///
 /// Returns (result, ConversationMessage?) — message is non-null on success or failure (persisted).
@@ -187,38 +194,19 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
         timeoutMs: interactiveDirectBudget.inMilliseconds,
       );
       if (sendResult.sent) {
-        final message = await _persistOutgoingSendResult(
+        return _completeSuccessfulSend(
           p2pService: p2pService,
+          messageRepo: messageRepo,
           payload: payload,
           targetPeerId: targetPeerId,
           jsonString: jsonString,
           acknowledged: sendResult.acknowledged,
           via: 'reuse',
-        );
-        await messageRepo.saveMessage(message);
-        await _persistOutgoingMedia(
+          resolvedMessageId: resolvedMessageId,
+          textPreview: textPreview,
+          text: text,
           mediaAttachmentRepo: mediaAttachmentRepo,
           attachments: normalizedAttachments,
-        );
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'CHAT_MSG_SEND_SUCCESS',
-          details: {
-            'id': resolvedMessageId.substring(0, 8),
-            'status': message.status,
-            'via': message.transport,
-            'textPreview': textPreview,
-          },
-        );
-        logChatOutgoing(
-          messageId: resolvedMessageId,
-          toPeerId: targetPeerId,
-          status: message.status,
-          text: text,
-        );
-        return (
-          SendChatMessageResult.success,
-          message.copyWith(media: normalizedAttachments ?? const []),
         );
       }
     } catch (_) {
@@ -258,7 +246,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   // We use a completer to commit only the first success.
   final completer = Completer<_RaceResult>();
   var pendingCount = raceFutures.length;
-  final failures = <String>[];
+  final failures = <_RaceResult>[];
 
   for (final future in raceFutures) {
     future
@@ -266,19 +254,50 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
           if (result.success && !completer.isCompleted) {
             completer.complete(result);
           } else {
-            failures.add(result.reason ?? 'unknown');
+            failures.add(result);
             pendingCount--;
             if (pendingCount <= 0 && !completer.isCompleted) {
-              // All paths failed
-              completer.complete(_RaceResult.failed(failures.join(', ')));
+              var failureReason = failures.isNotEmpty
+                  ? failures.first.reason ?? 'unknown'
+                  : 'unknown';
+              var relayProbeEligible = false;
+              for (final failure in failures) {
+                if (failure.relayProbeEligible) {
+                  failureReason = failure.reason ?? failureReason;
+                  relayProbeEligible = true;
+                  break;
+                }
+              }
+              completer.complete(
+                _RaceResult.failed(
+                  failureReason,
+                  relayProbeEligible: relayProbeEligible,
+                ),
+              );
             }
           }
         })
         .catchError((Object e) {
-          failures.add(e.toString());
+          failures.add(_RaceResult.failed(e.toString()));
           pendingCount--;
           if (pendingCount <= 0 && !completer.isCompleted) {
-            completer.complete(_RaceResult.failed(failures.join(', ')));
+            var failureReason = failures.isNotEmpty
+                ? failures.first.reason ?? 'unknown'
+                : 'unknown';
+            var relayProbeEligible = false;
+            for (final failure in failures) {
+              if (failure.relayProbeEligible) {
+                failureReason = failure.reason ?? failureReason;
+                relayProbeEligible = true;
+                break;
+              }
+            }
+            completer.complete(
+              _RaceResult.failed(
+                failureReason,
+                relayProbeEligible: relayProbeEligible,
+              ),
+            );
           }
         });
   }
@@ -286,46 +305,54 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   final raceResult = await completer.future;
 
   if (raceResult.success) {
-    final message = await _persistOutgoingSendResult(
+    return _completeSuccessfulSend(
       p2pService: p2pService,
+      messageRepo: messageRepo,
       payload: payload,
       targetPeerId: targetPeerId,
       jsonString: jsonString,
       acknowledged: raceResult.acknowledged,
       via: raceResult.via!,
-    );
-    await messageRepo.saveMessage(message);
-    await _persistOutgoingMedia(
+      resolvedMessageId: resolvedMessageId,
+      textPreview: textPreview,
+      text: text,
       mediaAttachmentRepo: mediaAttachmentRepo,
       attachments: normalizedAttachments,
     );
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'CHAT_MSG_SEND_SUCCESS',
-      details: {
-        'id': resolvedMessageId.substring(0, 8),
-        'status': message.status,
-        'via': message.transport,
-        'textPreview': textPreview,
-      },
+  }
+
+  var failureReason = raceResult.reason ?? 'unknown';
+  if (raceResult.relayProbeEligible) {
+    final relayProbeResult = await _tryRelayProbeSend(
+      p2pService,
+      targetPeerId,
+      jsonString,
+      failureReason: failureReason,
     );
-    logChatOutgoing(
-      messageId: resolvedMessageId,
-      toPeerId: targetPeerId,
-      status: message.status,
-      text: text,
-    );
-    return (
-      SendChatMessageResult.success,
-      message.copyWith(media: normalizedAttachments ?? const []),
-    );
+    if (relayProbeResult.success) {
+      return _completeSuccessfulSend(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        payload: payload,
+        targetPeerId: targetPeerId,
+        jsonString: jsonString,
+        acknowledged: relayProbeResult.acknowledged,
+        via: relayProbeResult.via!,
+        resolvedMessageId: resolvedMessageId,
+        textPreview: textPreview,
+        text: text,
+        mediaAttachmentRepo: mediaAttachmentRepo,
+        attachments: normalizedAttachments,
+      );
+    }
+    failureReason = relayProbeResult.reason ?? failureReason;
   }
 
   // All active paths failed — try offline inbox fallback once.
   emitFlowEvent(
     layer: 'FL',
     event: 'CHAT_MSG_SEND_RACE_ALL_FAILED',
-    details: {'reason': raceResult.reason ?? 'unknown'},
+    details: {'reason': failureReason},
   );
 
   try {
@@ -392,7 +419,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     event: 'CHAT_MSG_SEND_FAILED',
     details: {
       'id': resolvedMessageId.substring(0, 8),
-      'reason': raceResult.reason ?? 'unknown',
+      'reason': failureReason,
       'textPreview': textPreview,
     },
   );
@@ -403,7 +430,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     text: text,
   );
   return (
-    _resultForFailureReason(raceResult.reason),
+    _resultForFailureReason(failureReason),
     failedMessage.copyWith(media: normalizedAttachments ?? const []),
   );
 }
@@ -414,12 +441,14 @@ class _RaceResult {
   final bool acknowledged;
   final String? via;
   final String? reason;
+  final bool relayProbeEligible;
 
   const _RaceResult._({
     required this.success,
     this.acknowledged = false,
     this.via,
     this.reason,
+    this.relayProbeEligible = false,
   });
 
   factory _RaceResult.succeeded({
@@ -427,8 +456,14 @@ class _RaceResult {
     bool acknowledged = false,
   }) => _RaceResult._(success: true, acknowledged: acknowledged, via: via);
 
-  factory _RaceResult.failed(String reason) =>
-      _RaceResult._(success: false, reason: reason);
+  factory _RaceResult.failed(
+    String reason, {
+    bool relayProbeEligible = false,
+  }) => _RaceResult._(
+    success: false,
+    reason: reason,
+    relayProbeEligible: relayProbeEligible,
+  );
 }
 
 /// Try sending via local WiFi.
@@ -462,7 +497,7 @@ Future<_RaceResult> _tryDirectSend(
   // Discover
   final peer = await p2pService.discoverPeer(targetPeerId, timeoutMs: budgetMs);
   if (peer == null) {
-    return _RaceResult.failed('peer_not_found');
+    return _RaceResult.failed('peer_not_found', relayProbeEligible: true);
   }
 
   // Dial
@@ -472,7 +507,7 @@ Future<_RaceResult> _tryDirectSend(
     timeoutMs: budgetMs,
   );
   if (!dialed) {
-    return _RaceResult.failed('dial_failed');
+    return _RaceResult.failed('dial_failed', relayProbeEligible: true);
   }
 
   // Send
@@ -491,6 +526,110 @@ Future<_RaceResult> _tryDirectSend(
   );
 }
 
+Future<_RaceResult> _tryRelayProbeSend(
+  P2PService p2pService,
+  String targetPeerId,
+  String jsonString, {
+  required String failureReason,
+}) async {
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'CHAT_MSG_SEND_RELAY_PROBE_BEGIN',
+    details: {'reason': failureReason},
+  );
+
+  RelayProbeResult probeResult;
+  try {
+    probeResult = await p2pService.probeRelay(targetPeerId);
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_SEND_RELAY_PROBE_ERROR',
+      details: {'error': e.toString()},
+    );
+    return _RaceResult.failed(failureReason);
+  }
+
+  switch (probeResult) {
+    case RelayProbeResult.connected:
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CHAT_MSG_SEND_RELAY_PROBE_CONNECTED',
+        details: {},
+      );
+      try {
+        final dialed = await p2pService.dialPeer(
+          targetPeerId,
+          timeoutMs: interactiveDirectBudget.inMilliseconds,
+        );
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'CHAT_MSG_SEND_RELAY_PROBE_DIAL',
+          details: {'dialed': dialed},
+        );
+      } catch (e) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'CHAT_MSG_SEND_RELAY_PROBE_DIAL_ERROR',
+          details: {'error': e.toString()},
+        );
+      }
+      for (var attempt = 1; attempt <= relayProbeSendAttempts; attempt++) {
+        try {
+          final sendResult = await p2pService.sendMessageWithReply(
+            targetPeerId,
+            jsonString,
+            timeoutMs: interactiveDirectBudget.inMilliseconds,
+          );
+          if (sendResult.sent) {
+            return _RaceResult.succeeded(
+              via: 'direct',
+              acknowledged: sendResult.acknowledged,
+            );
+          }
+
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'CHAT_MSG_SEND_RELAY_PROBE_SEND_RETRY',
+            details: {
+              'attempt': attempt,
+              'maxAttempts': relayProbeSendAttempts,
+            },
+          );
+        } catch (e) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'CHAT_MSG_SEND_RELAY_PROBE_SEND_ERROR',
+            details: {
+              'attempt': attempt,
+              'maxAttempts': relayProbeSendAttempts,
+              'error': e.toString(),
+            },
+          );
+        }
+
+        if (attempt < relayProbeSendAttempts) {
+          await Future<void>.delayed(relayProbeRetryBackoff);
+        }
+      }
+      return _RaceResult.failed('send_failed');
+    case RelayProbeResult.noReservation:
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CHAT_MSG_SEND_RELAY_PROBE_NO_RESERVATION',
+        details: {},
+      );
+      return _RaceResult.failed('peer_not_found');
+    case RelayProbeResult.error:
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CHAT_MSG_SEND_RELAY_PROBE_FALLBACK',
+        details: {'reason': failureReason},
+      );
+      return _RaceResult.failed(failureReason);
+  }
+}
+
 Future<void> _persistOutgoingMedia({
   required MediaAttachmentRepository? mediaAttachmentRepo,
   required List<MediaAttachment>? attachments,
@@ -504,6 +643,55 @@ Future<void> _persistOutgoingMedia({
   for (final attachment in attachments) {
     await mediaAttachmentRepo.saveAttachment(attachment);
   }
+}
+
+Future<(SendChatMessageResult, ConversationMessage)> _completeSuccessfulSend({
+  required P2PService p2pService,
+  required MessageRepository messageRepo,
+  required MessagePayload payload,
+  required String targetPeerId,
+  required String jsonString,
+  required bool acknowledged,
+  required String via,
+  required String resolvedMessageId,
+  required String textPreview,
+  required String text,
+  required MediaAttachmentRepository? mediaAttachmentRepo,
+  required List<MediaAttachment>? attachments,
+}) async {
+  final message = await _persistOutgoingSendResult(
+    p2pService: p2pService,
+    payload: payload,
+    targetPeerId: targetPeerId,
+    jsonString: jsonString,
+    acknowledged: acknowledged,
+    via: via,
+  );
+  await messageRepo.saveMessage(message);
+  await _persistOutgoingMedia(
+    mediaAttachmentRepo: mediaAttachmentRepo,
+    attachments: attachments,
+  );
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'CHAT_MSG_SEND_SUCCESS',
+    details: {
+      'id': resolvedMessageId.substring(0, 8),
+      'status': message.status,
+      'via': message.transport,
+      'textPreview': textPreview,
+    },
+  );
+  logChatOutgoing(
+    messageId: resolvedMessageId,
+    toPeerId: targetPeerId,
+    status: message.status,
+    text: text,
+  );
+  return (
+    SendChatMessageResult.success,
+    message.copyWith(media: attachments ?? const []),
+  );
 }
 
 SendChatMessageResult _resultForFailureReason(String? reason) {

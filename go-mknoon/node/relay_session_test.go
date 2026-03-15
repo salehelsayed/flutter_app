@@ -161,54 +161,64 @@ func TestRelaySession_CoalescesConcurrentRecoveryRequests(t *testing.T) {
 	m := NewRelaySessionManager()
 
 	// First caller gets the recovery lock.
-	ch1, isNew1 := m.BeginRecovery()
+	recovery1, isNew1 := m.BeginRecovery()
 	if !isNew1 {
 		t.Fatal("first caller should get isNew=true")
 	}
-	if ch1 == nil {
-		t.Fatal("first caller should get a non-nil channel")
+	if recovery1 == nil {
+		t.Fatal("first caller should get a non-nil recovery promise")
 	}
 	if !m.IsRecovering() {
 		t.Error("should be recovering after BeginRecovery")
 	}
 
 	// Second concurrent caller should share the same recovery.
-	ch2, isNew2 := m.BeginRecovery()
+	recovery2, isNew2 := m.BeginRecovery()
 	if isNew2 {
 		t.Error("second caller should get isNew=false (coalesced)")
 	}
-	if ch2 != ch1 {
-		t.Error("second caller should get the same channel as first")
+	if recovery2 != recovery1 {
+		t.Error("second caller should get the same recovery promise as first")
 	}
 
 	// Third caller — same behavior.
-	ch3, isNew3 := m.BeginRecovery()
+	recovery3, isNew3 := m.BeginRecovery()
 	if isNew3 {
 		t.Error("third caller should get isNew=false")
 	}
-	if ch3 != ch1 {
-		t.Error("third caller should share the same channel")
+	if recovery3 != recovery1 {
+		t.Error("third caller should share the same recovery promise")
 	}
 
-	// Complete recovery — the result is sent on the buffered channel.
 	result := &RecoveryResult{
-		RecoveryMode:    "in_place",
-		Success:         true,
-		RelayState:      "online",
+		RecoveryMode:      "in_place",
+		Success:           true,
+		RelayState:        "online",
 		HealthyRelayCount: 1,
 	}
 
-	m.CompleteRecovery(result)
+	m.CompleteRecovery(result, nil)
 
-	// Since ch1 == ch2 == ch3 (same channel), and the channel is
-	// buffered(1) + closed, the first read gets the result and
-	// subsequent reads from the closed channel get nil.
-	r1 := <-ch1
-	if r1 == nil {
-		t.Fatal("first reader should have received the result")
+	r1, err1 := recovery1.Wait()
+	if err1 != nil {
+		t.Fatalf("first waiter should not receive an error: %v", err1)
 	}
-	if r1.RecoveryMode != "in_place" {
-		t.Errorf("expected recoveryMode=in_place, got %s", r1.RecoveryMode)
+	r2, err2 := recovery2.Wait()
+	if err2 != nil {
+		t.Fatalf("second waiter should not receive an error: %v", err2)
+	}
+	r3, err3 := recovery3.Wait()
+	if err3 != nil {
+		t.Fatalf("third waiter should not receive an error: %v", err3)
+	}
+
+	for idx, got := range []*RecoveryResult{r1, r2, r3} {
+		if got == nil {
+			t.Fatalf("waiter %d should have received the result", idx+1)
+		}
+		if got.RecoveryMode != "in_place" {
+			t.Fatalf("waiter %d recoveryMode=%s, want in_place", idx+1, got.RecoveryMode)
+		}
 	}
 
 	// After completion, should not be recovering.
@@ -217,19 +227,19 @@ func TestRelaySession_CoalescesConcurrentRecoveryRequests(t *testing.T) {
 	}
 
 	// A new call should get a fresh recovery.
-	ch4, isNew4 := m.BeginRecovery()
+	recovery4, isNew4 := m.BeginRecovery()
 	if !isNew4 {
 		t.Error("after CompleteRecovery, next call should get isNew=true")
 	}
-	if ch4 == ch1 {
-		t.Error("new recovery should use a different channel")
+	if recovery4 == recovery1 {
+		t.Error("new recovery should use a different promise")
 	}
 
 	m.CompleteRecovery(&RecoveryResult{
 		RecoveryMode: "in_place",
 		Success:      true,
 		RelayState:   "online",
-	})
+	}, nil)
 }
 
 // --- Additional relay session state tests ---
@@ -296,28 +306,31 @@ func TestRelaySession_WatchdogRestartCountIncrementsOnWatchdogRecovery(t *testin
 
 	var count int32
 	go func() {
-		<-ch
+		_, _ = ch.Wait()
 		atomic.AddInt32(&count, 1)
 	}()
 
 	m.CompleteRecovery(&RecoveryResult{
 		RecoveryMode: "watchdog_restart",
 		Success:      true,
-	})
+	}, nil)
 
 	time.Sleep(50 * time.Millisecond)
 
 	if m.WatchdogRestartCount() != 1 {
 		t.Errorf("expected watchdogRestartCount=1, got %d", m.WatchdogRestartCount())
 	}
+	if !m.NeedsGroupRecovery() {
+		t.Error("watchdog recovery should mark needsGroupRecovery")
+	}
 
 	// In-place recovery should NOT increment.
 	ch2, _ := m.BeginRecovery()
-	go func() { <-ch2 }()
+	go func() { _, _ = ch2.Wait() }()
 	m.CompleteRecovery(&RecoveryResult{
 		RecoveryMode: "in_place",
 		Success:      true,
-	})
+	}, nil)
 
 	time.Sleep(50 * time.Millisecond)
 
@@ -345,6 +358,40 @@ func TestRelaySession_Reset(t *testing.T) {
 	}
 	if len(m.AllSessions()) != 0 {
 		t.Error("expected 0 sessions after reset")
+	}
+}
+
+func TestRelaySession_ResetPreservesInFlightRecovery(t *testing.T) {
+	m := NewRelaySessionManager()
+
+	recovery, isNew := m.BeginRecovery()
+	if !isNew {
+		t.Fatal("expected new recovery")
+	}
+
+	m.Reset()
+
+	if !m.IsRecovering() {
+		t.Fatal("reset should preserve an in-flight recovery promise")
+	}
+	if m.AggregateState() != AggregateRelayRecovering {
+		t.Fatalf("expected recovering state during reset, got %s", m.AggregateState())
+	}
+
+	expected := &RecoveryResult{
+		RecoveryMode:      "watchdog_restart",
+		Success:           true,
+		RelayState:        "online",
+		HealthyRelayCount: 1,
+	}
+	m.CompleteRecovery(expected, nil)
+
+	got, err := recovery.Wait()
+	if err != nil {
+		t.Fatalf("Wait() error: %v", err)
+	}
+	if got == nil || got.RecoveryMode != expected.RecoveryMode {
+		t.Fatalf("Wait() = %+v, want %+v", got, expected)
 	}
 }
 

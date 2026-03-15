@@ -1,8 +1,8 @@
-Orchestrate the implementation of all phases (0 through 7) from Network-Arch/Resilient-libp2p-TDD-Plan.md using the /phase-implement and /phase-review skills.
+Orchestrate the implementation of all phases (0 through 7) from UI-21-POST/Plan-Phases.md using the /phase-implement and /phase-review skills.
 
 For each phase, follow this loop:
 
-1. Launch an implementation agent with isolation: "worktree" that runs /phase-implement <N>. The agent must read the plan document at Network-Arch/Resilient-libp2p-TDD-Plan.md and implement only its assigned phase using strict TDD order (RED tests first, then GREEN implementation).
+1. Launch an implementation agent with isolation: "worktree" that runs /phase-implement <N>. The agent must read the plan document at UI-21-POST/Plan-Phases.md and implement only its assigned phase using strict TDD order (RED tests first, then GREEN implementation).
 
 2. When the implementation agent completes, merge its worktree changes back to the current branch.
 

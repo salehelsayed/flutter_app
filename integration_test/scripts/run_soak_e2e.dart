@@ -16,8 +16,9 @@
 //   2. Spawns the test peer, generates identity, starts node
 //   3. Writes fixture file + creates signal directory
 //   4. Launches Flutter integration test (soak_e2e_test.dart)
-//   5. Runs a timed loop sending signals (send, drain, health check)
-//   6. Signals completion, reads final stats, reports results
+//   5. Runs a deterministic Phase 4 stale-discoverability gate on the real stack
+//   6. Continues with the longer churn soak loop (send, drain, resume)
+//   7. Signals completion, reads final stats, reports results
 
 import 'dart:async';
 import 'dart:convert';
@@ -73,22 +74,28 @@ class TestPeer {
     }
   }
 
-  Future<Map<String, dynamic>> command(String cmd,
-      [Map<String, dynamic>? params]) async {
+  Future<Map<String, dynamic>> command(
+    String cmd, [
+    Map<String, dynamic>? params,
+  ]) async {
     final completer = Completer<Map<String, dynamic>>();
     _pending.add(completer);
-    final request = {'cmd': cmd, if (params != null) 'params': params};
+    final request = {'cmd': cmd, 'params': params};
     _process!.stdin.writeln(jsonEncode(request));
     await _process!.stdin.flush();
-    return completer.future.timeout(const Duration(seconds: 60),
-        onTimeout: () {
-      _pending.remove(completer);
-      throw TimeoutException('Command "$cmd" timed out');
-    });
+    return completer.future.timeout(
+      const Duration(seconds: 60),
+      onTimeout: () {
+        _pending.remove(completer);
+        throw TimeoutException('Command "$cmd" timed out');
+      },
+    );
   }
 
-  Future<Map<String, dynamic>> commandOk(String cmd,
-      [Map<String, dynamic>? params]) async {
+  Future<Map<String, dynamic>> commandOk(
+    String cmd, [
+    Map<String, dynamic>? params,
+  ]) async {
     final result = await command(cmd, params);
     if (result['ok'] != true) {
       throw StateError('Command "$cmd" failed: ${result['errorMessage']}');
@@ -96,10 +103,12 @@ class TestPeer {
     return result;
   }
 
-  Future<Map<String, dynamic>> commandWithRetry(String cmd,
-      [Map<String, dynamic>? params,
-      int maxAttempts = 3,
-      Duration baseDelay = const Duration(seconds: 3)]) async {
+  Future<Map<String, dynamic>> commandWithRetry(
+    String cmd, [
+    Map<String, dynamic>? params,
+    int maxAttempts = 3,
+    Duration baseDelay = const Duration(seconds: 3),
+  ]) async {
     for (var attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
         return await commandOk(cmd, params);
@@ -140,11 +149,13 @@ class TestPeer {
     _stdoutSub?.cancel();
     _stderrSub?.cancel();
     _process?.kill();
-    await _process?.exitCode.timeout(const Duration(seconds: 5),
-        onTimeout: () {
-      _process?.kill(ProcessSignal.sigkill);
-      return -1;
-    });
+    await _process?.exitCode.timeout(
+      const Duration(seconds: 5),
+      onTimeout: () {
+        _process?.kill(ProcessSignal.sigkill);
+        return -1;
+      },
+    );
   }
 
   void _log(String tag, String msg) {
@@ -173,9 +184,31 @@ String? _readSignal(String name) {
   return f.readAsStringSync();
 }
 
-void _deleteSignal(String name) {
-  final f = File('${_signalDir.path}/$name');
-  if (f.existsSync()) f.deleteSync();
+Future<String?> _waitForSignal(
+  String name, {
+  required Duration timeout,
+  Duration pollInterval = const Duration(milliseconds: 500),
+}) async {
+  final deadline = DateTime.now().add(timeout);
+  while (DateTime.now().isBefore(deadline)) {
+    final content = _readSignal(name);
+    if (content != null) {
+      return content;
+    }
+    await Future.delayed(pollInterval);
+  }
+  return null;
+}
+
+Future<Map<String, dynamic>?> _waitForJsonSignal(
+  String name, {
+  required Duration timeout,
+}) async {
+  final content = await _waitForSignal(name, timeout: timeout);
+  if (content == null || content.isEmpty) {
+    return null;
+  }
+  return jsonDecode(content) as Map<String, dynamic>;
 }
 
 // ---------------------------------------------------------------------------
@@ -241,12 +274,16 @@ Future<void> main(List<String> args) async {
 
   // 2. Build test peer
   _log('SOAK', 'Building test peer...');
-  final buildResult = await Process.run('make', ['testpeer'],
-      workingDirectory: _goMknoonDir,
-      environment: {
-        ...Platform.environment,
-        'PATH': '${Platform.environment['PATH']}:${Platform.environment['HOME']}/go/bin',
-      });
+  final buildResult = await Process.run(
+    'make',
+    ['testpeer'],
+    workingDirectory: _goMknoonDir,
+    environment: {
+      ...Platform.environment,
+      'PATH':
+          '${Platform.environment['PATH']}:${Platform.environment['HOME']}/go/bin',
+    },
+  );
   if (buildResult.exitCode != 0) {
     _log('SOAK', 'Build failed: ${buildResult.stderr}');
     exit(1);
@@ -261,23 +298,27 @@ Future<void> main(List<String> args) async {
   _log('SOAK', 'CLI peer ready: ${peer.peerId!.substring(0, 20)}...');
 
   // 4. Write CLI fixture for Flutter
-  _writeSignal('cli_peer_fixture.json', jsonEncode({
-    'peerId': peer.peerId,
-    'publicKey': peer.publicKey,
-    'mlKemPublicKey': peer.mlKemPublicKey,
-  }));
+  _writeSignal(
+    'cli_peer_fixture.json',
+    jsonEncode({
+      'peerId': peer.peerId,
+      'publicKey': peer.publicKey,
+      'mlKemPublicKey': peer.mlKemPublicKey,
+    }),
+  );
 
   // 5. Launch Flutter integration test
   _log('SOAK', 'Launching Flutter soak test...');
   final flutterArgs = [
-    'test', 'integration_test/soak_e2e_test.dart',
-    if (deviceId != null) ...[ '-d', deviceId],
+    'test',
+    'integration_test/soak_e2e_test.dart',
+    if (deviceId != null) ...['-d', deviceId],
   ];
-  final flutterProcess = await Process.start('flutter', flutterArgs,
-      environment: {
-        ...Platform.environment,
-        'E2E_SIGNAL_DIR': _signalDir.path,
-      });
+  final flutterProcess = await Process.start(
+    'flutter',
+    flutterArgs,
+    environment: {...Platform.environment, 'E2E_SIGNAL_DIR': _signalDir.path},
+  );
 
   // Stream Flutter output
   flutterProcess.stdout
@@ -310,10 +351,85 @@ Future<void> main(List<String> args) async {
   }
 
   final flutterPeerId = flutterPeer['peerId'] as String;
-  final flutterMlKemPK = flutterPeer['mlKemPublicKey'] as String?;
   _log('SOAK', 'Flutter peer: ${flutterPeerId.substring(0, 20)}...');
 
-  // Discover and dial Flutter peer
+  // 7. Deterministic Phase 4 gate: keep the CLI peer online but remove its
+  // personal rendezvous registration so Flutter hits the stale-discoverability
+  // send path on the real stack without restarting either side.
+  const phase4Text = 'phase4-live-after-stale-discoverability';
+  _log('SOAK', 'Phase 4 gate: unregister CLI namespace without restart...');
+  await peer.commandOk('clear_messages');
+  await peer.commandOk('unregister');
+  await Future.delayed(const Duration(seconds: 2));
+
+  _writeSignal('phase4_resume_and_send', jsonEncode({'text': phase4Text}));
+
+  final phase4Result = await _waitForJsonSignal(
+    'phase4_result',
+    timeout: const Duration(seconds: 60),
+  );
+  if (phase4Result == null) {
+    _log('SOAK', 'ERROR: phase4_result not received from Flutter');
+    _writeSignal('soak_done');
+    await peer.kill();
+    flutterProcess.kill();
+    exit(1);
+  }
+
+  Map<String, dynamic> cliReceived;
+  try {
+    cliReceived = await peer.commandOk('wait_message', {
+      'fromPeerId': flutterPeerId,
+      'timeoutSec': 30,
+    });
+  } catch (e) {
+    _log('SOAK', 'ERROR: CLI did not receive the Phase 4 message: $e');
+    _writeSignal('soak_done');
+    await peer.kill();
+    flutterProcess.kill();
+    exit(1);
+  }
+
+  final phase4DiscoverMissBefore =
+      phase4Result['discoverMissBeforeResume'] == true;
+  final phase4DiscoverMissAfter =
+      phase4Result['discoverMissAfterResume'] == true;
+  final phase4LivePath = phase4Result['livePath'] == true;
+  final phase4Content = cliReceived['content']?.toString() ?? '';
+  final phase4ReceivedExpectedText = phase4Content.contains(phase4Text);
+
+  if (!phase4DiscoverMissBefore ||
+      !phase4DiscoverMissAfter ||
+      !phase4LivePath ||
+      !phase4ReceivedExpectedText) {
+    _log(
+      'SOAK',
+      'ERROR: Phase 4 gate failed. '
+          'discoverBefore=$phase4DiscoverMissBefore '
+          'discoverAfter=$phase4DiscoverMissAfter '
+          'livePath=$phase4LivePath '
+          'receivedText=$phase4ReceivedExpectedText '
+          'transport=${phase4Result['persistedTransport']} '
+          'status=${phase4Result['persistedStatus']} '
+          'recovery=${phase4Result['lastRecoveryMethod']}',
+    );
+    _writeSignal('soak_done');
+    await peer.kill();
+    flutterProcess.kill();
+    exit(1);
+  }
+
+  _log(
+    'SOAK',
+    'Phase 4 gate PASS: '
+        'transport=${phase4Result['persistedTransport']} '
+        'status=${phase4Result['persistedStatus']} '
+        'recovery=${phase4Result['lastRecoveryMethod']}',
+  );
+
+  await peer.commandOk('register');
+
+  // Discover and dial Flutter peer for the remaining long-running soak loop.
   final ns = 'mknoon:chat:$flutterPeerId';
   var dialed = false;
   for (var attempt = 1; attempt <= 10; attempt++) {
@@ -327,8 +443,10 @@ Future<void> main(List<String> args) async {
           final addrs = (pMap['addresses'] as List<dynamic>)
               .map((a) => a as String)
               .toList();
-          await peer.commandOk(
-              'dial', {'peerId': flutterPeerId, 'addresses': addrs});
+          await peer.commandOk('dial', {
+            'peerId': flutterPeerId,
+            'addresses': addrs,
+          });
           dialed = true;
           break;
         }
@@ -348,7 +466,7 @@ Future<void> main(List<String> args) async {
   }
   _log('SOAK', 'Connected to Flutter peer');
 
-  // 7. Soak loop
+  // 8. Soak loop
   final random = Random(42);
   final stopwatch = Stopwatch()..start();
   int cliSentCount = 0;
@@ -363,22 +481,10 @@ Future<void> main(List<String> args) async {
 
     // Send message from CLI → Flutter (every 1-3s)
     cliSentCount++;
-    final msgPayload = jsonEncode({
-      'type': 'chat_message',
-      'version': '1',
-      'payload': {
-        'id': 'soak-cli-$cliSentCount',
-        'text': 'soak from CLI #$cliSentCount',
-        'senderPeerId': peer.peerId,
-        'senderUsername': 'CLI-Soak',
-        'timestamp': DateTime.now().toUtc().toIso8601String(),
-      },
-    });
-
     try {
-      await peer.commandOk('send', {
+      await peer.commandOk('send_v1', {
         'peerId': flutterPeerId,
-        'message': msgPayload,
+        'text': 'soak from CLI #$cliSentCount',
       });
     } catch (e) {
       _log('SOAK', 'Send failed: $e');
@@ -412,8 +518,10 @@ Future<void> main(List<String> args) async {
             final addrs = (pMap['addresses'] as List<dynamic>)
                 .map((a) => a as String)
                 .toList();
-            await peer.commandOk(
-                'dial', {'peerId': flutterPeerId, 'addresses': addrs});
+            await peer.commandOk('dial', {
+              'peerId': flutterPeerId,
+              'addresses': addrs,
+            });
             break;
           }
         }
@@ -436,21 +544,11 @@ Future<void> main(List<String> args) async {
       inboxStores++;
       _log('SOAK', 'Storing inbox messages #$inboxStores...');
       for (var i = 0; i < 5; i++) {
-        final inboxMsg = jsonEncode({
-          'type': 'chat_message',
-          'version': '1',
-          'payload': {
-            'id': 'soak-inbox-$inboxStores-$i',
-            'text': 'inbox soak #$inboxStores-$i',
-            'senderPeerId': peer.peerId,
-            'senderUsername': 'CLI-Soak',
-            'timestamp': DateTime.now().toUtc().toIso8601String(),
-          },
-        });
         try {
-          await peer.commandOk('store_inbox', {
+          await peer.commandOk('inbox_store_v1', {
             'peerId': flutterPeerId,
-            'message': inboxMsg,
+            'text': 'inbox soak #$inboxStores-$i',
+            'messageId': 'soak-inbox-$inboxStores-$i',
           });
         } catch (e) {
           _log('SOAK', 'Inbox store failed: $e');
@@ -462,18 +560,19 @@ Future<void> main(List<String> args) async {
     // Print stats every 30s
     if (elapsed.inSeconds > 0 && elapsed.inSeconds % 30 < 3) {
       final stats = _readSignal('soak_stats');
-      _log('SOAK',
-          'Progress: ${elapsed.inSeconds}s/${duration.inSeconds}s, '
-          'cliSent=$cliSentCount, signalsSent=$signalsSent, '
-          'flutterStats=${stats ?? "pending"}');
+      _log(
+        'SOAK',
+        'Progress: ${elapsed.inSeconds}s/${duration.inSeconds}s, '
+            'cliSent=$cliSentCount, signalsSent=$signalsSent, '
+            'flutterStats=${stats ?? "pending"}',
+      );
     }
 
     // Random delay 1-3s
-    await Future.delayed(
-        Duration(milliseconds: 1000 + random.nextInt(2000)));
+    await Future.delayed(Duration(milliseconds: 1000 + random.nextInt(2000)));
   }
 
-  // 8. Signal done and collect results
+  // 9. Signal done and collect results
   _log('SOAK', 'Soak loop complete. Signaling done...');
   _writeSignal('soak_done');
 
@@ -490,11 +589,13 @@ Future<void> main(List<String> args) async {
   // Cleanup
   await peer.stopNode();
   await peer.kill();
-  await flutterProcess.exitCode.timeout(const Duration(seconds: 30),
-      onTimeout: () {
-    flutterProcess.kill();
-    return -1;
-  });
+  await flutterProcess.exitCode.timeout(
+    const Duration(seconds: 30),
+    onTimeout: () {
+      flutterProcess.kill();
+      return -1;
+    },
+  );
 
   // Clean up signal dir
   try {

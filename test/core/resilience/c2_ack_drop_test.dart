@@ -4,6 +4,8 @@ import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
+import 'package:flutter_app/features/p2p/domain/models/connection_state.dart'
+    as p2p;
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
@@ -150,14 +152,45 @@ class _AckDropP2PService implements P2PService {
 }
 
 // ---------------------------------------------------------------------------
-// _ConnectedAckDropP2PService — same as above but isConnectedToPeer → true
+// _ConnectedAckDropP2PService — same as above but currentState reports an
+// existing connected peer so the real send fast path is exercised.
 // ---------------------------------------------------------------------------
 
 class _ConnectedAckDropP2PService extends _AckDropP2PService {
-  _ConnectedAckDropP2PService(super.inner);
+  final String connectedPeerId;
+
+  _ConnectedAckDropP2PService(super.inner, {required this.connectedPeerId});
+
+  @override
+  NodeState get currentState => _inner.currentState.copyWith(
+    connections: [
+      p2p.ConnectionState(
+        peerId: connectedPeerId,
+        multiaddrs: const ['/ip4/127.0.0.1/tcp/4001'],
+        direction: 'outbound',
+        status: 'connected',
+      ),
+    ],
+  );
 
   @override
   bool isConnectedToPeer(String peerId) => true;
+}
+
+class _ProbeConnectedAckDropP2PService extends _AckDropP2PService {
+  int probeRelayCallCount = 0;
+
+  _ProbeConnectedAckDropP2PService(super.inner);
+
+  @override
+  Future<DiscoveredPeer?> discoverPeer(String peerId, {int? timeoutMs}) async =>
+      null;
+
+  @override
+  Future<RelayProbeResult> probeRelay(String peerId) async {
+    probeRelayCallCount++;
+    return RelayProbeResult.connected;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -324,7 +357,10 @@ void main() {
           peerId: alicePeerId,
           network: network,
         );
-        final connectedP2P = _ConnectedAckDropP2PService(innerAlice);
+        final connectedP2P = _ConnectedAckDropP2PService(
+          innerAlice,
+          connectedPeerId: bob.peerId,
+        );
         connectedP2P.dropAcks = true;
 
         final fastRepo = InMemoryMessageRepository();
@@ -347,6 +383,38 @@ void main() {
         ); // ACK lost on fast path → inbox safety net
 
         connectedP2P.dispose();
+      },
+    );
+
+    test(
+      'probe-assisted live send still hands off to inbox when ACK is lost',
+      () async {
+        final innerAlice = FakeP2PService(
+          peerId: alicePeerId,
+          network: network,
+        );
+        final probeP2P = _ProbeConnectedAckDropP2PService(innerAlice);
+        probeP2P.dropAcks = true;
+
+        final (result, msg) = await sendChatMessage(
+          p2pService: probeP2P,
+          messageRepo: aliceRepo,
+          targetPeerId: bob.peerId,
+          text: 'probe path ack drop',
+          senderPeerId: alicePeerId,
+          senderUsername: aliceUsername,
+          bridge: encryptBridge,
+          recipientMlKemPublicKey: bobMlKemKey,
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(msg, isNotNull);
+        expect(msg!.status, 'delivered');
+        expect(msg.transport, 'inbox');
+        expect(probeP2P.probeRelayCallCount, 1);
+        expect(network.inboxCount(bob.peerId), 1);
+
+        probeP2P.dispose();
       },
     );
 
