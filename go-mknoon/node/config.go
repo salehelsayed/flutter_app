@@ -41,6 +41,10 @@ const (
 	GroupDiscoveryJitterFactor = 4                // +/-25% interval jitter
 	GroupRecoveryInitialJitter = 3 * time.Second  // initial stagger for resume/watchdog bursts
 
+	// Personal rendezvous registration.
+	PersonalRendezvousRegistrationTTL     = 2 * time.Hour
+	DefaultPersonalRendezvousRefreshEvery = PersonalRendezvousRegistrationTTL / 4
+
 	// Inbox framing.
 	MaxFrameLen = 128 * 1024 // 128 KB, matches relay server
 
@@ -105,12 +109,13 @@ func RelayAddress() string {
 
 // NodeConfig holds the configuration for starting a Node.
 type NodeConfig struct {
-	PrivateKeyHex  string        // Ed25519 private key as hex string
-	RelayAddresses []string      // Multiaddr strings for relay servers
-	Namespace      string        // e.g. "mknoon:chat:<peerId>"
-	AutoRegister   bool          // Auto-register on rendezvous after relay connect
-	ListenPort     int           // 0 for random
-	FeatureFlags   *FeatureFlags // Rollout flags; nil → all enabled
+	PrivateKeyHex                     string        // Ed25519 private key as hex string
+	RelayAddresses                    []string      // Multiaddr strings for relay servers
+	Namespace                         string        // e.g. "mknoon:chat:<peerId>"
+	AutoRegister                      bool          // Auto-register on rendezvous after relay connect
+	PersonalRendezvousRefreshInterval time.Duration // 0 → DefaultPersonalRendezvousRefreshEvery
+	ListenPort                        int           // 0 for random
+	FeatureFlags                      *FeatureFlags // Rollout flags; nil → all enabled
 }
 
 // EffectiveFlags returns the feature flags from this config, falling back
@@ -120,6 +125,15 @@ func (c *NodeConfig) EffectiveFlags() FeatureFlags {
 		return *c.FeatureFlags
 	}
 	return DefaultFeatureFlags()
+}
+
+// PersonalRendezvousRefreshEvery returns the effective interval for periodic
+// personal rendezvous re-registration.
+func (c *NodeConfig) PersonalRendezvousRefreshEvery() time.Duration {
+	if c != nil && c.PersonalRendezvousRefreshInterval > 0 {
+		return c.PersonalRendezvousRefreshInterval
+	}
+	return DefaultPersonalRendezvousRefreshEvery
 }
 
 // NodeState represents the current state of the node.

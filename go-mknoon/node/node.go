@@ -11,6 +11,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/libp2p/go-libp2p"
@@ -71,9 +72,10 @@ type Node struct {
 	rendezvousRegisterHook    func(string, []string) error
 	refreshRelaySessionHook   func() *RecoveryResult
 
-	// Phase 0 scaffolding for the personal rendezvous refresh loop.
-	// This is intentionally not wired into Start() yet.
+	// Personal rendezvous refresh state.
 	personalRendezvousRefreshCancel context.CancelFunc
+	personalRendezvousRefreshLoopID uint64
+	personalRendezvousRegistering   atomic.Bool
 }
 
 type connectionInfo struct {
@@ -171,6 +173,7 @@ func (n *Node) Start(cfg NodeConfig) (*NodeState, error) {
 
 	// Save config for Restart().
 	cfgCopy := cfg
+	cfgCopy.PersonalRendezvousRefreshInterval = cfgCopy.PersonalRendezvousRefreshEvery()
 	n.lastConfig = &cfgCopy
 	flags := cfg.EffectiveFlags()
 	n.featureFlags = &flags
@@ -325,6 +328,7 @@ func (n *Node) Start(cfg NodeConfig) (*NodeState, error) {
 	n.isStarted = true
 	n.startedAt = time.Now()
 	n.relayReady = make(chan struct{})
+	n.personalRendezvousRegistering.Store(false)
 
 	// Phase 4: Initialize event dispatcher for async delivery.
 	if n.eventCallback != nil && n.eventDispatcher == nil {
@@ -349,15 +353,7 @@ func (n *Node) Start(cfg NodeConfig) (*NodeState, error) {
 	// Auto-register as soon as the first relay path yields a discoverable
 	// circuit address. Do not wait for slower warm attempts to settle.
 	if cfg.AutoRegister {
-		go func() {
-			if !n.waitForCircuitAddressForStart(10 * time.Second) {
-				log.Printf("[NODE] auto-register skipped: no circuit address ready")
-				return
-			}
-			if err := n.rendezvousRegisterForStart(n.namespace, nil); err != nil {
-				log.Printf("[NODE] auto-register failed: %v", err)
-			}
-		}()
+		go n.autoRegisterPersonalNamespaceForStart()
 	}
 
 	return n.stateLocked(), nil
@@ -399,6 +395,8 @@ func (n *Node) Stop() error {
 	n.groupKeys = nil
 	n.pubsub = nil
 
+	n.stopPersonalRendezvousRefreshLoopLocked()
+
 	if n.cancel != nil {
 		n.cancel()
 	}
@@ -417,6 +415,7 @@ func (n *Node) Stop() error {
 	n.groupRecoverySem = make(chan struct{}, GroupDiscoveryConcurrency)
 	n.relayReadyOnce = sync.Once{} // reset so next Start() can use it
 	n.featureFlags = nil
+	n.personalRendezvousRegistering.Store(false)
 
 	// Phase 4: Stop event dispatcher and reset relay session state.
 	if n.eventDispatcher != nil {
@@ -539,10 +538,6 @@ func (n *Node) warmRelayConnectionForStart(info peer.AddrInfo) error {
 //
 // Returns a RecoveryResult describing what happened.
 func (n *Node) RefreshRelaySession() *RecoveryResult {
-	if n.refreshRelaySessionHook != nil {
-		return n.refreshRelaySessionHook()
-	}
-
 	n.mu.RLock()
 	h := n.host
 	started := n.isStarted
@@ -578,63 +573,69 @@ func (n *Node) RefreshRelaySession() *RecoveryResult {
 	// We own the recovery — perform in-place refresh.
 	log.Printf("[NODE] RefreshRelaySession: attempting in-place relay recovery")
 
-	var refreshErr error
+	var result *RecoveryResult
+	if n.refreshRelaySessionHook != nil {
+		result = n.refreshRelaySessionHook()
+	} else {
+		var refreshErr error
 
-	// Build relay AddrInfos for warm connection.
-	if len(relayAddrs) == 0 {
-		relayAddrs = []string{DefaultRelayAddress}
-	}
-
-	relayInfoMap := make(map[peer.ID]*peer.AddrInfo)
-	for _, addr := range relayAddrs {
-		maddr, err := ma.NewMultiaddr(addr)
-		if err != nil {
-			continue
+		// Build relay AddrInfos for warm connection.
+		if len(relayAddrs) == 0 {
+			relayAddrs = []string{DefaultRelayAddress}
 		}
-		info, err := peer.AddrInfoFromP2pAddr(maddr)
-		if err != nil {
-			continue
+
+		relayInfoMap := make(map[peer.ID]*peer.AddrInfo)
+		for _, addr := range relayAddrs {
+			maddr, err := ma.NewMultiaddr(addr)
+			if err != nil {
+				continue
+			}
+			info, err := peer.AddrInfoFromP2pAddr(maddr)
+			if err != nil {
+				continue
+			}
+			if existing, ok := relayInfoMap[info.ID]; ok {
+				existing.Addrs = append(existing.Addrs, info.Addrs...)
+			} else {
+				relayInfoMap[info.ID] = info
+			}
 		}
-		if existing, ok := relayInfoMap[info.ID]; ok {
-			existing.Addrs = append(existing.Addrs, info.Addrs...)
-		} else {
-			relayInfoMap[info.ID] = info
+
+		// Attempt to reconnect to each relay peer.
+		for _, info := range relayInfoMap {
+			if err := n.warmRelayConnection(*info); err != nil {
+				log.Printf("[NODE] RefreshRelaySession: warm %s failed: %v",
+					info.ID.String()[:min(20, len(info.ID.String()))], err)
+				refreshErr = err
+			} else {
+				log.Printf("[NODE] RefreshRelaySession: warm %s success",
+					info.ID.String()[:min(20, len(info.ID.String()))])
+			}
+		}
+
+		// Wait for AutoRelay to re-establish circuit addresses.
+		if ok := n.waitForCircuitAddress(10 * time.Second); ok {
+			log.Printf("[NODE] RefreshRelaySession: circuit addresses obtained ✓")
+			refreshErr = nil
+		} else if refreshErr == nil {
+			refreshErr = fmt.Errorf("no circuit addresses after 10s wait")
+		}
+		_, circuitAddrs := splitHostAddresses(h)
+		n.syncRelaySessionFromRuntime("refresh_relay_session", circuitAddrs)
+
+		result = &RecoveryResult{
+			RecoveryMode:      "in_place",
+			Success:           refreshErr == nil,
+			RelayState:        string(mgr.AggregateState()),
+			HealthyRelayCount: mgr.HealthyRelayCount(),
+		}
+		if refreshErr != nil {
+			result.ErrorCode = "REFRESH_FAILED"
+			result.Reason = refreshErr.Error()
 		}
 	}
 
-	// Attempt to reconnect to each relay peer.
-	for _, info := range relayInfoMap {
-		if err := n.warmRelayConnection(*info); err != nil {
-			log.Printf("[NODE] RefreshRelaySession: warm %s failed: %v",
-				info.ID.String()[:min(20, len(info.ID.String()))], err)
-			refreshErr = err
-		} else {
-			log.Printf("[NODE] RefreshRelaySession: warm %s success",
-				info.ID.String()[:min(20, len(info.ID.String()))])
-		}
-	}
-
-	// Wait for AutoRelay to re-establish circuit addresses.
-	if ok := n.waitForCircuitAddress(10 * time.Second); ok {
-		log.Printf("[NODE] RefreshRelaySession: circuit addresses obtained ✓")
-		refreshErr = nil
-	} else if refreshErr == nil {
-		refreshErr = fmt.Errorf("no circuit addresses after 10s wait")
-	}
-	_, circuitAddrs := splitHostAddresses(h)
-	n.syncRelaySessionFromRuntime("refresh_relay_session", circuitAddrs)
-
-	result := &RecoveryResult{
-		RecoveryMode:      "in_place",
-		Success:           refreshErr == nil,
-		RelayState:        string(mgr.AggregateState()),
-		HealthyRelayCount: mgr.HealthyRelayCount(),
-	}
-	if refreshErr != nil {
-		result.ErrorCode = "REFRESH_FAILED"
-		result.Reason = refreshErr.Error()
-	}
-
+	result = n.finalizeRelayRecoveryResult(result, "relay refresh")
 	mgr.CompleteRecovery(result)
 	return result
 }
@@ -727,7 +728,7 @@ func (n *Node) ReconnectRelays() (*RecoveryResult, error) {
 		watchdogResult.Reason = "no circuit addresses after watchdog restart"
 	}
 
-	return watchdogResult, nil
+	return n.finalizeRelayRecoveryResult(watchdogResult, "watchdog restart"), nil
 }
 
 // DialPeerWithTimeout connects to a peer with an explicit timeout override.

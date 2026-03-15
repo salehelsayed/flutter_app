@@ -27,7 +27,7 @@ func (n *Node) RendezvousRegister(namespace string, serverAddresses []string) er
 
 	rs := n.buildRelaySelector(serverAddresses)
 
-	return rs.ForEach(func(relay RelayInfo) error {
+	if err := rs.ForEach(func(relay RelayInfo) error {
 		timeout := DiscoverTimeout
 		ctx, cancel := context.WithTimeout(n.ctx, timeout)
 		defer cancel()
@@ -56,7 +56,7 @@ func (n *Node) RendezvousRegister(namespace string, serverAddresses []string) er
 		}
 
 		// Build Register message
-		regBytes := marshalRegister(namespace, signedRecordBytes, 7200)
+		regBytes := marshalRegister(namespace, signedRecordBytes, uint64(PersonalRendezvousRegistrationTTL/time.Second))
 		msgBytes := marshalRzMessage(0, regBytes) // MessageType_REGISTER = 0
 
 		// Write varint-prefixed message
@@ -86,7 +86,12 @@ func (n *Node) RendezvousRegister(namespace string, serverAddresses []string) er
 		log.Printf("[RENDEZVOUS] Registered ns=%s", namespace)
 		streamOK = true
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+
+	n.maybeStartPersonalRendezvousRefreshLoopAfterRegister(namespace)
+	return nil
 }
 
 // RendezvousDiscoverWithTimeout discovers peers on a namespace using a

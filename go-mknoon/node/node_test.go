@@ -508,14 +508,59 @@ func TestAutoRegister_DoesNotWaitForSlowSecondaryWarmAttempt(t *testing.T) {
 	}
 }
 
-func TestPersonalRendezvousRefreshLoop_DoesNotStartWhenAutoRegisterDisabled(t *testing.T) {
+func TestPersonalRendezvousRefreshInterval_IsSafelyBelowTTL(t *testing.T) {
+	if DefaultPersonalRendezvousRefreshEvery >= PersonalRendezvousRegistrationTTL {
+		t.Fatalf(
+			"default personal refresh interval %v must be below registration TTL %v",
+			DefaultPersonalRendezvousRefreshEvery,
+			PersonalRendezvousRegistrationTTL,
+		)
+	}
+	if DefaultPersonalRendezvousRefreshEvery > PersonalRendezvousRegistrationTTL/2 {
+		t.Fatalf(
+			"default personal refresh interval %v should leave a large safety margin under TTL %v",
+			DefaultPersonalRendezvousRefreshEvery,
+			PersonalRendezvousRegistrationTTL,
+		)
+	}
+
+	cfg := NodeConfig{}
+	if got := cfg.PersonalRendezvousRefreshEvery(); got != DefaultPersonalRendezvousRefreshEvery {
+		t.Fatalf("default refresh interval = %v, want %v", got, DefaultPersonalRendezvousRefreshEvery)
+	}
+
+	cfg.PersonalRendezvousRefreshInterval = 7 * time.Second
+	if got := cfg.PersonalRendezvousRefreshEvery(); got != 7*time.Second {
+		t.Fatalf("configured refresh interval = %v, want %v", got, 7*time.Second)
+	}
+}
+
+func TestPersonalRendezvousRefreshLoop_StartsAfterSuccessfulPersonalRegister(t *testing.T) {
 	hexKey := generateTestKey(t)
 
 	n := NewNode()
-	registerCalled := make(chan struct{}, 1)
+	initialRegisterStarted := make(chan struct{})
+	releaseInitialRegister := make(chan struct{})
+	refreshObserved := make(chan struct{}, 1)
+	var callCount atomic.Int32
 
+	n.warmRelayConnectionHook = func(info peer.AddrInfo) error {
+		return nil
+	}
+	n.waitForCircuitAddressHook = func(timeout time.Duration) bool {
+		return true
+	}
 	n.rendezvousRegisterHook = func(namespace string, serverAddresses []string) error {
-		registerCalled <- struct{}{}
+		switch callCount.Add(1) {
+		case 1:
+			close(initialRegisterStarted)
+			select {
+			case <-releaseInitialRegister:
+			case <-n.ctx.Done():
+			}
+		case 2:
+			refreshObserved <- struct{}{}
+		}
 		return nil
 	}
 
@@ -524,20 +569,146 @@ func TestPersonalRendezvousRefreshLoop_DoesNotStartWhenAutoRegisterDisabled(t *t
 		RelayAddresses: []string{
 			generateFakeRelayAddr(t, 19021),
 		},
-		AutoRegister: false,
-		Namespace:    "mknoon:chat:no-auto-register",
+		AutoRegister:                      true,
+		Namespace:                         "mknoon:chat:phase1-start-after-register",
+		PersonalRendezvousRefreshInterval: 10 * time.Millisecond,
 	})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	defer n.Stop()
 
+	select {
+	case <-initialRegisterStarted:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("expected initial personal registration attempt to start")
+	}
+
+	time.Sleep(40 * time.Millisecond)
+	if got := callCount.Load(); got != 1 {
+		t.Fatalf("refresh loop started before initial registration succeeded; got %d register calls", got)
+	}
+
+	close(releaseInitialRegister)
+
+	select {
+	case <-refreshObserved:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("expected personal refresh loop to start after initial registration succeeded")
+	}
+}
+
+func TestPersonalRendezvousRefreshLoop_SkipsWhenNodeNotStarted(t *testing.T) {
+	n := NewNode()
+	registerCalled := make(chan struct{}, 1)
+
+	n.rendezvousRegisterHook = func(namespace string, serverAddresses []string) error {
+		registerCalled <- struct{}{}
+		return nil
+	}
+
 	n.startPersonalRendezvousRefreshLoop(10 * time.Millisecond)
+
+	select {
+	case <-registerCalled:
+		t.Fatal("refresh loop should not register when the node has not started")
+	case <-time.After(40 * time.Millisecond):
+	}
+
+	n.mu.RLock()
+	cancel := n.personalRendezvousRefreshCancel
+	n.mu.RUnlock()
+	if cancel != nil {
+		t.Fatal("refresh loop should not leave a cancel handle when the node has not started")
+	}
+}
+
+func TestPersonalRendezvousRefreshLoop_UsesConfiguredNamespace(t *testing.T) {
+	hexKey := generateTestKey(t)
+
+	n := NewNode()
+	namespaces := make(chan string, 4)
+
+	n.warmRelayConnectionHook = func(info peer.AddrInfo) error {
+		return nil
+	}
+	n.waitForCircuitAddressHook = func(timeout time.Duration) bool {
+		return true
+	}
+	n.rendezvousRegisterHook = func(namespace string, serverAddresses []string) error {
+		namespaces <- namespace
+		return nil
+	}
+
+	const expectedNamespace = "mknoon:chat:configured-namespace"
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex: hexKey,
+		RelayAddresses: []string{
+			generateFakeRelayAddr(t, 19022),
+		},
+		AutoRegister:                      true,
+		Namespace:                         expectedNamespace,
+		PersonalRendezvousRefreshInterval: 10 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer n.Stop()
+
+	for i := 0; i < 2; i++ {
+		select {
+		case namespace := <-namespaces:
+			if namespace != expectedNamespace {
+				t.Fatalf("register call %d used namespace %q, want %q", i+1, namespace, expectedNamespace)
+			}
+		case <-time.After(200 * time.Millisecond):
+			t.Fatalf("timed out waiting for register call %d", i+1)
+		}
+	}
+}
+
+func TestPersonalRendezvousRefreshLoop_DoesNotStartWhenAutoRegisterDisabled(t *testing.T) {
+	hexKey := generateTestKey(t)
+
+	n := NewNode()
+	registerCalled := make(chan struct{}, 1)
+
+	n.warmRelayConnectionHook = func(info peer.AddrInfo) error {
+		return nil
+	}
+	n.waitForCircuitAddressHook = func(timeout time.Duration) bool {
+		return true
+	}
+	n.rendezvousRegisterHook = func(namespace string, serverAddresses []string) error {
+		registerCalled <- struct{}{}
+		return nil
+	}
+
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex: hexKey,
+		RelayAddresses: []string{
+			generateFakeRelayAddr(t, 19023),
+		},
+		AutoRegister:                      false,
+		Namespace:                         "mknoon:chat:no-auto-register",
+		PersonalRendezvousRefreshInterval: 10 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer n.Stop()
 
 	select {
 	case <-registerCalled:
 		t.Fatal("personal rendezvous registration should not start when AutoRegister=false")
 	case <-time.After(60 * time.Millisecond):
+	}
+
+	n.mu.RLock()
+	cancel := n.personalRendezvousRefreshCancel
+	n.mu.RUnlock()
+	if cancel != nil {
+		t.Fatal("refresh loop should not start when AutoRegister=false")
 	}
 }
 
@@ -545,20 +716,22 @@ func TestPersonalRendezvousRefreshLoop_StopsOnNodeStop(t *testing.T) {
 	hexKey := generateTestKey(t)
 
 	n := NewNode()
-	firstCallStarted := make(chan struct{})
-	callReleased := make(chan struct{})
+	firstRefreshStarted := make(chan struct{})
 	var callCount atomic.Int32
 
+	n.warmRelayConnectionHook = func(info peer.AddrInfo) error {
+		return nil
+	}
 	n.waitForCircuitAddressHook = func(timeout time.Duration) bool {
-		return false
+		return true
 	}
 	n.rendezvousRegisterHook = func(namespace string, serverAddresses []string) error {
-		if callCount.Add(1) == 1 {
-			close(firstCallStarted)
-			select {
-			case <-n.ctx.Done():
-			case <-callReleased:
-			}
+		switch callCount.Add(1) {
+		case 1:
+			return nil
+		case 2:
+			close(firstRefreshStarted)
+			<-n.ctx.Done()
 		}
 		return nil
 	}
@@ -566,20 +739,20 @@ func TestPersonalRendezvousRefreshLoop_StopsOnNodeStop(t *testing.T) {
 	_, err := n.Start(NodeConfig{
 		PrivateKeyHex: hexKey,
 		RelayAddresses: []string{
-			generateFakeRelayAddr(t, 19022),
+			generateFakeRelayAddr(t, 19024),
 		},
-		AutoRegister: true,
-		Namespace:    "mknoon:chat:phase0-personal-refresh",
+		AutoRegister:                      true,
+		Namespace:                         "mknoon:chat:phase1-stop",
+		PersonalRendezvousRefreshInterval: 10 * time.Millisecond,
 	})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
-	n.startPersonalRendezvousRefreshLoop(10 * time.Millisecond)
-
 	select {
-	case <-firstCallStarted:
+	case <-firstRefreshStarted:
 	case <-time.After(200 * time.Millisecond):
+		n.Stop()
 		t.Fatal("expected refresh loop to attempt a registration before Stop()")
 	}
 
@@ -587,11 +760,10 @@ func TestPersonalRendezvousRefreshLoop_StopsOnNodeStop(t *testing.T) {
 		t.Fatalf("Stop: %v", err)
 	}
 
-	close(callReleased)
 	time.Sleep(40 * time.Millisecond)
 
-	if got := callCount.Load(); got != 1 {
-		t.Fatalf("expected exactly 1 registration attempt before stop, got %d", got)
+	if got := callCount.Load(); got != 2 {
+		t.Fatalf("expected initial register plus exactly 1 in-flight refresh before stop, got %d calls", got)
 	}
 }
 
@@ -599,14 +771,17 @@ func TestPersonalRendezvousRefreshLoop_DoesNotDuplicateConcurrentTicks(t *testin
 	hexKey := generateTestKey(t)
 
 	n := NewNode()
-	firstCallStarted := make(chan struct{})
-	releaseFirstCall := make(chan struct{})
+	refreshStarted := make(chan struct{})
+	releaseRefresh := make(chan struct{})
 	var callCount atomic.Int32
 	var inFlight atomic.Int32
 	var maxInFlight atomic.Int32
 
+	n.warmRelayConnectionHook = func(info peer.AddrInfo) error {
+		return nil
+	}
 	n.waitForCircuitAddressHook = func(timeout time.Duration) bool {
-		return false
+		return true
 	}
 	n.rendezvousRegisterHook = func(namespace string, serverAddresses []string) error {
 		current := inFlight.Add(1)
@@ -621,9 +796,12 @@ func TestPersonalRendezvousRefreshLoop_DoesNotDuplicateConcurrentTicks(t *testin
 		}
 
 		callNumber := callCount.Add(1)
-		if callNumber == 1 {
-			close(firstCallStarted)
-			<-releaseFirstCall
+		if callNumber == 2 {
+			close(refreshStarted)
+			select {
+			case <-releaseRefresh:
+			case <-n.ctx.Done():
+			}
 		}
 
 		inFlight.Add(-1)
@@ -633,34 +811,323 @@ func TestPersonalRendezvousRefreshLoop_DoesNotDuplicateConcurrentTicks(t *testin
 	_, err := n.Start(NodeConfig{
 		PrivateKeyHex: hexKey,
 		RelayAddresses: []string{
-			generateFakeRelayAddr(t, 19023),
+			generateFakeRelayAddr(t, 19025),
 		},
-		AutoRegister: true,
-		Namespace:    "mknoon:chat:no-duplicate-ticks",
+		AutoRegister:                      true,
+		Namespace:                         "mknoon:chat:no-duplicate-ticks",
+		PersonalRendezvousRefreshInterval: 10 * time.Millisecond,
 	})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	defer n.Stop()
 
-	n.startPersonalRendezvousRefreshLoop(10 * time.Millisecond)
-
 	select {
-	case <-firstCallStarted:
+	case <-refreshStarted:
 	case <-time.After(200 * time.Millisecond):
 		t.Fatal("expected first refresh-loop registration attempt to start")
 	}
 
 	time.Sleep(50 * time.Millisecond)
 
-	if got := callCount.Load(); got != 1 {
-		t.Fatalf("expected only 1 in-flight registration attempt while the first tick is blocked, got %d", got)
+	if got := callCount.Load(); got != 2 {
+		t.Fatalf("expected initial register plus exactly 1 blocked refresh attempt, got %d calls", got)
 	}
 	if got := maxInFlight.Load(); got != 1 {
 		t.Fatalf("expected at most 1 concurrent registration attempt, got %d", got)
 	}
 
-	close(releaseFirstCall)
+	close(releaseRefresh)
+}
+
+func TestPersonalRendezvousRefreshLoop_DoesNotStartForGroupNamespaceRegister(t *testing.T) {
+	hexKey := generateTestKey(t)
+
+	n := NewNode()
+	registerCalled := make(chan struct{}, 1)
+
+	n.waitForCircuitAddressHook = func(timeout time.Duration) bool {
+		return false
+	}
+	n.rendezvousRegisterHook = func(namespace string, serverAddresses []string) error {
+		registerCalled <- struct{}{}
+		return nil
+	}
+
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex: hexKey,
+		RelayAddresses: []string{
+			generateFakeRelayAddr(t, 19026),
+		},
+		AutoRegister: true,
+		Namespace:    "mknoon:chat:personal-namespace",
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer n.Stop()
+
+	n.maybeStartPersonalRendezvousRefreshLoopAfterRegister(groupRendezvousNamespace("group-123"))
+
+	select {
+	case <-registerCalled:
+		t.Fatal("group namespace register should not trigger the personal refresh loop")
+	case <-time.After(40 * time.Millisecond):
+	}
+
+	n.mu.RLock()
+	cancel := n.personalRendezvousRefreshCancel
+	n.mu.RUnlock()
+	if cancel != nil {
+		t.Fatal("group namespace register should not start the personal refresh loop")
+	}
+}
+
+func waitForPersonalRegisterCall(t *testing.T, registers <-chan string, timeout time.Duration) string {
+	t.Helper()
+
+	select {
+	case namespace := <-registers:
+		return namespace
+	case <-time.After(timeout):
+		t.Fatalf("timed out waiting for personal registration within %v", timeout)
+		return ""
+	}
+}
+
+func waitForPersonalRegisterIdle(t *testing.T, n *Node, timeout time.Duration) {
+	t.Helper()
+
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if !n.personalRendezvousRegistering.Load() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for personal registration guard to clear within %v", timeout)
+}
+
+func TestRefreshRelaySession_ReRegistersPersonalNamespaceOnSuccess(t *testing.T) {
+	hexKey := generateTestKey(t)
+	const expectedNamespace = "mknoon:chat:phase2-in-place"
+
+	n := NewNode()
+	registers := make(chan string, 4)
+	var refreshCalls atomic.Int32
+	var registerCalls atomic.Int32
+
+	n.warmRelayConnectionHook = func(info peer.AddrInfo) error {
+		return nil
+	}
+	n.waitForCircuitAddressHook = func(timeout time.Duration) bool {
+		return true
+	}
+	n.rendezvousRegisterHook = func(namespace string, serverAddresses []string) error {
+		registerCalls.Add(1)
+		registers <- namespace
+		return nil
+	}
+	n.refreshRelaySessionHook = func() *RecoveryResult {
+		refreshCalls.Add(1)
+		return &RecoveryResult{
+			RecoveryMode:      "in_place",
+			Success:           true,
+			RelayState:        string(AggregateRelayOnline),
+			HealthyRelayCount: 1,
+		}
+	}
+
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex: hexKey,
+		RelayAddresses: []string{
+			generateFakeRelayAddr(t, 19027),
+		},
+		AutoRegister:                      true,
+		Namespace:                         expectedNamespace,
+		PersonalRendezvousRefreshInterval: time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer n.Stop()
+
+	if namespace := waitForPersonalRegisterCall(t, registers, 200*time.Millisecond); namespace != expectedNamespace {
+		t.Fatalf("initial personal register used namespace %q, want %q", namespace, expectedNamespace)
+	}
+	waitForPersonalRegisterIdle(t, n, 200*time.Millisecond)
+
+	result := n.RefreshRelaySession()
+	if !result.Success {
+		t.Fatalf("RefreshRelaySession() should succeed, got %+v", result)
+	}
+	if result.RecoveryMode != "in_place" {
+		t.Fatalf("expected in_place recovery, got %+v", result)
+	}
+	if got := refreshCalls.Load(); got != 1 {
+		t.Fatalf("expected exactly 1 in-place refresh attempt, got %d", got)
+	}
+
+	if namespace := waitForPersonalRegisterCall(t, registers, 200*time.Millisecond); namespace != expectedNamespace {
+		t.Fatalf("recovery personal register used namespace %q, want %q", namespace, expectedNamespace)
+	}
+	if got := registerCalls.Load(); got != 2 {
+		t.Fatalf("expected initial register plus 1 recovery re-register, got %d calls", got)
+	}
+}
+
+func TestReconnectRelays_WatchdogRestart_ReRegistersPersonalNamespace(t *testing.T) {
+	hexKey := generateTestKey(t)
+	const expectedNamespace = "mknoon:chat:phase2-watchdog"
+
+	n := NewNode()
+	registers := make(chan string, 4)
+	var refreshCalls atomic.Int32
+	var registerCalls atomic.Int32
+
+	n.warmRelayConnectionHook = func(info peer.AddrInfo) error {
+		return nil
+	}
+	n.waitForCircuitAddressHook = func(timeout time.Duration) bool {
+		return true
+	}
+	n.rendezvousRegisterHook = func(namespace string, serverAddresses []string) error {
+		registerCalls.Add(1)
+		registers <- namespace
+		return nil
+	}
+	n.refreshRelaySessionHook = func() *RecoveryResult {
+		refreshCalls.Add(1)
+		return &RecoveryResult{
+			RecoveryMode: "in_place",
+			Success:      false,
+			ErrorCode:    "REFRESH_FAILED",
+			Reason:       "forced refresh failure",
+		}
+	}
+
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex: hexKey,
+		RelayAddresses: []string{
+			generateFakeRelayAddr(t, 19028),
+		},
+		AutoRegister:                      true,
+		Namespace:                         expectedNamespace,
+		PersonalRendezvousRefreshInterval: time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer n.Stop()
+
+	if namespace := waitForPersonalRegisterCall(t, registers, 200*time.Millisecond); namespace != expectedNamespace {
+		t.Fatalf("initial personal register used namespace %q, want %q", namespace, expectedNamespace)
+	}
+	waitForPersonalRegisterIdle(t, n, 200*time.Millisecond)
+
+	result, err := n.ReconnectRelays()
+	if err != nil {
+		t.Fatalf("ReconnectRelays(): %v", err)
+	}
+	if !result.Success {
+		t.Fatalf("watchdog restart should succeed, got %+v", result)
+	}
+	if result.RecoveryMode != "watchdog_restart" {
+		t.Fatalf("expected watchdog_restart, got %+v", result)
+	}
+	if got := refreshCalls.Load(); got != 1 {
+		t.Fatalf("expected exactly 1 failed in-place refresh before watchdog restart, got %d", got)
+	}
+
+	if namespace := waitForPersonalRegisterCall(t, registers, 200*time.Millisecond); namespace != expectedNamespace {
+		t.Fatalf("watchdog recovery personal register used namespace %q, want %q", namespace, expectedNamespace)
+	}
+	if got := registerCalls.Load(); got != 2 {
+		t.Fatalf("expected initial register plus 1 watchdog re-register, got %d calls", got)
+	}
+
+	n.mu.RLock()
+	cancel := n.personalRendezvousRefreshCancel
+	cfg := n.lastConfig
+	n.mu.RUnlock()
+	if cancel == nil {
+		t.Fatal("watchdog recovery should restart the personal refresh loop")
+	}
+	if cfg == nil || !cfg.AutoRegister {
+		t.Fatalf("watchdog recovery should restore AutoRegister in lastConfig, got %+v", cfg)
+	}
+}
+
+func TestRecoveryCoalescing_PerformsSinglePersonalReregister(t *testing.T) {
+	hexKey := generateTestKey(t)
+	const expectedNamespace = "mknoon:chat:phase2-coalesced"
+
+	n := NewNode()
+	registerStarted := make(chan struct{})
+	releaseRegister := make(chan struct{})
+	var registerCalls atomic.Int32
+
+	n.warmRelayConnectionHook = func(info peer.AddrInfo) error {
+		return nil
+	}
+	n.waitForCircuitAddressHook = func(timeout time.Duration) bool {
+		return true
+	}
+	n.rendezvousRegisterHook = func(namespace string, serverAddresses []string) error {
+		switch registerCalls.Add(1) {
+		case 1:
+			return nil
+		case 2:
+			close(registerStarted)
+			select {
+			case <-releaseRegister:
+			case <-n.ctx.Done():
+			}
+		default:
+			t.Fatalf("unexpected overlapping personal register call %d for %s", registerCalls.Load(), namespace)
+		}
+		return nil
+	}
+	n.refreshRelaySessionHook = func() *RecoveryResult {
+		return &RecoveryResult{
+			RecoveryMode:      "in_place",
+			Success:           true,
+			RelayState:        string(AggregateRelayOnline),
+			HealthyRelayCount: 1,
+		}
+	}
+
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex: hexKey,
+		RelayAddresses: []string{
+			generateFakeRelayAddr(t, 19029),
+		},
+		AutoRegister:                      true,
+		Namespace:                         expectedNamespace,
+		PersonalRendezvousRefreshInterval: 10 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer n.Stop()
+
+	select {
+	case <-registerStarted:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("expected a periodic personal refresh register to start")
+	}
+
+	result := n.RefreshRelaySession()
+	if !result.Success {
+		t.Fatalf("RefreshRelaySession() should succeed while a personal re-register is in flight, got %+v", result)
+	}
+
+	time.Sleep(40 * time.Millisecond)
+	if got := registerCalls.Load(); got != 2 {
+		t.Fatalf("expected initial register plus exactly 1 in-flight refresh call, got %d", got)
+	}
+
+	close(releaseRegister)
 }
 
 // ---------------------------------------------------------------------------
