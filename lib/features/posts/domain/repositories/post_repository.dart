@@ -5,6 +5,8 @@ import 'package:flutter_app/features/posts/domain/models/post_media_attachment_m
 import 'package:flutter_app/features/posts/domain/models/post_pending_child_event.dart';
 import 'package:flutter_app/features/posts/domain/models/post_reaction_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_recipient_delivery.dart';
+import 'package:flutter_app/features/posts/domain/models/post_pass_model.dart';
+import 'package:flutter_app/features/posts/domain/models/post_origin_model.dart';
 
 abstract class PostRepository {
   Stream<String> get postChanges;
@@ -64,6 +66,20 @@ abstract class PostRepository {
   Future<void> saveRecipientDelivery(PostRecipientDelivery delivery);
 
   Future<List<PostRecipientDelivery>> getRecipientDeliveries(String postId);
+
+  Future<void> savePostPass(PostPassModel pass);
+
+  Future<bool> postPassExists(String passId);
+
+  Future<List<PostPassModel>> loadPostPasses(String postId);
+
+  Future<int> loadPostPassCount(String postId);
+
+  Future<Map<String, int>> loadPostPassCounts(List<String> postIds);
+
+  Future<void> savePostOrigin(PostOriginModel origin);
+
+  Future<PostOriginModel?> getPostOrigin(String postId);
 
   Future<void> markFocused(String postId);
 

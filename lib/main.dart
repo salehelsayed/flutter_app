@@ -45,11 +45,14 @@ import 'package:flutter_app/core/database/migrations/026_group_quoted_message_id
 import 'package:flutter_app/core/database/migrations/027_posts_core.dart';
 import 'package:flutter_app/core/database/migrations/028_posts_engagement.dart';
 import 'package:flutter_app/core/database/migrations/029_posts_nearby.dart';
+import 'package:flutter_app/core/database/migrations/030_posts_pass_along.dart';
 import 'package:flutter_app/core/database/helpers/introductions_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_comments_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_comment_reactions_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_feed_state_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_location_presence_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/post_origin_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/post_passes_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_privacy_state_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_media_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_pending_child_events_db_helpers.dart';
@@ -120,6 +123,7 @@ import 'package:flutter_app/features/posts/application/post_presence_listener.da
 import 'package:flutter_app/features/posts/application/post_comment_listener.dart';
 import 'package:flutter_app/features/posts/application/post_listener.dart';
 import 'package:flutter_app/features/posts/application/post_notification_open_coordinator.dart';
+import 'package:flutter_app/features/posts/application/post_pass_listener.dart';
 import 'package:flutter_app/features/posts/application/post_reaction_listener.dart';
 import 'package:flutter_app/features/posts/application/sweep_expired_posts_use_case.dart';
 import 'package:flutter_app/features/posts/domain/repositories/contact_presence_snapshot_repository_impl.dart';
@@ -166,7 +170,7 @@ void main() async {
   final db = await openEncryptedDatabase(
     secureKeyStore: secureKeyStore,
     dbName: 'identity.db',
-    version: 29,
+    version: 30,
     onCreate: (db, version) async {
       await runIdentityTableMigration(db);
       await runMessagesTableMigration(db);
@@ -197,6 +201,7 @@ void main() async {
       await runPostsCoreMigration(db);
       await runPostsEngagementMigration(db);
       await runPostsNearbyMigration(db);
+      await runPostsPassAlongMigration(db);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) {
@@ -280,6 +285,9 @@ void main() async {
       }
       if (oldVersion < 29) {
         await runPostsNearbyMigration(db);
+      }
+      if (oldVersion < 30) {
+        await runPostsPassAlongMigration(db);
       }
     },
   );
@@ -373,6 +381,13 @@ void main() async {
     dbUpsertRecipientDelivery: (row) => dbUpsertPostRecipientDelivery(db, row),
     dbLoadRecipientDeliveries: (postId) =>
         dbLoadPostRecipientDeliveries(db, postId),
+    dbUpsertPostPass: (row) => dbUpsertPostPass(db, row),
+    dbLoadPostPass: (passId) => dbLoadPostPass(db, passId),
+    dbLoadPostPasses: (postId) => dbLoadPostPasses(db, postId),
+    dbCountPostPasses: (postId) => dbCountPostPasses(db, postId),
+    dbLoadPostPassCounts: (postIds) => dbLoadPostPassCounts(db, postIds),
+    dbUpsertPostOrigin: (row) => dbUpsertPostOrigin(db, row),
+    dbLoadPostOrigin: (postId) => dbLoadPostOrigin(db, postId),
     dbMarkPostFocused: (postId) => dbMarkPostFocused(db, postId),
     dbInsertPostComment: (row) => dbInsertPostComment(db, row),
     dbLoadPostComment: (commentId) => dbLoadPostComment(db, commentId),
@@ -663,6 +678,11 @@ void main() async {
     contactRepo: contactRepository,
     snapshotRepo: contactPresenceSnapshotRepository,
   );
+  final postPassListener = PostPassListener(
+    postPassStream: messageRouter.postPassStream,
+    postRepo: postRepository,
+    contactRepo: contactRepository,
+  );
 
   // Create reaction listener
   final reactionListener = ReactionListener(
@@ -779,6 +799,7 @@ void main() async {
   postCommentListener.start();
   postReactionListener.start();
   postPresenceListener.start();
+  postPassListener.start();
   reactionListener.start();
   profileUpdateListener.start();
   groupMessageListener.start(
@@ -832,6 +853,7 @@ void main() async {
       postCommentListener: postCommentListener,
       postReactionListener: postReactionListener,
       postPresenceListener: postPresenceListener,
+      postPassListener: postPassListener,
       reactionListener: reactionListener,
       profileUpdateListener: profileUpdateListener,
       messageRouter: messageRouter,
@@ -879,6 +901,7 @@ class MyApp extends StatefulWidget {
   final PostCommentListener postCommentListener;
   final PostReactionListener postReactionListener;
   final PostPresenceListener postPresenceListener;
+  final PostPassListener postPassListener;
   final ReactionListener reactionListener;
   final ProfileUpdateListener profileUpdateListener;
   final IncomingMessageRouter messageRouter;
@@ -925,6 +948,7 @@ class MyApp extends StatefulWidget {
     required this.postCommentListener,
     required this.postReactionListener,
     required this.postPresenceListener,
+    required this.postPassListener,
     required this.reactionListener,
     required this.profileUpdateListener,
     required this.messageRouter,
@@ -1215,6 +1239,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     widget.postCommentListener.dispose();
     widget.postReactionListener.dispose();
     widget.postPresenceListener.dispose();
+    widget.postPassListener.dispose();
     widget.chatMessageListener.dispose();
     widget.contactRequestListener.dispose();
     _postNotificationOpenCoordinator.dispose();

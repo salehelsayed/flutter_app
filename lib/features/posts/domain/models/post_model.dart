@@ -28,6 +28,10 @@ class PostModel {
   final bool isIncoming;
   final bool isFocused;
   final String deliveryStatus;
+  final String? passedByPeerId;
+  final String? passedByUsername;
+  final String? passedAt;
+  final int shareCount;
 
   const PostModel({
     required this.id,
@@ -56,6 +60,10 @@ class PostModel {
     this.isIncoming = true,
     this.isFocused = false,
     this.deliveryStatus = 'available',
+    this.passedByPeerId,
+    this.passedByUsername,
+    this.passedAt,
+    this.shareCount = 0,
   });
 
   factory PostModel.fromMap(Map<String, Object?> map) {
@@ -81,8 +89,8 @@ class PostModel {
       nearbySenderLatE3: map['nearby_sender_lat_e3'] as int?,
       nearbySenderLngE3: map['nearby_sender_lng_e3'] as int?,
       nearbySenderCapturedAt: map['nearby_sender_captured_at'] as String?,
-      nearbySenderAccuracyM:
-          (map['nearby_sender_accuracy_m'] as num?)?.toDouble(),
+      nearbySenderAccuracyM: (map['nearby_sender_accuracy_m'] as num?)
+          ?.toDouble(),
       nearbyDistanceLabel: map['nearby_distance_label'] as String?,
       isIncoming: (map['is_incoming'] as int? ?? 1) == 1,
       isFocused: (map['is_focused'] as int? ?? 0) == 1,
@@ -90,6 +98,10 @@ class PostModel {
           map['delivery_status'] as String? ??
           map['local_status'] as String? ??
           'available',
+      passedByPeerId: map['passer_peer_id'] as String?,
+      passedByUsername: map['passer_username'] as String?,
+      passedAt: map['pass_created_at'] as String?,
+      shareCount: (map['share_count'] as num?)?.toInt() ?? 0,
     );
   }
 
@@ -138,6 +150,10 @@ class PostModel {
     String? nearbyDistanceLabel,
     bool? isFocused,
     String? deliveryStatus,
+    String? passedByPeerId,
+    String? passedByUsername,
+    String? passedAt,
+    int? shareCount,
   }) {
     return PostModel(
       id: id,
@@ -168,6 +184,10 @@ class PostModel {
       isIncoming: isIncoming,
       isFocused: isFocused ?? this.isFocused,
       deliveryStatus: deliveryStatus ?? this.deliveryStatus,
+      passedByPeerId: passedByPeerId ?? this.passedByPeerId,
+      passedByUsername: passedByUsername ?? this.passedByUsername,
+      passedAt: passedAt ?? this.passedAt,
+      shareCount: shareCount ?? this.shareCount,
     );
   }
 }

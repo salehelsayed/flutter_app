@@ -16,6 +16,7 @@ import 'package:flutter_app/features/posts/application/load_post_comments_use_ca
 import 'package:flutter_app/features/posts/application/load_posts_feed_use_case.dart';
 import 'package:flutter_app/features/posts/application/nearby_location_service.dart';
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
+import 'package:flutter_app/features/posts/application/pass_post_along_use_case.dart';
 import 'package:flutter_app/features/posts/application/send_post_comment_reaction_use_case.dart';
 import 'package:flutter_app/features/posts/application/send_post_comment_use_case.dart';
 import 'package:flutter_app/features/posts/application/send_post_reaction_use_case.dart';
@@ -30,6 +31,7 @@ import 'package:flutter_app/features/posts/domain/repositories/posts_privacy_set
 import 'package:flutter_app/features/posts/presentation/screens/posts_screen.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/comments_sheet.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/compose_post_sheet.dart';
+import 'package:flutter_app/features/posts/presentation/widgets/pass_post_along_sheet.dart';
 
 class PostsWired extends StatefulWidget {
   final IdentityRepository identityRepo;
@@ -189,8 +191,8 @@ class _PostsWiredState extends State<PostsWired> {
         nearbyAvailability: nearbyAvailability,
         onRefreshNearby: widget.nearbyLocationService == null
             ? null
-            : () =>
-                widget.nearbyLocationService!.refreshInteractivelyFromCompose(),
+            : () => widget.nearbyLocationService!
+                  .refreshInteractivelyFromCompose(),
         onOpenNearbySettings: widget.nearbyLocationService == null
             ? null
             : widget.nearbyLocationService!.openAppSettings,
@@ -327,6 +329,43 @@ class _PostsWiredState extends State<PostsWired> {
     await _loadFeed();
   }
 
+  Future<void> _passAlong(PostModel post) async {
+    final peerId = _peerId;
+    if (peerId == null) {
+      return;
+    }
+    final contacts = await widget.contactRepo.getActiveContacts();
+    contacts.removeWhere(
+      (contact) =>
+          contact.isBlocked ||
+          contact.peerId == peerId ||
+          contact.peerId == post.authorPeerId,
+    );
+    if (!mounted) {
+      return;
+    }
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => PassPostAlongSheet(
+        eligibleContacts: contacts,
+        onSubmit: (recipientPeerIds) async {
+          await passPostAlong(
+            p2pService: widget.p2pService,
+            postRepo: widget.postRepo,
+            contactRepo: widget.contactRepo,
+            postId: post.id,
+            senderPeerId: peerId,
+            senderUsername: _username,
+            recipientPeerIds: recipientPeerIds,
+          );
+          await _loadFeed();
+        },
+      ),
+    );
+  }
+
   Future<List<PostCommentModel>> _toggleCommentHeart(
     PostModel post,
     String commentId,
@@ -387,6 +426,7 @@ class _PostsWiredState extends State<PostsWired> {
     return PostsScreen(
       username: _username,
       posts: _posts,
+      viewerPeerId: _peerId,
       scrollController: _scrollController,
       postKeys: _postKeys,
       activeTab: widget.activeTab,
@@ -394,6 +434,7 @@ class _PostsWiredState extends State<PostsWired> {
       onCompose: _compose,
       onOpenComments: _openComments,
       onToggleHeart: _togglePostHeart,
+      onPassAlong: _passAlong,
       focusedPostId: _focusedPostId,
       statusMessage: widget.pendingTargetStore?.statusMessage,
     );

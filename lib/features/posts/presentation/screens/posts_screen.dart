@@ -10,11 +10,13 @@ class PostsScreen extends StatelessWidget {
   final List<PostModel> posts;
   final ScrollController? scrollController;
   final Map<String, GlobalKey> postKeys;
+  final String? viewerPeerId;
   final String activeTab;
   final void Function(String tab) onSwitchView;
   final VoidCallback onCompose;
   final void Function(PostModel post)? onOpenComments;
   final void Function(PostModel post)? onToggleHeart;
+  final void Function(PostModel post)? onPassAlong;
   final String? focusedPostId;
   final String? statusMessage;
 
@@ -24,11 +26,13 @@ class PostsScreen extends StatelessWidget {
     required this.posts,
     this.scrollController,
     this.postKeys = const <String, GlobalKey>{},
+    this.viewerPeerId,
     required this.activeTab,
     required this.onSwitchView,
     required this.onCompose,
     this.onOpenComments,
     this.onToggleHeart,
+    this.onPassAlong,
     this.focusedPostId,
     this.statusMessage,
   });
@@ -117,6 +121,12 @@ class PostsScreen extends StatelessWidget {
                                 onToggleHeart: onToggleHeart == null
                                     ? null
                                     : () => onToggleHeart!(post),
+                                onPassAlong: onPassAlong == null
+                                    ? null
+                                    : () => onPassAlong!(post),
+                                showShareCount:
+                                    viewerPeerId != null &&
+                                    post.authorPeerId == viewerPeerId,
                                 isFocused:
                                     post.id == focusedPostId || post.isFocused,
                               );

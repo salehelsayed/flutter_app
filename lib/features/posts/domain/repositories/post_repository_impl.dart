@@ -8,6 +8,8 @@ import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_pending_child_event.dart';
 import 'package:flutter_app/features/posts/domain/models/post_reaction_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_recipient_delivery.dart';
+import 'package:flutter_app/features/posts/domain/models/post_pass_model.dart';
+import 'package:flutter_app/features/posts/domain/models/post_origin_model.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 
 class PostRepositoryImpl implements PostRepository {
@@ -21,6 +23,15 @@ class PostRepositoryImpl implements PostRepository {
   dbUpsertRecipientDelivery;
   final Future<List<Map<String, Object?>>> Function(String postId)
   dbLoadRecipientDeliveries;
+  final Future<void> Function(Map<String, Object?> row)? dbUpsertPostPass;
+  final Future<Map<String, Object?>?> Function(String passId)? dbLoadPostPass;
+  final Future<List<Map<String, Object?>>> Function(String postId)?
+  dbLoadPostPasses;
+  final Future<int> Function(String postId)? dbCountPostPasses;
+  final Future<List<Map<String, Object?>>> Function(List<String> postIds)?
+  dbLoadPostPassCounts;
+  final Future<void> Function(Map<String, Object?> row)? dbUpsertPostOrigin;
+  final Future<Map<String, Object?>?> Function(String postId)? dbLoadPostOrigin;
   final Future<void> Function(String postId) dbMarkPostFocused;
   final Future<void> Function(Map<String, Object?> row)? dbInsertPostComment;
   final Future<Map<String, Object?>?> Function(String commentId)?
@@ -64,6 +75,13 @@ class PostRepositoryImpl implements PostRepository {
     this.dbDeletePostCascade,
     required this.dbUpsertRecipientDelivery,
     required this.dbLoadRecipientDeliveries,
+    this.dbUpsertPostPass,
+    this.dbLoadPostPass,
+    this.dbLoadPostPasses,
+    this.dbCountPostPasses,
+    this.dbLoadPostPassCounts,
+    this.dbUpsertPostOrigin,
+    this.dbLoadPostOrigin,
     required this.dbMarkPostFocused,
     this.dbInsertPostComment,
     this.dbLoadPostComment,
@@ -353,6 +371,80 @@ class PostRepositoryImpl implements PostRepository {
   ) async {
     final rows = await dbLoadRecipientDeliveries(postId);
     return rows.map(PostRecipientDelivery.fromMap).toList(growable: false);
+  }
+
+  @override
+  Future<void> savePostPass(PostPassModel pass) async {
+    final dbUpsert = _require(
+      dbUpsertPostPass,
+      'Post passes are not configured for this repository.',
+    );
+    await dbUpsert(pass.toMap());
+    _postChangesController.add(pass.postId);
+  }
+
+  @override
+  Future<bool> postPassExists(String passId) async {
+    final dbLoad = _require(
+      dbLoadPostPass,
+      'Post passes are not configured for this repository.',
+    );
+    return await dbLoad(passId) != null;
+  }
+
+  @override
+  Future<List<PostPassModel>> loadPostPasses(String postId) async {
+    final dbLoad = _require(
+      dbLoadPostPasses,
+      'Post passes are not configured for this repository.',
+    );
+    final rows = await dbLoad(postId);
+    return rows.map(PostPassModel.fromMap).toList(growable: false);
+  }
+
+  @override
+  Future<int> loadPostPassCount(String postId) async {
+    final dbCount = _require(
+      dbCountPostPasses,
+      'Post passes are not configured for this repository.',
+    );
+    return dbCount(postId);
+  }
+
+  @override
+  Future<Map<String, int>> loadPostPassCounts(List<String> postIds) async {
+    if (postIds.isEmpty) {
+      return const <String, int>{};
+    }
+    final dbLoad = _require(
+      dbLoadPostPassCounts,
+      'Post passes are not configured for this repository.',
+    );
+    final rows = await dbLoad(postIds);
+    return <String, int>{
+      for (final row in rows)
+        row['post_id'] as String: ((row['share_count'] as num?)?.toInt() ?? 0),
+    };
+  }
+
+  @override
+  Future<void> savePostOrigin(PostOriginModel origin) async {
+    final dbUpsert = _require(
+      dbUpsertPostOrigin,
+      'Post origin metadata is not configured for this repository.',
+    );
+    await dbUpsert(origin.toMap());
+    _postChangesController.add(origin.postId);
+  }
+
+  @override
+  Future<PostOriginModel?> getPostOrigin(String postId) async {
+    final dbLoad = _require(
+      dbLoadPostOrigin,
+      'Post origin metadata is not configured for this repository.',
+    );
+    final row = await dbLoad(postId);
+    return row == null ? null : PostOriginModel.fromMap(row);
   }
 
   @override
