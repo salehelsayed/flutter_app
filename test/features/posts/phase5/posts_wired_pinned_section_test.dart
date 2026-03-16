@@ -146,8 +146,7 @@ void main() {
           createdAt: '2026-03-15T11:25:00.000Z',
         ),
       );
-      await tester.pump();
-      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 150));
 
       expect(find.text('Pinned posts'), findsNothing);
       expect(find.text('Need a ladder'), findsOneWidget);

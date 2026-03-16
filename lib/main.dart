@@ -47,9 +47,13 @@ import 'package:flutter_app/core/database/migrations/028_posts_engagement.dart';
 import 'package:flutter_app/core/database/migrations/029_posts_nearby.dart';
 import 'package:flutter_app/core/database/migrations/030_posts_pass_along.dart';
 import 'package:flutter_app/core/database/migrations/031_posts_pins.dart';
+import 'package:flutter_app/core/database/migrations/032_posts_retry_recipient_context.dart';
+import 'package:flutter_app/core/database/migrations/033_posts_follow_on_outbox.dart';
+import 'package:flutter_app/core/database/migrations/034_posts_media_upload_recovery.dart';
 import 'package:flutter_app/core/database/helpers/introductions_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_comments_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_comment_reactions_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/post_follow_on_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_feed_state_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_location_presence_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_pin_dismissals_db_helpers.dart';
@@ -58,6 +62,7 @@ import 'package:flutter_app/core/database/helpers/post_passes_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_pins_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_privacy_state_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_media_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/post_media_upload_recovery_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_pending_child_events_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_reactions_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_recipients_db_helpers.dart';
@@ -84,6 +89,9 @@ import 'package:flutter_app/features/groups/application/group_key_update_listene
 import 'package:flutter_app/features/settings/application/profile_update_listener.dart';
 import 'package:flutter_app/core/services/incoming_message_router.dart';
 import 'package:flutter_app/core/services/pending_message_retrier.dart';
+import 'package:flutter_app/features/posts/application/pending_post_delivery_retrier.dart';
+import 'package:flutter_app/features/posts/application/pending_post_follow_on_retrier.dart';
+import 'package:flutter_app/features/posts/application/pending_post_media_upload_retrier.dart';
 import 'package:flutter_app/features/contact_request/application/key_exchange_retrier.dart';
 import 'package:flutter_app/features/identity/presentation/startup_router.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
@@ -174,7 +182,7 @@ void main() async {
   final db = await openEncryptedDatabase(
     secureKeyStore: secureKeyStore,
     dbName: 'identity.db',
-    version: 31,
+    version: 34,
     onCreate: (db, version) async {
       await runIdentityTableMigration(db);
       await runMessagesTableMigration(db);
@@ -207,6 +215,9 @@ void main() async {
       await runPostsNearbyMigration(db);
       await runPostsPassAlongMigration(db);
       await runPostsPinsMigration(db);
+      await runPostsRetryRecipientContextMigration(db);
+      await runPostsFollowOnOutboxMigration(db);
+      await runPostsMediaUploadRecoveryMigration(db);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) {
@@ -297,6 +308,15 @@ void main() async {
       if (oldVersion < 31) {
         await runPostsPinsMigration(db);
       }
+      if (oldVersion < 32) {
+        await runPostsRetryRecipientContextMigration(db);
+      }
+      if (oldVersion < 33) {
+        await runPostsFollowOnOutboxMigration(db);
+      }
+      if (oldVersion < 34) {
+        await runPostsMediaUploadRecoveryMigration(db);
+      }
     },
   );
 
@@ -384,6 +404,7 @@ void main() async {
     dbInsertPost: (row) => dbInsertPost(db, row),
     dbLoadPost: (postId) => dbLoadPost(db, postId),
     dbLoadPostsFeed: () => dbLoadPostsFeed(db),
+    dbLoadRetryableOutgoingPosts: () => dbLoadRetryableOutgoingPosts(db),
     dbLoadExpiredPosts: (nowIso) => dbLoadExpiredPosts(db, nowIso),
     dbDeletePostCascade: (postId) => dbDeletePostCascade(db, postId),
     dbUpsertRecipientDelivery: (row) => dbUpsertPostRecipientDelivery(db, row),
@@ -405,6 +426,18 @@ void main() async {
         dbLoadPendingPostChildEvents(db, postId),
     dbDeletePendingChildEvent: (eventId) =>
         dbDeletePendingPostChildEvent(db, eventId),
+    dbUpsertFollowOnOutboxEvent: (row) =>
+        dbUpsertPostFollowOnOutboxEvent(db, row),
+    dbLoadFollowOnOutboxEvent: (eventId) =>
+        dbLoadPostFollowOnOutboxEvent(db, eventId),
+    dbLoadRetryableFollowOnOutboxEvents: () =>
+        dbLoadRetryablePostFollowOnOutboxEvents(db),
+    dbUpsertFollowOnOutboxRecipientDelivery: (row) =>
+        dbUpsertPostFollowOnOutboxRecipientDelivery(db, row),
+    dbLoadFollowOnOutboxRecipientDeliveries: (eventId) =>
+        dbLoadPostFollowOnOutboxRecipientDeliveries(db, eventId),
+    dbLoadRetryableFollowOnOutboxRecipientDeliveries: (eventIds) =>
+        dbLoadRetryablePostFollowOnOutboxRecipientDeliveries(db, eventIds),
     dbUpsertPostReaction: (row) => dbUpsertPostReaction(db, row),
     dbLoadPostReaction: (reactionId) => dbLoadPostReaction(db, reactionId),
     dbLoadPostReactions: (postId) => dbLoadPostReactions(db, postId),
@@ -415,6 +448,11 @@ void main() async {
         dbLoadPostCommentReactions(db, commentId),
     dbUpsertPostMedia: (row) => dbUpsertPostMediaAttachment(db, row),
     dbLoadPostMedia: (postId) => dbLoadPostMediaAttachments(db, postId),
+    dbReplacePostMediaUploadRecoveryItems: (postId, rows) =>
+        dbReplacePostMediaUploadRecoveryItems(db, postId, rows),
+    dbLoadPostMediaUploadRecoveryItems: (postId) =>
+        dbLoadPostMediaUploadRecoveryItems(db, postId),
+    dbLoadPendingMediaUploadPosts: () => dbLoadPendingPostMediaUploadPosts(db),
     dbLoadPostMediaForPosts: (postIds) =>
         dbLoadPostMediaAttachmentsForPosts(db, postIds),
     dbUpdatePostMediaLocalPath: (mediaId, localPath) =>
@@ -813,6 +851,27 @@ void main() async {
     bridge: bridge,
   );
 
+  final pendingPostMediaUploadRetrier = PendingPostMediaUploadRetrier(
+    p2pService: p2pService,
+    postRepo: postRepository,
+    contactRepo: contactRepository,
+    secureKeyStore: secureKeyStore,
+    imageProcessor: imageProcessor,
+    mediaFileManager: mediaFileManager,
+    bridge: bridge,
+  );
+  final pendingPostDeliveryRetrier = PendingPostDeliveryRetrier(
+    p2pService: p2pService,
+    postRepo: postRepository,
+    contactRepo: contactRepository,
+    bridge: bridge,
+    beforeRetry: pendingPostMediaUploadRetrier.retryNow,
+  );
+  final pendingPostFollowOnRetrier = PendingPostFollowOnRetrier(
+    p2pService: p2pService,
+    postRepo: postRepository,
+  );
+
   // Create key exchange retrier
   final keyExchangeRetrier = KeyExchangeRetrier(
     p2pService: p2pService,
@@ -846,6 +905,9 @@ void main() async {
   // StartupRouter._doStartP2P() AFTER node:start completes. They require
   // the Go node to be running (pubsub must be initialized).
   pendingMessageRetrier.start();
+  pendingPostMediaUploadRetrier.start();
+  pendingPostDeliveryRetrier.start();
+  pendingPostFollowOnRetrier.start();
   keyExchangeRetrier.start();
 
   // Forward profile avatar updates through chatMessageListener so
@@ -890,6 +952,9 @@ void main() async {
       profileUpdateListener: profileUpdateListener,
       messageRouter: messageRouter,
       pendingMessageRetrier: pendingMessageRetrier,
+      pendingPostMediaUploadRetrier: pendingPostMediaUploadRetrier,
+      pendingPostDeliveryRetrier: pendingPostDeliveryRetrier,
+      pendingPostFollowOnRetrier: pendingPostFollowOnRetrier,
       keyExchangeRetrier: keyExchangeRetrier,
       bridge: bridge,
       p2pService: p2pService,
@@ -939,6 +1004,9 @@ class MyApp extends StatefulWidget {
   final ProfileUpdateListener profileUpdateListener;
   final IncomingMessageRouter messageRouter;
   final PendingMessageRetrier pendingMessageRetrier;
+  final PendingPostMediaUploadRetrier pendingPostMediaUploadRetrier;
+  final PendingPostDeliveryRetrier pendingPostDeliveryRetrier;
+  final PendingPostFollowOnRetrier pendingPostFollowOnRetrier;
   final KeyExchangeRetrier keyExchangeRetrier;
   final Bridge bridge;
   final P2PServiceImpl p2pService;
@@ -987,6 +1055,9 @@ class MyApp extends StatefulWidget {
     required this.profileUpdateListener,
     required this.messageRouter,
     required this.pendingMessageRetrier,
+    required this.pendingPostMediaUploadRetrier,
+    required this.pendingPostDeliveryRetrier,
+    required this.pendingPostFollowOnRetrier,
     required this.keyExchangeRetrier,
     required this.bridge,
     required this.p2pService,
@@ -1262,6 +1333,9 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
     // Orderly teardown: retriers → listeners → router → service → bridge
     widget.keyExchangeRetrier.dispose();
+    widget.pendingPostFollowOnRetrier.dispose();
+    widget.pendingPostDeliveryRetrier.dispose();
+    widget.pendingPostMediaUploadRetrier.dispose();
     widget.pendingMessageRetrier.dispose();
     widget.introductionListener.dispose();
     widget.groupKeyUpdateListener.dispose();
@@ -1322,6 +1396,9 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         mediaAttachmentRepo: widget.mediaAttachmentRepository,
         reactionRepo: widget.reactionRepository,
         nearbyLocationService: widget.nearbyLocationService,
+        retryPendingPostMediaUploads:
+            widget.pendingPostMediaUploadRetrier.retryNow,
+        retryPendingPostDeliveries: widget.pendingPostDeliveryRetrier.retryNow,
       );
       await sweepExpiredPosts(
         postRepo: widget.postRepository,

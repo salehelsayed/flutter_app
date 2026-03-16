@@ -8,36 +8,17 @@ import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/posts/application/post_delivery_runner.dart';
+import 'package:flutter_app/features/posts/application/post_media_draft.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
+import 'package:flutter_app/features/posts/domain/models/post_media_upload_recovery_item.dart';
+import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 import 'package:flutter_app/features/settings/application/image_quality_preference_use_cases.dart';
 
+export 'package:flutter_app/features/posts/application/post_media_draft.dart';
+
 const _uuid = Uuid();
-
-class PostMediaDraft {
-  final String localFilePath;
-  final String mime;
-  final int? width;
-  final int? height;
-  final int? durationMs;
-  final List<double>? waveform;
-
-  const PostMediaDraft({
-    required this.localFilePath,
-    required this.mime,
-    this.width,
-    this.height,
-    this.durationMs,
-    this.waveform,
-  });
-
-  String get kind {
-    if (mime.startsWith('image/')) return 'image';
-    if (mime.startsWith('video/')) return 'video';
-    if (mime.startsWith('audio/')) return 'voice';
-    return 'file';
-  }
-}
 
 enum AttachPostMediaResult {
   success,
@@ -163,14 +144,79 @@ attachPostMedia({
       waveform: prepared.waveform,
     );
     if (uploaded == null) {
-      return (AttachPostMediaResult.uploadFailed, attachments);
+      return (
+        AttachPostMediaResult.uploadFailed,
+        const <PostMediaAttachmentModel>[],
+      );
     }
     final positioned = uploaded.copyWith(position: index, postId: postId);
-    await postRepo.savePostMediaAttachment(positioned);
     attachments.add(positioned);
   }
 
+  await postRepo.replacePostMediaAttachments(postId, attachments);
+
   return (AttachPostMediaResult.success, attachments);
+}
+
+Future<(SendPostResult, CreatedLocalPost?)> prepareCreatedLocalPostMedia({
+  required CreatedLocalPost created,
+  required PostRepository postRepo,
+  SecureKeyStore? secureKeyStore,
+  ImageProcessor? imageProcessor,
+  MediaFileManager? mediaFileManager,
+  UploadPostMediaFn? uploadPostMediaFn,
+  Bridge? bridge,
+}) async {
+  final drafts = created.mediaDrafts.isNotEmpty
+      ? created.mediaDrafts
+      : (await postRepo.loadPostMediaUploadRecoveryItems(
+          created.post.id,
+        )).map(_draftFromRecoveryItem).toList(growable: false);
+  if (drafts.isEmpty) {
+    return (SendPostResult.success, created.copyWith(mediaDrafts: const []));
+  }
+  if (secureKeyStore == null || imageProcessor == null) {
+    final failedPost = await _persistFailedMediaPreparationPost(
+      postRepo: postRepo,
+      post: created.post,
+    );
+    return (
+      SendPostResult.sendFailed,
+      created.copyWith(post: failedPost, mediaDrafts: drafts),
+    );
+  }
+
+  final (result, attachments) = await attachPostMedia(
+    postId: created.post.id,
+    postRepo: postRepo,
+    secureKeyStore: secureKeyStore,
+    imageProcessor: imageProcessor,
+    drafts: drafts,
+    mediaFileManager: mediaFileManager,
+    uploadPostMediaFn: uploadPostMediaFn,
+    bridge: bridge,
+  );
+  if (result != AttachPostMediaResult.success) {
+    final failedPost = await _persistFailedMediaPreparationPost(
+      postRepo: postRepo,
+      post: created.post,
+    );
+    return (
+      SendPostResult.sendFailed,
+      created.copyWith(post: failedPost, mediaDrafts: drafts),
+    );
+  }
+
+  final updatedPost = created.post.copyWith(
+    mediaKind: PostMediaAttachmentModel.deriveMediaKind(attachments),
+    media: attachments,
+  );
+  await postRepo.savePost(updatedPost);
+  await postRepo.replacePostMediaUploadRecoveryItems(created.post.id, const []);
+  return (
+    SendPostResult.success,
+    created.copyWith(post: updatedPost, mediaDrafts: const <PostMediaDraft>[]),
+  );
 }
 
 Future<PostMediaAttachmentModel?> uploadPostMedia({
@@ -258,6 +304,16 @@ Future<PostMediaAttachmentModel?> uploadPostMedia({
   }
 }
 
+Future<PostModel> _persistFailedMediaPreparationPost({
+  required PostRepository postRepo,
+  required PostModel post,
+}) async {
+  await postRepo.replacePostMediaAttachments(post.id, const []);
+  final failedPost = post.copyWith(deliveryStatus: 'failed', media: const []);
+  await postRepo.savePost(failedPost);
+  return failedPost;
+}
+
 String _draftMime(_PreparedPostMediaDraft prepared, PostMediaDraft original) {
   if (original.kind == 'image') {
     return original.mime == 'image/png' ? 'image/png' : 'image/jpeg';
@@ -333,4 +389,15 @@ String _kindFromMime(String mime) {
   if (mime.startsWith('video/')) return 'video';
   if (mime.startsWith('audio/')) return 'voice';
   return 'file';
+}
+
+PostMediaDraft _draftFromRecoveryItem(PostMediaUploadRecoveryItem item) {
+  return PostMediaDraft(
+    localFilePath: item.localFilePath,
+    mime: item.mime,
+    width: item.width,
+    height: item.height,
+    durationMs: item.durationMs,
+    waveform: item.waveform,
+  );
 }

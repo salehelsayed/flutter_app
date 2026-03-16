@@ -3,6 +3,8 @@ import 'package:flutter_app/core/database/helpers/post_feed_state_db_helpers.dar
 import 'package:flutter_app/core/database/helpers/post_recipients_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/posts_db_helpers.dart';
 import 'package:flutter_app/core/database/migrations/027_posts_core.dart';
+import 'package:flutter_app/core/database/migrations/030_posts_pass_along.dart';
+import 'package:flutter_app/core/database/migrations/032_posts_retry_recipient_context.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_recipient_delivery.dart';
@@ -21,6 +23,8 @@ void main() {
   setUp(() async {
     db = await openDatabase(inMemoryDatabasePath, version: 1);
     await runPostsCoreMigration(db);
+    await runPostsPassAlongMigration(db);
+    await runPostsRetryRecipientContextMigration(db);
     repository = PostRepositoryImpl(
       dbInsertPost: (row) => dbInsertPost(db, row),
       dbLoadPost: (postId) => dbLoadPost(db, postId),
@@ -72,6 +76,7 @@ void main() {
         deliveryStatus: 'delivered',
         lastAttemptAt: '2026-03-15T10:15:31.000Z',
         deliveryPath: 'direct',
+        nearbyDistanceM: 87,
         createdAt: '2026-03-15T10:15:31.000Z',
         updatedAt: '2026-03-15T10:15:31.000Z',
       );
@@ -88,6 +93,7 @@ void main() {
       expect(loaded.isFocused, isTrue);
       expect(deliveries, hasLength(1));
       expect(deliveries.single.deliveryStatus, 'delivered');
+      expect(deliveries.single.nearbyDistanceM, 87);
     },
   );
 }

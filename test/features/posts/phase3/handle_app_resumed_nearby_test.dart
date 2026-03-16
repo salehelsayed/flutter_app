@@ -85,4 +85,26 @@ void main() {
     expect(service.refreshInteractivelyFromSettingsCallCount, 0);
     expect(service.refreshInteractivelyFromComposeCallCount, 0);
   });
+
+  test(
+    'resume runs explicit pending post catch-up in media-then-delivery order',
+    () async {
+      final order = <String>[];
+
+      await handleAppResumed(
+        bridge: FakeBridge(),
+        p2pService: FakeP2PService(),
+        retryPendingPostMediaUploads: () async {
+          order.add('media');
+          return 1;
+        },
+        retryPendingPostDeliveries: () async {
+          order.add('delivery');
+          return 0;
+        },
+      );
+
+      expect(order, <String>['media', 'delivery']);
+    },
+  );
 }

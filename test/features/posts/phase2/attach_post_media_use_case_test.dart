@@ -187,6 +187,76 @@ void main() {
     expect(videoCompressFlags, [isTrue]);
     expect(attachments.single.durationMs, 12_000);
   });
+
+  test('preserves the selected order for multi-image posts', () async {
+    await posts.savePost(_post('post-ordered'));
+    await posts.saveRecipientDelivery(_delivery('post-ordered', 'peer-bob'));
+
+    final imageProcessor = ImageProcessor(
+      compressFile:
+          ({
+            required path,
+            required quality,
+            required keepExif,
+            minWidth = 1920,
+            minHeight = 1080,
+          }) async {
+            return XFile('${path}_processed');
+          },
+    );
+
+    final (result, attachments) = await attachPostMedia(
+      postId: 'post-ordered',
+      postRepo: posts,
+      secureKeyStore: secureKeyStore,
+      imageProcessor: imageProcessor,
+      drafts: const [
+        PostMediaDraft(localFilePath: '/tmp/one.jpg', mime: 'image/jpeg'),
+        PostMediaDraft(localFilePath: '/tmp/two.jpg', mime: 'image/jpeg'),
+      ],
+      uploadPostMediaFn:
+          ({
+            required postId,
+            required localFilePath,
+            required mime,
+            required allowedPeers,
+            mediaFileManager,
+            width,
+            height,
+            durationMs,
+            waveform,
+          }) async {
+            final index = localFilePath.contains('one') ? 0 : 1;
+            return PostMediaAttachmentModel(
+              mediaId: 'media-$index',
+              postId: postId,
+              blobId: 'blob-$index',
+              kind: 'image',
+              mime: mime,
+              sizeBytes: 100 + index,
+              localPath: 'post_media/$postId/blob-$index.jpg',
+              downloadStatus: 'done',
+              createdAt: '2026-03-15T10:20:0${1 - index}.000Z',
+            );
+          },
+    );
+
+    expect(result, AttachPostMediaResult.success);
+    expect(
+      attachments.map((attachment) => attachment.blobId).toList(),
+      <String>['blob-0', 'blob-1'],
+    );
+    expect(attachments.map((attachment) => attachment.position).toList(), <int>[
+      0,
+      1,
+    ]);
+
+    final stored = await posts.loadPostMediaAttachments('post-ordered');
+    expect(stored.map((attachment) => attachment.blobId).toList(), <String>[
+      'blob-0',
+      'blob-1',
+    ]);
+  });
 }
 
 PostModel _post(String postId) {

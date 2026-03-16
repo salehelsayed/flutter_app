@@ -3,7 +3,11 @@ import 'dart:async';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/posts/domain/models/post_comment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_comment_reaction_model.dart';
+import 'package:flutter_app/features/posts/domain/models/post_follow_on_outbox_event.dart';
+import 'package:flutter_app/features/posts/domain/models/post_follow_on_outbox_job.dart';
+import 'package:flutter_app/features/posts/domain/models/post_follow_on_outbox_recipient_delivery.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
+import 'package:flutter_app/features/posts/domain/models/post_media_upload_recovery_item.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_pending_child_event.dart';
 import 'package:flutter_app/features/posts/domain/models/post_reaction_model.dart';
@@ -17,6 +21,8 @@ class PostRepositoryImpl implements PostRepository {
   final Future<void> Function(Map<String, Object?> row) dbInsertPost;
   final Future<Map<String, Object?>?> Function(String postId) dbLoadPost;
   final Future<List<Map<String, Object?>>> Function() dbLoadPostsFeed;
+  final Future<List<Map<String, Object?>>> Function()?
+  dbLoadRetryableOutgoingPosts;
   final Future<List<Map<String, Object?>>> Function(String nowIso)?
   dbLoadExpiredPosts;
   final Future<void> Function(String postId)? dbDeletePostCascade;
@@ -44,6 +50,18 @@ class PostRepositoryImpl implements PostRepository {
   final Future<List<Map<String, Object?>>> Function(String postId)?
   dbLoadPendingChildEvents;
   final Future<void> Function(String eventId)? dbDeletePendingChildEvent;
+  final Future<void> Function(Map<String, Object?> row)?
+  dbUpsertFollowOnOutboxEvent;
+  final Future<Map<String, Object?>?> Function(String eventId)?
+  dbLoadFollowOnOutboxEvent;
+  final Future<List<Map<String, Object?>>> Function()?
+  dbLoadRetryableFollowOnOutboxEvents;
+  final Future<void> Function(Map<String, Object?> row)?
+  dbUpsertFollowOnOutboxRecipientDelivery;
+  final Future<List<Map<String, Object?>>> Function(String eventId)?
+  dbLoadFollowOnOutboxRecipientDeliveries;
+  final Future<List<Map<String, Object?>>> Function(List<String> eventIds)?
+  dbLoadRetryableFollowOnOutboxRecipientDeliveries;
   final Future<void> Function(Map<String, Object?> row)? dbUpsertPostReaction;
   final Future<Map<String, Object?>?> Function(String reactionId)?
   dbLoadPostReaction;
@@ -58,6 +76,12 @@ class PostRepositoryImpl implements PostRepository {
   final Future<void> Function(Map<String, Object?> row)? dbUpsertPostMedia;
   final Future<List<Map<String, Object?>>> Function(String postId)?
   dbLoadPostMedia;
+  final Future<void> Function(String postId, List<Map<String, Object?>> rows)?
+  dbReplacePostMediaUploadRecoveryItems;
+  final Future<List<Map<String, Object?>>> Function(String postId)?
+  dbLoadPostMediaUploadRecoveryItems;
+  final Future<List<Map<String, Object?>>> Function()?
+  dbLoadPendingMediaUploadPosts;
   final Future<List<Map<String, Object?>>> Function(List<String> postIds)?
   dbLoadPostMediaForPosts;
   final Future<void> Function(String mediaId, String localPath)?
@@ -82,6 +106,7 @@ class PostRepositoryImpl implements PostRepository {
     required this.dbInsertPost,
     required this.dbLoadPost,
     required this.dbLoadPostsFeed,
+    this.dbLoadRetryableOutgoingPosts,
     this.dbLoadExpiredPosts,
     this.dbDeletePostCascade,
     required this.dbUpsertRecipientDelivery,
@@ -100,6 +125,12 @@ class PostRepositoryImpl implements PostRepository {
     this.dbInsertPendingChildEvent,
     this.dbLoadPendingChildEvents,
     this.dbDeletePendingChildEvent,
+    this.dbUpsertFollowOnOutboxEvent,
+    this.dbLoadFollowOnOutboxEvent,
+    this.dbLoadRetryableFollowOnOutboxEvents,
+    this.dbUpsertFollowOnOutboxRecipientDelivery,
+    this.dbLoadFollowOnOutboxRecipientDeliveries,
+    this.dbLoadRetryableFollowOnOutboxRecipientDeliveries,
     this.dbUpsertPostReaction,
     this.dbLoadPostReaction,
     this.dbLoadPostReactions,
@@ -108,6 +139,9 @@ class PostRepositoryImpl implements PostRepository {
     this.dbLoadCommentReactions,
     this.dbUpsertPostMedia,
     this.dbLoadPostMedia,
+    this.dbReplacePostMediaUploadRecoveryItems,
+    this.dbLoadPostMediaUploadRecoveryItems,
+    this.dbLoadPendingMediaUploadPosts,
     this.dbLoadPostMediaForPosts,
     this.dbUpdatePostMediaLocalPath,
     this.dbUpdatePostMediaDownloadStatus,
@@ -154,6 +188,26 @@ class PostRepositoryImpl implements PostRepository {
   @override
   Future<List<PostModel>> loadFeed() async {
     final rows = await dbLoadPostsFeed();
+    return rows.map(PostModel.fromMap).toList(growable: false);
+  }
+
+  @override
+  Future<List<PostModel>> loadRetryableOutgoingPosts() async {
+    final dbLoad = dbLoadRetryableOutgoingPosts;
+    if (dbLoad == null) {
+      final rows = await dbLoadPostsFeed();
+      return rows
+          .map(PostModel.fromMap)
+          .where(
+            (post) =>
+                !post.isIncoming &&
+                (post.deliveryStatus == 'sending' ||
+                    post.deliveryStatus == 'partial' ||
+                    post.deliveryStatus == 'failed'),
+          )
+          .toList(growable: false);
+    }
+    final rows = await dbLoad();
     return rows.map(PostModel.fromMap).toList(growable: false);
   }
 
@@ -313,6 +367,46 @@ class PostRepositoryImpl implements PostRepository {
   }
 
   @override
+  Future<void> replacePostMediaUploadRecoveryItems(
+    String postId,
+    List<PostMediaUploadRecoveryItem> items,
+  ) async {
+    final dbReplace = _require(
+      dbReplacePostMediaUploadRecoveryItems,
+      'Post media upload recovery is not configured for this repository.',
+    );
+    await dbReplace(
+      postId,
+      items.map((item) => item.toMap()).toList(growable: false),
+    );
+    _postChangesController.add(postId);
+  }
+
+  @override
+  Future<List<PostMediaUploadRecoveryItem>> loadPostMediaUploadRecoveryItems(
+    String postId,
+  ) async {
+    final dbLoad = _require(
+      dbLoadPostMediaUploadRecoveryItems,
+      'Post media upload recovery is not configured for this repository.',
+    );
+    final rows = await dbLoad(postId);
+    return rows
+        .map(PostMediaUploadRecoveryItem.fromMap)
+        .toList(growable: false);
+  }
+
+  @override
+  Future<List<PostModel>> loadPendingMediaUploadPosts() async {
+    final dbLoad = _require(
+      dbLoadPendingMediaUploadPosts,
+      'Pending media-upload post loading is not configured for this repository.',
+    );
+    final rows = await dbLoad();
+    return rows.map(PostModel.fromMap).toList(growable: false);
+  }
+
+  @override
   Future<Map<String, List<PostMediaAttachmentModel>>>
   loadPostMediaAttachmentsForPosts(List<String> postIds) async {
     if (postIds.isEmpty) {
@@ -393,6 +487,94 @@ class PostRepositoryImpl implements PostRepository {
       'Posts orphan-event staging is not configured for this repository.',
     );
     await dbDelete(eventId);
+  }
+
+  @override
+  Future<void> saveFollowOnOutboxEvent(PostFollowOnOutboxEvent event) async {
+    final dbUpsert = _require(
+      dbUpsertFollowOnOutboxEvent,
+      'Posts follow-on outbox is not configured for this repository.',
+    );
+    await dbUpsert(event.toMap());
+  }
+
+  @override
+  Future<PostFollowOnOutboxEvent?> getFollowOnOutboxEvent(
+    String eventId,
+  ) async {
+    final dbLoad = _require(
+      dbLoadFollowOnOutboxEvent,
+      'Posts follow-on outbox is not configured for this repository.',
+    );
+    final row = await dbLoad(eventId);
+    return row == null ? null : PostFollowOnOutboxEvent.fromMap(row);
+  }
+
+  @override
+  Future<void> saveFollowOnOutboxRecipientDelivery(
+    PostFollowOnOutboxRecipientDelivery delivery,
+  ) async {
+    final dbUpsert = _require(
+      dbUpsertFollowOnOutboxRecipientDelivery,
+      'Posts follow-on outbox is not configured for this repository.',
+    );
+    await dbUpsert(delivery.toMap());
+  }
+
+  @override
+  Future<List<PostFollowOnOutboxRecipientDelivery>>
+  loadFollowOnOutboxRecipientDeliveries(String eventId) async {
+    final dbLoad = _require(
+      dbLoadFollowOnOutboxRecipientDeliveries,
+      'Posts follow-on outbox is not configured for this repository.',
+    );
+    final rows = await dbLoad(eventId);
+    return rows
+        .map(PostFollowOnOutboxRecipientDelivery.fromMap)
+        .toList(growable: false);
+  }
+
+  @override
+  Future<List<PostFollowOnOutboxJob>> loadRetryableFollowOnOutboxJobs() async {
+    final dbLoadEvents = _require(
+      dbLoadRetryableFollowOnOutboxEvents,
+      'Posts follow-on outbox is not configured for this repository.',
+    );
+    final eventRows = await dbLoadEvents();
+    if (eventRows.isEmpty) {
+      return const <PostFollowOnOutboxJob>[];
+    }
+
+    final events = eventRows
+        .map(PostFollowOnOutboxEvent.fromMap)
+        .toList(growable: false);
+    final dbLoadDeliveries = _require(
+      dbLoadRetryableFollowOnOutboxRecipientDeliveries,
+      'Posts follow-on outbox is not configured for this repository.',
+    );
+    final deliveryRows = await dbLoadDeliveries(
+      events.map((event) => event.eventId).toList(growable: false),
+    );
+    final deliveriesByEventId =
+        <String, List<PostFollowOnOutboxRecipientDelivery>>{};
+    for (final row in deliveryRows) {
+      final delivery = PostFollowOnOutboxRecipientDelivery.fromMap(row);
+      deliveriesByEventId.putIfAbsent(
+        delivery.eventId,
+        () => <PostFollowOnOutboxRecipientDelivery>[],
+      );
+      deliveriesByEventId[delivery.eventId]!.add(delivery);
+    }
+
+    return events
+        .map(
+          (event) => PostFollowOnOutboxJob(
+            event: event,
+            recipientDeliveries: deliveriesByEventId[event.eventId] ?? const [],
+          ),
+        )
+        .where((job) => job.recipientDeliveries.isNotEmpty)
+        .toList(growable: false);
   }
 
   @override

@@ -86,9 +86,9 @@ void main() {
         ),
       );
       FakeP2PService(peerId: 'peer-alice', network: network);
-      final commentedAt = DateTime.now()
-          .toUtc()
-          .subtract(const Duration(minutes: 1));
+      final commentedAt = DateTime.now().toUtc().subtract(
+        const Duration(minutes: 1),
+      );
 
       final (result, comment) = await sendPostComment(
         p2pService: bobService,
@@ -119,6 +119,125 @@ void main() {
       final payload = jsonDecode(inboxMessage) as Map<String, dynamic>;
       expect(payload['type'], 'post_comment');
       expect(payload['payload']['comment_id'], comment.id);
+    },
+  );
+
+  test(
+    'comment is persisted locally and refreshes expiry before delivery completes',
+    () async {
+      await posts.savePost(_post('post-1'));
+      await posts.saveRecipientDelivery(
+        const PostRecipientDelivery(
+          postId: 'post-1',
+          recipientPeerId: 'peer-cara',
+          deliveryStatus: 'delivered',
+          lastAttemptAt: '2026-03-15T10:15:31.000Z',
+          deliveryPath: 'direct',
+          createdAt: '2026-03-15T10:15:31.000Z',
+          updatedAt: '2026-03-15T10:15:31.000Z',
+        ),
+      );
+      FakeP2PService(peerId: 'peer-alice', network: network);
+      FakeP2PService(peerId: 'peer-cara', network: network);
+      network.deliveryDelay = const Duration(milliseconds: 150);
+      final commentedAt = DateTime.parse('2026-03-15T11:14:00.000Z');
+
+      final sendFuture = sendPostComment(
+        p2pService: bobService,
+        postRepo: posts,
+        contactRepo: contacts,
+        postId: 'post-1',
+        senderPeerId: 'peer-bob',
+        senderUsername: 'Bob',
+        body: 'I can lend one.',
+        nowProvider: () => commentedAt,
+      );
+
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      final localComments = await posts.loadComments('post-1');
+      expect(localComments, hasLength(1));
+      expect(localComments.single.body, 'I can lend one.');
+      expect(
+        (await posts.getFollowOnOutboxEvent(
+          localComments.single.eventId,
+        ))?.eventType,
+        'post_comment',
+      );
+      expect(
+        (await posts.loadFollowOnOutboxRecipientDeliveries(
+          localComments.single.eventId,
+        )).map((delivery) => delivery.deliveryStatus),
+        everyElement('pending'),
+      );
+      final updatedPost = await posts.getPost('post-1');
+      expect(
+        updatedPost?.expiresAt,
+        commentedAt.add(const Duration(days: 3)).toIso8601String(),
+      );
+      expect(updatedPost?.lastEngagementAt, commentedAt.toIso8601String());
+
+      final (result, comment) = await sendFuture;
+      expect(result, SendPostCommentResult.success);
+      expect(comment?.id, localComments.single.id);
+    },
+  );
+
+  test(
+    'comment keeps local sender state, refreshed expiry, and retryable outbox state when first send fails',
+    () async {
+      await posts.savePost(_post('post-1'));
+      await posts.saveRecipientDelivery(
+        const PostRecipientDelivery(
+          postId: 'post-1',
+          recipientPeerId: 'peer-cara',
+          deliveryStatus: 'delivered',
+          lastAttemptAt: '2026-03-15T10:15:31.000Z',
+          deliveryPath: 'direct',
+          createdAt: '2026-03-15T10:15:31.000Z',
+          updatedAt: '2026-03-15T10:15:31.000Z',
+        ),
+      );
+      network.deliveryFails = true;
+      network.inboxDisabled = true;
+      final commentedAt = DateTime.parse('2026-03-15T11:16:00.000Z');
+
+      final (result, comment) = await sendPostComment(
+        p2pService: bobService,
+        postRepo: posts,
+        contactRepo: contacts,
+        postId: 'post-1',
+        senderPeerId: 'peer-bob',
+        senderUsername: 'Bob',
+        body: 'I can lend one.',
+        nowProvider: () => commentedAt,
+      );
+
+      expect(result, SendPostCommentResult.queuedForRetry);
+      expect(comment, isNotNull);
+      expect(await posts.loadComments('post-1'), hasLength(1));
+      final updatedPost = await posts.getPost('post-1');
+      expect(
+        updatedPost?.expiresAt,
+        commentedAt.add(const Duration(days: 3)).toIso8601String(),
+      );
+      expect(updatedPost?.lastEngagementAt, commentedAt.toIso8601String());
+
+      final retryableJobs = await posts.loadRetryableFollowOnOutboxJobs();
+      expect(retryableJobs, hasLength(1));
+      expect(retryableJobs.single.event.eventType, 'post_comment');
+      expect(
+        retryableJobs.single.recipientDeliveries.map(
+          (delivery) => delivery.recipientPeerId,
+        ),
+        <String>['peer-alice', 'peer-cara'],
+      );
+      expect(
+        retryableJobs.single.recipientDeliveries.map(
+          (delivery) => delivery.deliveryStatus,
+        ),
+        everyElement('failed'),
+      );
     },
   );
 }

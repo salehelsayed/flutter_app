@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
@@ -44,6 +46,130 @@ void main() {
     expect(submitted!.text, 'hello posts');
     expect(submitted!.audience.kind, PostAudienceKind.pickPeople);
     expect(submitted!.audience.selectedPeerIds, <String>['peer-a']);
+  });
+
+  testWidgets('keeps the sheet open while onSubmit is still pending', (
+    tester,
+  ) async {
+    final submitCompleter = Completer<void>();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: FilledButton(
+              onPressed: () {
+                showModalBottomSheet<void>(
+                  context: context,
+                  isScrollControlled: true,
+                  backgroundColor: Colors.transparent,
+                  builder: (_) => ComposePostSheet(
+                    eligibleContacts: const <ContactModel>[],
+                    onSubmit: (_) => submitCompleter.future,
+                  ),
+                );
+              },
+              child: const Text('Compose'),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Compose'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField), 'hello posts');
+    await tester.pump();
+    await tester.tap(find.text('Post'));
+    await tester.pump();
+
+    expect(find.byType(ComposePostSheet), findsOneWidget);
+
+    submitCompleter.complete();
+    await tester.pump();
+  });
+
+  testWidgets('closes the sheet once submit outcome says to close', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: FilledButton(
+              onPressed: () {
+                showModalBottomSheet<void>(
+                  context: context,
+                  isScrollControlled: true,
+                  backgroundColor: Colors.transparent,
+                  builder: (_) => ComposePostSheet(
+                    eligibleContacts: const <ContactModel>[],
+                    onSubmitWithOutcome: (_) async =>
+                        ComposePostSubmitOutcome.closeSheet,
+                  ),
+                );
+              },
+              child: const Text('Compose'),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Compose'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField), 'hello posts');
+    await tester.pump();
+    await tester.tap(find.text('Post'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(find.byType(ComposePostSheet), findsNothing);
+  });
+
+  testWidgets('keeps the sheet open when submit outcome says to retry', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: FilledButton(
+              onPressed: () {
+                showModalBottomSheet<void>(
+                  context: context,
+                  isScrollControlled: true,
+                  backgroundColor: Colors.transparent,
+                  builder: (_) => ComposePostSheet(
+                    eligibleContacts: const <ContactModel>[],
+                    onSubmitWithOutcome: (_) async =>
+                        ComposePostSubmitOutcome.keepSheetOpen,
+                  ),
+                );
+              },
+              child: const Text('Compose'),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Compose'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField), 'hello posts');
+    await tester.pump();
+    await tester.tap(find.text('Post'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(find.byType(ComposePostSheet), findsOneWidget);
+    final postButton = tester.widget<ElevatedButton>(
+      find.widgetWithText(ElevatedButton, 'Post'),
+    );
+    expect(postButton.onPressed, isNotNull);
   });
 }
 

@@ -49,6 +49,13 @@ class PostCard extends StatelessWidget {
     );
     final scopeLabel = post.audience.scopeLabel;
     final isPassedAlong = post.passedByUsername != null;
+    final deliveryState = _deliveryStateFor(post);
+    final hasMediaSkeleton = _hasMediaSkeleton(post);
+    final isSending = post.deliveryStatus == 'sending';
+    final resolvedOpenComments = isSending ? null : onOpenComments;
+    final resolvedToggleHeart = isSending ? null : onToggleHeart;
+    final resolvedPassAlong = isSending ? null : onPassAlong;
+    final resolvedPinPost = isSending ? null : onPinPost;
     final canPassAlong =
         onPassAlong != null &&
         post.audience.kind != PostAudienceKind.pickPeople &&
@@ -56,225 +63,277 @@ class PostCard extends StatelessWidget {
 
     return Padding(
       padding: _cardMargin,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 220),
-        padding: _cardPadding,
-        decoration: BoxDecoration(
-          color: Colors.white.withOpacity(0.03),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: borderColor, width: 1),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (isPassedAlong) ...[
-              Text(
-                '${post.passedByUsername!} passed this along',
-                style: TextStyle(
-                  color: Colors.white.withOpacity(0.48),
-                  fontSize: 10,
-                  fontWeight: FontWeight.w500,
+      child: AnimatedOpacity(
+        duration: const Duration(milliseconds: 180),
+        opacity: isSending ? 0.92 : 1,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 220),
+          padding: _cardPadding,
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.03),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: borderColor, width: 1),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (isPassedAlong) ...[
+                Text(
+                  '${post.passedByUsername!} passed this along',
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.48),
+                    fontSize: 10,
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 8),
-            ],
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Stack(
-                  clipBehavior: Clip.none,
-                  children: [
-                    Container(
-                      width: 40,
-                      height: 40,
-                      foregroundDecoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        border: Border.all(
-                          color: authorColor.withOpacity(0.27),
-                          width: 2,
-                        ),
-                      ),
-                      child: UserAvatar(
-                        peerId: post.authorPeerId,
-                        size: 40,
-                        showGlow: false,
-                        showPhotoFrame: false,
-                      ),
-                    ),
-                    Positioned(
-                      right: 0,
-                      bottom: 0,
-                      child: Container(
-                        width: 10,
-                        height: 10,
-                        decoration: BoxDecoration(
-                          color: _onlineDotColor,
+                const SizedBox(height: 8),
+              ],
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      Container(
+                        width: 40,
+                        height: 40,
+                        foregroundDecoration: BoxDecoration(
                           shape: BoxShape.circle,
                           border: Border.all(
-                            color: const Color(0xFF0A0A0F),
+                            color: authorColor.withOpacity(0.27),
                             width: 2,
                           ),
                         ),
+                        child: UserAvatar(
+                          peerId: post.authorPeerId,
+                          size: 40,
+                          showGlow: false,
+                          showPhotoFrame: false,
+                        ),
                       ),
-                    ),
-                  ],
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Expanded(
-                            child: Text(
-                              post.authorUsername,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 14,
-                                fontWeight: FontWeight.w600,
-                              ),
+                      Positioned(
+                        right: 0,
+                        bottom: 0,
+                        child: Container(
+                          width: 10,
+                          height: 10,
+                          decoration: BoxDecoration(
+                            color: _onlineDotColor,
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: const Color(0xFF0A0A0F),
+                              width: 2,
                             ),
                           ),
-                          Text(
-                            _formatRelativeTimestamp(
-                              isPassedAlong ? post.visibleAt : post.createdAt,
-                              now,
-                            ),
-                            style: TextStyle(
-                              color: Colors.white.withOpacity(0.30),
-                              fontSize: 11,
-                              fontWeight: FontWeight.w400,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 4),
-                      Wrap(
-                        spacing: 6,
-                        runSpacing: 4,
-                        children: [
-                          if (!isPassedAlong)
-                            const _Badge(label: 'Friend', isPrimary: true),
-                          if (scopeLabel != null) _Badge(label: scopeLabel),
-                        ],
+                        ),
                       ),
                     ],
                   ),
-                ),
-              ],
-            ),
-            if (post.nearbyDistanceLabel != null) ...[
-              const SizedBox(height: 8),
-              Text(
-                post.nearbyDistanceLabel!,
-                style: TextStyle(
-                  color: Colors.white.withOpacity(0.46),
-                  fontSize: 11,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ],
-            const SizedBox(height: 14),
-            if (post.text.isNotEmpty)
-              LinkableText(
-                text: post.text,
-                style: TextStyle(
-                  color: Colors.white.withOpacity(0.94),
-                  fontSize: 15,
-                  height: 1.55,
-                ),
-              ),
-            if (post.media.isNotEmpty) ...[
-              const SizedBox(height: 14),
-              _PostMediaContent(post: post),
-            ],
-            const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.only(top: 8),
-              decoration: BoxDecoration(
-                border: Border(
-                  top: BorderSide(color: Colors.white.withOpacity(0.05)),
-                ),
-              ),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
+                  const SizedBox(width: 12),
                   Expanded(
-                    child: Wrap(
-                      spacing: 16,
-                      runSpacing: 6,
-                      crossAxisAlignment: WrapCrossAlignment.center,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        _MetricAction(
-                          icon: Icons.favorite_border,
-                          onTap: onToggleHeart,
-                          color: Colors.white.withOpacity(
-                            post.viewerHasHearted ? 0.48 : 0.35,
-                          ),
-                          label: post.heartCount.toString(),
-                          labelKey: const ValueKey<String>('post-heart-count'),
-                          iconSize: _actionIconSize,
-                        ),
-                        _MetricAction(
-                          icon: Icons.mode_comment_outlined,
-                          onTap: onOpenComments,
-                          color: Colors.white.withOpacity(0.35),
-                          label: post.commentCount.toString(),
-                          labelKey: const ValueKey<String>(
-                            'post-comment-count',
-                          ),
-                          iconSize: _actionIconSize,
-                        ),
-                        if (canPassAlong ||
-                            (showShareCount && post.shareCount > 0))
-                          _MetricAction(
-                            icon: Icons.repeat,
-                            onTap: onPassAlong,
-                            color: Colors.white.withOpacity(0.35),
-                            label: showShareCount
-                                ? post.shareCount.toString()
-                                : null,
-                            labelKey: const ValueKey<String>(
-                              'post-share-count',
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Expanded(
+                              child: Text(
+                                post.authorUsername,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
                             ),
-                            iconSize: _actionIconSize,
-                          ),
+                            Text(
+                              _formatRelativeTimestamp(
+                                isPassedAlong ? post.visibleAt : post.createdAt,
+                                now,
+                              ),
+                              style: TextStyle(
+                                color: Colors.white.withOpacity(0.30),
+                                fontSize: 11,
+                                fontWeight: FontWeight.w400,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 4,
+                          children: [
+                            if (!isPassedAlong)
+                              const _Badge(label: 'Friend', isPrimary: true),
+                            if (scopeLabel != null) _Badge(label: scopeLabel),
+                          ],
+                        ),
                       ],
                     ),
                   ),
-                  const SizedBox(width: 12),
-                  Padding(
-                    padding: const EdgeInsets.only(top: 2),
-                    child: Text(
-                      _expiryCopy(post.expiresAt, now).toLowerCase(),
-                      style: TextStyle(
-                        color: Colors.white.withOpacity(0.25),
-                        fontSize: 10,
-                        fontWeight: FontWeight.w400,
-                      ),
-                      textAlign: TextAlign.right,
-                    ),
-                  ),
-                  if (onPinPost != null) ...[
-                    const SizedBox(width: 10),
-                    _MetricAction(
-                      icon: Icons.bookmark_border,
-                      onTap: onPinPost,
-                      color: Colors.white.withOpacity(0.30),
-                      iconSize: 14,
-                    ),
-                  ],
                 ],
               ),
-            ),
-          ],
+              if (post.nearbyDistanceLabel != null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  post.nearbyDistanceLabel!,
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.46),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+              const SizedBox(height: 14),
+              if (post.text.isNotEmpty)
+                LinkableText(
+                  text: post.text,
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.94),
+                    fontSize: 15,
+                    height: 1.55,
+                  ),
+                ),
+              if (hasMediaSkeleton) ...[
+                const SizedBox(height: 14),
+                _PostMediaSkeleton(post: post),
+              ] else if (post.media.isNotEmpty) ...[
+                const SizedBox(height: 14),
+                _PostMediaContent(post: post),
+              ],
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.only(top: 8),
+                decoration: BoxDecoration(
+                  border: Border(
+                    top: BorderSide(color: Colors.white.withOpacity(0.05)),
+                  ),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Wrap(
+                        spacing: 16,
+                        runSpacing: 6,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          if (deliveryState != null)
+                            _DeliveryStatusChip(state: deliveryState),
+                          _MetricAction(
+                            icon: Icons.favorite_border,
+                            onTap: resolvedToggleHeart,
+                            color: Colors.white.withOpacity(
+                              post.viewerHasHearted ? 0.48 : 0.35,
+                            ),
+                            label: post.heartCount.toString(),
+                            labelKey: const ValueKey<String>(
+                              'post-heart-count',
+                            ),
+                            iconSize: _actionIconSize,
+                          ),
+                          _MetricAction(
+                            icon: Icons.mode_comment_outlined,
+                            onTap: resolvedOpenComments,
+                            color: Colors.white.withOpacity(0.35),
+                            label: post.commentCount.toString(),
+                            labelKey: const ValueKey<String>(
+                              'post-comment-count',
+                            ),
+                            iconSize: _actionIconSize,
+                          ),
+                          if (canPassAlong ||
+                              (showShareCount && post.shareCount > 0))
+                            _MetricAction(
+                              icon: Icons.repeat,
+                              onTap: resolvedPassAlong,
+                              color: Colors.white.withOpacity(0.35),
+                              label: showShareCount
+                                  ? post.shareCount.toString()
+                                  : null,
+                              labelKey: const ValueKey<String>(
+                                'post-share-count',
+                              ),
+                              iconSize: _actionIconSize,
+                            ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Text(
+                        _expiryCopy(post.expiresAt, now).toLowerCase(),
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.25),
+                          fontSize: 10,
+                          fontWeight: FontWeight.w400,
+                        ),
+                        textAlign: TextAlign.right,
+                      ),
+                    ),
+                    if (resolvedPinPost != null) ...[
+                      const SizedBox(width: 10),
+                      _MetricAction(
+                        icon: Icons.bookmark_border,
+                        onTap: resolvedPinPost,
+                        color: Colors.white.withOpacity(0.30),
+                        iconSize: 14,
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
+  }
+
+  static bool _hasMediaSkeleton(PostModel post) {
+    return post.mediaKind != 'none' && post.media.isEmpty;
+  }
+
+  static _PostDeliveryStateVisual? _deliveryStateFor(PostModel post) {
+    final isMediaSkeleton = _hasMediaSkeleton(post);
+    return switch (post.deliveryStatus) {
+      'sending' when isMediaSkeleton => const _PostDeliveryStateVisual(
+        label: 'Uploading media...',
+        textColor: Color(0xFFD8F4FF),
+        backgroundColor: Color.fromRGBO(58, 112, 138, 0.22),
+        borderColor: Color.fromRGBO(120, 188, 220, 0.35),
+      ),
+      'sending' => const _PostDeliveryStateVisual(
+        label: 'Sending...',
+        textColor: Color(0xFFD8F4FF),
+        backgroundColor: Color.fromRGBO(58, 112, 138, 0.22),
+        borderColor: Color.fromRGBO(120, 188, 220, 0.35),
+      ),
+      'partial' => const _PostDeliveryStateVisual(
+        label: 'Partially sent',
+        textColor: Color(0xFFFFE3B3),
+        backgroundColor: Color.fromRGBO(125, 88, 26, 0.24),
+        borderColor: Color.fromRGBO(230, 182, 84, 0.34),
+      ),
+      'failed' when isMediaSkeleton => const _PostDeliveryStateVisual(
+        label: 'Upload failed',
+        textColor: Color(0xFFFFC9C9),
+        backgroundColor: Color.fromRGBO(130, 42, 42, 0.24),
+        borderColor: Color.fromRGBO(227, 110, 110, 0.34),
+      ),
+      'failed' => const _PostDeliveryStateVisual(
+        label: 'Send failed',
+        textColor: Color(0xFFFFC9C9),
+        backgroundColor: Color.fromRGBO(130, 42, 42, 0.24),
+        borderColor: Color.fromRGBO(227, 110, 110, 0.34),
+      ),
+      _ => null,
+    };
   }
 
   static String _formatRelativeTimestamp(String rawTimestamp, DateTime now) {
@@ -323,6 +382,105 @@ class PostCard extends StatelessWidget {
     }
     return 'Expires soon';
   }
+}
+
+class _PostMediaSkeleton extends StatelessWidget {
+  final PostModel post;
+
+  const _PostMediaSkeleton({required this.post});
+
+  @override
+  Widget build(BuildContext context) {
+    final copy = _copyFor(post);
+    return Container(
+      key: const ValueKey<String>('post-media-skeleton-placeholder'),
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+      constraints: BoxConstraints(
+        minHeight: post.mediaKind == 'voice' ? 92 : 176,
+      ),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.white.withOpacity(0.08)),
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: <Color>[
+            Color.fromRGBO(255, 255, 255, 0.06),
+            Color.fromRGBO(255, 255, 255, 0.02),
+          ],
+        ),
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            copy.icon,
+            color: Colors.white.withOpacity(0.68),
+            size: post.mediaKind == 'voice' ? 26 : 34,
+          ),
+          const SizedBox(height: 12),
+          Text(
+            copy.title,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            copy.subtitle,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.52),
+              fontSize: 12,
+              height: 1.4,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  static _PostMediaSkeletonCopy _copyFor(PostModel post) {
+    final isUploadFailed =
+        post.deliveryStatus == 'failed' && PostCard._hasMediaSkeleton(post);
+    final title = switch (post.mediaKind) {
+      'image' =>
+        isUploadFailed ? 'Photo upload failed' : 'Photo pending upload',
+      'image_carousel' =>
+        isUploadFailed ? 'Photo upload failed' : 'Photos pending upload',
+      'video' =>
+        isUploadFailed ? 'Video upload failed' : 'Video pending upload',
+      'voice' =>
+        isUploadFailed ? 'Voice upload failed' : 'Voice note pending upload',
+      _ => isUploadFailed ? 'Media upload failed' : 'Media pending upload',
+    };
+    final subtitle = isUploadFailed
+        ? 'This post stayed local because the media upload did not finish.'
+        : 'Recipients will receive this after the upload finishes.';
+    final icon = switch (post.mediaKind) {
+      'image' || 'image_carousel' => Icons.photo_outlined,
+      'video' => Icons.videocam_outlined,
+      'voice' => Icons.mic_none_rounded,
+      _ => Icons.insert_drive_file_outlined,
+    };
+    return _PostMediaSkeletonCopy(title: title, subtitle: subtitle, icon: icon);
+  }
+}
+
+class _PostMediaSkeletonCopy {
+  final String title;
+  final String subtitle;
+  final IconData icon;
+
+  const _PostMediaSkeletonCopy({
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+  });
 }
 
 class _PostMediaContent extends StatelessWidget {
@@ -473,6 +631,46 @@ class _Badge extends StatelessWidget {
       ),
     );
   }
+}
+
+class _DeliveryStatusChip extends StatelessWidget {
+  final _PostDeliveryStateVisual state;
+
+  const _DeliveryStatusChip({required this.state});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: state.backgroundColor,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: state.borderColor),
+      ),
+      child: Text(
+        state.label,
+        style: TextStyle(
+          color: state.textColor,
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+}
+
+class _PostDeliveryStateVisual {
+  final String label;
+  final Color textColor;
+  final Color backgroundColor;
+  final Color borderColor;
+
+  const _PostDeliveryStateVisual({
+    required this.label,
+    required this.textColor,
+    required this.backgroundColor,
+    required this.borderColor,
+  });
 }
 
 class _MetricAction extends StatelessWidget {

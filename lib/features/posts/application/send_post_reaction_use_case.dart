@@ -3,15 +3,18 @@ import 'package:uuid/uuid.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
+import 'package:flutter_app/features/posts/application/post_engagement_follow_on_support.dart';
+import 'package:flutter_app/features/posts/application/post_follow_on_delivery.dart';
 import 'package:flutter_app/features/posts/domain/models/post_reaction_envelope.dart';
 import 'package:flutter_app/features/posts/domain/models/post_reaction_model.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 
 const _uuid = Uuid();
-const Duration _interactivePostReactionBudget = Duration(seconds: 4);
 
 enum SendPostReactionResult {
   success,
+  partiallySettled,
+  queuedForRetry,
   nodeNotRunning,
   postNotFound,
   noEligibleRecipients,
@@ -25,6 +28,7 @@ Future<(SendPostReactionResult, PostReactionModel?)> sendPostReaction({
   required String postId,
   required String senderPeerId,
   required bool isActive,
+  int maxConcurrentRecipients = defaultPostFollowOnDeliveryConcurrency,
 }) async {
   if (!p2pService.currentState.isStarted) {
     return (SendPostReactionResult.nodeNotRunning, null);
@@ -61,17 +65,24 @@ Future<(SendPostReactionResult, PostReactionModel?)> sendPostReaction({
     postId: postId,
     isActive: isActive,
   );
-  final didSend = await fanoutPostEngagementEnvelope(
-    p2pService: p2pService,
-    recipients: recipients,
-    envelope: envelope,
-  );
-  if (!didSend) {
-    return (SendPostReactionResult.sendFailed, null);
-  }
-
   await postRepo.savePostReaction(reaction);
-  return (SendPostReactionResult.success, reaction);
+  final deliveryResult = await queueAndSendPostEngagementFollowOn(
+    postRepo: postRepo,
+    p2pService: p2pService,
+    eventId: reaction.eventId,
+    eventType: postReactionFollowOnEventType,
+    postId: postId,
+    commentId: null,
+    senderPeerId: senderPeerId,
+    envelope: envelope,
+    createdAt: createdAt,
+    recipientPeerIds: recipients.map((recipient) => recipient.peerId),
+    maxConcurrentRecipients: maxConcurrentRecipients,
+  );
+  return (
+    _sendPostReactionResultForSettlement(deliveryResult.settlement),
+    reaction,
+  );
 }
 
 Future<List<ContactModel>> resolvePostEngagementRecipients({
@@ -98,24 +109,27 @@ Future<List<ContactModel>> resolvePostEngagementRecipients({
   return recipients;
 }
 
-Future<bool> fanoutPostEngagementEnvelope({
+Future<PostFollowOnDeliveryResult> fanoutPostEngagementEnvelope({
   required P2PService p2pService,
-  required List<ContactModel> recipients,
+  required Iterable<String> recipientPeerIds,
   required String envelope,
+  int maxConcurrentRecipients = defaultPostFollowOnDeliveryConcurrency,
 }) async {
-  var delivered = false;
-  for (final recipient in recipients) {
-    final sendResult = await p2pService.sendMessageWithReply(
-      recipient.peerId,
-      envelope,
-      timeoutMs: _interactivePostReactionBudget.inMilliseconds,
-    );
-    if (sendResult.sent) {
-      delivered = true;
-      continue;
-    }
-    final stored = await p2pService.storeInInbox(recipient.peerId, envelope);
-    delivered = delivered || stored;
-  }
-  return delivered;
+  return fanoutPostFollowOnEnvelope(
+    p2pService: p2pService,
+    recipientPeerIds: recipientPeerIds,
+    envelope: envelope,
+    maxConcurrentRecipients: maxConcurrentRecipients,
+  );
+}
+
+SendPostReactionResult _sendPostReactionResultForSettlement(
+  PostFollowOnSettlement settlement,
+) {
+  return switch (settlement) {
+    PostFollowOnSettlement.fullySettled => SendPostReactionResult.success,
+    PostFollowOnSettlement.partiallySettled =>
+      SendPostReactionResult.partiallySettled,
+    PostFollowOnSettlement.notSettled => SendPostReactionResult.queuedForRetry,
+  };
 }

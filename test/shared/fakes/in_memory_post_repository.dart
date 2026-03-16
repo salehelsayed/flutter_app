@@ -2,7 +2,11 @@ import 'dart:async';
 
 import 'package:flutter_app/features/posts/domain/models/post_comment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_comment_reaction_model.dart';
+import 'package:flutter_app/features/posts/domain/models/post_follow_on_outbox_event.dart';
+import 'package:flutter_app/features/posts/domain/models/post_follow_on_outbox_job.dart';
+import 'package:flutter_app/features/posts/domain/models/post_follow_on_outbox_recipient_delivery.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
+import 'package:flutter_app/features/posts/domain/models/post_media_upload_recovery_item.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_pending_child_event.dart';
 import 'package:flutter_app/features/posts/domain/models/post_reaction_model.dart';
@@ -30,6 +34,9 @@ class InMemoryPostRepository implements PostRepository {
       <String, PostMediaAttachmentModel>{};
   final Map<String, List<PostMediaAttachmentModel>> _postMediaByPostId =
       <String, List<PostMediaAttachmentModel>>{};
+  final Map<String, List<PostMediaUploadRecoveryItem>>
+  _postMediaUploadRecoveryByPostId =
+      <String, List<PostMediaUploadRecoveryItem>>{};
   final Map<String, List<PostRecipientDelivery>> _deliveries =
       <String, List<PostRecipientDelivery>>{};
   final Map<String, PostPassModel> _postPassesById = <String, PostPassModel>{};
@@ -40,6 +47,11 @@ class InMemoryPostRepository implements PostRepository {
       <String, PostPendingChildEvent>{};
   final Map<String, List<PostPendingChildEvent>> _pendingChildEventsByPostId =
       <String, List<PostPendingChildEvent>>{};
+  final Map<String, PostFollowOnOutboxEvent> _followOnOutboxEventsById =
+      <String, PostFollowOnOutboxEvent>{};
+  final Map<String, List<PostFollowOnOutboxRecipientDelivery>>
+  _followOnOutboxDeliveriesByEventId =
+      <String, List<PostFollowOnOutboxRecipientDelivery>>{};
   final Map<String, PostPinStateModel> _pinStates =
       <String, PostPinStateModel>{};
   final Map<String, String> _pinDismissals = <String, String>{};
@@ -85,6 +97,31 @@ class InMemoryPostRepository implements PostRepository {
   }
 
   @override
+  Future<List<PostModel>> loadRetryableOutgoingPosts() async {
+    return _posts.values
+        .map(_decoratePost)
+        .where(
+          (post) =>
+              !post.isIncoming &&
+              (post.deliveryStatus == 'sending' ||
+                  post.deliveryStatus == 'partial' ||
+                  post.deliveryStatus == 'failed'),
+        )
+        .toList(growable: false)
+      ..sort((a, b) {
+        final visibleCompare = b.visibleAt.compareTo(a.visibleAt);
+        if (visibleCompare != 0) {
+          return visibleCompare;
+        }
+        final createdCompare = b.createdAt.compareTo(a.createdAt);
+        if (createdCompare != 0) {
+          return createdCompare;
+        }
+        return b.id.compareTo(a.id);
+      });
+  }
+
+  @override
   Future<List<PostModel>> loadExpiredPosts(String nowIso) async {
     return _posts.values
         .where(
@@ -110,6 +147,7 @@ class InMemoryPostRepository implements PostRepository {
     _postMediaByPostId.remove(postId)?.forEach((attachment) {
       _postMediaById.remove(attachment.mediaId);
     });
+    _postMediaUploadRecoveryByPostId.remove(postId);
     _deliveries.remove(postId);
     _postOrigins.remove(postId);
     _pinStates.remove(postId);
@@ -287,6 +325,56 @@ class InMemoryPostRepository implements PostRepository {
   }
 
   @override
+  Future<void> replacePostMediaUploadRecoveryItems(
+    String postId,
+    List<PostMediaUploadRecoveryItem> items,
+  ) async {
+    if (items.isEmpty) {
+      _postMediaUploadRecoveryByPostId.remove(postId);
+      _changes.add(postId);
+      return;
+    }
+    _postMediaUploadRecoveryByPostId[postId] =
+        List<PostMediaUploadRecoveryItem>.from(items)..sort((a, b) {
+          final positionCompare = a.position.compareTo(b.position);
+          if (positionCompare != 0) {
+            return positionCompare;
+          }
+          return a.createdAt.compareTo(b.createdAt);
+        });
+    _changes.add(postId);
+  }
+
+  @override
+  Future<List<PostMediaUploadRecoveryItem>> loadPostMediaUploadRecoveryItems(
+    String postId,
+  ) async {
+    return List<PostMediaUploadRecoveryItem>.from(
+      _postMediaUploadRecoveryByPostId[postId] ?? const [],
+    );
+  }
+
+  @override
+  Future<List<PostModel>> loadPendingMediaUploadPosts() async {
+    final posts = <PostModel>[];
+    for (final postId in _postMediaUploadRecoveryByPostId.keys) {
+      final post = _posts[postId];
+      if (post == null || post.isIncoming) {
+        continue;
+      }
+      posts.add(_decoratePost(post));
+    }
+    posts.sort((a, b) {
+      final createdCompare = a.createdAt.compareTo(b.createdAt);
+      if (createdCompare != 0) {
+        return createdCompare;
+      }
+      return a.id.compareTo(b.id);
+    });
+    return posts;
+  }
+
+  @override
   Future<Map<String, List<PostMediaAttachmentModel>>>
   loadPostMediaAttachmentsForPosts(List<String> postIds) async {
     final result = <String, List<PostMediaAttachmentModel>>{};
@@ -371,6 +459,72 @@ class InMemoryPostRepository implements PostRepository {
     if (events != null && events.isEmpty) {
       _pendingChildEventsByPostId.remove(event.postId);
     }
+  }
+
+  @override
+  Future<void> saveFollowOnOutboxEvent(PostFollowOnOutboxEvent event) async {
+    _followOnOutboxEventsById[event.eventId] = event;
+  }
+
+  @override
+  Future<PostFollowOnOutboxEvent?> getFollowOnOutboxEvent(
+    String eventId,
+  ) async {
+    return _followOnOutboxEventsById[eventId];
+  }
+
+  @override
+  Future<void> saveFollowOnOutboxRecipientDelivery(
+    PostFollowOnOutboxRecipientDelivery delivery,
+  ) async {
+    final deliveries = _followOnOutboxDeliveriesByEventId.putIfAbsent(
+      delivery.eventId,
+      () => <PostFollowOnOutboxRecipientDelivery>[],
+    );
+    deliveries.removeWhere(
+      (existing) => existing.recipientPeerId == delivery.recipientPeerId,
+    );
+    deliveries.add(delivery);
+    deliveries.sort((a, b) => a.recipientPeerId.compareTo(b.recipientPeerId));
+  }
+
+  @override
+  Future<List<PostFollowOnOutboxRecipientDelivery>>
+  loadFollowOnOutboxRecipientDeliveries(String eventId) async {
+    return List<PostFollowOnOutboxRecipientDelivery>.from(
+      _followOnOutboxDeliveriesByEventId[eventId] ?? const [],
+    );
+  }
+
+  @override
+  Future<List<PostFollowOnOutboxJob>> loadRetryableFollowOnOutboxJobs() async {
+    final events = _followOnOutboxEventsById.values.toList(growable: false)
+      ..sort((a, b) {
+        final createdCompare = a.createdAt.compareTo(b.createdAt);
+        if (createdCompare != 0) {
+          return createdCompare;
+        }
+        return a.eventId.compareTo(b.eventId);
+      });
+
+    final jobs = <PostFollowOnOutboxJob>[];
+    for (final event in events) {
+      final retryableDeliveries =
+          (_followOnOutboxDeliveriesByEventId[event.eventId] ??
+                  const <PostFollowOnOutboxRecipientDelivery>[])
+              .where((delivery) => !delivery.isSettled)
+              .toList(growable: false);
+      if (retryableDeliveries.isEmpty) {
+        continue;
+      }
+      jobs.add(
+        PostFollowOnOutboxJob(
+          event: event,
+          recipientDeliveries: retryableDeliveries,
+        ),
+      );
+    }
+    return jobs;
   }
 
   @override

@@ -1,6 +1,7 @@
 import 'package:uuid/uuid.dart';
 
 import 'package:flutter_app/core/services/p2p_service.dart';
+import 'package:flutter_app/features/posts/application/post_follow_on_delivery.dart';
 import 'package:flutter_app/features/posts/application/post_pin_delivery_support.dart';
 import 'package:flutter_app/features/posts/domain/models/post_pin_envelope.dart';
 import 'package:flutter_app/features/posts/domain/models/post_pin_state_model.dart';
@@ -10,6 +11,8 @@ const _uuid = Uuid();
 
 enum EditPinnedPostResult {
   success,
+  partiallySettled,
+  queuedForRetry,
   nodeNotRunning,
   postNotFound,
   notAuthor,
@@ -75,13 +78,30 @@ Future<(EditPinnedPostResult, PostPinStateModel?)> editPinnedPost({
     post: updatedPost,
     media: media,
   );
-  final delivered = await sendPostPinEnvelope(
+  final deliveryResult = await queueAndSendPostPinFollowOn(
+    postRepo: postRepo,
     p2pService: p2pService,
-    recipientPeerIds: recipientPeerIds,
+    eventId: pinState.eventId,
+    eventType: postPinUpdateFollowOnEventType,
+    postId: updatedPost.id,
+    senderPeerId: senderPeerId,
     envelope: envelope,
+    createdAt: pinState.createdAt,
+    recipientPeerIds: recipientPeerIds,
   );
-  if (!delivered) {
-    return (EditPinnedPostResult.sendFailed, pinState);
-  }
-  return (EditPinnedPostResult.success, pinState);
+  return (
+    _editPinnedPostResultForSettlement(deliveryResult.settlement),
+    pinState,
+  );
+}
+
+EditPinnedPostResult _editPinnedPostResultForSettlement(
+  PostFollowOnSettlement settlement,
+) {
+  return switch (settlement) {
+    PostFollowOnSettlement.fullySettled => EditPinnedPostResult.success,
+    PostFollowOnSettlement.partiallySettled =>
+      EditPinnedPostResult.partiallySettled,
+    PostFollowOnSettlement.notSettled => EditPinnedPostResult.queuedForRetry,
+  };
 }

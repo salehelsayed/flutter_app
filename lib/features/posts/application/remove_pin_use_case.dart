@@ -1,6 +1,7 @@
 import 'package:uuid/uuid.dart';
 
 import 'package:flutter_app/core/services/p2p_service.dart';
+import 'package:flutter_app/features/posts/application/post_follow_on_delivery.dart';
 import 'package:flutter_app/features/posts/application/post_pin_delivery_support.dart';
 import 'package:flutter_app/features/posts/domain/models/post_pin_envelope.dart';
 import 'package:flutter_app/features/posts/domain/models/post_pin_state_model.dart';
@@ -10,6 +11,8 @@ const _uuid = Uuid();
 
 enum RemovePinResult {
   success,
+  partiallySettled,
+  queuedForRetry,
   nodeNotRunning,
   postNotFound,
   notAuthor,
@@ -51,7 +54,7 @@ Future<(RemovePinResult, PostPinStateModel?)> removePin({
   }
 
   final now = (nowProvider ?? DateTime.now).call().toUtc().toIso8601String();
-  final pinState = PostPinStateModel(
+  final removedPinState = PostPinStateModel(
     postId: post.id,
     eventId: 'evt_${_uuid.v4()}',
     pinEventId: 'pin_evt_${_uuid.v4()}',
@@ -63,17 +66,33 @@ Future<(RemovePinResult, PostPinStateModel?)> removePin({
     createdAt: now,
   );
   await postRepo.savePost(post.copyWith(keepAvailable: false));
-  await postRepo.savePostPinState(pinState);
+  await postRepo.savePostPinState(removedPinState);
   await postRepo.clearPinDismissal(post.id);
 
-  final envelope = PostPinRemoveEnvelope.buildJson(pinState: pinState);
-  final delivered = await sendPostPinEnvelope(
+  final envelope = PostPinRemoveEnvelope.buildJson(pinState: removedPinState);
+  final deliveryResult = await queueAndSendPostPinFollowOn(
+    postRepo: postRepo,
     p2pService: p2pService,
-    recipientPeerIds: recipientPeerIds,
+    eventId: removedPinState.eventId,
+    eventType: postPinRemoveFollowOnEventType,
+    postId: post.id,
+    senderPeerId: senderPeerId,
     envelope: envelope,
+    createdAt: removedPinState.createdAt,
+    recipientPeerIds: recipientPeerIds,
   );
-  if (!delivered) {
-    return (RemovePinResult.sendFailed, pinState);
-  }
-  return (RemovePinResult.success, pinState);
+  return (
+    _removePinResultForSettlement(deliveryResult.settlement),
+    removedPinState,
+  );
+}
+
+RemovePinResult _removePinResultForSettlement(
+  PostFollowOnSettlement settlement,
+) {
+  return switch (settlement) {
+    PostFollowOnSettlement.fullySettled => RemovePinResult.success,
+    PostFollowOnSettlement.partiallySettled => RemovePinResult.partiallySettled,
+    PostFollowOnSettlement.notSettled => RemovePinResult.queuedForRetry,
+  };
 }

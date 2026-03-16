@@ -6,13 +6,12 @@ import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
-import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/posts/application/attach_post_media_use_case.dart';
 import 'package:flutter_app/features/posts/application/nearby_eligibility_service.dart';
+import 'package:flutter_app/features/posts/application/post_delivery_runner.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
-import 'package:flutter_app/features/posts/domain/models/post_create_envelope.dart';
-import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
+import 'package:flutter_app/features/posts/domain/models/post_media_upload_recovery_item.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_recipient_delivery.dart';
 import 'package:flutter_app/features/posts/domain/models/posts_privacy_settings.dart';
@@ -20,18 +19,11 @@ import 'package:flutter_app/features/posts/domain/repositories/contact_presence_
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 import 'package:flutter_app/features/posts/domain/repositories/posts_privacy_settings_repository.dart';
 
+export 'package:flutter_app/features/posts/application/post_delivery_runner.dart'
+    show CreatedLocalPost, CreatedLocalPostRecipient, SendPostResult;
+
 const _uuid = Uuid();
 const Duration _postExpiry = Duration(days: 3);
-const Duration _interactivePostBudget = Duration(seconds: 4);
-
-enum SendPostResult {
-  success,
-  partialSuccess,
-  nodeNotRunning,
-  invalidPost,
-  noEligibleRecipients,
-  sendFailed,
-}
 
 Future<(SendPostResult, PostModel?)> sendPost({
   required P2PService p2pService,
@@ -56,154 +48,58 @@ Future<(SendPostResult, PostModel?)> sendPost({
     details: {'audienceKind': audience.kind.toWireValue()},
   );
 
-  final hasMedia = mediaDrafts.isNotEmpty;
-  if (text.trim().isEmpty && !hasMedia) {
+  if (_isInvalidPostPayload(text: text, mediaDrafts: mediaDrafts)) {
     return (SendPostResult.invalidPost, null);
   }
+
   if (!p2pService.currentState.isStarted) {
     return (SendPostResult.nodeNotRunning, null);
   }
 
-  final nearbySettings =
-      audience.kind == PostAudienceKind.peopleNearby &&
-          postsPrivacySettingsRepository != null
-      ? await postsPrivacySettingsRepository.load()
-      : null;
-  final eligibleRecipients = await _resolveEligibleRecipients(
+  final (createResult, created) = await createLocalPost(
+    postRepo: postRepo,
     contactRepo: contactRepo,
+    senderPeerId: senderPeerId,
+    senderUsername: senderUsername,
+    text: text,
     audience: audience,
+    mediaDrafts: mediaDrafts,
+    secureKeyStore: secureKeyStore,
+    imageProcessor: imageProcessor,
+    mediaFileManager: mediaFileManager,
+    uploadPostMediaFn: uploadPostMediaFn,
+    bridge: bridge,
     contactPresenceSnapshotRepository: contactPresenceSnapshotRepository,
     postsPrivacySettingsRepository: postsPrivacySettingsRepository,
-    nearbySettings: nearbySettings,
   );
-  if (eligibleRecipients.isEmpty) {
-    return (SendPostResult.noEligibleRecipients, null);
+  if (createResult != SendPostResult.success || created == null) {
+    return (createResult, created?.post);
   }
 
-  final createdAt = DateTime.now().toUtc().toIso8601String();
-  final expiresAt = DateTime.now().toUtc().add(_postExpiry).toIso8601String();
-  var post = PostModel(
-    id: 'post_${_uuid.v4()}',
-    eventId: 'evt_${_uuid.v4()}',
-    senderPeerId: senderPeerId,
-    authorPeerId: senderPeerId,
-    authorUsername: senderUsername,
-    text: text.trim(),
-    audience: audience,
-    createdAt: createdAt,
-    visibleAt: createdAt,
-    expiresAt: expiresAt,
-    keepAvailable: false,
-    mediaKind: _deriveDraftMediaKind(mediaDrafts),
-    nearbySenderLatE3: nearbySettings?.lastLocalLatE3,
-    nearbySenderLngE3: nearbySettings?.lastLocalLngE3,
-    nearbySenderCapturedAt: nearbySettings?.lastLocalCapturedAt,
-    nearbySenderAccuracyM: nearbySettings?.lastLocalAccuracyM,
-    isIncoming: false,
-    deliveryStatus: 'sending',
+  final (mediaResult, prepared) = await prepareCreatedLocalPostMedia(
+    created: created,
+    postRepo: postRepo,
+    secureKeyStore: secureKeyStore,
+    imageProcessor: imageProcessor,
+    mediaFileManager: mediaFileManager,
+    uploadPostMediaFn: uploadPostMediaFn,
+    bridge: bridge,
   );
-  await postRepo.savePost(post);
-
-  for (final recipient in eligibleRecipients) {
-    await postRepo.saveRecipientDelivery(
-      PostRecipientDelivery(
-        postId: post.id,
-        recipientPeerId: recipient.contact.peerId,
-        deliveryStatus: 'pending',
-        lastAttemptAt: createdAt,
-        deliveryPath: 'pending',
-        createdAt: createdAt,
-        updatedAt: createdAt,
-      ),
-    );
+  if (mediaResult != SendPostResult.success || prepared == null) {
+    return (mediaResult, prepared?.post);
   }
 
-  if (hasMedia) {
-    if (secureKeyStore == null || imageProcessor == null) {
-      final failedPost = post.copyWith(deliveryStatus: 'failed');
-      await postRepo.savePost(failedPost);
-      return (SendPostResult.sendFailed, failedPost);
-    }
-
-    final (mediaResult, attachments) = await attachPostMedia(
-      postId: post.id,
-      postRepo: postRepo,
-      secureKeyStore: secureKeyStore,
-      imageProcessor: imageProcessor,
-      mediaFileManager: mediaFileManager,
-      drafts: mediaDrafts,
-      uploadPostMediaFn: uploadPostMediaFn,
-      bridge: bridge,
-    );
-    if (mediaResult != AttachPostMediaResult.success) {
-      final failedPost = post.copyWith(deliveryStatus: 'failed');
-      await postRepo.savePost(failedPost);
-      return (SendPostResult.sendFailed, failedPost);
-    }
-    post = post.copyWith(
-      mediaKind: PostMediaAttachmentModel.deriveMediaKind(attachments),
-      media: attachments,
-    );
-    await postRepo.savePost(post);
-  }
-
-  var successCount = 0;
-  var failureCount = 0;
-
-  for (final recipient in eligibleRecipients) {
-    final now = DateTime.now().toUtc().toIso8601String();
-    final wireEnvelope = await _buildWireEnvelope(
-      post: post,
-      bridge: bridge,
-      recipient: recipient.contact,
-      recipientPeerIds: eligibleRecipients
-          .map((eligibleRecipient) => eligibleRecipient.contact.peerId)
-          .toList(growable: false),
-      nearbyDistanceM: recipient.distanceM,
-    );
-    final delivery = await _deliverToRecipient(
-      p2pService: p2pService,
-      recipientPeerId: recipient.contact.peerId,
-      wireEnvelope: wireEnvelope,
-    );
-
-    if (delivery.deliveryStatus == 'delivered' ||
-        delivery.deliveryStatus == 'inbox') {
-      successCount++;
-    } else {
-      failureCount++;
-    }
-
-    await postRepo.saveRecipientDelivery(
-      PostRecipientDelivery(
-        postId: post.id,
-        recipientPeerId: recipient.contact.peerId,
-        deliveryStatus: delivery.deliveryStatus,
-        lastAttemptAt: now,
-        deliveryPath: delivery.deliveryPath,
-        lastError: delivery.lastError,
-        createdAt: now,
-        updatedAt: now,
-      ),
-    );
-  }
-
-  final updatedPost = post.copyWith(
-    deliveryStatus: switch ((successCount, failureCount)) {
-      (> 0, 0) => 'sent',
-      (> 0, > 0) => 'partial',
-      _ => 'failed',
-    },
-  );
-  await postRepo.savePost(updatedPost);
-
-  final result = switch ((successCount, failureCount)) {
-    (> 0, 0) => SendPostResult.success,
-    (> 0, > 0) => SendPostResult.partialSuccess,
-    _ => SendPostResult.sendFailed,
-  };
-  return (result, updatedPost);
+  return PostDeliveryRunner(
+    p2pService: p2pService,
+    postRepo: postRepo,
+    bridge: bridge,
+  ).execute(prepared);
 }
+
+bool _isInvalidPostPayload({
+  required String text,
+  required List<PostMediaDraft> mediaDrafts,
+}) => text.trim().isEmpty && mediaDrafts.isEmpty;
 
 String _deriveDraftMediaKind(List<PostMediaDraft> mediaDrafts) {
   if (mediaDrafts.isEmpty) {
@@ -216,28 +112,171 @@ String _deriveDraftMediaKind(List<PostMediaDraft> mediaDrafts) {
   return firstKind;
 }
 
-Future<List<_ResolvedRecipient>> _resolveEligibleRecipients({
+Future<(SendPostResult, CreatedLocalPost?)> createLocalPost({
+  required PostRepository postRepo,
+  required ContactRepository contactRepo,
+  required String senderPeerId,
+  required String senderUsername,
+  required String text,
+  required PostAudience audience,
+  List<PostMediaDraft> mediaDrafts = const <PostMediaDraft>[],
+  SecureKeyStore? secureKeyStore,
+  ImageProcessor? imageProcessor,
+  MediaFileManager? mediaFileManager,
+  UploadPostMediaFn? uploadPostMediaFn,
+  Bridge? bridge,
+  ContactPresenceSnapshotRepository? contactPresenceSnapshotRepository,
+  PostsPrivacySettingsRepository? postsPrivacySettingsRepository,
+}) async {
+  final hasMedia = mediaDrafts.isNotEmpty;
+  if (_isInvalidPostPayload(text: text, mediaDrafts: mediaDrafts)) {
+    return (SendPostResult.invalidPost, null);
+  }
+
+  final nearbySettings =
+      audience.kind == PostAudienceKind.peopleNearby &&
+          postsPrivacySettingsRepository != null
+      ? await postsPrivacySettingsRepository.load()
+      : null;
+  final resolvedRecipients = await _resolveEligibleRecipients(
+    contactRepo: contactRepo,
+    audience: audience,
+    contactPresenceSnapshotRepository: contactPresenceSnapshotRepository,
+    postsPrivacySettingsRepository: postsPrivacySettingsRepository,
+    nearbySettings: nearbySettings,
+  );
+  if (resolvedRecipients.isEmpty) {
+    return (SendPostResult.noEligibleRecipients, null);
+  }
+
+  final now = DateTime.now().toUtc();
+  final createdAt = now.toIso8601String();
+  var post = PostModel(
+    id: 'post_${_uuid.v4()}',
+    eventId: 'evt_${_uuid.v4()}',
+    senderPeerId: senderPeerId,
+    authorPeerId: senderPeerId,
+    authorUsername: senderUsername,
+    text: text.trim(),
+    audience: audience,
+    createdAt: createdAt,
+    visibleAt: createdAt,
+    expiresAt: now.add(_postExpiry).toIso8601String(),
+    keepAvailable: false,
+    mediaKind: _deriveDraftMediaKind(mediaDrafts),
+    nearbySenderLatE3: nearbySettings?.lastLocalLatE3,
+    nearbySenderLngE3: nearbySettings?.lastLocalLngE3,
+    nearbySenderCapturedAt: nearbySettings?.lastLocalCapturedAt,
+    nearbySenderAccuracyM: nearbySettings?.lastLocalAccuracyM,
+    isIncoming: false,
+    deliveryStatus: 'sending',
+  );
+  if (hasMedia) {
+    await postRepo.replacePostMediaUploadRecoveryItems(
+      post.id,
+      mediaDrafts
+          .asMap()
+          .entries
+          .map((entry) {
+            final draft = entry.value;
+            return PostMediaUploadRecoveryItem(
+              postId: post.id,
+              position: entry.key,
+              localFilePath: draft.localFilePath,
+              mime: draft.mime,
+              kind: draft.kind,
+              width: draft.width,
+              height: draft.height,
+              durationMs: draft.durationMs,
+              waveform: draft.waveform,
+              createdAt: createdAt,
+            );
+          })
+          .toList(growable: false),
+    );
+  }
+  var postSaved = false;
+  try {
+    await postRepo.savePost(post);
+    postSaved = true;
+  } catch (_) {
+    if (hasMedia && !postSaved) {
+      try {
+        await postRepo.replacePostMediaUploadRecoveryItems(
+          post.id,
+          const <PostMediaUploadRecoveryItem>[],
+        );
+      } catch (_) {}
+    }
+    rethrow;
+  }
+  await _savePendingRecipientDeliveries(
+    postRepo: postRepo,
+    postId: post.id,
+    recipients: resolvedRecipients,
+    createdAt: createdAt,
+  );
+
+  if (!hasMedia) {
+    return (
+      SendPostResult.success,
+      CreatedLocalPost(post: post, resolvedRecipients: resolvedRecipients),
+    );
+  }
+  return (
+    SendPostResult.success,
+    CreatedLocalPost(
+      post: post,
+      resolvedRecipients: resolvedRecipients,
+      mediaDrafts: mediaDrafts,
+    ),
+  );
+}
+
+Future<void> _savePendingRecipientDeliveries({
+  required PostRepository postRepo,
+  required String postId,
+  required List<CreatedLocalPostRecipient> recipients,
+  required String createdAt,
+}) async {
+  for (final recipient in recipients) {
+    await postRepo.saveRecipientDelivery(
+      PostRecipientDelivery(
+        postId: postId,
+        recipientPeerId: recipient.contact.peerId,
+        deliveryStatus: 'pending',
+        lastAttemptAt: createdAt,
+        deliveryPath: 'pending',
+        nearbyDistanceM: recipient.nearbyDistanceM,
+        createdAt: createdAt,
+        updatedAt: createdAt,
+      ),
+    );
+  }
+}
+
+Future<List<CreatedLocalPostRecipient>> _resolveEligibleRecipients({
   required ContactRepository contactRepo,
   required PostAudience audience,
   ContactPresenceSnapshotRepository? contactPresenceSnapshotRepository,
   PostsPrivacySettingsRepository? postsPrivacySettingsRepository,
   PostsPrivacySettings? nearbySettings,
 }) async {
-  final recipients = <_ResolvedRecipient>[];
+  final recipients = <CreatedLocalPostRecipient>[];
   switch (audience.kind) {
     case PostAudienceKind.allFriends:
       final contacts = await contactRepo.getActiveContacts();
       recipients.addAll(
         contacts
             .where((contact) => !contact.isBlocked)
-            .map((contact) => _ResolvedRecipient(contact: contact)),
+            .map((contact) => CreatedLocalPostRecipient(contact: contact)),
       );
     case PostAudienceKind.peopleNearby:
       final snapshotRepo = contactPresenceSnapshotRepository;
       final privacyRepo = postsPrivacySettingsRepository;
       final radiusM = audience.radiusM;
       if (snapshotRepo == null || privacyRepo == null || radiusM == null) {
-        return const <_ResolvedRecipient>[];
+        return const <CreatedLocalPostRecipient>[];
       }
       final nearbyRecipients = await resolveNearbyEligibleRecipients(
         contactRepo: contactRepo,
@@ -248,9 +287,9 @@ Future<List<_ResolvedRecipient>> _resolveEligibleRecipients({
       );
       recipients.addAll(
         nearbyRecipients.map(
-          (entry) => _ResolvedRecipient(
+          (entry) => CreatedLocalPostRecipient(
             contact: entry.contact,
-            distanceM: entry.distanceM,
+            nearbyDistanceM: entry.distanceM,
           ),
         ),
       );
@@ -260,115 +299,13 @@ Future<List<_ResolvedRecipient>> _resolveEligibleRecipients({
         if (contact == null || contact.isArchived || contact.isBlocked) {
           continue;
         }
-        recipients.add(_ResolvedRecipient(contact: contact));
+        recipients.add(CreatedLocalPostRecipient(contact: contact));
       }
   }
 
-  final deduped = <String, _ResolvedRecipient>{};
+  final deduped = <String, CreatedLocalPostRecipient>{};
   for (final recipient in recipients) {
     deduped[recipient.contact.peerId] = recipient;
   }
   return deduped.values.toList(growable: false);
-}
-
-Future<String> _buildWireEnvelope({
-  required PostModel post,
-  required ContactModel recipient,
-  required List<String> recipientPeerIds,
-  Bridge? bridge,
-  int? nearbyDistanceM,
-}) async {
-  final envelope = PostCreateEnvelope.fromPost(post);
-  if (bridge == null || recipient.mlKemPublicKey == null) {
-    return envelope.toJson(
-      selectedPeerIds: post.audience.selectedPeerIds,
-      recipientPeerIds: recipientPeerIds,
-      nearbyDistanceM: nearbyDistanceM,
-    );
-  }
-
-  final encryptResult = await callEncryptMessage(
-    bridge: bridge,
-    recipientMlKemPublicKey: recipient.mlKemPublicKey!,
-    plaintext: envelope.toInnerJson(
-      selectedPeerIds: post.audience.selectedPeerIds,
-      recipientPeerIds: recipientPeerIds,
-      nearbyDistanceM: nearbyDistanceM,
-    ),
-  );
-
-  if (encryptResult['ok'] != true) {
-    return envelope.toJson(
-      selectedPeerIds: post.audience.selectedPeerIds,
-      recipientPeerIds: recipientPeerIds,
-      nearbyDistanceM: nearbyDistanceM,
-    );
-  }
-
-  return PostCreateEnvelope.buildEncryptedEnvelope(
-    eventId: post.eventId,
-    createdAt: post.createdAt,
-    senderPeerId: post.senderPeerId,
-    kem: encryptResult['kem'] as String,
-    ciphertext: encryptResult['ciphertext'] as String,
-    nonce: encryptResult['nonce'] as String,
-  );
-}
-
-Future<_DeliveryAttempt> _deliverToRecipient({
-  required P2PService p2pService,
-  required String recipientPeerId,
-  required String wireEnvelope,
-}) async {
-  try {
-    final sendResult = await p2pService.sendMessageWithReply(
-      recipientPeerId,
-      wireEnvelope,
-      timeoutMs: _interactivePostBudget.inMilliseconds,
-    );
-    if (sendResult.sent) {
-      return const _DeliveryAttempt(
-        deliveryStatus: 'delivered',
-        deliveryPath: 'direct',
-      );
-    }
-  } catch (e) {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'POST_SEND_DIRECT_ERROR',
-      details: {'recipientPeerId': recipientPeerId, 'error': e.toString()},
-    );
-  }
-
-  final stored = await p2pService.storeInInbox(recipientPeerId, wireEnvelope);
-  if (stored) {
-    return const _DeliveryAttempt(
-      deliveryStatus: 'inbox',
-      deliveryPath: 'inbox',
-    );
-  }
-  return const _DeliveryAttempt(
-    deliveryStatus: 'failed',
-    deliveryPath: 'failed',
-    lastError: 'direct_and_inbox_failed',
-  );
-}
-
-class _DeliveryAttempt {
-  final String deliveryStatus;
-  final String deliveryPath;
-  final String? lastError;
-
-  const _DeliveryAttempt({
-    required this.deliveryStatus,
-    required this.deliveryPath,
-    this.lastError,
-  });
-}
-
-class _ResolvedRecipient {
-  final ContactModel contact;
-  final int? distanceM;
-
-  const _ResolvedRecipient({required this.contact, this.distanceM});
 }

@@ -2,6 +2,8 @@ import 'package:uuid/uuid.dart';
 
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
+import 'package:flutter_app/features/posts/application/post_engagement_follow_on_support.dart';
+import 'package:flutter_app/features/posts/application/post_follow_on_delivery.dart';
 import 'package:flutter_app/features/posts/application/refresh_post_expiry_for_comment_use_case.dart';
 import 'package:flutter_app/features/posts/application/send_post_reaction_use_case.dart';
 import 'package:flutter_app/features/posts/domain/models/post_comment_envelope.dart';
@@ -12,6 +14,8 @@ const _uuid = Uuid();
 
 enum SendPostCommentResult {
   success,
+  partiallySettled,
+  queuedForRetry,
   nodeNotRunning,
   postNotFound,
   invalidComment,
@@ -28,6 +32,7 @@ Future<(SendPostCommentResult, PostCommentModel?)> sendPostComment({
   required String senderUsername,
   required String body,
   DateTime Function()? nowProvider,
+  int maxConcurrentRecipients = defaultPostFollowOnDeliveryConcurrency,
 }) async {
   final trimmedBody = body.trim();
   if (trimmedBody.isEmpty) {
@@ -74,21 +79,38 @@ Future<(SendPostCommentResult, PostCommentModel?)> sendPostComment({
     body: trimmedBody,
     commentedAt: commentedAt,
   ).toJson();
-
-  final didSend = await fanoutPostEngagementEnvelope(
-    p2pService: p2pService,
-    recipients: recipients,
-    envelope: envelope,
-  );
-  if (!didSend) {
-    return (SendPostCommentResult.sendFailed, null);
-  }
-
   await postRepo.saveComment(comment);
   await refreshPostExpiryForComment(
     postRepo: postRepo,
     postId: postId,
     commentedAt: commentedAt,
   );
-  return (SendPostCommentResult.success, comment);
+  final deliveryResult = await queueAndSendPostEngagementFollowOn(
+    postRepo: postRepo,
+    p2pService: p2pService,
+    eventId: comment.eventId,
+    eventType: postCommentFollowOnEventType,
+    postId: postId,
+    commentId: comment.id,
+    senderPeerId: senderPeerId,
+    envelope: envelope,
+    createdAt: commentedAt,
+    recipientPeerIds: recipients.map((recipient) => recipient.peerId),
+    maxConcurrentRecipients: maxConcurrentRecipients,
+  );
+  return (
+    _sendPostCommentResultForSettlement(deliveryResult.settlement),
+    comment,
+  );
+}
+
+SendPostCommentResult _sendPostCommentResultForSettlement(
+  PostFollowOnSettlement settlement,
+) {
+  return switch (settlement) {
+    PostFollowOnSettlement.fullySettled => SendPostCommentResult.success,
+    PostFollowOnSettlement.partiallySettled =>
+      SendPostCommentResult.partiallySettled,
+    PostFollowOnSettlement.notSettled => SendPostCommentResult.queuedForRetry,
+  };
 }

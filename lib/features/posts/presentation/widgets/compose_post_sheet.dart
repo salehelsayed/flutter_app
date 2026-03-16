@@ -22,9 +22,13 @@ class ComposePostResult {
   });
 }
 
+enum ComposePostSubmitOutcome { closeSheet, keepSheetOpen }
+
 class ComposePostSheet extends StatefulWidget {
   final List<ContactModel> eligibleContacts;
-  final Future<void> Function(ComposePostResult result) onSubmit;
+  final Future<void> Function(ComposePostResult result)? onSubmit;
+  final Future<ComposePostSubmitOutcome> Function(ComposePostResult result)?
+  onSubmitWithOutcome;
   final Future<List<PostMediaDraft>> Function()? onAttachMedia;
   final Future<PostMediaDraft?> Function()? onAttachVoice;
   final AudioRecorderService? audioRecorderService;
@@ -37,7 +41,8 @@ class ComposePostSheet extends StatefulWidget {
   const ComposePostSheet({
     super.key,
     required this.eligibleContacts,
-    required this.onSubmit,
+    this.onSubmit,
+    this.onSubmitWithOutcome,
     this.onAttachMedia,
     this.onAttachVoice,
     this.audioRecorderService,
@@ -46,7 +51,14 @@ class ComposePostSheet extends StatefulWidget {
     this.onOpenNearbySettings,
     this.activePinCount = 0,
     this.onManagePins,
-  });
+  }) : assert(
+         onSubmit != null || onSubmitWithOutcome != null,
+         'Either onSubmit or onSubmitWithOutcome must be provided.',
+       ),
+       assert(
+         onSubmit == null || onSubmitWithOutcome == null,
+         'Only one submit callback may be provided.',
+       );
 
   @override
   State<ComposePostSheet> createState() => _ComposePostSheetState();
@@ -115,14 +127,14 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
         ),
         _ => PostAudience.allFriends(),
       };
-      await widget.onSubmit(
+      final outcome = await _submitPost(
         ComposePostResult(
           text: _textController.text.trim(),
           audience: audience,
           mediaDrafts: _mediaDrafts,
         ),
       );
-      if (mounted) {
+      if (outcome == ComposePostSubmitOutcome.closeSheet && mounted) {
         Navigator.of(context).pop();
       }
     } finally {
@@ -130,6 +142,16 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
         setState(() => _isSubmitting = false);
       }
     }
+  }
+
+  Future<ComposePostSubmitOutcome> _submitPost(ComposePostResult result) async {
+    final onSubmitWithOutcome = widget.onSubmitWithOutcome;
+    if (onSubmitWithOutcome != null) {
+      return onSubmitWithOutcome(result);
+    }
+
+    await widget.onSubmit!(result);
+    return ComposePostSubmitOutcome.closeSheet;
   }
 
   @override

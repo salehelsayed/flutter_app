@@ -155,4 +155,60 @@ void main() {
       expect(finalPinState!.state, 'removed');
     },
   );
+
+  testWidgets(
+    'queued remove hides the pinned section and surfaces a retry message',
+    (tester) async {
+      await postRepository.savePost(
+        postPinBasePost(
+          authorPeerId: 'peer-bob',
+          authorUsername: 'Bob',
+          keepAvailable: true,
+        ),
+      );
+      await postRepository.savePostPinState(
+        const PostPinStateModel(
+          postId: 'post-1',
+          eventId: 'evt-pin-1',
+          pinEventId: 'pin-1',
+          senderPeerId: 'peer-bob',
+          state: 'active',
+          effectiveAt: '2026-03-15T11:20:00.000Z',
+          pinnedAt: '2026-03-15T11:20:00.000Z',
+          createdAt: '2026-03-15T11:20:00.000Z',
+        ),
+      );
+      await postRepository.saveRecipientDelivery(
+        const PostRecipientDelivery(
+          postId: 'post-1',
+          recipientPeerId: 'peer-cara',
+          deliveryStatus: 'delivered',
+          lastAttemptAt: '2026-03-15T10:16:00.000Z',
+          deliveryPath: 'direct',
+          createdAt: '2026-03-15T10:16:00.000Z',
+          updatedAt: '2026-03-15T10:16:00.000Z',
+        ),
+      );
+      p2pService.network.deliveryFails = true;
+      p2pService.network.inboxDisabled = true;
+
+      await tester.pumpWidget(buildWidget());
+      await tester.pump();
+
+      expect(find.text('Pinned posts'), findsOneWidget);
+
+      await tester.tap(find.text('Pinned posts'));
+      await tester.pump();
+      await tester.tap(find.text('Remove'));
+      await tester.pump();
+
+      expect(find.text('Pinned posts'), findsNothing);
+      expect(find.text('Pin removal queued for retry'), findsOneWidget);
+      expect((await postRepository.getPost('post-1'))!.keepAvailable, isFalse);
+      expect(
+        (await postRepository.getPostPinState('post-1'))!.state,
+        'removed',
+      );
+    },
+  );
 }

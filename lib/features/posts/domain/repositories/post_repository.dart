@@ -1,7 +1,11 @@
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_comment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_comment_reaction_model.dart';
+import 'package:flutter_app/features/posts/domain/models/post_follow_on_outbox_event.dart';
+import 'package:flutter_app/features/posts/domain/models/post_follow_on_outbox_job.dart';
+import 'package:flutter_app/features/posts/domain/models/post_follow_on_outbox_recipient_delivery.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
+import 'package:flutter_app/features/posts/domain/models/post_media_upload_recovery_item.dart';
 import 'package:flutter_app/features/posts/domain/models/post_pending_child_event.dart';
 import 'package:flutter_app/features/posts/domain/models/post_reaction_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_recipient_delivery.dart';
@@ -19,6 +23,8 @@ abstract class PostRepository {
   Future<bool> postExists(String postId);
 
   Future<List<PostModel>> loadFeed();
+
+  Future<List<PostModel>> loadRetryableOutgoingPosts();
 
   Future<List<PostModel>> loadExpiredPosts(String nowIso);
 
@@ -49,9 +55,20 @@ abstract class PostRepository {
     List<PostMediaAttachmentModel> attachments,
   );
 
+  Future<void> replacePostMediaUploadRecoveryItems(
+    String postId,
+    List<PostMediaUploadRecoveryItem> items,
+  );
+
   Future<List<PostMediaAttachmentModel>> loadPostMediaAttachments(
     String postId,
   );
+
+  Future<List<PostMediaUploadRecoveryItem>> loadPostMediaUploadRecoveryItems(
+    String postId,
+  );
+
+  Future<List<PostModel>> loadPendingMediaUploadPosts();
 
   Future<Map<String, List<PostMediaAttachmentModel>>>
   loadPostMediaAttachmentsForPosts(List<String> postIds);
@@ -68,6 +85,19 @@ abstract class PostRepository {
   Future<List<PostPendingChildEvent>> loadPendingChildEvents(String postId);
 
   Future<void> deletePendingChildEvent(String eventId);
+
+  Future<void> saveFollowOnOutboxEvent(PostFollowOnOutboxEvent event);
+
+  Future<PostFollowOnOutboxEvent?> getFollowOnOutboxEvent(String eventId);
+
+  Future<void> saveFollowOnOutboxRecipientDelivery(
+    PostFollowOnOutboxRecipientDelivery delivery,
+  );
+
+  Future<List<PostFollowOnOutboxRecipientDelivery>>
+  loadFollowOnOutboxRecipientDeliveries(String eventId);
+
+  Future<List<PostFollowOnOutboxJob>> loadRetryableFollowOnOutboxJobs();
 
   Future<void> saveRecipientDelivery(PostRecipientDelivery delivery);
 

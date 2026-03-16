@@ -30,6 +30,8 @@ import 'package:flutter_app/features/posts/application/nearby_location_service.d
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
 import 'package:flutter_app/features/posts/application/pass_post_along_use_case.dart';
 import 'package:flutter_app/features/posts/application/pin_post_use_case.dart';
+import 'package:flutter_app/features/posts/application/post_delivery_runner.dart'
+    as delivery;
 import 'package:flutter_app/features/posts/application/remove_pin_use_case.dart';
 import 'package:flutter_app/features/posts/application/send_post_comment_reaction_use_case.dart';
 import 'package:flutter_app/features/posts/application/send_post_comment_use_case.dart';
@@ -57,6 +59,8 @@ class PostsWired extends StatefulWidget {
   final MediaFileManager? mediaFileManager;
   final SecureKeyStore? secureKeyStore;
   final ImageProcessor? imageProcessor;
+  final Future<List<PostMediaDraft>> Function()? onAttachMedia;
+  final UploadPostMediaFn? uploadPostMediaFn;
   final AudioRecorderService? audioRecorderService;
   final String activeTab;
   final void Function(String tab) onSwitchView;
@@ -84,6 +88,8 @@ class PostsWired extends StatefulWidget {
     this.mediaFileManager,
     this.secureKeyStore,
     this.imageProcessor,
+    this.onAttachMedia,
+    this.uploadPostMediaFn,
     this.audioRecorderService,
     this.pendingTargetStore,
     required this.postsPrivacySettingsRepository,
@@ -103,6 +109,10 @@ class PostsWired extends StatefulWidget {
 }
 
 class _PostsWiredState extends State<PostsWired> {
+  static const Duration _postChangeRefreshDebounce = Duration(
+    milliseconds: 100,
+  );
+
   String _username = 'Username';
   String? _peerId;
   List<PostModel> _posts = <PostModel>[];
@@ -111,17 +121,20 @@ class _PostsWiredState extends State<PostsWired> {
   final ScrollController _scrollController = ScrollController();
   final Map<String, GlobalKey> _postKeys = <String, GlobalKey>{};
   StreamSubscription<String>? _postChangeSubscription;
+  Timer? _postChangeRefreshTimer;
+  bool _isPostChangeRefreshInFlight = false;
+  bool _hasTrailingPostChangeRefresh = false;
   bool _isResolvingPendingTarget = false;
   bool _isOpeningPendingComments = false;
+  String? _statusMessage;
 
   @override
   void initState() {
     super.initState();
-    unawaited(_loadIdentity());
-    unawaited(_runFeedMaintenanceAndLoad());
+    unawaited(_initializeSurface());
     _postChangeSubscription = widget.postRepo.postChanges.listen((_) {
-      unawaited(_loadSurface());
-      _tryResolvePendingTarget();
+      _schedulePostChangeRefresh();
+      unawaited(_tryResolvePendingTarget());
     });
     widget.pendingTargetStore?.addListener(_onPendingTargetStoreChanged);
     _tryResolvePendingTarget();
@@ -134,6 +147,7 @@ class _PostsWiredState extends State<PostsWired> {
   @override
   void dispose() {
     _postChangeSubscription?.cancel();
+    _postChangeRefreshTimer?.cancel();
     _scrollController.dispose();
     widget.pendingTargetStore?.removeListener(_onPendingTargetStoreChanged);
     super.dispose();
@@ -147,17 +161,7 @@ class _PostsWiredState extends State<PostsWired> {
     unawaited(_tryResolvePendingTarget());
   }
 
-  Future<void> _loadIdentity() async {
-    final identity = await widget.identityRepo.loadIdentity();
-    if (!mounted || identity == null) return;
-    setState(() {
-      _username = identity.username;
-      _peerId = identity.peerId;
-    });
-    await _loadSurface();
-  }
-
-  Future<void> _runFeedMaintenanceAndLoad() async {
+  Future<void> _initializeSurface() async {
     final mediaFileManager = widget.mediaFileManager;
     if (mediaFileManager != null) {
       await sweepExpiredPosts(
@@ -165,25 +169,98 @@ class _PostsWiredState extends State<PostsWired> {
         mediaFileManager: mediaFileManager,
       );
     }
-    await _loadSurface();
+    final identity = await widget.identityRepo.loadIdentity();
+    if (mounted && identity != null) {
+      setState(() {
+        _username = identity.username;
+        _peerId = identity.peerId;
+      });
+    }
+    await _loadSurface(reconcileLingeringSending: true);
   }
 
-  Future<void> _loadSurface() async {
-    final feed = await loadPostsFeed(
+  Future<void> _loadSurface({bool reconcileLingeringSending = false}) async {
+    var feed = await loadPostsFeed(
       postRepo: widget.postRepo,
       mediaFileManager: widget.mediaFileManager,
       viewerPeerId: _peerId,
     );
-    final pinned = await loadPinnedPosts(
+    var pinned = await loadPinnedPosts(
       postRepo: widget.postRepo,
       mediaFileManager: widget.mediaFileManager,
       viewerPeerId: _peerId,
     );
+    if (reconcileLingeringSending) {
+      final reconciledPosts = await _reconcileLingeringSendingPosts(<PostModel>[
+        ...feed,
+        ...pinned,
+      ]);
+      feed = feed
+          .map((post) => reconciledPosts[post.id] ?? post)
+          .toList(growable: false);
+      pinned = pinned
+          .map((post) => reconciledPosts[post.id] ?? post)
+          .toList(growable: false);
+    }
     if (!mounted) return;
     setState(() {
       _posts = feed;
       _pinnedPosts = pinned;
     });
+  }
+
+  void _schedulePostChangeRefresh() {
+    _postChangeRefreshTimer?.cancel();
+    _postChangeRefreshTimer = Timer(_postChangeRefreshDebounce, () {
+      _postChangeRefreshTimer = null;
+      unawaited(_runPostChangeRefresh());
+    });
+  }
+
+  Future<void> _runPostChangeRefresh() async {
+    if (_isPostChangeRefreshInFlight) {
+      _hasTrailingPostChangeRefresh = true;
+      return;
+    }
+    _isPostChangeRefreshInFlight = true;
+    try {
+      do {
+        _hasTrailingPostChangeRefresh = false;
+        await _loadSurface();
+      } while (_hasTrailingPostChangeRefresh);
+    } finally {
+      _isPostChangeRefreshInFlight = false;
+    }
+  }
+
+  Future<Map<String, PostModel>> _reconcileLingeringSendingPosts(
+    Iterable<PostModel> posts,
+  ) async {
+    final reconciled = <String, PostModel>{};
+    for (final post in posts) {
+      if (reconciled.containsKey(post.id) ||
+          post.deliveryStatus != 'sending' ||
+          post.isIncoming) {
+        reconciled.putIfAbsent(post.id, () => post);
+        continue;
+      }
+
+      final deliveries = await widget.postRepo.getRecipientDeliveries(post.id);
+      final aggregate = delivery.aggregatePostDeliveryStatusFromDeliveries(
+        deliveries,
+      );
+      if (aggregate.deliveryStatus == 'sending') {
+        reconciled[post.id] = post;
+        continue;
+      }
+
+      final updatedPost = post.copyWith(
+        deliveryStatus: aggregate.deliveryStatus,
+      );
+      await widget.postRepo.savePost(updatedPost);
+      reconciled[post.id] = updatedPost;
+    }
+    return reconciled;
   }
 
   Future<void> _compose() async {
@@ -200,6 +277,7 @@ class _PostsWiredState extends State<PostsWired> {
     final nearbyAvailability = await _loadNearbyComposeAvailability(
       postsPrivacySettings,
     );
+    delivery.CreatedLocalPost? createdPost;
     if (!mounted) return;
     await showModalBottomSheet<void>(
       context: context,
@@ -207,11 +285,12 @@ class _PostsWiredState extends State<PostsWired> {
       backgroundColor: Colors.transparent,
       builder: (_) => ComposePostSheet(
         eligibleContacts: contacts,
-        onSubmit: (result) async {
+        onSubmitWithOutcome: (result) async {
           final identity = await widget.identityRepo.loadIdentity();
-          if (identity == null) return;
-          await sendPost(
-            p2pService: widget.p2pService,
+          if (identity == null) {
+            return ComposePostSubmitOutcome.closeSheet;
+          }
+          final (createResult, created) = await createLocalPost(
             postRepo: widget.postRepo,
             contactRepo: widget.contactRepo,
             senderPeerId: identity.peerId,
@@ -219,18 +298,18 @@ class _PostsWiredState extends State<PostsWired> {
             text: result.text,
             audience: result.audience,
             mediaDrafts: result.mediaDrafts,
-            secureKeyStore: widget.secureKeyStore,
-            imageProcessor: widget.imageProcessor,
-            mediaFileManager: widget.mediaFileManager,
-            bridge: widget.bridge,
             contactPresenceSnapshotRepository:
                 widget.contactPresenceSnapshotRepository,
             postsPrivacySettingsRepository:
                 widget.postsPrivacySettingsRepository,
           );
-          await _loadSurface();
+          if (createResult != SendPostResult.success || created == null) {
+            return ComposePostSubmitOutcome.keepSheetOpen;
+          }
+          createdPost = created;
+          return ComposePostSubmitOutcome.closeSheet;
         },
-        onAttachMedia: _pickMediaDrafts,
+        onAttachMedia: widget.onAttachMedia ?? _pickMediaDrafts,
         audioRecorderService: widget.audioRecorderService,
         nearbyAvailability: nearbyAvailability,
         activePinCount: activePinCount,
@@ -253,6 +332,32 @@ class _PostsWiredState extends State<PostsWired> {
             : widget.nearbyLocationService!.openAppSettings,
       ),
     );
+    final created = createdPost;
+    if (created != null) {
+      unawaited(_startBackgroundDelivery(created));
+    }
+  }
+
+  Future<void> _startBackgroundDelivery(
+    delivery.CreatedLocalPost created,
+  ) async {
+    final (prepareResult, prepared) = await prepareCreatedLocalPostMedia(
+      created: created,
+      postRepo: widget.postRepo,
+      secureKeyStore: widget.secureKeyStore,
+      imageProcessor: widget.imageProcessor,
+      mediaFileManager: widget.mediaFileManager,
+      uploadPostMediaFn: widget.uploadPostMediaFn,
+      bridge: widget.bridge,
+    );
+    if (prepareResult != SendPostResult.success || prepared == null) {
+      return;
+    }
+    await delivery.PostDeliveryRunner(
+      p2pService: widget.p2pService,
+      postRepo: widget.postRepo,
+      bridge: widget.bridge,
+    ).execute(prepared);
   }
 
   Future<NearbyComposeAvailability> _loadNearbyComposeAvailability(
@@ -462,12 +567,16 @@ class _PostsWiredState extends State<PostsWired> {
     if (peerId == null) {
       return;
     }
-    await pinPost(
+    final (result, _) = await pinPost(
       p2pService: widget.p2pService,
       postRepo: widget.postRepo,
       postId: post.id,
       senderPeerId: peerId,
     );
+    if (!mounted) {
+      return;
+    }
+    setState(() => _statusMessage = _pinStatusMessage(result));
     await _loadSurface();
   }
 
@@ -483,13 +592,17 @@ class _PostsWiredState extends State<PostsWired> {
       builder: (_) => EditPinnedPostSheet(
         initialText: post.text,
         onSubmit: (text) async {
-          await editPinnedPost(
+          final (result, _) = await editPinnedPost(
             p2pService: widget.p2pService,
             postRepo: widget.postRepo,
             postId: post.id,
             senderPeerId: peerId,
             text: text,
           );
+          if (!mounted) {
+            return;
+          }
+          setState(() => _statusMessage = _editPinnedPostStatusMessage(result));
           await _loadSurface();
         },
       ),
@@ -501,13 +614,60 @@ class _PostsWiredState extends State<PostsWired> {
     if (peerId == null) {
       return;
     }
-    await removePin(
+    final (result, _) = await removePin(
       p2pService: widget.p2pService,
       postRepo: widget.postRepo,
       postId: post.id,
       senderPeerId: peerId,
     );
+    if (!mounted) {
+      return;
+    }
+    setState(() => _statusMessage = _removePinStatusMessage(result));
     await _loadSurface();
+  }
+
+  String? _pinStatusMessage(PinPostResult result) {
+    return switch (result) {
+      PinPostResult.success => null,
+      PinPostResult.partiallySettled => 'Pin update will continue retrying',
+      PinPostResult.queuedForRetry => 'Pin update queued for retry',
+      PinPostResult.sendFailed => 'Pin update failed',
+      PinPostResult.nodeNotRunning ||
+      PinPostResult.postNotFound ||
+      PinPostResult.notAuthor ||
+      PinPostResult.noRecipients => 'Could not pin post',
+    };
+  }
+
+  String? _editPinnedPostStatusMessage(EditPinnedPostResult result) {
+    return switch (result) {
+      EditPinnedPostResult.success => null,
+      EditPinnedPostResult.partiallySettled =>
+        'Pinned post update will continue retrying',
+      EditPinnedPostResult.queuedForRetry =>
+        'Pinned post update queued for retry',
+      EditPinnedPostResult.sendFailed => 'Pinned post update failed',
+      EditPinnedPostResult.nodeNotRunning ||
+      EditPinnedPostResult.postNotFound ||
+      EditPinnedPostResult.notAuthor ||
+      EditPinnedPostResult.notPinned ||
+      EditPinnedPostResult.noRecipients => 'Could not update pinned post',
+    };
+  }
+
+  String? _removePinStatusMessage(RemovePinResult result) {
+    return switch (result) {
+      RemovePinResult.success => null,
+      RemovePinResult.partiallySettled => 'Pin removal will continue retrying',
+      RemovePinResult.queuedForRetry => 'Pin removal queued for retry',
+      RemovePinResult.sendFailed => 'Pin removal failed',
+      RemovePinResult.nodeNotRunning ||
+      RemovePinResult.postNotFound ||
+      RemovePinResult.notAuthor ||
+      RemovePinResult.notPinned ||
+      RemovePinResult.noRecipients => 'Could not remove pin',
+    };
   }
 
   Future<void> _messagePinnedPostAuthor(PostModel post) async {
@@ -600,7 +760,7 @@ class _PostsWiredState extends State<PostsWired> {
       onEditPinnedPost: _editPinnedPost,
       onRemovePin: _removePinnedPost,
       focusedPostId: _focusedPostId,
-      statusMessage: widget.pendingTargetStore?.statusMessage,
+      statusMessage: _statusMessage ?? widget.pendingTargetStore?.statusMessage,
       activePinnedPostIds: _pinnedPosts.map((post) => post.id).toSet(),
     );
   }

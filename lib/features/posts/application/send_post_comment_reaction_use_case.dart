@@ -2,6 +2,8 @@ import 'package:uuid/uuid.dart';
 
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
+import 'package:flutter_app/features/posts/application/post_engagement_follow_on_support.dart';
+import 'package:flutter_app/features/posts/application/post_follow_on_delivery.dart';
 import 'package:flutter_app/features/posts/application/send_post_reaction_use_case.dart';
 import 'package:flutter_app/features/posts/domain/models/post_comment_reaction_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_reaction_envelope.dart';
@@ -11,6 +13,8 @@ const _uuid = Uuid();
 
 enum SendPostCommentReactionResult {
   success,
+  partiallySettled,
+  queuedForRetry,
   nodeNotRunning,
   postNotFound,
   commentNotFound,
@@ -27,6 +31,7 @@ sendPostCommentReaction({
   required String commentId,
   required String senderPeerId,
   required bool isActive,
+  int maxConcurrentRecipients = defaultPostFollowOnDeliveryConcurrency,
 }) async {
   if (!p2pService.currentState.isStarted) {
     return (SendPostCommentReactionResult.nodeNotRunning, null);
@@ -72,15 +77,35 @@ sendPostCommentReaction({
     commentId: commentId,
     isActive: isActive,
   );
-  final didSend = await fanoutPostEngagementEnvelope(
-    p2pService: p2pService,
-    recipients: recipients,
-    envelope: envelope,
-  );
-  if (!didSend) {
-    return (SendPostCommentReactionResult.sendFailed, null);
-  }
-
   await postRepo.saveCommentReaction(reaction);
-  return (SendPostCommentReactionResult.success, reaction);
+  final deliveryResult = await queueAndSendPostEngagementFollowOn(
+    postRepo: postRepo,
+    p2pService: p2pService,
+    eventId: reaction.eventId,
+    eventType: postCommentReactionFollowOnEventType,
+    postId: postId,
+    commentId: commentId,
+    senderPeerId: senderPeerId,
+    envelope: envelope,
+    createdAt: createdAt,
+    recipientPeerIds: recipients.map((recipient) => recipient.peerId),
+    maxConcurrentRecipients: maxConcurrentRecipients,
+  );
+  return (
+    _sendPostCommentReactionResultForSettlement(deliveryResult.settlement),
+    reaction,
+  );
+}
+
+SendPostCommentReactionResult _sendPostCommentReactionResultForSettlement(
+  PostFollowOnSettlement settlement,
+) {
+  return switch (settlement) {
+    PostFollowOnSettlement.fullySettled =>
+      SendPostCommentReactionResult.success,
+    PostFollowOnSettlement.partiallySettled =>
+      SendPostCommentReactionResult.partiallySettled,
+    PostFollowOnSettlement.notSettled =>
+      SendPostCommentReactionResult.queuedForRetry,
+  };
 }

@@ -128,6 +128,117 @@ void main() {
     },
   );
 
+  test(
+    'persists a local pass and outbox recipients before delivery completes',
+    () async {
+      await posts.savePost(_directPost());
+      network.deliveryDelay = const Duration(milliseconds: 150);
+
+      final sendFuture = passPostAlong(
+        p2pService: aliceService,
+        postRepo: posts,
+        contactRepo: contacts,
+        postId: 'post-1',
+        senderPeerId: 'peer-alice',
+        senderUsername: 'Alice',
+        recipientPeerIds: const <String>['peer-cara'],
+      );
+
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      final localPasses = await posts.loadPostPasses('post-1');
+      expect(localPasses, hasLength(1));
+      expect(
+        (await posts.getFollowOnOutboxEvent(
+          localPasses.single.eventId,
+        ))?.eventType,
+        'post_pass_along',
+      );
+      final deliveries = await posts.loadFollowOnOutboxRecipientDeliveries(
+        localPasses.single.eventId,
+      );
+      expect(deliveries.map((delivery) => delivery.recipientPeerId), <String>[
+        'peer-bob',
+        'peer-cara',
+      ]);
+      expect(
+        deliveries.map((delivery) => delivery.deliveryStatus),
+        everyElement('pending'),
+      );
+
+      final (result, pass) = await sendFuture;
+      expect(result, PassPostAlongResult.success);
+      expect(pass?.passId, localPasses.single.passId);
+    },
+  );
+
+  test(
+    'keeps a local pass and retryable outbox state when the author notification is unresolved',
+    () async {
+      await posts.savePost(_directPost());
+      bobService.setOnline(false);
+      network.inboxDisabled = true;
+
+      final (result, pass) = await passPostAlong(
+        p2pService: aliceService,
+        postRepo: posts,
+        contactRepo: contacts,
+        postId: 'post-1',
+        senderPeerId: 'peer-alice',
+        senderUsername: 'Alice',
+        recipientPeerIds: const <String>['peer-cara'],
+      );
+
+      expect(result, PassPostAlongResult.partiallySettled);
+      expect(pass, isNotNull);
+      expect(await posts.loadPostPasses('post-1'), hasLength(1));
+
+      final deliveries = await posts.loadFollowOnOutboxRecipientDeliveries(
+        pass!.eventId,
+      );
+      expect(deliveries.map((delivery) => delivery.recipientPeerId), <String>[
+        'peer-bob',
+        'peer-cara',
+      ]);
+      expect(deliveries.map((delivery) => delivery.deliveryStatus), <String>[
+        'failed',
+        'delivered',
+      ]);
+
+      final retryableJobs = await posts.loadRetryableFollowOnOutboxJobs();
+      expect(retryableJobs, hasLength(1));
+      expect(retryableJobs.single.event.eventType, 'post_pass_along');
+      expect(
+        retryableJobs.single.recipientDeliveries.map(
+          (delivery) => delivery.recipientPeerId,
+        ),
+        <String>['peer-bob'],
+      );
+    },
+  );
+
+  test(
+    'rejects a non-renderable snapshot before persisting a local pass or outbox state',
+    () async {
+      await posts.savePost(_directPost(mediaKind: 'image'));
+
+      final (result, pass) = await passPostAlong(
+        p2pService: aliceService,
+        postRepo: posts,
+        contactRepo: contacts,
+        postId: 'post-1',
+        senderPeerId: 'peer-alice',
+        senderUsername: 'Alice',
+        recipientPeerIds: const <String>['peer-cara'],
+      );
+
+      expect(result, PassPostAlongResult.sendFailed);
+      expect(pass, isNull);
+      expect(await posts.loadPostPasses('post-1'), isEmpty);
+      expect(await posts.loadRetryableFollowOnOutboxJobs(), isEmpty);
+    },
+  );
+
   test('blocks pass-along for pick-people posts', () async {
     await posts.savePost(
       _directPost(
