@@ -1,13 +1,12 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
 import 'package:flutter_app/features/posts/application/post_follow_on_delivery.dart';
 import 'package:flutter_app/features/posts/application/post_pin_delivery_support.dart';
 
 import '../../../shared/fakes/fake_p2p_network.dart';
-import '../../../shared/fakes/fake_p2p_service_integration.dart';
 import '../../../shared/fakes/in_memory_post_repository.dart';
+import 'support/controlled_post_pin_delivery_harness.dart';
 
 void main() {
   late FakeP2PNetwork network;
@@ -15,6 +14,157 @@ void main() {
   setUp(() {
     network = FakeP2PNetwork();
   });
+
+  test(
+    'sendPostPinEnvelope default pin fanout allows up to 25 in-flight recipients',
+    () async {
+      final recipientPeerIds = _buildRecipientPeerIds(30);
+      final sendGates = <String, Completer<void>>{
+        for (final peerId in recipientPeerIds) peerId: Completer<void>(),
+      };
+      final service = ControlledPostPinDeliveryP2PService(
+        peerId: 'peer-alice',
+        network: network,
+        policies: {
+          for (final peerId in recipientPeerIds)
+            peerId: PostPinDeliveryPeerPolicy(sendGate: sendGates[peerId]),
+        },
+      );
+      addTearDown(service.dispose);
+
+      final sendFuture = sendPostPinEnvelope(
+        p2pService: service,
+        recipientPeerIds: recipientPeerIds,
+        envelope: '{"type":"post_pin_update"}',
+      );
+
+      await service.waitForSendCount(25);
+      await drainPostPinDeliveryMicrotasks();
+
+      expect(service.maxInFlightSends, 25);
+      expect(
+        service.sendStartOrder.take(25).toList(growable: false),
+        recipientPeerIds.take(25).toList(growable: false),
+      );
+
+      sendGates[recipientPeerIds.first]!.complete();
+      await service.waitForSendCount(26);
+      await drainPostPinDeliveryMicrotasks();
+
+      expect(service.maxInFlightSends, 25);
+      expect(
+        service.sendStartOrder.take(26).toList(growable: false),
+        recipientPeerIds.take(26).toList(growable: false),
+      );
+
+      for (final gate in sendGates.values) {
+        if (!gate.isCompleted) {
+          gate.complete();
+        }
+      }
+
+      final result = await sendFuture;
+      expect(result.settlement, PostFollowOnSettlement.fullySettled);
+      expect(service.maxInFlightSends, 25);
+    },
+  );
+
+  test(
+    'sendPostPinEnvelope lets later recipients start before an earlier slow recipient completes by default',
+    () async {
+      final recipientPeerIds = _buildRecipientPeerIds(26);
+      final sendGates = <String, Completer<void>>{
+        for (final peerId in recipientPeerIds) peerId: Completer<void>(),
+      };
+      final service = ControlledPostPinDeliveryP2PService(
+        peerId: 'peer-alice',
+        network: network,
+        policies: {
+          for (final peerId in recipientPeerIds)
+            peerId: PostPinDeliveryPeerPolicy(sendGate: sendGates[peerId]),
+        },
+      );
+      addTearDown(service.dispose);
+
+      final sendFuture = sendPostPinEnvelope(
+        p2pService: service,
+        recipientPeerIds: recipientPeerIds,
+        envelope: '{"type":"post_pin_remove"}',
+      );
+
+      await service.waitForSendCount(25);
+      await drainPostPinDeliveryMicrotasks(6);
+
+      expect(service.maxInFlightSends, 25);
+      expect(service.sendStartOrder.first, recipientPeerIds.first);
+      expect(
+        service.sendStartOrder.skip(1).toList(growable: false),
+        recipientPeerIds.skip(1).take(24).toList(growable: false),
+      );
+
+      sendGates[recipientPeerIds.first]!.complete();
+      await service.waitForSendCount(26);
+      await drainPostPinDeliveryMicrotasks();
+
+      expect(service.maxInFlightSends, 25);
+      expect(service.sendStartOrder.last, recipientPeerIds.last);
+
+      for (final gate in sendGates.values) {
+        if (!gate.isCompleted) {
+          gate.complete();
+        }
+      }
+
+      await sendFuture;
+    },
+  );
+
+  test(
+    'sendPostPinEnvelope default fanout never exceeds 25 in-flight recipients',
+    () async {
+      final recipientPeerIds = _buildRecipientPeerIds(30);
+      final sendGates = <String, Completer<void>>{
+        for (final peerId in recipientPeerIds) peerId: Completer<void>(),
+      };
+      final service = ControlledPostPinDeliveryP2PService(
+        peerId: 'peer-alice',
+        network: network,
+        policies: {
+          for (final peerId in recipientPeerIds)
+            peerId: PostPinDeliveryPeerPolicy(sendGate: sendGates[peerId]),
+        },
+      );
+      addTearDown(service.dispose);
+
+      final sendFuture = sendPostPinEnvelope(
+        p2pService: service,
+        recipientPeerIds: recipientPeerIds,
+        envelope: '{"type":"post_pin_update"}',
+      );
+
+      await service.waitForSendCount(25);
+      await drainPostPinDeliveryMicrotasks(6);
+
+      expect(service.maxInFlightSends, 25);
+      expect(service.sendStartOrder, hasLength(25));
+
+      sendGates[recipientPeerIds[4]]!.complete();
+      await service.waitForSendCount(26);
+      await drainPostPinDeliveryMicrotasks();
+
+      expect(service.maxInFlightSends, 25);
+      expect(service.sendStartOrder, hasLength(26));
+
+      for (final gate in sendGates.values) {
+        if (!gate.isCompleted) {
+          gate.complete();
+        }
+      }
+
+      final result = await sendFuture;
+      expect(result.settlement, PostFollowOnSettlement.fullySettled);
+    },
+  );
 
   test(
     'sendPostPinEnvelope never exceeds the configured concurrency limit',
@@ -28,12 +178,12 @@ void main() {
       final sendGates = <String, Completer<void>>{
         for (final peerId in recipientPeerIds) peerId: Completer<void>(),
       };
-      final service = _ControlledP2PService(
+      final service = ControlledPostPinDeliveryP2PService(
         peerId: 'peer-alice',
         network: network,
         policies: {
           for (final peerId in recipientPeerIds)
-            peerId: _PeerPolicy(sendGate: sendGates[peerId]),
+            peerId: PostPinDeliveryPeerPolicy(sendGate: sendGates[peerId]),
         },
       );
       addTearDown(service.dispose);
@@ -46,14 +196,14 @@ void main() {
       );
 
       await service.waitForSendCount(2);
-      await _drainMicrotasks();
+      await drainPostPinDeliveryMicrotasks();
 
       expect(service.maxInFlightSends, 2);
       expect(service.sendStartOrder, recipientPeerIds.take(2).toList());
 
       sendGates['peer-bob']!.complete();
       await service.waitForSendCount(3);
-      await _drainMicrotasks();
+      await drainPostPinDeliveryMicrotasks();
 
       expect(service.maxInFlightSends, 2);
       expect(service.sendStartOrder, recipientPeerIds.take(3).toList());
@@ -74,12 +224,15 @@ void main() {
   test(
     'sendPostPinEnvelope returns structured settlement when some recipients store and others stay unresolved',
     () async {
-      final service = _ControlledP2PService(
+      final service = ControlledPostPinDeliveryP2PService(
         peerId: 'peer-alice',
         network: network,
         policies: const {
-          'peer-bob': _PeerPolicy(sendResult: false, storeInInboxResult: true),
-          'peer-cara': _PeerPolicy(
+          'peer-bob': PostPinDeliveryPeerPolicy(
+            sendResult: false,
+            storeInInboxResult: true,
+          ),
+          'peer-cara': PostPinDeliveryPeerPolicy(
             sendResult: false,
             storeInInboxResult: false,
           ),
@@ -119,18 +272,33 @@ void main() {
   test(
     'queueAndSendPostPinFollowOn persists outbox rows and excludes settled recipients from retry',
     () async {
-      final service = _ControlledP2PService(
+      final pendingSnapshot = Completer<List<String>>();
+      final postRepo = InMemoryPostRepository();
+      final service = ControlledPostPinDeliveryP2PService(
         peerId: 'peer-alice',
         network: network,
-        policies: const {
-          'peer-bob': _PeerPolicy(sendResult: true),
-          'peer-cara': _PeerPolicy(
+        policies: {
+          'peer-bob': PostPinDeliveryPeerPolicy(
+            sendResult: true,
+            onSendStart: (_) async {
+              final deliveries = await postRepo
+                  .loadFollowOnOutboxRecipientDeliveries('evt-pin-remove-1');
+              pendingSnapshot.complete(
+                deliveries
+                    .map(
+                      (delivery) =>
+                          '${delivery.recipientPeerId}:${delivery.deliveryStatus}:${delivery.deliveryPath}',
+                    )
+                    .toList(growable: false),
+              );
+            },
+          ),
+          'peer-cara': const PostPinDeliveryPeerPolicy(
             sendResult: false,
             storeInInboxResult: false,
           ),
         },
       );
-      final postRepo = InMemoryPostRepository();
       addTearDown(service.dispose);
       addTearDown(postRepo.dispose);
 
@@ -146,6 +314,10 @@ void main() {
         recipientPeerIds: const <String>['peer-bob', 'peer-cara'],
       );
 
+      expect(await pendingSnapshot.future, <String>[
+        'peer-bob:pending:queued',
+        'peer-cara:pending:queued',
+      ]);
       expect(result.settlement, PostFollowOnSettlement.partiallySettled);
       expect(
         result.recipientResults.map((result) => result.recipientPeerId),
@@ -170,71 +342,10 @@ void main() {
   );
 }
 
-Future<void> _drainMicrotasks([int turns = 3]) async {
-  for (var index = 0; index < turns; index++) {
-    await Future<void>.delayed(Duration.zero);
-  }
-}
-
-class _ControlledP2PService extends FakeP2PService {
-  final Map<String, _PeerPolicy> policies;
-  final List<String> sendStartOrder = <String>[];
-  final List<String> inboxAttempts = <String>[];
-
-  int _inFlightSends = 0;
-  int maxInFlightSends = 0;
-
-  _ControlledP2PService({
-    required super.peerId,
-    required super.network,
-    this.policies = const <String, _PeerPolicy>{},
-  });
-
-  Future<void> waitForSendCount(int count) async {
-    while (sendStartOrder.length < count) {
-      await Future<void>.delayed(Duration.zero);
-    }
-  }
-
-  @override
-  Future<SendMessageResult> sendMessageWithReply(
-    String targetPeerId,
-    String message, {
-    int? timeoutMs,
-  }) async {
-    final policy = policies[targetPeerId] ?? const _PeerPolicy();
-    sendStartOrder.add(targetPeerId);
-    _inFlightSends++;
-    if (_inFlightSends > maxInFlightSends) {
-      maxInFlightSends = _inFlightSends;
-    }
-
-    try {
-      final gate = policy.sendGate;
-      if (gate != null) {
-        await gate.future;
-      }
-      return SendMessageResult(
-        sent: policy.sendResult ?? true,
-        reply: (policy.sendResult ?? true) ? 'received' : null,
-      );
-    } finally {
-      _inFlightSends--;
-    }
-  }
-
-  @override
-  Future<bool> storeInInbox(String toPeerId, String message) async {
-    inboxAttempts.add(toPeerId);
-    return (policies[toPeerId] ?? const _PeerPolicy()).storeInInboxResult ??
-        true;
-  }
-}
-
-class _PeerPolicy {
-  final Completer<void>? sendGate;
-  final bool? sendResult;
-  final bool? storeInInboxResult;
-
-  const _PeerPolicy({this.sendGate, this.sendResult, this.storeInInboxResult});
+List<String> _buildRecipientPeerIds(int count) {
+  return List<String>.generate(
+    count,
+    (index) => 'peer-${(index + 1).toString().padLeft(2, '0')}',
+    growable: false,
+  );
 }

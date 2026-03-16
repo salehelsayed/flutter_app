@@ -10,7 +10,9 @@ import 'package:flutter_app/features/posts/domain/models/post_follow_on_outbox_r
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 
 const Duration interactivePostPinBudget = Duration(seconds: 4);
-const int defaultPostPinDeliveryConcurrency = 1;
+// Pins use a higher fanout cap than the prior serialized path so updates and
+// removals do not stack behind one slow recipient.
+const int defaultPostPinDeliveryConcurrency = 25;
 const String postPinUpdateFollowOnEventType = 'post_pin_update';
 const String postPinRemoveFollowOnEventType = 'post_pin_remove';
 
