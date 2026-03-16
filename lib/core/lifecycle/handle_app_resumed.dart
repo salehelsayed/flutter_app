@@ -35,6 +35,8 @@ Future<bool?> handleAppResumed({
   MediaAttachmentRepository? mediaAttachmentRepo,
   ReactionRepository? reactionRepo,
   NearbyLocationService? nearbyLocationService,
+  Future<int> Function()? retryPendingPostMediaUploads,
+  Future<int> Function()? retryPendingPostDeliveries,
 }) async {
   final resumeStart = DateTime.now();
   debugPrint(
@@ -200,6 +202,32 @@ Future<bool?> handleAppResumed({
           'after ${nearbyMs}ms: $e',
         );
       }
+    }
+
+    if (retryPendingPostMediaUploads != null) {
+      final mediaRetryStart = DateTime.now();
+      debugPrint('[RESUME] Step 6: retryPendingPostMediaUploads() starting...');
+      final retried = await retryPendingPostMediaUploads();
+      final mediaRetryMs = DateTime.now()
+          .difference(mediaRetryStart)
+          .inMilliseconds;
+      debugPrint(
+        '[RESUME] Step 6: retryPendingPostMediaUploads() done '
+        '(retried=$retried, took ${mediaRetryMs}ms)',
+      );
+    }
+
+    if (retryPendingPostDeliveries != null) {
+      final postRetryStart = DateTime.now();
+      debugPrint('[RESUME] Step 7: retryPendingPostDeliveries() starting...');
+      final retried = await retryPendingPostDeliveries();
+      final postRetryMs = DateTime.now()
+          .difference(postRetryStart)
+          .inMilliseconds;
+      debugPrint(
+        '[RESUME] Step 7: retryPendingPostDeliveries() done '
+        '(retried=$retried, took ${postRetryMs}ms)',
+      );
     }
 
     final totalMs = DateTime.now().difference(resumeStart).inMilliseconds;

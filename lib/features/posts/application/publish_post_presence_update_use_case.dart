@@ -4,9 +4,11 @@ import 'package:uuid/uuid.dart';
 
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
+import 'package:flutter_app/features/posts/application/post_follow_on_delivery.dart';
 
 const Duration _postPresenceInteractiveBudget = Duration(seconds: 4);
 const _postPresenceUuid = Uuid();
+const int defaultPostPresenceDeliveryConcurrency = 1;
 
 Future<void> publishPostPresenceUpdate({
   required P2PService p2pService,
@@ -17,6 +19,7 @@ Future<void> publishPostPresenceUpdate({
   int? lngE3,
   double? accuracyM,
   String? reason,
+  int maxConcurrentRecipients = defaultPostPresenceDeliveryConcurrency,
   DateTime Function()? now,
 }) async {
   final senderPeerId = p2pService.currentState.peerId;
@@ -69,31 +72,12 @@ Future<void> publishPostPresenceUpdate({
     },
   });
 
-  for (final recipientPeerId in recipientPeerIds) {
-    final delivered = await _sendPresenceEnvelope(
-      p2pService: p2pService,
-      recipientPeerId: recipientPeerId,
-      envelope: envelope,
-    );
-    if (!delivered) {
-      await p2pService.storeInInbox(recipientPeerId, envelope);
-    }
-  }
-}
-
-Future<bool> _sendPresenceEnvelope({
-  required P2PService p2pService,
-  required String recipientPeerId,
-  required String envelope,
-}) async {
-  try {
-    final result = await p2pService.sendMessageWithReply(
-      recipientPeerId,
-      envelope,
-      timeoutMs: _postPresenceInteractiveBudget.inMilliseconds,
-    );
-    return result.sent;
-  } catch (_) {
-    return false;
-  }
+  await fanoutPostFollowOnEnvelope(
+    p2pService: p2pService,
+    recipientPeerIds: recipientPeerIds,
+    envelope: envelope,
+    maxConcurrentRecipients: maxConcurrentRecipients,
+    interactiveBudget: _postPresenceInteractiveBudget,
+    fallbackToInboxOnDirectSendError: true,
+  );
 }

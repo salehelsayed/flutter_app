@@ -1,6 +1,7 @@
 import 'package:uuid/uuid.dart';
 
 import 'package:flutter_app/core/services/p2p_service.dart';
+import 'package:flutter_app/features/posts/application/post_follow_on_delivery.dart';
 import 'package:flutter_app/features/posts/application/post_pin_delivery_support.dart';
 import 'package:flutter_app/features/posts/domain/models/post_pin_envelope.dart';
 import 'package:flutter_app/features/posts/domain/models/post_pin_state_model.dart';
@@ -10,6 +11,8 @@ const _uuid = Uuid();
 
 enum PinPostResult {
   success,
+  partiallySettled,
+  queuedForRetry,
   nodeNotRunning,
   postNotFound,
   notAuthor,
@@ -72,13 +75,24 @@ Future<(PinPostResult, PostPinStateModel?)> pinPost({
     post: updatedPost,
     media: media,
   );
-  final delivered = await sendPostPinEnvelope(
+  final deliveryResult = await queueAndSendPostPinFollowOn(
+    postRepo: postRepo,
     p2pService: p2pService,
-    recipientPeerIds: recipientPeerIds,
+    eventId: pinState.eventId,
+    eventType: postPinUpdateFollowOnEventType,
+    postId: updatedPost.id,
+    senderPeerId: senderPeerId,
     envelope: envelope,
+    createdAt: pinState.createdAt,
+    recipientPeerIds: recipientPeerIds,
   );
-  if (!delivered) {
-    return (PinPostResult.sendFailed, pinState);
-  }
-  return (PinPostResult.success, pinState);
+  return (_pinPostResultForSettlement(deliveryResult.settlement), pinState);
+}
+
+PinPostResult _pinPostResultForSettlement(PostFollowOnSettlement settlement) {
+  return switch (settlement) {
+    PostFollowOnSettlement.fullySettled => PinPostResult.success,
+    PostFollowOnSettlement.partiallySettled => PinPostResult.partiallySettled,
+    PostFollowOnSettlement.notSettled => PinPostResult.queuedForRetry,
+  };
 }

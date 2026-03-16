@@ -5,6 +5,7 @@ class PostRecipientDelivery {
   final String lastAttemptAt;
   final String deliveryPath;
   final String? lastError;
+  final int? nearbyDistanceM;
   final String createdAt;
   final String updatedAt;
 
@@ -15,6 +16,7 @@ class PostRecipientDelivery {
     required this.lastAttemptAt,
     required this.deliveryPath,
     this.lastError,
+    this.nearbyDistanceM,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -27,6 +29,7 @@ class PostRecipientDelivery {
       lastAttemptAt: map['last_attempt_at'] as String,
       deliveryPath: map['delivery_path'] as String? ?? 'unknown',
       lastError: map['last_error'] as String?,
+      nearbyDistanceM: (map['nearby_distance_m'] as num?)?.toInt(),
       createdAt: map['created_at'] as String,
       updatedAt: map['updated_at'] as String,
     );
@@ -40,6 +43,7 @@ class PostRecipientDelivery {
       'last_attempt_at': lastAttemptAt,
       'delivery_path': deliveryPath,
       'last_error': lastError,
+      'nearby_distance_m': nearbyDistanceM,
       'created_at': createdAt,
       'updated_at': updatedAt,
     };
@@ -50,6 +54,7 @@ class PostRecipientDelivery {
     String? lastAttemptAt,
     String? deliveryPath,
     String? lastError,
+    int? nearbyDistanceM,
     String? updatedAt,
   }) {
     return PostRecipientDelivery(
@@ -59,6 +64,7 @@ class PostRecipientDelivery {
       lastAttemptAt: lastAttemptAt ?? this.lastAttemptAt,
       deliveryPath: deliveryPath ?? this.deliveryPath,
       lastError: lastError ?? this.lastError,
+      nearbyDistanceM: nearbyDistanceM ?? this.nearbyDistanceM,
       createdAt: createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
     );

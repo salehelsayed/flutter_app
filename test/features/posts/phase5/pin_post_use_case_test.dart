@@ -150,6 +150,46 @@ void main() {
     expect(post.keepAvailable, isFalse);
   });
 
+  test(
+    'removePin keeps the local remove and leaves a retryable outbox job when direct send and inbox storage both fail',
+    () async {
+      await seedSentPost(keepAvailable: true);
+      await pinPost(
+        p2pService: authorService,
+        postRepo: posts,
+        postId: 'post-1',
+        senderPeerId: 'peer-bob',
+        nowProvider: () => DateTime.parse('2026-03-15T11:20:00.000Z'),
+      );
+      network.deliveryFails = true;
+      network.inboxDisabled = true;
+
+      final (result, pinState) = await removePin(
+        p2pService: authorService,
+        postRepo: posts,
+        postId: 'post-1',
+        senderPeerId: 'peer-bob',
+        nowProvider: () => DateTime.parse('2026-03-15T11:25:00.000Z'),
+      );
+
+      expect(result, RemovePinResult.queuedForRetry);
+      expect(pinState, isNotNull);
+      expect(pinState!.state, 'removed');
+
+      final storedPinState = await posts.getPostPinState('post-1');
+      final post = await posts.getPost('post-1');
+      final retryableJobs = await posts.loadRetryableFollowOnOutboxJobs();
+
+      expect(storedPinState, isNotNull);
+      expect(storedPinState!.state, 'removed');
+      expect(storedPinState.effectiveAt, '2026-03-15T11:25:00.000Z');
+      expect(post, isNotNull);
+      expect(post!.keepAvailable, isFalse);
+      expect(retryableJobs, hasLength(1));
+      expect(retryableJobs.single.event.eventType, 'post_pin_remove');
+    },
+  );
+
   test('supports repeated pin and remove cycles for the same post', () async {
     await seedSentPost();
 

@@ -245,6 +245,7 @@ class PostCreateEnvelope {
     List<String>? recipientPeerIds,
     int? nearbyDistanceM,
   }) {
+    final hasNearbyContext = nearbyDistanceM != null || _hasNearbyContext;
     final payload = <String, Object?>{
       'post_id': postId,
       'snapshot': <String, Object?>{
@@ -269,7 +270,7 @@ class PostCreateEnvelope {
         'selected_peer_ids': selectedPeerIds,
       if (recipientPeerIds != null && recipientPeerIds.isNotEmpty)
         'recipient_peer_ids': recipientPeerIds,
-      if (_hasNearbyContext)
+      if (hasNearbyContext)
         'nearby_context': <String, Object?>{
           'distance_m': nearbyDistanceM ?? this.nearbyDistanceM,
           'sender_lat_e3': nearbySenderLatE3,
@@ -293,6 +294,7 @@ class PostCreateEnvelope {
     List<String>? recipientPeerIds,
     int? nearbyDistanceM,
   }) {
+    final hasNearbyContext = nearbyDistanceM != null || _hasNearbyContext;
     return jsonEncode({
       'post_id': postId,
       'snapshot': <String, Object?>{
@@ -317,7 +319,7 @@ class PostCreateEnvelope {
         'selected_peer_ids': selectedPeerIds,
       if (recipientPeerIds != null && recipientPeerIds.isNotEmpty)
         'recipient_peer_ids': recipientPeerIds,
-      if (_hasNearbyContext)
+      if (hasNearbyContext)
         'nearby_context': <String, Object?>{
           'distance_m': nearbyDistanceM ?? this.nearbyDistanceM,
           'sender_lat_e3': nearbySenderLatE3,
