@@ -334,3 +334,165 @@ Start with the requested phase only.
   - feat(posts): implement <accepted phase label>
 
   Begin with Phase 1 only, then auto-advance according to the rules above.
+
+
+
+
+
+
+
+   I just added @GoogleService-Info.plist pin
+
+
+
+
+
+
+
+
+
+
+
+
+  ==============================================
+
+  Use $libp2p-phase-orchestrator in auto-advance mode.
+
+  Plan path:
+  - UI-21-POST/3.3-Pin-improv.md
+
+  Controller mode:
+  - auto-advance
+
+  Start phase:
+  - Phase 1: Reproduce Serial Pin Latency
+
+  Allowed phase sequence:
+  - Phase 1: Reproduce Serial Pin Latency
+  - Phase 2: Raise Pin Fanout Concurrency To 25
+  - Phase 3: Guard Correctness Under Higher Parallelism
+
+  Stop condition:
+  - Stop when a phase is blocked or when Phase 3 is accepted.
+  - Do not start any work beyond Phase 3 unless I explicitly request it in a later session.
+
+  Agent orchestration rules:
+  - Spawn a separate implementer/dev agent for each phase.
+  - Spawn a separate reviewer/QA agent for each phase.
+  - Never let the implementer review its own phase.
+  - If review finds blocking gaps, spawn a separate fix agent for that same phase, or a fresh
+  implementer-context fix agent, but do not reuse the reviewer as the fixer.
+  - After a phase is accepted, discard or close the phase-local implementer, reviewer, and fixer
+  agents before advancing.
+  - Start the next phase with fresh agents so context does not accumulate across phases.
+
+  Phase control rules:
+  - Run one controller session per phase, but auto-advance after acceptance.
+  - Treat UI-21-POST/3.3-Pin-improv.md as the authoritative active phase-scoped implementation doc.
+  - For production phases, require strict `RED -> GREEN -> REFACTOR` and capture the exact failing
+  tests or commands before production edits.
+  - If QA returns `PASS` and the phase is accepted, move to the next phase automatically.
+  - If QA returns `NEEDS WORK` or `FAIL`, run the fix loop for that same phase and review again
+  before any advancement.
+  - Do not widen scope into later phases unless required for compilation.
+  - Follow the 3.3 plan's locked decisions, scope, verification matrix, suggested file touch order,
+  risks, and exit gates.
+  - Record residual risks, explicit deferrals, and next-phase prerequisites before advancing.
+  - Rebuild each next phase contract from the 3.3 plan instead of carrying hidden assumptions
+  forward.
+
+  Pin execution rules:
+  - Raise the default pin fanout concurrency to 25.
+  - Keep the current pin-specific durable outbox architecture intact.
+  - Do not change the sender-visible settlement model in this plan.
+  - Do not change generic follow-on concurrency in this plan.
+  - Do not change stale-event ordering semantics in this plan.
+  - Do not widen scope into inbox-settlement semantics or non-pin follow-ons in this plan.
+
+  Phase-specific execution reminders:
+  - Phase 1 must reproduce the current serialized pin latency and lock the one-at-a-time behavior
+  before changing it.
+  - Phase 2 must raise pin follow-on bounded concurrency to 25 for both initial send and retry while
+  preserving bounded fanout and outbox persistence semantics.
+  - Phase 3 must prove higher parallelism does not break stale remove protection, partial settlement
+  handling, queued-for-retry behavior, or real recipient-state convergence.
+
+  Verification reminders:
+  - Use the 3.3 plan's per-phase verification matrix as the minimum targeted command set.
+  - Before final acceptance of the plan, run the broader regression commands listed in the 3.3
+  plan's broader regression section.
+
+  Commit rule after acceptance, if a commit is requested:
+  - feat(posts): implement <accepted phase label>
+
+  Begin with Phase 1 only, then auto-advance according to the rules above.
+
+
+  ======================
+
+
+  • Use $libp2p-phase-orchestrator in auto-advance mode.
+
+  Plan path:
+  - UI-21-POST/3.4-Comment-improv.md
+
+  Controller mode:
+  - auto-advance
+
+  Start phase:
+  - Phase 1: Reproduce The Receiver Comments Sheet Gap
+
+  Allowed phase sequence:
+  - Phase 1: Reproduce The Receiver Comments Sheet Gap
+  - Phase 2: Make The Open Comments Sheet Live
+  - Phase 3: Raise Post-Create Fanout Concurrency To 25
+  - Phase 4: Raise Comment Fanout Concurrency To 25
+  - Phase 5: Guard Correctness And UX Regressions
+
+  Stop condition:
+  - Stop when a phase is blocked or when Phase 5 is accepted.
+  - Do not start any work beyond Phase 5 unless I explicitly request it in a later session.
+
+  Agent orchestration rules:
+  - Spawn a separate implementer/dev agent for each phase.
+  - Spawn a separate reviewer/QA agent for each phase.
+  - Never let the implementer review its own phase.
+  - If review finds blocking gaps, spawn a separate fix agent for that same phase, or a fresh implementer-context fix agent, but do not reuse the reviewer as the fixer.
+  - After a phase is accepted, discard or close the phase-local implementer, reviewer, and fixer agents before advancing.
+  - Start the next phase with fresh agents so context does not accumulate across phases.
+
+  Phase control rules:
+  - Run one controller session per phase, but auto-advance after acceptance.
+  - Treat UI-21-POST/3.4-Comment-improv.md as the authoritative active phase-scoped implementation doc.
+  - For production phases, require strict `RED -> GREEN -> REFACTOR` and capture the exact failing tests or commands before production edits.
+  - If QA returns `PASS` and the phase is accepted, move to the next phase automatically.
+  - If QA returns `NEEDS WORK` or `FAIL`, run the fix loop for that same phase and review again before any advancement.
+  - Do not widen scope into later phases unless required for compilation.
+  - Follow the 3.4 plan's locked decisions, non-goals, verification matrix, suggested file touch order, risks, and exit gates.
+  - Record residual risks, explicit deferrals, and next-phase prerequisites before advancing.
+  - Rebuild each next phase contract from the 3.4 plan instead of carrying hidden assumptions forward.
+
+  Comment execution rules:
+  - Fix the receiver comment freshness gap by making the open comments sheet refresh from Posts-owned persisted state, not from a raw transport subscription.
+  - Keep `PostCommentListener` as the transport and persistence boundary.
+  - Raise post-create bounded fanout concurrency from 4 to 25.
+  - Raise comment bounded fanout concurrency from 4 to 25.
+  - Do not silently widen reaction, comment-reaction, or pass-along concurrency in this plan unless the active phase requires it and the change is explicitly tested.
+  - Do not change whether `deliveryStatus == 'inbox'` counts as settled in this plan.
+  - Do not redesign the Comments UI in this plan.
+
+  Phase-specific execution reminders:
+  - Phase 1 must reproduce the stale open-comments-sheet behavior and prove the gap is isolated to the open sheet rather than the persisted comment state.
+  - Phase 2 must make the open comments sheet live-update from persisted state while preserving optimistic local submit behavior and duplicate protection.
+  - Phase 3 must raise post-create bounded concurrency to 25 while preserving delivery-state aggregation and retry behavior.
+  - Phase 4 must raise comment bounded concurrency to 25 while keeping comment-specific behavior isolated and preserving sender-local persistence plus expiry refresh.
+  - Phase 5 must guard ordering, dedupe, orphan reconciliation, expiry refresh, and open-sheet UX against regressions.
+
+  Verification reminders:
+  - Use the 3.4 plan's per-phase verification matrix as the minimum targeted command set.
+  - Before final acceptance of the plan, run the broader regression commands listed in the 3.4 plan's broader regression section.
+
+  Commit rule after acceptance, if a commit is requested:
+  - feat(posts): implement <accepted phase label>
+
+  Begin with Phase 1 only, then auto-advance according to the rules above.

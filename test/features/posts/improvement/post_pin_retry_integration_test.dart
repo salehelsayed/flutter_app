@@ -1,9 +1,15 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/services/incoming_message_router.dart';
 import 'package:flutter_app/features/posts/application/pin_post_use_case.dart';
+import 'package:flutter_app/features/posts/application/post_follow_on_delivery.dart';
 import 'package:flutter_app/features/posts/application/post_pin_listener.dart';
+import 'package:flutter_app/features/posts/application/post_pin_delivery_support.dart';
 import 'package:flutter_app/features/posts/application/pending_post_follow_on_retrier.dart';
 import 'package:flutter_app/features/posts/application/remove_pin_use_case.dart';
+import 'package:flutter_app/features/posts/domain/models/post_follow_on_outbox_event.dart';
+import 'package:flutter_app/features/posts/domain/models/post_follow_on_outbox_recipient_delivery.dart';
 import 'package:flutter_app/features/posts/domain/models/post_recipient_delivery.dart';
 
 import '../../../shared/fakes/fake_p2p_network.dart';
@@ -11,6 +17,7 @@ import '../../../shared/fakes/fake_p2p_service_integration.dart';
 import '../../../shared/fakes/in_memory_contact_repository.dart';
 import '../../../shared/fakes/in_memory_post_repository.dart';
 import '../phase5/support/post_pin_fixtures.dart';
+import 'support/controlled_post_pin_delivery_harness.dart';
 
 void main() {
   late FakeP2PNetwork network;
@@ -46,6 +53,91 @@ void main() {
     recipientOne.dispose();
     recipientTwo.dispose();
   });
+
+  test(
+    'retryPostPinFollowOnJob honors the 25 recipient default cap for unresolved pin recipients',
+    () async {
+      const createdAt = '2026-03-15T11:25:00.000Z';
+      const eventId = 'evt-pin-retry-default-cap';
+      final recipientPeerIds = List<String>.generate(
+        30,
+        (index) => 'peer-${(index + 1).toString().padLeft(2, '0')}',
+        growable: false,
+      );
+      final postRepo = InMemoryPostRepository();
+      final sendGates = <String, Completer<void>>{
+        for (final peerId in recipientPeerIds) peerId: Completer<void>(),
+      };
+      final service = ControlledPostPinDeliveryP2PService(
+        peerId: 'peer-alice',
+        network: network,
+        policies: {
+          for (final peerId in recipientPeerIds)
+            peerId: PostPinDeliveryPeerPolicy(sendGate: sendGates[peerId]),
+        },
+      );
+      addTearDown(postRepo.dispose);
+      addTearDown(service.dispose);
+
+      await postRepo.saveFollowOnOutboxEvent(
+        const PostFollowOnOutboxEvent(
+          eventId: eventId,
+          eventType: postPinRemoveFollowOnEventType,
+          postId: 'post-1',
+          senderPeerId: 'peer-alice',
+          rawEnvelope: '{"type":"post_pin_remove"}',
+          createdAt: createdAt,
+        ),
+      );
+      for (final recipientPeerId in recipientPeerIds) {
+        await postRepo.saveFollowOnOutboxRecipientDelivery(
+          PostFollowOnOutboxRecipientDelivery(
+            eventId: eventId,
+            recipientPeerId: recipientPeerId,
+            deliveryStatus: 'failed',
+            deliveryPath: 'failed',
+            lastError: 'direct_send_failed',
+            lastAttemptAt: createdAt,
+            createdAt: createdAt,
+            updatedAt: createdAt,
+          ),
+        );
+      }
+
+      final job = (await postRepo.loadRetryableFollowOnOutboxJobs()).single;
+      final retryFuture = retryPostPinFollowOnJob(
+        postRepo: postRepo,
+        p2pService: service,
+        job: job,
+      );
+
+      await service.waitForSendCount(25);
+      await drainPostPinDeliveryMicrotasks(6);
+
+      expect(service.maxInFlightSends, 25);
+      expect(
+        service.sendStartOrder.take(25).toList(growable: false),
+        recipientPeerIds.take(25).toList(growable: false),
+      );
+
+      sendGates[recipientPeerIds[6]]!.complete();
+      await service.waitForSendCount(26);
+      await drainPostPinDeliveryMicrotasks();
+
+      expect(service.maxInFlightSends, 25);
+      expect(service.sendStartOrder, hasLength(26));
+
+      for (final gate in sendGates.values) {
+        if (!gate.isCompleted) {
+          gate.complete();
+        }
+      }
+
+      final result = await retryFuture;
+      expect(result.settlement, PostFollowOnSettlement.fullySettled);
+      expect(service.maxInFlightSends, 25);
+    },
+  );
 
   test(
     'pin remove retries unresolved recipients and clears the pinned section after recovery',
@@ -197,14 +289,117 @@ void main() {
       );
       await Future<void>.delayed(const Duration(milliseconds: 50));
 
-      expect((await recipientOne.postRepo.getPostPinState('post-1'))!.state, 'active');
-      expect((await recipientOne.postRepo.getPost('post-1'))!.keepAvailable, isTrue);
+      expect(
+        (await recipientOne.postRepo.getPostPinState('post-1'))!.state,
+        'active',
+      );
+      expect(
+        (await recipientOne.postRepo.getPost('post-1'))!.keepAvailable,
+        isTrue,
+      );
       expect(
         (await author.postRepo.loadRetryableFollowOnOutboxJobs())
             .where((job) => job.event.eventType == 'post_pin_update')
             .toList(growable: false),
         isEmpty,
       );
+    },
+  );
+
+  test(
+    'a retried stale pin remove fanout preserves the later re-pin on all recipients',
+    () async {
+      await _seedSharedPost(
+        author: author,
+        recipients: <_PostPinUser>[recipientOne, recipientTwo],
+      );
+
+      final (initialPinResult, _) = await pinPost(
+        p2pService: author.p2pService,
+        postRepo: author.postRepo,
+        postId: 'post-1',
+        senderPeerId: author.peerId,
+        nowProvider: () => DateTime.parse('2026-03-15T11:20:00.000Z'),
+      );
+
+      expect(initialPinResult, PinPostResult.success);
+      await _waitForPinnedRecipientState(
+        recipientOne,
+        expectedState: 'active',
+        expectedKeepAvailable: true,
+        description: 'first recipient to receive the initial pin',
+      );
+      await _waitForPinnedRecipientState(
+        recipientTwo,
+        expectedState: 'active',
+        expectedKeepAvailable: true,
+        description: 'second recipient to receive the initial pin',
+      );
+
+      recipientOne.p2pService.setOnline(false);
+      recipientTwo.p2pService.setOnline(false);
+      network.inboxDisabled = true;
+
+      final (removeResult, _) = await removePin(
+        p2pService: author.p2pService,
+        postRepo: author.postRepo,
+        postId: 'post-1',
+        senderPeerId: author.peerId,
+        nowProvider: () => DateTime.parse('2026-03-15T11:25:00.000Z'),
+      );
+
+      expect(removeResult, RemovePinResult.queuedForRetry);
+
+      recipientOne.p2pService.setOnline(true);
+      recipientTwo.p2pService.setOnline(true);
+      network.inboxDisabled = false;
+
+      final (secondPinResult, _) = await pinPost(
+        p2pService: author.p2pService,
+        postRepo: author.postRepo,
+        postId: 'post-1',
+        senderPeerId: author.peerId,
+        nowProvider: () => DateTime.parse('2026-03-15T11:30:00.000Z'),
+      );
+
+      expect(secondPinResult, PinPostResult.success);
+      await _waitForPinnedRecipientState(
+        recipientOne,
+        expectedState: 'active',
+        expectedKeepAvailable: true,
+        description: 'first recipient to receive the later replacement pin',
+      );
+      await _waitForPinnedRecipientState(
+        recipientTwo,
+        expectedState: 'active',
+        expectedKeepAvailable: true,
+        description: 'second recipient to receive the later replacement pin',
+      );
+
+      final retried = await retryPendingPostFollowOns(
+        postRepo: author.postRepo,
+        p2pService: author.p2pService,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(retried, 1);
+      expect(
+        (await recipientOne.postRepo.getPostPinState('post-1'))!.state,
+        'active',
+      );
+      expect(
+        (await recipientOne.postRepo.getPost('post-1'))!.keepAvailable,
+        isTrue,
+      );
+      expect(
+        (await recipientTwo.postRepo.getPostPinState('post-1'))!.state,
+        'active',
+      );
+      expect(
+        (await recipientTwo.postRepo.getPost('post-1'))!.keepAvailable,
+        isTrue,
+      );
+      expect(await author.postRepo.loadRetryableFollowOnOutboxJobs(), isEmpty);
     },
   );
 }

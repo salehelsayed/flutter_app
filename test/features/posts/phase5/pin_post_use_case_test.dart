@@ -11,6 +11,7 @@ import 'package:flutter_app/features/posts/domain/models/post_recipient_delivery
 import '../../../shared/fakes/fake_p2p_network.dart';
 import '../../../shared/fakes/fake_p2p_service_integration.dart';
 import '../../../shared/fakes/in_memory_post_repository.dart';
+import '../improvement/support/controlled_post_pin_delivery_harness.dart';
 import 'support/post_pin_fixtures.dart';
 
 void main() {
@@ -32,7 +33,10 @@ void main() {
     receiverService.dispose();
   });
 
-  Future<void> seedSentPost({bool keepAvailable = false}) async {
+  Future<void> seedSentPost({
+    bool keepAvailable = false,
+    List<String> recipientPeerIds = const <String>['peer-cara'],
+  }) async {
     await posts.savePost(
       postPinBasePost(
         authorPeerId: 'peer-bob',
@@ -40,17 +44,19 @@ void main() {
         keepAvailable: keepAvailable,
       ).copyWith(keepAvailable: keepAvailable),
     );
-    await posts.saveRecipientDelivery(
-      const PostRecipientDelivery(
-        postId: 'post-1',
-        recipientPeerId: 'peer-cara',
-        deliveryStatus: 'delivered',
-        lastAttemptAt: '2026-03-15T10:16:00.000Z',
-        deliveryPath: 'direct',
-        createdAt: '2026-03-15T10:16:00.000Z',
-        updatedAt: '2026-03-15T10:16:00.000Z',
-      ),
-    );
+    for (final recipientPeerId in recipientPeerIds) {
+      await posts.saveRecipientDelivery(
+        PostRecipientDelivery(
+          postId: 'post-1',
+          recipientPeerId: recipientPeerId,
+          deliveryStatus: 'delivered',
+          lastAttemptAt: '2026-03-15T10:16:00.000Z',
+          deliveryPath: 'direct',
+          createdAt: '2026-03-15T10:16:00.000Z',
+          updatedAt: '2026-03-15T10:16:00.000Z',
+        ),
+      );
+    }
   }
 
   test('pins an authored post locally and sends post_pin_update', () async {
@@ -273,4 +279,61 @@ void main() {
       '2026-03-15T11:50:00.000Z',
     );
   });
+
+  test(
+    'pinPost uses the 25 recipient default cap for follow-on delivery',
+    () async {
+      final recipientPeerIds = List<String>.generate(
+        30,
+        (index) => 'peer-${(index + 1).toString().padLeft(2, '0')}',
+        growable: false,
+      );
+      await seedSentPost(recipientPeerIds: recipientPeerIds);
+      final sendGates = <String, Completer<void>>{
+        for (final peerId in recipientPeerIds) peerId: Completer<void>(),
+      };
+      final service = ControlledPostPinDeliveryP2PService(
+        peerId: 'peer-bob',
+        network: network,
+        policies: {
+          for (final peerId in recipientPeerIds)
+            peerId: PostPinDeliveryPeerPolicy(sendGate: sendGates[peerId]),
+        },
+      );
+      addTearDown(service.dispose);
+
+      final pinFuture = pinPost(
+        p2pService: service,
+        postRepo: posts,
+        postId: 'post-1',
+        senderPeerId: 'peer-bob',
+      );
+
+      await service.waitForSendCount(25);
+      await drainPostPinDeliveryMicrotasks();
+
+      expect(service.maxInFlightSends, 25);
+      expect(
+        service.sendStartOrder.take(25).toList(growable: false),
+        recipientPeerIds.take(25).toList(growable: false),
+      );
+
+      sendGates[recipientPeerIds.first]!.complete();
+      await service.waitForSendCount(26);
+      await drainPostPinDeliveryMicrotasks();
+
+      expect(service.maxInFlightSends, 25);
+      expect(service.sendStartOrder, hasLength(26));
+
+      for (final gate in sendGates.values) {
+        if (!gate.isCompleted) {
+          gate.complete();
+        }
+      }
+
+      final (result, pinState) = await pinFuture;
+      expect(result, PinPostResult.success);
+      expect(pinState, isNotNull);
+    },
+  );
 }
