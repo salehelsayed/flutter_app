@@ -152,6 +152,30 @@ void main() {
       'post_comment:post-1:comment-1',
     );
   });
+
+  test('dedupes repeated deliveries and emits the comment once', () async {
+    contacts.addTestContact(_contact('peer-bob', 'Bob'));
+    await posts.savePost(_ownPost('post-1'));
+    final emittedCommentIds = <String>[];
+    final subscription = listener.incomingCommentStream.listen((comment) {
+      emittedCommentIds.add(comment.id);
+    });
+    addTearDown(subscription.cancel);
+    final message = _message(
+      senderPeerId: 'peer-bob',
+      postId: 'post-1',
+      commentId: 'comment-1',
+      createdAt: '2026-03-15T11:00:00.000Z',
+    );
+
+    controller.add(message);
+    controller.add(message);
+    await Future<void>.delayed(const Duration(milliseconds: 75));
+
+    expect(await posts.loadComments('post-1'), hasLength(1));
+    expect(emittedCommentIds, <String>['comment-1']);
+    expect(notifications.shownGeneric, hasLength(1));
+  });
 }
 
 PostModel _ownPost(String postId) {

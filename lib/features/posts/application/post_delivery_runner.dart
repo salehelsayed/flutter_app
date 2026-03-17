@@ -12,7 +12,8 @@ import 'package:flutter_app/features/posts/domain/models/post_recipient_delivery
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 
 const Duration _interactivePostBudget = Duration(seconds: 4);
-const int defaultPostDeliveryConcurrency = 4;
+// Keep interactive post fanout bounded while shortening long recipient tails.
+const int defaultPostDeliveryConcurrency = 25;
 
 enum SendPostResult {
   success,

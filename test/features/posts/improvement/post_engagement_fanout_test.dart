@@ -17,7 +17,11 @@ import '../../../shared/fakes/in_memory_contact_repository.dart';
 import '../../../shared/fakes/in_memory_post_repository.dart';
 
 const _senderPeerId = 'peer-bob';
-const _resolvedRecipientPeerIds = <String>{'peer-alice', 'peer-cara', 'peer-drew'};
+const _resolvedRecipientPeerIds = <String>{
+  'peer-alice',
+  'peer-cara',
+  'peer-drew',
+};
 
 ContactModel _contact(String peerId, String username) {
   return ContactModel(
@@ -65,56 +69,134 @@ void main() {
     posts.dispose();
   });
 
-  test('sendPostReaction uses bounded concurrent fanout when configured', () async {
-    await _seedPostWithDeliveries(posts);
-    final service = _createControlledService(network);
-    addTearDown(service.dispose);
+  test(
+    'sendPostReaction uses bounded concurrent fanout when configured',
+    () async {
+      await _seedPostWithDeliveries(posts);
+      final service = _createControlledService(network);
+      addTearDown(service.dispose);
 
-    final sendFuture = sendPostReaction(
-      p2pService: service,
-      postRepo: posts,
-      contactRepo: contacts,
-      postId: 'post-1',
-      senderPeerId: _senderPeerId,
-      isActive: true,
-      maxConcurrentRecipients: 2,
-    );
+      final sendFuture = sendPostReaction(
+        p2pService: service,
+        postRepo: posts,
+        contactRepo: contacts,
+        postId: 'post-1',
+        senderPeerId: _senderPeerId,
+        isActive: true,
+        maxConcurrentRecipients: 2,
+      );
 
-    await _assertBoundedStart(service);
-    service.releaseOneStartedRecipient();
-    await _assertAllRecipientsStarted(service);
-    service.releaseAllRecipients();
+      await _assertBoundedStart(
+        service,
+        expectedCount: 2,
+        allowedRecipientPeerIds: _resolvedRecipientPeerIds,
+      );
+      service.releaseOneStartedRecipient();
+      await _assertAllRecipientsStarted(
+        service,
+        expectedCount: 3,
+        maxConcurrentRecipients: 2,
+        allowedRecipientPeerIds: _resolvedRecipientPeerIds,
+      );
+      service.releaseAllRecipients();
 
-    final (result, reaction) = await sendFuture;
-    expect(result, SendPostReactionResult.success);
-    expect(reaction, isNotNull);
-  });
+      final (result, reaction) = await sendFuture;
+      expect(result, SendPostReactionResult.success);
+      expect(reaction, isNotNull);
+    },
+  );
 
-  test('sendPostComment uses bounded concurrent fanout when configured', () async {
-    await _seedPostWithDeliveries(posts);
-    final service = _createControlledService(network);
-    addTearDown(service.dispose);
+  test(
+    'sendPostComment uses bounded concurrent fanout when configured',
+    () async {
+      await _seedPostWithDeliveries(posts);
+      final service = _createControlledService(network);
+      addTearDown(service.dispose);
 
-    final sendFuture = sendPostComment(
-      p2pService: service,
-      postRepo: posts,
-      contactRepo: contacts,
-      postId: 'post-1',
-      senderPeerId: _senderPeerId,
-      senderUsername: 'Bob',
-      body: 'I can lend one.',
-      maxConcurrentRecipients: 2,
-    );
+      final sendFuture = sendPostComment(
+        p2pService: service,
+        postRepo: posts,
+        contactRepo: contacts,
+        postId: 'post-1',
+        senderPeerId: _senderPeerId,
+        senderUsername: 'Bob',
+        body: 'I can lend one.',
+        maxConcurrentRecipients: 2,
+      );
 
-    await _assertBoundedStart(service);
-    service.releaseOneStartedRecipient();
-    await _assertAllRecipientsStarted(service);
-    service.releaseAllRecipients();
+      await _assertBoundedStart(
+        service,
+        expectedCount: 2,
+        allowedRecipientPeerIds: _resolvedRecipientPeerIds,
+      );
+      service.releaseOneStartedRecipient();
+      await _assertAllRecipientsStarted(
+        service,
+        expectedCount: 3,
+        maxConcurrentRecipients: 2,
+        allowedRecipientPeerIds: _resolvedRecipientPeerIds,
+      );
+      service.releaseAllRecipients();
 
-    final (result, comment) = await sendFuture;
-    expect(result, SendPostCommentResult.success);
-    expect(comment, isNotNull);
-  });
+      final (result, comment) = await sendFuture;
+      expect(result, SendPostCommentResult.success);
+      expect(comment, isNotNull);
+    },
+  );
+
+  test(
+    'sendPostComment uses the default concurrent fanout cap of 25',
+    () async {
+      final deliveryRecipientPeerIds = List<String>.generate(
+        29,
+        (index) => 'peer-${index.toString().padLeft(2, '0')}',
+      );
+      final resolvedRecipientPeerIds = <String>{
+        'peer-alice',
+        ...deliveryRecipientPeerIds,
+      };
+      for (final peerId in deliveryRecipientPeerIds) {
+        contacts.addTestContact(_contact(peerId, peerId));
+      }
+      await _seedPostWithDeliveries(
+        posts,
+        recipientPeerIds: deliveryRecipientPeerIds,
+      );
+      final service = _createControlledService(
+        network,
+        recipientPeerIds: resolvedRecipientPeerIds,
+      );
+      addTearDown(service.dispose);
+
+      final sendFuture = sendPostComment(
+        p2pService: service,
+        postRepo: posts,
+        contactRepo: contacts,
+        postId: 'post-1',
+        senderPeerId: _senderPeerId,
+        senderUsername: 'Bob',
+        body: 'I can lend one.',
+      );
+
+      await _assertBoundedStart(
+        service,
+        expectedCount: 25,
+        allowedRecipientPeerIds: resolvedRecipientPeerIds,
+      );
+      service.releaseOneStartedRecipient();
+      await _assertAllRecipientsStarted(
+        service,
+        expectedCount: 26,
+        maxConcurrentRecipients: 25,
+        allowedRecipientPeerIds: resolvedRecipientPeerIds,
+      );
+      service.releaseAllRecipients();
+
+      final (result, comment) = await sendFuture;
+      expect(result, SendPostCommentResult.success);
+      expect(comment, isNotNull);
+    },
+  );
 
   test(
     'sendPostCommentReaction uses bounded concurrent fanout when configured',
@@ -145,9 +227,146 @@ void main() {
         maxConcurrentRecipients: 2,
       );
 
-      await _assertBoundedStart(service);
+      await _assertBoundedStart(
+        service,
+        expectedCount: 2,
+        allowedRecipientPeerIds: _resolvedRecipientPeerIds,
+      );
       service.releaseOneStartedRecipient();
-      await _assertAllRecipientsStarted(service);
+      await _assertAllRecipientsStarted(
+        service,
+        expectedCount: 3,
+        maxConcurrentRecipients: 2,
+        allowedRecipientPeerIds: _resolvedRecipientPeerIds,
+      );
+      service.releaseAllRecipients();
+
+      final (result, reaction) = await sendFuture;
+      expect(result, SendPostCommentReactionResult.success);
+      expect(reaction, isNotNull);
+    },
+  );
+
+  test(
+    'sendPostReaction keeps the default concurrent fanout cap at 4',
+    () async {
+      final deliveryRecipientPeerIds = <String>[
+        'peer-cara',
+        'peer-drew',
+        'peer-erin',
+        'peer-finn',
+      ];
+      final resolvedRecipientPeerIds = <String>{
+        'peer-alice',
+        ...deliveryRecipientPeerIds,
+      };
+      contacts.addTestContact(_contact('peer-erin', 'Erin'));
+      contacts.addTestContact(_contact('peer-finn', 'Finn'));
+      await _seedPostWithDeliveries(
+        posts,
+        recipientPeerIds: deliveryRecipientPeerIds,
+      );
+      final service = _createControlledService(
+        network,
+        recipientPeerIds: resolvedRecipientPeerIds,
+      );
+      addTearDown(service.dispose);
+
+      final sendFuture = sendPostReaction(
+        p2pService: service,
+        postRepo: posts,
+        contactRepo: contacts,
+        postId: 'post-1',
+        senderPeerId: _senderPeerId,
+        isActive: true,
+      );
+
+      await _assertBoundedStart(
+        service,
+        expectedCount: 4,
+        allowedRecipientPeerIds: resolvedRecipientPeerIds,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      await _drainMicrotasks();
+      expect(service.sendStartOrder, hasLength(4));
+
+      service.releaseOneStartedRecipient();
+      await _assertAllRecipientsStarted(
+        service,
+        expectedCount: 5,
+        maxConcurrentRecipients: 4,
+        allowedRecipientPeerIds: resolvedRecipientPeerIds,
+      );
+      service.releaseAllRecipients();
+
+      final (result, reaction) = await sendFuture;
+      expect(result, SendPostReactionResult.success);
+      expect(reaction, isNotNull);
+    },
+  );
+
+  test(
+    'sendPostCommentReaction keeps the default concurrent fanout cap at 4',
+    () async {
+      final deliveryRecipientPeerIds = <String>[
+        'peer-cara',
+        'peer-drew',
+        'peer-erin',
+        'peer-finn',
+      ];
+      final resolvedRecipientPeerIds = <String>{
+        'peer-alice',
+        ...deliveryRecipientPeerIds,
+      };
+      contacts.addTestContact(_contact('peer-erin', 'Erin'));
+      contacts.addTestContact(_contact('peer-finn', 'Finn'));
+      await _seedPostWithDeliveries(
+        posts,
+        recipientPeerIds: deliveryRecipientPeerIds,
+      );
+      await posts.saveComment(
+        const PostCommentModel(
+          id: 'comment-1',
+          eventId: 'evt-comment-1',
+          postId: 'post-1',
+          senderPeerId: 'peer-alice',
+          authorUsername: 'Alice',
+          body: 'I can lend one.',
+          commentedAt: '2026-03-15T11:00:00.000Z',
+        ),
+      );
+      final service = _createControlledService(
+        network,
+        recipientPeerIds: resolvedRecipientPeerIds,
+      );
+      addTearDown(service.dispose);
+
+      final sendFuture = sendPostCommentReaction(
+        p2pService: service,
+        postRepo: posts,
+        contactRepo: contacts,
+        postId: 'post-1',
+        commentId: 'comment-1',
+        senderPeerId: _senderPeerId,
+        isActive: true,
+      );
+
+      await _assertBoundedStart(
+        service,
+        expectedCount: 4,
+        allowedRecipientPeerIds: resolvedRecipientPeerIds,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      await _drainMicrotasks();
+      expect(service.sendStartOrder, hasLength(4));
+
+      service.releaseOneStartedRecipient();
+      await _assertAllRecipientsStarted(
+        service,
+        expectedCount: 5,
+        maxConcurrentRecipients: 4,
+        allowedRecipientPeerIds: resolvedRecipientPeerIds,
+      );
       service.releaseAllRecipients();
 
       final (result, reaction) = await sendFuture;
@@ -157,44 +376,32 @@ void main() {
   );
 }
 
-Future<void> _seedPostWithDeliveries(InMemoryPostRepository posts) async {
+Future<void> _seedPostWithDeliveries(
+  InMemoryPostRepository posts, {
+  Iterable<String> recipientPeerIds = _resolvedRecipientPeerIds,
+}) async {
   await posts.savePost(_post('post-1'));
-  for (final delivery in const <PostRecipientDelivery>[
-    PostRecipientDelivery(
-      postId: 'post-1',
-      recipientPeerId: 'peer-bob',
-      deliveryStatus: 'delivered',
-      lastAttemptAt: '2026-03-15T10:15:31.000Z',
-      deliveryPath: 'direct',
-      createdAt: '2026-03-15T10:15:31.000Z',
-      updatedAt: '2026-03-15T10:15:31.000Z',
-    ),
-    PostRecipientDelivery(
-      postId: 'post-1',
-      recipientPeerId: 'peer-cara',
-      deliveryStatus: 'delivered',
-      lastAttemptAt: '2026-03-15T10:15:31.000Z',
-      deliveryPath: 'direct',
-      createdAt: '2026-03-15T10:15:31.000Z',
-      updatedAt: '2026-03-15T10:15:31.000Z',
-    ),
-    PostRecipientDelivery(
-      postId: 'post-1',
-      recipientPeerId: 'peer-drew',
-      deliveryStatus: 'inbox',
-      lastAttemptAt: '2026-03-15T10:15:31.000Z',
-      deliveryPath: 'inbox',
-      createdAt: '2026-03-15T10:15:31.000Z',
-      updatedAt: '2026-03-15T10:15:31.000Z',
-    ),
-  ]) {
-    await posts.saveRecipientDelivery(delivery);
+  for (final recipientPeerId in recipientPeerIds) {
+    await posts.saveRecipientDelivery(
+      PostRecipientDelivery(
+        postId: 'post-1',
+        recipientPeerId: recipientPeerId,
+        deliveryStatus: 'delivered',
+        lastAttemptAt: '2026-03-15T10:15:31.000Z',
+        deliveryPath: 'direct',
+        createdAt: '2026-03-15T10:15:31.000Z',
+        updatedAt: '2026-03-15T10:15:31.000Z',
+      ),
+    );
   }
 }
 
-_ControlledP2PService _createControlledService(FakeP2PNetwork network) {
+_ControlledP2PService _createControlledService(
+  FakeP2PNetwork network, {
+  Set<String> recipientPeerIds = _resolvedRecipientPeerIds,
+}) {
   final sendGates = <String, Completer<void>>{
-    for (final peerId in _resolvedRecipientPeerIds) peerId: Completer<void>(),
+    for (final peerId in recipientPeerIds) peerId: Completer<void>(),
   };
   return _ControlledP2PService(
     peerId: _senderPeerId,
@@ -203,24 +410,49 @@ _ControlledP2PService _createControlledService(FakeP2PNetwork network) {
   );
 }
 
-Future<void> _assertBoundedStart(_ControlledP2PService service) async {
-  await service.waitForSendCount(2);
+Future<void> _assertBoundedStart(
+  _ControlledP2PService service, {
+  required int expectedCount,
+  required Set<String> allowedRecipientPeerIds,
+}) async {
+  await service.waitForSendCount(expectedCount);
   await _drainMicrotasks();
 
-  expect(service.maxInFlightSends, 2);
-  expect(service.sendStartOrder.take(2).toSet(), hasLength(2));
+  expect(service.maxInFlightSends, expectedCount);
   expect(
-    service.sendStartOrder.take(2).toSet().difference(_resolvedRecipientPeerIds),
+    service.sendStartOrder.take(expectedCount).toSet(),
+    hasLength(expectedCount),
+  );
+  expect(
+    service.sendStartOrder
+        .take(expectedCount)
+        .toSet()
+        .difference(allowedRecipientPeerIds),
     isEmpty,
   );
 }
 
-Future<void> _assertAllRecipientsStarted(_ControlledP2PService service) async {
-  await service.waitForSendCount(3);
+Future<void> _assertAllRecipientsStarted(
+  _ControlledP2PService service, {
+  required int expectedCount,
+  required int maxConcurrentRecipients,
+  required Set<String> allowedRecipientPeerIds,
+}) async {
+  await service.waitForSendCount(expectedCount);
   await _drainMicrotasks();
 
-  expect(service.maxInFlightSends, 2);
-  expect(service.sendStartOrder.toSet(), _resolvedRecipientPeerIds);
+  expect(service.maxInFlightSends, maxConcurrentRecipients);
+  expect(
+    service.sendStartOrder.take(expectedCount).toSet(),
+    hasLength(expectedCount),
+  );
+  expect(
+    service.sendStartOrder
+        .take(expectedCount)
+        .toSet()
+        .difference(allowedRecipientPeerIds),
+    isEmpty,
+  );
 }
 
 Future<void> _drainMicrotasks([int turns = 3]) async {
@@ -244,9 +476,17 @@ class _ControlledP2PService extends FakeP2PService {
     required this.sendGates,
   });
 
-  Future<void> waitForSendCount(int count) async {
+  Future<void> waitForSendCount(
+    int count, {
+    Duration timeout = const Duration(seconds: 1),
+  }) async {
+    final deadline = DateTime.now().add(timeout);
     while (sendStartOrder.length < count) {
-      await _sendStarted.stream.first;
+      final remaining = deadline.difference(DateTime.now());
+      if (remaining <= Duration.zero) {
+        throw StateError('Timed out waiting for $count recipients to start.');
+      }
+      await _sendStarted.stream.first.timeout(remaining);
     }
   }
 

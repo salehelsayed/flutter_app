@@ -32,6 +32,7 @@ class CommentsSheet extends StatefulWidget {
 
 class _CommentsSheetState extends State<CommentsSheet> {
   final TextEditingController _textController = TextEditingController();
+  final ScrollController _commentsScrollController = ScrollController();
   late List<PostCommentModel> _comments;
   bool _isSubmitting = false;
   final Set<String> _heartingCommentIds = <String>{};
@@ -40,18 +41,32 @@ class _CommentsSheetState extends State<CommentsSheet> {
   void initState() {
     super.initState();
     _comments = _sortComments(widget.comments);
+    _scheduleScrollToLatest();
   }
 
   @override
   void didUpdateWidget(covariant CommentsSheet oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.comments != widget.comments) {
-      _comments = _sortComments(widget.comments);
+      final previousComments = _comments;
+      final updatedComments = _sortComments(widget.comments);
+      final previousLatestCommentId = previousComments.isEmpty
+          ? null
+          : previousComments.last.id;
+      final updatedLatestCommentId = updatedComments.isEmpty
+          ? null
+          : updatedComments.last.id;
+      _comments = updatedComments;
+      if (updatedComments.length != previousComments.length ||
+          updatedLatestCommentId != previousLatestCommentId) {
+        _scheduleScrollToLatest();
+      }
     }
   }
 
   @override
   void dispose() {
+    _commentsScrollController.dispose();
     _textController.dispose();
     super.dispose();
   }
@@ -108,6 +123,19 @@ class _CommentsSheetState extends State<CommentsSheet> {
       return a.id.compareTo(b.id);
     });
     return sorted;
+  }
+
+  void _scheduleScrollToLatest() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_commentsScrollController.hasClients) {
+        return;
+      }
+      final targetOffset = _commentsScrollController.position.maxScrollExtent;
+      if ((_commentsScrollController.offset - targetOffset).abs() < 0.5) {
+        return;
+      }
+      _commentsScrollController.jumpTo(targetOffset);
+    });
   }
 
   @override
@@ -243,6 +271,9 @@ class _CommentsSheetState extends State<CommentsSheet> {
                           ),
                         )
                       : ListView.separated(
+                          key: const ValueKey<String>('comments-list'),
+                          controller: _commentsScrollController,
+                          padding: const EdgeInsets.only(bottom: 16),
                           itemCount: comments.length,
                           separatorBuilder: (_, _) => const Divider(
                             height: 1,
