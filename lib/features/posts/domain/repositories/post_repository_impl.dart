@@ -30,10 +30,14 @@ class PostRepositoryImpl implements PostRepository {
   dbUpsertRecipientDelivery;
   final Future<List<Map<String, Object?>>> Function(String postId)
   dbLoadRecipientDeliveries;
+  final Future<List<Map<String, Object?>>> Function(String passId)?
+  dbLoadPostPassRecipientDeliveries;
   final Future<void> Function(Map<String, Object?> row)? dbUpsertPostPass;
   final Future<Map<String, Object?>?> Function(String passId)? dbLoadPostPass;
   final Future<List<Map<String, Object?>>> Function(String postId)?
   dbLoadPostPasses;
+  final Future<List<Map<String, Object?>>> Function()?
+  dbLoadRetryableOutgoingPostPasses;
   final Future<int> Function(String postId)? dbCountPostPasses;
   final Future<List<Map<String, Object?>>> Function(List<String> postIds)?
   dbLoadPostPassCounts;
@@ -111,9 +115,11 @@ class PostRepositoryImpl implements PostRepository {
     this.dbDeletePostCascade,
     required this.dbUpsertRecipientDelivery,
     required this.dbLoadRecipientDeliveries,
+    this.dbLoadPostPassRecipientDeliveries,
     this.dbUpsertPostPass,
     this.dbLoadPostPass,
     this.dbLoadPostPasses,
+    this.dbLoadRetryableOutgoingPostPasses,
     this.dbCountPostPasses,
     this.dbLoadPostPassCounts,
     this.dbUpsertPostOrigin,
@@ -592,6 +598,18 @@ class PostRepositoryImpl implements PostRepository {
   }
 
   @override
+  Future<List<PostRecipientDelivery>> getPostPassRecipientDeliveries(
+    String passId,
+  ) async {
+    final dbLoad = _require(
+      dbLoadPostPassRecipientDeliveries,
+      'Post pass recipient deliveries are not configured for this repository.',
+    );
+    final rows = await dbLoad(passId);
+    return rows.map(PostRecipientDelivery.fromMap).toList(growable: false);
+  }
+
+  @override
   Future<void> savePostPass(PostPassModel pass) async {
     final dbUpsert = _require(
       dbUpsertPostPass,
@@ -608,6 +626,16 @@ class PostRepositoryImpl implements PostRepository {
       'Post passes are not configured for this repository.',
     );
     return await dbLoad(passId) != null;
+  }
+
+  @override
+  Future<List<PostPassModel>> loadRetryableOutgoingPostPasses() async {
+    final dbLoad = _require(
+      dbLoadRetryableOutgoingPostPasses,
+      'Retryable outgoing post-pass loading is not configured for this repository.',
+    );
+    final rows = await dbLoad();
+    return rows.map(PostPassModel.fromMap).toList(growable: false);
   }
 
   @override

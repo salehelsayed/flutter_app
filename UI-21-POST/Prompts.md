@@ -525,84 +525,132 @@ Start with the requested phase only.
   - Spawn a separate implementer/dev agent for each phase.
   - Spawn a separate reviewer/QA agent for each phase.
   - Never let the implementer review its own phase.
-  - If review finds blocking gaps, spawn a separate fix agent for that same phase, or a fresh
-  implementer-context fix agent, but do not reuse the reviewer as the fixer.
-  - After a phase is accepted, discard or close the phase-local implementer, reviewer, and fixer
-  agents before advancing.
+  - If review finds blocking gaps, spawn a separate fix agent for that same phase, or a fresh implementer-context fix agent, but do not reuse the reviewer as the fixer.
+  - After a phase is accepted, discard or close the phase-local implementer, reviewer, and fixer agents before advancing.
   - Start the next phase with fresh agents so context does not accumulate across phases.
 
   Phase control rules:
   - Run one controller session per phase, but auto-advance after acceptance.
-  - Treat UI-21-POST/3.5-Repost-improv.md as the authoritative active phase-scoped implementation
-  doc.
-  - For production phases, require strict `RED -> GREEN -> REFACTOR` and capture the exact failing
-  tests or commands before production edits.
+  - Treat UI-21-POST/3.5-Repost-improv.md as the authoritative active phase-scoped implementation doc.
+  - For production phases, require strict `RED -> GREEN -> REFACTOR` and capture the exact failing tests or commands before production edits.
   - If QA returns `PASS` and the phase is accepted, move to the next phase automatically.
-  - If QA returns `NEEDS WORK` or `FAIL`, run the fix loop for that same phase and review again
-  before any advancement.
+  - If QA returns `NEEDS WORK` or `FAIL`, run the fix loop for that same phase and review again before any advancement.
   - Do not widen scope into later phases unless required for compilation.
-  - Follow the 3.5 plan's locked decisions, non-goals, verification matrix, suggested file touch
-  order, risks, and exit gates.
+  - Follow the 3.5 plan's locked decisions, non-goals, verification matrix, suggested file touch order, risks, and exit gates.
   - Record residual risks, explicit deferrals, and next-phase prerequisites before advancing.
-  - Rebuild each next phase contract from the 3.5 plan instead of carrying hidden assumptions
-  forward.
+  - Rebuild each next phase contract from the 3.5 plan instead of carrying hidden assumptions forward.
 
   Repost execution rules:
   - Move repost/pass-along onto the same delivery/retry stack used by `post_create`.
-  - Reuse `PostDeliveryRunner`, `post_recipients`, aggregate delivery status, and
-  `PendingPostDeliveryRetrier` where the runner can be extended safely.
+  - Reuse `PostDeliveryRunner`, `post_recipients`, aggregate delivery status, and `PendingPostDeliveryRetrier` where the runner can be extended safely.
   - Mirror the current local-first Posts pattern:
-    - create-local repost step persists the pass and the recipient-delivery state needed by the
-  reused runner path
-    - deliver-created repost step performs network fanout afterward through the reused post delivery
-  runner stack
-  - Keep one-hop limit, `pickPeople` rejection, explicit-recipient selection, original-author
-  notification, and renderable snapshot validation intact.
-  - If the sender tries to select the original author explicitly, filter that author out of the
-  explicit repost audience:
+    - create-local repost step persists the pass and the recipient-delivery state needed by the reused runner path
+    - deliver-created repost step performs network fanout afterward through the reused post delivery runner stack
+  - Keep one-hop limit, `pickPeople` rejection, explicit-recipient selection, original-author notification, and renderable snapshot validation intact.
+  - If the sender tries to select the original author explicitly, filter that author out of the explicit repost audience:
     - the author may still receive the implicit author-notification copy
     - that copy must not count as an explicit repost recipient
   - When a repost arrives for a receiver who already has the original post:
     - do not create a duplicate post row
     - do update persisted surfacing so the pass is visible on the existing card
-    - prefer persisted pass attribution plus repost-time resurfacing over a transport-only transient
-  signal
-  - When a direct author copy later arrives for a post that already exists locally as a reposted
-  copy:
+    - prefer persisted pass attribution plus repost-time resurfacing over a transport-only transient signal
+  - When a direct author copy later arrives for a post that already exists locally as a reposted copy:
     - merge by `postId`
     - do not create a duplicate card
-    - prefer the direct author relationship for stored sender/origin semantics while preserving any
-  relevant pass history needed for repost surfacing
-  - Preserve the existing rule that share counts remain an author-only metric unless the smallest
-  viable implementation absolutely requires revisiting that.
+    - prefer the direct author relationship for stored sender/origin semantics while preserving any relevant pass history needed for repost surfacing
+  - Preserve the existing rule that share counts remain an author-only metric unless the smallest viable implementation absolutely requires revisiting that.
   - Reuse the post-create runner's bounded concurrency of 25 for repost initial send and retry.
   - Do not silently widen comment, reaction, comment-reaction, or pin concurrency in this plan.
   - Do not redefine whether `deliveryStatus == 'inbox'` counts as settled in this plan.
-  - Do not widen into repost media/avatar/encryption or repost engagement continuity work from 3.6
-  unless the active 3.5 phase needs the smallest compatibility fix.
-  - Do not widen into repost visual metric/color work from 3.7 unless the active 3.5 phase needs the
-  smallest compatibility fix.
+  - Do not widen into repost media/avatar/encryption or repost engagement continuity work from 3.6 unless the active 3.5 phase needs the smallest compatibility fix.
+  - Do not widen into repost visual metric/color work from 3.7 unless the active 3.5 phase needs the smallest compatibility fix.
 
   Phase-specific execution reminders:
-  - Phase 1 must reproduce the sender-side blocking repost sheet and the muted receiver-existing-
-  post surfacing gap before changing production code.
-  - Phase 2 must split local repost persistence from background delivery so sender UX mirrors the
-  current local-first comment architecture, and the pass sheet closes after local queueing rather
-  than after network settlement.
-  - Phase 3 must make receiver-targeted reposts visibly resurface existing posts from durable state
-  without creating duplicate cards, and must keep later direct-copy merge duplicate-free.
-  - Phase 4 must raise repost initial-send and retry fanout concurrency to 25 through the reused
-  post-create runner stack while keeping non-repost follow-on defaults unchanged.
-  - Phase 5 must prove repost UX changes do not break durable retry, one-hop safety, explicit-
-  recipient plus author-notification behavior, renderable snapshot validation, author-exclusion from
-  explicit selection, or idempotency.
+  - Phase 1 must reproduce the sender-side blocking repost sheet and the muted receiver-existing- post surfacing gap before changing production code.
+  - Phase 2 must split local repost persistence from background delivery so sender UX mirrors the current local-first comment architecture, and the pass sheet closes after local queueing rather than after network settlement.
+  - Phase 3 must make receiver-targeted reposts visibly resurface existing posts from durable state without creating duplicate cards, and must keep later direct-copy merge duplicate-free.
+  - Phase 4 must raise repost initial-send and retry fanout concurrency to 25 through the reused post-create runner stack while keeping non-repost follow-on defaults unchanged.
+  - Phase 5 must prove repost UX changes do not break durable retry, one-hop safety, explicit-recipient plus author-notification behavior, renderable snapshot validation, author-exclusion from explicit selection, or idempotency.
 
   Verification reminders:
   - Use the 3.5 plan's per-phase verification matrix as the minimum targeted command set.
-  - Before final acceptance of the plan, run the broader regression commands listed in the 3.5
-  plan's broader regression section.
+  - Before final acceptance of the plan, run the broader regression commands listed in the 3.5 plan's broader regression section.
 
   Commit rule after acceptance, if a commit is requested:
   - feat(posts): implement <accepted phase label>
 
   Begin with Phase 1 only, then auto-advance according to the rules above.
+
+
+  ===
+  Use $libp2p-phase-orchestrator in auto-advance mode.
+
+  Plan path:
+  - UI-21-POST/3.5-Repost-improv.md
+
+  Controller mode:
+  - auto-advance
+
+  Start phase:
+  - Phase 4: Raise Repost Fanout Concurrency To 25
+
+  Allowed phase sequence:
+  - Phase 4: Raise Repost Fanout Concurrency To 25
+  - Phase 5: Guard Repost Correctness, Retry, And Feed Semantics
+
+  Stop condition:
+  - Stop when a phase is blocked or when Phase 5 is accepted.
+  - Do not start any work beyond Phase 5 unless I explicitly request it in a later session.
+
+  Accepted phase context:
+  - Phase 1 accepted
+  - Phase 2 accepted
+  - Phase 3 accepted
+  - Resume from Phase 4 only
+
+  Agent orchestration rules:
+  - Spawn a separate implementer/dev agent for each phase.
+  - Spawn a separate reviewer/QA agent for each phase.
+  - Never let the implementer review its own phase.
+  - If review finds blocking gaps, spawn a separate fix agent for that same phase, or a fresh implementer-context fix agent, but do not reuse the reviewer as the fixer.
+  - After a phase is accepted, discard or close the phase-local implementer, reviewer, and fixer agents before advancing.
+  - Start the next phase with fresh agents so context does not accumulate across phases.
+
+  Phase control rules:
+  - Run one controller session per phase, but auto-advance after acceptance.
+  - Treat UI-21-POST/3.5-Repost-improv.md as the authoritative active phase-scoped implementation doc.
+  - Treat the plan's `Required Skills By Phase` section as binding for implementer and reviewer setup.
+  - For production phases, require strict `RED -> GREEN -> REFACTOR` and capture the exact failing tests or commands before production edits.
+  - If QA returns `PASS` and the phase is accepted, move to the next phase automatically.
+  - If QA returns `NEEDS WORK` or `FAIL`, run the fix loop for that same phase and review again before any advancement.
+  - Do not widen scope into later phases unless required for compilation.
+  - Follow the 3.5 plan's locked decisions, non-goals, verification matrix, suggested file touch order, risks, and exit gates.
+  - Record residual risks, explicit deferrals, and next-phase prerequisites before advancing.
+  - Rebuild each next phase contract from the 3.5 plan instead of carrying hidden assumptions forward.
+
+  Reviewer fallback rule:
+  - If a reviewer/QA agent fails twice to return a usable `PASS` / `NEEDS WORK` / `FAIL` verdict, treat that as a review-orchestration failure, not an implementation failure.
+  - In that case, perform a manual controller review in the main session against the active phase contract and issue exactly one verdict: `PASS`, `NEEDS WORK`, or `FAIL`.
+  - Do not advance without a verdict.
+
+  Repost execution rules:
+  - Move repost/pass-along onto the same delivery/retry stack used by `post_create`.
+  - Reuse `PostDeliveryRunner`, `post_recipients`, aggregate delivery status, and
+  `PendingPostDeliveryRetrier` where the runner can be extended safely.
+  - Reuse the post-create runner's bounded concurrency of 25 for repost initial send and retry.
+  - Do not silently widen comment, reaction, comment-reaction, or pin concurrency in this plan.
+  - Do not redefine whether `deliveryStatus == 'inbox'` counts as settled in this plan.
+  - Do not widen into 3.6 or 3.7 except for the smallest compatibility fix required by the active 3.5 phase.
+
+  Phase-specific execution reminders:
+  - Phase 4 must raise repost initial-send and retry fanout concurrency to 25 through the reused post-create runner stack while keeping non-repost follow-on defaults unchanged.
+  - Phase 5 must prove repost UX changes do not break durable retry, one-hop safety, explicit-recipient plus author-notification behavior, renderable snapshot validation, author-exclusion from explicit selection, or idempotency.
+
+  Verification reminders:
+  - Use the 3.5 plan's per-phase verification matrix as the minimum targeted command set.
+  - Before final acceptance of the plan, run the broader regression commands listed in the 3.5 plan's broader regression section.
+
+  Commit rule after acceptance, if a commit is requested:
+  - feat(posts): implement <accepted phase label>
+
+  Begin with Phase 4 only, then auto-advance according to the rules above.

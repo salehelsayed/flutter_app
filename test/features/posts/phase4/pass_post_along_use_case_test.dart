@@ -3,10 +3,13 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
 import 'package:flutter_app/features/posts/application/pass_post_along_use_case.dart';
+import 'package:flutter_app/features/posts/application/post_delivery_runner.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
+import 'package:flutter_app/features/posts/domain/models/post_recipient_delivery.dart';
 
 import '../../../shared/fakes/fake_p2p_network.dart';
 import '../../../shared/fakes/fake_p2p_service_integration.dart';
@@ -129,7 +132,54 @@ void main() {
   );
 
   test(
-    'persists a local pass and outbox recipients before delivery completes',
+    'createLocalPostPass persists a local pass and queued recipient deliveries before background delivery starts',
+    () async {
+      await posts.savePost(_directPost());
+
+      final (result, created) = await createLocalPostPass(
+        p2pService: aliceService,
+        postRepo: posts,
+        contactRepo: contacts,
+        postId: 'post-1',
+        senderPeerId: 'peer-alice',
+        senderUsername: 'Alice',
+        recipientPeerIds: const <String>['peer-cara'],
+      );
+
+      expect(result, PassPostAlongResult.success);
+      expect(created, isNotNull);
+      expect(network.deliverCallCount, 0);
+      expect(network.storeInInboxCallCount, 0);
+
+      final localPasses = await posts.loadPostPasses('post-1');
+      expect(localPasses, hasLength(1));
+      expect(created!.pass.passId, localPasses.single.passId);
+      expect(localPasses.single.deliveryStatus, 'sending');
+      final deliveries = await posts.getPostPassRecipientDeliveries(
+        created.pass.passId,
+      );
+      expect(deliveries.map((delivery) => delivery.recipientPeerId), <String>[
+        'peer-bob',
+        'peer-cara',
+      ]);
+      expect(
+        deliveries.map((delivery) => delivery.deliveryStatus),
+        everyElement('pending'),
+      );
+      expect(
+        deliveries.map((delivery) => delivery.deliveryOwnerKind),
+        everyElement(postRecipientDeliveryOwnerKindPass),
+      );
+      expect(
+        deliveries.map((delivery) => delivery.deliveryOwnerId),
+        everyElement(created.pass.passId),
+      );
+      expect(await posts.loadRetryableFollowOnOutboxJobs(), isEmpty);
+    },
+  );
+
+  test(
+    'persists a local pass and shared recipient deliveries before delivery completes',
     () async {
       await posts.savePost(_directPost());
       network.deliveryDelay = const Duration(milliseconds: 150);
@@ -148,14 +198,9 @@ void main() {
 
       final localPasses = await posts.loadPostPasses('post-1');
       expect(localPasses, hasLength(1));
-      expect(
-        (await posts.getFollowOnOutboxEvent(
-          localPasses.single.eventId,
-        ))?.eventType,
-        'post_pass_along',
-      );
-      final deliveries = await posts.loadFollowOnOutboxRecipientDeliveries(
-        localPasses.single.eventId,
+      expect(localPasses.single.deliveryStatus, 'sending');
+      final deliveries = await posts.getPostPassRecipientDeliveries(
+        localPasses.single.passId,
       );
       expect(deliveries.map((delivery) => delivery.recipientPeerId), <String>[
         'peer-bob',
@@ -165,6 +210,7 @@ void main() {
         deliveries.map((delivery) => delivery.deliveryStatus),
         everyElement('pending'),
       );
+      expect(await posts.loadRetryableFollowOnOutboxJobs(), isEmpty);
 
       final (result, pass) = await sendFuture;
       expect(result, PassPostAlongResult.success);
@@ -173,7 +219,165 @@ void main() {
   );
 
   test(
-    'keeps a local pass and retryable outbox state when the author notification is unresolved',
+    'does not create a duplicate delivery target when the sender explicitly selects the original author',
+    () async {
+      await posts.savePost(_directPost());
+
+      final receivedByBob = bobService.messageStream.first;
+      final receivedByCara = caraService.messageStream.first;
+
+      final (result, pass) = await passPostAlong(
+        p2pService: aliceService,
+        postRepo: posts,
+        contactRepo: contacts,
+        postId: 'post-1',
+        senderPeerId: 'peer-alice',
+        senderUsername: 'Alice',
+        recipientPeerIds: const <String>['peer-bob', 'peer-cara'],
+      );
+
+      expect(result, PassPostAlongResult.success);
+      expect(pass, isNotNull);
+      expect(network.deliverCallCount, 2);
+
+      final deliveries = await posts.getPostPassRecipientDeliveries(
+        pass!.passId,
+      );
+      expect(deliveries.map((delivery) => delivery.recipientPeerId), <String>[
+        'peer-bob',
+        'peer-cara',
+      ]);
+      expect(
+        deliveries.where((delivery) => delivery.recipientPeerId == 'peer-bob'),
+        hasLength(1),
+      );
+      expect(
+        deliveries.where((delivery) => delivery.recipientPeerId == 'peer-cara'),
+        hasLength(1),
+      );
+
+      await receivedByBob.timeout(const Duration(seconds: 1));
+      await receivedByCara.timeout(const Duration(seconds: 1));
+    },
+  );
+
+  test(
+    'passPostAlong uses the post delivery runner default concurrency cap of 25',
+    () async {
+      final recipientPeerIds = List<String>.generate(
+        30,
+        (index) => 'peer-${index.toString().padLeft(2, '0')}',
+      );
+      final sendGates = <String, Completer<void>>{
+        for (final peerId in recipientPeerIds) peerId: Completer<void>(),
+      };
+      final service = _ControlledP2PService(
+        peerId: 'peer-bob',
+        network: network,
+        policies: {
+          for (final peerId in recipientPeerIds)
+            peerId: _PeerPolicy(sendGate: sendGates[peerId]),
+        },
+      );
+      addTearDown(service.dispose);
+
+      await posts.savePost(_directPost());
+      for (final peerId in recipientPeerIds) {
+        contacts.addTestContact(_contact(peerId, peerId));
+      }
+
+      final sendFuture = passPostAlong(
+        p2pService: service,
+        postRepo: posts,
+        contactRepo: contacts,
+        postId: 'post-1',
+        senderPeerId: 'peer-bob',
+        senderUsername: 'Bob',
+        recipientPeerIds: recipientPeerIds,
+      );
+
+      await service
+          .waitForSendCount(25)
+          .timeout(const Duration(milliseconds: 200));
+      await _drainMicrotasks();
+
+      expect(service.maxInFlightSends, 25);
+      expect(service.sendStartOrder, recipientPeerIds.take(25).toList());
+
+      sendGates[recipientPeerIds.first]!.complete();
+      await service
+          .waitForSendCount(26)
+          .timeout(const Duration(milliseconds: 200));
+      await _drainMicrotasks();
+
+      expect(service.maxInFlightSends, 25);
+      expect(service.sendStartOrder, recipientPeerIds.take(26).toList());
+
+      for (final gate in sendGates.values) {
+        if (!gate.isCompleted) {
+          gate.complete();
+        }
+      }
+
+      final (result, pass) = await sendFuture;
+      expect(result, PassPostAlongResult.success);
+      expect(pass, isNotNull);
+      expect(service.maxInFlightSends, 25);
+    },
+  );
+
+  test(
+    'deliverCreatedLocalPostPass keeps the local pass and queued recipient deliveries when every delivery path fails',
+    () async {
+      await posts.savePost(_directPost());
+      bobService.setOnline(false);
+      caraService.setOnline(false);
+      network.inboxDisabled = true;
+
+      final (createResult, created) = await createLocalPostPass(
+        p2pService: aliceService,
+        postRepo: posts,
+        contactRepo: contacts,
+        postId: 'post-1',
+        senderPeerId: 'peer-alice',
+        senderUsername: 'Alice',
+        recipientPeerIds: const <String>['peer-cara'],
+      );
+
+      expect(createResult, PassPostAlongResult.success);
+      expect(created, isNotNull);
+
+      final deliveryResult = await deliverCreatedLocalPostPass(
+        p2pService: aliceService,
+        postRepo: posts,
+        created: created!,
+      );
+
+      expect(deliveryResult.$1, SendPostResult.sendFailed);
+      final localPasses = await posts.loadPostPasses('post-1');
+      expect(localPasses, hasLength(1));
+      expect(localPasses.single.deliveryStatus, 'failed');
+
+      final deliveries = await posts.getPostPassRecipientDeliveries(
+        created.pass.passId,
+      );
+      expect(deliveries.map((delivery) => delivery.recipientPeerId), <String>[
+        'peer-bob',
+        'peer-cara',
+      ]);
+      expect(deliveries.map((delivery) => delivery.deliveryStatus), <String>[
+        'failed',
+        'failed',
+      ]);
+
+      final retryablePasses = await posts.loadRetryableOutgoingPostPasses();
+      expect(retryablePasses, hasLength(1));
+      expect(retryablePasses.single.passId, created.pass.passId);
+    },
+  );
+
+  test(
+    'keeps a local pass and retryable recipient-delivery state when the author notification is unresolved',
     () async {
       await posts.savePost(_directPost());
       bobService.setOnline(false);
@@ -193,8 +397,8 @@ void main() {
       expect(pass, isNotNull);
       expect(await posts.loadPostPasses('post-1'), hasLength(1));
 
-      final deliveries = await posts.loadFollowOnOutboxRecipientDeliveries(
-        pass!.eventId,
+      final deliveries = await posts.getPostPassRecipientDeliveries(
+        pass!.passId,
       );
       expect(deliveries.map((delivery) => delivery.recipientPeerId), <String>[
         'peer-bob',
@@ -205,20 +409,26 @@ void main() {
         'delivered',
       ]);
 
-      final retryableJobs = await posts.loadRetryableFollowOnOutboxJobs();
-      expect(retryableJobs, hasLength(1));
-      expect(retryableJobs.single.event.eventType, 'post_pass_along');
+      final retryablePasses = await posts.loadRetryableOutgoingPostPasses();
+      expect(retryablePasses, hasLength(1));
+      expect(retryablePasses.single.passId, pass.passId);
+      expect(retryablePasses.single.deliveryStatus, 'partial');
       expect(
-        retryableJobs.single.recipientDeliveries.map(
-          (delivery) => delivery.recipientPeerId,
-        ),
+        deliveries
+            .where(
+              (delivery) =>
+                  delivery.deliveryStatus != 'delivered' &&
+                  delivery.deliveryStatus != 'inbox',
+            )
+            .map((delivery) => delivery.recipientPeerId),
         <String>['peer-bob'],
       );
+      expect(await posts.loadRetryableFollowOnOutboxJobs(), isEmpty);
     },
   );
 
   test(
-    'rejects a non-renderable snapshot before persisting a local pass or outbox state',
+    'rejects a non-renderable snapshot before persisting a local pass or recipient-delivery state',
     () async {
       await posts.savePost(_directPost(mediaKind: 'image'));
 
@@ -235,6 +445,7 @@ void main() {
       expect(result, PassPostAlongResult.sendFailed);
       expect(pass, isNull);
       expect(await posts.loadPostPasses('post-1'), isEmpty);
+      expect(await posts.loadRetryableOutgoingPostPasses(), isEmpty);
       expect(await posts.loadRetryableFollowOnOutboxJobs(), isEmpty);
     },
   );
@@ -307,4 +518,69 @@ PostModel _directPost({
     expiresAt: '2026-03-18T10:15:30.000Z',
     mediaKind: mediaKind,
   );
+}
+
+Future<void> _drainMicrotasks([int turns = 3]) async {
+  for (var index = 0; index < turns; index++) {
+    await Future<void>.delayed(Duration.zero);
+  }
+}
+
+class _ControlledP2PService extends FakeP2PService {
+  final Map<String, _PeerPolicy> policies;
+  final List<String> sendStartOrder = <String>[];
+  final StreamController<void> _sendStarted =
+      StreamController<void>.broadcast();
+
+  int _inFlightSends = 0;
+  int maxInFlightSends = 0;
+
+  _ControlledP2PService({
+    required super.peerId,
+    required super.network,
+    this.policies = const <String, _PeerPolicy>{},
+  });
+
+  Future<void> waitForSendCount(int count) async {
+    while (sendStartOrder.length < count) {
+      await _sendStarted.stream.first;
+    }
+  }
+
+  @override
+  Future<SendMessageResult> sendMessageWithReply(
+    String targetPeerId,
+    String message, {
+    int? timeoutMs,
+  }) async {
+    final policy = policies[targetPeerId] ?? const _PeerPolicy();
+    sendStartOrder.add(targetPeerId);
+    _inFlightSends++;
+    if (_inFlightSends > maxInFlightSends) {
+      maxInFlightSends = _inFlightSends;
+    }
+    _sendStarted.add(null);
+
+    try {
+      final gate = policy.sendGate;
+      if (gate != null) {
+        await gate.future;
+      }
+      return const SendMessageResult(sent: true, reply: 'received');
+    } finally {
+      _inFlightSends--;
+    }
+  }
+
+  @override
+  void dispose() {
+    _sendStarted.close();
+    super.dispose();
+  }
+}
+
+class _PeerPolicy {
+  final Completer<void>? sendGate;
+
+  const _PeerPolicy({this.sendGate});
 }

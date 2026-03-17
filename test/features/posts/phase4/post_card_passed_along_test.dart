@@ -6,7 +6,7 @@ import 'package:flutter_app/features/posts/presentation/widgets/post_card.dart';
 
 void main() {
   testWidgets(
-    'renders passed-along attribution without the direct-friend badge',
+    'renders passed-along attribution on a resurfaced direct-author card without the direct-friend badge',
     (tester) async {
       await tester.pumpWidget(
         MaterialApp(
@@ -14,8 +14,8 @@ void main() {
             body: PostCard(
               post: PostModel(
                 id: 'post-1',
-                eventId: 'evt-pass-1',
-                senderPeerId: 'peer-james',
+                eventId: 'evt-direct-1',
+                senderPeerId: 'peer-sarah',
                 authorPeerId: 'peer-sarah',
                 authorUsername: 'Sarah',
                 text: 'Lost dog near Neckar bridge.',

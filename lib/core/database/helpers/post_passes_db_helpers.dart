@@ -1,9 +1,17 @@
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
 Future<void> dbUpsertPostPass(Database db, Map<String, Object?> row) async {
+  final insertRow = Map<String, Object?>.from(row);
+  final columns = await db.rawQuery("PRAGMA table_info(post_passes)");
+  final hasDeliveryStatus = columns.any(
+    (column) => column['name'] == 'delivery_status',
+  );
+  if (!hasDeliveryStatus) {
+    insertRow.remove('delivery_status');
+  }
   await db.insert(
     'post_passes',
-    row,
+    insertRow,
     conflictAlgorithm: ConflictAlgorithm.replace,
   );
 }
@@ -53,4 +61,27 @@ Future<List<Map<String, Object?>>> dbLoadPostPassCounts(
       WHERE post_id IN ($placeholders)
       GROUP BY post_id
     ''', postIds);
+}
+
+Future<List<Map<String, Object?>>> dbLoadRetryableOutgoingPostPasses(
+  Database db,
+) async {
+  final columns = await db.rawQuery("PRAGMA table_info(post_passes)");
+  final hasDeliveryStatus = columns.any(
+    (column) => column['name'] == 'delivery_status',
+  );
+  if (!hasDeliveryStatus) {
+    return db.query(
+      'post_passes',
+      where: 'is_incoming = ?',
+      whereArgs: const <Object?>[0],
+      orderBy: 'passed_at DESC, pass_id DESC',
+    );
+  }
+  return db.query(
+    'post_passes',
+    where: 'is_incoming = ? AND delivery_status IN (?, ?, ?)',
+    whereArgs: const <Object?>[0, 'sending', 'partial', 'failed'],
+    orderBy: 'passed_at DESC, pass_id DESC',
+  );
 }

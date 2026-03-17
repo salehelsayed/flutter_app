@@ -4,6 +4,7 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
+import 'package:flutter_app/features/posts/domain/models/post_origin_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_pass_model.dart';
 import 'package:flutter_app/features/posts/presentation/screens/posts_wired.dart';
 
@@ -67,7 +68,11 @@ void main() {
     await tester.pumpWidget(buildWidget());
     await tester.pump();
 
-    expect(find.text('2 shares'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey<String>('post-share-count')),
+      findsOneWidget,
+    );
+    expect(find.text('2'), findsOneWidget);
   });
 
   testWidgets('keeps share counts hidden on receiver cards', (tester) async {
@@ -82,8 +87,46 @@ void main() {
     await tester.pumpWidget(buildWidget());
     await tester.pump();
 
-    expect(find.text('2 shares'), findsNothing);
+    expect(
+      find.byKey(const ValueKey<String>('post-share-count')),
+      findsNothing,
+    );
   });
+
+  testWidgets(
+    'keeps receiver resurfacing attribution visible while leaving share counts hidden',
+    (tester) async {
+      identityRepository.seed(_identity('peer-cara', 'Cara'));
+      contactRepository.seed([
+        _contact('peer-bob', 'Bob'),
+        _contact('peer-james', 'James'),
+      ]);
+      await postRepository.savePost(
+        _post(authorPeerId: 'peer-bob', authorUsername: 'Bob'),
+      );
+      await postRepository.savePostOrigin(
+        const PostOriginModel(
+          postId: 'post-1',
+          originKind: PostOriginKind.direct,
+          passId: 'pass-2',
+          passerPeerId: 'peer-james',
+          passerUsername: 'James',
+          passCreatedAt: '2026-03-15T11:15:00.000Z',
+        ),
+      );
+      await postRepository.savePostPass(_pass('pass-1', 'peer-alice', 'Alice'));
+      await postRepository.savePostPass(_pass('pass-2', 'peer-james', 'James'));
+
+      await tester.pumpWidget(buildWidget());
+      await tester.pump();
+
+      expect(find.text('James passed this along'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey<String>('post-share-count')),
+        findsNothing,
+      );
+    },
+  );
 }
 
 IdentityModel _identity(String peerId, String username) {

@@ -109,6 +109,63 @@ void main() {
     expect(payload['post_id'], 'post-1');
     expect(payload['passer_peer_id'], 'peer-alice');
   });
+
+  testWidgets(
+    'closes the pass sheet after local persistence and refreshes sender-visible repost state while delivery is still in flight',
+    (tester) async {
+      contactRepository.seed([
+        _contact('peer-bob', 'Bob'),
+        _contact('peer-cara', 'Cara'),
+      ]);
+      await postRepository.savePost(
+        _post(
+          senderPeerId: 'peer-alice',
+          authorPeerId: 'peer-alice',
+          authorUsername: 'Alice',
+        ),
+      );
+      network.deliveryDelay = const Duration(seconds: 1);
+
+      await tester.pumpWidget(buildWidget());
+      await tester.pump();
+
+      await tester.tap(find.byIcon(Icons.repeat));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      await tester.tap(find.text('Cara'));
+      await tester.pump();
+      await tester.tap(find.text('Send pass'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+
+      final localPasses = await postRepository.loadPostPasses('post-1');
+      expect(localPasses, hasLength(1));
+      final deliveries = await postRepository.getPostPassRecipientDeliveries(
+        localPasses.single.passId,
+      );
+
+      expect(find.text('Pass along'), findsNothing);
+      expect(find.text('Sending…'), findsNothing);
+      expect(
+        find.byKey(const ValueKey<String>('post-share-count')),
+        findsOneWidget,
+      );
+      expect(find.text('1'), findsOneWidget);
+      expect(deliveries.map((delivery) => delivery.recipientPeerId), <String>[
+        'peer-cara',
+      ]);
+      expect(
+        deliveries.map((delivery) => delivery.deliveryStatus),
+        everyElement('pending'),
+      );
+      expect(localPasses.single.deliveryStatus, 'sending');
+      expect(await postRepository.loadRetryableFollowOnOutboxJobs(), isEmpty);
+
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pump(const Duration(milliseconds: 300));
+    },
+  );
 }
 
 ContactModel _contact(
@@ -129,13 +186,17 @@ ContactModel _contact(
   );
 }
 
-PostModel _post() {
+PostModel _post({
+  String senderPeerId = 'peer-bob',
+  String authorPeerId = 'peer-bob',
+  String authorUsername = 'Bob',
+}) {
   return PostModel(
     id: 'post-1',
     eventId: 'evt-post-1',
-    senderPeerId: 'peer-bob',
-    authorPeerId: 'peer-bob',
-    authorUsername: 'Bob',
+    senderPeerId: senderPeerId,
+    authorPeerId: authorPeerId,
+    authorUsername: authorUsername,
     text: 'Lost dog near Neckar bridge.',
     audience: PostAudience.peopleNearby(radiusM: 2000),
     createdAt: '2026-03-15T10:15:30.000Z',

@@ -5,6 +5,7 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/posts/application/handle_incoming_passed_post_use_case.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
+import 'package:flutter_app/features/posts/domain/models/post_origin_model.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 
 import '../../../shared/fakes/in_memory_contact_repository.dart';
@@ -172,10 +173,24 @@ void main() {
   );
 
   test(
-    'merges repeated pass deliveries by original post identity and keeps the first attribution',
+    'resurfaces an existing post again when a later distinct repost arrives',
     () async {
       contacts.addTestContact(_contact('peer-james', 'James'));
       contacts.addTestContact(_contact('peer-maria', 'Maria'));
+      await posts.savePost(
+        PostModel(
+          id: 'post-1',
+          eventId: 'evt-direct-1',
+          senderPeerId: 'peer-sarah',
+          authorPeerId: 'peer-sarah',
+          authorUsername: 'Sarah',
+          text: 'Lost dog near Neckar bridge.',
+          audience: PostAudience.peopleNearby(radiusM: 2000),
+          createdAt: '2026-03-15T10:15:30.000Z',
+          visibleAt: '2026-03-15T10:15:30.000Z',
+          expiresAt: '2026-03-18T10:15:30.000Z',
+        ),
+      );
 
       final first = await handleIncomingPassedPost(
         message: _messageFromJson(
@@ -202,12 +217,182 @@ void main() {
       expect(first.$1, HandleIncomingPassedPostResult.passAccepted);
       expect(second.$1, HandleIncomingPassedPostResult.passAccepted);
       expect((await posts.loadFeed()), hasLength(1));
-      expect((await posts.getPost('post-1'))?.passedByUsername, 'James');
+      final feed = await posts.loadFeed();
+      final resurfacedPost = await posts.getPost('post-1');
+      final origin = await posts.getPostOrigin('post-1');
+      expect(feed.single.id, 'post-1');
+      expect(feed.single.visibleAt, '2026-03-15T11:25:00.000Z');
+      expect(resurfacedPost, isNotNull);
+      expect(resurfacedPost!.passedByUsername, 'Maria');
+      expect(resurfacedPost.passedAt, '2026-03-15T11:25:00.000Z');
+      expect(resurfacedPost.visibleAt, '2026-03-15T11:25:00.000Z');
+      expect(await posts.loadPostPasses('post-1'), hasLength(2));
+      expect(origin, isNotNull);
+      expect(origin!.originKind, PostOriginKind.direct);
+      expect(origin.passerUsername, 'Maria');
+      expect(origin.passCreatedAt, '2026-03-15T11:25:00.000Z');
     },
   );
 
   test(
-    'does not create a second visible card when the original post already exists directly',
+    'resurfaces an existing direct post for each distinct later repost without creating a duplicate row',
+    () async {
+      contacts.addTestContact(_contact('peer-james', 'James'));
+      contacts.addTestContact(_contact('peer-maria', 'Maria'));
+      await posts.savePost(
+        PostModel(
+          id: 'post-1',
+          eventId: 'evt-direct-1',
+          senderPeerId: 'peer-sarah',
+          authorPeerId: 'peer-sarah',
+          authorUsername: 'Sarah',
+          text: 'Lost dog near Neckar bridge.',
+          audience: PostAudience.peopleNearby(radiusM: 2000),
+          createdAt: '2026-03-15T10:15:30.000Z',
+          visibleAt: '2026-03-15T10:15:30.000Z',
+          expiresAt: '2026-03-18T10:15:30.000Z',
+        ),
+      );
+      await posts.savePost(
+        PostModel(
+          id: 'post-2',
+          eventId: 'evt-direct-2',
+          senderPeerId: 'peer-ava',
+          authorPeerId: 'peer-ava',
+          authorUsername: 'Ava',
+          text: 'Can someone lend jumper cables?',
+          audience: PostAudience.allFriends(),
+          createdAt: '2026-03-15T10:45:00.000Z',
+          visibleAt: '2026-03-15T10:45:00.000Z',
+          expiresAt: '2026-03-18T10:45:00.000Z',
+        ),
+      );
+
+      final (result, post) = await handleIncomingPassedPost(
+        message: _messageFromJson(
+          _postPassJson(),
+          transportSender: 'peer-james',
+        ),
+        postRepo: posts,
+        contactRepo: contacts,
+      );
+      final second = await handleIncomingPassedPost(
+        message: _messageFromJson(
+          _postPassJson(
+            senderPeerId: 'peer-maria',
+            passerPeerId: 'peer-maria',
+            passerUsername: 'Maria',
+            passId: 'pass-2',
+            eventId: 'evt-pass-2',
+            passedAt: '2026-03-15T11:25:00.000Z',
+          ),
+          transportSender: 'peer-maria',
+        ),
+        postRepo: posts,
+        contactRepo: contacts,
+      );
+
+      expect(result, HandleIncomingPassedPostResult.passAccepted);
+      expect(second.$1, HandleIncomingPassedPostResult.passAccepted);
+      expect(post, isNotNull);
+      final feed = await posts.loadFeed();
+      final origin = await posts.getPostOrigin('post-1');
+      expect(feed, hasLength(2));
+      expect(feed.first.id, 'post-1');
+      expect(feed.first.visibleAt, '2026-03-15T11:25:00.000Z');
+      expect(await posts.loadPostPasses('post-1'), hasLength(2));
+      expect((await posts.getPost('post-1'))?.senderPeerId, 'peer-sarah');
+      expect((await posts.getPost('post-1'))?.passedByUsername, 'Maria');
+      expect(
+        (await posts.getPost('post-1'))?.visibleAt,
+        '2026-03-15T11:25:00.000Z',
+      );
+      expect((await posts.getPost('post-1'))?.shareCount, 2);
+      expect(origin, isNotNull);
+      expect(origin!.originKind, PostOriginKind.direct);
+      expect(origin.passerUsername, 'Maria');
+      expect(origin.passCreatedAt, '2026-03-15T11:25:00.000Z');
+    },
+  );
+
+  test(
+    'keeps latest repost attribution when an older distinct repost arrives afterward',
+    () async {
+      contacts.addTestContact(_contact('peer-james', 'James'));
+      contacts.addTestContact(_contact('peer-maria', 'Maria'));
+      contacts.addTestContact(_contact('peer-nora', 'Nora'));
+      await posts.savePost(
+        PostModel(
+          id: 'post-1',
+          eventId: 'evt-direct-1',
+          senderPeerId: 'peer-sarah',
+          authorPeerId: 'peer-sarah',
+          authorUsername: 'Sarah',
+          text: 'Lost dog near Neckar bridge.',
+          audience: PostAudience.peopleNearby(radiusM: 2000),
+          createdAt: '2026-03-15T10:15:30.000Z',
+          visibleAt: '2026-03-15T10:15:30.000Z',
+          expiresAt: '2026-03-18T10:15:30.000Z',
+        ),
+      );
+
+      await handleIncomingPassedPost(
+        message: _messageFromJson(
+          _postPassJson(),
+          transportSender: 'peer-james',
+        ),
+        postRepo: posts,
+        contactRepo: contacts,
+      );
+      await handleIncomingPassedPost(
+        message: _messageFromJson(
+          _postPassJson(
+            senderPeerId: 'peer-maria',
+            passerPeerId: 'peer-maria',
+            passerUsername: 'Maria',
+            passId: 'pass-2',
+            eventId: 'evt-pass-2',
+            passedAt: '2026-03-15T11:25:00.000Z',
+          ),
+          transportSender: 'peer-maria',
+        ),
+        postRepo: posts,
+        contactRepo: contacts,
+      );
+      final olderThird = await handleIncomingPassedPost(
+        message: _messageFromJson(
+          _postPassJson(
+            senderPeerId: 'peer-nora',
+            passerPeerId: 'peer-nora',
+            passerUsername: 'Nora',
+            passId: 'pass-3',
+            eventId: 'evt-pass-3',
+            passedAt: '2026-03-15T11:20:00.000Z',
+          ),
+          transportSender: 'peer-nora',
+        ),
+        postRepo: posts,
+        contactRepo: contacts,
+      );
+
+      final resurfacedPost = await posts.getPost('post-1');
+      final origin = await posts.getPostOrigin('post-1');
+      expect(olderThird.$1, HandleIncomingPassedPostResult.passAccepted);
+      expect((await posts.loadFeed()), hasLength(1));
+      expect(await posts.loadPostPasses('post-1'), hasLength(3));
+      expect(resurfacedPost, isNotNull);
+      expect(resurfacedPost!.visibleAt, '2026-03-15T11:25:00.000Z');
+      expect(resurfacedPost.passedByUsername, 'Maria');
+      expect(resurfacedPost.passedAt, '2026-03-15T11:25:00.000Z');
+      expect(resurfacedPost.shareCount, 3);
+      expect(origin, isNotNull);
+      expect(origin!.passerUsername, 'Maria');
+      expect(origin.passCreatedAt, '2026-03-15T11:25:00.000Z');
+    },
+  );
+
+  test(
+    'keeps duplicate pass ids idempotent after resurfacing an existing direct post',
     () async {
       contacts.addTestContact(_contact('peer-james', 'James'));
       await posts.savePost(
@@ -225,7 +410,15 @@ void main() {
         ),
       );
 
-      final (result, post) = await handleIncomingPassedPost(
+      final first = await handleIncomingPassedPost(
+        message: _messageFromJson(
+          _postPassJson(),
+          transportSender: 'peer-james',
+        ),
+        postRepo: posts,
+        contactRepo: contacts,
+      );
+      final second = await handleIncomingPassedPost(
         message: _messageFromJson(
           _postPassJson(),
           transportSender: 'peer-james',
@@ -234,11 +427,15 @@ void main() {
         contactRepo: contacts,
       );
 
-      expect(result, HandleIncomingPassedPostResult.passAccepted);
-      expect(post, isNotNull);
+      expect(first.$1, HandleIncomingPassedPostResult.passAccepted);
+      expect(second.$1, HandleIncomingPassedPostResult.duplicate);
       expect((await posts.loadFeed()), hasLength(1));
-      expect((await posts.getPost('post-1'))?.senderPeerId, 'peer-sarah');
-      expect((await posts.getPost('post-1'))?.passedByUsername, isNull);
+      expect(await posts.loadPostPasses('post-1'), hasLength(1));
+      expect((await posts.getPost('post-1'))?.passedByUsername, 'James');
+      expect(
+        (await posts.getPost('post-1'))?.visibleAt,
+        '2026-03-15T11:15:00.000Z',
+      );
     },
   );
 

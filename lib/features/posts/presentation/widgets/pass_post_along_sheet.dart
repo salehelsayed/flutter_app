@@ -2,15 +2,29 @@ import 'package:flutter/material.dart';
 
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 
+enum PassPostAlongSubmitOutcome { closeSheet, keepSheetOpen }
+
 class PassPostAlongSheet extends StatefulWidget {
   final List<ContactModel> eligibleContacts;
-  final Future<void> Function(List<String> recipientPeerIds) onSubmit;
+  final Future<void> Function(List<String> recipientPeerIds)? onSubmit;
+  final Future<PassPostAlongSubmitOutcome> Function(
+    List<String> recipientPeerIds,
+  )?
+  onSubmitWithOutcome;
 
   const PassPostAlongSheet({
     super.key,
     required this.eligibleContacts,
-    required this.onSubmit,
-  });
+    this.onSubmit,
+    this.onSubmitWithOutcome,
+  }) : assert(
+         onSubmit != null || onSubmitWithOutcome != null,
+         'Either onSubmit or onSubmitWithOutcome must be provided.',
+       ),
+       assert(
+         onSubmit == null || onSubmitWithOutcome == null,
+         'Use only one of onSubmit or onSubmitWithOutcome.',
+       );
 
   @override
   State<PassPostAlongSheet> createState() => _PassPostAlongSheetState();
@@ -117,13 +131,18 @@ class _PassPostAlongSheetState extends State<PassPostAlongSheet> {
                     ? null
                     : () async {
                         setState(() => _isSubmitting = true);
-                        await widget.onSubmit(
-                          _selectedPeerIds.toList(growable: false),
-                        );
-                        if (!mounted) {
-                          return;
+                        try {
+                          final outcome = await _submitPass();
+                          if (outcome ==
+                                  PassPostAlongSubmitOutcome.closeSheet &&
+                              mounted) {
+                            Navigator.of(context).pop();
+                          }
+                        } finally {
+                          if (mounted) {
+                            setState(() => _isSubmitting = false);
+                          }
                         }
-                        Navigator.of(context).pop();
                       },
                 child: Text(_isSubmitting ? 'Sending…' : 'Send pass'),
               ),
@@ -132,5 +151,15 @@ class _PassPostAlongSheetState extends State<PassPostAlongSheet> {
         ),
       ),
     );
+  }
+
+  Future<PassPostAlongSubmitOutcome> _submitPass() async {
+    final onSubmitWithOutcome = widget.onSubmitWithOutcome;
+    if (onSubmitWithOutcome != null) {
+      return onSubmitWithOutcome(_selectedPeerIds.toList(growable: false));
+    }
+
+    await widget.onSubmit!(_selectedPeerIds.toList(growable: false));
+    return PassPostAlongSubmitOutcome.closeSheet;
   }
 }
