@@ -24,16 +24,43 @@ Future<PostMediaAttachmentModel> downloadPostMedia({
   );
 
   try {
+    final downloadPath = attachment.isEncrypted
+        ? '$absolutePath.enc'
+        : absolutePath;
     final result = await callP2PMediaDownload(
       bridge,
       id: attachment.blobId,
-      outputPath: absolutePath,
+      outputPath: downloadPath,
     );
     if (result['ok'] != true) {
       await postRepo.updatePostMediaDownloadStatus(attachment.mediaId, 'failed');
       throw StateError(
         'Post media download failed for ${attachment.mediaId}: ${result['errorMessage']}',
       );
+    }
+
+    // Decrypt if attachment has crypto metadata.
+    if (attachment.isEncrypted &&
+        attachment.encryptionKeyBase64 != null &&
+        attachment.encryptionNonce != null) {
+      final decryptedPath = await callBlobDecrypt(
+        bridge,
+        filePath: downloadPath,
+        keyBase64: attachment.encryptionKeyBase64!,
+        nonce: attachment.encryptionNonce!,
+      );
+      // Move decrypted file to final path.
+      final decryptedFile = File(decryptedPath);
+      if (decryptedFile.existsSync()) {
+        decryptedFile.renameSync(absolutePath);
+      }
+      // Clean up ciphertext temp file.
+      try {
+        final ctFile = File(downloadPath);
+        if (ctFile.existsSync()) {
+          ctFile.deleteSync();
+        }
+      } catch (_) {}
     }
 
     final relativePath = mediaFileManager.relativePathForPostAttachment(

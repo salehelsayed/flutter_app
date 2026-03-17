@@ -4,6 +4,7 @@ import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/posts/application/post_engagement_follow_on_support.dart';
 import 'package:flutter_app/features/posts/application/post_follow_on_delivery.dart';
+import 'package:flutter_app/features/posts/application/post_repost_engagement_support.dart';
 import 'package:flutter_app/features/posts/application/send_post_reaction_use_case.dart';
 import 'package:flutter_app/features/posts/domain/models/post_comment_reaction_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_reaction_envelope.dart';
@@ -78,6 +79,12 @@ sendPostCommentReaction({
     isActive: isActive,
   );
   await postRepo.saveCommentReaction(reaction);
+  await persistRepostEngagementParticipantIfNeeded(
+    postRepo: postRepo,
+    postId: postId,
+    participantPeerId: senderPeerId,
+    createdAt: createdAt,
+  );
   final deliveryResult = await queueAndSendPostEngagementFollowOn(
     postRepo: postRepo,
     p2pService: p2pService,

@@ -6,6 +6,7 @@ import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/posts/application/post_media_draft.dart';
+import 'package:flutter_app/features/posts/application/post_repost_engagement_support.dart';
 import 'package:flutter_app/features/posts/domain/models/post_create_envelope.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_pass_envelope.dart';
@@ -152,14 +153,48 @@ class PostDeliveryRunner {
         postRepo,
       ),
     );
-    final envelope = PostPassEnvelope.buildJson(pass: pass, post: snapshotPost);
+    var innerPayloadJson = pass.innerPayloadJson;
+    if (innerPayloadJson == null || innerPayloadJson.isEmpty) {
+      final participantPeerIds = await loadPersistedRepostParticipantPeerIds(
+        postRepo: postRepo,
+        postId: snapshotPost.id,
+        authorPeerId: snapshotPost.authorPeerId,
+        passerPeerId: pass.passerPeerId,
+      );
+      final activeHeartPeerIds = await loadProjectedActiveHeartPeerIds(
+        postRepo: postRepo,
+        postId: snapshotPost.id,
+      );
+      final repostTotalBaseline = await loadProjectedRepostShareCount(
+        postRepo: postRepo,
+        postId: snapshotPost.id,
+      );
+      innerPayloadJson = PostPassEnvelope.fromPass(
+        pass: pass,
+        post: snapshotPost,
+        participantPeerIds: participantPeerIds,
+        activeHeartPeerIds: activeHeartPeerIds,
+        repostTotalBaseline: repostTotalBaseline > 0
+            ? repostTotalBaseline - 1
+            : 0,
+      ).toInnerJson();
+      progress.latestPass = pass.copyWith(innerPayloadJson: innerPayloadJson);
+      await postRepo.savePostPass(progress.latestPass);
+    }
 
     try {
       await _runRecipientFanout(
         p2pService: p2pService,
         maxConcurrentRecipients: maxConcurrentRecipients,
         resolvedRecipients: resolvedRecipients,
-        buildWireEnvelope: (_) async => envelope,
+        buildWireEnvelope: (recipient) {
+          return _buildPostPassWireEnvelope(
+            pass: progress.latestPass,
+            innerPayloadJson: innerPayloadJson!,
+            bridge: bridge,
+            recipient: recipient.contact,
+          );
+        },
         persistRecipientCompletion: (recipient, attemptedAt, delivery) {
           return progress.applyRecipientCompletion(
             postRepo: postRepo,
@@ -252,8 +287,8 @@ Future<void> _runRecipientFanout({
   );
 
   Future<void> runRecipient(CreatedLocalPostRecipient recipient) async {
+    final attemptedAt = DateTime.now().toUtc().toIso8601String();
     try {
-      final attemptedAt = DateTime.now().toUtc().toIso8601String();
       final wireEnvelope = await buildWireEnvelope(recipient);
       final delivery = await _deliverToRecipient(
         p2pService: p2pService,
@@ -270,6 +305,21 @@ Future<void> _runRecipientFanout({
           return Future<void>.value();
         }
         return persistRecipientCompletion(recipient, attemptedAt, delivery);
+      });
+    } on _RecipientDeliveryBuildException catch (error) {
+      completionQueue.enqueue(() {
+        if (fatalError != null) {
+          return Future<void>.value();
+        }
+        return persistRecipientCompletion(
+          recipient,
+          attemptedAt,
+          _DeliveryAttempt(
+            deliveryStatus: 'failed',
+            deliveryPath: 'failed',
+            lastError: error.message,
+          ),
+        );
       });
     } catch (error, stackTrace) {
       fatalError ??= AsyncError(error, stackTrace);
@@ -391,6 +441,48 @@ Future<String> _buildWireEnvelope({
   );
 }
 
+Future<String> _buildPostPassWireEnvelope({
+  required PostPassModel pass,
+  required String innerPayloadJson,
+  required ContactModel recipient,
+  Bridge? bridge,
+}) async {
+  if (bridge == null) {
+    throw const _RecipientDeliveryBuildException(
+      'repost_encryption_unavailable',
+    );
+  }
+  final recipientMlKemPublicKey = recipient.mlKemPublicKey;
+  if (recipientMlKemPublicKey == null || recipientMlKemPublicKey.isEmpty) {
+    throw const _RecipientDeliveryBuildException(
+      'repost_recipient_missing_mlkem_key',
+    );
+  }
+
+  final encryptResult = await callEncryptMessage(
+    bridge: bridge,
+    recipientMlKemPublicKey: recipientMlKemPublicKey,
+    plaintext: innerPayloadJson,
+  );
+  if (encryptResult['ok'] != true) {
+    final errorCode = encryptResult['errorCode']?.toString();
+    throw _RecipientDeliveryBuildException(
+      errorCode == null || errorCode.isEmpty
+          ? 'repost_encrypt_failed'
+          : 'repost_encrypt_failed:$errorCode',
+    );
+  }
+
+  return PostPassEnvelope.buildEncryptedEnvelope(
+    eventId: pass.eventId,
+    createdAt: pass.createdAt,
+    senderPeerId: pass.senderPeerId,
+    kem: encryptResult['kem'] as String,
+    ciphertext: encryptResult['ciphertext'] as String,
+    nonce: encryptResult['nonce'] as String,
+  );
+}
+
 Future<_DeliveryAttempt> _deliverToRecipient({
   required P2PService p2pService,
   required String recipientPeerId,
@@ -440,6 +532,12 @@ class _DeliveryAttempt {
     required this.deliveryPath,
     this.lastError,
   });
+}
+
+class _RecipientDeliveryBuildException implements Exception {
+  final String message;
+
+  const _RecipientDeliveryBuildException(this.message);
 }
 
 class _PostDeliveryProgress {

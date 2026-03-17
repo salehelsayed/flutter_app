@@ -597,3 +597,108 @@ Future<Map<String, dynamic>> callDecryptMessage({
     };
   }
 }
+
+/// Calls the bridge to generate a random 32-byte AES-256 symmetric key.
+///
+/// Returns the key as a base64-encoded string.
+Future<String> callBlobKeygen(
+  Bridge bridge, {
+  Duration timeout = const Duration(seconds: 10),
+}) async {
+  final request = {'cmd': 'blob:keygen', 'payload': <String, dynamic>{}};
+
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'BLOB_KEYGEN_REQUEST',
+    details: {},
+  );
+
+  final responseJson = await bridge
+      .send(jsonEncode(request))
+      .timeout(timeout);
+  final response = jsonDecode(responseJson) as Map<String, dynamic>;
+
+  if (response['ok'] != true) {
+    throw StateError(
+      'blob:keygen failed: ${response['errorMessage'] ?? 'unknown'}',
+    );
+  }
+
+  return response['keyBase64'] as String;
+}
+
+/// Calls the bridge to encrypt a file with AES-256-GCM.
+///
+/// Returns the encrypted file path and the base64 nonce.
+Future<({String encryptedPath, String nonce})> callBlobEncrypt(
+  Bridge bridge, {
+  required String filePath,
+  required String keyBase64,
+  Duration timeout = const Duration(minutes: 5),
+}) async {
+  final request = {
+    'cmd': 'blob:encrypt',
+    'payload': {'filePath': filePath, 'keyBase64': keyBase64},
+  };
+
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'BLOB_ENCRYPT_REQUEST',
+    details: {'filePath': filePath},
+  );
+
+  final responseJson = await bridge
+      .send(jsonEncode(request))
+      .timeout(timeout);
+  final response = jsonDecode(responseJson) as Map<String, dynamic>;
+
+  if (response['ok'] != true) {
+    throw StateError(
+      'blob:encrypt failed: ${response['errorMessage'] ?? 'unknown'}',
+    );
+  }
+
+  return (
+    encryptedPath: response['encryptedPath'] as String,
+    nonce: response['nonce'] as String,
+  );
+}
+
+/// Calls the bridge to decrypt a file with AES-256-GCM.
+///
+/// Returns the decrypted file path.
+Future<String> callBlobDecrypt(
+  Bridge bridge, {
+  required String filePath,
+  required String keyBase64,
+  required String nonce,
+  Duration timeout = const Duration(minutes: 5),
+}) async {
+  final request = {
+    'cmd': 'blob:decrypt',
+    'payload': {
+      'filePath': filePath,
+      'keyBase64': keyBase64,
+      'nonce': nonce,
+    },
+  };
+
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'BLOB_DECRYPT_REQUEST',
+    details: {'filePath': filePath},
+  );
+
+  final responseJson = await bridge
+      .send(jsonEncode(request))
+      .timeout(timeout);
+  final response = jsonDecode(responseJson) as Map<String, dynamic>;
+
+  if (response['ok'] != true) {
+    throw StateError(
+      'blob:decrypt failed: ${response['errorMessage'] ?? 'unknown'}',
+    );
+  }
+
+  return response['decryptedPath'] as String;
+}

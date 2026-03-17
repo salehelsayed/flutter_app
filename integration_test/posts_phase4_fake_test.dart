@@ -8,7 +8,9 @@ import 'package:flutter_app/features/posts/application/send_post_use_case.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
+import 'package:flutter_app/features/posts/domain/models/post_pass_envelope.dart';
 
+import '../test/core/bridge/fake_bridge.dart';
 import '../test/shared/fakes/fake_p2p_network.dart';
 import '../test/shared/fakes/fake_p2p_service_integration.dart';
 import '../test/shared/fakes/in_memory_contact_repository.dart';
@@ -22,6 +24,7 @@ ContactModel _contact(String peerId, String username) {
     username: username,
     signature: 'sig-$peerId',
     scannedAt: '2026-03-15T10:00:00.000Z',
+    mlKemPublicKey: 'mlkem-$peerId',
   );
 }
 
@@ -36,6 +39,9 @@ void main() {
         network: network,
       );
       final caraService = FakeP2PService(peerId: 'peer-cara', network: network);
+      final bobBridge = PassthroughCryptoBridge();
+      final aliceBridge = PassthroughCryptoBridge();
+      final caraBridge = PassthroughCryptoBridge();
 
       final bobContacts = InMemoryContactRepository()
         ..addTestContact(_contact('peer-alice', 'Alice'));
@@ -69,11 +75,15 @@ void main() {
         postPassStream: bobRouter.postPassStream,
         postRepo: bobPosts,
         contactRepo: bobContacts,
+        bridge: bobBridge,
+        getOwnMlKemSecretKey: () async => 'test-own-mlkem-sk',
       )..start();
       final caraPassListener = PostPassListener(
         postPassStream: caraRouter.postPassStream,
         postRepo: caraPosts,
         contactRepo: caraContacts,
+        bridge: caraBridge,
+        getOwnMlKemSecretKey: () async => 'test-own-mlkem-sk',
       )..start();
 
       addTearDown(() {
@@ -112,6 +122,7 @@ void main() {
         p2pService: aliceService,
         postRepo: alicePosts,
         contactRepo: aliceContacts,
+        bridge: aliceBridge,
         postId: postId,
         senderPeerId: 'peer-alice',
         senderUsername: 'Alice',
@@ -139,6 +150,9 @@ void main() {
         network: network,
       );
       final caraService = FakeP2PService(peerId: 'peer-cara', network: network);
+      final bobBridge = PassthroughCryptoBridge();
+      final aliceBridge = PassthroughCryptoBridge();
+      final caraBridge = PassthroughCryptoBridge();
 
       final bobContacts = InMemoryContactRepository()
         ..addTestContact(_contact('peer-alice', 'Alice'));
@@ -193,11 +207,15 @@ void main() {
         postPassStream: bobRouter.postPassStream,
         postRepo: bobPosts,
         contactRepo: bobContacts,
+        bridge: bobBridge,
+        getOwnMlKemSecretKey: () async => 'test-own-mlkem-sk',
       )..start();
       final caraPassListener = PostPassListener(
         postPassStream: caraRouter.postPassStream,
         postRepo: caraPosts,
         contactRepo: caraContacts,
+        bridge: caraBridge,
+        getOwnMlKemSecretKey: () async => 'test-own-mlkem-sk',
       )..start();
 
       addTearDown(() {
@@ -218,10 +236,23 @@ void main() {
         p2pService: aliceService,
         postRepo: alicePosts,
         contactRepo: aliceContacts,
+        bridge: aliceBridge,
         postId: post.id,
         senderPeerId: 'peer-alice',
         senderUsername: 'Alice',
         recipientPeerIds: const <String>['peer-cara'],
+        prepareRepostMediaFn: ({
+          required bridge,
+          required originalMedia,
+          required passerPeerId,
+          required recipientPeerIds,
+          required originalAuthorPeerId,
+        }) async {
+          return RepostMediaPrepResult(
+            attachments: originalMedia,
+            keys: const <String, PostMediaCryptoEntry>{},
+          );
+        },
       );
       expect(result, PassPostAlongResult.success);
       expect(pass, isNotNull);

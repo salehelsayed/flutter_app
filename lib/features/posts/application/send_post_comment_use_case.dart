@@ -5,6 +5,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/posts/application/post_engagement_follow_on_support.dart';
 import 'package:flutter_app/features/posts/application/post_follow_on_delivery.dart';
+import 'package:flutter_app/features/posts/application/post_repost_engagement_support.dart';
 import 'package:flutter_app/features/posts/application/refresh_post_expiry_for_comment_use_case.dart';
 import 'package:flutter_app/features/posts/application/send_post_reaction_use_case.dart';
 import 'package:flutter_app/features/posts/domain/models/post_comment_envelope.dart';
@@ -130,6 +131,12 @@ createLocalPostComment({
     commentedAt: commentedAt,
   ).toJson();
   await postRepo.saveComment(comment);
+  await persistRepostEngagementParticipantIfNeeded(
+    postRepo: postRepo,
+    postId: postId,
+    participantPeerId: senderPeerId,
+    createdAt: commentedAt,
+  );
   await refreshPostExpiryForComment(
     postRepo: postRepo,
     postId: postId,

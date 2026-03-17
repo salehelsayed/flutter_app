@@ -42,6 +42,11 @@ class InMemoryPostRepository implements PostRepository {
   final Map<String, PostPassModel> _postPassesById = <String, PostPassModel>{};
   final Map<String, List<PostPassModel>> _postPassesByPostId =
       <String, List<PostPassModel>>{};
+  final Map<String, Set<String>> _repostEngagementParticipantsByPostId =
+      <String, Set<String>>{};
+  final Map<String, Set<String>> _repostHeartBaselinePeersByPostId =
+      <String, Set<String>>{};
+  final Map<String, int> _repostTotalBaselinesByPostId = <String, int>{};
   final Map<String, PostOriginModel> _postOrigins = <String, PostOriginModel>{};
   final Map<String, PostPendingChildEvent> _pendingChildEventsById =
       <String, PostPendingChildEvent>{};
@@ -55,6 +60,7 @@ class InMemoryPostRepository implements PostRepository {
   final Map<String, PostPinStateModel> _pinStates =
       <String, PostPinStateModel>{};
   final Map<String, String> _pinDismissals = <String, String>{};
+  final Map<String, List<int>> _passAvatarSnapshots = <String, List<int>>{};
   final StreamController<String> _changes =
       StreamController<String>.broadcast();
 
@@ -158,8 +164,12 @@ class InMemoryPostRepository implements PostRepository {
       }
     }
     _postOrigins.remove(postId);
+    _repostEngagementParticipantsByPostId.remove(postId);
+    _repostHeartBaselinePeersByPostId.remove(postId);
+    _repostTotalBaselinesByPostId.remove(postId);
     _pinStates.remove(postId);
     _pinDismissals.remove(postId);
+    _passAvatarSnapshots.remove(postId);
     _postPassesByPostId.remove(postId)?.forEach((pass) {
       _postPassesById.remove(pass.passId);
     });
@@ -637,6 +647,101 @@ class InMemoryPostRepository implements PostRepository {
   }
 
   @override
+  Future<void> saveRepostEngagementParticipant({
+    required String postId,
+    required String participantPeerId,
+    required String createdAt,
+  }) async {
+    if (participantPeerId.isEmpty) {
+      return;
+    }
+    _repostEngagementParticipantsByPostId
+        .putIfAbsent(postId, () => <String>{})
+        .add(participantPeerId);
+    _changes.add(postId);
+  }
+
+  @override
+  Future<Set<String>> loadRepostEngagementParticipantPeerIds(
+    String postId,
+  ) async {
+    return Set<String>.from(
+      _repostEngagementParticipantsByPostId[postId] ?? const <String>{},
+    );
+  }
+
+  @override
+  Future<void> saveRepostHeartBaselinePeerIds({
+    required String postId,
+    required Iterable<String> peerIds,
+    required String createdAt,
+  }) async {
+    final baselinePeerIds = _repostHeartBaselinePeersByPostId.putIfAbsent(
+      postId,
+      () => <String>{},
+    );
+    baselinePeerIds.addAll(
+      peerIds.where((peerId) => peerId.isNotEmpty).toSet(),
+    );
+    _changes.add(postId);
+  }
+
+  @override
+  Future<Set<String>> loadRepostHeartBaselinePeerIds(String postId) async {
+    return Set<String>.from(
+      _repostHeartBaselinePeersByPostId[postId] ?? const <String>{},
+    );
+  }
+
+  @override
+  Future<Map<String, Set<String>>> loadRepostHeartBaselinePeerIdsForPosts(
+    List<String> postIds,
+  ) async {
+    return <String, Set<String>>{
+      for (final postId in postIds)
+        if (_repostHeartBaselinePeersByPostId.containsKey(postId))
+          postId: Set<String>.from(
+            _repostHeartBaselinePeersByPostId[postId] ?? const <String>{},
+          ),
+    };
+  }
+
+  @override
+  Future<void> seedRepostTotalBaseline({
+    required String postId,
+    required int repostTotalBaseline,
+    required int existingLocalPassCount,
+    required String createdAt,
+  }) async {
+    final expectedVisibleShareCount = repostTotalBaseline + 1;
+    final baselineDelta = expectedVisibleShareCount > existingLocalPassCount
+        ? expectedVisibleShareCount - existingLocalPassCount
+        : 0;
+    final existingBaseline = _repostTotalBaselinesByPostId[postId] ?? 0;
+    if (baselineDelta <= existingBaseline) {
+      return;
+    }
+    _repostTotalBaselinesByPostId[postId] = baselineDelta;
+    _changes.add(postId);
+  }
+
+  @override
+  Future<int> loadRepostTotalBaseline(String postId) async {
+    return _repostTotalBaselinesByPostId[postId] ?? 0;
+  }
+
+  @override
+  Future<Map<String, int>> loadRepostTotalBaselines(
+    List<String> postIds,
+  ) async {
+    return <String, int>{
+      for (final postId in postIds)
+        if (_repostTotalBaselinesByPostId.containsKey(postId))
+          postId: _repostTotalBaselinesByPostId[postId] ?? 0,
+    };
+  }
+
+  @override
   Future<void> savePostOrigin(PostOriginModel origin) async {
     _postOrigins[origin.postId] = origin;
     _changes.add(origin.postId);
@@ -702,6 +807,32 @@ class InMemoryPostRepository implements PostRepository {
   }
 
   @override
+  Future<void> savePassAvatarSnapshot({
+    required String postId,
+    required String authorPeerId,
+    required List<int> avatarBlob,
+    required String createdAt,
+  }) async {
+    _passAvatarSnapshots.putIfAbsent(postId, () => avatarBlob);
+  }
+
+  @override
+  Future<List<int>?> loadPassAvatarSnapshot(String postId) async {
+    return _passAvatarSnapshots[postId];
+  }
+
+  @override
+  Future<Map<String, List<int>>> loadPassAvatarSnapshotsForPosts(
+    List<String> postIds,
+  ) async {
+    return <String, List<int>>{
+      for (final postId in postIds)
+        if (_passAvatarSnapshots.containsKey(postId))
+          postId: _passAvatarSnapshots[postId]!,
+    };
+  }
+
+  @override
   void dispose() {
     _changes.close();
   }
@@ -713,7 +844,8 @@ class InMemoryPostRepository implements PostRepository {
   PostModel _decoratePost(PostModel post) {
     final origin = _postOrigins[post.id];
     final passCount =
-        (_postPassesByPostId[post.id] ?? const <PostPassModel>[]).length;
+        (_postPassesByPostId[post.id] ?? const <PostPassModel>[]).length +
+        (_repostTotalBaselinesByPostId[post.id] ?? 0);
     return post.copyWith(
       passedByPeerId: origin?.passerPeerId,
       passedByUsername: origin?.passerUsername,

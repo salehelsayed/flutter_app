@@ -18,6 +18,9 @@ class PostMediaAttachmentModel {
   final String createdAt;
   final List<double>? waveform;
   final String? thumbnailBlobId;
+  final String? encryptionKeyBase64;
+  final String? encryptionNonce;
+  final bool isEncrypted;
 
   const PostMediaAttachmentModel({
     required this.mediaId,
@@ -35,6 +38,9 @@ class PostMediaAttachmentModel {
     required this.createdAt,
     this.waveform,
     this.thumbnailBlobId,
+    this.encryptionKeyBase64,
+    this.encryptionNonce,
+    this.isEncrypted = false,
   });
 
   factory PostMediaAttachmentModel.fromMap(Map<String, Object?> map) {
@@ -54,6 +60,9 @@ class PostMediaAttachmentModel {
       createdAt: map['created_at'] as String,
       waveform: _decodeWaveform(map['waveform']),
       thumbnailBlobId: map['thumbnail_blob_id'] as String?,
+      encryptionKeyBase64: map['encryption_key_base64'] as String?,
+      encryptionNonce: map['encryption_nonce'] as String?,
+      isEncrypted: (map['is_encrypted'] as int?) == 1,
     );
   }
 
@@ -64,6 +73,9 @@ class PostMediaAttachmentModel {
     String downloadStatus = 'pending',
     String? localPath,
     String? createdAt,
+    String? encryptionKeyBase64,
+    String? encryptionNonce,
+    bool isEncrypted = false,
   }) {
     return PostMediaAttachmentModel(
       mediaId: json['media_id'] as String,
@@ -81,6 +93,9 @@ class PostMediaAttachmentModel {
       createdAt: createdAt ?? DateTime.now().toUtc().toIso8601String(),
       waveform: _decodeWaveform(json['waveform']),
       thumbnailBlobId: json['thumbnail_blob_id'] as String?,
+      encryptionKeyBase64: encryptionKeyBase64,
+      encryptionNonce: encryptionNonce,
+      isEncrypted: isEncrypted,
     );
   }
 
@@ -101,6 +116,9 @@ class PostMediaAttachmentModel {
       'created_at': createdAt,
       'waveform': waveform == null ? null : jsonEncode(waveform),
       'thumbnail_blob_id': thumbnailBlobId,
+      'encryption_key_base64': encryptionKeyBase64,
+      'encryption_nonce': encryptionNonce,
+      'is_encrypted': isEncrypted ? 1 : 0,
     };
   }
 
@@ -153,6 +171,9 @@ class PostMediaAttachmentModel {
     List<double>? waveform,
     bool clearWaveform = false,
     String? thumbnailBlobId,
+    String? encryptionKeyBase64,
+    String? encryptionNonce,
+    bool? isEncrypted,
   }) {
     return PostMediaAttachmentModel(
       mediaId: mediaId ?? this.mediaId,
@@ -170,6 +191,9 @@ class PostMediaAttachmentModel {
       createdAt: createdAt ?? this.createdAt,
       waveform: clearWaveform ? null : (waveform ?? this.waveform),
       thumbnailBlobId: thumbnailBlobId ?? this.thumbnailBlobId,
+      encryptionKeyBase64: encryptionKeyBase64 ?? this.encryptionKeyBase64,
+      encryptionNonce: encryptionNonce ?? this.encryptionNonce,
+      isEncrypted: isEncrypted ?? this.isEncrypted,
     );
   }
 

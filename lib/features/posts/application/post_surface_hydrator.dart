@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/features/posts/application/nearby_eligibility_service.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
@@ -19,20 +21,32 @@ Future<List<PostModel>> hydratePostSurfaceItems({
   final mediaMap = await postRepo.loadPostMediaAttachmentsForPosts(
     postList.map((post) => post.id).toList(growable: false),
   );
+  final repostHeartBaselines = await postRepo
+      .loadRepostHeartBaselinePeerIdsForPosts(
+        postList.map((post) => post.id).toList(growable: false),
+      );
+  final avatarSnapshots = await postRepo.loadPassAvatarSnapshotsForPosts(
+    postList.map((post) => post.id).toList(growable: false),
+  );
 
   return Future.wait(
     postList.map((post) async {
       final comments = await postRepo.loadComments(post.id);
       final reactions = await postRepo.loadPostReactions(post.id);
-      final activeHeartCount = reactions
-          .where((reaction) => reaction.isActive)
-          .length;
+      final activeHeartPeerIds = <String>{...?repostHeartBaselines[post.id]};
+      for (final reaction in reactions) {
+        if (reaction.senderPeerId.isEmpty) {
+          continue;
+        }
+        if (reaction.isActive) {
+          activeHeartPeerIds.add(reaction.senderPeerId);
+        } else {
+          activeHeartPeerIds.remove(reaction.senderPeerId);
+        }
+      }
+      final activeHeartCount = activeHeartPeerIds.length;
       final viewerHasHearted =
-          viewerPeerId != null &&
-          reactions.any(
-            (reaction) =>
-                reaction.senderPeerId == viewerPeerId && reaction.isActive,
-          );
+          viewerPeerId != null && activeHeartPeerIds.contains(viewerPeerId);
       final attachments =
           mediaMap[post.id] ?? const <PostMediaAttachmentModel>[];
       if (attachments.isEmpty) {
@@ -44,6 +58,9 @@ Future<List<PostModel>> hydratePostSurfaceItems({
               post.audience.kind == PostAudienceKind.peopleNearby &&
                   post.nearbyDistanceM != null
               ? formatNearbyDistanceLabel(post.nearbyDistanceM!)
+              : null,
+          originalAuthorAvatarBytes: avatarSnapshots[post.id] != null
+              ? Uint8List.fromList(avatarSnapshots[post.id]!)
               : null,
         );
       }
@@ -73,6 +90,9 @@ Future<List<PostModel>> hydratePostSurfaceItems({
             post.audience.kind == PostAudienceKind.peopleNearby &&
                 post.nearbyDistanceM != null
             ? formatNearbyDistanceLabel(post.nearbyDistanceM!)
+            : null,
+        originalAuthorAvatarBytes: avatarSnapshots[post.id] != null
+            ? Uint8List.fromList(avatarSnapshots[post.id]!)
             : null,
       );
     }),

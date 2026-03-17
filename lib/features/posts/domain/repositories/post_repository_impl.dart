@@ -41,6 +41,22 @@ class PostRepositoryImpl implements PostRepository {
   final Future<int> Function(String postId)? dbCountPostPasses;
   final Future<List<Map<String, Object?>>> Function(List<String> postIds)?
   dbLoadPostPassCounts;
+  final Future<void> Function(Map<String, Object?> row)?
+  dbUpsertRepostEngagementParticipant;
+  final Future<List<Map<String, Object?>>> Function(String postId)?
+  dbLoadRepostEngagementParticipants;
+  final Future<void> Function(Map<String, Object?> row)?
+  dbUpsertRepostHeartBaselinePeer;
+  final Future<List<Map<String, Object?>>> Function(String postId)?
+  dbLoadRepostHeartBaselinePeers;
+  final Future<List<Map<String, Object?>>> Function(List<String> postIds)?
+  dbLoadRepostHeartBaselinePeersForPosts;
+  final Future<void> Function(Map<String, Object?> row)?
+  dbInsertRepostProjectionState;
+  final Future<Map<String, Object?>?> Function(String postId)?
+  dbLoadRepostProjectionState;
+  final Future<List<Map<String, Object?>>> Function(List<String> postIds)?
+  dbLoadRepostProjectionStates;
   final Future<void> Function(Map<String, Object?> row)? dbUpsertPostOrigin;
   final Future<Map<String, Object?>?> Function(String postId)? dbLoadPostOrigin;
   final Future<void> Function(String postId) dbMarkPostFocused;
@@ -102,6 +118,9 @@ class PostRepositoryImpl implements PostRepository {
   final Future<void> Function(Map<String, Object?> row)? dbUpsertPinDismissal;
   final Future<List<Map<String, Object?>>> Function()? dbLoadPinDismissals;
   final Future<void> Function(String postId)? dbDeletePinDismissal;
+  final Future<void> Function(String postId, String authorPeerId, List<int> avatarBlob, String createdAt)? dbSavePassAvatarSnapshot;
+  final Future<List<int>?> Function(String postId)? dbLoadPassAvatarSnapshot;
+  final Future<Map<String, List<int>>> Function(List<String> postIds)? dbLoadPassAvatarSnapshotsForPosts;
 
   final StreamController<String> _postChangesController =
       StreamController<String>.broadcast();
@@ -122,6 +141,14 @@ class PostRepositoryImpl implements PostRepository {
     this.dbLoadRetryableOutgoingPostPasses,
     this.dbCountPostPasses,
     this.dbLoadPostPassCounts,
+    this.dbUpsertRepostEngagementParticipant,
+    this.dbLoadRepostEngagementParticipants,
+    this.dbUpsertRepostHeartBaselinePeer,
+    this.dbLoadRepostHeartBaselinePeers,
+    this.dbLoadRepostHeartBaselinePeersForPosts,
+    this.dbInsertRepostProjectionState,
+    this.dbLoadRepostProjectionState,
+    this.dbLoadRepostProjectionStates,
     this.dbUpsertPostOrigin,
     this.dbLoadPostOrigin,
     required this.dbMarkPostFocused,
@@ -158,6 +185,9 @@ class PostRepositoryImpl implements PostRepository {
     this.dbUpsertPinDismissal,
     this.dbLoadPinDismissals,
     this.dbDeletePinDismissal,
+    this.dbSavePassAvatarSnapshot,
+    this.dbLoadPassAvatarSnapshot,
+    this.dbLoadPassAvatarSnapshotsForPosts,
   });
 
   @override
@@ -674,6 +704,167 @@ class PostRepositoryImpl implements PostRepository {
   }
 
   @override
+  Future<void> saveRepostEngagementParticipant({
+    required String postId,
+    required String participantPeerId,
+    required String createdAt,
+  }) async {
+    final dbUpsert = _require(
+      dbUpsertRepostEngagementParticipant,
+      'Repost engagement participants are not configured for this repository.',
+    );
+    await dbUpsert(<String, Object?>{
+      'post_id': postId,
+      'participant_peer_id': participantPeerId,
+      'created_at': createdAt,
+    });
+    _postChangesController.add(postId);
+  }
+
+  @override
+  Future<Set<String>> loadRepostEngagementParticipantPeerIds(
+    String postId,
+  ) async {
+    final dbLoad = _require(
+      dbLoadRepostEngagementParticipants,
+      'Repost engagement participants are not configured for this repository.',
+    );
+    final rows = await dbLoad(postId);
+    return rows
+        .map((row) => row['participant_peer_id'] as String?)
+        .whereType<String>()
+        .where((peerId) => peerId.isNotEmpty)
+        .toSet();
+  }
+
+  @override
+  Future<void> saveRepostHeartBaselinePeerIds({
+    required String postId,
+    required Iterable<String> peerIds,
+    required String createdAt,
+  }) async {
+    final dbUpsert = _require(
+      dbUpsertRepostHeartBaselinePeer,
+      'Repost heart baselines are not configured for this repository.',
+    );
+    final sortedPeerIds =
+        peerIds
+            .where((peerId) => peerId.isNotEmpty)
+            .toSet()
+            .toList(growable: false)
+          ..sort();
+    for (final peerId in sortedPeerIds) {
+      await dbUpsert(<String, Object?>{
+        'post_id': postId,
+        'sender_peer_id': peerId,
+        'created_at': createdAt,
+      });
+    }
+    _postChangesController.add(postId);
+  }
+
+  @override
+  Future<Set<String>> loadRepostHeartBaselinePeerIds(String postId) async {
+    final dbLoad = _require(
+      dbLoadRepostHeartBaselinePeers,
+      'Repost heart baselines are not configured for this repository.',
+    );
+    final rows = await dbLoad(postId);
+    return rows
+        .map((row) => row['sender_peer_id'] as String?)
+        .whereType<String>()
+        .where((peerId) => peerId.isNotEmpty)
+        .toSet();
+  }
+
+  @override
+  Future<Map<String, Set<String>>> loadRepostHeartBaselinePeerIdsForPosts(
+    List<String> postIds,
+  ) async {
+    if (postIds.isEmpty) {
+      return const <String, Set<String>>{};
+    }
+    final dbLoad = _require(
+      dbLoadRepostHeartBaselinePeersForPosts,
+      'Repost heart baselines are not configured for this repository.',
+    );
+    final rows = await dbLoad(postIds);
+    final results = <String, Set<String>>{};
+    for (final row in rows) {
+      final postId = row['post_id'] as String?;
+      final senderPeerId = row['sender_peer_id'] as String?;
+      if (postId == null || senderPeerId == null || senderPeerId.isEmpty) {
+        continue;
+      }
+      results.putIfAbsent(postId, () => <String>{}).add(senderPeerId);
+    }
+    return results;
+  }
+
+  @override
+  Future<void> seedRepostTotalBaseline({
+    required String postId,
+    required int repostTotalBaseline,
+    required int existingLocalPassCount,
+    required String createdAt,
+  }) async {
+    final dbInsert = _require(
+      dbInsertRepostProjectionState,
+      'Repost projection state is not configured for this repository.',
+    );
+    final dbLoad = _require(
+      dbLoadRepostProjectionState,
+      'Repost projection state is not configured for this repository.',
+    );
+    final expectedVisibleShareCount = repostTotalBaseline + 1;
+    final baselineDelta = expectedVisibleShareCount > existingLocalPassCount
+        ? expectedVisibleShareCount - existingLocalPassCount
+        : 0;
+    final existingRow = await dbLoad(postId);
+    final existingBaseline =
+        (existingRow?['repost_total_baseline'] as num?)?.toInt() ?? 0;
+    if (baselineDelta <= existingBaseline) {
+      return;
+    }
+    await dbInsert(<String, Object?>{
+      'post_id': postId,
+      'repost_total_baseline': baselineDelta,
+      'created_at': createdAt,
+    });
+    _postChangesController.add(postId);
+  }
+
+  @override
+  Future<int> loadRepostTotalBaseline(String postId) async {
+    final dbLoad = _require(
+      dbLoadRepostProjectionState,
+      'Repost projection state is not configured for this repository.',
+    );
+    final row = await dbLoad(postId);
+    return (row?['repost_total_baseline'] as num?)?.toInt() ?? 0;
+  }
+
+  @override
+  Future<Map<String, int>> loadRepostTotalBaselines(
+    List<String> postIds,
+  ) async {
+    if (postIds.isEmpty) {
+      return const <String, int>{};
+    }
+    final dbLoad = _require(
+      dbLoadRepostProjectionStates,
+      'Repost projection state is not configured for this repository.',
+    );
+    final rows = await dbLoad(postIds);
+    return <String, int>{
+      for (final row in rows)
+        if (row['post_id'] is String)
+          row['post_id'] as String:
+              ((row['repost_total_baseline'] as num?)?.toInt() ?? 0),
+    };
+  }
+
+  @override
   Future<void> savePostOrigin(PostOriginModel origin) async {
     final dbUpsert = _require(
       dbUpsertPostOrigin,
@@ -760,6 +951,43 @@ class PostRepositoryImpl implements PostRepository {
   Future<void> markFocused(String postId) async {
     await dbMarkPostFocused(postId);
     _postChangesController.add(postId);
+  }
+
+  @override
+  Future<void> savePassAvatarSnapshot({
+    required String postId,
+    required String authorPeerId,
+    required List<int> avatarBlob,
+    required String createdAt,
+  }) async {
+    final dbSave = _require(
+      dbSavePassAvatarSnapshot,
+      'Pass avatar snapshots are not configured for this repository.',
+    );
+    await dbSave(postId, authorPeerId, avatarBlob, createdAt);
+  }
+
+  @override
+  Future<List<int>?> loadPassAvatarSnapshot(String postId) async {
+    final dbLoad = _require(
+      dbLoadPassAvatarSnapshot,
+      'Pass avatar snapshots are not configured for this repository.',
+    );
+    return dbLoad(postId);
+  }
+
+  @override
+  Future<Map<String, List<int>>> loadPassAvatarSnapshotsForPosts(
+    List<String> postIds,
+  ) async {
+    if (postIds.isEmpty) {
+      return const <String, List<int>>{};
+    }
+    final dbLoad = _require(
+      dbLoadPassAvatarSnapshotsForPosts,
+      'Pass avatar snapshots are not configured for this repository.',
+    );
+    return dbLoad(postIds);
   }
 
   @override

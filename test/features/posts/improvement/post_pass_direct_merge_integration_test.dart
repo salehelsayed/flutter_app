@@ -9,6 +9,7 @@ import 'package:flutter_app/features/posts/domain/models/post_create_envelope.da
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_origin_model.dart';
 
+import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/fake_p2p_network.dart';
 import '../../../shared/fakes/fake_p2p_service_integration.dart';
 import '../../../shared/fakes/in_memory_contact_repository.dart';
@@ -73,6 +74,7 @@ void main() {
         p2pService: passer.p2pService,
         postRepo: passer.postRepo,
         contactRepo: passer.contactRepo,
+        bridge: passer.bridge,
         postId: sharedPost.id,
         senderPeerId: passer.peerId,
         senderUsername: passer.username,
@@ -143,6 +145,7 @@ void main() {
         p2pService: passer.p2pService,
         postRepo: passer.postRepo,
         contactRepo: passer.contactRepo,
+        bridge: passer.bridge,
         postId: sharedPost.id,
         senderPeerId: passer.peerId,
         senderUsername: passer.username,
@@ -234,6 +237,7 @@ class _MergeUser {
   final IncomingMessageRouter router;
   final PostListener postListener;
   final PostPassListener passListener;
+  final PassthroughCryptoBridge bridge;
 
   _MergeUser._({
     required this.peerId,
@@ -244,6 +248,7 @@ class _MergeUser {
     required this.router,
     required this.postListener,
     required this.passListener,
+    required this.bridge,
   });
 
   factory _MergeUser.create({
@@ -252,6 +257,7 @@ class _MergeUser {
     required FakeP2PNetwork network,
   }) {
     final p2pService = FakeP2PService(peerId: peerId, network: network);
+    final bridge = PassthroughCryptoBridge();
     final contactRepo = InMemoryContactRepository();
     final postRepo = InMemoryPostRepository();
     final router = IncomingMessageRouter(p2pService: p2pService);
@@ -264,6 +270,8 @@ class _MergeUser {
       postPassStream: router.postPassStream,
       postRepo: postRepo,
       contactRepo: contactRepo,
+      bridge: bridge,
+      getOwnMlKemSecretKey: () async => 'test-own-mlkem-sk',
     );
     return _MergeUser._(
       peerId: peerId,
@@ -274,6 +282,7 @@ class _MergeUser {
       router: router,
       postListener: postListener,
       passListener: passListener,
+      bridge: bridge,
     );
   }
 
@@ -304,5 +313,6 @@ ContactModel _contact(String peerId, String username) {
     username: username,
     signature: 'sig-$peerId',
     scannedAt: '2026-03-15T10:00:00.000Z',
+    mlKemPublicKey: 'mlkem-$peerId',
   );
 }

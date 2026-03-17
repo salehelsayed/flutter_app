@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
@@ -12,6 +13,8 @@ class PostPassListener {
   final Stream<ChatMessage> postPassStream;
   final PostRepository postRepo;
   final ContactRepository contactRepo;
+  final Bridge? bridge;
+  final Future<String?> Function()? getOwnMlKemSecretKey;
   final Future<PostMediaAttachmentModel> Function({
     required PostMediaAttachmentModel attachment,
     required String postId,
@@ -25,6 +28,8 @@ class PostPassListener {
     required this.postPassStream,
     required this.postRepo,
     required this.contactRepo,
+    this.bridge,
+    this.getOwnMlKemSecretKey,
     this.hydratePostMediaFn,
   });
 
@@ -49,10 +54,15 @@ class PostPassListener {
 
   Future<void> _onMessage(ChatMessage message) async {
     try {
+      final ownMlKemSecretKey = getOwnMlKemSecretKey == null
+          ? null
+          : await getOwnMlKemSecretKey!();
       final (result, post) = await handleIncomingPassedPost(
         message: message,
         postRepo: postRepo,
         contactRepo: contactRepo,
+        bridge: bridge,
+        ownMlKemSecretKey: ownMlKemSecretKey,
         hydratePostMediaFn: hydratePostMediaFn,
       );
       if (result == HandleIncomingPassedPostResult.passAccepted &&

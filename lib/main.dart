@@ -51,6 +51,10 @@ import 'package:flutter_app/core/database/migrations/032_posts_retry_recipient_c
 import 'package:flutter_app/core/database/migrations/033_posts_follow_on_outbox.dart';
 import 'package:flutter_app/core/database/migrations/034_posts_media_upload_recovery.dart';
 import 'package:flutter_app/core/database/migrations/035_posts_repost_delivery_state.dart';
+import 'package:flutter_app/core/database/migrations/036_posts_pass_encrypted_snapshots.dart';
+import 'package:flutter_app/core/database/migrations/037_posts_repost_engagement_state.dart';
+import 'package:flutter_app/core/database/migrations/038_posts_repost_media_crypto.dart';
+import 'package:flutter_app/core/database/migrations/039_posts_pass_avatar_snapshots.dart';
 import 'package:flutter_app/core/database/helpers/introductions_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_comments_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_comment_reactions_db_helpers.dart';
@@ -66,6 +70,7 @@ import 'package:flutter_app/core/database/helpers/post_media_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_media_upload_recovery_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_pending_child_events_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_reactions_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/post_repost_state_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_recipients_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/posts_db_helpers.dart';
 import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository_impl.dart';
@@ -183,7 +188,7 @@ void main() async {
   final db = await openEncryptedDatabase(
     secureKeyStore: secureKeyStore,
     dbName: 'identity.db',
-    version: 35,
+    version: 39,
     onCreate: (db, version) async {
       await runIdentityTableMigration(db);
       await runMessagesTableMigration(db);
@@ -220,6 +225,10 @@ void main() async {
       await runPostsFollowOnOutboxMigration(db);
       await runPostsMediaUploadRecoveryMigration(db);
       await runPostsRepostDeliveryStateMigration(db);
+      await runPostsPassEncryptedSnapshotsMigration(db);
+      await runPostsRepostEngagementStateMigration(db);
+      await runPostsRepostMediaCryptoMigration(db);
+      await runPostsPassAvatarSnapshotsMigration(db);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) {
@@ -321,6 +330,18 @@ void main() async {
       }
       if (oldVersion < 35) {
         await runPostsRepostDeliveryStateMigration(db);
+      }
+      if (oldVersion < 36) {
+        await runPostsPassEncryptedSnapshotsMigration(db);
+      }
+      if (oldVersion < 37) {
+        await runPostsRepostEngagementStateMigration(db);
+      }
+      if (oldVersion < 38) {
+        await runPostsRepostMediaCryptoMigration(db);
+      }
+      if (oldVersion < 39) {
+        await runPostsPassAvatarSnapshotsMigration(db);
       }
     },
   );
@@ -424,6 +445,22 @@ void main() async {
         dbLoadRetryableOutgoingPostPasses(db),
     dbCountPostPasses: (postId) => dbCountPostPasses(db, postId),
     dbLoadPostPassCounts: (postIds) => dbLoadPostPassCounts(db, postIds),
+    dbUpsertRepostEngagementParticipant: (row) =>
+        dbUpsertPostRepostEngagementParticipant(db, row),
+    dbLoadRepostEngagementParticipants: (postId) =>
+        dbLoadPostRepostEngagementParticipants(db, postId),
+    dbUpsertRepostHeartBaselinePeer: (row) =>
+        dbUpsertPostRepostHeartBaselinePeer(db, row),
+    dbLoadRepostHeartBaselinePeers: (postId) =>
+        dbLoadPostRepostHeartBaselinePeers(db, postId),
+    dbLoadRepostHeartBaselinePeersForPosts: (postIds) =>
+        dbLoadPostRepostHeartBaselinePeersForPosts(db, postIds),
+    dbInsertRepostProjectionState: (row) =>
+        dbInsertPostRepostProjectionState(db, row),
+    dbLoadRepostProjectionState: (postId) =>
+        dbLoadPostRepostProjectionState(db, postId),
+    dbLoadRepostProjectionStates: (postIds) =>
+        dbLoadPostRepostProjectionStates(db, postIds),
     dbUpsertPostOrigin: (row) => dbUpsertPostOrigin(db, row),
     dbLoadPostOrigin: (postId) => dbLoadPostOrigin(db, postId),
     dbMarkPostFocused: (postId) => dbMarkPostFocused(db, postId),
@@ -476,6 +513,11 @@ void main() async {
     dbUpsertPinDismissal: (row) => dbUpsertPostPinDismissal(db, row),
     dbLoadPinDismissals: () => dbLoadPostPinDismissals(db),
     dbDeletePinDismissal: (postId) => dbDeletePostPinDismissal(db, postId),
+    dbSavePassAvatarSnapshot: (postId, authorPeerId, avatarBlob, createdAt) =>
+        dbSavePassAvatarSnapshot(db, postId, authorPeerId, avatarBlob, createdAt),
+    dbLoadPassAvatarSnapshot: (postId) => dbLoadPassAvatarSnapshot(db, postId),
+    dbLoadPassAvatarSnapshotsForPosts: (postIds) =>
+        dbLoadPassAvatarSnapshotsForPosts(db, postIds),
   );
 
   final postsPrivacySettingsRepository = PostsPrivacySettingsRepositoryImpl(
@@ -745,6 +787,11 @@ void main() async {
     postPassStream: messageRouter.postPassStream,
     postRepo: postRepository,
     contactRepo: contactRepository,
+    bridge: bridge,
+    getOwnMlKemSecretKey: () async {
+      final identity = await repository.loadIdentity();
+      return identity?.mlKemSecretKey;
+    },
     hydratePostMediaFn: ({required attachment, required postId}) {
       return downloadPostMedia(
         bridge: bridge,

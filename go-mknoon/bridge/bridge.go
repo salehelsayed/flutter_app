@@ -1875,6 +1875,96 @@ func GroupInboxRetrieveCursor(paramsJSON string) (result string) {
 	})
 }
 
+// --- Blob Crypto ---
+
+// BlobKeygen generates a random 32-byte AES-256 symmetric key.
+// Returns JSON: { "ok": true, "keyBase64": "<base64>" }
+func BlobKeygen(_ string) (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+		}
+	}()
+
+	key, err := mcrypto.GenerateSymmetricKey()
+	if err != nil {
+		return errJSON("INTERNAL_ERROR", err.Error())
+	}
+
+	return okJSON(map[string]interface{}{
+		"ok":        true,
+		"keyBase64": key,
+	})
+}
+
+// BlobEncrypt encrypts a file with AES-256-GCM using a symmetric key.
+// Input JSON: { "filePath": "...", "keyBase64": "<base64>" }
+// Returns JSON: { "ok": true, "encryptedPath": "...", "nonce": "<base64>" }
+func BlobEncrypt(paramsJSON string) (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+		}
+	}()
+
+	var params struct {
+		FilePath  string `json:"filePath"`
+		KeyBase64 string `json:"keyBase64"`
+	}
+	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
+		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
+	}
+
+	if params.FilePath == "" || params.KeyBase64 == "" {
+		return errJSON("INVALID_INPUT", "missing filePath or keyBase64")
+	}
+
+	encryptedPath, nonce, err := mcrypto.EncryptFile(params.FilePath, params.KeyBase64)
+	if err != nil {
+		return errJSON("ENCRYPT_ERROR", err.Error())
+	}
+
+	return okJSON(map[string]interface{}{
+		"ok":            true,
+		"encryptedPath": encryptedPath,
+		"nonce":         nonce,
+	})
+}
+
+// BlobDecrypt decrypts a file with AES-256-GCM using a symmetric key + nonce.
+// Input JSON: { "filePath": "...", "keyBase64": "<base64>", "nonce": "<base64>" }
+// Returns JSON: { "ok": true, "decryptedPath": "..." }
+func BlobDecrypt(paramsJSON string) (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+		}
+	}()
+
+	var params struct {
+		FilePath  string `json:"filePath"`
+		KeyBase64 string `json:"keyBase64"`
+		Nonce     string `json:"nonce"`
+	}
+	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
+		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
+	}
+
+	if params.FilePath == "" || params.KeyBase64 == "" || params.Nonce == "" {
+		return errJSON("INVALID_INPUT", "missing filePath, keyBase64, or nonce")
+	}
+
+	decryptedPath, err := mcrypto.DecryptFile(params.FilePath, params.KeyBase64, params.Nonce)
+	if err != nil {
+		return errJSON("DECRYPT_ERROR", err.Error())
+	}
+
+	return okJSON(map[string]interface{}{
+		"ok":            true,
+		"decryptedPath": decryptedPath,
+	})
+}
+
 // --- Helpers ---
 
 // identityMap converts an identity.Identity to the JSON-compatible map format.

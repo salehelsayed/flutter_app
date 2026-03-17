@@ -94,15 +94,17 @@ Future<Map<String, Object?>?> dbLoadPost(Database db, String postId) async {
         po.passer_peer_id,
         po.passer_username,
         po.pass_created_at,
-        COALESCE(pc.share_count, 0) AS share_count,
+        COALESCE(pc.local_share_count, 0) +
+            COALESCE(prs.repost_total_baseline, 0) AS share_count,
         COALESCE(fs.is_hidden, 0) AS is_hidden,
         COALESCE(fs.is_read, 0) AS is_read,
         COALESCE(fs.last_focused_at, '') AS last_focused_at
       FROM posts p
       LEFT JOIN post_feed_state fs ON fs.post_id = p.post_id
       LEFT JOIN post_origin po ON po.post_id = p.post_id
+      LEFT JOIN post_repost_projection_state prs ON prs.post_id = p.post_id
       LEFT JOIN (
-        SELECT post_id, COUNT(*) AS share_count
+        SELECT post_id, COUNT(*) AS local_share_count
         FROM post_passes
         GROUP BY post_id
       ) pc ON pc.post_id = p.post_id
@@ -126,15 +128,17 @@ Future<List<Map<String, Object?>>> dbLoadPostsFeed(Database db) async {
       po.passer_peer_id,
       po.passer_username,
       po.pass_created_at,
-      COALESCE(pc.share_count, 0) AS share_count,
+      COALESCE(pc.local_share_count, 0) +
+          COALESCE(prs.repost_total_baseline, 0) AS share_count,
       COALESCE(fs.is_hidden, 0) AS is_hidden,
       COALESCE(fs.is_read, 0) AS is_read,
       COALESCE(fs.last_focused_at, '') AS last_focused_at
     FROM posts p
     LEFT JOIN post_feed_state fs ON fs.post_id = p.post_id
     LEFT JOIN post_origin po ON po.post_id = p.post_id
+    LEFT JOIN post_repost_projection_state prs ON prs.post_id = p.post_id
     LEFT JOIN (
-      SELECT post_id, COUNT(*) AS share_count
+      SELECT post_id, COUNT(*) AS local_share_count
       FROM post_passes
       GROUP BY post_id
     ) pc ON pc.post_id = p.post_id
@@ -154,15 +158,17 @@ Future<List<Map<String, Object?>>> dbLoadRetryableOutgoingPosts(
         po.passer_peer_id,
         po.passer_username,
         po.pass_created_at,
-        COALESCE(pc.share_count, 0) AS share_count,
+        COALESCE(pc.local_share_count, 0) +
+            COALESCE(prs.repost_total_baseline, 0) AS share_count,
         COALESCE(fs.is_hidden, 0) AS is_hidden,
         COALESCE(fs.is_read, 0) AS is_read,
         COALESCE(fs.last_focused_at, '') AS last_focused_at
       FROM posts p
       LEFT JOIN post_feed_state fs ON fs.post_id = p.post_id
       LEFT JOIN post_origin po ON po.post_id = p.post_id
+      LEFT JOIN post_repost_projection_state prs ON prs.post_id = p.post_id
       LEFT JOIN (
-        SELECT post_id, COUNT(*) AS share_count
+        SELECT post_id, COUNT(*) AS local_share_count
         FROM post_passes
         GROUP BY post_id
       ) pc ON pc.post_id = p.post_id
@@ -185,15 +191,17 @@ Future<List<Map<String, Object?>>> dbLoadExpiredPosts(
         po.passer_peer_id,
         po.passer_username,
         po.pass_created_at,
-        COALESCE(pc.share_count, 0) AS share_count,
+        COALESCE(pc.local_share_count, 0) +
+            COALESCE(prs.repost_total_baseline, 0) AS share_count,
         COALESCE(fs.is_hidden, 0) AS is_hidden,
         COALESCE(fs.is_read, 0) AS is_read,
         COALESCE(fs.last_focused_at, '') AS last_focused_at
       FROM posts p
       LEFT JOIN post_feed_state fs ON fs.post_id = p.post_id
       LEFT JOIN post_origin po ON po.post_id = p.post_id
+      LEFT JOIN post_repost_projection_state prs ON prs.post_id = p.post_id
       LEFT JOIN (
-        SELECT post_id, COUNT(*) AS share_count
+        SELECT post_id, COUNT(*) AS local_share_count
         FROM post_passes
         GROUP BY post_id
       ) pc ON pc.post_id = p.post_id
@@ -206,70 +214,47 @@ Future<List<Map<String, Object?>>> dbLoadExpiredPosts(
 
 Future<void> dbDeletePostCascade(Database db, String postId) async {
   await db.transaction((txn) async {
-    await txn.delete(
-      'post_comment_reactions',
-      where: 'post_id = ?',
-      whereArgs: <Object?>[postId],
+    await _deleteRequiredPostRows(txn, 'post_comment_reactions', postId);
+    await _deleteRequiredPostRows(txn, 'post_reactions', postId);
+    await _deleteRequiredPostRows(txn, 'post_comments', postId);
+    await _deleteRequiredPostRows(txn, 'post_media_attachments', postId);
+    await _deleteRequiredPostRows(txn, 'post_media_upload_recovery', postId);
+    await _deleteRequiredPostRows(txn, 'post_pending_child_events', postId);
+    await _deleteRequiredPostRows(txn, 'post_recipients', postId);
+    await _deleteRequiredPostRows(txn, 'post_passes', postId);
+    await _deleteRequiredPostRows(txn, 'post_origin', postId);
+    await _deleteRequiredPostRows(
+      txn,
+      'post_repost_engagement_participants',
+      postId,
     );
-    await txn.delete(
-      'post_reactions',
-      where: 'post_id = ?',
-      whereArgs: <Object?>[postId],
+    await _deleteRequiredPostRows(
+      txn,
+      'post_repost_heart_baseline_peers',
+      postId,
     );
-    await txn.delete(
-      'post_comments',
-      where: 'post_id = ?',
-      whereArgs: <Object?>[postId],
-    );
-    await txn.delete(
-      'post_media_attachments',
-      where: 'post_id = ?',
-      whereArgs: <Object?>[postId],
-    );
-    await txn.delete(
-      'post_media_upload_recovery',
-      where: 'post_id = ?',
-      whereArgs: <Object?>[postId],
-    );
-    await txn.delete(
-      'post_pending_child_events',
-      where: 'post_id = ?',
-      whereArgs: <Object?>[postId],
-    );
-    await txn.delete(
-      'post_recipients',
-      where: 'post_id = ?',
-      whereArgs: <Object?>[postId],
-    );
-    await txn.delete(
-      'post_passes',
-      where: 'post_id = ?',
-      whereArgs: <Object?>[postId],
-    );
-    await txn.delete(
-      'post_origin',
-      where: 'post_id = ?',
-      whereArgs: <Object?>[postId],
-    );
-    await txn.delete(
-      'post_pins',
-      where: 'post_id = ?',
-      whereArgs: <Object?>[postId],
-    );
-    await txn.delete(
-      'post_pin_dismissals',
-      where: 'post_id = ?',
-      whereArgs: <Object?>[postId],
-    );
-    await txn.delete(
-      'post_feed_state',
-      where: 'post_id = ?',
-      whereArgs: <Object?>[postId],
-    );
-    await txn.delete(
-      'posts',
-      where: 'post_id = ?',
-      whereArgs: <Object?>[postId],
-    );
+    await _deleteRequiredPostRows(txn, 'post_repost_projection_state', postId);
+    await _deleteRequiredPostRows(txn, 'post_pins', postId);
+    await _deleteRequiredPostRows(txn, 'post_pin_dismissals', postId);
+    await _deleteRequiredPostRows(txn, 'post_feed_state', postId);
+    await _deleteRequiredPostRows(txn, 'post_pass_avatar_snapshots', postId);
+    await _deleteRequiredPostRows(txn, 'posts', postId);
   });
+}
+
+Future<void> _deleteRequiredPostRows(
+  Transaction txn,
+  String table,
+  String postId,
+) async {
+  final exists = await txn.rawQuery(
+    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+    <Object?>[table],
+  );
+  if (exists.isEmpty) {
+    throw StateError(
+      'Expected posts cascade table "$table" to exist before deleting post "$postId".',
+    );
+  }
+  await txn.delete(table, where: 'post_id = ?', whereArgs: <Object?>[postId]);
 }

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
@@ -9,8 +10,13 @@ import 'package:flutter_app/features/posts/application/post_delivery_runner.dart
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
+import 'package:flutter_app/features/posts/domain/models/post_pass_envelope.dart';
+import 'package:flutter_app/features/posts/domain/models/post_pass_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_recipient_delivery.dart';
 
+import 'package:flutter_app/core/bridge/bridge.dart';
+
+import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/fake_p2p_network.dart';
 import '../../../shared/fakes/fake_p2p_service_integration.dart';
 import '../../../shared/fakes/in_memory_contact_repository.dart';
@@ -23,6 +29,7 @@ void main() {
   late FakeP2PService caraService;
   late InMemoryContactRepository contacts;
   late InMemoryPostRepository posts;
+  late PassthroughCryptoBridge bridge;
 
   setUp(() {
     network = FakeP2PNetwork();
@@ -31,6 +38,7 @@ void main() {
     caraService = FakeP2PService(peerId: 'peer-cara', network: network);
     contacts = InMemoryContactRepository();
     posts = InMemoryPostRepository();
+    bridge = PassthroughCryptoBridge();
 
     contacts.addTestContact(_contact('peer-bob', 'Bob'));
     contacts.addTestContact(_contact('peer-cara', 'Cara'));
@@ -54,6 +62,7 @@ void main() {
         p2pService: aliceService,
         postRepo: posts,
         contactRepo: contacts,
+        bridge: bridge,
         postId: 'post-1',
         senderPeerId: 'peer-alice',
         senderUsername: 'Alice',
@@ -65,10 +74,11 @@ void main() {
 
       final message = await receivedByCara.timeout(const Duration(seconds: 1));
       final json = jsonDecode(message.content) as Map<String, dynamic>;
-      final payload = json['payload'] as Map<String, dynamic>;
+      final payload = _decodeEncryptedPassPayload(json);
       final snapshot = payload['original_snapshot'] as Map<String, dynamic>;
 
       expect(json['type'], 'post_pass');
+      expect(json['version'], '2');
       expect(payload['post_id'], 'post-1');
       expect(payload['passer_peer_id'], 'peer-alice');
       expect(snapshot['post_id'], 'post-1');
@@ -108,10 +118,12 @@ void main() {
         p2pService: aliceService,
         postRepo: posts,
         contactRepo: contacts,
+        bridge: bridge,
         postId: 'post-1',
         senderPeerId: 'peer-alice',
         senderUsername: 'Alice',
         recipientPeerIds: const <String>['peer-cara'],
+        prepareRepostMediaFn: _noopMediaPrep,
       );
 
       expect(result, PassPostAlongResult.success);
@@ -119,7 +131,7 @@ void main() {
 
       final message = await receivedByCara.timeout(const Duration(seconds: 1));
       final json = jsonDecode(message.content) as Map<String, dynamic>;
-      final payload = json['payload'] as Map<String, dynamic>;
+      final payload = _decodeEncryptedPassPayload(json);
       final snapshot = payload['original_snapshot'] as Map<String, dynamic>;
       final media = (snapshot['media'] as List<dynamic>)
           .cast<Map<String, dynamic>>();
@@ -132,6 +144,250 @@ void main() {
   );
 
   test(
+    'includes avatar in encrypted repost payload when avatar exists',
+    () async {
+      await posts.savePost(_directPost());
+      final avatarBytes = Uint8List.fromList(const <int>[1, 2, 3, 4, 5]);
+
+      final receivedByCara = caraService.messageStream.first;
+
+      final (result, pass) = await passPostAlong(
+        p2pService: aliceService,
+        postRepo: posts,
+        contactRepo: contacts,
+        bridge: bridge,
+        postId: 'post-1',
+        senderPeerId: 'peer-alice',
+        senderUsername: 'Alice',
+        recipientPeerIds: const <String>['peer-cara'],
+        loadAvatarBytesFn: (_) async => avatarBytes,
+      );
+
+      expect(result, PassPostAlongResult.success);
+      expect(pass, isNotNull);
+
+      final message = await receivedByCara.timeout(const Duration(seconds: 1));
+      final json = jsonDecode(message.content) as Map<String, dynamic>;
+      final snapshot = _decodeEncryptedOriginalSnapshot(json);
+
+      expect(
+        snapshot['original_author_avatar_base64'],
+        base64Encode(avatarBytes),
+      );
+    },
+  );
+
+  test(
+    'omits avatar in encrypted repost payload when no avatar exists',
+    () async {
+      await posts.savePost(_directPost());
+
+      final receivedByCara = caraService.messageStream.first;
+
+      final (result, pass) = await passPostAlong(
+        p2pService: aliceService,
+        postRepo: posts,
+        contactRepo: contacts,
+        bridge: bridge,
+        postId: 'post-1',
+        senderPeerId: 'peer-alice',
+        senderUsername: 'Alice',
+        recipientPeerIds: const <String>['peer-cara'],
+        loadAvatarBytesFn: (_) async => null,
+      );
+
+      expect(result, PassPostAlongResult.success);
+      expect(pass, isNotNull);
+
+      final message = await receivedByCara.timeout(const Duration(seconds: 1));
+      final json = jsonDecode(message.content) as Map<String, dynamic>;
+      final snapshot = _decodeEncryptedOriginalSnapshot(json);
+
+      expect(snapshot.containsKey('original_author_avatar_base64'), isFalse);
+    },
+  );
+
+  test(
+    'omits avatar in encrypted repost payload when avatar exceeds the 64 KB bound',
+    () async {
+      await posts.savePost(_directPost());
+      final avatarBytes = Uint8List.fromList(List<int>.filled(65537, 7));
+
+      final receivedByCara = caraService.messageStream.first;
+
+      final (result, pass) = await passPostAlong(
+        p2pService: aliceService,
+        postRepo: posts,
+        contactRepo: contacts,
+        bridge: bridge,
+        postId: 'post-1',
+        senderPeerId: 'peer-alice',
+        senderUsername: 'Alice',
+        recipientPeerIds: const <String>['peer-cara'],
+        loadAvatarBytesFn: (_) async => avatarBytes,
+      );
+
+      expect(result, PassPostAlongResult.success);
+      expect(pass, isNotNull);
+
+      final message = await receivedByCara.timeout(const Duration(seconds: 1));
+      final json = jsonDecode(message.content) as Map<String, dynamic>;
+      final snapshot = _decodeEncryptedOriginalSnapshot(json);
+
+      expect(snapshot.containsKey('original_author_avatar_base64'), isFalse);
+    },
+  );
+
+  test(
+    'calls loadAvatarBytesFn exactly once with the original author peer id',
+    () async {
+      await posts.savePost(_directPost());
+      final requestedPeerIds = <String>[];
+
+      final (result, pass) = await passPostAlong(
+        p2pService: aliceService,
+        postRepo: posts,
+        contactRepo: contacts,
+        bridge: bridge,
+        postId: 'post-1',
+        senderPeerId: 'peer-alice',
+        senderUsername: 'Alice',
+        recipientPeerIds: const <String>['peer-cara'],
+        loadAvatarBytesFn: (peerId) async {
+          requestedPeerIds.add(peerId);
+          return Uint8List.fromList(const <int>[9, 8, 7]);
+        },
+      );
+
+      expect(result, PassPostAlongResult.success);
+      expect(pass, isNotNull);
+      expect(requestedPeerIds, <String>['peer-bob']);
+    },
+  );
+
+  test(
+    'createLocalPostPass persists avatar snapshot in durable state before delivery starts',
+    () async {
+      await posts.savePost(_directPost());
+      final avatarBytes = Uint8List.fromList(const <int>[42, 41, 40, 39]);
+
+      final (result, created) = await createLocalPostPass(
+        p2pService: aliceService,
+        postRepo: posts,
+        contactRepo: contacts,
+        bridge: bridge,
+        postId: 'post-1',
+        senderPeerId: 'peer-alice',
+        senderUsername: 'Alice',
+        recipientPeerIds: const <String>['peer-cara'],
+        loadAvatarBytesFn: (_) async => avatarBytes,
+      );
+
+      expect(result, PassPostAlongResult.success);
+      expect(created, isNotNull);
+      expect(network.deliverCallCount, 0);
+      expect(network.storeInInboxCallCount, 0);
+      expect(
+        await posts.loadPassAvatarSnapshot('post-1'),
+        orderedEquals(avatarBytes),
+      );
+    },
+  );
+
+  test(
+    'runner-backed repost delivery encrypts repost payloads per recipient and carries the shared-thread baseline contract',
+    () async {
+      await posts.savePost(_directPost(mediaKind: 'image'));
+      await posts.savePostMediaAttachment(
+        const PostMediaAttachmentModel(
+          mediaId: 'media-1',
+          postId: 'post-1',
+          blobId: 'blob-original-1',
+          kind: 'image',
+          mime: 'image/jpeg',
+          sizeBytes: 248120,
+          width: 1440,
+          height: 1080,
+          localPath: 'post_media/post-1/blob-original-1.jpg',
+          downloadStatus: 'done',
+          createdAt: '2026-03-15T10:20:00.000Z',
+        ),
+      );
+
+      final receivedByBob = bobService.messageStream.first;
+      final receivedByCara = caraService.messageStream.first;
+
+      final (createResult, created) = await createLocalPostPass(
+        p2pService: aliceService,
+        postRepo: posts,
+        contactRepo: contacts,
+        bridge: bridge,
+        postId: 'post-1',
+        senderPeerId: 'peer-alice',
+        senderUsername: 'Alice',
+        recipientPeerIds: const <String>['peer-cara'],
+        prepareRepostMediaFn: _noopMediaPrep,
+      );
+
+      expect(createResult, PassPostAlongResult.success);
+      expect(created, isNotNull);
+
+      final (deliveryResult, deliveredPass) =
+          await PostDeliveryRunner(
+            p2pService: aliceService,
+            postRepo: posts,
+            bridge: bridge,
+          ).executePostPass(
+            pass: created!.pass,
+            snapshotPost: created.snapshotPost,
+            resolvedRecipients: created.resolvedRecipients,
+            allRecipientPeerIds: created.recipientPeerIds,
+          );
+
+      expect(deliveryResult, SendPostResult.success);
+      expect(deliveredPass.passId, created.pass.passId);
+      expect(
+        bridge.commandLog.where((command) => command == 'message.encrypt'),
+        hasLength(2),
+      );
+
+      final bobMessage = await receivedByBob.timeout(
+        const Duration(seconds: 1),
+      );
+      final caraMessage = await receivedByCara.timeout(
+        const Duration(seconds: 1),
+      );
+
+      final json = jsonDecode(bobMessage.content) as Map<String, dynamic>;
+      final payload = _decodeEncryptedPassPayload(json);
+      final snapshot = payload['original_snapshot'] as Map<String, dynamic>;
+      final media = (snapshot['media'] as List<dynamic>)
+          .cast<Map<String, dynamic>>();
+
+      expect(json['type'], 'post_pass');
+      expect(json['version'], '2');
+      expect(json.containsKey('encrypted'), isTrue);
+      expect(payload['participant_peer_ids'], <String>[
+        'peer-alice',
+        'peer-bob',
+      ]);
+      expect(payload['heart_baseline'], <String, Object?>{
+        'active_peer_ids': const <String>[],
+      });
+      expect(payload['repost_total_baseline'], 0);
+      expect(media.single['blob_id'], 'blob-original-1');
+      expect(
+        _encryptRecipientKeys(bridge.sentMessages),
+        unorderedEquals(<String>['mlkem-peer-bob', 'mlkem-peer-cara']),
+      );
+      expect(
+        jsonDecode(caraMessage.content),
+        equals(jsonDecode(bobMessage.content)),
+      );
+    },
+  );
+
+  test(
     'createLocalPostPass persists a local pass and queued recipient deliveries before background delivery starts',
     () async {
       await posts.savePost(_directPost());
@@ -140,6 +396,7 @@ void main() {
         p2pService: aliceService,
         postRepo: posts,
         contactRepo: contacts,
+        bridge: bridge,
         postId: 'post-1',
         senderPeerId: 'peer-alice',
         senderUsername: 'Alice',
@@ -179,6 +436,34 @@ void main() {
   );
 
   test(
+    'createLocalPostPass persists shared-thread participant, heart, and repost baselines before background delivery starts',
+    () async {
+      await posts.savePost(_directPost());
+      await _seedExistingRepostThreadState(posts);
+
+      final (result, created) = await createLocalPostPass(
+        p2pService: aliceService,
+        postRepo: posts,
+        contactRepo: contacts,
+        bridge: bridge,
+        postId: 'post-1',
+        senderPeerId: 'peer-alice',
+        senderUsername: 'Alice',
+        recipientPeerIds: const <String>['peer-cara'],
+      );
+
+      expect(result, PassPostAlongResult.success);
+      expect(created, isNotNull);
+      expect(network.deliverCallCount, 0);
+      expect(network.storeInInboxCallCount, 0);
+      await _expectPersistedSharedThreadState(
+        posts,
+        innerPayloadJson: created!.pass.innerPayloadJson!,
+      );
+    },
+  );
+
+  test(
     'persists a local pass and shared recipient deliveries before delivery completes',
     () async {
       await posts.savePost(_directPost());
@@ -188,6 +473,7 @@ void main() {
         p2pService: aliceService,
         postRepo: posts,
         contactRepo: contacts,
+        bridge: bridge,
         postId: 'post-1',
         senderPeerId: 'peer-alice',
         senderUsername: 'Alice',
@@ -219,6 +505,43 @@ void main() {
   );
 
   test(
+    'passPostAlong persists shared-thread participant, heart, and repost baselines before delivery settles',
+    () async {
+      await posts.savePost(_directPost());
+      await _seedExistingRepostThreadState(posts);
+      network.deliveryDelay = const Duration(milliseconds: 150);
+
+      final sendFuture = passPostAlong(
+        p2pService: aliceService,
+        postRepo: posts,
+        contactRepo: contacts,
+        bridge: bridge,
+        postId: 'post-1',
+        senderPeerId: 'peer-alice',
+        senderUsername: 'Alice',
+        recipientPeerIds: const <String>['peer-cara'],
+      );
+
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      final localPasses = await posts.loadPostPasses('post-1');
+      expect(localPasses, hasLength(2));
+      final pendingPass = localPasses.firstWhere(
+        (pass) =>
+            pass.innerPayloadJson != null && pass.innerPayloadJson!.isNotEmpty,
+      );
+      await _expectPersistedSharedThreadState(
+        posts,
+        innerPayloadJson: pendingPass.innerPayloadJson!,
+      );
+
+      final (result, pass) = await sendFuture;
+      expect(result, PassPostAlongResult.success);
+      expect(pass?.passId, pendingPass.passId);
+    },
+  );
+
+  test(
     'does not create a duplicate delivery target when the sender explicitly selects the original author',
     () async {
       await posts.savePost(_directPost());
@@ -230,6 +553,7 @@ void main() {
         p2pService: aliceService,
         postRepo: posts,
         contactRepo: contacts,
+        bridge: bridge,
         postId: 'post-1',
         senderPeerId: 'peer-alice',
         senderUsername: 'Alice',
@@ -290,6 +614,7 @@ void main() {
         p2pService: service,
         postRepo: posts,
         contactRepo: contacts,
+        bridge: bridge,
         postId: 'post-1',
         senderPeerId: 'peer-bob',
         senderUsername: 'Bob',
@@ -338,6 +663,7 @@ void main() {
         p2pService: aliceService,
         postRepo: posts,
         contactRepo: contacts,
+        bridge: bridge,
         postId: 'post-1',
         senderPeerId: 'peer-alice',
         senderUsername: 'Alice',
@@ -351,6 +677,7 @@ void main() {
         p2pService: aliceService,
         postRepo: posts,
         created: created!,
+        bridge: bridge,
       );
 
       expect(deliveryResult.$1, SendPostResult.sendFailed);
@@ -387,6 +714,7 @@ void main() {
         p2pService: aliceService,
         postRepo: posts,
         contactRepo: contacts,
+        bridge: bridge,
         postId: 'post-1',
         senderPeerId: 'peer-alice',
         senderUsername: 'Alice',
@@ -489,7 +817,11 @@ void main() {
   });
 }
 
-ContactModel _contact(String peerId, String username) {
+ContactModel _contact(
+  String peerId,
+  String username, {
+  String? mlKemPublicKey,
+}) {
   return ContactModel(
     peerId: peerId,
     publicKey: 'pk-$peerId',
@@ -497,7 +829,32 @@ ContactModel _contact(String peerId, String username) {
     username: username,
     signature: 'sig-$peerId',
     scannedAt: '2026-03-15T10:00:00.000Z',
+    mlKemPublicKey: mlKemPublicKey ?? 'mlkem-$peerId',
   );
+}
+
+Map<String, dynamic> _decodeEncryptedPassPayload(Map<String, dynamic> json) {
+  final encrypted = json['encrypted'] as Map<String, dynamic>;
+  return jsonDecode(encrypted['ciphertext'] as String) as Map<String, dynamic>;
+}
+
+Map<String, dynamic> _decodeEncryptedOriginalSnapshot(
+  Map<String, dynamic> json,
+) {
+  final payload = _decodeEncryptedPassPayload(json);
+  return payload['original_snapshot'] as Map<String, dynamic>;
+}
+
+List<String> _encryptRecipientKeys(List<String> sentMessages) {
+  return sentMessages
+      .map((message) => jsonDecode(message) as Map<String, dynamic>)
+      .where((message) => message['cmd'] == 'message.encrypt')
+      .map(
+        (message) =>
+            (message['payload'] as Map<String, dynamic>)['recipientPublicKey']
+                as String,
+      )
+      .toList(growable: false);
 }
 
 PostModel _directPost({
@@ -524,6 +881,81 @@ Future<void> _drainMicrotasks([int turns = 3]) async {
   for (var index = 0; index < turns; index++) {
     await Future<void>.delayed(Duration.zero);
   }
+}
+
+Future<void> _seedExistingRepostThreadState(
+  InMemoryPostRepository posts,
+) async {
+  await posts.savePostPass(
+    const PostPassModel(
+      passId: 'pass-existing',
+      eventId: 'evt-pass-existing',
+      postId: 'post-1',
+      senderPeerId: 'peer-alice',
+      passerPeerId: 'peer-alice',
+      passerUsername: 'Alice',
+      passedAt: '2026-03-15T11:05:00.000Z',
+      createdAt: '2026-03-15T11:05:00.000Z',
+    ),
+  );
+  await posts.saveRepostEngagementParticipant(
+    postId: 'post-1',
+    participantPeerId: 'peer-zoya',
+    createdAt: '2026-03-15T11:05:00.000Z',
+  );
+  await posts.saveRepostHeartBaselinePeerIds(
+    postId: 'post-1',
+    peerIds: const <String>['peer-zoya'],
+    createdAt: '2026-03-15T11:05:00.000Z',
+  );
+  await posts.seedRepostTotalBaseline(
+    postId: 'post-1',
+    repostTotalBaseline: 2,
+    existingLocalPassCount: 1,
+    createdAt: '2026-03-15T11:05:00.000Z',
+  );
+}
+
+Future<void> _expectPersistedSharedThreadState(
+  InMemoryPostRepository posts, {
+  required String innerPayloadJson,
+}) async {
+  final payload = jsonDecode(innerPayloadJson) as Map<String, dynamic>;
+  final heartBaseline = payload['heart_baseline'] as Map<String, dynamic>;
+
+  expect(await posts.loadRepostEngagementParticipantPeerIds('post-1'), <String>{
+    'peer-alice',
+    'peer-bob',
+    'peer-zoya',
+  });
+  expect(await posts.loadRepostHeartBaselinePeerIds('post-1'), <String>{
+    'peer-zoya',
+  });
+  expect(await posts.loadRepostTotalBaseline('post-1'), 2);
+  expect(
+    (payload['participant_peer_ids'] as List<dynamic>).cast<String>(),
+    <String>['peer-alice', 'peer-bob', 'peer-zoya'],
+  );
+  expect(
+    (heartBaseline['active_peer_ids'] as List<dynamic>).cast<String>(),
+    <String>['peer-zoya'],
+  );
+  expect(payload['repost_total_baseline'], 3);
+}
+
+/// A no-op media preparation function that passes attachments through
+/// unchanged, for tests that don't need real file I/O.
+Future<RepostMediaPrepResult?> _noopMediaPrep({
+  required Bridge bridge,
+  required List<PostMediaAttachmentModel> originalMedia,
+  required String passerPeerId,
+  required List<String> recipientPeerIds,
+  required String originalAuthorPeerId,
+}) async {
+  return RepostMediaPrepResult(
+    attachments: originalMedia,
+    keys: const <String, PostMediaCryptoEntry>{},
+  );
 }
 
 class _ControlledP2PService extends FakeP2PService {
