@@ -132,9 +132,14 @@ class PostModel {
   }
 
   PostModel copyWith({
+    String? eventId,
+    String? senderPeerId,
+    String? authorPeerId,
     String? authorUsername,
     String? text,
     PostAudience? audience,
+    String? createdAt,
+    String? visibleAt,
     String? expiresAt,
     String? lastEngagementAt,
     bool? keepAvailable,
@@ -149,6 +154,7 @@ class PostModel {
     String? nearbySenderCapturedAt,
     double? nearbySenderAccuracyM,
     String? nearbyDistanceLabel,
+    bool? isIncoming,
     bool? isFocused,
     String? deliveryStatus,
     String? passedByPeerId,
@@ -158,14 +164,14 @@ class PostModel {
   }) {
     return PostModel(
       id: id,
-      eventId: eventId,
-      senderPeerId: senderPeerId,
-      authorPeerId: authorPeerId,
+      eventId: eventId ?? this.eventId,
+      senderPeerId: senderPeerId ?? this.senderPeerId,
+      authorPeerId: authorPeerId ?? this.authorPeerId,
       authorUsername: authorUsername ?? this.authorUsername,
       text: text ?? this.text,
       audience: audience ?? this.audience,
-      createdAt: createdAt,
-      visibleAt: visibleAt,
+      createdAt: createdAt ?? this.createdAt,
+      visibleAt: visibleAt ?? this.visibleAt,
       expiresAt: expiresAt ?? this.expiresAt,
       lastEngagementAt: lastEngagementAt ?? this.lastEngagementAt,
       keepAvailable: keepAvailable ?? this.keepAvailable,
@@ -182,7 +188,7 @@ class PostModel {
       nearbySenderAccuracyM:
           nearbySenderAccuracyM ?? this.nearbySenderAccuracyM,
       nearbyDistanceLabel: nearbyDistanceLabel ?? this.nearbyDistanceLabel,
-      isIncoming: isIncoming,
+      isIncoming: isIncoming ?? this.isIncoming,
       isFocused: isFocused ?? this.isFocused,
       deliveryStatus: deliveryStatus ?? this.deliveryStatus,
       passedByPeerId: passedByPeerId ?? this.passedByPeerId,

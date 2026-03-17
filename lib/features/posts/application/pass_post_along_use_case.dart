@@ -3,13 +3,13 @@ import 'package:uuid/uuid.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
-import 'package:flutter_app/features/posts/application/post_follow_on_delivery.dart';
-import 'package:flutter_app/features/posts/application/post_pass_follow_on_support.dart';
+import 'package:flutter_app/features/posts/application/post_delivery_runner.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_pass_envelope.dart';
 import 'package:flutter_app/features/posts/domain/models/post_pass_model.dart';
+import 'package:flutter_app/features/posts/domain/models/post_recipient_delivery.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 
 const _uuid = Uuid();
@@ -26,6 +26,28 @@ enum PassPostAlongResult {
   sendFailed,
 }
 
+class CreatedLocalPostPass {
+  final PostPassModel pass;
+  final PostModel snapshotPost;
+  final String envelope;
+  final List<CreatedLocalPostRecipient> resolvedRecipients;
+  final List<String> allRecipientPeerIds;
+
+  const CreatedLocalPostPass({
+    required this.pass,
+    required this.snapshotPost,
+    required this.envelope,
+    required this.resolvedRecipients,
+    this.allRecipientPeerIds = const <String>[],
+  });
+
+  List<String> get recipientPeerIds => allRecipientPeerIds.isNotEmpty
+      ? allRecipientPeerIds
+      : resolvedRecipients
+            .map((recipient) => recipient.contact.peerId)
+            .toList(growable: false);
+}
+
 Future<(PassPostAlongResult, PostPassModel?)> passPostAlong({
   required P2PService p2pService,
   required PostRepository postRepo,
@@ -35,7 +57,43 @@ Future<(PassPostAlongResult, PostPassModel?)> passPostAlong({
   required String senderUsername,
   required List<String> recipientPeerIds,
   DateTime Function()? nowProvider,
-  int maxConcurrentRecipients = defaultPostFollowOnDeliveryConcurrency,
+  int maxConcurrentRecipients = defaultPostDeliveryConcurrency,
+}) async {
+  final (createResult, created) = await createLocalPostPass(
+    p2pService: p2pService,
+    postRepo: postRepo,
+    contactRepo: contactRepo,
+    postId: postId,
+    senderPeerId: senderPeerId,
+    senderUsername: senderUsername,
+    recipientPeerIds: recipientPeerIds,
+    nowProvider: nowProvider,
+  );
+  if (createResult != PassPostAlongResult.success || created == null) {
+    return (createResult, created?.pass);
+  }
+
+  final deliveryResult = await deliverCreatedLocalPostPass(
+    p2pService: p2pService,
+    postRepo: postRepo,
+    created: created,
+    maxConcurrentRecipients: maxConcurrentRecipients,
+  );
+  return (
+    _passPostAlongResultForDeliveryResult(deliveryResult.$1),
+    deliveryResult.$2,
+  );
+}
+
+Future<(PassPostAlongResult, CreatedLocalPostPass?)> createLocalPostPass({
+  required P2PService p2pService,
+  required PostRepository postRepo,
+  required ContactRepository contactRepo,
+  required String postId,
+  required String senderPeerId,
+  required String senderUsername,
+  required List<String> recipientPeerIds,
+  DateTime Function()? nowProvider,
 }) async {
   if (!p2pService.currentState.isStarted) {
     return (PassPostAlongResult.nodeNotRunning, null);
@@ -102,18 +160,53 @@ Future<(PassPostAlongResult, PostPassModel?)> passPostAlong({
   );
   final envelope = PostPassEnvelope.buildJson(pass: pass, post: renderablePost);
   await postRepo.savePostPass(pass);
-  final deliveryResult = await queueAndSendPostPassFollowOn(
-    postRepo: postRepo,
-    p2pService: p2pService,
-    eventId: pass.eventId,
-    postId: post.id,
-    senderPeerId: senderPeerId,
-    envelope: envelope,
-    createdAt: now,
-    recipientPeerIds: recipients.keys,
-    maxConcurrentRecipients: maxConcurrentRecipients,
+  final resolvedRecipients = recipients.values
+      .map((contact) => CreatedLocalPostRecipient(contact: contact))
+      .toList(growable: false);
+  for (final recipient in resolvedRecipients) {
+    await postRepo.saveRecipientDelivery(
+      PostRecipientDelivery(
+        postId: post.id,
+        deliveryOwnerKind: postRecipientDeliveryOwnerKindPass,
+        deliveryOwnerId: pass.passId,
+        recipientPeerId: recipient.contact.peerId,
+        deliveryStatus: 'pending',
+        lastAttemptAt: now,
+        deliveryPath: 'pending',
+        nearbyDistanceM: recipient.nearbyDistanceM,
+        createdAt: now,
+        updatedAt: now,
+      ),
+    );
+  }
+  return (
+    PassPostAlongResult.success,
+    CreatedLocalPostPass(
+      pass: pass,
+      snapshotPost: renderablePost,
+      envelope: envelope,
+      resolvedRecipients: resolvedRecipients,
+      allRecipientPeerIds: recipients.keys.toList(growable: false),
+    ),
   );
-  return (_passPostAlongResultForSettlement(deliveryResult.settlement), pass);
+}
+
+Future<(SendPostResult, PostPassModel)> deliverCreatedLocalPostPass({
+  required P2PService p2pService,
+  required PostRepository postRepo,
+  required CreatedLocalPostPass created,
+  int maxConcurrentRecipients = defaultPostDeliveryConcurrency,
+}) {
+  return PostDeliveryRunner(
+    p2pService: p2pService,
+    postRepo: postRepo,
+    maxConcurrentRecipients: maxConcurrentRecipients,
+  ).executePostPass(
+    pass: created.pass,
+    snapshotPost: created.snapshotPost,
+    resolvedRecipients: created.resolvedRecipients,
+    allRecipientPeerIds: created.recipientPeerIds,
+  );
 }
 
 Future<List<ContactModel>> _resolveRecipients({
@@ -131,13 +224,12 @@ Future<List<ContactModel>> _resolveRecipients({
   return recipients.values.toList(growable: false);
 }
 
-PassPostAlongResult _passPostAlongResultForSettlement(
-  PostFollowOnSettlement settlement,
+PassPostAlongResult _passPostAlongResultForDeliveryResult(
+  SendPostResult result,
 ) {
-  return switch (settlement) {
-    PostFollowOnSettlement.fullySettled => PassPostAlongResult.success,
-    PostFollowOnSettlement.partiallySettled =>
-      PassPostAlongResult.partiallySettled,
-    PostFollowOnSettlement.notSettled => PassPostAlongResult.queuedForRetry,
+  return switch (result) {
+    SendPostResult.success => PassPostAlongResult.success,
+    SendPostResult.partialSuccess => PassPostAlongResult.partiallySettled,
+    _ => PassPostAlongResult.queuedForRetry,
   };
 }

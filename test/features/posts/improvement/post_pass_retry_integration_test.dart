@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/services/incoming_message_router.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/posts/application/pass_post_along_use_case.dart';
+import 'package:flutter_app/features/posts/application/pending_post_delivery_retrier.dart';
 import 'package:flutter_app/features/posts/application/pending_post_follow_on_retrier.dart';
 import 'package:flutter_app/features/posts/application/post_pass_listener.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
@@ -51,7 +52,7 @@ void main() {
   });
 
   test(
-    'pass retry preserves explicit recipient plus author notification and does not duplicate pass records',
+    'pass retry uses the post delivery retrier, preserves explicit recipient plus author notification, and does not duplicate pass records',
     () async {
       await _seedSharedPost(sender: sender, author: author);
       author.p2pService.setOnline(false);
@@ -77,22 +78,34 @@ void main() {
       );
       expect(await author.postRepo.loadPostPasses('post-1'), isEmpty);
 
-      final retryableJobs = await sender.postRepo
-          .loadRetryableFollowOnOutboxJobs();
-      expect(retryableJobs, hasLength(1));
-      expect(retryableJobs.single.event.eventType, 'post_pass_along');
+      final retryablePasses = await sender.postRepo
+          .loadRetryableOutgoingPostPasses();
+      expect(retryablePasses, hasLength(1));
+      expect(retryablePasses.single.passId, pass!.passId);
+      expect(await sender.postRepo.loadRetryableFollowOnOutboxJobs(), isEmpty);
       expect(
-        retryableJobs.single.recipientDeliveries.map(
-          (delivery) => delivery.recipientPeerId,
-        ),
+        (await sender.postRepo.getPostPassRecipientDeliveries(pass.passId))
+            .where(
+              (delivery) =>
+                  delivery.deliveryStatus != 'delivered' &&
+                  delivery.deliveryStatus != 'inbox',
+            )
+            .map((delivery) => delivery.recipientPeerId),
         <String>[author.peerId],
       );
 
       author.p2pService.setOnline(true);
       network.inboxDisabled = false;
 
-      final retried = await retryPendingPostFollowOns(
+      final followOnRetried = await retryPendingPostFollowOns(
         postRepo: sender.postRepo,
+        p2pService: sender.p2pService,
+      );
+      expect(followOnRetried, 0);
+
+      final retried = await retryPendingPostDeliveries(
+        postRepo: sender.postRepo,
+        contactRepo: sender.contactRepo,
         p2pService: sender.p2pService,
       );
 
@@ -106,10 +119,12 @@ void main() {
       expect(await recipient.postRepo.loadPostPasses('post-1'), hasLength(1));
       expect(await author.postRepo.loadPostPasses('post-1'), hasLength(1));
       expect(await author.postRepo.loadPostPassCount('post-1'), 1);
+      expect(await sender.postRepo.loadRetryableOutgoingPostPasses(), isEmpty);
       expect(await sender.postRepo.loadRetryableFollowOnOutboxJobs(), isEmpty);
 
-      final secondRetry = await retryPendingPostFollowOns(
+      final secondRetry = await retryPendingPostDeliveries(
         postRepo: sender.postRepo,
+        contactRepo: sender.contactRepo,
         p2pService: sender.p2pService,
       );
 

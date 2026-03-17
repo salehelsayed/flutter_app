@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/posts/application/post_engagement_follow_on_support.dart';
-import 'package:flutter_app/features/posts/application/post_pass_follow_on_support.dart';
 import 'package:flutter_app/features/posts/application/post_pin_delivery_support.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 
@@ -139,15 +138,6 @@ Future<int> retryPendingPostFollowOns({
       continue;
     }
     if (!isPostEngagementFollowOnEventType(job.event.eventType)) {
-      if (!isPostPassFollowOnEventType(job.event.eventType)) {
-        continue;
-      }
-      retriedCount++;
-      await retryPostPassFollowOnJob(
-        postRepo: postRepo,
-        p2pService: p2pService,
-        job: job,
-      );
       continue;
     }
     retriedCount++;

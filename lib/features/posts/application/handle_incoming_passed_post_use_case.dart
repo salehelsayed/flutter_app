@@ -78,19 +78,19 @@ Future<(HandleIncomingPassedPostResult, PostModel?)> handleIncomingPassedPost({
   final existingPost = await postRepo.getPost(envelope.postId);
   if (existingPost != null) {
     final existingOrigin = await postRepo.getPostOrigin(envelope.postId);
-    if (existingOrigin == null &&
-        existingPost.senderPeerId != existingPost.authorPeerId) {
-      await postRepo.savePostOrigin(
-        PostOriginModel(
-          postId: envelope.postId,
-          originKind: PostOriginKind.pass,
-          passId: envelope.passId,
-          passerPeerId: envelope.passerPeerId,
-          passerUsername: envelope.passerUsername,
-          passCreatedAt: envelope.passedAt,
-        ),
-      );
+    final resurfacedPost = existingPost.copyWith(
+      visibleAt: _laterTimestamp(existingPost.visibleAt, envelope.passedAt),
+    );
+    if (resurfacedPost.visibleAt != existingPost.visibleAt) {
+      await postRepo.savePost(resurfacedPost);
     }
+    await postRepo.savePostOrigin(
+      _mergePassOrigin(
+        existingPost: resurfacedPost,
+        existingOrigin: existingOrigin,
+        envelope: envelope,
+      ),
+    );
     return (
       HandleIncomingPassedPostResult.passAccepted,
       await postRepo.getPost(envelope.postId),
@@ -162,4 +162,56 @@ Future<(HandleIncomingPassedPostResult, PostModel?)> handleIncomingPassedPost({
           shareCount: 1,
         ),
   );
+}
+
+String _laterTimestamp(String currentIso, String candidateIso) {
+  final current = DateTime.tryParse(currentIso);
+  final candidate = DateTime.tryParse(candidateIso);
+  if (current == null || candidate == null) {
+    return candidateIso;
+  }
+  return candidate.isAfter(current) ? candidateIso : currentIso;
+}
+
+PostOriginModel _mergePassOrigin({
+  required PostModel existingPost,
+  required PostOriginModel? existingOrigin,
+  required PostPassEnvelope envelope,
+}) {
+  final incomingIsNewest = _isNewerTimestamp(
+    existingOrigin?.passCreatedAt,
+    envelope.passedAt,
+  );
+  final prefersDirectOrigin =
+      existingPost.senderPeerId == existingPost.authorPeerId ||
+      existingOrigin?.originKind == PostOriginKind.direct;
+
+  return PostOriginModel(
+    postId: envelope.postId,
+    originKind: prefersDirectOrigin
+        ? PostOriginKind.direct
+        : PostOriginKind.pass,
+    passId: incomingIsNewest ? envelope.passId : existingOrigin?.passId,
+    passerPeerId: incomingIsNewest
+        ? envelope.passerPeerId
+        : existingOrigin?.passerPeerId,
+    passerUsername: incomingIsNewest
+        ? envelope.passerUsername
+        : existingOrigin?.passerUsername,
+    passCreatedAt: incomingIsNewest
+        ? envelope.passedAt
+        : existingOrigin?.passCreatedAt,
+  );
+}
+
+bool _isNewerTimestamp(String? currentIso, String candidateIso) {
+  if (currentIso == null) {
+    return true;
+  }
+  final current = DateTime.tryParse(currentIso);
+  final candidate = DateTime.tryParse(candidateIso);
+  if (current == null || candidate == null) {
+    return currentIso != candidateIso;
+  }
+  return candidate.isAfter(current);
 }

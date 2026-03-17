@@ -50,6 +50,7 @@ import 'package:flutter_app/core/database/migrations/031_posts_pins.dart';
 import 'package:flutter_app/core/database/migrations/032_posts_retry_recipient_context.dart';
 import 'package:flutter_app/core/database/migrations/033_posts_follow_on_outbox.dart';
 import 'package:flutter_app/core/database/migrations/034_posts_media_upload_recovery.dart';
+import 'package:flutter_app/core/database/migrations/035_posts_repost_delivery_state.dart';
 import 'package:flutter_app/core/database/helpers/introductions_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_comments_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_comment_reactions_db_helpers.dart';
@@ -182,7 +183,7 @@ void main() async {
   final db = await openEncryptedDatabase(
     secureKeyStore: secureKeyStore,
     dbName: 'identity.db',
-    version: 34,
+    version: 35,
     onCreate: (db, version) async {
       await runIdentityTableMigration(db);
       await runMessagesTableMigration(db);
@@ -218,6 +219,7 @@ void main() async {
       await runPostsRetryRecipientContextMigration(db);
       await runPostsFollowOnOutboxMigration(db);
       await runPostsMediaUploadRecoveryMigration(db);
+      await runPostsRepostDeliveryStateMigration(db);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) {
@@ -317,6 +319,9 @@ void main() async {
       if (oldVersion < 34) {
         await runPostsMediaUploadRecoveryMigration(db);
       }
+      if (oldVersion < 35) {
+        await runPostsRepostDeliveryStateMigration(db);
+      }
     },
   );
 
@@ -410,9 +415,13 @@ void main() async {
     dbUpsertRecipientDelivery: (row) => dbUpsertPostRecipientDelivery(db, row),
     dbLoadRecipientDeliveries: (postId) =>
         dbLoadPostRecipientDeliveries(db, postId),
+    dbLoadPostPassRecipientDeliveries: (passId) =>
+        dbLoadPostPassRecipientDeliveries(db, passId),
     dbUpsertPostPass: (row) => dbUpsertPostPass(db, row),
     dbLoadPostPass: (passId) => dbLoadPostPass(db, passId),
     dbLoadPostPasses: (postId) => dbLoadPostPasses(db, postId),
+    dbLoadRetryableOutgoingPostPasses: () =>
+        dbLoadRetryableOutgoingPostPasses(db),
     dbCountPostPasses: (postId) => dbCountPostPasses(db, postId),
     dbLoadPostPassCounts: (postIds) => dbLoadPostPassCounts(db, postIds),
     dbUpsertPostOrigin: (row) => dbUpsertPostOrigin(db, row),

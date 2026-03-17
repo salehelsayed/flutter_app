@@ -37,7 +37,7 @@ class InMemoryPostRepository implements PostRepository {
   final Map<String, List<PostMediaUploadRecoveryItem>>
   _postMediaUploadRecoveryByPostId =
       <String, List<PostMediaUploadRecoveryItem>>{};
-  final Map<String, List<PostRecipientDelivery>> _deliveries =
+  final Map<String, List<PostRecipientDelivery>> _deliveriesByOwner =
       <String, List<PostRecipientDelivery>>{};
   final Map<String, PostPassModel> _postPassesById = <String, PostPassModel>{};
   final Map<String, List<PostPassModel>> _postPassesByPostId =
@@ -148,7 +148,15 @@ class InMemoryPostRepository implements PostRepository {
       _postMediaById.remove(attachment.mediaId);
     });
     _postMediaUploadRecoveryByPostId.remove(postId);
-    _deliveries.remove(postId);
+    final deliveryOwnerKeys = _deliveriesByOwner.keys.toList(growable: false);
+    for (final ownerKey in deliveryOwnerKeys) {
+      _deliveriesByOwner[ownerKey]?.removeWhere(
+        (delivery) => delivery.postId == postId,
+      );
+      if ((_deliveriesByOwner[ownerKey] ?? const []).isEmpty) {
+        _deliveriesByOwner.remove(ownerKey);
+      }
+    }
     _postOrigins.remove(postId);
     _pinStates.remove(postId);
     _pinDismissals.remove(postId);
@@ -529,14 +537,15 @@ class InMemoryPostRepository implements PostRepository {
 
   @override
   Future<void> saveRecipientDelivery(PostRecipientDelivery delivery) async {
-    final deliveries = _deliveries.putIfAbsent(
-      delivery.postId,
+    final deliveries = _deliveriesByOwner.putIfAbsent(
+      _deliveryOwnerKey(delivery.deliveryOwnerKind, delivery.deliveryOwnerId),
       () => <PostRecipientDelivery>[],
     );
     deliveries.removeWhere(
       (existing) => existing.recipientPeerId == delivery.recipientPeerId,
     );
     deliveries.add(delivery);
+    deliveries.sort((a, b) => a.recipientPeerId.compareTo(b.recipientPeerId));
     _changes.add(delivery.postId);
   }
 
@@ -544,7 +553,26 @@ class InMemoryPostRepository implements PostRepository {
   Future<List<PostRecipientDelivery>> getRecipientDeliveries(
     String postId,
   ) async {
-    return List<PostRecipientDelivery>.from(_deliveries[postId] ?? const []);
+    return List<PostRecipientDelivery>.from(
+      _deliveriesByOwner[_deliveryOwnerKey(
+            postRecipientDeliveryOwnerKindPost,
+            postId,
+          )] ??
+          const [],
+    );
+  }
+
+  @override
+  Future<List<PostRecipientDelivery>> getPostPassRecipientDeliveries(
+    String passId,
+  ) async {
+    return List<PostRecipientDelivery>.from(
+      _deliveriesByOwner[_deliveryOwnerKey(
+            postRecipientDeliveryOwnerKindPass,
+            passId,
+          )] ??
+          const [],
+    );
   }
 
   @override
@@ -569,6 +597,26 @@ class InMemoryPostRepository implements PostRepository {
   @override
   Future<bool> postPassExists(String passId) async =>
       _postPassesById.containsKey(passId);
+
+  @override
+  Future<List<PostPassModel>> loadRetryableOutgoingPostPasses() async {
+    return _postPassesById.values
+        .where(
+          (pass) =>
+              !pass.isIncoming &&
+              (pass.deliveryStatus == 'sending' ||
+                  pass.deliveryStatus == 'partial' ||
+                  pass.deliveryStatus == 'failed'),
+        )
+        .toList(growable: false)
+      ..sort((a, b) {
+        final passedCompare = b.passedAt.compareTo(a.passedAt);
+        if (passedCompare != 0) {
+          return passedCompare;
+        }
+        return b.passId.compareTo(a.passId);
+      });
+  }
 
   @override
   Future<List<PostPassModel>> loadPostPasses(String postId) async {
@@ -656,6 +704,10 @@ class InMemoryPostRepository implements PostRepository {
   @override
   void dispose() {
     _changes.close();
+  }
+
+  String _deliveryOwnerKey(String ownerKind, String ownerId) {
+    return '$ownerKind::$ownerId';
   }
 
   PostModel _decoratePost(PostModel post) {

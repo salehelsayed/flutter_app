@@ -8,6 +8,8 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/posts/application/post_media_draft.dart';
 import 'package:flutter_app/features/posts/domain/models/post_create_envelope.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
+import 'package:flutter_app/features/posts/domain/models/post_pass_envelope.dart';
+import 'package:flutter_app/features/posts/domain/models/post_pass_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_recipient_delivery.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 
@@ -37,8 +39,7 @@ class CreatedLocalPost {
     this.allRecipientPeerIds = const <String>[],
   });
 
-  List<String> get recipientPeerIds =>
-      allRecipientPeerIds.isNotEmpty
+  List<String> get recipientPeerIds => allRecipientPeerIds.isNotEmpty
       ? allRecipientPeerIds
       : resolvedRecipients
             .map((recipient) => recipient.contact.peerId)
@@ -81,8 +82,8 @@ class PostDeliveryRunner {
     required this.p2pService,
     required this.postRepo,
     this.bridge,
-    int maxConcurrentRecipients = defaultPostDeliveryConcurrency,
-  }) : maxConcurrentRecipients = maxConcurrentRecipients {
+    this.maxConcurrentRecipients = defaultPostDeliveryConcurrency,
+  }) {
     if (maxConcurrentRecipients < 1) {
       throw ArgumentError.value(
         maxConcurrentRecipients,
@@ -104,80 +105,28 @@ class PostDeliveryRunner {
         ),
       );
       final recipientPeerIds = created.recipientPeerIds;
-      final pendingRecipients = Queue<CreatedLocalPostRecipient>.of(
-        created.resolvedRecipients,
-      );
-      final inFlight = <Future<void>>[];
-      AsyncError? fatalError;
-      final completionQueue = _SerializedPostCompletionQueue(
-        onError: (error, stackTrace) {
-          fatalError ??= AsyncError(error, stackTrace);
-        },
-      );
-
-      Future<void> runRecipient(CreatedLocalPostRecipient recipient) async {
-        try {
-          final attemptedAt = DateTime.now().toUtc().toIso8601String();
-          final wireEnvelope = await _buildWireEnvelope(
+      await _runRecipientFanout(
+        p2pService: p2pService,
+        maxConcurrentRecipients: maxConcurrentRecipients,
+        resolvedRecipients: created.resolvedRecipients,
+        buildWireEnvelope: (recipient) {
+          return _buildWireEnvelope(
             post: created.post,
             bridge: bridge,
             recipient: recipient.contact,
             recipientPeerIds: recipientPeerIds,
             nearbyDistanceM: recipient.nearbyDistanceM,
           );
-          final delivery = await _deliverToRecipient(
-            p2pService: p2pService,
+        },
+        persistRecipientCompletion: (recipient, attemptedAt, delivery) {
+          return progress!.applyRecipientCompletion(
+            postRepo: postRepo,
             recipientPeerId: recipient.contact.peerId,
-            wireEnvelope: wireEnvelope,
+            attemptedAt: attemptedAt,
+            delivery: delivery,
           );
-
-          if (fatalError != null) {
-            return;
-          }
-
-          completionQueue.enqueue(() {
-            if (fatalError != null) {
-              return Future<void>.value();
-            }
-            return progress!.applyRecipientCompletion(
-              postRepo: postRepo,
-              recipientPeerId: recipient.contact.peerId,
-              attemptedAt: attemptedAt,
-              delivery: delivery,
-            );
-          });
-        } catch (error, stackTrace) {
-          fatalError ??= AsyncError(error, stackTrace);
-        }
-      }
-
-      while (pendingRecipients.isNotEmpty || inFlight.isNotEmpty) {
-        while (fatalError == null &&
-            pendingRecipients.isNotEmpty &&
-            inFlight.length < maxConcurrentRecipients) {
-          final recipient = pendingRecipients.removeFirst();
-          late final Future<void> task;
-          task = runRecipient(recipient).whenComplete(() {
-            inFlight.remove(task);
-          });
-          inFlight.add(task);
-        }
-
-        if (inFlight.isEmpty) {
-          break;
-        }
-
-        await Future.any(inFlight);
-      }
-
-      await completionQueue.flush();
-      final uncaughtError = fatalError;
-      if (uncaughtError != null) {
-        Error.throwWithStackTrace(
-          uncaughtError.error,
-          uncaughtError.stackTrace,
-        );
-      }
+        },
+      );
     } catch (error) {
       return _persistTerminalFailure(
         created.post.id,
@@ -188,6 +137,48 @@ class PostDeliveryRunner {
     }
 
     return (_resultForAggregate(progress.aggregate), progress.latestPost);
+  }
+
+  Future<(SendPostResult, PostPassModel)> executePostPass({
+    required PostPassModel pass,
+    required PostModel snapshotPost,
+    required List<CreatedLocalPostRecipient> resolvedRecipients,
+    List<String> allRecipientPeerIds = const <String>[],
+  }) async {
+    final progress = _PostPassDeliveryProgress(
+      latestPass: pass,
+      deliveriesByRecipient: await _loadExistingPostPassDeliveries(
+        pass.passId,
+        postRepo,
+      ),
+    );
+    final envelope = PostPassEnvelope.buildJson(pass: pass, post: snapshotPost);
+
+    try {
+      await _runRecipientFanout(
+        p2pService: p2pService,
+        maxConcurrentRecipients: maxConcurrentRecipients,
+        resolvedRecipients: resolvedRecipients,
+        buildWireEnvelope: (_) async => envelope,
+        persistRecipientCompletion: (recipient, attemptedAt, delivery) {
+          return progress.applyRecipientCompletion(
+            postRepo: postRepo,
+            postId: snapshotPost.id,
+            recipientPeerId: recipient.contact.peerId,
+            attemptedAt: attemptedAt,
+            delivery: delivery,
+          );
+        },
+      );
+    } catch (error) {
+      await progress.markUnsettledAsFailed(
+        postRepo: postRepo,
+        postId: snapshotPost.id,
+        error: error,
+      );
+    }
+
+    return (_resultForAggregate(progress.aggregate), progress.latestPass);
   }
 }
 
@@ -224,6 +215,91 @@ Future<Map<String, PostRecipientDelivery>> _loadExistingDeliveries(
   return <String, PostRecipientDelivery>{
     for (final delivery in deliveries) delivery.recipientPeerId: delivery,
   };
+}
+
+Future<Map<String, PostRecipientDelivery>> _loadExistingPostPassDeliveries(
+  String passId,
+  PostRepository postRepo,
+) async {
+  final deliveries = await postRepo.getPostPassRecipientDeliveries(passId);
+  return <String, PostRecipientDelivery>{
+    for (final delivery in deliveries) delivery.recipientPeerId: delivery,
+  };
+}
+
+Future<void> _runRecipientFanout({
+  required P2PService p2pService,
+  required int maxConcurrentRecipients,
+  required List<CreatedLocalPostRecipient> resolvedRecipients,
+  required Future<String> Function(CreatedLocalPostRecipient recipient)
+  buildWireEnvelope,
+  required Future<void> Function(
+    CreatedLocalPostRecipient recipient,
+    String attemptedAt,
+    _DeliveryAttempt delivery,
+  )
+  persistRecipientCompletion,
+}) async {
+  final pendingRecipients = Queue<CreatedLocalPostRecipient>.of(
+    resolvedRecipients,
+  );
+  final inFlight = <Future<void>>[];
+  AsyncError? fatalError;
+  final completionQueue = _SerializedPostCompletionQueue(
+    onError: (error, stackTrace) {
+      fatalError ??= AsyncError(error, stackTrace);
+    },
+  );
+
+  Future<void> runRecipient(CreatedLocalPostRecipient recipient) async {
+    try {
+      final attemptedAt = DateTime.now().toUtc().toIso8601String();
+      final wireEnvelope = await buildWireEnvelope(recipient);
+      final delivery = await _deliverToRecipient(
+        p2pService: p2pService,
+        recipientPeerId: recipient.contact.peerId,
+        wireEnvelope: wireEnvelope,
+      );
+
+      if (fatalError != null) {
+        return;
+      }
+
+      completionQueue.enqueue(() {
+        if (fatalError != null) {
+          return Future<void>.value();
+        }
+        return persistRecipientCompletion(recipient, attemptedAt, delivery);
+      });
+    } catch (error, stackTrace) {
+      fatalError ??= AsyncError(error, stackTrace);
+    }
+  }
+
+  while (pendingRecipients.isNotEmpty || inFlight.isNotEmpty) {
+    while (fatalError == null &&
+        pendingRecipients.isNotEmpty &&
+        inFlight.length < maxConcurrentRecipients) {
+      final recipient = pendingRecipients.removeFirst();
+      late final Future<void> task;
+      task = runRecipient(recipient).whenComplete(() {
+        inFlight.remove(task);
+      });
+      inFlight.add(task);
+    }
+
+    if (inFlight.isEmpty) {
+      break;
+    }
+
+    await Future.any(inFlight);
+  }
+
+  await completionQueue.flush();
+  final uncaughtError = fatalError;
+  if (uncaughtError != null) {
+    Error.throwWithStackTrace(uncaughtError.error, uncaughtError.stackTrace);
+  }
 }
 
 PostDeliveryAggregate aggregatePostDeliveryStatusFromDeliveries(
@@ -395,6 +471,10 @@ class _PostDeliveryProgress {
       nearbyDistanceM: existingDelivery?.nearbyDistanceM,
       createdAt: existingDelivery?.createdAt ?? attemptedAt,
       updatedAt: attemptedAt,
+      deliveryOwnerKind:
+          existingDelivery?.deliveryOwnerKind ??
+          postRecipientDeliveryOwnerKindPost,
+      deliveryOwnerId: existingDelivery?.deliveryOwnerId ?? latestPost.id,
     );
     deliveriesByRecipient[recipientPeerId] = updatedDelivery;
     await postRepo.saveRecipientDelivery(updatedDelivery);
@@ -404,6 +484,83 @@ class _PostDeliveryProgress {
     );
     latestPost = latestPost.copyWith(deliveryStatus: aggregate.deliveryStatus);
     await postRepo.savePost(latestPost);
+  }
+}
+
+class _PostPassDeliveryProgress {
+  PostPassModel latestPass;
+  final Map<String, PostRecipientDelivery> deliveriesByRecipient;
+  PostDeliveryAggregate aggregate;
+
+  _PostPassDeliveryProgress({
+    required this.latestPass,
+    required this.deliveriesByRecipient,
+  }) : aggregate = aggregatePostDeliveryStatusFromDeliveries(
+         deliveriesByRecipient.values,
+       );
+
+  Future<void> applyRecipientCompletion({
+    required PostRepository postRepo,
+    required String postId,
+    required String recipientPeerId,
+    required String attemptedAt,
+    required _DeliveryAttempt delivery,
+  }) async {
+    final existingDelivery = deliveriesByRecipient[recipientPeerId];
+    final updatedDelivery = PostRecipientDelivery(
+      postId: postId,
+      recipientPeerId: recipientPeerId,
+      deliveryStatus: delivery.deliveryStatus,
+      lastAttemptAt: attemptedAt,
+      deliveryPath: delivery.deliveryPath,
+      lastError: delivery.lastError,
+      nearbyDistanceM: existingDelivery?.nearbyDistanceM,
+      createdAt: existingDelivery?.createdAt ?? attemptedAt,
+      updatedAt: attemptedAt,
+      deliveryOwnerKind: postRecipientDeliveryOwnerKindPass,
+      deliveryOwnerId: latestPass.passId,
+    );
+    deliveriesByRecipient[recipientPeerId] = updatedDelivery;
+    await postRepo.saveRecipientDelivery(updatedDelivery);
+
+    aggregate = aggregatePostDeliveryStatusFromDeliveries(
+      deliveriesByRecipient.values,
+    );
+    latestPass = latestPass.copyWith(deliveryStatus: aggregate.deliveryStatus);
+    await postRepo.savePostPass(latestPass);
+  }
+
+  Future<void> markUnsettledAsFailed({
+    required PostRepository postRepo,
+    required String postId,
+    required Object error,
+  }) async {
+    final attemptedAt = DateTime.now().toUtc().toIso8601String();
+    final unsettledDeliveries = deliveriesByRecipient.values
+        .where(
+          (delivery) =>
+              !isSuccessfulRecipientDeliveryStatus(delivery.deliveryStatus),
+        )
+        .toList(growable: false);
+    for (final delivery in unsettledDeliveries) {
+      final failedDelivery = delivery.copyWith(
+        deliveryStatus: 'failed',
+        deliveryPath: 'failed',
+        lastError: error.toString(),
+        lastAttemptAt: attemptedAt,
+        updatedAt: attemptedAt,
+        deliveryOwnerKind: postRecipientDeliveryOwnerKindPass,
+        deliveryOwnerId: latestPass.passId,
+      );
+      deliveriesByRecipient[delivery.recipientPeerId] = failedDelivery;
+      await postRepo.saveRecipientDelivery(failedDelivery);
+    }
+
+    aggregate = aggregatePostDeliveryStatusFromDeliveries(
+      deliveriesByRecipient.values,
+    );
+    latestPass = latestPass.copyWith(deliveryStatus: aggregate.deliveryStatus);
+    await postRepo.savePostPass(latestPass);
   }
 }
 

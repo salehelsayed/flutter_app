@@ -230,5 +230,102 @@ Future<int> retryPendingPostDeliveries({
     );
   }
 
+  final retryablePasses = await postRepo.loadRetryableOutgoingPostPasses();
+  for (final pass in retryablePasses) {
+    if (pass.isIncoming) {
+      continue;
+    }
+
+    final deliveries = await postRepo.getPostPassRecipientDeliveries(
+      pass.passId,
+    );
+    if (deliveries.isEmpty) {
+      continue;
+    }
+
+    final aggregate = aggregatePostDeliveryStatusFromDeliveries(deliveries);
+    final unresolvedDeliveries = deliveries
+        .where(
+          (delivery) =>
+              !isSuccessfulRecipientDeliveryStatus(delivery.deliveryStatus),
+        )
+        .toList(growable: false);
+    if (unresolvedDeliveries.isEmpty) {
+      if (aggregate.deliveryStatus != pass.deliveryStatus) {
+        await postRepo.savePostPass(
+          pass.copyWith(deliveryStatus: aggregate.deliveryStatus),
+        );
+      }
+      continue;
+    }
+
+    final sourcePost = await postRepo.getPost(pass.postId);
+    if (sourcePost == null) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'PENDING_POST_RETRIER_MISSING_PASS_SOURCE_POST',
+        details: {'passId': pass.passId, 'postId': pass.postId},
+      );
+      continue;
+    }
+
+    final attachments = await postRepo.loadPostMediaAttachments(sourcePost.id);
+    final hydratedPost = sourcePost.copyWith(
+      mediaKind: sourcePost.mediaKind == 'none' && attachments.isNotEmpty
+          ? PostMediaAttachmentModel.deriveMediaKind(attachments)
+          : sourcePost.mediaKind,
+      media: attachments,
+    );
+    if (hydratedPost.mediaKind != 'none' && hydratedPost.media.isEmpty) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'PENDING_POST_RETRIER_SKIPPED_PENDING_PASS_MEDIA',
+        details: {'passId': pass.passId, 'postId': hydratedPost.id},
+      );
+      continue;
+    }
+
+    final retryRecipients = <CreatedLocalPostRecipient>[];
+    for (final delivery in unresolvedDeliveries) {
+      final contact = await contactRepo.getContact(delivery.recipientPeerId);
+      if (contact == null) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'PENDING_POST_RETRIER_MISSING_PASS_CONTACT',
+          details: {
+            'passId': pass.passId,
+            'recipientPeerId': delivery.recipientPeerId,
+          },
+        );
+        continue;
+      }
+      retryRecipients.add(
+        CreatedLocalPostRecipient(
+          contact: contact,
+          nearbyDistanceM: delivery.nearbyDistanceM,
+        ),
+      );
+    }
+
+    if (retryRecipients.isEmpty) {
+      continue;
+    }
+
+    retriedCount++;
+    await PostDeliveryRunner(
+      p2pService: p2pService,
+      postRepo: postRepo,
+      bridge: bridge,
+      maxConcurrentRecipients: defaultPostDeliveryConcurrency,
+    ).executePostPass(
+      pass: pass,
+      snapshotPost: hydratedPost,
+      resolvedRecipients: retryRecipients,
+      allRecipientPeerIds: deliveries
+          .map((delivery) => delivery.recipientPeerId)
+          .toList(growable: false),
+    );
+  }
+
   return retriedCount;
 }

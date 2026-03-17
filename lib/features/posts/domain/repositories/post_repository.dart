@@ -103,7 +103,13 @@ abstract class PostRepository {
 
   Future<List<PostRecipientDelivery>> getRecipientDeliveries(String postId);
 
+  Future<List<PostRecipientDelivery>> getPostPassRecipientDeliveries(
+    String passId,
+  );
+
   Future<void> savePostPass(PostPassModel pass);
+
+  Future<List<PostPassModel>> loadRetryableOutgoingPostPasses();
 
   Future<bool> postPassExists(String passId);
 

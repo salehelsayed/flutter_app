@@ -575,14 +575,15 @@ class _PostsWiredState extends State<PostsWired> {
     if (!mounted) {
       return;
     }
+    CreatedLocalPostPass? createdPass;
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (_) => PassPostAlongSheet(
         eligibleContacts: contacts,
-        onSubmit: (recipientPeerIds) async {
-          await passPostAlong(
+        onSubmitWithOutcome: (recipientPeerIds) async {
+          final (result, created) = await createLocalPostPass(
             p2pService: widget.p2pService,
             postRepo: widget.postRepo,
             contactRepo: widget.contactRepo,
@@ -591,9 +592,27 @@ class _PostsWiredState extends State<PostsWired> {
             senderUsername: _username,
             recipientPeerIds: recipientPeerIds,
           );
-          await _loadSurface();
+          if (result != PassPostAlongResult.success || created == null) {
+            return PassPostAlongSubmitOutcome.keepSheetOpen;
+          }
+          createdPass = created;
+          return PassPostAlongSubmitOutcome.closeSheet;
         },
       ),
+    );
+    final created = createdPass;
+    if (created != null) {
+      unawaited(_startBackgroundPassAlongDelivery(created));
+    }
+  }
+
+  Future<void> _startBackgroundPassAlongDelivery(
+    CreatedLocalPostPass created,
+  ) async {
+    await deliverCreatedLocalPostPass(
+      p2pService: widget.p2pService,
+      postRepo: widget.postRepo,
+      created: created,
     );
   }
 
