@@ -10,11 +10,19 @@ import 'package:flutter_app/features/posts/domain/repositories/post_repository.d
 const String postReactionFollowOnEventType = 'post_reaction';
 const String postCommentFollowOnEventType = 'post_comment';
 const String postCommentReactionFollowOnEventType = 'post_comment_reaction';
+const int defaultPostCommentDeliveryConcurrency = 25;
 
 bool isPostEngagementFollowOnEventType(String eventType) {
   return eventType == postReactionFollowOnEventType ||
       eventType == postCommentFollowOnEventType ||
       eventType == postCommentReactionFollowOnEventType;
+}
+
+int postEngagementDeliveryConcurrencyForEventType(String eventType) {
+  return switch (eventType) {
+    postCommentFollowOnEventType => defaultPostCommentDeliveryConcurrency,
+    _ => defaultPostFollowOnDeliveryConcurrency,
+  };
 }
 
 Future<PostFollowOnDeliveryResult> queueAndSendPostEngagementFollowOn({
@@ -29,6 +37,38 @@ Future<PostFollowOnDeliveryResult> queueAndSendPostEngagementFollowOn({
   required String createdAt,
   required Iterable<String> recipientPeerIds,
   int maxConcurrentRecipients = defaultPostFollowOnDeliveryConcurrency,
+}) async {
+  await queuePostEngagementFollowOn(
+    postRepo: postRepo,
+    eventId: eventId,
+    eventType: eventType,
+    postId: postId,
+    commentId: commentId,
+    senderPeerId: senderPeerId,
+    envelope: envelope,
+    createdAt: createdAt,
+    recipientPeerIds: recipientPeerIds,
+  );
+
+  return deliverQueuedPostEngagementFollowOn(
+    postRepo: postRepo,
+    p2pService: p2pService,
+    eventId: eventId,
+    envelope: envelope,
+    maxConcurrentRecipients: maxConcurrentRecipients,
+  );
+}
+
+Future<void> queuePostEngagementFollowOn({
+  required PostRepository postRepo,
+  required String eventId,
+  required String eventType,
+  required String postId,
+  required String? commentId,
+  required String senderPeerId,
+  required String envelope,
+  required String createdAt,
+  required Iterable<String> recipientPeerIds,
 }) async {
   final recipients = LinkedHashSet<String>.from(
     recipientPeerIds.where((recipientPeerId) => recipientPeerId.isNotEmpty),
@@ -61,13 +101,24 @@ Future<PostFollowOnDeliveryResult> queueAndSendPostEngagementFollowOn({
   for (final delivery in queuedDeliveries) {
     await postRepo.saveFollowOnOutboxRecipientDelivery(delivery);
   }
+}
 
+Future<PostFollowOnDeliveryResult> deliverQueuedPostEngagementFollowOn({
+  required PostRepository postRepo,
+  required P2PService p2pService,
+  required String eventId,
+  required String envelope,
+  required int maxConcurrentRecipients,
+}) async {
+  final deliveries = await postRepo.loadFollowOnOutboxRecipientDeliveries(
+    eventId,
+  );
   return _deliverPostEngagementFollowOnRecipients(
     postRepo: postRepo,
     p2pService: p2pService,
     eventId: eventId,
     envelope: envelope,
-    deliveries: queuedDeliveries,
+    deliveries: deliveries,
     maxConcurrentRecipients: maxConcurrentRecipients,
   );
 }
@@ -76,15 +127,18 @@ Future<PostFollowOnDeliveryResult> retryPostEngagementFollowOnJob({
   required PostRepository postRepo,
   required P2PService p2pService,
   required PostFollowOnOutboxJob job,
-  int maxConcurrentRecipients = defaultPostFollowOnDeliveryConcurrency,
+  int? maxConcurrentRecipients,
 }) async {
+  final resolvedMaxConcurrentRecipients =
+      maxConcurrentRecipients ??
+      postEngagementDeliveryConcurrencyForEventType(job.event.eventType);
   return _deliverPostEngagementFollowOnRecipients(
     postRepo: postRepo,
     p2pService: p2pService,
     eventId: job.event.eventId,
     envelope: job.event.rawEnvelope,
     deliveries: job.recipientDeliveries,
-    maxConcurrentRecipients: maxConcurrentRecipients,
+    maxConcurrentRecipients: resolvedMaxConcurrentRecipients,
   );
 }
 

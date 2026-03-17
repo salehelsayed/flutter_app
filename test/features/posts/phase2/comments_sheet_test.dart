@@ -56,6 +56,49 @@ void main() {
       expect(firstOffset.dy, lessThan(secondOffset.dy));
     },
   );
+
+  testWidgets(
+    'opens scrolled to the latest comment with clearance above the composer',
+    (tester) async {
+      final comments = List<PostCommentModel>.generate(
+        18,
+        (index) => PostCommentModel(
+          id: 'comment-${index + 1}',
+          eventId: 'evt-comment-${index + 1}',
+          postId: 'post-1',
+          senderPeerId: index.isEven ? 'peer-bob' : 'peer-cara',
+          body: 'Comment ${index + 1}',
+          commentedAt:
+              '2026-03-15T11:${index.toString().padLeft(2, '0')}:00.000Z',
+        ),
+        growable: false,
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: CommentsSheet(
+              post: _post(),
+              comments: comments,
+              onSubmitComment: (_) async => comments,
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(find.text('Comment 18'), findsOneWidget);
+      expect(find.text('Comment 1'), findsNothing);
+
+      final newestBottom = tester.getBottomLeft(find.text('Comment 18')).dy;
+      final composerTop = tester
+          .getTopLeft(
+            find.byKey(const ValueKey<String>('comments-composer-pill')),
+          )
+          .dy;
+      expect(newestBottom, lessThan(composerTop));
+    },
+  );
 }
 
 PostModel _post() {

@@ -18,6 +18,7 @@ class PostCommentListener {
 
   StreamSubscription<ChatMessage>? _subscription;
   final _commentController = StreamController<PostCommentModel>.broadcast();
+  Future<void> _pendingMessageHandling = Future<void>.value();
 
   PostCommentListener({
     required this.postCommentStream,
@@ -33,7 +34,13 @@ class PostCommentListener {
     if (_subscription != null) {
       return;
     }
-    _subscription = postCommentStream.listen(_onMessage);
+    _subscription = postCommentStream.listen((message) {
+      // Serialize comment handling so duplicate deliveries cannot race past the
+      // persistence dedupe check and emit the same comment twice.
+      _pendingMessageHandling = _pendingMessageHandling.then(
+        (_) => _onMessage(message),
+      );
+    });
   }
 
   void stop() {
@@ -76,6 +83,15 @@ class PostCommentListener {
             ).toPayload(),
           );
         }
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'POST_COMMENT_RECEIVED',
+          details: {
+            'postId': comment.postId,
+            'commentId': comment.id,
+            'transport': message.transport ?? 'unknown',
+          },
+        );
         _commentController.add(comment);
       }
     } catch (e) {

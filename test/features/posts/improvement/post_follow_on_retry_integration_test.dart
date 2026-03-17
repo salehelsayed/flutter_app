@@ -1,14 +1,20 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/services/incoming_message_router.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/posts/application/pending_post_follow_on_retrier.dart';
 import 'package:flutter_app/features/posts/application/post_comment_listener.dart';
+import 'package:flutter_app/features/posts/application/post_engagement_follow_on_support.dart';
 import 'package:flutter_app/features/posts/application/post_reaction_listener.dart';
 import 'package:flutter_app/features/posts/application/send_post_comment_reaction_use_case.dart';
 import 'package:flutter_app/features/posts/application/send_post_comment_use_case.dart';
 import 'package:flutter_app/features/posts/application/send_post_reaction_use_case.dart';
+import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_comment_model.dart';
+import 'package:flutter_app/features/posts/domain/models/post_follow_on_outbox_event.dart';
+import 'package:flutter_app/features/posts/domain/models/post_follow_on_outbox_recipient_delivery.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_recipient_delivery.dart';
 
@@ -316,6 +322,194 @@ void main() {
       );
     },
   );
+
+  test('comment retry uses the default concurrent fanout cap of 25', () async {
+    final posts = InMemoryPostRepository();
+    addTearDown(posts.dispose);
+
+    final deliveryRecipientPeerIds = List<String>.generate(
+      29,
+      (index) => 'peer-${index.toString().padLeft(2, '0')}',
+    );
+    final resolvedRecipientPeerIds = <String>[
+      'peer-alice',
+      ...deliveryRecipientPeerIds,
+    ];
+    final sendGates = <String, Completer<void>>{
+      for (final peerId in resolvedRecipientPeerIds) peerId: Completer<void>(),
+    };
+    final service = _ControlledP2PService(
+      peerId: 'peer-bob',
+      network: network,
+      sendGates: sendGates,
+    );
+    addTearDown(service.dispose);
+
+    await _saveRetryableEngagementJob(
+      posts: posts,
+      eventId: 'evt-comment-retry',
+      eventType: postCommentFollowOnEventType,
+      recipientPeerIds: resolvedRecipientPeerIds,
+    );
+
+    final retryFuture = retryPendingPostFollowOns(
+      postRepo: posts,
+      p2pService: service,
+    );
+
+    await service.waitForSendCount(25);
+    await _drainMicrotasks();
+
+    expect(service.maxInFlightSends, 25);
+    expect(service.sendStartOrder.take(25).toSet(), hasLength(25));
+    expect(
+      service.sendStartOrder
+          .take(25)
+          .toSet()
+          .difference(resolvedRecipientPeerIds.toSet()),
+      isEmpty,
+    );
+
+    service.releaseOneStartedRecipient();
+    await service.waitForSendCount(26);
+    await _drainMicrotasks();
+
+    expect(service.maxInFlightSends, 25);
+    expect(service.sendStartOrder.take(26).toSet(), hasLength(26));
+    expect(
+      service.sendStartOrder
+          .take(26)
+          .toSet()
+          .difference(resolvedRecipientPeerIds.toSet()),
+      isEmpty,
+    );
+
+    service.releaseAllRecipients();
+
+    final retried = await retryFuture;
+    expect(retried, 1);
+    expect(
+      (await posts.loadFollowOnOutboxRecipientDeliveries(
+        'evt-comment-retry',
+      )).map((delivery) => delivery.deliveryStatus),
+      everyElement('delivered'),
+    );
+  });
+
+  test('reaction retry keeps the default concurrent fanout cap at 4', () async {
+    final posts = InMemoryPostRepository();
+    addTearDown(posts.dispose);
+
+    final resolvedRecipientPeerIds = <String>[
+      'peer-alice',
+      'peer-cara',
+      'peer-drew',
+      'peer-erin',
+      'peer-finn',
+    ];
+    final sendGates = <String, Completer<void>>{
+      for (final peerId in resolvedRecipientPeerIds) peerId: Completer<void>(),
+    };
+    final service = _ControlledP2PService(
+      peerId: 'peer-bob',
+      network: network,
+      sendGates: sendGates,
+    );
+    addTearDown(service.dispose);
+
+    await _saveRetryableEngagementJob(
+      posts: posts,
+      eventId: 'evt-reaction-retry',
+      eventType: postReactionFollowOnEventType,
+      recipientPeerIds: resolvedRecipientPeerIds,
+    );
+
+    final retryFuture = retryPendingPostFollowOns(
+      postRepo: posts,
+      p2pService: service,
+    );
+
+    await service.waitForSendCount(4);
+    await _drainMicrotasks();
+
+    expect(service.maxInFlightSends, 4);
+    expect(service.sendStartOrder.take(4).toSet(), hasLength(4));
+    expect(
+      service.sendStartOrder
+          .take(4)
+          .toSet()
+          .difference(resolvedRecipientPeerIds.toSet()),
+      isEmpty,
+    );
+
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    await _drainMicrotasks();
+    expect(service.sendStartOrder, hasLength(4));
+
+    service.releaseOneStartedRecipient();
+    await service.waitForSendCount(5);
+    await _drainMicrotasks();
+
+    expect(service.maxInFlightSends, 4);
+    expect(service.sendStartOrder.take(5).toSet(), hasLength(5));
+    expect(
+      service.sendStartOrder
+          .take(5)
+          .toSet()
+          .difference(resolvedRecipientPeerIds.toSet()),
+      isEmpty,
+    );
+
+    service.releaseAllRecipients();
+
+    final retried = await retryFuture;
+    expect(retried, 1);
+    expect(
+      (await posts.loadFollowOnOutboxRecipientDeliveries(
+        'evt-reaction-retry',
+      )).map((delivery) => delivery.deliveryStatus),
+      everyElement('delivered'),
+    );
+  });
+}
+
+Future<void> _saveRetryableEngagementJob({
+  required InMemoryPostRepository posts,
+  required String eventId,
+  required String eventType,
+  required List<String> recipientPeerIds,
+}) async {
+  await posts.saveFollowOnOutboxEvent(
+    PostFollowOnOutboxEvent(
+      eventId: eventId,
+      eventType: eventType,
+      postId: 'post-1',
+      commentId: eventType == postCommentFollowOnEventType ? 'comment-1' : null,
+      senderPeerId: 'peer-bob',
+      rawEnvelope: '{"type":"$eventType"}',
+      createdAt: '2026-03-15T10:16:00.000Z',
+    ),
+  );
+  for (final recipientPeerId in recipientPeerIds) {
+    await posts.saveFollowOnOutboxRecipientDelivery(
+      PostFollowOnOutboxRecipientDelivery(
+        eventId: eventId,
+        recipientPeerId: recipientPeerId,
+        deliveryStatus: 'failed',
+        deliveryPath: 'failed',
+        lastError: 'direct_and_inbox_failed',
+        lastAttemptAt: '2026-03-15T10:16:00.000Z',
+        createdAt: '2026-03-15T10:16:00.000Z',
+        updatedAt: '2026-03-15T10:16:00.000Z',
+      ),
+    );
+  }
+}
+
+Future<void> _drainMicrotasks([int turns = 3]) async {
+  for (var index = 0; index < turns; index++) {
+    await Future<void>.delayed(Duration.zero);
+  }
 }
 
 Future<void> _seedSharedPost({
@@ -520,6 +714,85 @@ class _PostEngagementUser {
     router.dispose();
     postRepo.dispose();
     p2pService.dispose();
+  }
+}
+
+class _ControlledP2PService extends FakeP2PService {
+  final Map<String, Completer<void>> sendGates;
+  final List<String> sendStartOrder = <String>[];
+  final StreamController<void> _sendStarted =
+      StreamController<void>.broadcast();
+
+  int _inFlightSends = 0;
+  int maxInFlightSends = 0;
+
+  _ControlledP2PService({
+    required super.peerId,
+    required super.network,
+    required this.sendGates,
+  });
+
+  Future<void> waitForSendCount(
+    int count, {
+    Duration timeout = const Duration(seconds: 1),
+  }) async {
+    final deadline = DateTime.now().add(timeout);
+    while (sendStartOrder.length < count) {
+      final remaining = deadline.difference(DateTime.now());
+      if (remaining <= Duration.zero) {
+        throw StateError('Timed out waiting for $count recipients to start.');
+      }
+      await _sendStarted.stream.first.timeout(remaining);
+    }
+  }
+
+  void releaseOneStartedRecipient() {
+    for (final recipientPeerId in sendStartOrder) {
+      final gate = sendGates[recipientPeerId];
+      if (gate != null && !gate.isCompleted) {
+        gate.complete();
+        return;
+      }
+    }
+    fail('No started recipient remained blocked.');
+  }
+
+  void releaseAllRecipients() {
+    for (final gate in sendGates.values) {
+      if (!gate.isCompleted) {
+        gate.complete();
+      }
+    }
+  }
+
+  @override
+  Future<SendMessageResult> sendMessageWithReply(
+    String targetPeerId,
+    String message, {
+    int? timeoutMs,
+  }) async {
+    sendStartOrder.add(targetPeerId);
+    _inFlightSends++;
+    if (_inFlightSends > maxInFlightSends) {
+      maxInFlightSends = _inFlightSends;
+    }
+    _sendStarted.add(null);
+
+    try {
+      final gate = sendGates[targetPeerId];
+      if (gate != null) {
+        await gate.future;
+      }
+      return const SendMessageResult(sent: true, reply: 'received');
+    } finally {
+      _inFlightSends--;
+    }
+  }
+
+  @override
+  void dispose() {
+    _sendStarted.close();
+    super.dispose();
   }
 }
 

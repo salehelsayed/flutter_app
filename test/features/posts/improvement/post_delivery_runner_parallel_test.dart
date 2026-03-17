@@ -47,6 +47,68 @@ void main() {
     posts.dispose();
   });
 
+  test('execute uses the default concurrency cap of 25', () async {
+    final recipientPeerIds = List<String>.generate(
+      30,
+      (index) => 'peer-${index.toString().padLeft(2, '0')}',
+    );
+    for (final peerId in recipientPeerIds) {
+      contacts.addTestContact(_contact(peerId, peerId));
+    }
+
+    final sendGates = <String, Completer<void>>{
+      for (final peerId in recipientPeerIds) peerId: Completer<void>(),
+    };
+    final service = _ControlledP2PService(
+      peerId: 'peer-alice',
+      network: network,
+      policies: {
+        for (final peerId in recipientPeerIds)
+          peerId: _PeerPolicy(sendGate: sendGates[peerId]),
+      },
+    );
+    addTearDown(service.dispose);
+
+    final created = await _createLocalPost(
+      posts: posts,
+      contacts: contacts,
+      recipientPeerIds: recipientPeerIds,
+    );
+
+    final runFuture = PostDeliveryRunner(
+      p2pService: service,
+      postRepo: posts,
+    ).execute(created);
+
+    await service
+        .waitForSendCount(25)
+        .timeout(const Duration(milliseconds: 200));
+    await _drainMicrotasks();
+
+    expect(service.maxInFlightSends, 25);
+    expect(service.sendStartOrder, recipientPeerIds.take(25).toList());
+
+    sendGates[recipientPeerIds.first]!.complete();
+    await service
+        .waitForSendCount(26)
+        .timeout(const Duration(milliseconds: 200));
+    await _drainMicrotasks();
+
+    expect(service.maxInFlightSends, 25);
+    expect(service.sendStartOrder, recipientPeerIds.take(26).toList());
+
+    for (final gate in sendGates.values) {
+      if (!gate.isCompleted) {
+        gate.complete();
+      }
+    }
+
+    final (result, post) = await runFuture;
+    expect(result, SendPostResult.success);
+    expect(post.deliveryStatus, 'sent');
+    expect(service.maxInFlightSends, 25);
+  });
+
   test('execute never exceeds the configured concurrency limit', () async {
     const recipientPeerIds = <String>[
       'peer-bob',

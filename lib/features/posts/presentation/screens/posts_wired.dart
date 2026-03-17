@@ -390,11 +390,7 @@ class _PostsWiredState extends State<PostsWired> {
       if (!mounted || post == null) return;
 
       if (target.opensComments && target.commentId != null) {
-        final comments = await loadPostComments(
-          postRepo: widget.postRepo,
-          postId: target.postId,
-          viewerPeerId: _peerId,
-        );
+        final comments = await _loadCommentsForPost(target.postId);
         final hasTargetComment = comments.any(
           (comment) => comment.id == target.commentId,
         );
@@ -421,27 +417,100 @@ class _PostsWiredState extends State<PostsWired> {
   }
 
   Future<void> _openComments(PostModel post, {String? focusCommentId}) async {
-    final comments = await loadPostComments(
-      postRepo: widget.postRepo,
-      postId: post.id,
-      viewerPeerId: _peerId,
+    final commentsNotifier = ValueNotifier<List<PostCommentModel>>(
+      const <PostCommentModel>[],
     );
+    StreamSubscription<String>? commentsSubscription;
+    var isCommentsRefreshInFlight = false;
+    var hasTrailingCommentsRefresh = false;
+    var isCommentsSheetClosed = false;
+
+    Future<void> refreshComments() async {
+      if (isCommentsSheetClosed) {
+        return;
+      }
+      if (isCommentsRefreshInFlight) {
+        hasTrailingCommentsRefresh = true;
+        return;
+      }
+      isCommentsRefreshInFlight = true;
+      try {
+        do {
+          hasTrailingCommentsRefresh = false;
+          final refreshedComments = await _loadCommentsForPost(post.id);
+          if (isCommentsSheetClosed) {
+            return;
+          }
+          commentsNotifier.value = refreshedComments;
+        } while (hasTrailingCommentsRefresh && !isCommentsSheetClosed);
+      } finally {
+        isCommentsRefreshInFlight = false;
+      }
+    }
+
+    void scheduleCommentsRefresh() {
+      if (isCommentsSheetClosed) {
+        return;
+      }
+      unawaited(refreshComments());
+    }
+
+    commentsNotifier.value = await _loadCommentsForPost(post.id);
     if (!mounted) {
+      commentsNotifier.dispose();
       return;
     }
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => CommentsSheet(
-        post: post,
-        comments: comments,
-        focusedCommentId: focusCommentId,
-        viewerPeerId: _peerId,
-        onSubmitComment: (text) => _submitComment(post, text),
-        onToggleCommentHeart: (comment, isActive) =>
-            _toggleCommentHeart(post, comment.id, isActive),
-      ),
+    commentsSubscription = widget.postRepo.postChanges.listen((postId) {
+      if (postId != post.id) {
+        return;
+      }
+      scheduleCommentsRefresh();
+    });
+    try {
+      await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.transparent,
+        builder: (_) => ValueListenableBuilder<List<PostCommentModel>>(
+          valueListenable: commentsNotifier,
+          builder: (_, comments, __) => CommentsSheet(
+            post: post,
+            comments: comments,
+            focusedCommentId: focusCommentId,
+            viewerPeerId: _peerId,
+            onSubmitComment: (text) async {
+              final updatedComments = await _submitComment(post, text);
+              if (!isCommentsSheetClosed) {
+                commentsNotifier.value = updatedComments;
+              }
+              return updatedComments;
+            },
+            onToggleCommentHeart: (comment, isActive) async {
+              final updatedComments = await _toggleCommentHeart(
+                post,
+                comment.id,
+                isActive,
+              );
+              if (!isCommentsSheetClosed) {
+                commentsNotifier.value = updatedComments;
+              }
+              return updatedComments;
+            },
+          ),
+        ),
+      );
+    } finally {
+      isCommentsSheetClosed = true;
+      await commentsSubscription?.cancel();
+      commentsNotifier.dispose();
+    }
+  }
+
+  Future<List<PostCommentModel>> _loadCommentsForPost(String postId) {
+    return loadPostComments(
+      postRepo: widget.postRepo,
+      postId: postId,
+      viewerPeerId: _peerId,
     );
   }
 
@@ -451,13 +520,9 @@ class _PostsWiredState extends State<PostsWired> {
   ) async {
     final peerId = _peerId;
     if (peerId == null) {
-      return loadPostComments(
-        postRepo: widget.postRepo,
-        postId: post.id,
-        viewerPeerId: _peerId,
-      );
+      return _loadCommentsForPost(post.id);
     }
-    await sendPostComment(
+    final (result, created) = await createLocalPostComment(
       p2pService: widget.p2pService,
       postRepo: widget.postRepo,
       contactRepo: widget.contactRepo,
@@ -466,12 +531,17 @@ class _PostsWiredState extends State<PostsWired> {
       senderUsername: _username,
       body: text,
     );
-    await _loadSurface();
-    return loadPostComments(
-      postRepo: widget.postRepo,
-      postId: post.id,
-      viewerPeerId: _peerId,
+    if (result != SendPostCommentResult.success || created == null) {
+      return _loadCommentsForPost(post.id);
+    }
+    unawaited(
+      deliverCreatedLocalPostComment(
+        p2pService: widget.p2pService,
+        postRepo: widget.postRepo,
+        created: created,
+      ),
     );
+    return _loadCommentsForPost(post.id);
   }
 
   Future<void> _togglePostHeart(PostModel post) async {
@@ -534,11 +604,7 @@ class _PostsWiredState extends State<PostsWired> {
   ) async {
     final peerId = _peerId;
     if (peerId == null) {
-      return loadPostComments(
-        postRepo: widget.postRepo,
-        postId: post.id,
-        viewerPeerId: _peerId,
-      );
+      return _loadCommentsForPost(post.id);
     }
     await sendPostCommentReaction(
       p2pService: widget.p2pService,
@@ -550,11 +616,7 @@ class _PostsWiredState extends State<PostsWired> {
       isActive: isActive,
     );
     await _loadSurface();
-    return loadPostComments(
-      postRepo: widget.postRepo,
-      postId: post.id,
-      viewerPeerId: _peerId,
-    );
+    return _loadCommentsForPost(post.id);
   }
 
   Future<void> _dismissPinnedPost(PostModel post) async {
