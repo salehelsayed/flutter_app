@@ -1,6 +1,9 @@
 import 'dart:async';
+import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
@@ -591,6 +594,8 @@ class _PostsWiredState extends State<PostsWired> {
             senderPeerId: peerId,
             senderUsername: _username,
             recipientPeerIds: recipientPeerIds,
+            bridge: widget.bridge,
+            loadAvatarBytesFn: _loadAvatarFromDisk,
           );
           if (result != PassPostAlongResult.success || created == null) {
             return PassPostAlongSubmitOutcome.keepSheetOpen;
@@ -613,6 +618,7 @@ class _PostsWiredState extends State<PostsWired> {
       p2pService: widget.p2pService,
       postRepo: widget.postRepo,
       created: created,
+      bridge: widget.bridge,
     );
   }
 
@@ -880,4 +886,12 @@ String _kindFromMime(String mime) {
   if (mime.startsWith('video/')) return 'video';
   if (mime.startsWith('audio/')) return 'voice';
   return 'other';
+}
+
+Future<Uint8List?> _loadAvatarFromDisk(String peerId) async {
+  final docsDir = UserAvatar.documentsDir;
+  if (docsDir == null) return null;
+  final file = File('$docsDir/media/avatars/$peerId.jpg');
+  if (await file.exists()) return file.readAsBytes();
+  return null;
 }

@@ -6,8 +6,14 @@ Future<void> dbUpsertPostPass(Database db, Map<String, Object?> row) async {
   final hasDeliveryStatus = columns.any(
     (column) => column['name'] == 'delivery_status',
   );
+  final hasInnerPayloadJson = columns.any(
+    (column) => column['name'] == 'inner_payload_json',
+  );
   if (!hasDeliveryStatus) {
     insertRow.remove('delivery_status');
+  }
+  if (!hasInnerPayloadJson) {
+    insertRow.remove('inner_payload_json');
   }
   await db.insert(
     'post_passes',
@@ -84,4 +90,59 @@ Future<List<Map<String, Object?>>> dbLoadRetryableOutgoingPostPasses(
     whereArgs: const <Object?>[0, 'sending', 'partial', 'failed'],
     orderBy: 'passed_at DESC, pass_id DESC',
   );
+}
+
+Future<void> dbSavePassAvatarSnapshot(
+  Database db,
+  String postId,
+  String authorPeerId,
+  List<int> avatarBlob,
+  String createdAt,
+) async {
+  await db.insert(
+    'post_pass_avatar_snapshots',
+    <String, Object?>{
+      'post_id': postId,
+      'author_peer_id': authorPeerId,
+      'avatar_blob': avatarBlob,
+      'created_at': createdAt,
+    },
+    conflictAlgorithm: ConflictAlgorithm.ignore,
+  );
+}
+
+Future<List<int>?> dbLoadPassAvatarSnapshot(
+  Database db,
+  String postId,
+) async {
+  final rows = await db.query(
+    'post_pass_avatar_snapshots',
+    columns: const ['avatar_blob'],
+    where: 'post_id = ?',
+    whereArgs: <Object?>[postId],
+    limit: 1,
+  );
+  if (rows.isEmpty) {
+    return null;
+  }
+  return rows.first['avatar_blob'] as List<int>?;
+}
+
+Future<Map<String, List<int>>> dbLoadPassAvatarSnapshotsForPosts(
+  Database db,
+  List<String> postIds,
+) async {
+  if (postIds.isEmpty) {
+    return const <String, List<int>>{};
+  }
+  final placeholders = List<String>.filled(postIds.length, '?').join(', ');
+  final rows = await db.rawQuery(
+    'SELECT post_id, avatar_blob FROM post_pass_avatar_snapshots WHERE post_id IN ($placeholders)',
+    postIds,
+  );
+  return <String, List<int>>{
+    for (final row in rows)
+      if (row['post_id'] is String && row['avatar_blob'] is List<int>)
+        row['post_id'] as String: row['avatar_blob'] as List<int>,
+  };
 }

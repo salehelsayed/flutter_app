@@ -1,12 +1,20 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_app/core/database/helpers/post_comments_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_feed_state_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_pending_child_events_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/post_passes_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_recipients_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_media_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/posts_db_helpers.dart';
 import 'package:flutter_app/core/database/migrations/027_posts_core.dart';
 import 'package:flutter_app/core/database/migrations/028_posts_engagement.dart';
+import 'package:flutter_app/core/database/migrations/030_posts_pass_along.dart';
+import 'package:flutter_app/core/database/migrations/031_posts_pins.dart';
+import 'package:flutter_app/core/database/migrations/034_posts_media_upload_recovery.dart';
+import 'package:flutter_app/core/database/migrations/037_posts_repost_engagement_state.dart';
+import 'package:flutter_app/core/database/migrations/038_posts_repost_media_crypto.dart';
+import 'package:flutter_app/core/database/migrations/039_posts_pass_avatar_snapshots.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_comment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
@@ -28,6 +36,12 @@ void main() {
     db = await openDatabase(inMemoryDatabasePath, version: 1);
     await runPostsCoreMigration(db);
     await runPostsEngagementMigration(db);
+    await runPostsPassAlongMigration(db);
+    await runPostsPinsMigration(db);
+    await runPostsMediaUploadRecoveryMigration(db);
+    await runPostsRepostEngagementStateMigration(db);
+    await runPostsRepostMediaCryptoMigration(db);
+    await runPostsPassAvatarSnapshotsMigration(db);
     repository = PostRepositoryImpl(
       dbInsertPost: (row) => dbInsertPost(db, row),
       dbLoadPost: (postId) => dbLoadPost(db, postId),
@@ -50,6 +64,18 @@ void main() {
           dbDeletePendingPostChildEvent(db, eventId),
       dbUpsertPostMedia: (row) => dbUpsertPostMediaAttachment(db, row),
       dbLoadPostMedia: (postId) => dbLoadPostMediaAttachments(db, postId),
+      dbSavePassAvatarSnapshot: (postId, authorPeerId, avatarBlob, createdAt) =>
+          dbSavePassAvatarSnapshot(
+            db,
+            postId,
+            authorPeerId,
+            avatarBlob,
+            createdAt,
+          ),
+      dbLoadPassAvatarSnapshot: (postId) =>
+          dbLoadPassAvatarSnapshot(db, postId),
+      dbLoadPassAvatarSnapshotsForPosts: (postIds) =>
+          dbLoadPassAvatarSnapshotsForPosts(db, postIds),
     );
   });
 
@@ -106,41 +132,88 @@ void main() {
     },
   );
 
-  test('repository can load and delete expired posts with media rows', () async {
-    await repository.savePost(
-      const PostModel(
-        id: 'post-expired',
-        eventId: 'evt-post-expired',
-        senderPeerId: 'peer-bob',
-        authorPeerId: 'peer-bob',
-        authorUsername: 'Bob',
-        text: 'Expired post',
-        audience: PostAudience(kind: PostAudienceKind.allFriends),
-        createdAt: '2026-03-15T10:15:30.000Z',
-        visibleAt: '2026-03-15T10:15:30.000Z',
-        expiresAt: '2026-03-16T08:00:00.000Z',
-      ),
-    );
-    await repository.savePostMediaAttachment(
-      const PostMediaAttachmentModel(
-        mediaId: 'media-1',
+  test(
+    'repository can load and delete expired posts with media rows',
+    () async {
+      await repository.savePost(
+        const PostModel(
+          id: 'post-expired',
+          eventId: 'evt-post-expired',
+          senderPeerId: 'peer-bob',
+          authorPeerId: 'peer-bob',
+          authorUsername: 'Bob',
+          text: 'Expired post',
+          audience: PostAudience(kind: PostAudienceKind.allFriends),
+          createdAt: '2026-03-15T10:15:30.000Z',
+          visibleAt: '2026-03-15T10:15:30.000Z',
+          expiresAt: '2026-03-16T08:00:00.000Z',
+        ),
+      );
+      await repository.savePostMediaAttachment(
+        const PostMediaAttachmentModel(
+          mediaId: 'media-1',
+          postId: 'post-expired',
+          blobId: 'blob-1',
+          kind: 'image',
+          mime: 'image/jpeg',
+          sizeBytes: 128,
+          localPath: 'post_media/post-expired/blob-1',
+          downloadStatus: 'done',
+          createdAt: '2026-03-15T10:20:00.000Z',
+        ),
+      );
+      await repository.savePassAvatarSnapshot(
         postId: 'post-expired',
-        blobId: 'blob-1',
-        kind: 'image',
-        mime: 'image/jpeg',
-        sizeBytes: 128,
-        localPath: 'post_media/post-expired/blob-1',
-        downloadStatus: 'done',
-        createdAt: '2026-03-15T10:20:00.000Z',
-      ),
-    );
+        authorPeerId: 'peer-bob',
+        avatarBlob: Uint8List.fromList(<int>[1, 2, 3, 4]),
+        createdAt: '2026-03-15T10:25:00.000Z',
+      );
 
-    final expired = await repository.loadExpiredPosts('2026-03-16T09:00:00.000Z');
-    expect(expired.map((post) => post.id), ['post-expired']);
+      final expired = await repository.loadExpiredPosts(
+        '2026-03-16T09:00:00.000Z',
+      );
+      expect(expired.map((post) => post.id), ['post-expired']);
 
-    await repository.deletePostCascade('post-expired');
+      await repository.deletePostCascade('post-expired');
 
-    expect(await repository.getPost('post-expired'), isNull);
-    expect(await repository.loadPostMediaAttachments('post-expired'), isEmpty);
-  });
+      expect(await repository.getPost('post-expired'), isNull);
+      expect(
+        await repository.loadPostMediaAttachments('post-expired'),
+        isEmpty,
+      );
+      expect(await repository.loadPassAvatarSnapshot('post-expired'), isNull);
+    },
+  );
+
+  test(
+    'deletePostCascade fails when a required posts table is missing',
+    () async {
+      await repository.savePost(
+        const PostModel(
+          id: 'post-missing-table',
+          eventId: 'evt-post-missing-table',
+          senderPeerId: 'peer-bob',
+          authorPeerId: 'peer-bob',
+          authorUsername: 'Bob',
+          text: 'Needs strict schema',
+          audience: PostAudience(kind: PostAudienceKind.allFriends),
+          createdAt: '2026-03-15T10:15:30.000Z',
+          visibleAt: '2026-03-15T10:15:30.000Z',
+          expiresAt: '2026-03-18T10:15:30.000Z',
+        ),
+      );
+      await db.execute('DROP TABLE post_reactions');
+
+      await expectLater(
+        repository.deletePostCascade('post-missing-table'),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.toString(),
+            'message',
+            contains('post_reactions'),
+          ),
+        ),
+      );
+    },
+  );
 }

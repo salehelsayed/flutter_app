@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 
@@ -32,6 +34,7 @@ class PostModel {
   final String? passedByUsername;
   final String? passedAt;
   final int shareCount;
+  final Uint8List? originalAuthorAvatarBytes;
 
   const PostModel({
     required this.id,
@@ -64,6 +67,7 @@ class PostModel {
     this.passedByUsername,
     this.passedAt,
     this.shareCount = 0,
+    this.originalAuthorAvatarBytes,
   });
 
   factory PostModel.fromMap(Map<String, Object?> map) {
@@ -161,6 +165,8 @@ class PostModel {
     String? passedByUsername,
     String? passedAt,
     int? shareCount,
+    Uint8List? originalAuthorAvatarBytes,
+    bool clearOriginalAuthorAvatarBytes = false,
   }) {
     return PostModel(
       id: id,
@@ -195,6 +201,7 @@ class PostModel {
       passedByUsername: passedByUsername ?? this.passedByUsername,
       passedAt: passedAt ?? this.passedAt,
       shareCount: shareCount ?? this.shareCount,
+      originalAuthorAvatarBytes: clearOriginalAuthorAvatarBytes ? null : (originalAuthorAvatarBytes ?? this.originalAuthorAvatarBytes),
     );
   }
 }

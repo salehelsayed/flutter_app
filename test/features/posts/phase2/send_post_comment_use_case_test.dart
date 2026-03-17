@@ -7,6 +7,7 @@ import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart'
 import 'package:flutter_app/features/posts/application/send_post_comment_use_case.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
+import 'package:flutter_app/features/posts/domain/models/post_origin_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_recipient_delivery.dart';
 
 import '../../../shared/fakes/fake_p2p_network.dart';
@@ -315,6 +316,77 @@ void main() {
           (delivery) => delivery.deliveryStatus,
         ),
         everyElement('failed'),
+      );
+    },
+  );
+
+  test(
+    'repost-thread comments target the original author plus persisted participants and add the sender to participant state',
+    () async {
+      final service = FakeP2PService(peerId: 'peer-ibra', network: network);
+      addTearDown(service.dispose);
+      contacts.addTestContact(_contact('peer-solz', 'Solz'));
+      contacts.addTestContact(_contact('peer-hisam', 'Hisam'));
+      contacts.addTestContact(_contact('peer-ibra', 'Ibra'));
+      contacts.addTestContact(_contact('peer-dana', 'Dana'));
+      await posts.savePost(
+        PostModel(
+          id: 'post-1',
+          eventId: 'evt-post-1',
+          senderPeerId: 'peer-hisam',
+          authorPeerId: 'peer-solz',
+          authorUsername: 'Solz',
+          text: 'Need a ladder',
+          audience: PostAudience.allFriends(),
+          createdAt: '2026-03-15T10:15:30.000Z',
+          visibleAt: '2026-03-15T11:15:30.000Z',
+          expiresAt: '2026-03-18T10:15:30.000Z',
+          isIncoming: true,
+        ),
+      );
+      await posts.savePostOrigin(
+        const PostOriginModel(
+          postId: 'post-1',
+          originKind: PostOriginKind.pass,
+          passId: 'pass-1',
+          passerPeerId: 'peer-hisam',
+          passerUsername: 'Hisam',
+          passCreatedAt: '2026-03-15T11:15:30.000Z',
+        ),
+      );
+      await posts.saveRepostEngagementParticipant(
+        postId: 'post-1',
+        participantPeerId: 'peer-solz',
+        createdAt: '2026-03-15T11:15:30.000Z',
+      );
+      await posts.saveRepostEngagementParticipant(
+        postId: 'post-1',
+        participantPeerId: 'peer-hisam',
+        createdAt: '2026-03-15T11:15:30.000Z',
+      );
+
+      final (result, created) = await createLocalPostComment(
+        p2pService: service,
+        postRepo: posts,
+        contactRepo: contacts,
+        postId: 'post-1',
+        senderPeerId: 'peer-ibra',
+        senderUsername: 'Ibra',
+        body: 'I can help too.',
+      );
+
+      expect(result, SendPostCommentResult.success);
+      expect(created, isNotNull);
+      expect(
+        await posts.loadRepostEngagementParticipantPeerIds('post-1'),
+        <String>{'peer-hisam', 'peer-ibra', 'peer-solz'},
+      );
+      final deliveries = await posts.loadFollowOnOutboxRecipientDeliveries(
+        created!.comment.eventId,
+      );
+      expect(
+        deliveries.map((delivery) => delivery.recipientPeerId).toList(),
+        <String>['peer-hisam', 'peer-solz'],
       );
     },
   );

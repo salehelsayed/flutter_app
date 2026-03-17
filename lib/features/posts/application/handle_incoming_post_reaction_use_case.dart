@@ -1,6 +1,7 @@
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
+import 'package:flutter_app/features/posts/application/post_repost_engagement_support.dart';
 import 'package:flutter_app/features/posts/domain/models/post_comment_reaction_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_pending_child_event.dart';
 import 'package:flutter_app/features/posts/domain/models/post_reaction_envelope.dart';
@@ -78,6 +79,12 @@ handleIncomingPostReaction({
     return (HandleIncomingPostReactionResult.staleIgnored, existing);
   }
 
+  await persistRepostEngagementParticipantIfNeeded(
+    postRepo: postRepo,
+    postId: envelope.postId,
+    participantPeerId: envelope.senderPeerId,
+    createdAt: envelope.reactedAt,
+  );
   final reaction = PostReactionModel(
     reactionId: envelope.reactionId,
     eventId: envelope.eventId,
@@ -155,6 +162,12 @@ handleIncomingPostCommentReaction({
     return (HandleIncomingPostCommentReactionResult.staleIgnored, existing);
   }
 
+  await persistRepostEngagementParticipantIfNeeded(
+    postRepo: postRepo,
+    postId: envelope.postId,
+    participantPeerId: envelope.senderPeerId,
+    createdAt: envelope.reactedAt,
+  );
   final reaction = PostCommentReactionModel(
     reactionId: envelope.reactionId,
     eventId: envelope.eventId,

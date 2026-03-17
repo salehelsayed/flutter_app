@@ -5,6 +5,7 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/posts/application/post_engagement_follow_on_support.dart';
 import 'package:flutter_app/features/posts/application/post_follow_on_delivery.dart';
+import 'package:flutter_app/features/posts/application/post_repost_engagement_support.dart';
 import 'package:flutter_app/features/posts/domain/models/post_reaction_envelope.dart';
 import 'package:flutter_app/features/posts/domain/models/post_reaction_model.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
@@ -66,6 +67,12 @@ Future<(SendPostReactionResult, PostReactionModel?)> sendPostReaction({
     isActive: isActive,
   );
   await postRepo.savePostReaction(reaction);
+  await persistRepostEngagementParticipantIfNeeded(
+    postRepo: postRepo,
+    postId: postId,
+    participantPeerId: senderPeerId,
+    createdAt: createdAt,
+  );
   final deliveryResult = await queueAndSendPostEngagementFollowOn(
     postRepo: postRepo,
     p2pService: p2pService,
@@ -92,11 +99,29 @@ Future<List<ContactModel>> resolvePostEngagementRecipients({
   required String authorPeerId,
   required String senderPeerId,
 }) async {
-  final deliveries = await postRepo.getRecipientDeliveries(postId);
-  final peerIds = <String>{
-    ...deliveries.map((delivery) => delivery.recipientPeerId),
-    authorPeerId,
-  }..remove(senderPeerId);
+  final repostParticipants = await postRepo
+      .loadRepostEngagementParticipantPeerIds(postId);
+  final origin = await postRepo.getPostOrigin(postId);
+  final hasRepostContext =
+      repostParticipants.isNotEmpty ||
+      await postRepo.loadPostPassCount(postId) > 0 ||
+      await postRepo.loadRepostTotalBaseline(postId) > 0 ||
+      isRepostOrigin(origin);
+  final fallbackPasserPeerId = origin?.passerPeerId;
+  final peerIds = hasRepostContext
+      ? <String>{
+          authorPeerId,
+          ...repostParticipants,
+          if (fallbackPasserPeerId != null && fallbackPasserPeerId.isNotEmpty)
+            fallbackPasserPeerId,
+        }
+      : <String>{
+          ...(await postRepo.getRecipientDeliveries(
+            postId,
+          )).map((delivery) => delivery.recipientPeerId),
+          authorPeerId,
+        };
+  peerIds.remove(senderPeerId);
 
   final recipients = <ContactModel>[];
   for (final peerId in peerIds) {

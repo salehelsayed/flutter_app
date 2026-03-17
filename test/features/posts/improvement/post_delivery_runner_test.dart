@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -7,8 +8,10 @@ import 'package:flutter_app/features/posts/application/post_delivery_runner.dart
 import 'package:flutter_app/features/posts/application/send_post_use_case.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
+import 'package:flutter_app/features/posts/domain/models/post_pass_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_recipient_delivery.dart';
 
+import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/fake_p2p_network.dart';
 import '../../../shared/fakes/fake_p2p_service_integration.dart';
 import '../../../shared/fakes/in_memory_contact_repository.dart';
@@ -23,6 +26,7 @@ ContactModel _contact(String peerId, String username) {
     username: username,
     signature: 'sig-$peerId',
     scannedAt: '2026-03-15T10:00:00.000Z',
+    mlKemPublicKey: 'mlkem-$peerId',
   );
 }
 
@@ -213,6 +217,170 @@ void main() {
     expect(bob.messageRepo.count, 0);
   });
 
+  test(
+    'executePostPass encrypts repost payloads for each recipient and persists sent status',
+    () async {
+      final bridge = PassthroughCryptoBridge();
+      contacts.addTestContact(_contact('peer-bob', 'Bob'));
+      contacts.addTestContact(_contact('peer-cara', 'Cara'));
+      final bobService = FakeP2PService(peerId: 'peer-bob', network: network);
+      addTearDown(bobService.dispose);
+      final caraService = FakeP2PService(peerId: 'peer-cara', network: network);
+      addTearDown(caraService.dispose);
+      final aliceService = FakeP2PService(
+        peerId: 'peer-alice',
+        network: network,
+      );
+      addTearDown(aliceService.dispose);
+
+      const pass = PostPassModel(
+        passId: 'pass-enc-1',
+        eventId: 'evt-pass-enc-1',
+        postId: 'post-pass-source',
+        senderPeerId: 'peer-alice',
+        passerPeerId: 'peer-alice',
+        passerUsername: 'Alice',
+        passedAt: '2026-03-15T10:00:02.000Z',
+        createdAt: '2026-03-15T10:00:02.000Z',
+        isIncoming: false,
+      );
+      final snapshotPost = _post(
+        id: 'post-pass-source',
+        deliveryStatus: 'available',
+        isIncoming: true,
+      ).copyWith(authorPeerId: 'peer-bob', authorUsername: 'Bob');
+      final receivedByBob = bobService.messageStream.first;
+      final receivedByCara = caraService.messageStream.first;
+
+      final (result, deliveredPass) =
+          await PostDeliveryRunner(
+            p2pService: aliceService,
+            postRepo: posts,
+            bridge: bridge,
+          ).executePostPass(
+            pass: pass,
+            snapshotPost: snapshotPost,
+            resolvedRecipients: const <CreatedLocalPostRecipient>[
+              CreatedLocalPostRecipient(
+                contact: ContactModel(
+                  peerId: 'peer-bob',
+                  publicKey: 'pk-peer-bob',
+                  rendezvous: '/dns4/example.invalid/tcp/443',
+                  username: 'Bob',
+                  signature: 'sig-peer-bob',
+                  scannedAt: '2026-03-15T10:00:00.000Z',
+                  mlKemPublicKey: 'mlkem-peer-bob',
+                ),
+              ),
+              CreatedLocalPostRecipient(
+                contact: ContactModel(
+                  peerId: 'peer-cara',
+                  publicKey: 'pk-peer-cara',
+                  rendezvous: '/dns4/example.invalid/tcp/443',
+                  username: 'Cara',
+                  signature: 'sig-peer-cara',
+                  scannedAt: '2026-03-15T10:00:00.000Z',
+                  mlKemPublicKey: 'mlkem-peer-cara',
+                ),
+              ),
+            ],
+          );
+
+      expect(result, SendPostResult.success);
+      expect(deliveredPass.deliveryStatus, 'sent');
+      expect(
+        bridge.commandLog.where((command) => command == 'message.encrypt'),
+        hasLength(2),
+      );
+
+      final bobJson =
+          jsonDecode(
+                (await receivedByBob.timeout(
+                  const Duration(seconds: 1),
+                )).content,
+              )
+              as Map<String, dynamic>;
+      final caraJson =
+          jsonDecode(
+                (await receivedByCara.timeout(
+                  const Duration(seconds: 1),
+                )).content,
+              )
+              as Map<String, dynamic>;
+      expect(bobJson['version'], '2');
+      expect(caraJson['version'], '2');
+      expect(
+        (bobJson['encrypted'] as Map<String, dynamic>)['ciphertext'],
+        isNotEmpty,
+      );
+      expect(
+        (caraJson['encrypted'] as Map<String, dynamic>)['ciphertext'],
+        isNotEmpty,
+      );
+    },
+  );
+
+  test(
+    'executePostPass marks the repost delivery failed instead of downgrading to plaintext when encryption is unavailable',
+    () async {
+      contacts.addTestContact(_contact('peer-bob', 'Bob'));
+      final aliceService = FakeP2PService(
+        peerId: 'peer-alice',
+        network: network,
+      );
+      addTearDown(aliceService.dispose);
+
+      const pass = PostPassModel(
+        passId: 'pass-fail-1',
+        eventId: 'evt-pass-fail-1',
+        postId: 'post-pass-fail',
+        senderPeerId: 'peer-alice',
+        passerPeerId: 'peer-alice',
+        passerUsername: 'Alice',
+        passedAt: '2026-03-15T10:00:02.000Z',
+        createdAt: '2026-03-15T10:00:02.000Z',
+        isIncoming: false,
+      );
+      final snapshotPost = _post(
+        id: 'post-pass-fail',
+        deliveryStatus: 'available',
+        isIncoming: true,
+      ).copyWith(authorPeerId: 'peer-bob', authorUsername: 'Bob');
+
+      final (
+        result,
+        deliveredPass,
+      ) = await PostDeliveryRunner(p2pService: aliceService, postRepo: posts)
+          .executePostPass(
+            pass: pass,
+            snapshotPost: snapshotPost,
+            resolvedRecipients: const <CreatedLocalPostRecipient>[
+              CreatedLocalPostRecipient(
+                contact: ContactModel(
+                  peerId: 'peer-bob',
+                  publicKey: 'pk-peer-bob',
+                  rendezvous: '/dns4/example.invalid/tcp/443',
+                  username: 'Bob',
+                  signature: 'sig-peer-bob',
+                  scannedAt: '2026-03-15T10:00:00.000Z',
+                  mlKemPublicKey: 'mlkem-peer-bob',
+                ),
+              ),
+            ],
+          );
+
+      expect(result, SendPostResult.sendFailed);
+      expect(deliveredPass.deliveryStatus, 'failed');
+      expect(network.deliverCallCount, 0);
+      final deliveries = await posts.getPostPassRecipientDeliveries(
+        pass.passId,
+      );
+      expect(deliveries, hasLength(1));
+      expect(deliveries.single.deliveryStatus, 'failed');
+      expect(deliveries.single.lastError, 'repost_encryption_unavailable');
+    },
+  );
+
   test('PostDeliveryRunner stays widget agnostic', () async {
     final source = await File(
       'lib/features/posts/application/post_delivery_runner.dart',
@@ -242,6 +410,27 @@ Future<CreatedLocalPost> _createLocalPost({
   expect(result, SendPostResult.success);
   expect(created, isNotNull);
   return created!;
+}
+
+PostModel _post({
+  required String id,
+  required String deliveryStatus,
+  bool isIncoming = false,
+}) {
+  return PostModel(
+    id: id,
+    eventId: 'evt-$id',
+    senderPeerId: 'peer-alice',
+    authorPeerId: 'peer-alice',
+    authorUsername: 'Alice',
+    text: 'Hello from Posts',
+    audience: PostAudience.allFriends(),
+    createdAt: '2026-03-15T10:00:00.000Z',
+    visibleAt: '2026-03-15T10:00:00.000Z',
+    expiresAt: '2026-03-18T10:00:00.000Z',
+    isIncoming: isIncoming,
+    deliveryStatus: deliveryStatus,
+  );
 }
 
 class _RecordingPostRepository extends InMemoryPostRepository {

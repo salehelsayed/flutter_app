@@ -5,7 +5,9 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/posts/application/handle_incoming_post_reaction_use_case.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
+import 'package:flutter_app/features/posts/domain/models/post_comment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
+import 'package:flutter_app/features/posts/domain/models/post_origin_model.dart';
 
 import '../../../shared/fakes/in_memory_contact_repository.dart';
 import '../../../shared/fakes/in_memory_post_repository.dart';
@@ -214,4 +216,64 @@ void main() {
     expect(reaction, isNull);
     expect(await posts.loadPendingChildEvents('post-1'), hasLength(1));
   });
+
+  test(
+    'persists the incoming sender as a repost-engagement participant for repost-thread comment reactions',
+    () async {
+      await posts.savePost(
+        _post('post-1').copyWith(
+          senderPeerId: 'peer-hisam',
+          authorPeerId: 'peer-bob',
+          authorUsername: 'Bob',
+        ),
+      );
+      await posts.saveComment(
+        const PostCommentModel(
+          id: 'comment-1',
+          eventId: 'evt-comment-1',
+          postId: 'post-1',
+          senderPeerId: 'peer-bob',
+          authorUsername: 'Bob',
+          body: 'I can lend one.',
+          commentedAt: '2026-03-15T11:00:00.000Z',
+        ),
+      );
+      await posts.savePostOrigin(
+        const PostOriginModel(
+          postId: 'post-1',
+          originKind: PostOriginKind.pass,
+          passId: 'pass-1',
+          passerPeerId: 'peer-hisam',
+          passerUsername: 'Hisam',
+          passCreatedAt: '2026-03-15T11:15:00.000Z',
+        ),
+      );
+      await posts.saveRepostEngagementParticipant(
+        postId: 'post-1',
+        participantPeerId: 'peer-hisam',
+        createdAt: '2026-03-15T11:15:00.000Z',
+      );
+      contacts.addTestContact(_contact('peer-ibra', 'Ibra'));
+
+      final (result, reaction) = await handleIncomingPostCommentReaction(
+        message: _commentReactionMessage(
+          senderPeerId: 'peer-ibra',
+          postId: 'post-1',
+          commentId: 'comment-1',
+          reactionId: 'comment_heart:comment-1:peer-ibra',
+          eventId: 'evt-comment-reaction-2',
+          isActive: true,
+        ),
+        postRepo: posts,
+        contactRepo: contacts,
+      );
+
+      expect(result, HandleIncomingPostCommentReactionResult.reactionApplied);
+      expect(reaction, isNotNull);
+      expect(
+        await posts.loadRepostEngagementParticipantPeerIds('post-1'),
+        <String>{'peer-hisam', 'peer-ibra'},
+      );
+    },
+  );
 }

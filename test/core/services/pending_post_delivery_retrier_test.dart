@@ -23,6 +23,7 @@ ContactModel _contact(String peerId, String username) {
     username: username,
     signature: 'sig-$peerId',
     scannedAt: '2026-03-15T10:00:00.000Z',
+    mlKemPublicKey: 'mlkem-$peerId',
   );
 }
 
@@ -52,16 +53,18 @@ void main() {
   late InMemoryPostRepository posts;
   late FakeContactRepository contacts;
   late PendingPostDeliveryRetrier retrier;
+  late PassthroughCryptoBridge bridge;
 
   setUp(() {
     p2pService = FakeP2PService();
     posts = InMemoryPostRepository();
     contacts = FakeContactRepository();
+    bridge = PassthroughCryptoBridge();
     retrier = PendingPostDeliveryRetrier(
       p2pService: p2pService,
       postRepo: posts,
       contactRepo: contacts,
-      bridge: FakeBridge(),
+      bridge: bridge,
       retryDebounce: Duration.zero,
       periodicRetryInterval: const Duration(hours: 1),
     );
@@ -160,7 +163,7 @@ void main() {
         p2pService: recordingP2PService,
         postRepo: posts,
         contactRepo: contacts,
-        bridge: FakeBridge(),
+        bridge: bridge,
         retryDebounce: Duration.zero,
         periodicRetryInterval: const Duration(hours: 1),
         beforeRetry: () async {
@@ -235,6 +238,7 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 20));
 
       expect(p2pService.sendMessageWithReplyCallCount, 1);
+      expect(bridge.commandLog, contains('message.encrypt'));
       final deliveries = await posts.getPostPassRecipientDeliveries(
         pass.passId,
       );
@@ -272,7 +276,7 @@ void main() {
         p2pService: controlledP2PService,
         postRepo: posts,
         contactRepo: contacts,
-        bridge: FakeBridge(),
+        bridge: bridge,
         retryDebounce: Duration.zero,
         periodicRetryInterval: const Duration(hours: 1),
       );
@@ -355,6 +359,10 @@ void main() {
       expect(
         deliveries.every((delivery) => delivery.deliveryStatus == 'delivered'),
         isTrue,
+      );
+      expect(
+        bridge.commandLog.where((command) => command == 'message.encrypt'),
+        hasLength(30),
       );
       expect(
         (await posts.loadPostPasses('post-pass-25')).single.deliveryStatus,

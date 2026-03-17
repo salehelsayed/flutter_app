@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -9,6 +8,7 @@ import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/presentation/screens/posts_wired.dart';
 
+import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/fake_p2p_network.dart';
 import '../../../shared/fakes/fake_p2p_service_integration.dart';
 import '../../../shared/fakes/in_memory_post_repository.dart';
@@ -26,6 +26,7 @@ void main() {
   late FakeP2PNetwork network;
   late FakeP2PService aliceService;
   late FakeP2PService caraService;
+  late PassthroughCryptoBridge bridge;
 
   setUp(() {
     identityRepository = FakeIdentityRepository()
@@ -47,6 +48,7 @@ void main() {
     network = FakeP2PNetwork();
     aliceService = FakeP2PService(peerId: 'peer-alice', network: network);
     caraService = FakeP2PService(peerId: 'peer-cara', network: network);
+    bridge = PassthroughCryptoBridge();
   });
 
   tearDown(() {
@@ -63,6 +65,7 @@ void main() {
         contactRepo: contactRepository,
         postRepo: postRepository,
         p2pService: aliceService,
+        bridge: bridge,
         activeTab: 'posts',
         onSwitchView: (_) {},
         pendingTargetStore: pendingTargetStore,
@@ -75,10 +78,10 @@ void main() {
     tester,
   ) async {
     contactRepository.seed([
-      _contact('peer-bob', 'Bob'),
-      _contact('peer-cara', 'Cara'),
-      _contact('peer-dan', 'Dan', blocked: true),
-      _contact('peer-eve', 'Eve', archived: true),
+      _contact('peer-bob', 'Bob', mlKemPublicKey: 'mlkem-peer-bob'),
+      _contact('peer-cara', 'Cara', mlKemPublicKey: 'mlkem-peer-cara'),
+      _contact('peer-dan', 'Dan', blocked: true, mlKemPublicKey: 'mlkem-peer-dan'),
+      _contact('peer-eve', 'Eve', archived: true, mlKemPublicKey: 'mlkem-peer-eve'),
     ]);
     await postRepository.savePost(_post());
 
@@ -103,9 +106,12 @@ void main() {
 
     final message = await receivedByCara.timeout(const Duration(seconds: 1));
     final json = jsonDecode(message.content) as Map<String, dynamic>;
-    final payload = json['payload'] as Map<String, dynamic>;
+    final payload = jsonDecode(
+      (json['encrypted'] as Map<String, dynamic>)['ciphertext'] as String,
+    ) as Map<String, dynamic>;
 
     expect(json['type'], 'post_pass');
+    expect(json['version'], '2');
     expect(payload['post_id'], 'post-1');
     expect(payload['passer_peer_id'], 'peer-alice');
   });
@@ -113,10 +119,10 @@ void main() {
   testWidgets(
     'closes the pass sheet after local persistence and refreshes sender-visible repost state while delivery is still in flight',
     (tester) async {
-      contactRepository.seed([
-        _contact('peer-bob', 'Bob'),
-        _contact('peer-cara', 'Cara'),
-      ]);
+    contactRepository.seed([
+      _contact('peer-bob', 'Bob', mlKemPublicKey: 'mlkem-peer-bob'),
+      _contact('peer-cara', 'Cara', mlKemPublicKey: 'mlkem-peer-cara'),
+    ]);
       await postRepository.savePost(
         _post(
           senderPeerId: 'peer-alice',
@@ -173,6 +179,7 @@ ContactModel _contact(
   String username, {
   bool blocked = false,
   bool archived = false,
+  String? mlKemPublicKey,
 }) {
   return ContactModel(
     peerId: peerId,
@@ -183,6 +190,7 @@ ContactModel _contact(
     scannedAt: '2026-03-15T10:00:00.000Z',
     isBlocked: blocked,
     isArchived: archived,
+    mlKemPublicKey: mlKemPublicKey,
   );
 }
 

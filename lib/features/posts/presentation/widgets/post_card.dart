@@ -106,6 +106,7 @@ class PostCard extends StatelessWidget {
                         ),
                         child: UserAvatar(
                           peerId: post.authorPeerId,
+                          avatarBytes: post.originalAuthorAvatarBytes,
                           size: 40,
                           showGlow: false,
                           showPhotoFrame: false,

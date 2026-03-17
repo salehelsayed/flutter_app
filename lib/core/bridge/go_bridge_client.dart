@@ -89,6 +89,10 @@ class GoBridgeClient extends Bridge {
     'group.keygen': _CmdSpec('generateGroupKey', false),
     'group.encrypt': _CmdSpec('groupEncryptMessage', true),
     'group.decrypt': _CmdSpec('groupDecryptMessage', true),
+    // Blob crypto
+    'blob:keygen': _CmdSpec('blobKeygen', false),
+    'blob:encrypt': _CmdSpec('blobEncrypt', true),
+    'blob:decrypt': _CmdSpec('blobDecrypt', true),
   };
 
   @override

@@ -119,6 +119,37 @@ abstract class PostRepository {
 
   Future<Map<String, int>> loadPostPassCounts(List<String> postIds);
 
+  Future<void> saveRepostEngagementParticipant({
+    required String postId,
+    required String participantPeerId,
+    required String createdAt,
+  });
+
+  Future<Set<String>> loadRepostEngagementParticipantPeerIds(String postId);
+
+  Future<void> saveRepostHeartBaselinePeerIds({
+    required String postId,
+    required Iterable<String> peerIds,
+    required String createdAt,
+  });
+
+  Future<Set<String>> loadRepostHeartBaselinePeerIds(String postId);
+
+  Future<Map<String, Set<String>>> loadRepostHeartBaselinePeerIdsForPosts(
+    List<String> postIds,
+  );
+
+  Future<void> seedRepostTotalBaseline({
+    required String postId,
+    required int repostTotalBaseline,
+    required int existingLocalPassCount,
+    required String createdAt,
+  });
+
+  Future<int> loadRepostTotalBaseline(String postId);
+
+  Future<Map<String, int>> loadRepostTotalBaselines(List<String> postIds);
+
   Future<void> savePostOrigin(PostOriginModel origin);
 
   Future<PostOriginModel?> getPostOrigin(String postId);
@@ -136,6 +167,19 @@ abstract class PostRepository {
   Future<void> clearPinDismissal(String postId);
 
   Future<void> markFocused(String postId);
+
+  Future<void> savePassAvatarSnapshot({
+    required String postId,
+    required String authorPeerId,
+    required List<int> avatarBlob,
+    required String createdAt,
+  });
+
+  Future<List<int>?> loadPassAvatarSnapshot(String postId);
+
+  Future<Map<String, List<int>>> loadPassAvatarSnapshotsForPosts(
+    List<String> postIds,
+  );
 
   void dispose();
 }

@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/services/incoming_message_router.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
@@ -7,7 +9,9 @@ import 'package:flutter_app/features/posts/application/pending_post_follow_on_re
 import 'package:flutter_app/features/posts/application/post_pass_listener.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
+import 'package:flutter_app/features/posts/domain/models/post_pass_envelope.dart';
 
+import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/fake_p2p_network.dart';
 import '../../../shared/fakes/fake_p2p_service_integration.dart';
 import '../../../shared/fakes/in_memory_contact_repository.dart';
@@ -62,6 +66,7 @@ void main() {
         p2pService: sender.p2pService,
         postRepo: sender.postRepo,
         contactRepo: sender.contactRepo,
+        bridge: sender.bridge,
         postId: 'post-1',
         senderPeerId: sender.peerId,
         senderUsername: sender.username,
@@ -107,6 +112,7 @@ void main() {
         postRepo: sender.postRepo,
         contactRepo: sender.contactRepo,
         p2pService: sender.p2pService,
+        bridge: sender.bridge,
       );
 
       expect(retried, 1);
@@ -126,12 +132,136 @@ void main() {
         postRepo: sender.postRepo,
         contactRepo: sender.contactRepo,
         p2pService: sender.p2pService,
+        bridge: sender.bridge,
       );
 
       expect(secondRetry, 0);
       expect(await sender.postRepo.loadPostPasses('post-1'), hasLength(1));
       expect(await recipient.postRepo.loadPostPasses('post-1'), hasLength(1));
       expect(await author.postRepo.loadPostPasses('post-1'), hasLength(1));
+      expect(
+        sender.bridge.commandLog.where(
+          (command) => command == 'message.encrypt',
+        ),
+        isNotEmpty,
+      );
+    },
+  );
+
+  test(
+    'offline-inbox fallback persists an encrypted post_pass payload for the author notification path',
+    () async {
+      await _seedSharedPost(sender: sender, author: author);
+      author.p2pService.setOnline(false);
+
+      final (result, pass) = await passPostAlong(
+        p2pService: sender.p2pService,
+        postRepo: sender.postRepo,
+        contactRepo: sender.contactRepo,
+        bridge: sender.bridge,
+        postId: 'post-1',
+        senderPeerId: sender.peerId,
+        senderUsername: sender.username,
+        recipientPeerIds: const <String>['peer-cara'],
+      );
+
+      expect(result, PassPostAlongResult.success);
+      expect(pass, isNotNull);
+      expect(network.inboxCount(author.peerId), 1);
+      await _waitForPassCount(
+        recipient,
+        expectedCount: 1,
+        description: 'explicit recipient pass delivery before inbox inspection',
+      );
+
+      final storedInbox = network.retrieveInbox(author.peerId);
+      expect(storedInbox, hasLength(1));
+      final storedMessage = storedInbox.single['message'] as String;
+      final storedJson = jsonDecode(storedMessage) as Map<String, dynamic>;
+      final payload = _decodeEncryptedPassPayload(storedJson);
+
+      expect(storedJson['type'], 'post_pass');
+      expect(storedJson['version'], '2');
+      expect(storedJson.containsKey('encrypted'), isTrue);
+      expect(payload['post_id'], 'post-1');
+      expect(payload.containsKey('original_snapshot'), isTrue);
+      expect(payload['participant_peer_ids'], <String>[
+        'peer-alice',
+        'peer-bob',
+      ]);
+      expect(payload['repost_total_baseline'], 0);
+    },
+  );
+
+  test(
+    'retryPendingPostDeliveries rebuilds an encrypted post_pass envelope from durable inner payload state',
+    () async {
+      await _seedSharedPost(sender: sender, author: author);
+      author.p2pService.setOnline(false);
+      network.inboxDisabled = true;
+
+      final (result, pass) = await passPostAlong(
+        p2pService: sender.p2pService,
+        postRepo: sender.postRepo,
+        contactRepo: sender.contactRepo,
+        bridge: sender.bridge,
+        postId: 'post-1',
+        senderPeerId: sender.peerId,
+        senderUsername: sender.username,
+        recipientPeerIds: const <String>['peer-cara'],
+      );
+
+      expect(result, PassPostAlongResult.partiallySettled);
+      expect(pass, isNotNull);
+      await _waitForPassCount(
+        recipient,
+        expectedCount: 1,
+        description: 'explicit recipient pass delivery before retry replay',
+      );
+
+      final storedPass = (await sender.postRepo.loadPostPasses(
+        'post-1',
+      )).single;
+      expect(storedPass.innerPayloadJson, isNotNull);
+
+      final receivedOnRetry = author.p2pService.messageStream.first;
+      author.p2pService.setOnline(true);
+      network.inboxDisabled = false;
+
+      final retried = await retryPendingPostDeliveries(
+        postRepo: sender.postRepo,
+        contactRepo: sender.contactRepo,
+        p2pService: sender.p2pService,
+        bridge: sender.bridge,
+      );
+
+      expect(retried, 1);
+      await _waitForPassCount(
+        author,
+        expectedCount: 1,
+        description: 'author retry pass persistence',
+      );
+
+      final retriedMessage = await receivedOnRetry.timeout(
+        const Duration(seconds: 1),
+      );
+      final retriedJson =
+          jsonDecode(retriedMessage.content) as Map<String, dynamic>;
+      final payload = _decodeEncryptedPassPayload(retriedJson);
+
+      expect(retriedJson['type'], 'post_pass');
+      expect(retriedJson['version'], '2');
+      expect(retriedJson.containsKey('encrypted'), isTrue);
+      expect(payload['post_id'], 'post-1');
+      expect(payload['participant_peer_ids'], <String>[
+        'peer-alice',
+        'peer-bob',
+      ]);
+      expect(payload['repost_total_baseline'], 0);
+      expect(
+        PostPassEnvelope.parseEncryptedEnvelope(retriedMessage.content),
+        isNotNull,
+      );
     },
   );
 }
@@ -194,6 +324,7 @@ class _PassUser {
   final InMemoryPostRepository postRepo;
   final IncomingMessageRouter router;
   final PostPassListener passListener;
+  final PassthroughCryptoBridge bridge;
 
   _PassUser._({
     required this.peerId,
@@ -203,6 +334,7 @@ class _PassUser {
     required this.postRepo,
     required this.router,
     required this.passListener,
+    required this.bridge,
   });
 
   factory _PassUser.create({
@@ -214,10 +346,13 @@ class _PassUser {
     final contactRepo = InMemoryContactRepository();
     final postRepo = InMemoryPostRepository();
     final router = IncomingMessageRouter(p2pService: p2pService);
+    final bridge = PassthroughCryptoBridge();
     final passListener = PostPassListener(
       postPassStream: router.postPassStream,
       postRepo: postRepo,
       contactRepo: contactRepo,
+      bridge: bridge,
+      getOwnMlKemSecretKey: () async => 'test-own-mlkem-sk',
     );
 
     return _PassUser._(
@@ -228,6 +363,7 @@ class _PassUser {
       postRepo: postRepo,
       router: router,
       passListener: passListener,
+      bridge: bridge,
     );
   }
 
@@ -256,5 +392,11 @@ ContactModel _contact(String peerId, String username) {
     username: username,
     signature: 'sig-$peerId',
     scannedAt: '2026-03-15T10:00:00.000Z',
+    mlKemPublicKey: 'mlkem-$peerId',
   );
+}
+
+Map<String, dynamic> _decodeEncryptedPassPayload(Map<String, dynamic> json) {
+  final encrypted = json['encrypted'] as Map<String, dynamic>;
+  return jsonDecode(encrypted['ciphertext'] as String) as Map<String, dynamic>;
 }
