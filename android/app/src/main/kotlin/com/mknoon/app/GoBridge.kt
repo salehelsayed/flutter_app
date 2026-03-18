@@ -92,6 +92,9 @@ class GoBridge(flutterEngine: FlutterEngine) : MethodChannel.MethodCallHandler,
             "mediaDownload" -> runOnBackground({ GoMknoon.mediaDownload(args ?: "") }, result)
             "mediaDelete" -> runOnBackground({ GoMknoon.mediaDelete(args ?: "") }, result)
             "mediaList" -> runOnBackground({ GoMknoon.mediaList(args ?: "") }, result)
+            "blobKeygen" -> runOnBackground({ GoMknoon.blobKeygen("") }, result)
+            "blobEncrypt" -> runOnBackground({ GoMknoon.blobEncrypt(args ?: "") }, result)
+            "blobDecrypt" -> runOnBackground({ GoMknoon.blobDecrypt(args ?: "") }, result)
 
             // Profile
             "profileUpload" -> runOnBackground({ GoMknoon.profileUpload(args ?: "") }, result)

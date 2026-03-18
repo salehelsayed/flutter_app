@@ -13,6 +13,7 @@ import 'package:flutter_app/core/media/media_picker.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/application/reaction_listener.dart';
@@ -23,6 +24,9 @@ import 'package:flutter_app/features/conversation/presentation/navigation/conver
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository.dart';
+import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
+import 'package:flutter_app/features/settings/presentation/navigation/settings_route_transition.dart';
+import 'package:flutter_app/features/settings/presentation/screens/settings_wired.dart';
 import 'package:flutter_app/features/posts/application/attach_post_media_use_case.dart';
 import 'package:flutter_app/features/posts/application/dismiss_pin_use_case.dart';
 import 'package:flutter_app/features/posts/application/edit_pinned_post_use_case.dart';
@@ -67,6 +71,7 @@ class PostsWired extends StatefulWidget {
   final AudioRecorderService? audioRecorderService;
   final String activeTab;
   final void Function(String tab) onSwitchView;
+  final AppShellController? appShellController;
   final PendingPostTargetStore? pendingTargetStore;
   final PostsPrivacySettingsRepository postsPrivacySettingsRepository;
   final ContactPresenceSnapshotRepository? contactPresenceSnapshotRepository;
@@ -87,6 +92,7 @@ class PostsWired extends StatefulWidget {
     required this.p2pService,
     required this.activeTab,
     required this.onSwitchView,
+    this.appShellController,
     this.bridge,
     this.mediaFileManager,
     this.secureKeyStore,
@@ -130,10 +136,14 @@ class _PostsWiredState extends State<PostsWired> {
   bool _isResolvingPendingTarget = false;
   bool _isOpeningPendingComments = false;
   String? _statusMessage;
+  late final AppShellController _fallbackAppShellController;
 
   @override
   void initState() {
     super.initState();
+    _fallbackAppShellController = AppShellController(
+      initialTab: widget.activeTab,
+    );
     unawaited(_initializeSurface());
     _postChangeSubscription = widget.postRepo.postChanges.listen((_) {
       _schedulePostChangeRefresh();
@@ -153,8 +163,17 @@ class _PostsWiredState extends State<PostsWired> {
     _postChangeRefreshTimer?.cancel();
     _scrollController.dispose();
     widget.pendingTargetStore?.removeListener(_onPendingTargetStoreChanged);
+    _fallbackAppShellController.dispose();
     super.dispose();
   }
+
+  AppShellController get _settingsAppShellController =>
+      widget.appShellController ?? _fallbackAppShellController;
+
+  bool get _canOpenInAppSettings =>
+      widget.bridge != null &&
+      widget.secureKeyStore != null &&
+      widget.imageProcessor != null;
 
   void _onPendingTargetStoreChanged() {
     if (!mounted) {
@@ -267,20 +286,66 @@ class _PostsWiredState extends State<PostsWired> {
   }
 
   Future<void> _compose() async {
-    final contacts = await widget.contactRepo.getActiveContacts();
-    contacts.removeWhere((contact) => contact.isBlocked);
+    final composeStopwatch = Stopwatch()..start();
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'POST_COMPOSE_OPEN_START',
+      details: {'hasNearbyService': widget.nearbyLocationService != null},
+    );
+    final contactsFuture = widget.contactRepo.getActiveContacts().then((
+      contacts,
+    ) {
+      final rawContactCount = contacts.length;
+      contacts.removeWhere((contact) => contact.isBlocked);
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'POST_COMPOSE_CONTACTS_READY',
+        details: {
+          'rawContactCount': rawContactCount,
+          'eligibleContactCount': contacts.length,
+          'elapsedMs': composeStopwatch.elapsedMilliseconds,
+        },
+      );
+      return contacts;
+    });
+    final nearbyAvailabilityFuture = _loadNearbyComposeAvailability().then((
+      availability,
+    ) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'POST_COMPOSE_NEARBY_READY',
+        details: {
+          'state': availability.state.name,
+          'elapsedMs': composeStopwatch.elapsedMilliseconds,
+        },
+      );
+      return availability;
+    });
+    final contacts = await contactsFuture;
     final viewerPeerId = _peerId;
     final activePinCount = viewerPeerId == null
         ? 0
         : _pinnedPosts
               .where((post) => post.authorPeerId == viewerPeerId)
               .length;
-    final postsPrivacySettings = await widget.postsPrivacySettingsRepository
-        .load();
-    final nearbyAvailability = await _loadNearbyComposeAvailability(
-      postsPrivacySettings,
-    );
+    final nearbyAvailability = await nearbyAvailabilityFuture;
+    final canOpenNearbySettings = switch (nearbyAvailability.state) {
+      NearbyComposeAvailabilityState.sharingOff => _canOpenInAppSettings,
+      NearbyComposeAvailabilityState.permissionDeniedForever =>
+        widget.nearbyLocationService != null,
+      _ => false,
+    };
     delivery.CreatedLocalPost? createdPost;
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'POST_COMPOSE_OPEN_READY',
+      details: {
+        'eligibleContactCount': contacts.length,
+        'nearbyState': nearbyAvailability.state.name,
+        'activePinCount': activePinCount,
+        'elapsedMs': composeStopwatch.elapsedMilliseconds,
+      },
+    );
     if (!mounted) return;
     await showModalBottomSheet<void>(
       context: context,
@@ -289,15 +354,40 @@ class _PostsWiredState extends State<PostsWired> {
       builder: (_) => ComposePostSheet(
         eligibleContacts: contacts,
         onSubmitWithOutcome: (result) async {
-          final identity = await widget.identityRepo.loadIdentity();
-          if (identity == null) {
+          final submitStopwatch = Stopwatch()..start();
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'POST_COMPOSE_SUBMIT_START',
+            details: {
+              'audienceKind': result.audience.kind.name,
+              'hasMedia': result.mediaDrafts.isNotEmpty,
+            },
+          );
+          final senderIdentity = await _resolveComposeSenderIdentity();
+          if (senderIdentity == null) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'POST_COMPOSE_SUBMIT_ABORT',
+              details: {
+                'reason': 'identity_missing',
+                'elapsedMs': submitStopwatch.elapsedMilliseconds,
+              },
+            );
             return ComposePostSubmitOutcome.closeSheet;
           }
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'POST_COMPOSE_IDENTITY_READY',
+            details: {
+              'usedCachedIdentity': senderIdentity.$3,
+              'elapsedMs': submitStopwatch.elapsedMilliseconds,
+            },
+          );
           final (createResult, created) = await createLocalPost(
             postRepo: widget.postRepo,
             contactRepo: widget.contactRepo,
-            senderPeerId: identity.peerId,
-            senderUsername: identity.username,
+            senderPeerId: senderIdentity.$1,
+            senderUsername: senderIdentity.$2,
             text: result.text,
             audience: result.audience,
             mediaDrafts: result.mediaDrafts,
@@ -307,9 +397,26 @@ class _PostsWiredState extends State<PostsWired> {
                 widget.postsPrivacySettingsRepository,
           );
           if (createResult != SendPostResult.success || created == null) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'POST_COMPOSE_SUBMIT_ABORT',
+              details: {
+                'reason': createResult.name,
+                'elapsedMs': submitStopwatch.elapsedMilliseconds,
+              },
+            );
             return ComposePostSubmitOutcome.keepSheetOpen;
           }
           createdPost = created;
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'POST_COMPOSE_SUBMIT_LOCAL_SUCCESS',
+            details: {
+              'postId': created.post.id,
+              'recipientCount': created.resolvedRecipients.length,
+              'elapsedMs': submitStopwatch.elapsedMilliseconds,
+            },
+          );
           return ComposePostSubmitOutcome.closeSheet;
         },
         onAttachMedia: widget.onAttachMedia ?? _pickMediaDrafts,
@@ -330,9 +437,9 @@ class _PostsWiredState extends State<PostsWired> {
             ? null
             : () => widget.nearbyLocationService!
                   .refreshInteractivelyFromCompose(),
-        onOpenNearbySettings: widget.nearbyLocationService == null
-            ? null
-            : widget.nearbyLocationService!.openAppSettings,
+        onOpenNearbySettings: canOpenNearbySettings
+            ? _openNearbySettings
+            : null,
       ),
     );
     final created = createdPost;
@@ -363,18 +470,79 @@ class _PostsWiredState extends State<PostsWired> {
     ).execute(prepared);
   }
 
-  Future<NearbyComposeAvailability> _loadNearbyComposeAvailability(
-    PostsPrivacySettings settings,
-  ) async {
+  Future<NearbyComposeAvailability> _loadNearbyComposeAvailability({
+    PostsPrivacySettings? cachedSettings,
+  }) async {
     final nearbyLocationService = widget.nearbyLocationService;
     if (nearbyLocationService != null) {
       return nearbyLocationService.loadComposeAvailability();
     }
+    final settings =
+        cachedSettings ?? await widget.postsPrivacySettingsRepository.load();
     return NearbyComposeAvailability(
       state: settings.sharingEnabled
           ? NearbyComposeAvailabilityState.ready
           : NearbyComposeAvailabilityState.sharingOff,
     );
+  }
+
+  Future<(String, String, bool)?> _resolveComposeSenderIdentity() async {
+    final cachedPeerId = _peerId;
+    if (cachedPeerId != null) {
+      return (cachedPeerId, _username, true);
+    }
+
+    final identity = await widget.identityRepo.loadIdentity();
+    if (identity == null) {
+      return null;
+    }
+
+    if (mounted) {
+      setState(() {
+        _peerId = identity.peerId;
+        _username = identity.username;
+      });
+    } else {
+      _peerId = identity.peerId;
+      _username = identity.username;
+    }
+    return (identity.peerId, identity.username, false);
+  }
+
+  Future<NearbyComposeAvailability> _openNearbySettings() async {
+    final settings = await widget.postsPrivacySettingsRepository.load();
+    if (!mounted) {
+      return _loadNearbyComposeAvailability(cachedSettings: settings);
+    }
+
+    if (!settings.sharingEnabled) {
+      if (!_canOpenInAppSettings) {
+        return _loadNearbyComposeAvailability(cachedSettings: settings);
+      }
+      await Navigator.of(context).push(
+        buildSettingsSlideUpRoute(
+          builder: (_) => SettingsWired(
+            identityRepo: widget.identityRepo,
+            bridge: widget.bridge!,
+            contactRepo: widget.contactRepo,
+            p2pService: widget.p2pService,
+            secureKeyStore: widget.secureKeyStore!,
+            imageProcessor: widget.imageProcessor!,
+            appShellController: _settingsAppShellController,
+            postsPrivacySettingsRepository:
+                widget.postsPrivacySettingsRepository,
+            nearbyLocationService: widget.nearbyLocationService,
+            showNavigationBar: false,
+          ),
+        ),
+      );
+    } else {
+      await widget.nearbyLocationService?.openAppSettings();
+    }
+
+    final refreshedSettings = await widget.postsPrivacySettingsRepository
+        .load();
+    return _loadNearbyComposeAvailability(cachedSettings: refreshedSettings);
   }
 
   Future<void> _tryResolvePendingTarget() async {
@@ -474,37 +642,38 @@ class _PostsWiredState extends State<PostsWired> {
         context: context,
         isScrollControlled: true,
         backgroundColor: Colors.transparent,
-        builder: (_) => ValueListenableBuilder<List<PostCommentModel>>(
-          valueListenable: commentsNotifier,
-          builder: (_, comments, __) => CommentsSheet(
-            post: post,
-            comments: comments,
-            focusedCommentId: focusCommentId,
-            viewerPeerId: _peerId,
-            onSubmitComment: (text) async {
-              final updatedComments = await _submitComment(post, text);
-              if (!isCommentsSheetClosed) {
-                commentsNotifier.value = updatedComments;
-              }
-              return updatedComments;
-            },
-            onToggleCommentHeart: (comment, isActive) async {
-              final updatedComments = await _toggleCommentHeart(
-                post,
-                comment.id,
-                isActive,
-              );
-              if (!isCommentsSheetClosed) {
-                commentsNotifier.value = updatedComments;
-              }
-              return updatedComments;
-            },
-          ),
-        ),
+        builder: (sheetContext) =>
+            ValueListenableBuilder<List<PostCommentModel>>(
+              valueListenable: commentsNotifier,
+              builder: (context, comments, child) => CommentsSheet(
+                post: post,
+                comments: comments,
+                focusedCommentId: focusCommentId,
+                viewerPeerId: _peerId,
+                onSubmitComment: (text) async {
+                  final updatedComments = await _submitComment(post, text);
+                  if (!isCommentsSheetClosed) {
+                    commentsNotifier.value = updatedComments;
+                  }
+                  return updatedComments;
+                },
+                onToggleCommentHeart: (comment, isActive) async {
+                  final updatedComments = await _toggleCommentHeart(
+                    post,
+                    comment.id,
+                    isActive,
+                  );
+                  if (!isCommentsSheetClosed) {
+                    commentsNotifier.value = updatedComments;
+                  }
+                  return updatedComments;
+                },
+              ),
+            ),
       );
     } finally {
       isCommentsSheetClosed = true;
-      await commentsSubscription?.cancel();
+      await commentsSubscription.cancel();
       commentsNotifier.dispose();
     }
   }
@@ -596,7 +765,11 @@ class _PostsWiredState extends State<PostsWired> {
             recipientPeerIds: recipientPeerIds,
             bridge: widget.bridge,
             loadAvatarBytesFn: _loadAvatarFromDisk,
+            resolveStoredPathFn: widget.mediaFileManager?.resolveStoredPath,
           );
+          if (mounted) {
+            setState(() => _statusMessage = _passAlongStatusMessage(result));
+          }
           if (result != PassPostAlongResult.success || created == null) {
             return PassPostAlongSubmitOutcome.keepSheetOpen;
           }
@@ -754,6 +927,23 @@ class _PostsWiredState extends State<PostsWired> {
       RemovePinResult.notAuthor ||
       RemovePinResult.notPinned ||
       RemovePinResult.noRecipients => 'Could not remove pin',
+    };
+  }
+
+  String? _passAlongStatusMessage(PassPostAlongResult result) {
+    return switch (result) {
+      PassPostAlongResult.success => null,
+      PassPostAlongResult.partiallySettled => 'Repost will continue retrying',
+      PassPostAlongResult.queuedForRetry => 'Repost queued for retry',
+      PassPostAlongResult.mediaPreparationFailed =>
+        'Could not prepare repost media',
+      PassPostAlongResult.nodeNotRunning ||
+      PassPostAlongResult.sendFailed => 'Could not prepare repost',
+      PassPostAlongResult.postNotFound => 'Post is no longer available',
+      PassPostAlongResult.noEligibleRecipients =>
+        'No eligible friends available right now',
+      PassPostAlongResult.pickPeopleNotAllowed ||
+      PassPostAlongResult.oneHopLimitReached => 'This post cannot be reposted',
     };
   }
 

@@ -82,6 +82,8 @@ class PostPassEnvelope {
   final List<String> participantPeerIds;
   final List<String> activeHeartPeerIds;
   final int? repostTotalBaseline;
+  final int? sharedToCountBaseline;
+  final int? recipientCount;
   final Map<String, PostMediaCryptoEntry>? mediaKeys;
 
   const PostPassEnvelope({
@@ -97,6 +99,8 @@ class PostPassEnvelope {
     this.participantPeerIds = const <String>[],
     this.activeHeartPeerIds = const <String>[],
     this.repostTotalBaseline,
+    this.sharedToCountBaseline,
+    this.recipientCount,
     this.mediaKeys,
   });
 
@@ -106,6 +110,7 @@ class PostPassEnvelope {
     List<String>? participantPeerIds,
     List<String>? activeHeartPeerIds,
     int? repostTotalBaseline,
+    int? sharedToCountBaseline,
     Map<String, PostMediaCryptoEntry>? mediaKeys,
     String? originalAuthorAvatarBase64,
   }) {
@@ -150,6 +155,8 @@ class PostPassEnvelope {
         activeHeartPeerIds ?? const <String>[],
       ),
       repostTotalBaseline: repostTotalBaseline ?? 0,
+      sharedToCountBaseline: sharedToCountBaseline ?? repostTotalBaseline ?? 0,
+      recipientCount: pass.recipientCount,
       mediaKeys: mediaKeys,
     );
   }
@@ -193,6 +200,10 @@ class PostPassEnvelope {
               .toList(growable: false);
       final repostTotalBaseline =
           (payload['repost_total_baseline'] as num?)?.toInt() ?? 0;
+      final sharedToCountBaseline =
+          (payload['shared_to_count_baseline'] as num?)?.toInt() ??
+          repostTotalBaseline;
+      final recipientCount = (payload['recipient_count'] as num?)?.toInt();
       final rawMediaKeys = payload['media_keys'] as Map<String, dynamic>?;
       final mediaKeys = rawMediaKeys == null
           ? null
@@ -234,7 +245,9 @@ class PostPassEnvelope {
         originalSnapshot: snapshot,
         participantPeerIds: _sortedUniqueNonEmpty(participantPeerIds),
         activeHeartPeerIds: _sortedUniqueNonEmpty(activeHeartPeerIds),
-        repostTotalBaseline: repostTotalBaseline ?? 0,
+        repostTotalBaseline: repostTotalBaseline,
+        sharedToCountBaseline: sharedToCountBaseline,
+        recipientCount: recipientCount,
         mediaKeys: mediaKeys,
       );
     } catch (_) {
@@ -324,6 +337,7 @@ class PostPassEnvelope {
     List<String>? participantPeerIds,
     List<String>? activeHeartPeerIds,
     int? repostTotalBaseline,
+    int? sharedToCountBaseline,
   }) {
     return PostPassEnvelope.fromPass(
       pass: pass,
@@ -331,6 +345,7 @@ class PostPassEnvelope {
       participantPeerIds: participantPeerIds,
       activeHeartPeerIds: activeHeartPeerIds,
       repostTotalBaseline: repostTotalBaseline,
+      sharedToCountBaseline: sharedToCountBaseline,
       originalAuthorAvatarBase64: _encodeAvatarBytes(
         post.originalAuthorAvatarBytes,
       ),
@@ -409,6 +424,8 @@ class PostPassEnvelope {
         'active_peer_ids': activeHeartPeerIds,
       },
       'repost_total_baseline': repostTotalBaseline,
+      'shared_to_count_baseline': sharedToCountBaseline ?? repostTotalBaseline,
+      if (recipientCount != null) 'recipient_count': recipientCount,
       if (mediaKeys != null && mediaKeys!.isNotEmpty)
         'media_keys': <String, Object?>{
           for (final entry in mediaKeys!.entries)

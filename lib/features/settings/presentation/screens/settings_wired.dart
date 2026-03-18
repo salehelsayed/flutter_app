@@ -35,6 +35,7 @@ class SettingsWired extends StatefulWidget {
   final AppShellController appShellController;
   final PostsPrivacySettingsRepository postsPrivacySettingsRepository;
   final NearbyLocationService? nearbyLocationService;
+  final bool showNavigationBar;
 
   const SettingsWired({
     super.key,
@@ -47,6 +48,7 @@ class SettingsWired extends StatefulWidget {
     required this.appShellController,
     required this.postsPrivacySettingsRepository,
     this.nearbyLocationService,
+    this.showNavigationBar = true,
   });
 
   @override
@@ -336,6 +338,7 @@ class _SettingsWiredState extends State<SettingsWired> {
         onNearbySharingChanged: _onNearbySharingChanged,
         onSwitchView: _onSwitchView,
         activeTab: widget.appShellController.activeTab,
+        showNavigationBar: widget.showNavigationBar,
       ),
     );
   }

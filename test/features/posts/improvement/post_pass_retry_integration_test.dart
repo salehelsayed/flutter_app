@@ -22,6 +22,7 @@ void main() {
   late _PassUser sender;
   late _PassUser author;
   late _PassUser recipient;
+  late _PassUser recipientTwo;
 
   setUp(() {
     network = FakeP2PNetwork();
@@ -40,19 +41,28 @@ void main() {
       username: 'Cara',
       network: network,
     );
+    recipientTwo = _PassUser.create(
+      peerId: 'peer-dan',
+      username: 'Dan',
+      network: network,
+    );
 
     sender.addContact(author);
     sender.addContact(recipient);
+    sender.addContact(recipientTwo);
     author.addContact(sender);
     recipient.addContact(sender);
+    recipientTwo.addContact(sender);
     author.start();
     recipient.start();
+    recipientTwo.start();
   });
 
   tearDown(() {
     sender.dispose();
     author.dispose();
     recipient.dispose();
+    recipientTwo.dispose();
   });
 
   test(
@@ -145,6 +155,72 @@ void main() {
         ),
         isNotEmpty,
       );
+    },
+  );
+
+  test(
+    'pass retry preserves shared-to totals with multi-recipient baseline replay on the receiving side',
+    () async {
+      await _seedSharedPost(sender: sender, author: author);
+      await sender.postRepo.seedRepostSharedToBaseline(
+        postId: 'post-1',
+        sharedToCountBaseline: 4,
+        existingLocalSharedToCount: 0,
+        currentPassRecipientCount: 0,
+        createdAt: '2026-03-15T11:10:00.000Z',
+      );
+      author.p2pService.setOnline(false);
+      network.inboxDisabled = true;
+
+      final (result, pass) = await passPostAlong(
+        p2pService: sender.p2pService,
+        postRepo: sender.postRepo,
+        contactRepo: sender.contactRepo,
+        bridge: sender.bridge,
+        postId: 'post-1',
+        senderPeerId: sender.peerId,
+        senderUsername: sender.username,
+        recipientPeerIds: const <String>['peer-cara', 'peer-dan'],
+      );
+
+      expect(result, PassPostAlongResult.partiallySettled);
+      expect(pass, isNotNull);
+      expect(pass!.recipientCount, 2);
+      await _waitForPassCount(
+        recipient,
+        expectedCount: 1,
+        description: 'explicit recipient pass delivery with shared-to baseline',
+      );
+      await _waitForProjectedTotalSharedToCount(
+        recipient,
+        expectedCount: 6,
+        description: 'explicit recipient shared-to projection',
+      );
+
+      author.p2pService.setOnline(true);
+      network.inboxDisabled = false;
+
+      final retried = await retryPendingPostDeliveries(
+        postRepo: sender.postRepo,
+        contactRepo: sender.contactRepo,
+        p2pService: sender.p2pService,
+        bridge: sender.bridge,
+      );
+
+      expect(retried, 1);
+      await _waitForPassCount(
+        author,
+        expectedCount: 1,
+        description: 'author notification retry delivery with shared-to replay',
+      );
+      await _waitForProjectedTotalSharedToCount(
+        author,
+        expectedCount: 6,
+        description: 'author notification shared-to projection',
+      );
+      expect(await sender.postRepo.loadPostPasses('post-1'), hasLength(1));
+      expect(await recipient.postRepo.loadPostPasses('post-1'), hasLength(1));
+      expect(await author.postRepo.loadPostPasses('post-1'), hasLength(1));
     },
   );
 
@@ -298,6 +374,31 @@ Future<void> _waitForPassCount(
 }) async {
   Future<bool> condition() async {
     return (await user.postRepo.loadPostPasses('post-1')).length ==
+        expectedCount;
+  }
+
+  if (await condition()) {
+    return;
+  }
+
+  final deadline = DateTime.now().add(const Duration(seconds: 1));
+  while (DateTime.now().isBefore(deadline)) {
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+    if (await condition()) {
+      return;
+    }
+  }
+
+  throw StateError('Timed out waiting for $description');
+}
+
+Future<void> _waitForProjectedTotalSharedToCount(
+  _PassUser user, {
+  required int expectedCount,
+  required String description,
+}) async {
+  Future<bool> condition() async {
+    return (await user.postRepo.getPost('post-1'))?.totalSharedToCount ==
         expectedCount;
   }
 

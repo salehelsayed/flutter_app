@@ -47,6 +47,7 @@ class InMemoryPostRepository implements PostRepository {
   final Map<String, Set<String>> _repostHeartBaselinePeersByPostId =
       <String, Set<String>>{};
   final Map<String, int> _repostTotalBaselinesByPostId = <String, int>{};
+  final Map<String, int> _repostSharedToBaselinesByPostId = <String, int>{};
   final Map<String, PostOriginModel> _postOrigins = <String, PostOriginModel>{};
   final Map<String, PostPendingChildEvent> _pendingChildEventsById =
       <String, PostPendingChildEvent>{};
@@ -167,6 +168,7 @@ class InMemoryPostRepository implements PostRepository {
     _repostEngagementParticipantsByPostId.remove(postId);
     _repostHeartBaselinePeersByPostId.remove(postId);
     _repostTotalBaselinesByPostId.remove(postId);
+    _repostSharedToBaselinesByPostId.remove(postId);
     _pinStates.remove(postId);
     _pinDismissals.remove(postId);
     _passAvatarSnapshots.remove(postId);
@@ -647,6 +649,37 @@ class InMemoryPostRepository implements PostRepository {
   }
 
   @override
+  Future<Map<String, int>> loadViewerSharedToCountsForPosts(
+    List<String> postIds,
+    String viewerPeerId,
+  ) async {
+    if (postIds.isEmpty || viewerPeerId.isEmpty) {
+      return const <String, int>{};
+    }
+    return <String, int>{
+      for (final postId in postIds)
+        if ((_postPassesByPostId[postId] ?? const <PostPassModel>[])
+                .where(
+                  (pass) =>
+                      !pass.isIncoming && pass.senderPeerId == viewerPeerId,
+                )
+                .fold<int>(
+                  0,
+                  (total, pass) => total + (pass.recipientCount ?? 1),
+                ) >
+            0)
+          postId: (_postPassesByPostId[postId] ?? const <PostPassModel>[])
+              .where(
+                (pass) => !pass.isIncoming && pass.senderPeerId == viewerPeerId,
+              )
+              .fold<int>(
+                0,
+                (total, pass) => total + (pass.recipientCount ?? 1),
+              ),
+    };
+  }
+
+  @override
   Future<void> saveRepostEngagementParticipant({
     required String postId,
     required String participantPeerId,
@@ -738,6 +771,50 @@ class InMemoryPostRepository implements PostRepository {
       for (final postId in postIds)
         if (_repostTotalBaselinesByPostId.containsKey(postId))
           postId: _repostTotalBaselinesByPostId[postId] ?? 0,
+    };
+  }
+
+  @override
+  Future<void> seedRepostSharedToBaseline({
+    required String postId,
+    required int sharedToCountBaseline,
+    required int existingLocalSharedToCount,
+    required int currentPassRecipientCount,
+    required String createdAt,
+  }) async {
+    final expectedVisibleSharedToCount =
+        sharedToCountBaseline + currentPassRecipientCount;
+    final baselineDelta =
+        expectedVisibleSharedToCount > existingLocalSharedToCount
+        ? expectedVisibleSharedToCount - existingLocalSharedToCount
+        : 0;
+    final existingBaseline = _repostSharedToBaselinesByPostId[postId] ?? 0;
+    if (baselineDelta <= existingBaseline) {
+      return;
+    }
+    _repostSharedToBaselinesByPostId[postId] = baselineDelta;
+    _changes.add(postId);
+  }
+
+  @override
+  Future<int> loadRepostSharedToBaseline(String postId) async {
+    return _repostSharedToBaselinesByPostId[postId] ??
+        _repostTotalBaselinesByPostId[postId] ??
+        0;
+  }
+
+  @override
+  Future<Map<String, int>> loadRepostSharedToBaselines(
+    List<String> postIds,
+  ) async {
+    return <String, int>{
+      for (final postId in postIds)
+        if (_repostSharedToBaselinesByPostId.containsKey(postId) ||
+            _repostTotalBaselinesByPostId.containsKey(postId))
+          postId:
+              _repostSharedToBaselinesByPostId[postId] ??
+              _repostTotalBaselinesByPostId[postId] ??
+              0,
     };
   }
 
@@ -843,14 +920,23 @@ class InMemoryPostRepository implements PostRepository {
 
   PostModel _decoratePost(PostModel post) {
     final origin = _postOrigins[post.id];
+    final postPasses = _postPassesByPostId[post.id] ?? const <PostPassModel>[];
     final passCount =
-        (_postPassesByPostId[post.id] ?? const <PostPassModel>[]).length +
-        (_repostTotalBaselinesByPostId[post.id] ?? 0);
+        postPasses.length + (_repostTotalBaselinesByPostId[post.id] ?? 0);
+    final totalSharedToCount =
+        postPasses.fold<int>(
+          0,
+          (total, pass) => total + (pass.recipientCount ?? 1),
+        ) +
+        (_repostSharedToBaselinesByPostId[post.id] ??
+            _repostTotalBaselinesByPostId[post.id] ??
+            0);
     return post.copyWith(
       passedByPeerId: origin?.passerPeerId,
       passedByUsername: origin?.passerUsername,
       passedAt: origin?.passCreatedAt,
       shareCount: passCount,
+      totalSharedToCount: totalSharedToCount,
     );
   }
 }

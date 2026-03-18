@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/services/incoming_message_router.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
 import 'package:flutter_app/features/posts/application/pending_post_follow_on_retrier.dart';
 import 'package:flutter_app/features/posts/application/post_comment_listener.dart';
 import 'package:flutter_app/features/posts/application/post_engagement_follow_on_support.dart';
@@ -725,6 +726,7 @@ class _ControlledP2PService extends FakeP2PService {
 
   int _inFlightSends = 0;
   int maxInFlightSends = 0;
+  final Set<String> _dialedPeers = <String>{};
 
   _ControlledP2PService({
     required super.peerId,
@@ -771,6 +773,9 @@ class _ControlledP2PService extends FakeP2PService {
     String message, {
     int? timeoutMs,
   }) async {
+    if (!_dialedPeers.contains(targetPeerId)) {
+      return const SendMessageResult(sent: false);
+    }
     sendStartOrder.add(targetPeerId);
     _inFlightSends++;
     if (_inFlightSends > maxInFlightSends) {
@@ -787,6 +792,24 @@ class _ControlledP2PService extends FakeP2PService {
     } finally {
       _inFlightSends--;
     }
+  }
+
+  @override
+  Future<DiscoveredPeer?> discoverPeer(String peerId, {int? timeoutMs}) async {
+    return DiscoveredPeer(
+      id: peerId,
+      addresses: <String>['/ip4/127.0.0.1/tcp/4001/p2p/$peerId'],
+    );
+  }
+
+  @override
+  Future<bool> dialPeer(
+    String peerId, {
+    List<String>? addresses,
+    int? timeoutMs,
+  }) async {
+    _dialedPeers.add(peerId);
+    return true;
   }
 
   @override

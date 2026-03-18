@@ -4,6 +4,7 @@ import 'package:flutter_app/features/feed/presentation/widgets/feed_navigation_b
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/post_card.dart';
+import 'package:flutter_app/features/posts/presentation/widgets/post_repost_visual_state.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/pinned_posts_section.dart';
 
 class PostsScreen extends StatelessWidget {
@@ -153,9 +154,11 @@ class PostsScreen extends StatelessWidget {
                                     !activePinnedPostIds.contains(post.id)
                                 ? () => onPinPost!(post)
                                 : null,
-                            showShareCount:
-                                viewerPeerId != null &&
-                                post.authorPeerId == viewerPeerId,
+                            viewerPeerId: viewerPeerId,
+                            repostVisualState: resolvePostRepostVisualState(
+                              post,
+                              viewerPeerId: viewerPeerId,
+                            ),
                             isFocused:
                                 post.id == focusedPostId || post.isFocused,
                           );

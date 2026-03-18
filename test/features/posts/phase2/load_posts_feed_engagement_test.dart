@@ -3,6 +3,7 @@ import 'package:flutter_app/features/posts/application/load_posts_feed_use_case.
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_comment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
+import 'package:flutter_app/features/posts/domain/models/post_pass_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_reaction_model.dart';
 
 import '../../../shared/fakes/in_memory_post_repository.dart';
@@ -18,69 +19,144 @@ void main() {
     postRepo.dispose();
   });
 
-  test('enriches feed items with comment counts and active post hearts', () async {
-    await postRepo.savePost(
-      const PostModel(
-        id: 'post-1',
-        eventId: 'evt-post-1',
-        senderPeerId: 'peer-alice',
-        authorPeerId: 'peer-alice',
-        authorUsername: 'Alice',
-        text: 'Need a ladder',
-        audience: PostAudience(kind: PostAudienceKind.allFriends),
-        createdAt: '2026-03-15T10:15:30.000Z',
-        visibleAt: '2026-03-15T10:15:30.000Z',
-        expiresAt: '2026-03-18T10:15:30.000Z',
-      ),
-    );
-    await postRepo.saveComment(
-      const PostCommentModel(
-        id: 'comment-1',
-        eventId: 'evt-comment-1',
-        postId: 'post-1',
-        senderPeerId: 'peer-bob',
-        body: 'I can lend one.',
-        commentedAt: '2026-03-15T11:00:00.000Z',
-      ),
-    );
-    await postRepo.saveComment(
-      const PostCommentModel(
-        id: 'comment-2',
-        eventId: 'evt-comment-2',
-        postId: 'post-1',
-        senderPeerId: 'peer-cara',
-        body: 'I have one too.',
-        commentedAt: '2026-03-15T11:05:00.000Z',
-      ),
-    );
-    await postRepo.savePostReaction(
-      const PostReactionModel(
-        reactionId: 'post_heart:post-1:peer-bob',
-        eventId: 'evt-reaction-1',
-        postId: 'post-1',
-        senderPeerId: 'peer-bob',
-        isActive: true,
-        reactedAt: '2026-03-15T11:10:00.000Z',
-      ),
-    );
-    await postRepo.savePostReaction(
-      const PostReactionModel(
-        reactionId: 'post_heart:post-1:peer-cara',
-        eventId: 'evt-reaction-2',
-        postId: 'post-1',
-        senderPeerId: 'peer-cara',
-        isActive: false,
-        reactedAt: '2026-03-15T11:11:00.000Z',
-      ),
-    );
+  test(
+    'enriches feed items with comment counts and active post hearts',
+    () async {
+      await postRepo.savePost(
+        const PostModel(
+          id: 'post-1',
+          eventId: 'evt-post-1',
+          senderPeerId: 'peer-alice',
+          authorPeerId: 'peer-alice',
+          authorUsername: 'Alice',
+          text: 'Need a ladder',
+          audience: PostAudience(kind: PostAudienceKind.allFriends),
+          createdAt: '2026-03-15T10:15:30.000Z',
+          visibleAt: '2026-03-15T10:15:30.000Z',
+          expiresAt: '2026-03-18T10:15:30.000Z',
+        ),
+      );
+      await postRepo.saveComment(
+        const PostCommentModel(
+          id: 'comment-1',
+          eventId: 'evt-comment-1',
+          postId: 'post-1',
+          senderPeerId: 'peer-bob',
+          body: 'I can lend one.',
+          commentedAt: '2026-03-15T11:00:00.000Z',
+        ),
+      );
+      await postRepo.saveComment(
+        const PostCommentModel(
+          id: 'comment-2',
+          eventId: 'evt-comment-2',
+          postId: 'post-1',
+          senderPeerId: 'peer-cara',
+          body: 'I have one too.',
+          commentedAt: '2026-03-15T11:05:00.000Z',
+        ),
+      );
+      await postRepo.savePostReaction(
+        const PostReactionModel(
+          reactionId: 'post_heart:post-1:peer-bob',
+          eventId: 'evt-reaction-1',
+          postId: 'post-1',
+          senderPeerId: 'peer-bob',
+          isActive: true,
+          reactedAt: '2026-03-15T11:10:00.000Z',
+        ),
+      );
+      await postRepo.savePostReaction(
+        const PostReactionModel(
+          reactionId: 'post_heart:post-1:peer-cara',
+          eventId: 'evt-reaction-2',
+          postId: 'post-1',
+          senderPeerId: 'peer-cara',
+          isActive: false,
+          reactedAt: '2026-03-15T11:11:00.000Z',
+        ),
+      );
 
-    final feed = await loadPostsFeed(
-      postRepo: postRepo,
-      viewerPeerId: 'peer-bob',
-    );
+      final feed = await loadPostsFeed(
+        postRepo: postRepo,
+        viewerPeerId: 'peer-bob',
+      );
 
-    expect(feed.single.commentCount, 2);
-    expect(feed.single.heartCount, 1);
-    expect(feed.single.viewerHasHearted, isTrue);
-  });
+      expect(feed.single.commentCount, 2);
+      expect(feed.single.heartCount, 1);
+      expect(feed.single.viewerHasHearted, isTrue);
+    },
+  );
+
+  test(
+    'loads viewer-local repost metrics for the feed from repository projection',
+    () async {
+      await postRepo.savePost(
+        const PostModel(
+          id: 'post-1',
+          eventId: 'evt-post-1',
+          senderPeerId: 'peer-bob',
+          authorPeerId: 'peer-bob',
+          authorUsername: 'Bob',
+          text: 'Need a ladder',
+          audience: PostAudience(kind: PostAudienceKind.allFriends),
+          createdAt: '2026-03-15T10:15:30.000Z',
+          visibleAt: '2026-03-15T10:15:30.000Z',
+          expiresAt: '2026-03-18T10:15:30.000Z',
+        ),
+      );
+      await postRepo.savePostPass(
+        const PostPassModel(
+          passId: 'pass-1',
+          eventId: 'evt-pass-1',
+          postId: 'post-1',
+          senderPeerId: 'peer-alice',
+          passerPeerId: 'peer-alice',
+          passerUsername: 'Alice',
+          passedAt: '2026-03-15T11:15:00.000Z',
+          createdAt: '2026-03-15T11:15:00.000Z',
+          isIncoming: false,
+          recipientCount: 2,
+        ),
+      );
+      await postRepo.savePostPass(
+        const PostPassModel(
+          passId: 'pass-2',
+          eventId: 'evt-pass-2',
+          postId: 'post-1',
+          senderPeerId: 'peer-alice',
+          passerPeerId: 'peer-alice',
+          passerUsername: 'Alice',
+          passedAt: '2026-03-15T11:20:00.000Z',
+          createdAt: '2026-03-15T11:20:00.000Z',
+          isIncoming: false,
+          recipientCount: 1,
+        ),
+      );
+      await postRepo.savePostPass(
+        const PostPassModel(
+          passId: 'pass-3',
+          eventId: 'evt-pass-3',
+          postId: 'post-1',
+          senderPeerId: 'peer-james',
+          passerPeerId: 'peer-james',
+          passerUsername: 'James',
+          passedAt: '2026-03-15T11:25:00.000Z',
+          createdAt: '2026-03-15T11:25:00.000Z',
+          isIncoming: false,
+          recipientCount: 4,
+        ),
+      );
+
+      final feed = await loadPostsFeed(
+        postRepo: postRepo,
+        viewerPeerId: 'peer-alice',
+      );
+
+      expect(feed.single.shareCount, 3);
+      expect(feed.single.totalSharedToCount, 7);
+      expect(feed.single.viewerSharedToCount, 3);
+      expect(feed.single.viewerHasPassed, isTrue);
+    },
+  );
 }

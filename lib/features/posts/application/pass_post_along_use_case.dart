@@ -57,15 +57,17 @@ class CreatedLocalPostPass {
             .toList(growable: false);
 }
 
-typedef PrepareRepostMediaFn = Future<RepostMediaPrepResult?> Function({
-  required Bridge bridge,
-  required List<PostMediaAttachmentModel> originalMedia,
-  required String passerPeerId,
-  required List<String> recipientPeerIds,
-  required String originalAuthorPeerId,
-});
+typedef PrepareRepostMediaFn =
+    Future<RepostMediaPrepResult?> Function({
+      required Bridge bridge,
+      required List<PostMediaAttachmentModel> originalMedia,
+      required String passerPeerId,
+      required List<String> recipientPeerIds,
+      required String originalAuthorPeerId,
+    });
 
 typedef LoadAvatarBytesFn = Future<Uint8List?> Function(String peerId);
+typedef ResolveStoredPathFn = Future<String> Function(String storedPath);
 
 Future<(PassPostAlongResult, PostPassModel?)> passPostAlong({
   required P2PService p2pService,
@@ -80,6 +82,7 @@ Future<(PassPostAlongResult, PostPassModel?)> passPostAlong({
   int maxConcurrentRecipients = defaultPostDeliveryConcurrency,
   PrepareRepostMediaFn? prepareRepostMediaFn,
   LoadAvatarBytesFn? loadAvatarBytesFn,
+  ResolveStoredPathFn? resolveStoredPathFn,
 }) async {
   final (createResult, created) = await createLocalPostPass(
     p2pService: p2pService,
@@ -93,6 +96,7 @@ Future<(PassPostAlongResult, PostPassModel?)> passPostAlong({
     nowProvider: nowProvider,
     prepareRepostMediaFn: prepareRepostMediaFn,
     loadAvatarBytesFn: loadAvatarBytesFn,
+    resolveStoredPathFn: resolveStoredPathFn,
   );
   if (createResult != PassPostAlongResult.success || created == null) {
     return (createResult, created?.pass);
@@ -123,35 +127,70 @@ Future<(PassPostAlongResult, CreatedLocalPostPass?)> createLocalPostPass({
   DateTime Function()? nowProvider,
   PrepareRepostMediaFn? prepareRepostMediaFn,
   LoadAvatarBytesFn? loadAvatarBytesFn,
+  ResolveStoredPathFn? resolveStoredPathFn,
 }) async {
   if (!p2pService.currentState.isStarted) {
+    _emitRepostCreateAbort(postId: postId, reason: 'node_not_running');
     return (PassPostAlongResult.nodeNotRunning, null);
   }
 
   final post = await postRepo.getPost(postId);
   if (post == null) {
+    _emitRepostCreateAbort(postId: postId, reason: 'post_not_found');
     return (PassPostAlongResult.postNotFound, null);
   }
   if (post.audience.kind == PostAudienceKind.pickPeople) {
+    _emitRepostCreateAbort(
+      postId: postId,
+      reason: 'pick_people_not_allowed',
+    );
     return (PassPostAlongResult.pickPeopleNotAllowed, null);
   }
   if (post.senderPeerId != post.authorPeerId) {
+    _emitRepostCreateAbort(postId: postId, reason: 'one_hop_limit_reached');
     return (PassPostAlongResult.oneHopLimitReached, null);
   }
 
   final snapshotMedia = post.media.isNotEmpty
       ? post.media
       : await postRepo.loadPostMediaAttachments(post.id);
+  final resolvedSnapshotMedia = resolveStoredPathFn == null
+      ? snapshotMedia
+      : await _resolveStoredMediaPaths(
+          snapshotMedia,
+          resolveStoredPathFn: resolveStoredPathFn,
+        );
   final renderablePost = post.copyWith(
-    mediaKind: snapshotMedia.isEmpty
+    mediaKind: resolvedSnapshotMedia.isEmpty
         ? post.mediaKind
-        : PostMediaAttachmentModel.deriveMediaKind(snapshotMedia),
-    media: snapshotMedia,
+        : PostMediaAttachmentModel.deriveMediaKind(resolvedSnapshotMedia),
+    media: resolvedSnapshotMedia,
+  );
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'REPOST_CREATE_START',
+    details: {
+      'postId': post.id,
+      'senderPeerId': senderPeerId,
+      'authorPeerId': post.authorPeerId,
+      'mediaCount': renderablePost.media.length,
+      'mediaKind': renderablePost.mediaKind,
+      'bridgePresent': bridge != null,
+      'requestedRecipientCount': recipientPeerIds.length,
+    },
   );
   if (!PostMediaAttachmentModel.isValidSnapshotMedia(
     mediaKind: renderablePost.mediaKind,
     media: renderablePost.media,
   )) {
+    _emitRepostCreateAbort(
+      postId: post.id,
+      reason: 'invalid_snapshot_media',
+      details: {
+        'mediaKind': renderablePost.mediaKind,
+        'mediaCount': renderablePost.media.length,
+      },
+    );
     return (PassPostAlongResult.sendFailed, null);
   }
 
@@ -160,8 +199,14 @@ Future<(PassPostAlongResult, CreatedLocalPostPass?)> createLocalPostPass({
     peerIds: recipientPeerIds,
   );
   if (explicitRecipients.isEmpty) {
+    _emitRepostCreateAbort(postId: post.id, reason: 'no_eligible_recipients');
     return (PassPostAlongResult.noEligibleRecipients, null);
   }
+  final explicitRecipientCount = explicitRecipients
+      .map((contact) => contact.peerId)
+      .where((peerId) => peerId != post.authorPeerId)
+      .toSet()
+      .length;
 
   final recipients = <String, ContactModel>{
     for (final contact in explicitRecipients) contact.peerId: contact,
@@ -182,6 +227,14 @@ Future<(PassPostAlongResult, CreatedLocalPostPass?)> createLocalPostPass({
       .map((contact) => contact.peerId)
       .toList(growable: false);
   if (bridge == null || missingEncryptionPeerIds.isNotEmpty) {
+    _emitRepostCreateAbort(
+      postId: post.id,
+      reason: 'missing_bridge_or_encryption_keys',
+      details: {
+        'bridgePresent': bridge != null,
+        'missingEncryptionPeerIds': missingEncryptionPeerIds,
+      },
+    );
     return (PassPostAlongResult.sendFailed, null);
   }
 
@@ -198,6 +251,11 @@ Future<(PassPostAlongResult, CreatedLocalPostPass?)> createLocalPostPass({
       originalAuthorPeerId: renderablePost.authorPeerId,
     );
     if (prepResult == null) {
+      _emitRepostCreateAbort(
+        postId: post.id,
+        reason: 'media_preparation_failed',
+        details: {'mediaCount': renderablePost.media.length},
+      );
       return (PassPostAlongResult.mediaPreparationFailed, null);
     }
     repostMedia = prepResult.attachments;
@@ -229,6 +287,10 @@ Future<(PassPostAlongResult, CreatedLocalPostPass?)> createLocalPostPass({
     postRepo: postRepo,
     postId: post.id,
   );
+  final sharedToCountBaseline = await loadProjectedRepostSharedToCount(
+    postRepo: postRepo,
+    postId: post.id,
+  );
   final draftPass = PostPassModel(
     passId: 'pass_${_uuid.v4()}',
     eventId: 'evt_${_uuid.v4()}',
@@ -239,6 +301,7 @@ Future<(PassPostAlongResult, CreatedLocalPostPass?)> createLocalPostPass({
     passedAt: now,
     createdAt: now,
     isIncoming: false,
+    recipientCount: explicitRecipientCount,
   );
   final envelope = PostPassEnvelope.fromPass(
     pass: draftPass,
@@ -246,6 +309,7 @@ Future<(PassPostAlongResult, CreatedLocalPostPass?)> createLocalPostPass({
     participantPeerIds: sharedThreadBasePeerIds,
     activeHeartPeerIds: hiddenHeartSenderPeerIds,
     repostTotalBaseline: repostTotalBaseline,
+    sharedToCountBaseline: sharedToCountBaseline,
     mediaKeys: mediaKeys,
     originalAuthorAvatarBase64: avatarBase64,
   );
@@ -259,17 +323,25 @@ Future<(PassPostAlongResult, CreatedLocalPostPass?)> createLocalPostPass({
     passedAt: now,
     createdAt: now,
     isIncoming: false,
+    recipientCount: explicitRecipientCount,
     innerPayloadJson: envelope.toInnerJson(),
   );
   await postRepo.savePostPass(pass);
   final currentLocalPassCount = await postRepo.loadPostPassCount(post.id);
+  final currentLocalSharedToCount = await loadLocalRepostSharedToCount(
+    postRepo: postRepo,
+    postId: post.id,
+  );
   await seedRepostThreadState(
     postRepo: postRepo,
     postId: post.id,
     participantPeerIds: sharedThreadBasePeerIds,
     activeHeartPeerIds: hiddenHeartSenderPeerIds,
     repostTotalBaseline: repostTotalBaseline,
+    sharedToCountBaseline: sharedToCountBaseline,
     currentLocalPassCount: currentLocalPassCount,
+    currentLocalSharedToCount: currentLocalSharedToCount,
+    currentPassRecipientCount: explicitRecipientCount,
     createdAt: now,
   );
   if (avatarBase64 != null) {
@@ -299,6 +371,17 @@ Future<(PassPostAlongResult, CreatedLocalPostPass?)> createLocalPostPass({
       ),
     );
   }
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'REPOST_CREATE_LOCAL_SUCCESS',
+    details: {
+      'postId': post.id,
+      'passId': pass.passId,
+      'explicitRecipientCount': explicitRecipientCount,
+      'deliveryRecipientCount': resolvedRecipients.length,
+      'mediaCount': mediaPost.media.length,
+    },
+  );
   return (
     PassPostAlongResult.success,
     CreatedLocalPostPass(
@@ -360,10 +443,7 @@ class RepostMediaPrepResult {
   final List<PostMediaAttachmentModel> attachments;
   final Map<String, PostMediaCryptoEntry> keys;
 
-  const RepostMediaPrepResult({
-    required this.attachments,
-    required this.keys,
-  });
+  const RepostMediaPrepResult({required this.attachments, required this.keys});
 }
 
 Future<RepostMediaPrepResult?> _prepareRepostMedia({
@@ -373,6 +453,16 @@ Future<RepostMediaPrepResult?> _prepareRepostMedia({
   required List<String> recipientPeerIds,
   required String originalAuthorPeerId,
 }) async {
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'REPOST_MEDIA_PREP_START',
+    details: {
+      'attachmentCount': originalMedia.length,
+      'recipientCount': recipientPeerIds.length,
+      'passerPeerId': passerPeerId,
+      'originalAuthorPeerId': originalAuthorPeerId,
+    },
+  );
   final repostAcl = <String>{
     passerPeerId,
     ...recipientPeerIds,
@@ -385,6 +475,17 @@ Future<RepostMediaPrepResult?> _prepareRepostMedia({
 
   try {
     for (final attachment in originalMedia) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'REPOST_MEDIA_PREP_ATTACHMENT',
+        details: {
+          'mediaId': attachment.mediaId,
+          'blobId': attachment.blobId,
+          'localPath': attachment.localPath,
+          'downloadStatus': attachment.downloadStatus,
+          'isEncrypted': attachment.isEncrypted,
+        },
+      );
       if (attachment.localPath == null ||
           !File(attachment.localPath!).existsSync()) {
         emitFlowEvent(
@@ -429,12 +530,14 @@ Future<RepostMediaPrepResult?> _prepareRepostMedia({
         return null;
       }
 
-      attachments.add(attachment.copyWith(
-        blobId: newBlobId,
-        encryptionKeyBase64: keyBase64,
-        encryptionNonce: nonce,
-        isEncrypted: true,
-      ));
+      attachments.add(
+        attachment.copyWith(
+          blobId: newBlobId,
+          encryptionKeyBase64: keyBase64,
+          encryptionNonce: nonce,
+          isEncrypted: true,
+        ),
+      );
 
       keys[attachment.mediaId] = PostMediaCryptoEntry(
         keyBase64: keyBase64,
@@ -446,7 +549,7 @@ Future<RepostMediaPrepResult?> _prepareRepostMedia({
     emitFlowEvent(
       layer: 'FL',
       event: 'REPOST_MEDIA_PREP_ERROR',
-      details: {'error': e.toString()},
+      details: {'error': e.toString(), 'errorType': e.runtimeType.toString()},
     );
     return null;
   } finally {
@@ -460,5 +563,49 @@ Future<RepostMediaPrepResult?> _prepareRepostMedia({
     }
   }
 
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'REPOST_MEDIA_PREP_SUCCESS',
+    details: {'attachmentCount': attachments.length},
+  );
   return RepostMediaPrepResult(attachments: attachments, keys: keys);
+}
+
+Future<List<PostMediaAttachmentModel>> _resolveStoredMediaPaths(
+  List<PostMediaAttachmentModel> attachments, {
+  required ResolveStoredPathFn resolveStoredPathFn,
+}) async {
+  return Future.wait(
+    attachments.map((attachment) async {
+      final localPath = attachment.localPath;
+      if (localPath == null || localPath.isEmpty) {
+        return attachment;
+      }
+      final resolvedPath = await resolveStoredPathFn(localPath);
+      if (resolvedPath != localPath) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'REPOST_MEDIA_PATH_RESOLVED',
+          details: {
+            'mediaId': attachment.mediaId,
+            'storedPath': localPath,
+            'resolvedPath': resolvedPath,
+          },
+        );
+      }
+      return attachment.copyWith(localPath: resolvedPath);
+    }),
+  );
+}
+
+void _emitRepostCreateAbort({
+  required String postId,
+  required String reason,
+  Map<String, Object?> details = const <String, Object?>{},
+}) {
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'REPOST_CREATE_ABORT',
+    details: {'postId': postId, 'reason': reason, ...details},
+  );
 }

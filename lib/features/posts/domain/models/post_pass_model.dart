@@ -9,6 +9,7 @@ class PostPassModel {
   final String createdAt;
   final bool isIncoming;
   final String deliveryStatus;
+  final int? recipientCount;
   final String? innerPayloadJson;
 
   const PostPassModel({
@@ -22,6 +23,7 @@ class PostPassModel {
     required this.createdAt,
     this.isIncoming = true,
     String? deliveryStatus,
+    this.recipientCount,
     this.innerPayloadJson,
   }) : deliveryStatus =
            deliveryStatus ?? (isIncoming ? 'available' : 'sending');
@@ -41,6 +43,7 @@ class PostPassModel {
       deliveryStatus:
           map['delivery_status'] as String? ??
           (isIncoming ? 'available' : 'sending'),
+      recipientCount: (map['recipient_count'] as num?)?.toInt(),
       innerPayloadJson: map['inner_payload_json'] as String?,
     );
   }
@@ -57,6 +60,7 @@ class PostPassModel {
       'created_at': createdAt,
       'is_incoming': isIncoming ? 1 : 0,
       'delivery_status': deliveryStatus,
+      'recipient_count': recipientCount,
       'inner_payload_json': innerPayloadJson,
     };
   }
@@ -69,7 +73,9 @@ class PostPassModel {
     String? createdAt,
     bool? isIncoming,
     String? deliveryStatus,
+    int? recipientCount,
     String? innerPayloadJson,
+    bool clearRecipientCount = false,
     bool clearInnerPayloadJson = false,
   }) {
     final resolvedIncoming = isIncoming ?? this.isIncoming;
@@ -86,6 +92,9 @@ class PostPassModel {
       deliveryStatus:
           deliveryStatus ??
           (resolvedIncoming ? 'available' : this.deliveryStatus),
+      recipientCount: clearRecipientCount
+          ? null
+          : (recipientCount ?? this.recipientCount),
       innerPayloadJson: clearInnerPayloadJson
           ? null
           : (innerPayloadJson ?? this.innerPayloadJson),

@@ -376,6 +376,26 @@ class GoBridgeClient extends Bridge {
             'errorCode': 'NULL_RESPONSE',
             'errorMessage': 'Native bridge returned null',
           });
+    } on MissingPluginException catch (e) {
+      final errorMessage =
+          'Native bridge method ${spec.methodName} is not available for '
+          '$cmd on channel com.mknoon/go_bridge. Rebuild the app with the '
+          'updated native bridge.';
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GO_BRIDGE_MISSING_PLUGIN',
+        details: {
+          'cmd': cmd,
+          'method': spec.methodName,
+          'initialized': _initialized,
+          'error': e.message ?? e.toString(),
+        },
+      );
+      return jsonEncode({
+        'ok': false,
+        'errorCode': 'MISSING_PLUGIN',
+        'errorMessage': errorMessage,
+      });
     } on PlatformException catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -386,6 +406,17 @@ class GoBridgeClient extends Bridge {
         'ok': false,
         'errorCode': 'PLATFORM_ERROR',
         'errorMessage': e.message ?? 'Platform channel error',
+      });
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GO_BRIDGE_UNEXPECTED_ERROR',
+        details: {'cmd': cmd, 'method': spec.methodName, 'error': e.toString()},
+      );
+      return jsonEncode({
+        'ok': false,
+        'errorCode': 'BRIDGE_EXCEPTION',
+        'errorMessage': e.toString(),
       });
     }
   }

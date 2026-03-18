@@ -34,6 +34,9 @@ class PostModel {
   final String? passedByUsername;
   final String? passedAt;
   final int shareCount;
+  final int totalSharedToCount;
+  final int viewerSharedToCount;
+  final bool viewerHasPassed;
   final Uint8List? originalAuthorAvatarBytes;
 
   const PostModel({
@@ -67,6 +70,9 @@ class PostModel {
     this.passedByUsername,
     this.passedAt,
     this.shareCount = 0,
+    this.totalSharedToCount = 0,
+    this.viewerSharedToCount = 0,
+    this.viewerHasPassed = false,
     this.originalAuthorAvatarBytes,
   });
 
@@ -106,6 +112,10 @@ class PostModel {
       passedByUsername: map['passer_username'] as String?,
       passedAt: map['pass_created_at'] as String?,
       shareCount: (map['share_count'] as num?)?.toInt() ?? 0,
+      totalSharedToCount: (map['total_shared_to_count'] as num?)?.toInt() ?? 0,
+      viewerSharedToCount:
+          (map['viewer_shared_to_count'] as num?)?.toInt() ?? 0,
+      viewerHasPassed: (map['viewer_has_passed'] as int? ?? 0) == 1,
     );
   }
 
@@ -165,6 +175,9 @@ class PostModel {
     String? passedByUsername,
     String? passedAt,
     int? shareCount,
+    int? totalSharedToCount,
+    int? viewerSharedToCount,
+    bool? viewerHasPassed,
     Uint8List? originalAuthorAvatarBytes,
     bool clearOriginalAuthorAvatarBytes = false,
   }) {
@@ -201,7 +214,12 @@ class PostModel {
       passedByUsername: passedByUsername ?? this.passedByUsername,
       passedAt: passedAt ?? this.passedAt,
       shareCount: shareCount ?? this.shareCount,
-      originalAuthorAvatarBytes: clearOriginalAuthorAvatarBytes ? null : (originalAuthorAvatarBytes ?? this.originalAuthorAvatarBytes),
+      totalSharedToCount: totalSharedToCount ?? this.totalSharedToCount,
+      viewerSharedToCount: viewerSharedToCount ?? this.viewerSharedToCount,
+      viewerHasPassed: viewerHasPassed ?? this.viewerHasPassed,
+      originalAuthorAvatarBytes: clearOriginalAuthorAvatarBytes
+          ? null
+          : (originalAuthorAvatarBytes ?? this.originalAuthorAvatarBytes),
     );
   }
 }

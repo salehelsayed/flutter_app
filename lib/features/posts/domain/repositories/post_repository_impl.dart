@@ -41,6 +41,11 @@ class PostRepositoryImpl implements PostRepository {
   final Future<int> Function(String postId)? dbCountPostPasses;
   final Future<List<Map<String, Object?>>> Function(List<String> postIds)?
   dbLoadPostPassCounts;
+  final Future<Map<String, int>> Function(
+    List<String> postIds,
+    String viewerPeerId,
+  )?
+  dbLoadViewerSharedToCountsForPosts;
   final Future<void> Function(Map<String, Object?> row)?
   dbUpsertRepostEngagementParticipant;
   final Future<List<Map<String, Object?>>> Function(String postId)?
@@ -118,9 +123,16 @@ class PostRepositoryImpl implements PostRepository {
   final Future<void> Function(Map<String, Object?> row)? dbUpsertPinDismissal;
   final Future<List<Map<String, Object?>>> Function()? dbLoadPinDismissals;
   final Future<void> Function(String postId)? dbDeletePinDismissal;
-  final Future<void> Function(String postId, String authorPeerId, List<int> avatarBlob, String createdAt)? dbSavePassAvatarSnapshot;
+  final Future<void> Function(
+    String postId,
+    String authorPeerId,
+    List<int> avatarBlob,
+    String createdAt,
+  )?
+  dbSavePassAvatarSnapshot;
   final Future<List<int>?> Function(String postId)? dbLoadPassAvatarSnapshot;
-  final Future<Map<String, List<int>>> Function(List<String> postIds)? dbLoadPassAvatarSnapshotsForPosts;
+  final Future<Map<String, List<int>>> Function(List<String> postIds)?
+  dbLoadPassAvatarSnapshotsForPosts;
 
   final StreamController<String> _postChangesController =
       StreamController<String>.broadcast();
@@ -141,6 +153,7 @@ class PostRepositoryImpl implements PostRepository {
     this.dbLoadRetryableOutgoingPostPasses,
     this.dbCountPostPasses,
     this.dbLoadPostPassCounts,
+    this.dbLoadViewerSharedToCountsForPosts,
     this.dbUpsertRepostEngagementParticipant,
     this.dbLoadRepostEngagementParticipants,
     this.dbUpsertRepostHeartBaselinePeer,
@@ -704,6 +717,36 @@ class PostRepositoryImpl implements PostRepository {
   }
 
   @override
+  Future<Map<String, int>> loadViewerSharedToCountsForPosts(
+    List<String> postIds,
+    String viewerPeerId,
+  ) async {
+    if (postIds.isEmpty || viewerPeerId.isEmpty) {
+      return const <String, int>{};
+    }
+    final dbLoad = dbLoadViewerSharedToCountsForPosts;
+    if (dbLoad != null) {
+      return dbLoad(postIds, viewerPeerId);
+    }
+
+    final results = <String, int>{};
+    for (final postId in postIds) {
+      final passes = await loadPostPasses(postId);
+      var viewerSharedToCount = 0;
+      for (final pass in passes) {
+        if (pass.isIncoming || pass.senderPeerId != viewerPeerId) {
+          continue;
+        }
+        viewerSharedToCount += pass.recipientCount ?? 1;
+      }
+      if (viewerSharedToCount > 0) {
+        results[postId] = viewerSharedToCount;
+      }
+    }
+    return results;
+  }
+
+  @override
   Future<void> saveRepostEngagementParticipant({
     required String postId,
     required String participantPeerId,
@@ -823,12 +866,15 @@ class PostRepositoryImpl implements PostRepository {
     final existingRow = await dbLoad(postId);
     final existingBaseline =
         (existingRow?['repost_total_baseline'] as num?)?.toInt() ?? 0;
+    final existingSharedToBaseline =
+        (existingRow?['shared_to_count_baseline'] as num?)?.toInt() ?? 0;
     if (baselineDelta <= existingBaseline) {
       return;
     }
     await dbInsert(<String, Object?>{
       'post_id': postId,
       'repost_total_baseline': baselineDelta,
+      'shared_to_count_baseline': existingSharedToBaseline,
       'created_at': createdAt,
     });
     _postChangesController.add(postId);
@@ -861,6 +907,86 @@ class PostRepositoryImpl implements PostRepository {
         if (row['post_id'] is String)
           row['post_id'] as String:
               ((row['repost_total_baseline'] as num?)?.toInt() ?? 0),
+    };
+  }
+
+  @override
+  Future<void> seedRepostSharedToBaseline({
+    required String postId,
+    required int sharedToCountBaseline,
+    required int existingLocalSharedToCount,
+    required int currentPassRecipientCount,
+    required String createdAt,
+  }) async {
+    final dbInsert = _require(
+      dbInsertRepostProjectionState,
+      'Repost projection state is not configured for this repository.',
+    );
+    final dbLoad = _require(
+      dbLoadRepostProjectionState,
+      'Repost projection state is not configured for this repository.',
+    );
+    final expectedVisibleSharedToCount =
+        sharedToCountBaseline + currentPassRecipientCount;
+    final baselineDelta =
+        expectedVisibleSharedToCount > existingLocalSharedToCount
+        ? expectedVisibleSharedToCount - existingLocalSharedToCount
+        : 0;
+    final existingRow = await dbLoad(postId);
+    final existingEventBaseline =
+        (existingRow?['repost_total_baseline'] as num?)?.toInt() ?? 0;
+    final existingSharedToBaseline =
+        (existingRow?['shared_to_count_baseline'] as num?)?.toInt() ?? 0;
+    if (baselineDelta <= existingSharedToBaseline) {
+      return;
+    }
+    await dbInsert(<String, Object?>{
+      'post_id': postId,
+      'repost_total_baseline': existingEventBaseline,
+      'shared_to_count_baseline': baselineDelta,
+      'created_at': createdAt,
+    });
+    _postChangesController.add(postId);
+  }
+
+  @override
+  Future<int> loadRepostSharedToBaseline(String postId) async {
+    final dbLoad = _require(
+      dbLoadRepostProjectionState,
+      'Repost projection state is not configured for this repository.',
+    );
+    final row = await dbLoad(postId);
+    final sharedToBaseline =
+        (row?['shared_to_count_baseline'] as num?)?.toInt() ?? 0;
+    if (sharedToBaseline > 0) {
+      return sharedToBaseline;
+    }
+    return (row?['repost_total_baseline'] as num?)?.toInt() ?? 0;
+  }
+
+  @override
+  Future<Map<String, int>> loadRepostSharedToBaselines(
+    List<String> postIds,
+  ) async {
+    if (postIds.isEmpty) {
+      return const <String, int>{};
+    }
+    final dbLoad = _require(
+      dbLoadRepostProjectionStates,
+      'Repost projection state is not configured for this repository.',
+    );
+    final rows = await dbLoad(postIds);
+    return <String, int>{
+      for (final row in rows)
+        if (row['post_id'] is String)
+          row['post_id'] as String: () {
+            final sharedToBaseline =
+                (row['shared_to_count_baseline'] as num?)?.toInt() ?? 0;
+            if (sharedToBaseline > 0) {
+              return sharedToBaseline;
+            }
+            return (row['repost_total_baseline'] as num?)?.toInt() ?? 0;
+          }(),
     };
   }
 

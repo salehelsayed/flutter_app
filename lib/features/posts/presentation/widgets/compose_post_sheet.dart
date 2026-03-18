@@ -34,7 +34,7 @@ class ComposePostSheet extends StatefulWidget {
   final AudioRecorderService? audioRecorderService;
   final NearbyComposeAvailability? nearbyAvailability;
   final Future<NearbyComposeAvailability> Function()? onRefreshNearby;
-  final Future<bool> Function()? onOpenNearbySettings;
+  final Future<NearbyComposeAvailability> Function()? onOpenNearbySettings;
   final int activePinCount;
   final VoidCallback? onManagePins;
 
@@ -341,7 +341,11 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
     if (widget.onOpenNearbySettings == null) {
       return;
     }
-    await widget.onOpenNearbySettings!();
+    final availability = await widget.onOpenNearbySettings!();
+    if (!mounted) {
+      return;
+    }
+    setState(() => _nearbyAvailability = availability);
   }
 
   @override
@@ -718,15 +722,44 @@ class _NearbyComposeAvailabilityCard extends StatelessWidget {
         'Enable location services, then refresh nearby again.',
     };
 
-    final action = availability.canOpenSettings && onOpenSettings != null
-        ? TextButton(
+    final canOpenSettingsShortcut =
+        (availability.state == NearbyComposeAvailabilityState.sharingOff ||
+            availability.canOpenSettings) &&
+        onOpenSettings != null;
+
+    final action = canOpenSettingsShortcut
+        ? TextButton.icon(
             onPressed: onOpenSettings,
-            child: const Text('Open Settings'),
+            style: TextButton.styleFrom(
+              foregroundColor: Colors.white,
+              backgroundColor: const Color.fromRGBO(255, 255, 255, 0.08),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+                side: const BorderSide(
+                  color: Color.fromRGBO(255, 255, 255, 0.10),
+                ),
+              ),
+            ),
+            icon: const Icon(Icons.settings_outlined, size: 16),
+            label: const Text('Open Settings'),
           )
         : availability.canRefresh && onRefresh != null
-        ? TextButton(
+        ? TextButton.icon(
             onPressed: isRefreshing ? null : onRefresh,
-            child: Text(isRefreshing ? 'Refreshing...' : 'Refresh nearby'),
+            style: TextButton.styleFrom(
+              foregroundColor: Colors.white,
+              backgroundColor: const Color.fromRGBO(255, 255, 255, 0.08),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+                side: const BorderSide(
+                  color: Color.fromRGBO(255, 255, 255, 0.10),
+                ),
+              ),
+            ),
+            icon: const Icon(Icons.refresh_rounded, size: 16),
+            label: Text(isRefreshing ? 'Refreshing...' : 'Refresh nearby'),
           )
         : null;
 
@@ -737,32 +770,26 @@ class _NearbyComposeAvailabilityCard extends StatelessWidget {
         color: const Color(0xFF1A1E26),
         borderRadius: BorderRadius.circular(18),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  subtitle,
-                  style: const TextStyle(
-                    color: Color.fromRGBO(255, 255, 255, 0.55),
-                    fontSize: 12,
-                    height: 1.35,
-                  ),
-                ),
-              ],
+          Text(
+            title,
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w600,
             ),
           ),
-          if (action != null) ...[const SizedBox(width: 12), action],
+          const SizedBox(height: 6),
+          Text(
+            subtitle,
+            style: const TextStyle(
+              color: Color.fromRGBO(255, 255, 255, 0.55),
+              fontSize: 12,
+              height: 1.35,
+            ),
+          ),
+          if (action != null) ...[const SizedBox(height: 12), action],
         ],
       ),
     );

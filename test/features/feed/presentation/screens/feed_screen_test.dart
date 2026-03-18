@@ -5,6 +5,7 @@ import 'package:flutter_app/features/feed/domain/models/session_reply.dart';
 import 'package:flutter_app/features/feed/presentation/screens/feed_screen.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/collapsed_mode_card_body.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/feed_card.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/feed_navigation_bar.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/open_mode_card_body.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/scrollable_message_preview.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bubble.dart';
@@ -57,6 +58,8 @@ void main() {
     ValueNotifier<List<FeedItem>>? feedItemsListenable,
     bool feedLoaded = true,
     String? expandedCardId,
+    String? activeFocusPeerId,
+    EdgeInsets viewInsets = EdgeInsets.zero,
     SessionReplyTracker? sessionReplies,
     Map<String, String>? activeQuoteMessageIds,
     void Function(String contactPeerId)? onClearQuote,
@@ -66,21 +69,27 @@ void main() {
   }) {
     return MaterialApp(
       home: Scaffold(
-        body: FeedScreen(
-          username: 'Alice',
-          feedItems: feedItems,
-          feedItemsListenable: feedItemsListenable,
-          feedLoaded: feedLoaded,
-          activeTab: 'feed',
-          onSwitchView: (_) {},
-          expandedCardId: expandedCardId,
-          onToggleExpand: (_) {},
-          sessionReplies: sessionReplies,
-          activeQuoteMessageIds: activeQuoteMessageIds,
-          onClearQuote: onClearQuote,
-          onGroupInlineSend: onGroupInlineSend,
-          onQuoteReply: onQuoteReply,
-          onGroupAttach: onGroupAttach,
+        body: Builder(
+          builder: (context) => MediaQuery(
+            data: MediaQuery.of(context).copyWith(viewInsets: viewInsets),
+            child: FeedScreen(
+              username: 'Alice',
+              feedItems: feedItems,
+              feedItemsListenable: feedItemsListenable,
+              feedLoaded: feedLoaded,
+              activeTab: 'feed',
+              onSwitchView: (_) {},
+              activeFocusPeerId: activeFocusPeerId,
+              expandedCardId: expandedCardId,
+              onToggleExpand: (_) {},
+              sessionReplies: sessionReplies,
+              activeQuoteMessageIds: activeQuoteMessageIds,
+              onClearQuote: onClearQuote,
+              onGroupInlineSend: onGroupInlineSend,
+              onQuoteReply: onQuoteReply,
+              onGroupAttach: onGroupAttach,
+            ),
+          ),
         ),
       ),
     );
@@ -199,6 +208,53 @@ void main() {
 
       expect(tailCardFinder, findsOneWidget);
       expect(find.text('User 29'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'keeps bottom navigation visible when reply input is focused without keyboard insets',
+    (tester) async {
+      setPhoneViewport(tester);
+
+      await tester.pumpWidget(
+        buildFeedScreen(
+          feedItems: [
+            buildThreadItem(
+              id: 'thread_bob',
+              username: 'Bob',
+              timestamp: DateTime.utc(2026, 3, 1, 10),
+            ),
+          ],
+          activeFocusPeerId: 'thread_bob_peer',
+        ),
+      );
+      await tester.pump();
+
+      expect(find.byType(FeedNavigationBar), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'hides bottom navigation when reply input is focused with software keyboard visible',
+    (tester) async {
+      setPhoneViewport(tester);
+
+      await tester.pumpWidget(
+        buildFeedScreen(
+          feedItems: [
+            buildThreadItem(
+              id: 'thread_bob',
+              username: 'Bob',
+              timestamp: DateTime.utc(2026, 3, 1, 10),
+            ),
+          ],
+          activeFocusPeerId: 'thread_bob_peer',
+          viewInsets: const EdgeInsets.only(bottom: 320),
+        ),
+      );
+      await tester.pump();
+
+      expect(find.byType(FeedNavigationBar), findsNothing);
     },
   );
 
@@ -421,8 +477,8 @@ void main() {
       await tester.pumpWidget(
         buildFeedScreen(
           feedItems: [groupItem],
-          onGroupInlineSend: (_, __) {},
-          onQuoteReply: (_, __) {},
+          onGroupInlineSend: (groupId, text) {},
+          onQuoteReply: (contactPeerId, messageId) {},
           onGroupAttach: (_) {},
         ),
       );

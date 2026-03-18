@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
@@ -18,6 +20,7 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/fake_p2p_network.dart';
+import '../../../shared/fakes/fake_media_file_manager.dart';
 import '../../../shared/fakes/fake_p2p_service_integration.dart';
 import '../../../shared/fakes/in_memory_contact_repository.dart';
 import '../../../shared/fakes/in_memory_post_repository.dart';
@@ -30,6 +33,7 @@ void main() {
   late InMemoryContactRepository contacts;
   late InMemoryPostRepository posts;
   late PassthroughCryptoBridge bridge;
+  Directory? tempDir;
 
   setUp(() {
     network = FakeP2PNetwork();
@@ -39,12 +43,14 @@ void main() {
     contacts = InMemoryContactRepository();
     posts = InMemoryPostRepository();
     bridge = PassthroughCryptoBridge();
+    tempDir = null;
 
     contacts.addTestContact(_contact('peer-bob', 'Bob'));
     contacts.addTestContact(_contact('peer-cara', 'Cara'));
   });
 
   tearDown(() {
+    tempDir?.deleteSync(recursive: true);
     posts.dispose();
     aliceService.dispose();
     bobService.dispose();
@@ -140,6 +146,103 @@ void main() {
       expect(media, hasLength(1));
       expect(media.single['media_id'], 'media-1');
       expect(media.single['blob_id'], 'blob-1');
+    },
+  );
+
+  test(
+    'createLocalPostPass resolves stored repost media paths before media prep',
+    () async {
+      await posts.savePost(_directPost(mediaKind: 'image'));
+      await posts.savePostMediaAttachment(
+        const PostMediaAttachmentModel(
+          mediaId: 'media-1',
+          postId: 'post-1',
+          blobId: 'blob-1',
+          kind: 'image',
+          mime: 'image/jpeg',
+          sizeBytes: 248120,
+          width: 1440,
+          height: 1080,
+          localPath: 'post_media/post-1/blob-1.jpg',
+          downloadStatus: 'done',
+          createdAt: '2026-03-15T10:20:00.000Z',
+        ),
+      );
+      final mediaFileManager = FakeMediaFileManager();
+      List<PostMediaAttachmentModel>? preparedMedia;
+
+      final (result, created) = await createLocalPostPass(
+        p2pService: aliceService,
+        postRepo: posts,
+        contactRepo: contacts,
+        bridge: bridge,
+        postId: 'post-1',
+        senderPeerId: 'peer-alice',
+        senderUsername: 'Alice',
+        recipientPeerIds: const <String>['peer-cara'],
+        resolveStoredPathFn: mediaFileManager.resolveStoredPath,
+        prepareRepostMediaFn: ({
+          required bridge,
+          required originalMedia,
+          required passerPeerId,
+          required recipientPeerIds,
+          required originalAuthorPeerId,
+        }) async {
+          preparedMedia = originalMedia;
+          return RepostMediaPrepResult(
+            attachments: originalMedia,
+            keys: const <String, PostMediaCryptoEntry>{},
+          );
+        },
+      );
+
+      expect(result, PassPostAlongResult.success);
+      expect(created, isNotNull);
+      expect(preparedMedia, isNotNull);
+      expect(
+        preparedMedia!.single.localPath,
+        '/tmp/test_docs/post_media/post-1/blob-1.jpg',
+      );
+    },
+  );
+
+  test(
+    'createLocalPostPass returns mediaPreparationFailed when blob crypto bridge support is missing',
+    () async {
+      tempDir = await Directory.systemTemp.createTemp(
+        'pass-post-missing-blob-plugin-',
+      );
+      final localFile = File('${tempDir!.path}/blob-1.jpg');
+      await localFile.writeAsBytes(const <int>[1, 2, 3, 4]);
+      await posts.savePost(_directPost(mediaKind: 'image'));
+      await posts.savePostMediaAttachment(
+        PostMediaAttachmentModel(
+          mediaId: 'media-1',
+          postId: 'post-1',
+          blobId: 'blob-1',
+          kind: 'image',
+          mime: 'image/jpeg',
+          sizeBytes: 4,
+          localPath: localFile.path,
+          downloadStatus: 'done',
+          createdAt: '2026-03-15T10:20:00.000Z',
+        ),
+      );
+
+      final (result, created) = await createLocalPostPass(
+        p2pService: aliceService,
+        postRepo: posts,
+        contactRepo: contacts,
+        bridge: _MissingBlobPluginBridge(),
+        postId: 'post-1',
+        senderPeerId: 'peer-alice',
+        senderUsername: 'Alice',
+        recipientPeerIds: const <String>['peer-cara'],
+      );
+
+      expect(result, PassPostAlongResult.mediaPreparationFailed);
+      expect(created, isNull);
+      expect(await posts.loadPostPasses('post-1'), isEmpty);
     },
   );
 
@@ -295,6 +398,37 @@ void main() {
   );
 
   test(
+    'still emits an event-count repost baseline when a local pass fans out to multiple recipients',
+    () async {
+      await posts.savePost(_directPost());
+
+      final (result, created) = await createLocalPostPass(
+        p2pService: aliceService,
+        postRepo: posts,
+        contactRepo: contacts,
+        bridge: bridge,
+        postId: 'post-1',
+        senderPeerId: 'peer-alice',
+        senderUsername: 'Alice',
+        recipientPeerIds: const <String>['peer-bob', 'peer-cara'],
+      );
+
+      expect(result, PassPostAlongResult.success);
+      expect(created, isNotNull);
+      expect(created!.recipientPeerIds, <String>['peer-bob', 'peer-cara']);
+      expect(created.resolvedRecipients, hasLength(2));
+
+      final envelopeJson = jsonDecode(created.envelope) as Map<String, dynamic>;
+      final payload = envelopeJson['payload'] as Map<String, dynamic>;
+      expect(payload['repost_total_baseline'], 0);
+      expect(payload['participant_peer_ids'], <String>[
+        'peer-alice',
+        'peer-bob',
+      ]);
+    },
+  );
+
+  test(
     'runner-backed repost delivery encrypts repost payloads per recipient and carries the shared-thread baseline contract',
     () async {
       await posts.savePost(_directPost(mediaKind: 'image'));
@@ -432,6 +566,46 @@ void main() {
         everyElement(created.pass.passId),
       );
       expect(await posts.loadRetryableFollowOnOutboxJobs(), isEmpty);
+    },
+  );
+
+  test(
+    'createLocalPostPass persists recipient_count from the explicit audience and excludes the original-author notification copy',
+    () async {
+      await posts.savePost(_directPost());
+
+      final (result, created) = await createLocalPostPass(
+        p2pService: aliceService,
+        postRepo: posts,
+        contactRepo: contacts,
+        bridge: bridge,
+        postId: 'post-1',
+        senderPeerId: 'peer-alice',
+        senderUsername: 'Alice',
+        recipientPeerIds: const <String>['peer-bob', 'peer-cara'],
+      );
+
+      expect(result, PassPostAlongResult.success);
+      expect(created, isNotNull);
+      expect(created!.pass.recipientCount, 1);
+
+      final localPasses = await posts.loadPostPasses('post-1');
+      final storedPass = localPasses.singleWhere(
+        (pass) => pass.passId == created.pass.passId,
+      );
+      final envelopeJson = jsonDecode(created.envelope) as Map<String, dynamic>;
+      final payload = envelopeJson['payload'] as Map<String, dynamic>;
+      final deliveries = await posts.getPostPassRecipientDeliveries(
+        created.pass.passId,
+      );
+
+      expect(storedPass.recipientCount, 1);
+      expect(payload['recipient_count'], 1);
+      expect(payload['shared_to_count_baseline'], 0);
+      expect(deliveries.map((delivery) => delivery.recipientPeerId), <String>[
+        'peer-bob',
+        'peer-cara',
+      ]);
     },
   );
 
@@ -815,6 +989,19 @@ void main() {
     expect(result, PassPostAlongResult.oneHopLimitReached);
     expect(pass, isNull);
   });
+}
+
+class _MissingBlobPluginBridge extends FakeBridge {
+  @override
+  Future<String> send(String message) async {
+    final parsed = jsonDecode(message) as Map<String, dynamic>;
+    if (parsed['cmd'] == 'blob:keygen') {
+      throw MissingPluginException(
+        'No implementation found for method blobKeygen on channel com.mknoon/go_bridge',
+      );
+    }
+    return super.send(message);
+  }
 }
 
 ContactModel _contact(

@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
 import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
 
 import '../../../../shared/fakes/fake_p2p_network.dart';
@@ -18,6 +19,7 @@ class ControlledPostPinDeliveryP2PService extends FakeP2PService {
 
   int _inFlightSends = 0;
   int maxInFlightSends = 0;
+  final Set<String> _dialedPeers = <String>{};
 
   ControlledPostPinDeliveryP2PService({
     required super.peerId,
@@ -47,6 +49,10 @@ class ControlledPostPinDeliveryP2PService extends FakeP2PService {
     int? timeoutMs,
   }) async {
     final policy = policies[targetPeerId] ?? const PostPinDeliveryPeerPolicy();
+    if (policy.requireDiscoverAndDialBeforeSend &&
+        !_dialedPeers.contains(targetPeerId)) {
+      return const SendMessageResult(sent: false);
+    }
     sendStartOrder.add(targetPeerId);
     _inFlightSends++;
     if (_inFlightSends > maxInFlightSends) {
@@ -75,6 +81,24 @@ class ControlledPostPinDeliveryP2PService extends FakeP2PService {
             .storeInInboxResult ??
         true;
   }
+
+  @override
+  Future<DiscoveredPeer?> discoverPeer(String peerId, {int? timeoutMs}) async {
+    return DiscoveredPeer(
+      id: peerId,
+      addresses: <String>['/ip4/127.0.0.1/tcp/4001/p2p/$peerId'],
+    );
+  }
+
+  @override
+  Future<bool> dialPeer(
+    String peerId, {
+    List<String>? addresses,
+    int? timeoutMs,
+  }) async {
+    _dialedPeers.add(peerId);
+    return true;
+  }
 }
 
 class PostPinDeliveryPeerPolicy {
@@ -82,11 +106,13 @@ class PostPinDeliveryPeerPolicy {
   final bool? sendResult;
   final bool? storeInInboxResult;
   final FutureOr<void> Function(String targetPeerId)? onSendStart;
+  final bool requireDiscoverAndDialBeforeSend;
 
   const PostPinDeliveryPeerPolicy({
     this.sendGate,
     this.sendResult,
     this.storeInInboxResult,
     this.onSendStart,
+    this.requireDiscoverAndDialBeforeSend = false,
   });
 }

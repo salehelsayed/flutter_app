@@ -94,12 +94,18 @@ Future<(HandleIncomingPassedPostResult, PostModel?)> handleIncomingPassedPost({
     passerUsername: envelope.passerUsername,
     passedAt: envelope.passedAt,
     createdAt: envelope.createdAt,
+    recipientCount: envelope.recipientCount,
     innerPayloadJson: envelope.toInnerJson(),
   );
   await postRepo.savePostPass(pass);
   final currentLocalPassCount = await postRepo.loadPostPassCount(
     envelope.postId,
   );
+  final currentLocalSharedToCount = await loadLocalRepostSharedToCount(
+    postRepo: postRepo,
+    postId: envelope.postId,
+  );
+  final currentPassRecipientCount = envelope.recipientCount ?? 1;
   await seedRepostThreadState(
     postRepo: postRepo,
     postId: envelope.postId,
@@ -111,7 +117,11 @@ Future<(HandleIncomingPassedPostResult, PostModel?)> handleIncomingPassedPost({
           ],
     activeHeartPeerIds: envelope.activeHeartPeerIds,
     repostTotalBaseline: envelope.repostTotalBaseline ?? 0,
+    sharedToCountBaseline:
+        envelope.sharedToCountBaseline ?? envelope.repostTotalBaseline ?? 0,
     currentLocalPassCount: currentLocalPassCount,
+    currentLocalSharedToCount: currentLocalSharedToCount,
+    currentPassRecipientCount: currentPassRecipientCount,
     createdAt: envelope.passedAt,
   );
   await _persistPassAvatarSnapshotIfPresent(
@@ -221,6 +231,11 @@ Future<(HandleIncomingPassedPostResult, PostModel?)> handleIncomingPassedPost({
           passedByUsername: envelope.passerUsername,
           passedAt: envelope.passedAt,
           shareCount: 1,
+          totalSharedToCount:
+              (envelope.sharedToCountBaseline ??
+                  envelope.repostTotalBaseline ??
+                  0) +
+              currentPassRecipientCount,
         ),
   );
 }

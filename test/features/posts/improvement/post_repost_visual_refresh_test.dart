@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
@@ -8,13 +9,12 @@ import 'package:flutter_app/features/posts/domain/models/post_origin_model.dart'
 import 'package:flutter_app/features/posts/domain/models/post_pass_model.dart';
 import 'package:flutter_app/features/posts/presentation/screens/posts_wired.dart';
 
+import '../../../shared/fakes/fake_p2p_network.dart';
+import '../../../shared/fakes/fake_p2p_service_integration.dart';
 import '../../../shared/fakes/in_memory_post_repository.dart';
 import '../../../shared/fakes/in_memory_posts_privacy_settings_repository.dart';
 import '../../contacts/domain/repositories/fake_contact_repository.dart';
 import '../../identity/domain/repositories/fake_identity_repository.dart';
-import '../../../shared/fakes/fake_p2p_service_integration.dart';
-import '../../../shared/fakes/fake_p2p_network.dart';
-import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 
 void main() {
   late FakeIdentityRepository identityRepository;
@@ -55,7 +55,7 @@ void main() {
   }
 
   testWidgets(
-    'shows totalSharedToCount and an active repeat control on the original author card',
+    'refreshes the original author card to the summed repost total after later repost notifications arrive',
     (tester) async {
       identityRepository.seed(_identity('peer-bob', 'Bob'));
       contactRepository.seed([
@@ -64,79 +64,56 @@ void main() {
       ]);
       await postRepository.savePost(
         _post(
-          senderPeerId: 'peer-james',
+          senderPeerId: 'peer-bob',
           authorPeerId: 'peer-bob',
           authorUsername: 'Bob',
         ),
       );
-      await postRepository.savePostPass(
-        _pass('pass-1', 'peer-alice', 'Alice', recipientCount: 2),
-      );
-      await postRepository.savePostPass(
-        _pass('pass-2', 'peer-james', 'James', recipientCount: 3),
-      );
 
       await tester.pumpWidget(buildWidget());
       await tester.pump();
+      await tester.pump();
 
-      final repeatIcon = tester.widget<Icon>(find.byIcon(Icons.repeat));
-      expect(repeatIcon.color, const Color(0xFF1DB954));
+      await postRepository.savePostPass(
+        _pass('pass-1', 'peer-alice', 'Alice', recipientCount: 2),
+      );
+      await tester.pump(const Duration(milliseconds: 350));
+
+      expect(
+        find.byKey(const ValueKey<String>('post-share-count')),
+        findsOneWidget,
+      );
+      expect(find.text('2'), findsOneWidget);
+      expect(
+        tester.widget<Icon>(find.byIcon(Icons.repeat)).color,
+        const Color(0xFF1DB954),
+      );
+
+      await postRepository.savePostPass(
+        _pass('pass-2', 'peer-james', 'James', recipientCount: 3),
+      );
+      await tester.pump(const Duration(milliseconds: 350));
+
       expect(
         find.byKey(const ValueKey<String>('post-share-count')),
         findsOneWidget,
       );
       expect(find.text('5'), findsOneWidget);
-    },
-  );
-
-  testWidgets(
-    'shows viewerSharedToCount and an active repeat control on the reposter card',
-    (tester) async {
-      identityRepository.seed(_identity('peer-alice', 'Alice'));
-      contactRepository.seed([
-        _contact('peer-bob', 'Bob'),
-        _contact('peer-james', 'James'),
-      ]);
-      await postRepository.savePost(
-        _post(
-          authorPeerId: 'peer-bob',
-          authorUsername: 'Bob',
-          senderPeerId: 'peer-bob',
-        ),
-      );
-      await postRepository.savePostPass(
-        _pass(
-          'pass-1',
-          'peer-alice',
-          'Alice',
-          recipientCount: 3,
-          isIncoming: false,
-        ),
-      );
-      await postRepository.savePostPass(
-        _pass('pass-2', 'peer-james', 'James', recipientCount: 2),
-      );
-
-      await tester.pumpWidget(buildWidget());
-      await tester.pump();
-
-      final repeatIcon = tester.widget<Icon>(find.byIcon(Icons.repeat));
-      expect(repeatIcon.color, const Color(0xFF1DB954));
       expect(
-        find.byKey(const ValueKey<String>('post-share-count')),
-        findsOneWidget,
+        tester.widget<Icon>(find.byIcon(Icons.repeat)).color,
+        const Color(0xFF1DB954),
       );
-      expect(find.text('3'), findsOneWidget);
     },
   );
 
   testWidgets(
-    'shows totalSharedToCount neutrally on a passed-along receiver card',
+    'keeps carried-baseline repost totals visible on passive receiver cards when later repost events arrive',
     (tester) async {
       identityRepository.seed(_identity('peer-cara', 'Cara'));
       contactRepository.seed([
         _contact('peer-bob', 'Bob'),
         _contact('peer-james', 'James'),
+        _contact('peer-maria', 'Maria'),
       ]);
       await postRepository.savePost(
         _post(
@@ -148,7 +125,7 @@ void main() {
       await postRepository.savePostOrigin(
         const PostOriginModel(
           postId: 'post-1',
-          originKind: PostOriginKind.direct,
+          originKind: PostOriginKind.pass,
           passId: 'pass-1',
           passerPeerId: 'peer-james',
           passerUsername: 'James',
@@ -168,6 +145,7 @@ void main() {
 
       await tester.pumpWidget(buildWidget());
       await tester.pump();
+      await tester.pump();
 
       expect(find.text('James passed this along'), findsOneWidget);
       expect(
@@ -175,8 +153,114 @@ void main() {
         findsOneWidget,
       );
       expect(find.text('4'), findsOneWidget);
-      final repeatIcon = tester.widget<Icon>(find.byIcon(Icons.repeat));
-      expect(repeatIcon.color?.opacity, closeTo(0.35, 0.01));
+      expect(
+        tester.widget<Icon>(find.byIcon(Icons.repeat)).color?.opacity,
+        closeTo(0.35, 0.01),
+      );
+
+      await postRepository.savePostOrigin(
+        const PostOriginModel(
+          postId: 'post-1',
+          originKind: PostOriginKind.pass,
+          passId: 'pass-2',
+          passerPeerId: 'peer-maria',
+          passerUsername: 'Maria',
+          passCreatedAt: '2026-03-15T11:25:00.000Z',
+        ),
+      );
+      await postRepository.savePostPass(
+        _pass('pass-2', 'peer-maria', 'Maria', recipientCount: 2),
+      );
+      await tester.pump(const Duration(milliseconds: 350));
+
+      expect(find.text('Maria passed this along'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey<String>('post-share-count')),
+        findsOneWidget,
+      );
+      expect(find.text('6'), findsOneWidget);
+      expect(
+        tester.widget<Icon>(find.byIcon(Icons.repeat)).color?.opacity,
+        closeTo(0.35, 0.01),
+      );
+    },
+  );
+
+  testWidgets(
+    'keeps legacy fallback shared-to totals visible and neutrally styled after repository-driven refresh',
+    (tester) async {
+      identityRepository.seed(_identity('peer-cara', 'Cara'));
+      contactRepository.seed([
+        _contact('peer-bob', 'Bob'),
+        _contact('peer-james', 'James'),
+        _contact('peer-maria', 'Maria'),
+      ]);
+      await postRepository.savePost(
+        _post(
+          senderPeerId: 'peer-james',
+          authorPeerId: 'peer-bob',
+          authorUsername: 'Bob',
+        ),
+      );
+      await postRepository.savePostOrigin(
+        const PostOriginModel(
+          postId: 'post-1',
+          originKind: PostOriginKind.pass,
+          passId: 'pass-1',
+          passerPeerId: 'peer-james',
+          passerUsername: 'James',
+          passCreatedAt: '2026-03-15T11:15:00.000Z',
+        ),
+      );
+      await postRepository.savePostPass(_pass('pass-1', 'peer-james', 'James'));
+      await postRepository.seedRepostSharedToBaseline(
+        postId: 'post-1',
+        sharedToCountBaseline: 3,
+        existingLocalSharedToCount: 1,
+        currentPassRecipientCount: 1,
+        createdAt: '2026-03-15T11:15:00.000Z',
+      );
+
+      await tester.pumpWidget(buildWidget());
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.text('James passed this along'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey<String>('post-share-count')),
+        findsOneWidget,
+      );
+      expect(find.text('4'), findsOneWidget);
+      expect(
+        tester.widget<Icon>(find.byIcon(Icons.repeat)).color?.opacity,
+        closeTo(0.35, 0.01),
+      );
+
+      await postRepository.savePostOrigin(
+        const PostOriginModel(
+          postId: 'post-1',
+          originKind: PostOriginKind.pass,
+          passId: 'pass-2',
+          passerPeerId: 'peer-maria',
+          passerUsername: 'Maria',
+          passCreatedAt: '2026-03-15T11:25:00.000Z',
+        ),
+      );
+      await postRepository.savePostPass(
+        _pass('pass-2', 'peer-maria', 'Maria', recipientCount: 2),
+      );
+      await tester.pump(const Duration(milliseconds: 350));
+
+      expect(find.text('Maria passed this along'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey<String>('post-share-count')),
+        findsOneWidget,
+      );
+      expect(find.text('6'), findsOneWidget);
+      expect(
+        tester.widget<Icon>(find.byIcon(Icons.repeat)).color?.opacity,
+        closeTo(0.35, 0.01),
+      );
     },
   );
 }
@@ -206,8 +290,8 @@ ContactModel _contact(String peerId, String username) {
 
 PostModel _post({
   String senderPeerId = 'peer-bob',
-  required String authorPeerId,
-  required String authorUsername,
+  String authorPeerId = 'peer-bob',
+  String authorUsername = 'Bob',
 }) {
   return PostModel(
     id: 'post-1',
@@ -228,7 +312,6 @@ PostPassModel _pass(
   String passerPeerId,
   String passerUsername, {
   int? recipientCount,
-  bool isIncoming = true,
 }) {
   return PostPassModel(
     passId: passId,
@@ -239,7 +322,6 @@ PostPassModel _pass(
     passerUsername: passerUsername,
     passedAt: '2026-03-15T11:15:00.000Z',
     createdAt: '2026-03-15T11:15:00.000Z',
-    isIncoming: isIncoming,
     recipientCount: recipientCount,
   );
 }

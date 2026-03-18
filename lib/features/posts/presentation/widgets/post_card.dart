@@ -5,6 +5,7 @@ import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart'
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
+import 'package:flutter_app/features/posts/presentation/widgets/post_repost_visual_state.dart';
 import 'package:flutter_app/shared/widgets/linkable_text.dart';
 import 'package:flutter_app/shared/widgets/media/audio_player_widget.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid.dart';
@@ -23,7 +24,8 @@ class PostCard extends StatelessWidget {
   final VoidCallback? onToggleHeart;
   final VoidCallback? onPassAlong;
   final VoidCallback? onPinPost;
-  final bool showShareCount;
+  final String? viewerPeerId;
+  final PostRepostVisualState? repostVisualState;
   final DateTime Function()? nowProvider;
 
   const PostCard({
@@ -34,7 +36,8 @@ class PostCard extends StatelessWidget {
     this.onToggleHeart,
     this.onPassAlong,
     this.onPinPost,
-    this.showShareCount = false,
+    this.viewerPeerId,
+    this.repostVisualState,
     this.nowProvider,
   });
 
@@ -49,12 +52,18 @@ class PostCard extends StatelessWidget {
     );
     final scopeLabel = post.audience.scopeLabel;
     final isPassedAlong = post.passedByUsername != null;
+    final resolvedRepostVisualState =
+        repostVisualState ??
+        resolvePostRepostVisualState(post, viewerPeerId: viewerPeerId);
     final deliveryState = _deliveryStateFor(post);
     final hasMediaSkeleton = _hasMediaSkeleton(post);
     final isSending = post.deliveryStatus == 'sending';
     final resolvedOpenComments = isSending ? null : onOpenComments;
     final resolvedToggleHeart = isSending ? null : onToggleHeart;
-    final resolvedPassAlong = isSending ? null : onPassAlong;
+    final resolvedPassAlong =
+        isSending || resolvedRepostVisualState.isPassiveReceiver
+        ? null
+        : onPassAlong;
     final resolvedPinPost = isSending ? null : onPinPost;
     final canPassAlong =
         onPassAlong != null &&
@@ -248,18 +257,20 @@ class PostCard extends StatelessWidget {
                             iconSize: _actionIconSize,
                           ),
                           if (canPassAlong ||
-                              (showShareCount && post.shareCount > 0))
+                              resolvedRepostVisualState.hasCount)
                             _MetricAction(
                               icon: Icons.repeat,
                               onTap: resolvedPassAlong,
-                              color: Colors.white.withOpacity(0.35),
-                              label: showShareCount
-                                  ? post.shareCount.toString()
-                                  : null,
+                              color: resolvedRepostVisualState.isActive
+                                  ? _friendBadgeColor
+                                  : Colors.white.withOpacity(0.35),
+                              label: resolvedRepostVisualState.count
+                                  ?.toString(),
                               labelKey: const ValueKey<String>(
                                 'post-share-count',
                               ),
                               iconSize: _actionIconSize,
+                              preserveColorWhenDisabled: true,
                             ),
                         ],
                       ),
@@ -681,6 +692,7 @@ class _MetricAction extends StatelessWidget {
   final String? label;
   final Key? labelKey;
   final double iconSize;
+  final bool preserveColorWhenDisabled;
 
   const _MetricAction({
     required this.icon,
@@ -689,11 +701,12 @@ class _MetricAction extends StatelessWidget {
     this.label,
     this.labelKey,
     this.iconSize = 15,
+    this.preserveColorWhenDisabled = false,
   });
 
   @override
   Widget build(BuildContext context) {
-    final resolvedColor = onTap == null
+    final resolvedColor = onTap == null && !preserveColorWhenDisabled
         ? const Color.fromRGBO(255, 255, 255, 0.28)
         : color;
 

@@ -14,10 +14,12 @@ import 'package:flutter_app/core/database/migrations/030_posts_pass_along.dart';
 import 'package:flutter_app/core/database/migrations/036_posts_pass_encrypted_snapshots.dart';
 import 'package:flutter_app/core/database/migrations/037_posts_repost_engagement_state.dart';
 import 'package:flutter_app/core/database/migrations/039_posts_pass_avatar_snapshots.dart';
+import 'package:flutter_app/core/database/migrations/040_posts_repost_visual_metrics.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_origin_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_pass_model.dart';
+import 'package:flutter_app/features/posts/domain/models/post_recipient_delivery.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository_impl.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
@@ -39,6 +41,7 @@ void main() {
     await runPostsPassEncryptedSnapshotsMigration(db);
     await runPostsRepostEngagementStateMigration(db);
     await runPostsPassAvatarSnapshotsMigration(db);
+    await runPostsRepostVisualMetricsMigration(db);
     repository = PostRepositoryImpl(
       dbInsertPost: (row) => dbInsertPost(db, row),
       dbLoadPost: (postId) => dbLoadPost(db, postId),
@@ -248,6 +251,150 @@ void main() {
     },
   );
 
+  test(
+    'keeps shareCount on event semantics even when a single pass has multiple explicit recipient deliveries',
+    () async {
+      await repository.savePost(
+        const PostModel(
+          id: 'post-1',
+          eventId: 'evt-post-1',
+          senderPeerId: 'peer-bob',
+          authorPeerId: 'peer-bob',
+          authorUsername: 'Bob',
+          text: 'Need a ladder',
+          audience: PostAudience(kind: PostAudienceKind.allFriends),
+          createdAt: '2026-03-15T10:15:30.000Z',
+          visibleAt: '2026-03-15T10:15:30.000Z',
+          expiresAt: '2026-03-18T10:15:30.000Z',
+        ),
+      );
+      await repository.savePostPass(
+        const PostPassModel(
+          passId: 'pass-1',
+          eventId: 'evt-pass-1',
+          postId: 'post-1',
+          senderPeerId: 'peer-alice',
+          passerPeerId: 'peer-alice',
+          passerUsername: 'Alice',
+          passedAt: '2026-03-15T11:15:00.000Z',
+          createdAt: '2026-03-15T11:15:00.000Z',
+        ),
+      );
+      await repository.saveRecipientDelivery(
+        _delivery('post-1', 'pass-1', 'peer-cara'),
+      );
+      await repository.saveRecipientDelivery(
+        _delivery('post-1', 'pass-1', 'peer-james'),
+      );
+
+      final loaded = await repository.getPost('post-1');
+
+      expect(await dbLoadPostRecipientDeliveries(db, 'post-1'), hasLength(2));
+      expect(loaded, isNotNull);
+      expect(loaded!.shareCount, 1);
+      expect(await repository.loadPostPassCount('post-1'), 1);
+      expect(await repository.loadPostPassCounts(const <String>['post-1']), {
+        'post-1': 1,
+      });
+    },
+  );
+
+  test(
+    'projects totalSharedToCount from recipient totals across multiple repost events',
+    () async {
+      await repository.savePost(
+        const PostModel(
+          id: 'post-1',
+          eventId: 'evt-post-1',
+          senderPeerId: 'peer-bob',
+          authorPeerId: 'peer-bob',
+          authorUsername: 'Bob',
+          text: 'Need a ladder',
+          audience: PostAudience(kind: PostAudienceKind.allFriends),
+          createdAt: '2026-03-15T10:15:30.000Z',
+          visibleAt: '2026-03-15T10:15:30.000Z',
+          expiresAt: '2026-03-18T10:15:30.000Z',
+        ),
+      );
+      await repository.savePostPass(
+        const PostPassModel(
+          passId: 'pass-1',
+          eventId: 'evt-pass-1',
+          postId: 'post-1',
+          senderPeerId: 'peer-alice',
+          passerPeerId: 'peer-alice',
+          passerUsername: 'Alice',
+          passedAt: '2026-03-15T11:15:00.000Z',
+          createdAt: '2026-03-15T11:15:00.000Z',
+          recipientCount: 2,
+        ),
+      );
+      await repository.savePostPass(
+        const PostPassModel(
+          passId: 'pass-2',
+          eventId: 'evt-pass-2',
+          postId: 'post-1',
+          senderPeerId: 'peer-james',
+          passerPeerId: 'peer-james',
+          passerUsername: 'James',
+          passedAt: '2026-03-15T11:20:00.000Z',
+          createdAt: '2026-03-15T11:20:00.000Z',
+          recipientCount: 3,
+        ),
+      );
+
+      final loaded = await repository.getPost('post-1');
+
+      expect(loaded, isNotNull);
+      expect(loaded!.shareCount, 2);
+      expect(loaded.totalSharedToCount, 5);
+    },
+  );
+
+  test(
+    'keeps totalSharedToCount readable for legacy rows via recipient-count fallback and carried baseline support',
+    () async {
+      await repository.savePost(
+        const PostModel(
+          id: 'post-1',
+          eventId: 'evt-post-1',
+          senderPeerId: 'peer-bob',
+          authorPeerId: 'peer-bob',
+          authorUsername: 'Bob',
+          text: 'Need a ladder',
+          audience: PostAudience(kind: PostAudienceKind.allFriends),
+          createdAt: '2026-03-15T10:15:30.000Z',
+          visibleAt: '2026-03-15T10:15:30.000Z',
+          expiresAt: '2026-03-18T10:15:30.000Z',
+        ),
+      );
+      await repository.savePostPass(
+        const PostPassModel(
+          passId: 'pass-1',
+          eventId: 'evt-pass-1',
+          postId: 'post-1',
+          senderPeerId: 'peer-alice',
+          passerPeerId: 'peer-alice',
+          passerUsername: 'Alice',
+          passedAt: '2026-03-15T11:15:00.000Z',
+          createdAt: '2026-03-15T11:15:00.000Z',
+        ),
+      );
+      await repository.seedRepostSharedToBaseline(
+        postId: 'post-1',
+        sharedToCountBaseline: 4,
+        existingLocalSharedToCount: 1,
+        currentPassRecipientCount: 1,
+        createdAt: '2026-03-15T11:15:00.000Z',
+      );
+
+      final loaded = await repository.getPost('post-1');
+
+      expect(loaded, isNotNull);
+      expect(loaded!.totalSharedToCount, 5);
+    },
+  );
+
   test('persists and loads avatar snapshot for a passed-along post', () async {
     final avatarBytes = Uint8List.fromList(<int>[1, 7, 9, 11]);
 
@@ -288,5 +435,23 @@ void main() {
         initialAvatarBytes,
       );
     },
+  );
+}
+
+PostRecipientDelivery _delivery(
+  String postId,
+  String passId,
+  String recipientPeerId,
+) {
+  return PostRecipientDelivery(
+    postId: postId,
+    recipientPeerId: recipientPeerId,
+    deliveryStatus: 'pending',
+    lastAttemptAt: '2026-03-15T11:16:00.000Z',
+    deliveryPath: 'pending',
+    createdAt: '2026-03-15T11:16:00.000Z',
+    updatedAt: '2026-03-15T11:16:00.000Z',
+    deliveryOwnerKind: postRecipientDeliveryOwnerKindPass,
+    deliveryOwnerId: passId,
   );
 }
