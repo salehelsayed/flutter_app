@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
 import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
 import 'package:flutter_app/features/posts/application/pending_post_delivery_retrier.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
@@ -42,10 +43,7 @@ void main() {
     'retryPendingPostDeliveries retries unresolved recipients and settles aggregate to sent',
     () async {
       final network = FakeP2PNetwork();
-      final p2pService = FakeP2PService(
-        peerId: 'peer-self',
-        network: network,
-      );
+      final p2pService = FakeP2PService(peerId: 'peer-self', network: network);
       contacts.addTestContact(_contact('peer-bob', 'Bob'));
       contacts.addTestContact(_contact('peer-cara', 'Cara'));
 
@@ -99,8 +97,8 @@ void main() {
       expect((await posts.getPost('post-1'))!.deliveryStatus, 'sent');
       expect(network.inboxCount('peer-bob'), 0);
       final inboxMessage = network.retrieveInbox('peer-cara').single;
-      final payload = jsonDecode(inboxMessage['message'] as String)
-          as Map<String, dynamic>;
+      final payload =
+          jsonDecode(inboxMessage['message'] as String) as Map<String, dynamic>;
       final envelopePayload = payload['payload'] as Map<String, dynamic>;
       expect(
         envelopePayload['recipient_peer_ids'],
@@ -113,10 +111,7 @@ void main() {
     'retryPendingPostDeliveries preserves persisted nearby distance when rebuilding jobs',
     () async {
       final network = FakeP2PNetwork();
-      final p2pService = FakeP2PService(
-        peerId: 'peer-self',
-        network: network,
-      );
+      final p2pService = FakeP2PService(peerId: 'peer-self', network: network);
       contacts.addTestContact(_contact('peer-bob', 'Bob'));
 
       await posts.savePost(
@@ -161,8 +156,8 @@ void main() {
 
       expect(retried, 1);
       final inboxMessage = network.retrieveInbox('peer-bob').single;
-      final payload = jsonDecode(inboxMessage['message'] as String)
-          as Map<String, dynamic>;
+      final payload =
+          jsonDecode(inboxMessage['message'] as String) as Map<String, dynamic>;
       final envelopePayload = payload['payload'] as Map<String, dynamic>;
       final nearbyContext =
           envelopePayload['nearby_context'] as Map<String, dynamic>;
@@ -266,6 +261,7 @@ class _ControlledP2PService extends FakeP2PService {
 
   int _inFlightSends = 0;
   int maxInFlightSends = 0;
+  final Set<String> _dialedPeers = <String>{};
 
   _ControlledP2PService({
     required super.peerId,
@@ -286,6 +282,10 @@ class _ControlledP2PService extends FakeP2PService {
     int? timeoutMs,
   }) async {
     final policy = policies[targetPeerId] ?? const _PeerPolicy();
+    if (policy.requireDiscoverAndDialBeforeSend &&
+        !_dialedPeers.contains(targetPeerId)) {
+      return const SendMessageResult(sent: false);
+    }
     sendStartOrder.add(targetPeerId);
     _inFlightSends++;
     if (_inFlightSends > maxInFlightSends) {
@@ -305,6 +305,24 @@ class _ControlledP2PService extends FakeP2PService {
   }
 
   @override
+  Future<DiscoveredPeer?> discoverPeer(String peerId, {int? timeoutMs}) async {
+    return DiscoveredPeer(
+      id: peerId,
+      addresses: <String>['/ip4/127.0.0.1/tcp/4001/p2p/$peerId'],
+    );
+  }
+
+  @override
+  Future<bool> dialPeer(
+    String peerId, {
+    List<String>? addresses,
+    int? timeoutMs,
+  }) async {
+    _dialedPeers.add(peerId);
+    return true;
+  }
+
+  @override
   void dispose() {
     _sendStarted.close();
     super.dispose();
@@ -313,6 +331,10 @@ class _ControlledP2PService extends FakeP2PService {
 
 class _PeerPolicy {
   final Completer<void>? sendGate;
+  final bool requireDiscoverAndDialBeforeSend;
 
-  const _PeerPolicy({this.sendGate});
+  const _PeerPolicy({
+    this.sendGate,
+    this.requireDiscoverAndDialBeforeSend = false,
+  });
 }

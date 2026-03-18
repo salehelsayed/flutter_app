@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
 import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
 import 'package:flutter_app/features/posts/application/post_delivery_runner.dart';
 import 'package:flutter_app/features/posts/application/send_post_use_case.dart';
@@ -486,6 +487,7 @@ class _ControlledP2PService extends FakeP2PService {
 
   int _inFlightSends = 0;
   int maxInFlightSends = 0;
+  final Set<String> _dialedPeers = <String>{};
 
   _ControlledP2PService({
     required super.peerId,
@@ -506,6 +508,10 @@ class _ControlledP2PService extends FakeP2PService {
     int? timeoutMs,
   }) async {
     final policy = policies[targetPeerId] ?? const _PeerPolicy();
+    if (policy.requireDiscoverAndDialBeforeSend &&
+        !_dialedPeers.contains(targetPeerId)) {
+      return const SendMessageResult(sent: false);
+    }
     sendStartOrder.add(targetPeerId);
     sendAttempts.add((recipientPeerId: targetPeerId, message: message));
     _inFlightSends++;
@@ -547,6 +553,24 @@ class _ControlledP2PService extends FakeP2PService {
   }
 
   @override
+  Future<DiscoveredPeer?> discoverPeer(String peerId, {int? timeoutMs}) async {
+    return DiscoveredPeer(
+      id: peerId,
+      addresses: <String>['/ip4/127.0.0.1/tcp/4001/p2p/$peerId'],
+    );
+  }
+
+  @override
+  Future<bool> dialPeer(
+    String peerId, {
+    List<String>? addresses,
+    int? timeoutMs,
+  }) async {
+    _dialedPeers.add(peerId);
+    return true;
+  }
+
+  @override
   void dispose() {
     _sendStarted.close();
     super.dispose();
@@ -561,6 +585,7 @@ class _PeerPolicy {
   final bool? storeInInboxResult;
   final bool throwOnSend;
   final bool throwOnInbox;
+  final bool requireDiscoverAndDialBeforeSend;
 
   const _PeerPolicy({
     this.sendGate,
@@ -570,6 +595,7 @@ class _PeerPolicy {
     this.storeInInboxResult,
     this.throwOnSend = false,
     this.throwOnInbox = false,
+    this.requireDiscoverAndDialBeforeSend = false,
   });
 }
 

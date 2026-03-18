@@ -28,6 +28,12 @@ Future<List<PostModel>> hydratePostSurfaceItems({
   final avatarSnapshots = await postRepo.loadPassAvatarSnapshotsForPosts(
     postList.map((post) => post.id).toList(growable: false),
   );
+  final viewerSharedToCounts = viewerPeerId == null
+      ? const <String, int>{}
+      : await postRepo.loadViewerSharedToCountsForPosts(
+          postList.map((post) => post.id).toList(growable: false),
+          viewerPeerId,
+        );
 
   return Future.wait(
     postList.map((post) async {
@@ -47,6 +53,7 @@ Future<List<PostModel>> hydratePostSurfaceItems({
       final activeHeartCount = activeHeartPeerIds.length;
       final viewerHasHearted =
           viewerPeerId != null && activeHeartPeerIds.contains(viewerPeerId);
+      final viewerSharedToCount = viewerSharedToCounts[post.id] ?? 0;
       final attachments =
           mediaMap[post.id] ?? const <PostMediaAttachmentModel>[];
       if (attachments.isEmpty) {
@@ -54,6 +61,8 @@ Future<List<PostModel>> hydratePostSurfaceItems({
           commentCount: comments.length,
           heartCount: activeHeartCount,
           viewerHasHearted: viewerHasHearted,
+          viewerSharedToCount: viewerSharedToCount,
+          viewerHasPassed: viewerSharedToCount > 0,
           nearbyDistanceLabel:
               post.audience.kind == PostAudienceKind.peopleNearby &&
                   post.nearbyDistanceM != null
@@ -86,6 +95,8 @@ Future<List<PostModel>> hydratePostSurfaceItems({
         commentCount: comments.length,
         heartCount: activeHeartCount,
         viewerHasHearted: viewerHasHearted,
+        viewerSharedToCount: viewerSharedToCount,
+        viewerHasPassed: viewerSharedToCount > 0,
         nearbyDistanceLabel:
             post.audience.kind == PostAudienceKind.peopleNearby &&
                 post.nearbyDistanceM != null

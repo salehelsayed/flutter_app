@@ -102,6 +102,7 @@ class FeedScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.viewPaddingOf(context).bottom;
+    final shouldHideNavigationBar = _shouldHideNavigationBar(context);
 
     return GestureDetector(
       onTap: () => FocusScope.of(context).unfocus(),
@@ -172,7 +173,7 @@ class FeedScreen extends StatelessWidget {
               ),
             ),
             // Floating nav bar pinned to bottom
-            if (activeFocusPeerId == null)
+            if (!shouldHideNavigationBar)
               Positioned(
                 left: 0,
                 right: 0,
@@ -183,6 +184,11 @@ class FeedScreen extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  bool _shouldHideNavigationBar(BuildContext context) {
+    final keyboardVisible = MediaQuery.viewInsetsOf(context).bottom > 0;
+    return activeFocusPeerId != null && keyboardVisible;
   }
 
   Widget _buildFeedContent({

@@ -972,6 +972,7 @@ class _FeedWiredState extends State<FeedWired> {
     );
     if (contact == null || !mounted) return;
 
+    _clearFeedComposerFocus();
     Navigator.of(context)
         .push(
           buildConversationSlideUpRoute(
@@ -1006,6 +1007,7 @@ class _FeedWiredState extends State<FeedWired> {
     final contact = await widget.contactRepository.getContact(contactPeerId);
     if (contact == null || !mounted) return;
 
+    _clearFeedComposerFocus();
     Navigator.of(context)
         .push(
           buildConversationSlideUpRoute(
@@ -1138,6 +1140,7 @@ class _FeedWiredState extends State<FeedWired> {
   }
 
   void _onAttach(String contactPeerId) {
+    _clearFeedComposerFocus();
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: Colors.grey[900],
@@ -1446,6 +1449,7 @@ class _FeedWiredState extends State<FeedWired> {
     final group = await _resolveGroupForThread(groupThread);
     if (!mounted) return;
 
+    _clearFeedComposerFocus();
     Navigator.of(context)
         .push(
           MaterialPageRoute(
@@ -1482,6 +1486,7 @@ class _FeedWiredState extends State<FeedWired> {
 
   void _onGroupAttach(GroupThreadFeedItem groupThread) {
     if (!groupThread.canWrite) return;
+    _clearFeedComposerFocus();
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: Colors.grey[900],
@@ -1853,6 +1858,7 @@ class _FeedWiredState extends State<FeedWired> {
   }
 
   void _onAvatarTap() {
+    _clearFeedComposerFocus();
     Navigator.of(context)
         .push(
           buildSettingsSlideUpRoute(
@@ -1879,11 +1885,42 @@ class _FeedWiredState extends State<FeedWired> {
 
   String get _activeTab => widget.appShellController.activeTab;
 
+  String? get _visibleActiveFocusPeerId {
+    final activeFocusPeerId = _activeFocusPeerId;
+    if (activeFocusPeerId == null) {
+      return null;
+    }
+
+    final hasVisibleThread = _feedItems.whereType<ThreadFeedItem>().any(
+      (item) => item.contactPeerId == activeFocusPeerId,
+    );
+    return hasVisibleThread ? activeFocusPeerId : null;
+  }
+
+  void _clearFeedComposerFocus({bool notify = true}) {
+    FocusManager.instance.primaryFocus?.unfocus();
+    if (_activeFocusPeerId == null) {
+      return;
+    }
+
+    if (!notify || !mounted) {
+      _activeFocusPeerId = null;
+      return;
+    }
+
+    setState(() {
+      _activeFocusPeerId = null;
+    });
+  }
+
   void _onShellChanged() {
     if (!mounted) {
       return;
     }
     final activeTab = widget.appShellController.activeTab;
+    if (activeTab != AppShellTab.feed) {
+      _clearFeedComposerFocus(notify: false);
+    }
     if (activeTab != AppShellTab.orbit) {
       _orbitReturnTab = activeTab;
     }
@@ -2101,6 +2138,7 @@ class _FeedWiredState extends State<FeedWired> {
   @override
   Widget build(BuildContext context) {
     final activeTab = _activeTab;
+    final activeFocusPeerId = _visibleActiveFocusPeerId;
     final body = activeTab == AppShellTab.posts
         ? PostsWired(
             identityRepo: widget.repository,
@@ -2114,6 +2152,7 @@ class _FeedWiredState extends State<FeedWired> {
             audioRecorderService: widget.audioRecorderService,
             onSwitchView: _onSwitchView,
             activeTab: activeTab,
+            appShellController: widget.appShellController,
             pendingTargetStore: widget.pendingPostTargetStore,
             postsPrivacySettingsRepository:
                 widget.postsPrivacySettingsRepository,
@@ -2147,7 +2186,7 @@ class _FeedWiredState extends State<FeedWired> {
             onInlineSend: _onInlineSend,
             onViewFullConversation: _onViewFullConversation,
             draftTexts: _draftTexts,
-            activeFocusPeerId: _activeFocusPeerId,
+            activeFocusPeerId: activeFocusPeerId,
             onDraftChanged: _onDraftChanged,
             onInputFocusChanged: _onInputFocusChanged,
             activeQuoteMessageIds: _activeQuoteMessageIds,

@@ -129,7 +129,26 @@ Future<(SendPostResult, CreatedLocalPost?)> createLocalPost({
   PostsPrivacySettingsRepository? postsPrivacySettingsRepository,
 }) async {
   final hasMedia = mediaDrafts.isNotEmpty;
+  final createStopwatch = Stopwatch()..start();
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'POST_CREATE_LOCAL_START',
+    details: {
+      'audienceKind': audience.kind.toWireValue(),
+      'hasMedia': hasMedia,
+    },
+  );
   if (_isInvalidPostPayload(text: text, mediaDrafts: mediaDrafts)) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'POST_CREATE_LOCAL_ABORT',
+      details: {
+        'audienceKind': audience.kind.toWireValue(),
+        'hasMedia': hasMedia,
+        'reason': SendPostResult.invalidPost.name,
+        'elapsedMs': createStopwatch.elapsedMilliseconds,
+      },
+    );
     return (SendPostResult.invalidPost, null);
   }
 
@@ -145,7 +164,26 @@ Future<(SendPostResult, CreatedLocalPost?)> createLocalPost({
     postsPrivacySettingsRepository: postsPrivacySettingsRepository,
     nearbySettings: nearbySettings,
   );
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'POST_CREATE_LOCAL_RECIPIENTS_READY',
+    details: {
+      'audienceKind': audience.kind.toWireValue(),
+      'recipientCount': resolvedRecipients.length,
+      'elapsedMs': createStopwatch.elapsedMilliseconds,
+    },
+  );
   if (resolvedRecipients.isEmpty) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'POST_CREATE_LOCAL_ABORT',
+      details: {
+        'audienceKind': audience.kind.toWireValue(),
+        'hasMedia': hasMedia,
+        'reason': SendPostResult.noEligibleRecipients.name,
+        'elapsedMs': createStopwatch.elapsedMilliseconds,
+      },
+    );
     return (SendPostResult.noEligibleRecipients, null);
   }
 
@@ -199,6 +237,14 @@ Future<(SendPostResult, CreatedLocalPost?)> createLocalPost({
   try {
     await postRepo.savePost(post);
     postSaved = true;
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'POST_CREATE_LOCAL_POST_SAVED',
+      details: {
+        'postId': post.id,
+        'elapsedMs': createStopwatch.elapsedMilliseconds,
+      },
+    );
   } catch (_) {
     if (hasMedia && !postSaved) {
       try {
@@ -208,6 +254,16 @@ Future<(SendPostResult, CreatedLocalPost?)> createLocalPost({
         );
       } catch (_) {}
     }
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'POST_CREATE_LOCAL_ABORT',
+      details: {
+        'audienceKind': audience.kind.toWireValue(),
+        'hasMedia': hasMedia,
+        'reason': 'save_post_failed',
+        'elapsedMs': createStopwatch.elapsedMilliseconds,
+      },
+    );
     rethrow;
   }
   await _savePendingRecipientDeliveries(
@@ -216,13 +272,42 @@ Future<(SendPostResult, CreatedLocalPost?)> createLocalPost({
     recipients: resolvedRecipients,
     createdAt: createdAt,
   );
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'POST_CREATE_LOCAL_DELIVERIES_SAVED',
+    details: {
+      'postId': post.id,
+      'recipientCount': resolvedRecipients.length,
+      'elapsedMs': createStopwatch.elapsedMilliseconds,
+    },
+  );
 
   if (!hasMedia) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'POST_CREATE_LOCAL_SUCCESS',
+      details: {
+        'postId': post.id,
+        'recipientCount': resolvedRecipients.length,
+        'hasMedia': false,
+        'elapsedMs': createStopwatch.elapsedMilliseconds,
+      },
+    );
     return (
       SendPostResult.success,
       CreatedLocalPost(post: post, resolvedRecipients: resolvedRecipients),
     );
   }
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'POST_CREATE_LOCAL_SUCCESS',
+    details: {
+      'postId': post.id,
+      'recipientCount': resolvedRecipients.length,
+      'hasMedia': true,
+      'elapsedMs': createStopwatch.elapsedMilliseconds,
+    },
+  );
   return (
     SendPostResult.success,
     CreatedLocalPost(

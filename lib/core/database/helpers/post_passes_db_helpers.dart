@@ -9,11 +9,17 @@ Future<void> dbUpsertPostPass(Database db, Map<String, Object?> row) async {
   final hasInnerPayloadJson = columns.any(
     (column) => column['name'] == 'inner_payload_json',
   );
+  final hasRecipientCount = columns.any(
+    (column) => column['name'] == 'recipient_count',
+  );
   if (!hasDeliveryStatus) {
     insertRow.remove('delivery_status');
   }
   if (!hasInnerPayloadJson) {
     insertRow.remove('inner_payload_json');
+  }
+  if (!hasRecipientCount) {
+    insertRow.remove('recipient_count');
   }
   await db.insert(
     'post_passes',
@@ -99,22 +105,15 @@ Future<void> dbSavePassAvatarSnapshot(
   List<int> avatarBlob,
   String createdAt,
 ) async {
-  await db.insert(
-    'post_pass_avatar_snapshots',
-    <String, Object?>{
-      'post_id': postId,
-      'author_peer_id': authorPeerId,
-      'avatar_blob': avatarBlob,
-      'created_at': createdAt,
-    },
-    conflictAlgorithm: ConflictAlgorithm.ignore,
-  );
+  await db.insert('post_pass_avatar_snapshots', <String, Object?>{
+    'post_id': postId,
+    'author_peer_id': authorPeerId,
+    'avatar_blob': avatarBlob,
+    'created_at': createdAt,
+  }, conflictAlgorithm: ConflictAlgorithm.ignore);
 }
 
-Future<List<int>?> dbLoadPassAvatarSnapshot(
-  Database db,
-  String postId,
-) async {
+Future<List<int>?> dbLoadPassAvatarSnapshot(Database db, String postId) async {
   final rows = await db.query(
     'post_pass_avatar_snapshots',
     columns: const ['avatar_blob'],

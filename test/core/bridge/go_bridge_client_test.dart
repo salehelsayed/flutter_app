@@ -42,6 +42,7 @@ void main() {
     final noPayloadCmds = <String, String>{
       'identity.generate': 'generateIdentity',
       'mlkem.keygen': 'mlKemKeygen',
+      'blob:keygen': 'blobKeygen',
       'node:stop': 'stopNode',
       'node:status': 'nodeStatus',
       'relay:reconnect': 'relayReconnect',
@@ -93,6 +94,8 @@ void main() {
       'media:download': 'mediaDownload',
       'media:delete': 'mediaDelete',
       'media:list': 'mediaList',
+      'blob:encrypt': 'blobEncrypt',
+      'blob:decrypt': 'blobDecrypt',
       'profile:upload': 'profileUpload',
       'profile:download': 'profileDownload',
       'group:create': 'groupCreate',
@@ -240,6 +243,32 @@ void main() {
       expect(decoded['errorCode'], equals('PLATFORM_ERROR'));
       expect(decoded['errorMessage'], equals('Platform channel error'));
     });
+
+    test('MissingPluginException returns MISSING_PLUGIN with rebuild guidance', () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+            const MethodChannel('com.mknoon/go_bridge'),
+            (MethodCall call) async {
+              lastCall = call;
+              throw MissingPluginException('No implementation found');
+            },
+          );
+
+      final request = jsonEncode({
+        'cmd': 'blob:keygen',
+        'payload': <String, dynamic>{},
+      });
+
+      final response = await client.send(request);
+      final decoded = jsonDecode(response) as Map<String, dynamic>;
+
+      expect(decoded['ok'], isFalse);
+      expect(decoded['errorCode'], equals('MISSING_PLUGIN'));
+      expect(decoded['errorMessage'], contains('blobKeygen'));
+      expect(decoded['errorMessage'], contains('Rebuild the app'));
+      expect(lastCall, isNotNull);
+      expect(lastCall!.method, equals('blobKeygen'));
+    });
   });
 
   group('push event routing', () {
@@ -272,7 +301,7 @@ void main() {
   // ---------------------------------------------------------------------------
   // Total command coverage sanity check
   // ---------------------------------------------------------------------------
-  test('all 43 commands are covered', () async {
+  test('all 46 commands are covered', () async {
     // Exhaustive list of every command in _cmdMap.
     final allCmds = [
       // Identity
@@ -280,6 +309,9 @@ void main() {
       'identity.restore',
       // Crypto
       'mlkem.keygen',
+      'blob:keygen',
+      'blob:encrypt',
+      'blob:decrypt',
       'message.encrypt',
       'message.decrypt',
       'payload.sign',
@@ -331,7 +363,7 @@ void main() {
       'group.decrypt',
     ];
 
-    expect(allCmds, hasLength(43));
+    expect(allCmds, hasLength(46));
 
     for (final cmd in allCmds) {
       final request = jsonEncode({

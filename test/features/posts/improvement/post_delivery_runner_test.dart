@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
 import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
 import 'package:flutter_app/features/posts/application/post_delivery_runner.dart';
 import 'package:flutter_app/features/posts/application/send_post_use_case.dart';
@@ -216,6 +217,44 @@ void main() {
     expect(result, SendPostResult.success);
     expect(bob.messageRepo.count, 0);
   });
+
+  test(
+    'execute discovers and dials recipients before direct post send',
+    () async {
+      contacts.addTestContact(_contact('peer-bob', 'Bob'));
+      final bobService = FakeP2PService(peerId: 'peer-bob', network: network);
+      addTearDown(bobService.dispose);
+      final aliceService = _PolicyFakeP2PService(
+        peerId: 'peer-alice',
+        network: network,
+        policies: const {
+          'peer-bob': _PeerPolicy(requireDiscoverAndDialBeforeSend: true),
+        },
+      );
+      addTearDown(aliceService.dispose);
+
+      final created = await _createLocalPost(
+        posts: posts,
+        contacts: contacts,
+        recipientPeerIds: const ['peer-bob'],
+      );
+
+      final (result, post) = await PostDeliveryRunner(
+        p2pService: aliceService,
+        postRepo: posts,
+      ).execute(created);
+
+      expect(result, SendPostResult.success);
+      expect(post.deliveryStatus, 'sent');
+      expect(aliceService.discoverAttempts, <String>['peer-bob']);
+      expect(aliceService.dialAttempts, <String>['peer-bob']);
+      expect(network.inboxCount('peer-bob'), 0);
+
+      final deliveries = await posts.getRecipientDeliveries(post.id);
+      expect(deliveries.single.deliveryStatus, 'delivered');
+      expect(deliveries.single.deliveryPath, 'direct');
+    },
+  );
 
   test(
     'executePostPass encrypts repost payloads for each recipient and persists sent status',
@@ -457,6 +496,9 @@ class _RecordingPostRepository extends InMemoryPostRepository {
 
 class _PolicyFakeP2PService extends FakeP2PService {
   final Map<String, _PeerPolicy> policies;
+  final List<String> discoverAttempts = <String>[];
+  final List<String> dialAttempts = <String>[];
+  final Set<String> _dialedPeers = <String>{};
 
   _PolicyFakeP2PService({
     required super.peerId,
@@ -471,6 +513,10 @@ class _PolicyFakeP2PService extends FakeP2PService {
     int? timeoutMs,
   }) async {
     final policy = policies[targetPeerId];
+    if (policy?.requireDiscoverAndDialBeforeSend == true &&
+        !_dialedPeers.contains(targetPeerId)) {
+      return const SendMessageResult(sent: false);
+    }
     if (policy?.throwOnSend == true) {
       throw StateError('send failed for $targetPeerId');
     }
@@ -486,6 +532,26 @@ class _PolicyFakeP2PService extends FakeP2PService {
       message,
       timeoutMs: timeoutMs,
     );
+  }
+
+  @override
+  Future<DiscoveredPeer?> discoverPeer(String peerId, {int? timeoutMs}) async {
+    discoverAttempts.add(peerId);
+    return DiscoveredPeer(
+      id: peerId,
+      addresses: <String>['/ip4/127.0.0.1/tcp/4001/p2p/$peerId'],
+    );
+  }
+
+  @override
+  Future<bool> dialPeer(
+    String peerId, {
+    List<String>? addresses,
+    int? timeoutMs,
+  }) async {
+    dialAttempts.add(peerId);
+    _dialedPeers.add(peerId);
+    return true;
   }
 
   @override
@@ -506,11 +572,13 @@ class _PeerPolicy {
   final bool? storeInInboxResult;
   final bool throwOnSend;
   final bool throwOnInbox;
+  final bool requireDiscoverAndDialBeforeSend;
 
   const _PeerPolicy({
     this.sendResult,
     this.storeInInboxResult,
     this.throwOnSend = false,
     this.throwOnInbox = false,
+    this.requireDiscoverAndDialBeforeSend = false,
   });
 }

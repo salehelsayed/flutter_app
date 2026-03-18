@@ -2,6 +2,37 @@ import 'package:sqflite_sqlcipher/sqflite.dart';
 
 import '../../utils/flow_event_emitter.dart';
 
+Future<String> _localSharedToCountSubquery(Database db) async {
+  final sharedToExpression = await _sharedToCountExpression(db);
+  return '''
+      SELECT post_id, $sharedToExpression AS local_shared_to_count
+      FROM post_passes
+      GROUP BY post_id
+    ''';
+}
+
+Future<String> _sharedToCountExpression(Database db) async {
+  final columns = await db.rawQuery('PRAGMA table_info(post_passes)');
+  final hasRecipientCount = columns.any(
+    (column) => column['name'] == 'recipient_count',
+  );
+  return hasRecipientCount
+      ? 'SUM(COALESCE(recipient_count, 1))'
+      : 'COUNT(*)';
+}
+
+Future<String> _sharedToBaselineExpression(Database db) async {
+  final columns = await db.rawQuery(
+    'PRAGMA table_info(post_repost_projection_state)',
+  );
+  final hasSharedToCountBaseline = columns.any(
+    (column) => column['name'] == 'shared_to_count_baseline',
+  );
+  return hasSharedToCountBaseline
+      ? 'COALESCE(NULLIF(prs.shared_to_count_baseline, 0), prs.repost_total_baseline, 0)'
+      : 'COALESCE(prs.repost_total_baseline, 0)';
+}
+
 Future<void> dbInsertPost(Database db, Map<String, Object?> row) async {
   final postId = row['post_id'] as String? ?? '';
   emitFlowEvent(
@@ -85,6 +116,8 @@ Future<void> dbInsertPost(Database db, Map<String, Object?> row) async {
 }
 
 Future<Map<String, Object?>?> dbLoadPost(Database db, String postId) async {
+  final localSharedToCountSubquery = await _localSharedToCountSubquery(db);
+  final sharedToBaselineExpression = await _sharedToBaselineExpression(db);
   final rows = await db.rawQuery(
     '''
       SELECT
@@ -96,6 +129,8 @@ Future<Map<String, Object?>?> dbLoadPost(Database db, String postId) async {
         po.pass_created_at,
         COALESCE(pc.local_share_count, 0) +
             COALESCE(prs.repost_total_baseline, 0) AS share_count,
+        COALESCE(psc.local_shared_to_count, 0) +
+            $sharedToBaselineExpression AS total_shared_to_count,
         COALESCE(fs.is_hidden, 0) AS is_hidden,
         COALESCE(fs.is_read, 0) AS is_read,
         COALESCE(fs.last_focused_at, '') AS last_focused_at
@@ -108,6 +143,9 @@ Future<Map<String, Object?>?> dbLoadPost(Database db, String postId) async {
         FROM post_passes
         GROUP BY post_id
       ) pc ON pc.post_id = p.post_id
+      LEFT JOIN (
+        $localSharedToCountSubquery
+      ) psc ON psc.post_id = p.post_id
       WHERE p.post_id = ?
       LIMIT 1
     ''',
@@ -120,6 +158,8 @@ Future<Map<String, Object?>?> dbLoadPost(Database db, String postId) async {
 }
 
 Future<List<Map<String, Object?>>> dbLoadPostsFeed(Database db) async {
+  final localSharedToCountSubquery = await _localSharedToCountSubquery(db);
+  final sharedToBaselineExpression = await _sharedToBaselineExpression(db);
   return db.rawQuery('''
     SELECT
       p.*,
@@ -130,6 +170,8 @@ Future<List<Map<String, Object?>>> dbLoadPostsFeed(Database db) async {
       po.pass_created_at,
       COALESCE(pc.local_share_count, 0) +
           COALESCE(prs.repost_total_baseline, 0) AS share_count,
+      COALESCE(psc.local_shared_to_count, 0) +
+          $sharedToBaselineExpression AS total_shared_to_count,
       COALESCE(fs.is_hidden, 0) AS is_hidden,
       COALESCE(fs.is_read, 0) AS is_read,
       COALESCE(fs.last_focused_at, '') AS last_focused_at
@@ -142,14 +184,48 @@ Future<List<Map<String, Object?>>> dbLoadPostsFeed(Database db) async {
       FROM post_passes
       GROUP BY post_id
     ) pc ON pc.post_id = p.post_id
+    LEFT JOIN (
+      $localSharedToCountSubquery
+    ) psc ON psc.post_id = p.post_id
     WHERE COALESCE(fs.is_hidden, 0) = 0
     ORDER BY p.visible_at DESC, p.post_created_at DESC, p.post_id DESC
   ''');
 }
 
+Future<Map<String, int>> dbLoadViewerSharedToCountsForPosts(
+  Database db,
+  List<String> postIds,
+  String viewerPeerId,
+) async {
+  if (postIds.isEmpty || viewerPeerId.isEmpty) {
+    return const <String, int>{};
+  }
+  final sharedToExpression = await _sharedToCountExpression(db);
+  final placeholders = List<String>.filled(postIds.length, '?').join(', ');
+  final rows = await db.rawQuery(
+    '''
+      SELECT post_id, $sharedToExpression AS viewer_shared_to_count
+      FROM post_passes
+      WHERE post_id IN ($placeholders)
+        AND sender_peer_id = ?
+        AND is_incoming = 0
+      GROUP BY post_id
+    ''',
+    <Object?>[...postIds, viewerPeerId],
+  );
+  return <String, int>{
+    for (final row in rows)
+      if (row['post_id'] is String)
+        row['post_id'] as String:
+            ((row['viewer_shared_to_count'] as num?)?.toInt() ?? 0),
+  };
+}
+
 Future<List<Map<String, Object?>>> dbLoadRetryableOutgoingPosts(
   Database db,
 ) async {
+  final localSharedToCountSubquery = await _localSharedToCountSubquery(db);
+  final sharedToBaselineExpression = await _sharedToBaselineExpression(db);
   return db.rawQuery('''
       SELECT
         p.*,
@@ -160,6 +236,8 @@ Future<List<Map<String, Object?>>> dbLoadRetryableOutgoingPosts(
         po.pass_created_at,
         COALESCE(pc.local_share_count, 0) +
             COALESCE(prs.repost_total_baseline, 0) AS share_count,
+        COALESCE(psc.local_shared_to_count, 0) +
+            $sharedToBaselineExpression AS total_shared_to_count,
         COALESCE(fs.is_hidden, 0) AS is_hidden,
         COALESCE(fs.is_read, 0) AS is_read,
         COALESCE(fs.last_focused_at, '') AS last_focused_at
@@ -172,6 +250,9 @@ Future<List<Map<String, Object?>>> dbLoadRetryableOutgoingPosts(
         FROM post_passes
         GROUP BY post_id
       ) pc ON pc.post_id = p.post_id
+      LEFT JOIN (
+        $localSharedToCountSubquery
+      ) psc ON psc.post_id = p.post_id
       WHERE p.is_incoming = 0
         AND p.delivery_status IN ('sending', 'partial', 'failed')
       ORDER BY p.visible_at DESC, p.post_created_at DESC, p.post_id DESC
@@ -182,6 +263,8 @@ Future<List<Map<String, Object?>>> dbLoadExpiredPosts(
   Database db,
   String nowIso,
 ) async {
+  final localSharedToCountSubquery = await _localSharedToCountSubquery(db);
+  final sharedToBaselineExpression = await _sharedToBaselineExpression(db);
   return db.rawQuery(
     '''
       SELECT
@@ -193,6 +276,8 @@ Future<List<Map<String, Object?>>> dbLoadExpiredPosts(
         po.pass_created_at,
         COALESCE(pc.local_share_count, 0) +
             COALESCE(prs.repost_total_baseline, 0) AS share_count,
+        COALESCE(psc.local_shared_to_count, 0) +
+            $sharedToBaselineExpression AS total_shared_to_count,
         COALESCE(fs.is_hidden, 0) AS is_hidden,
         COALESCE(fs.is_read, 0) AS is_read,
         COALESCE(fs.last_focused_at, '') AS last_focused_at
@@ -205,6 +290,9 @@ Future<List<Map<String, Object?>>> dbLoadExpiredPosts(
         FROM post_passes
         GROUP BY post_id
       ) pc ON pc.post_id = p.post_id
+      LEFT JOIN (
+        $localSharedToCountSubquery
+      ) psc ON psc.post_id = p.post_id
       WHERE p.keep_available = 0
         AND p.expires_at <= ?
     ''',

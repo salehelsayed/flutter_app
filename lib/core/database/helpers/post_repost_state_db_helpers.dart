@@ -66,9 +66,19 @@ Future<void> dbInsertPostRepostProjectionState(
   Database db,
   Map<String, Object?> row,
 ) async {
+  final insertRow = Map<String, Object?>.from(row);
+  final columns = await db.rawQuery(
+    'PRAGMA table_info(post_repost_projection_state)',
+  );
+  final hasSharedToCountBaseline = columns.any(
+    (column) => column['name'] == 'shared_to_count_baseline',
+  );
+  if (!hasSharedToCountBaseline) {
+    insertRow.remove('shared_to_count_baseline');
+  }
   await db.insert(
     'post_repost_projection_state',
-    row,
+    insertRow,
     conflictAlgorithm: ConflictAlgorithm.replace,
   );
 }
@@ -95,7 +105,7 @@ Future<List<Map<String, Object?>>> dbLoadPostRepostProjectionStates(
   }
   final placeholders = List<String>.filled(postIds.length, '?').join(', ');
   return db.rawQuery('''
-      SELECT post_id, repost_total_baseline
+      SELECT *
       FROM post_repost_projection_state
       WHERE post_id IN ($placeholders)
     ''', postIds);

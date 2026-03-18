@@ -1,15 +1,13 @@
 import 'dart:collection';
 
 import 'package:flutter_app/core/services/p2p_service.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
 
 const Duration interactivePostFollowOnBudget = Duration(seconds: 4);
 const int defaultPostFollowOnDeliveryConcurrency = 4;
 
-enum PostFollowOnSettlement {
-  fullySettled,
-  partiallySettled,
-  notSettled,
-}
+enum PostFollowOnSettlement { fullySettled, partiallySettled, notSettled }
 
 class PostFollowOnRecipientResult {
   final String recipientPeerId;
@@ -62,8 +60,7 @@ Future<PostFollowOnDeliveryResult> fanoutPostFollowOnEnvelope({
       .where((recipientPeerId) => recipientPeerId.isNotEmpty)
       .toList(growable: false);
   final pendingRecipients = Queue<String>.of(recipients);
-  final outcomesByRecipient =
-      <String, PostFollowOnRecipientResult>{};
+  final outcomesByRecipient = <String, PostFollowOnRecipientResult>{};
   final inFlight = <Future<void>>[];
 
   while (pendingRecipients.isNotEmpty || inFlight.isNotEmpty) {
@@ -73,22 +70,25 @@ Future<PostFollowOnDeliveryResult> fanoutPostFollowOnEnvelope({
       late final Future<void> task;
       task =
           _deliverPostFollowOnEnvelope(
-            p2pService: p2pService,
-            recipientPeerId: recipientPeerId,
-            envelope: envelope,
-            interactiveBudget: interactiveBudget,
-            fallbackToInboxOnDirectSendError: fallbackToInboxOnDirectSendError,
-          ).then((outcome) {
-            outcomesByRecipient[recipientPeerId] = outcome;
-          }).whenComplete(() {
-            inFlight.remove(task);
-          });
+                p2pService: p2pService,
+                recipientPeerId: recipientPeerId,
+                envelope: envelope,
+                interactiveBudget: interactiveBudget,
+                fallbackToInboxOnDirectSendError:
+                    fallbackToInboxOnDirectSendError,
+              )
+              .then((outcome) {
+                outcomesByRecipient[recipientPeerId] = outcome;
+              })
+              .whenComplete(() {
+                inFlight.remove(task);
+              });
       inFlight.add(task);
     }
 
-      if (inFlight.isEmpty) {
-        break;
-      }
+    if (inFlight.isEmpty) {
+      break;
+    }
 
     await Future.any(inFlight);
   }
@@ -111,24 +111,44 @@ Future<PostFollowOnRecipientResult> _deliverPostFollowOnEnvelope({
   required bool fallbackToInboxOnDirectSendError,
 }) async {
   final attemptedAt = DateTime.now().toUtc().toIso8601String();
+  var directFailureReason = 'direct_send_failed';
   try {
-    final sendResult = await p2pService.sendMessageWithReply(
-      recipientPeerId,
-      envelope,
-      timeoutMs: interactiveBudget.inMilliseconds,
+    final directReady = await ensurePostRecipientDirectConnection(
+      p2pService: p2pService,
+      recipientPeerId: recipientPeerId,
+      interactiveBudget: interactiveBudget,
     );
-    if (sendResult.sent) {
-      return PostFollowOnRecipientResult(
-        recipientPeerId: recipientPeerId,
-        deliveryStatus: 'delivered',
-        deliveryPath: 'direct',
-        attemptedAt: attemptedAt,
+    if (directReady) {
+      final sendResult = await p2pService.sendMessageWithReply(
+        recipientPeerId,
+        envelope,
+        timeoutMs: interactiveBudget.inMilliseconds,
       );
+      if (sendResult.sent) {
+        return PostFollowOnRecipientResult(
+          recipientPeerId: recipientPeerId,
+          deliveryStatus: 'delivered',
+          deliveryPath: 'direct',
+          attemptedAt: attemptedAt,
+        );
+      }
+      directFailureReason = 'direct_send_returned_not_sent';
+    } else {
+      directFailureReason = 'direct_connect_unavailable';
     }
   } catch (error) {
     if (!fallbackToInboxOnDirectSendError) {
       rethrow;
     }
+    directFailureReason = error.toString();
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'POST_DIRECT_SEND_FALLBACK_TO_INBOX',
+      details: {
+        'recipientPeerId': recipientPeerId,
+        'reason': directFailureReason,
+      },
+    );
     final stored = await p2pService.storeInInbox(recipientPeerId, envelope);
     return PostFollowOnRecipientResult(
       recipientPeerId: recipientPeerId,
@@ -139,14 +159,105 @@ Future<PostFollowOnRecipientResult> _deliverPostFollowOnEnvelope({
     );
   }
 
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'POST_DIRECT_SEND_FALLBACK_TO_INBOX',
+    details: {
+      'recipientPeerId': recipientPeerId,
+      'reason': directFailureReason,
+    },
+  );
   final stored = await p2pService.storeInInbox(recipientPeerId, envelope);
   return PostFollowOnRecipientResult(
     recipientPeerId: recipientPeerId,
     deliveryStatus: stored ? 'inbox' : 'failed',
     deliveryPath: 'inbox',
     attemptedAt: attemptedAt,
-    lastError: stored ? null : 'inbox_store_failed',
+    lastError: stored ? null : directFailureReason,
   );
+}
+
+Future<bool> ensurePostRecipientDirectConnection({
+  required P2PService p2pService,
+  required String recipientPeerId,
+  required Duration interactiveBudget,
+}) async {
+  final timeoutMs = interactiveBudget.inMilliseconds;
+  if (p2pService.isConnectedToPeer(recipientPeerId)) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'POST_DIRECT_CONNECT_SKIP_CONNECTED',
+      details: {'recipientPeerId': recipientPeerId},
+    );
+    return true;
+  }
+
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'POST_DIRECT_CONNECT_BEGIN',
+    details: {'recipientPeerId': recipientPeerId, 'timeoutMs': timeoutMs},
+  );
+
+  try {
+    final discoveredPeer = await p2pService.discoverPeer(
+      recipientPeerId,
+      timeoutMs: timeoutMs,
+    );
+    if (discoveredPeer == null) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'POST_DIRECT_CONNECT_DISCOVER_NOT_FOUND',
+        details: {'recipientPeerId': recipientPeerId},
+      );
+      return false;
+    }
+    return _dialDiscoveredPostRecipient(
+      p2pService: p2pService,
+      recipientPeerId: recipientPeerId,
+      discoveredPeer: discoveredPeer,
+      timeoutMs: timeoutMs,
+    );
+  } catch (error) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'POST_DIRECT_CONNECT_EXCEPTION',
+      details: {'recipientPeerId': recipientPeerId, 'error': error.toString()},
+    );
+    return false;
+  }
+}
+
+Future<bool> _dialDiscoveredPostRecipient({
+  required P2PService p2pService,
+  required String recipientPeerId,
+  required DiscoveredPeer discoveredPeer,
+  required int timeoutMs,
+}) async {
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'POST_DIRECT_CONNECT_DISCOVER_SUCCESS',
+    details: {
+      'recipientPeerId': recipientPeerId,
+      'addressCount': discoveredPeer.addresses.length,
+    },
+  );
+  final dialed = await p2pService.dialPeer(
+    recipientPeerId,
+    addresses: discoveredPeer.addresses,
+    timeoutMs: timeoutMs,
+  );
+  emitFlowEvent(
+    layer: 'FL',
+    event: dialed
+        ? 'POST_DIRECT_CONNECT_DIAL_SUCCESS'
+        : 'POST_DIRECT_CONNECT_DIAL_FAILED',
+    details: {
+      'recipientPeerId': recipientPeerId,
+      'addressCount': discoveredPeer.addresses.length,
+      'timeoutMs': timeoutMs,
+    },
+  );
+  return dialed;
 }
 
 PostFollowOnSettlement _aggregatePostFollowOnResult(

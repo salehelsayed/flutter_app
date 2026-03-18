@@ -540,7 +540,39 @@ void main() {
         'peer-zoya',
       });
       expect(await posts.loadRepostTotalBaseline('post-1'), 2);
+      expect(await posts.loadRepostSharedToBaseline('post-1'), 2);
       expect((await posts.getPost('post-1'))?.shareCount, 3);
+      expect((await posts.getPost('post-1'))?.totalSharedToCount, 3);
+    },
+  );
+
+  test(
+    'incoming repost persists recipient_count and shared-to baseline for a fresh passed-along receiver',
+    () async {
+      contacts.addTestContact(_contact('peer-james', 'James'));
+
+      final (result, post) = await handleIncomingPassedPost(
+        message: _messageFromJson(
+          _postPassJson(
+            recipientCount: 3,
+            repostTotalBaseline: 2,
+            sharedToCountBaseline: 4,
+          ),
+          transportSender: 'peer-james',
+        ),
+        postRepo: posts,
+        contactRepo: contacts,
+      );
+
+      final storedPass = (await posts.loadPostPasses('post-1')).single;
+
+      expect(result, HandleIncomingPassedPostResult.passAccepted);
+      expect(post, isNotNull);
+      expect(storedPass.recipientCount, 3);
+      expect(await posts.loadRepostTotalBaseline('post-1'), 2);
+      expect(await posts.loadRepostSharedToBaseline('post-1'), 4);
+      expect((await posts.getPost('post-1'))?.shareCount, 3);
+      expect((await posts.getPost('post-1'))?.totalSharedToCount, 7);
     },
   );
 
@@ -969,6 +1001,8 @@ Map<String, Object?> _postPassJson({
   List<String> participantPeerIds = const <String>[],
   List<String> activeHeartPeerIds = const <String>[],
   int repostTotalBaseline = 0,
+  int? sharedToCountBaseline,
+  int? recipientCount,
   bool includeThreadMetadata = true,
   String? originalAuthorAvatarBase64,
 }) {
@@ -991,6 +1025,10 @@ Map<String, Object?> _postPassJson({
           'active_peer_ids': activeHeartPeerIds,
         },
       if (includeThreadMetadata) 'repost_total_baseline': repostTotalBaseline,
+      if (includeThreadMetadata)
+        'shared_to_count_baseline':
+            sharedToCountBaseline ?? repostTotalBaseline,
+      if (recipientCount != null) 'recipient_count': recipientCount,
       'original_snapshot': <String, Object?>{
         'post_id': 'post-1',
         'author_peer_id': 'peer-sarah',

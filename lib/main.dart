@@ -55,6 +55,7 @@ import 'package:flutter_app/core/database/migrations/036_posts_pass_encrypted_sn
 import 'package:flutter_app/core/database/migrations/037_posts_repost_engagement_state.dart';
 import 'package:flutter_app/core/database/migrations/038_posts_repost_media_crypto.dart';
 import 'package:flutter_app/core/database/migrations/039_posts_pass_avatar_snapshots.dart';
+import 'package:flutter_app/core/database/migrations/040_posts_repost_visual_metrics.dart';
 import 'package:flutter_app/core/database/helpers/introductions_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_comments_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_comment_reactions_db_helpers.dart';
@@ -188,7 +189,7 @@ void main() async {
   final db = await openEncryptedDatabase(
     secureKeyStore: secureKeyStore,
     dbName: 'identity.db',
-    version: 39,
+    version: 40,
     onCreate: (db, version) async {
       await runIdentityTableMigration(db);
       await runMessagesTableMigration(db);
@@ -229,6 +230,7 @@ void main() async {
       await runPostsRepostEngagementStateMigration(db);
       await runPostsRepostMediaCryptoMigration(db);
       await runPostsPassAvatarSnapshotsMigration(db);
+      await runPostsRepostVisualMetricsMigration(db);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) {
@@ -343,6 +345,9 @@ void main() async {
       if (oldVersion < 39) {
         await runPostsPassAvatarSnapshotsMigration(db);
       }
+      if (oldVersion < 40) {
+        await runPostsRepostVisualMetricsMigration(db);
+      }
     },
   );
 
@@ -445,6 +450,8 @@ void main() async {
         dbLoadRetryableOutgoingPostPasses(db),
     dbCountPostPasses: (postId) => dbCountPostPasses(db, postId),
     dbLoadPostPassCounts: (postIds) => dbLoadPostPassCounts(db, postIds),
+    dbLoadViewerSharedToCountsForPosts: (postIds, viewerPeerId) =>
+        dbLoadViewerSharedToCountsForPosts(db, postIds, viewerPeerId),
     dbUpsertRepostEngagementParticipant: (row) =>
         dbUpsertPostRepostEngagementParticipant(db, row),
     dbLoadRepostEngagementParticipants: (postId) =>
@@ -514,7 +521,13 @@ void main() async {
     dbLoadPinDismissals: () => dbLoadPostPinDismissals(db),
     dbDeletePinDismissal: (postId) => dbDeletePostPinDismissal(db, postId),
     dbSavePassAvatarSnapshot: (postId, authorPeerId, avatarBlob, createdAt) =>
-        dbSavePassAvatarSnapshot(db, postId, authorPeerId, avatarBlob, createdAt),
+        dbSavePassAvatarSnapshot(
+          db,
+          postId,
+          authorPeerId,
+          avatarBlob,
+          createdAt,
+        ),
     dbLoadPassAvatarSnapshot: (postId) => dbLoadPassAvatarSnapshot(db, postId),
     dbLoadPassAvatarSnapshotsForPosts: (postIds) =>
         dbLoadPassAvatarSnapshotsForPosts(db, postIds),

@@ -30,6 +30,30 @@ Future<int> loadProjectedRepostShareCount({
   return localPassCount + repostTotalBaseline;
 }
 
+Future<int> loadLocalRepostSharedToCount({
+  required PostRepository postRepo,
+  required String postId,
+}) async {
+  final passes = await postRepo.loadPostPasses(postId);
+  var total = 0;
+  for (final pass in passes) {
+    total += pass.recipientCount ?? 1;
+  }
+  return total;
+}
+
+Future<int> loadProjectedRepostSharedToCount({
+  required PostRepository postRepo,
+  required String postId,
+}) async {
+  final localSharedToCount = await loadLocalRepostSharedToCount(
+    postRepo: postRepo,
+    postId: postId,
+  );
+  final sharedToBaseline = await postRepo.loadRepostSharedToBaseline(postId);
+  return localSharedToCount + sharedToBaseline;
+}
+
 Future<List<String>> loadPersistedRepostParticipantPeerIds({
   required PostRepository postRepo,
   required String postId,
@@ -53,6 +77,9 @@ Future<bool> hasRepostThreadState({
     return true;
   }
   if (await postRepo.loadRepostTotalBaseline(postId) > 0) {
+    return true;
+  }
+  if (await postRepo.loadRepostSharedToBaseline(postId) > 0) {
     return true;
   }
   if ((await postRepo.loadRepostEngagementParticipantPeerIds(
@@ -89,7 +116,10 @@ Future<void> seedRepostThreadState({
   required Iterable<String> participantPeerIds,
   required Iterable<String> activeHeartPeerIds,
   required int repostTotalBaseline,
+  required int sharedToCountBaseline,
   required int currentLocalPassCount,
+  required int currentLocalSharedToCount,
+  required int currentPassRecipientCount,
   required String createdAt,
 }) async {
   final sortedParticipantPeerIds =
@@ -114,6 +144,13 @@ Future<void> seedRepostThreadState({
     postId: postId,
     repostTotalBaseline: repostTotalBaseline,
     existingLocalPassCount: currentLocalPassCount,
+    createdAt: createdAt,
+  );
+  await postRepo.seedRepostSharedToBaseline(
+    postId: postId,
+    sharedToCountBaseline: sharedToCountBaseline,
+    existingLocalSharedToCount: currentLocalSharedToCount,
+    currentPassRecipientCount: currentPassRecipientCount,
     createdAt: createdAt,
   );
 }

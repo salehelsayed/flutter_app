@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
 import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
 import 'package:flutter_app/features/posts/application/post_follow_on_delivery.dart';
 
@@ -194,6 +195,31 @@ void main() {
       );
     },
   );
+
+  test(
+    'fanoutPostFollowOnEnvelope discovers and dials before direct send',
+    () async {
+      final service = _ControlledP2PService(
+        peerId: 'peer-alice',
+        network: network,
+        policies: const {
+          'peer-bob': _PeerPolicy(requireDiscoverAndDialBeforeSend: true),
+        },
+      );
+      addTearDown(service.dispose);
+
+      final result = await fanoutPostFollowOnEnvelope(
+        p2pService: service,
+        recipientPeerIds: const <String>['peer-bob'],
+        envelope: '{"type":"post_comment"}',
+      );
+
+      expect(result.settlement, PostFollowOnSettlement.fullySettled);
+      expect(service.discoverAttempts, <String>['peer-bob']);
+      expect(service.dialAttempts, <String>['peer-bob']);
+      expect(service.inboxAttempts, isEmpty);
+    },
+  );
 }
 
 Future<void> _drainMicrotasks([int turns = 3]) async {
@@ -206,6 +232,9 @@ class _ControlledP2PService extends FakeP2PService {
   final Map<String, _PeerPolicy> policies;
   final List<String> sendStartOrder = <String>[];
   final List<String> inboxAttempts = <String>[];
+  final List<String> discoverAttempts = <String>[];
+  final List<String> dialAttempts = <String>[];
+  final Set<String> _dialedPeers = <String>{};
 
   int _inFlightSends = 0;
   int maxInFlightSends = 0;
@@ -229,6 +258,10 @@ class _ControlledP2PService extends FakeP2PService {
     int? timeoutMs,
   }) async {
     final policy = policies[targetPeerId] ?? const _PeerPolicy();
+    if (policy.requireDiscoverAndDialBeforeSend &&
+        !_dialedPeers.contains(targetPeerId)) {
+      return const SendMessageResult(sent: false);
+    }
     sendStartOrder.add(targetPeerId);
     _inFlightSends++;
     if (_inFlightSends > maxInFlightSends) {
@@ -258,6 +291,26 @@ class _ControlledP2PService extends FakeP2PService {
     return (policies[toPeerId] ?? const _PeerPolicy()).storeInInboxResult ??
         true;
   }
+
+  @override
+  Future<DiscoveredPeer?> discoverPeer(String peerId, {int? timeoutMs}) async {
+    discoverAttempts.add(peerId);
+    return DiscoveredPeer(
+      id: peerId,
+      addresses: <String>['/ip4/127.0.0.1/tcp/4001/p2p/$peerId'],
+    );
+  }
+
+  @override
+  Future<bool> dialPeer(
+    String peerId, {
+    List<String>? addresses,
+    int? timeoutMs,
+  }) async {
+    dialAttempts.add(peerId);
+    _dialedPeers.add(peerId);
+    return true;
+  }
 }
 
 class _PeerPolicy {
@@ -265,11 +318,13 @@ class _PeerPolicy {
   final bool? sendResult;
   final bool? storeInInboxResult;
   final bool throwOnSend;
+  final bool requireDiscoverAndDialBeforeSend;
 
   const _PeerPolicy({
     this.sendGate,
     this.sendResult,
     this.storeInInboxResult,
     this.throwOnSend = false,
+    this.requireDiscoverAndDialBeforeSend = false,
   });
 }

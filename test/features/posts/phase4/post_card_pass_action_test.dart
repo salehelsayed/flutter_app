@@ -22,6 +22,64 @@ void main() {
     expect(find.byIcon(Icons.repeat), findsOneWidget);
   });
 
+  testWidgets(
+    'shows an active repeat control and viewer-local count on a reposter card',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: PostCard(
+              post: _post(
+                audience: PostAudience.allFriends(),
+                viewerHasPassed: true,
+                viewerSharedToCount: 3,
+              ),
+              viewerPeerId: 'peer-bob',
+              onPassAlong: () {},
+            ),
+          ),
+        ),
+      );
+
+      final repeatIcon = tester.widget<Icon>(find.byIcon(Icons.repeat));
+      expect(repeatIcon.color, const Color(0xFF1DB954));
+      expect(
+        find.byKey(const ValueKey<String>('post-share-count')),
+        findsOneWidget,
+      );
+      expect(find.text('3'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'keeps the repeat control neutral and unlabeled on a passed-along card',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: PostCard(
+              post: _post(
+                audience: PostAudience.allFriends(),
+                passedByPeerId: 'peer-james',
+                passedByUsername: 'James',
+                passedAt: '2026-03-15T11:15:00.000Z',
+              ),
+              onPassAlong: () {},
+            ),
+          ),
+        ),
+      );
+
+      final repeatIcon = tester.widget<Icon>(find.byIcon(Icons.repeat));
+      expect(repeatIcon.color?.opacity, closeTo(0.35, 0.01));
+      expect(find.text('James passed this along'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey<String>('post-share-count')),
+        findsNothing,
+      );
+    },
+  );
+
   testWidgets('wraps action clusters on narrow cards without overflowing', (
     tester,
   ) async {
@@ -70,7 +128,16 @@ void main() {
   });
 }
 
-PostModel _post({required PostAudience audience}) {
+PostModel _post({
+  required PostAudience audience,
+  String? passedByPeerId,
+  String? passedByUsername,
+  String? passedAt,
+  int shareCount = 0,
+  int totalSharedToCount = 0,
+  int viewerSharedToCount = 0,
+  bool viewerHasPassed = false,
+}) {
   return PostModel(
     id: 'post-1',
     eventId: 'evt-post-1',
@@ -82,5 +149,12 @@ PostModel _post({required PostAudience audience}) {
     createdAt: '2026-03-15T10:15:30.000Z',
     visibleAt: '2026-03-15T10:15:30.000Z',
     expiresAt: '2026-03-16T12:00:00.000Z',
+    passedByPeerId: passedByPeerId,
+    passedByUsername: passedByUsername,
+    passedAt: passedAt,
+    shareCount: shareCount,
+    totalSharedToCount: totalSharedToCount,
+    viewerSharedToCount: viewerSharedToCount,
+    viewerHasPassed: viewerHasPassed,
   );
 }

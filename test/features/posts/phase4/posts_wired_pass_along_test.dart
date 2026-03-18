@@ -80,8 +80,18 @@ void main() {
     contactRepository.seed([
       _contact('peer-bob', 'Bob', mlKemPublicKey: 'mlkem-peer-bob'),
       _contact('peer-cara', 'Cara', mlKemPublicKey: 'mlkem-peer-cara'),
-      _contact('peer-dan', 'Dan', blocked: true, mlKemPublicKey: 'mlkem-peer-dan'),
-      _contact('peer-eve', 'Eve', archived: true, mlKemPublicKey: 'mlkem-peer-eve'),
+      _contact(
+        'peer-dan',
+        'Dan',
+        blocked: true,
+        mlKemPublicKey: 'mlkem-peer-dan',
+      ),
+      _contact(
+        'peer-eve',
+        'Eve',
+        archived: true,
+        mlKemPublicKey: 'mlkem-peer-eve',
+      ),
     ]);
     await postRepository.savePost(_post());
 
@@ -106,9 +116,12 @@ void main() {
 
     final message = await receivedByCara.timeout(const Duration(seconds: 1));
     final json = jsonDecode(message.content) as Map<String, dynamic>;
-    final payload = jsonDecode(
-      (json['encrypted'] as Map<String, dynamic>)['ciphertext'] as String,
-    ) as Map<String, dynamic>;
+    final payload =
+        jsonDecode(
+              (json['encrypted'] as Map<String, dynamic>)['ciphertext']
+                  as String,
+            )
+            as Map<String, dynamic>;
 
     expect(json['type'], 'post_pass');
     expect(json['version'], '2');
@@ -119,10 +132,10 @@ void main() {
   testWidgets(
     'closes the pass sheet after local persistence and refreshes sender-visible repost state while delivery is still in flight',
     (tester) async {
-    contactRepository.seed([
-      _contact('peer-bob', 'Bob', mlKemPublicKey: 'mlkem-peer-bob'),
-      _contact('peer-cara', 'Cara', mlKemPublicKey: 'mlkem-peer-cara'),
-    ]);
+      contactRepository.seed([
+        _contact('peer-bob', 'Bob', mlKemPublicKey: 'mlkem-peer-bob'),
+        _contact('peer-cara', 'Cara', mlKemPublicKey: 'mlkem-peer-cara'),
+      ]);
       await postRepository.savePost(
         _post(
           senderPeerId: 'peer-alice',
@@ -157,6 +170,8 @@ void main() {
         find.byKey(const ValueKey<String>('post-share-count')),
         findsOneWidget,
       );
+      final repeatIcon = tester.widget<Icon>(find.byIcon(Icons.repeat));
+      expect(repeatIcon.color, const Color(0xFF1DB954));
       expect(find.text('1'), findsOneWidget);
       expect(deliveries.map((delivery) => delivery.recipientPeerId), <String>[
         'peer-cara',

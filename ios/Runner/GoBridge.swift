@@ -109,6 +109,12 @@ class GoBridge: NSObject {
             runOnBackground({ BridgeMediaDelete(args ?? "") }, result: result)
         case "mediaList":
             runOnBackground({ BridgeMediaList(args ?? "") }, result: result)
+        case "blobKeygen":
+            runOnBackground({ BridgeBlobKeygen(nil) }, result: result)
+        case "blobEncrypt":
+            runOnBackground({ BridgeBlobEncrypt(args ?? "") }, result: result)
+        case "blobDecrypt":
+            runOnBackground({ BridgeBlobDecrypt(args ?? "") }, result: result)
 
         // Profile
         case "profileUpload":

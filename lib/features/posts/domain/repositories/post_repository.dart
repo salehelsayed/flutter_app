@@ -119,6 +119,11 @@ abstract class PostRepository {
 
   Future<Map<String, int>> loadPostPassCounts(List<String> postIds);
 
+  Future<Map<String, int>> loadViewerSharedToCountsForPosts(
+    List<String> postIds,
+    String viewerPeerId,
+  );
+
   Future<void> saveRepostEngagementParticipant({
     required String postId,
     required String participantPeerId,
@@ -149,6 +154,18 @@ abstract class PostRepository {
   Future<int> loadRepostTotalBaseline(String postId);
 
   Future<Map<String, int>> loadRepostTotalBaselines(List<String> postIds);
+
+  Future<void> seedRepostSharedToBaseline({
+    required String postId,
+    required int sharedToCountBaseline,
+    required int existingLocalSharedToCount,
+    required int currentPassRecipientCount,
+    required String createdAt,
+  });
+
+  Future<int> loadRepostSharedToBaseline(String postId);
+
+  Future<Map<String, int>> loadRepostSharedToBaselines(List<String> postIds);
 
   Future<void> savePostOrigin(PostOriginModel origin);
 

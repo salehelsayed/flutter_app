@@ -38,6 +38,7 @@ class SettingsScreen extends StatelessWidget {
   final ValueChanged<bool>? onNearbySharingChanged;
   final void Function(String) onSwitchView;
   final String activeTab;
+  final bool showNavigationBar;
 
   const SettingsScreen({
     super.key,
@@ -63,6 +64,7 @@ class SettingsScreen extends StatelessWidget {
     this.onNearbySharingChanged,
     required this.onSwitchView,
     required this.activeTab,
+    this.showNavigationBar = true,
   });
 
   @override
@@ -151,7 +153,9 @@ class SettingsScreen extends StatelessWidget {
                 Expanded(
                   child: SingleChildScrollView(
                     physics: const BouncingScrollPhysics(),
-                    padding: EdgeInsets.only(bottom: 60 + bottomInset),
+                    padding: EdgeInsets.only(
+                      bottom: (showNavigationBar ? 60 : 24) + bottomInset,
+                    ),
                     child: Column(
                       children: [
                         SettingsProfileSection(
@@ -210,17 +214,18 @@ class SettingsScreen extends StatelessWidget {
             ),
           ),
           // Floating nav bar pinned to bottom
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: bottomInset + 8,
-            child: Center(
-              child: FeedNavigationBar(
-                activeTab: activeTab,
-                onSwitchView: onSwitchView,
+          if (showNavigationBar)
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: bottomInset + 8,
+              child: Center(
+                child: FeedNavigationBar(
+                  activeTab: activeTab,
+                  onSwitchView: onSwitchView,
+                ),
               ),
             ),
-          ),
         ],
       ),
     );

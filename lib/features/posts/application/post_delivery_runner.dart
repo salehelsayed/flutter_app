@@ -5,6 +5,7 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/features/posts/application/post_follow_on_delivery.dart';
 import 'package:flutter_app/features/posts/application/post_media_draft.dart';
 import 'package:flutter_app/features/posts/application/post_repost_engagement_support.dart';
 import 'package:flutter_app/features/posts/domain/models/post_create_envelope.dart';
@@ -488,19 +489,31 @@ Future<_DeliveryAttempt> _deliverToRecipient({
   required String recipientPeerId,
   required String wireEnvelope,
 }) async {
+  var directFailureReason = 'direct_send_failed';
   try {
-    final sendResult = await p2pService.sendMessageWithReply(
-      recipientPeerId,
-      wireEnvelope,
-      timeoutMs: _interactivePostBudget.inMilliseconds,
+    final directReady = await ensurePostRecipientDirectConnection(
+      p2pService: p2pService,
+      recipientPeerId: recipientPeerId,
+      interactiveBudget: _interactivePostBudget,
     );
-    if (sendResult.sent) {
-      return const _DeliveryAttempt(
-        deliveryStatus: 'delivered',
-        deliveryPath: 'direct',
+    if (directReady) {
+      final sendResult = await p2pService.sendMessageWithReply(
+        recipientPeerId,
+        wireEnvelope,
+        timeoutMs: _interactivePostBudget.inMilliseconds,
       );
+      if (sendResult.sent) {
+        return const _DeliveryAttempt(
+          deliveryStatus: 'delivered',
+          deliveryPath: 'direct',
+        );
+      }
+      directFailureReason = 'direct_send_returned_not_sent';
+    } else {
+      directFailureReason = 'direct_connect_unavailable';
     }
   } catch (error) {
+    directFailureReason = error.toString();
     emitFlowEvent(
       layer: 'FL',
       event: 'POST_SEND_DIRECT_ERROR',
@@ -508,6 +521,14 @@ Future<_DeliveryAttempt> _deliverToRecipient({
     );
   }
 
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'POST_DIRECT_SEND_FALLBACK_TO_INBOX',
+    details: {
+      'recipientPeerId': recipientPeerId,
+      'reason': directFailureReason,
+    },
+  );
   final stored = await p2pService.storeInInbox(recipientPeerId, wireEnvelope);
   if (stored) {
     return const _DeliveryAttempt(
@@ -515,10 +536,10 @@ Future<_DeliveryAttempt> _deliverToRecipient({
       deliveryPath: 'inbox',
     );
   }
-  return const _DeliveryAttempt(
+  return _DeliveryAttempt(
     deliveryStatus: 'failed',
     deliveryPath: 'failed',
-    lastError: 'direct_and_inbox_failed',
+    lastError: '$directFailureReason:inbox_store_failed',
   );
 }
 
