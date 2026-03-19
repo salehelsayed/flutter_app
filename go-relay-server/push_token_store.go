@@ -51,6 +51,16 @@ func (s *memoryPushTokenStore) TokenCount() int {
 	return len(s.tokens)
 }
 
+func (s *memoryPushTokenStore) PlatformCounts() map[string]int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	counts := make(map[string]int)
+	for _, entry := range s.tokens {
+		counts[entry.Platform]++
+	}
+	return counts
+}
+
 // --- Shared in-memory PushTokenBackend (for simulating shared state in tests) ---
 
 // sharedPushTokenStore wraps a memoryPushTokenStore pointer so multiple

@@ -1,3 +1,5 @@
 relay-server
 *.exe
 firebase-service-account.json
+.env
+.env.*

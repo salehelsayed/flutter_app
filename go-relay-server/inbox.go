@@ -167,6 +167,10 @@ func (ps *PushService) TokenCount() int {
 	return ps.tokenBackend.TokenCount()
 }
 
+func (ps *PushService) PlatformCounts() map[string]int {
+	return ps.tokenBackend.PlatformCounts()
+}
+
 func isInvalidTokenError(err error) bool {
 	// Firebase returns specific error codes for invalid tokens
 	errStr := err.Error()
@@ -221,6 +225,9 @@ func NewInboxStoreWithBackend(backend InboxBackend, push *PushService) *InboxSto
 func (is *InboxStore) Store(toPeerId string, entry inboxMessage) {
 	is.backend.Store(toPeerId, entry)
 	inboxStoredCounter.Inc()
+	if biz != nil {
+		biz.RecordMessageStored()
+	}
 
 	log.Printf("[INBOX] Stored message for %s from %s",
 		toPeerId[:min(20, len(toPeerId))],

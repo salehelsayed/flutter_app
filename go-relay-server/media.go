@@ -345,6 +345,9 @@ func handleMediaUpload(s network.Stream, media *MediaStore, remotePeer string, r
 	media.store(meta)
 	mediaUploadedCounter.Inc()
 	mediaUploadedBytesCounter.Add(float64(written))
+	if biz != nil {
+		biz.RecordMediaUploaded()
+	}
 
 	writeMediaResponse(s, mediaResponse{Status: "OK", ID: req.ID})
 	log.Printf("[MEDIA] Uploaded blob %s (%d bytes) from %s to %s",

@@ -220,3 +220,40 @@ var streamDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
 	Help:    "End-to-end stream handler time.",
 	Buckets: []float64{0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30},
 }, []string{"proto", "result"})
+
+// --- Business metrics (aggregate only, privacy-safe) ---
+
+var estimatedDAU = promauto.NewGauge(prometheus.GaugeOpts{
+	Name: "relay_estimated_dau",
+	Help: "Estimated daily active unique peers (HyperLogLog, not recoverable).",
+})
+
+var estimatedWAU = promauto.NewGauge(prometheus.GaugeOpts{
+	Name: "relay_estimated_wau",
+	Help: "Estimated weekly active unique peers (HyperLogLog, not recoverable).",
+})
+
+var estimatedMAU = promauto.NewGauge(prometheus.GaugeOpts{
+	Name: "relay_estimated_mau",
+	Help: "Estimated monthly active unique peers (HyperLogLog, not recoverable).",
+})
+
+var newSignupsCounter = promauto.NewCounter(prometheus.CounterOpts{
+	Name: "relay_new_signups_total",
+	Help: "New user profiles created (first-time uploads only).",
+})
+
+var pushTokensByPlatform = promauto.NewGaugeVec(prometheus.GaugeOpts{
+	Name: "relay_push_tokens_by_platform",
+	Help: "Push tokens registered, by platform.",
+}, []string{"platform"})
+
+var messagesDailyGauge = promauto.NewGauge(prometheus.GaugeOpts{
+	Name: "relay_messages_daily",
+	Help: "Messages stored today (resets at midnight UTC).",
+})
+
+var mediaUploadsDailyGauge = promauto.NewGauge(prometheus.GaugeOpts{
+	Name: "relay_media_uploads_daily",
+	Help: "Media blobs uploaded today (resets at midnight UTC).",
+})

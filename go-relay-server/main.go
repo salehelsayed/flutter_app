@@ -22,7 +22,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-const version = "1.1.0"
+const version = "1.2.0"
 
 func main() {
 	// Handle subcommands
@@ -102,6 +102,7 @@ func main() {
 	media := NewMediaStore(mediaDataDir)
 	media.StartCleanup(ctx)
 	profile := NewProfileStore(profileDataDir)
+	biz = newBusinessMetrics()
 
 	// Register protocol handlers
 	h.SetStreamHandler(RendezvousProtocol, func(s network.Stream) {
@@ -142,6 +143,7 @@ func main() {
 				if e.Connectedness == network.Connected {
 					connectionsActive.Inc()
 					connectionsCounter.Inc()
+					biz.RecordPeerSeen(e.Peer.String())
 					conns := len(h.Network().Peers())
 					logPeerConnected(e.Peer, inbox, int64(conns))
 				} else if e.Connectedness == network.NotConnected {
@@ -202,7 +204,7 @@ func main() {
 	}()
 
 	// Periodic stats
-	go logStatsPeriodically(ctx, h, inbox, groupInbox, store, media, profile)
+	go logStatsPeriodically(ctx, h, inbox, groupInbox, store, media, profile, push)
 
 	// Wait for shutdown signal
 	sigCh := make(chan os.Signal, 1)
@@ -228,7 +230,7 @@ func logPeerConnected(p peer.ID, inbox *InboxStore, total int64) {
 	}
 }
 
-func logStatsPeriodically(ctx context.Context, h host.Host, inbox *InboxStore, groupInbox *GroupInboxStore, rz *RendezvousStore, media *MediaStore, profile *ProfileStore) {
+func logStatsPeriodically(ctx context.Context, h host.Host, inbox *InboxStore, groupInbox *GroupInboxStore, rz *RendezvousStore, media *MediaStore, profile *ProfileStore, push *PushService) {
 	ticker := time.NewTicker(60 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -257,11 +259,30 @@ func logStatsPeriodically(ctx context.Context, h host.Host, inbox *InboxStore, g
 			groupInboxGroupsActiveGauge.Set(float64(groupInboxGroups))
 			groupInboxMessagesStoredGauge.Set(float64(groupInboxMsgs))
 
-			log.Printf("[STATS] conns=%d rz_ns=%d rz_peers=%d inbox_peers=%d inbox_msgs=%d push_tokens=%d media_blobs=%d media_disk_mb=%d profile_count=%d profile_disk_mb=%d group_inbox_groups=%d group_inbox_msgs=%d heap_mb=%d goroutines=%d",
+			// Business metrics (aggregate only, privacy-safe)
+			biz.CheckAndResetPeriods()
+			dau := biz.dailyHLL.Estimate()
+			wau := biz.weeklyHLL.Estimate()
+			mau := biz.monthlyHLL.Estimate()
+			dailyMsgs := biz.messagesDailyCount.Load()
+			dailyMedia := biz.mediaUploadsDailyCount.Load()
+			estimatedDAU.Set(float64(dau))
+			estimatedWAU.Set(float64(wau))
+			estimatedMAU.Set(float64(mau))
+			messagesDailyGauge.Set(float64(dailyMsgs))
+			mediaUploadsDailyGauge.Set(float64(dailyMedia))
+
+			platformCounts := push.PlatformCounts()
+			for _, p := range []string{"ios", "android"} {
+				pushTokensByPlatform.WithLabelValues(p).Set(float64(platformCounts[p]))
+			}
+
+			log.Printf("[STATS] conns=%d rz_ns=%d rz_peers=%d inbox_peers=%d inbox_msgs=%d push_tokens=%d media_blobs=%d media_disk_mb=%d profile_count=%d profile_disk_mb=%d group_inbox_groups=%d group_inbox_msgs=%d dau=%d wau=%d mau=%d daily_msgs=%d daily_media=%d heap_mb=%d goroutines=%d",
 				conns, rzNs, rzPeers, inboxPeers, inboxMsgs, tokenCount,
 				mediaBlobs, mediaDiskMB,
 				pCount, pDiskMB,
 				groupInboxGroups, groupInboxMsgs,
+				dau, wau, mau, dailyMsgs, dailyMedia,
 				mem.HeapAlloc/1024/1024, runtime.NumGoroutine())
 		case <-ctx.Done():
 			return

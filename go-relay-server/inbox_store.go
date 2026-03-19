@@ -30,4 +30,7 @@ type PushTokenBackend interface {
 
 	// TokenCount returns the number of registered tokens.
 	TokenCount() int
+
+	// PlatformCounts returns the number of tokens per platform (e.g., "ios", "android").
+	PlatformCounts() map[string]int
 }
