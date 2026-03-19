@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/posts/application/handle_incoming_post_comment_use_case.dart';
@@ -135,20 +136,33 @@ void main() {
       contacts.addTestContact(_contact('peer-james', 'James'));
       final avatarBytes = <int>[1, 2, 3, 4, 5, 6];
 
-      final (result, post) = await handleIncomingPassedPost(
-        message: _encryptedPostPassMessageFromJson(
-          _postPassJson(originalAuthorAvatarBase64: base64Encode(avatarBytes)),
-          transportSender: 'peer-james',
-        ),
-        postRepo: posts,
-        contactRepo: contacts,
-        bridge: PassthroughCryptoBridge(),
-        ownMlKemSecretKey: 'test-own-mlkem-sk',
-      );
+      final events = await _captureFlowEvents(() async {
+        final (result, post) = await handleIncomingPassedPost(
+          message: _encryptedPostPassMessageFromJson(
+            _postPassJson(
+              originalAuthorAvatarBase64: base64Encode(avatarBytes),
+            ),
+            transportSender: 'peer-james',
+          ),
+          postRepo: posts,
+          contactRepo: contacts,
+          bridge: PassthroughCryptoBridge(),
+          ownMlKemSecretKey: 'test-own-mlkem-sk',
+        );
 
-      expect(result, HandleIncomingPassedPostResult.passAccepted);
-      expect(post, isNotNull);
-      expect(await posts.loadPassAvatarSnapshot('post-1'), avatarBytes);
+        expect(result, HandleIncomingPassedPostResult.passAccepted);
+        expect(post, isNotNull);
+        expect(await posts.loadPassAvatarSnapshot('post-1'), avatarBytes);
+      });
+
+      expect(
+        _flowEventDetails(events, 'POST_PASS_RECEIVE_AVATAR_SNAPSHOT_START'),
+        isNotEmpty,
+      );
+      expect(
+        _flowEventDetails(events, 'POST_PASS_RECEIVE_AVATAR_SNAPSHOT_STORED'),
+        isNotEmpty,
+      );
     },
   );
 
@@ -157,20 +171,27 @@ void main() {
     () async {
       contacts.addTestContact(_contact('peer-james', 'James'));
 
-      final (result, post) = await handleIncomingPassedPost(
-        message: _encryptedPostPassMessageFromJson(
-          _postPassJson(),
-          transportSender: 'peer-james',
-        ),
-        postRepo: posts,
-        contactRepo: contacts,
-        bridge: PassthroughCryptoBridge(),
-        ownMlKemSecretKey: 'test-own-mlkem-sk',
-      );
+      final events = await _captureFlowEvents(() async {
+        final (result, post) = await handleIncomingPassedPost(
+          message: _encryptedPostPassMessageFromJson(
+            _postPassJson(),
+            transportSender: 'peer-james',
+          ),
+          postRepo: posts,
+          contactRepo: contacts,
+          bridge: PassthroughCryptoBridge(),
+          ownMlKemSecretKey: 'test-own-mlkem-sk',
+        );
 
-      expect(result, HandleIncomingPassedPostResult.passAccepted);
-      expect(post, isNotNull);
-      expect(await posts.loadPassAvatarSnapshot('post-1'), isNull);
+        expect(result, HandleIncomingPassedPostResult.passAccepted);
+        expect(post, isNotNull);
+        expect(await posts.loadPassAvatarSnapshot('post-1'), isNull);
+      });
+
+      expect(
+        _flowEventDetails(events, 'POST_PASS_RECEIVE_AVATAR_SNAPSHOT_ABSENT'),
+        isNotEmpty,
+      );
     },
   );
 
@@ -915,6 +936,38 @@ void main() {
       expect((await posts.getPost('post-1'))?.shareCount, 2);
     },
   );
+}
+
+Future<List<Map<String, dynamic>>> _captureFlowEvents(
+  Future<void> Function() body,
+) async {
+  final originalDebugPrint = debugPrint;
+  final events = <Map<String, dynamic>>[];
+  debugPrint = (String? message, {int? wrapWidth}) {
+    if (message == null || !message.startsWith('[FLOW] ')) {
+      return;
+    }
+    final decoded = jsonDecode(message.substring('[FLOW] '.length));
+    if (decoded is Map<String, dynamic>) {
+      events.add(decoded);
+    }
+  };
+  try {
+    await body();
+  } finally {
+    debugPrint = originalDebugPrint;
+  }
+  return events;
+}
+
+List<Map<String, dynamic>> _flowEventDetails(
+  List<Map<String, dynamic>> events,
+  String eventName,
+) {
+  return events
+      .where((event) => event['event'] == eventName)
+      .map((event) => event['details'] as Map<String, dynamic>)
+      .toList(growable: false);
 }
 
 ContactModel _contact(String peerId, String username) {

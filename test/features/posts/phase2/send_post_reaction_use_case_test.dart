@@ -504,4 +504,84 @@ void main() {
       );
     },
   );
+
+  test(
+    'repost-thread comment hearts still reach the original author when that author is not a direct contact',
+    () async {
+      final repostContacts = InMemoryContactRepository();
+      repostContacts.addTestContact(_contact('peer-hisam', 'Hisam'));
+      repostContacts.addTestContact(_contact('peer-ibra', 'Ibra'));
+      final solzService = FakeP2PService(peerId: 'peer-solz', network: network);
+      final hisamService = FakeP2PService(
+        peerId: 'peer-hisam',
+        network: network,
+      );
+      final ibraService = FakeP2PService(peerId: 'peer-ibra', network: network);
+      addTearDown(solzService.dispose);
+      addTearDown(hisamService.dispose);
+      addTearDown(ibraService.dispose);
+
+      await posts.savePost(
+        _post('post-1').copyWith(
+          senderPeerId: 'peer-hisam',
+          authorPeerId: 'peer-solz',
+          authorUsername: 'Solz',
+        ),
+      );
+      await posts.savePostOrigin(
+        const PostOriginModel(
+          postId: 'post-1',
+          originKind: PostOriginKind.pass,
+          passId: 'pass-1',
+          passerPeerId: 'peer-hisam',
+          passerUsername: 'Hisam',
+          passCreatedAt: '2026-03-15T11:15:30.000Z',
+        ),
+      );
+      await posts.saveRepostEngagementParticipant(
+        postId: 'post-1',
+        participantPeerId: 'peer-solz',
+        createdAt: '2026-03-15T11:15:30.000Z',
+      );
+      await posts.saveRepostEngagementParticipant(
+        postId: 'post-1',
+        participantPeerId: 'peer-hisam',
+        createdAt: '2026-03-15T11:15:30.000Z',
+      );
+      await posts.saveComment(
+        const PostCommentModel(
+          id: 'comment-1',
+          eventId: 'evt-comment-1',
+          postId: 'post-1',
+          senderPeerId: 'peer-solz',
+          authorUsername: 'Solz',
+          body: 'I can help too.',
+          commentedAt: '2026-03-15T11:16:00.000Z',
+        ),
+      );
+
+      final (result, reaction) = await sendPostCommentReaction(
+        p2pService: ibraService,
+        postRepo: posts,
+        contactRepo: repostContacts,
+        postId: 'post-1',
+        commentId: 'comment-1',
+        senderPeerId: 'peer-ibra',
+        isActive: true,
+      );
+
+      expect(result, SendPostCommentReactionResult.success);
+      expect(reaction, isNotNull);
+      expect(
+        await posts.loadFollowOnOutboxRecipientDeliveries(reaction!.eventId),
+        hasLength(2),
+      );
+      expect(
+        (await posts.loadFollowOnOutboxRecipientDeliveries(
+          reaction.eventId,
+        )).map((delivery) => delivery.recipientPeerId).toSet(),
+        <String>{'peer-hisam', 'peer-solz'},
+      );
+    },
+  );
 }

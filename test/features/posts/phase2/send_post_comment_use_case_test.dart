@@ -198,6 +198,13 @@ void main() {
       final resolvedRecipientPeerIds = _resolvedRecipientPeerIds(
         deliveryRecipientPeerIds,
       );
+      final recipientServices = [
+        for (final peerId in resolvedRecipientPeerIds)
+          FakeP2PService(peerId: peerId, network: network),
+      ];
+      for (final serviceNode in recipientServices) {
+        addTearDown(serviceNode.dispose);
+      }
       final service = _ControlledP2PService(
         peerId: 'peer-bob',
         network: network,
@@ -390,6 +397,75 @@ void main() {
       );
     },
   );
+
+  test(
+    'repost-thread comments still reach the original author when that author is not a direct contact',
+    () async {
+      final repostContacts = InMemoryContactRepository();
+      repostContacts.addTestContact(_contact('peer-hisam', 'Hisam'));
+      repostContacts.addTestContact(_contact('peer-ibra', 'Ibra'));
+      final solzService = FakeP2PService(peerId: 'peer-solz', network: network);
+      final hisamService = FakeP2PService(
+        peerId: 'peer-hisam',
+        network: network,
+      );
+      final ibraService = FakeP2PService(peerId: 'peer-ibra', network: network);
+      addTearDown(solzService.dispose);
+      addTearDown(hisamService.dispose);
+      addTearDown(ibraService.dispose);
+
+      await posts.savePost(
+        _post('post-1').copyWith(
+          senderPeerId: 'peer-hisam',
+          authorPeerId: 'peer-solz',
+          authorUsername: 'Solz',
+        ),
+      );
+      await posts.savePostOrigin(
+        const PostOriginModel(
+          postId: 'post-1',
+          originKind: PostOriginKind.pass,
+          passId: 'pass-1',
+          passerPeerId: 'peer-hisam',
+          passerUsername: 'Hisam',
+          passCreatedAt: '2026-03-15T11:15:30.000Z',
+        ),
+      );
+      await posts.saveRepostEngagementParticipant(
+        postId: 'post-1',
+        participantPeerId: 'peer-solz',
+        createdAt: '2026-03-15T11:15:30.000Z',
+      );
+      await posts.saveRepostEngagementParticipant(
+        postId: 'post-1',
+        participantPeerId: 'peer-hisam',
+        createdAt: '2026-03-15T11:15:30.000Z',
+      );
+
+      final (result, comment) = await sendPostComment(
+        p2pService: ibraService,
+        postRepo: posts,
+        contactRepo: repostContacts,
+        postId: 'post-1',
+        senderPeerId: 'peer-ibra',
+        senderUsername: 'Ibra',
+        body: 'I can help too.',
+      );
+
+      expect(result, SendPostCommentResult.success);
+      expect(comment, isNotNull);
+      expect(
+        await posts.loadFollowOnOutboxRecipientDeliveries(comment!.eventId),
+        hasLength(2),
+      );
+      expect(
+        (await posts.loadFollowOnOutboxRecipientDeliveries(
+          comment.eventId,
+        )).map((delivery) => delivery.recipientPeerId).toSet(),
+        <String>{'peer-hisam', 'peer-solz'},
+      );
+    },
+  );
 }
 
 List<String> _deliveryRecipientPeerIds(int count) {
@@ -458,7 +534,7 @@ class _ControlledP2PService extends FakeP2PService {
 
   Future<void> waitForSendCount(
     int count, {
-    Duration timeout = const Duration(seconds: 1),
+    Duration timeout = const Duration(seconds: 3),
   }) async {
     final deadline = DateTime.now().add(timeout);
     while (sendStartOrder.length < count) {

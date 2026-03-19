@@ -276,4 +276,316 @@ void main() {
       );
     },
   );
+
+  test(
+    'accepts a trusted repost-thread reaction from a non-contact sender',
+    () async {
+      await posts.savePost(
+        _post('post-1').copyWith(
+          senderPeerId: 'peer-hisam',
+          authorPeerId: 'peer-solz',
+          authorUsername: 'Solz',
+        ),
+      );
+      await posts.savePostOrigin(
+        const PostOriginModel(
+          postId: 'post-1',
+          originKind: PostOriginKind.pass,
+          passId: 'pass-1',
+          passerPeerId: 'peer-hisam',
+          passerUsername: 'Hisam',
+          passCreatedAt: '2026-03-15T11:15:30.000Z',
+        ),
+      );
+      await posts.saveRepostEngagementParticipant(
+        postId: 'post-1',
+        participantPeerId: 'peer-solz',
+        createdAt: '2026-03-15T11:15:30.000Z',
+      );
+      await posts.saveRepostEngagementParticipant(
+        postId: 'post-1',
+        participantPeerId: 'peer-hisam',
+        createdAt: '2026-03-15T11:15:30.000Z',
+      );
+      await posts.saveRepostEngagementParticipant(
+        postId: 'post-1',
+        participantPeerId: 'peer-ibra',
+        createdAt: '2026-03-15T11:16:30.000Z',
+      );
+
+      final (result, reaction) = await handleIncomingPostReaction(
+        message: _postReactionMessage(
+          senderPeerId: 'peer-ibra',
+          postId: 'post-1',
+          reactionId: 'post_heart:post-1:peer-ibra',
+          eventId: 'evt-reaction-3',
+          isActive: true,
+        ),
+        postRepo: posts,
+        contactRepo: contacts,
+      );
+
+      expect(result, HandleIncomingPostReactionResult.reactionApplied);
+      expect(reaction, isNotNull);
+      expect(
+        await posts.loadRepostEngagementParticipantPeerIds('post-1'),
+        <String>{'peer-hisam', 'peer-ibra', 'peer-solz'},
+      );
+    },
+  );
+
+  test(
+    'accepts a trusted repost-thread comment reaction from a non-contact sender',
+    () async {
+      await posts.savePost(
+        _post('post-1').copyWith(
+          senderPeerId: 'peer-hisam',
+          authorPeerId: 'peer-solz',
+          authorUsername: 'Solz',
+        ),
+      );
+      await posts.saveComment(
+        const PostCommentModel(
+          id: 'comment-1',
+          eventId: 'evt-comment-1',
+          postId: 'post-1',
+          senderPeerId: 'peer-solz',
+          authorUsername: 'Solz',
+          body: 'I can help too.',
+          commentedAt: '2026-03-15T11:16:00.000Z',
+        ),
+      );
+      await posts.savePostOrigin(
+        const PostOriginModel(
+          postId: 'post-1',
+          originKind: PostOriginKind.pass,
+          passId: 'pass-1',
+          passerPeerId: 'peer-hisam',
+          passerUsername: 'Hisam',
+          passCreatedAt: '2026-03-15T11:15:30.000Z',
+        ),
+      );
+      await posts.saveRepostEngagementParticipant(
+        postId: 'post-1',
+        participantPeerId: 'peer-solz',
+        createdAt: '2026-03-15T11:15:30.000Z',
+      );
+      await posts.saveRepostEngagementParticipant(
+        postId: 'post-1',
+        participantPeerId: 'peer-hisam',
+        createdAt: '2026-03-15T11:15:30.000Z',
+      );
+      await posts.saveRepostEngagementParticipant(
+        postId: 'post-1',
+        participantPeerId: 'peer-ibra',
+        createdAt: '2026-03-15T11:16:30.000Z',
+      );
+
+      final (result, reaction) = await handleIncomingPostCommentReaction(
+        message: _commentReactionMessage(
+          senderPeerId: 'peer-ibra',
+          postId: 'post-1',
+          commentId: 'comment-1',
+          reactionId: 'comment_heart:comment-1:peer-ibra',
+          eventId: 'evt-comment-reaction-3',
+          isActive: true,
+        ),
+        postRepo: posts,
+        contactRepo: contacts,
+      );
+
+      expect(result, HandleIncomingPostCommentReactionResult.reactionApplied);
+      expect(reaction, isNotNull);
+      expect(
+        await posts.loadRepostEngagementParticipantPeerIds('post-1'),
+        <String>{'peer-hisam', 'peer-ibra', 'peer-solz'},
+      );
+    },
+  );
+
+  test(
+    'rejects an unknown non-contact post reaction sender when no trusted repost-thread state exists',
+    () async {
+      await posts.savePost(_post('post-1'));
+
+      final (result, reaction) = await handleIncomingPostReaction(
+        message: _postReactionMessage(
+          senderPeerId: 'peer-ibra',
+          postId: 'post-1',
+          reactionId: 'post_heart:post-1:peer-ibra',
+          eventId: 'evt-reaction-unknown',
+          isActive: true,
+        ),
+        postRepo: posts,
+        contactRepo: contacts,
+      );
+
+      expect(result, HandleIncomingPostReactionResult.unknownSender);
+      expect(reaction, isNull);
+      expect(await posts.loadPostReactions('post-1'), isEmpty);
+      expect(
+        await posts.loadRepostEngagementParticipantPeerIds('post-1'),
+        isEmpty,
+      );
+    },
+  );
+
+  test(
+    'rejects a blocked direct post reaction sender even when the repost thread trusts that peer',
+    () async {
+      await posts.savePost(
+        _post('post-1').copyWith(
+          senderPeerId: 'peer-hisam',
+          authorPeerId: 'peer-solz',
+          authorUsername: 'Solz',
+        ),
+      );
+      await posts.savePostOrigin(
+        const PostOriginModel(
+          postId: 'post-1',
+          originKind: PostOriginKind.pass,
+          passId: 'pass-1',
+          passerPeerId: 'peer-hisam',
+          passerUsername: 'Hisam',
+          passCreatedAt: '2026-03-15T11:15:30.000Z',
+        ),
+      );
+      await posts.saveRepostEngagementParticipant(
+        postId: 'post-1',
+        participantPeerId: 'peer-solz',
+        createdAt: '2026-03-15T11:15:30.000Z',
+      );
+      await posts.saveRepostEngagementParticipant(
+        postId: 'post-1',
+        participantPeerId: 'peer-hisam',
+        createdAt: '2026-03-15T11:15:30.000Z',
+      );
+      contacts.addTestContact(_contact('peer-ibra', 'Ibra', blocked: true));
+
+      final (result, reaction) = await handleIncomingPostReaction(
+        message: _postReactionMessage(
+          senderPeerId: 'peer-ibra',
+          postId: 'post-1',
+          reactionId: 'post_heart:post-1:peer-ibra',
+          eventId: 'evt-reaction-blocked',
+          isActive: true,
+        ),
+        postRepo: posts,
+        contactRepo: contacts,
+      );
+
+      expect(result, HandleIncomingPostReactionResult.blockedSender);
+      expect(reaction, isNull);
+      expect(await posts.loadPostReactions('post-1'), isEmpty);
+      expect(
+        await posts.loadRepostEngagementParticipantPeerIds('post-1'),
+        <String>{'peer-hisam', 'peer-solz'},
+      );
+    },
+  );
+
+  test(
+    'rejects an unknown non-contact comment reaction sender when no trusted repost-thread state exists',
+    () async {
+      await posts.savePost(_post('post-1'));
+      await posts.saveComment(
+        const PostCommentModel(
+          id: 'comment-1',
+          eventId: 'evt-comment-1',
+          postId: 'post-1',
+          senderPeerId: 'peer-alice',
+          authorUsername: 'Alice',
+          body: 'I can help too.',
+          commentedAt: '2026-03-15T11:16:00.000Z',
+        ),
+      );
+
+      final (result, reaction) = await handleIncomingPostCommentReaction(
+        message: _commentReactionMessage(
+          senderPeerId: 'peer-ibra',
+          postId: 'post-1',
+          commentId: 'comment-1',
+          reactionId: 'comment_heart:comment-1:peer-ibra',
+          eventId: 'evt-comment-reaction-unknown',
+          isActive: true,
+        ),
+        postRepo: posts,
+        contactRepo: contacts,
+      );
+
+      expect(result, HandleIncomingPostCommentReactionResult.unknownSender);
+      expect(reaction, isNull);
+      expect(await posts.loadCommentReactions('post-1'), isEmpty);
+      expect(
+        await posts.loadRepostEngagementParticipantPeerIds('post-1'),
+        isEmpty,
+      );
+    },
+  );
+
+  test(
+    'rejects a blocked direct comment reaction sender even when the repost thread trusts that peer',
+    () async {
+      await posts.savePost(
+        _post('post-1').copyWith(
+          senderPeerId: 'peer-hisam',
+          authorPeerId: 'peer-solz',
+          authorUsername: 'Solz',
+        ),
+      );
+      await posts.saveComment(
+        const PostCommentModel(
+          id: 'comment-1',
+          eventId: 'evt-comment-1',
+          postId: 'post-1',
+          senderPeerId: 'peer-solz',
+          authorUsername: 'Solz',
+          body: 'I can help too.',
+          commentedAt: '2026-03-15T11:16:00.000Z',
+        ),
+      );
+      await posts.savePostOrigin(
+        const PostOriginModel(
+          postId: 'post-1',
+          originKind: PostOriginKind.pass,
+          passId: 'pass-1',
+          passerPeerId: 'peer-hisam',
+          passerUsername: 'Hisam',
+          passCreatedAt: '2026-03-15T11:15:30.000Z',
+        ),
+      );
+      await posts.saveRepostEngagementParticipant(
+        postId: 'post-1',
+        participantPeerId: 'peer-solz',
+        createdAt: '2026-03-15T11:15:30.000Z',
+      );
+      await posts.saveRepostEngagementParticipant(
+        postId: 'post-1',
+        participantPeerId: 'peer-hisam',
+        createdAt: '2026-03-15T11:15:30.000Z',
+      );
+      contacts.addTestContact(_contact('peer-ibra', 'Ibra', blocked: true));
+
+      final (result, reaction) = await handleIncomingPostCommentReaction(
+        message: _commentReactionMessage(
+          senderPeerId: 'peer-ibra',
+          postId: 'post-1',
+          commentId: 'comment-1',
+          reactionId: 'comment_heart:comment-1:peer-ibra',
+          eventId: 'evt-comment-reaction-blocked',
+          isActive: true,
+        ),
+        postRepo: posts,
+        contactRepo: contacts,
+      );
+
+      expect(result, HandleIncomingPostCommentReactionResult.blockedSender);
+      expect(reaction, isNull);
+      expect(await posts.loadCommentReactions('post-1'), isEmpty);
+      expect(
+        await posts.loadRepostEngagementParticipantPeerIds('post-1'),
+        <String>{'peer-hisam', 'peer-solz'},
+      );
+    },
+  );
 }

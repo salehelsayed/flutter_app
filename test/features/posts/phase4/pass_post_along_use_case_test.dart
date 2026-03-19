@@ -3,9 +3,13 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/core/media/image_processor.dart';
+import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
 import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
 import 'package:flutter_app/features/posts/application/pass_post_along_use_case.dart';
 import 'package:flutter_app/features/posts/application/post_delivery_runner.dart';
@@ -15,6 +19,7 @@ import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_pass_envelope.dart';
 import 'package:flutter_app/features/posts/domain/models/post_pass_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_recipient_delivery.dart';
+import 'package:flutter_app/features/settings/application/helpers/avatar_normalization_helper.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 
@@ -181,19 +186,20 @@ void main() {
         senderUsername: 'Alice',
         recipientPeerIds: const <String>['peer-cara'],
         resolveStoredPathFn: mediaFileManager.resolveStoredPath,
-        prepareRepostMediaFn: ({
-          required bridge,
-          required originalMedia,
-          required passerPeerId,
-          required recipientPeerIds,
-          required originalAuthorPeerId,
-        }) async {
-          preparedMedia = originalMedia;
-          return RepostMediaPrepResult(
-            attachments: originalMedia,
-            keys: const <String, PostMediaCryptoEntry>{},
-          );
-        },
+        prepareRepostMediaFn:
+            ({
+              required bridge,
+              required originalMedia,
+              required passerPeerId,
+              required recipientPeerIds,
+              required originalAuthorPeerId,
+            }) async {
+              preparedMedia = originalMedia;
+              return RepostMediaPrepResult(
+                attachments: originalMedia,
+                keys: const <String, PostMediaCryptoEntry>{},
+              );
+            },
       );
 
       expect(result, PassPostAlongResult.success);
@@ -247,27 +253,31 @@ void main() {
   );
 
   test(
-    'includes avatar in encrypted repost payload when avatar exists',
+    'includes processed avatar in encrypted repost payload when avatar exists',
     () async {
       await posts.savePost(_directPost());
       final avatarBytes = Uint8List.fromList(const <int>[1, 2, 3, 4, 5]);
+      final processedAvatarBytes = Uint8List.fromList(const <int>[9, 8, 7, 6]);
 
       final receivedByCara = caraService.messageStream.first;
 
-      final (result, pass) = await passPostAlong(
-        p2pService: aliceService,
-        postRepo: posts,
-        contactRepo: contacts,
-        bridge: bridge,
-        postId: 'post-1',
-        senderPeerId: 'peer-alice',
-        senderUsername: 'Alice',
-        recipientPeerIds: const <String>['peer-cara'],
-        loadAvatarBytesFn: (_) async => avatarBytes,
-      );
+      final events = await _captureFlowEvents(() async {
+        final (result, pass) = await passPostAlong(
+          p2pService: aliceService,
+          postRepo: posts,
+          contactRepo: contacts,
+          bridge: bridge,
+          postId: 'post-1',
+          senderPeerId: 'peer-alice',
+          senderUsername: 'Alice',
+          recipientPeerIds: const <String>['peer-cara'],
+          loadAvatarBytesFn: (_) async => avatarBytes,
+          avatarNormalizer: _makeAvatarNormalizer(processedAvatarBytes),
+        );
 
-      expect(result, PassPostAlongResult.success);
-      expect(pass, isNotNull);
+        expect(result, PassPostAlongResult.success);
+        expect(pass, isNotNull);
+      });
 
       final message = await receivedByCara.timeout(const Duration(seconds: 1));
       final json = jsonDecode(message.content) as Map<String, dynamic>;
@@ -275,7 +285,24 @@ void main() {
 
       expect(
         snapshot['original_author_avatar_base64'],
-        base64Encode(avatarBytes),
+        base64Encode(processedAvatarBytes),
+      );
+      expect(_flowEventDetails(events, 'POST_PASS_AVATAR_LOAD_START'), isNotEmpty);
+      expect(
+        _flowEventDetails(events, 'POST_PASS_AVATAR_LOAD_SUCCESS'),
+        isNotEmpty,
+      );
+      expect(
+        _flowEventDetails(events, 'POST_PASS_AVATAR_PROCESS_START'),
+        isNotEmpty,
+      );
+      expect(
+        _flowEventDetails(events, 'POST_PASS_AVATAR_PROCESS_SUCCESS'),
+        isNotEmpty,
+      );
+      expect(
+        _flowEventDetails(events, 'POST_PASS_AVATAR_SNAPSHOT_STORED'),
+        isNotEmpty,
       );
     },
   );
@@ -287,34 +314,47 @@ void main() {
 
       final receivedByCara = caraService.messageStream.first;
 
-      final (result, pass) = await passPostAlong(
-        p2pService: aliceService,
-        postRepo: posts,
-        contactRepo: contacts,
-        bridge: bridge,
-        postId: 'post-1',
-        senderPeerId: 'peer-alice',
-        senderUsername: 'Alice',
-        recipientPeerIds: const <String>['peer-cara'],
-        loadAvatarBytesFn: (_) async => null,
-      );
+      final events = await _captureFlowEvents(() async {
+        final (result, pass) = await passPostAlong(
+          p2pService: aliceService,
+          postRepo: posts,
+          contactRepo: contacts,
+          bridge: bridge,
+          postId: 'post-1',
+          senderPeerId: 'peer-alice',
+          senderUsername: 'Alice',
+          recipientPeerIds: const <String>['peer-cara'],
+          loadAvatarBytesFn: (_) async => null,
+        );
 
-      expect(result, PassPostAlongResult.success);
-      expect(pass, isNotNull);
+        expect(result, PassPostAlongResult.success);
+        expect(pass, isNotNull);
+      });
 
       final message = await receivedByCara.timeout(const Duration(seconds: 1));
       final json = jsonDecode(message.content) as Map<String, dynamic>;
       final snapshot = _decodeEncryptedOriginalSnapshot(json);
 
       expect(snapshot.containsKey('original_author_avatar_base64'), isFalse);
+      expect(
+        _flowEventDetails(events, 'POST_PASS_AVATAR_LOAD_MISSING'),
+        isNotEmpty,
+      );
     },
   );
 
   test(
-    'omits avatar in encrypted repost payload when avatar exceeds the 64 KB bound',
+    'includes a valid but oversized local avatar after client-side processing',
     () async {
       await posts.savePost(_directPost());
-      final avatarBytes = Uint8List.fromList(List<int>.filled(65537, 7));
+      final avatarBytes = _validButOversizedAvatarBytes();
+      final processedAvatarBytes = Uint8List.fromList(const <int>[
+        0xCA,
+        0xFE,
+        0xBA,
+        0xBE,
+      ]);
+      final probe = _AvatarProcessingProbe();
 
       final receivedByCara = caraService.messageStream.first;
 
@@ -328,6 +368,10 @@ void main() {
         senderUsername: 'Alice',
         recipientPeerIds: const <String>['peer-cara'],
         loadAvatarBytesFn: (_) async => avatarBytes,
+        avatarNormalizer: _makeAvatarNormalizer(
+          processedAvatarBytes,
+          probe: probe,
+        ),
       );
 
       expect(result, PassPostAlongResult.success);
@@ -337,7 +381,173 @@ void main() {
       final json = jsonDecode(message.content) as Map<String, dynamic>;
       final snapshot = _decodeEncryptedOriginalSnapshot(json);
 
+      expect(
+        snapshot['original_author_avatar_base64'],
+        base64Encode(processedAvatarBytes),
+      );
+      expect(probe.quality, 80);
+      expect(probe.keepExif, isFalse);
+      expect(probe.minWidth, 512);
+      expect(probe.minHeight, 512);
+    },
+  );
+
+  test(
+    'omits avatar in encrypted repost payload when processed avatar still exceeds the 64 KB bound',
+    () async {
+      await posts.savePost(_directPost());
+      final avatarBytes = Uint8List.fromList(const <int>[5, 4, 3, 2, 1]);
+      final processedAvatarBytes = _validButOversizedAvatarBytes();
+      expect(processedAvatarBytes.length, greaterThan(65536));
+
+      final receivedByCara = caraService.messageStream.first;
+
+      final events = await _captureFlowEvents(() async {
+        final (result, pass) = await passPostAlong(
+          p2pService: aliceService,
+          postRepo: posts,
+          contactRepo: contacts,
+          bridge: bridge,
+          postId: 'post-1',
+          senderPeerId: 'peer-alice',
+          senderUsername: 'Alice',
+          recipientPeerIds: const <String>['peer-cara'],
+          loadAvatarBytesFn: (_) async => avatarBytes,
+          avatarNormalizer: _makeAvatarNormalizer(processedAvatarBytes),
+        );
+
+        expect(result, PassPostAlongResult.success);
+        expect(pass, isNotNull);
+      });
+
+      final message = await receivedByCara.timeout(const Duration(seconds: 1));
+      final json = jsonDecode(message.content) as Map<String, dynamic>;
+      final snapshot = _decodeEncryptedOriginalSnapshot(json);
+
+      expect(
+        snapshot.containsKey('original_author_avatar_base64'),
+        isFalse,
+      );
+      expect(
+        _flowEventDetails(events, 'POST_PASS_AVATAR_OMITTED_TOO_LARGE'),
+        isNotEmpty,
+      );
+    },
+  );
+
+  test(
+    'omits avatar but still delivers the repost when loading the local avatar throws',
+    () async {
+      await posts.savePost(_directPost());
+
+      final receivedByCara = caraService.messageStream.first;
+
+      final events = await _captureFlowEvents(() async {
+        final (result, pass) = await passPostAlong(
+          p2pService: aliceService,
+          postRepo: posts,
+          contactRepo: contacts,
+          bridge: bridge,
+          postId: 'post-1',
+          senderPeerId: 'peer-alice',
+          senderUsername: 'Alice',
+          recipientPeerIds: const <String>['peer-cara'],
+          loadAvatarBytesFn: (_) async {
+            throw const FileSystemException('avatar unreadable');
+          },
+        );
+
+        expect(result, PassPostAlongResult.success);
+        expect(pass, isNotNull);
+      });
+
+      final message = await receivedByCara.timeout(const Duration(seconds: 1));
+      final json = jsonDecode(message.content) as Map<String, dynamic>;
+      final snapshot = _decodeEncryptedOriginalSnapshot(json);
+
       expect(snapshot.containsKey('original_author_avatar_base64'), isFalse);
+      expect(
+        _flowEventDetails(events, 'POST_PASS_AVATAR_LOAD_FAILED'),
+        isNotEmpty,
+      );
+      expect(
+        _flowEventDetails(events, 'POST_PASS_AVATAR_LOAD_MISSING'),
+        isEmpty,
+      );
+    },
+  );
+
+  test(
+    'omits avatar safely when avatar normalization fails on unreadable bytes',
+    () async {
+      await posts.savePost(_directPost());
+      final avatarBytes = Uint8List.fromList(const <int>[255, 0, 1, 2]);
+
+      final receivedByCara = caraService.messageStream.first;
+
+      final events = await _captureFlowEvents(() async {
+        final (result, pass) = await passPostAlong(
+          p2pService: aliceService,
+          postRepo: posts,
+          contactRepo: contacts,
+          bridge: bridge,
+          postId: 'post-1',
+          senderPeerId: 'peer-alice',
+          senderUsername: 'Alice',
+          recipientPeerIds: const <String>['peer-cara'],
+          loadAvatarBytesFn: (_) async => avatarBytes,
+          avatarNormalizer: _makeThrowingAvatarNormalizer(),
+        );
+
+        expect(result, PassPostAlongResult.success);
+        expect(pass, isNotNull);
+      });
+
+      final message = await receivedByCara.timeout(const Duration(seconds: 1));
+      final json = jsonDecode(message.content) as Map<String, dynamic>;
+      final snapshot = _decodeEncryptedOriginalSnapshot(json);
+
+      expect(snapshot.containsKey('original_author_avatar_base64'), isFalse);
+      expect(
+        _flowEventDetails(events, 'POST_PASS_AVATAR_PROCESS_FAILED'),
+        isNotEmpty,
+      );
+    },
+  );
+
+  test(
+    'cleans up avatar temp directories after repeated repost attempts',
+    () async {
+      await posts.savePost(_directPost());
+      final avatarBytes = Uint8List.fromList(const <int>[7, 7, 7, 7]);
+      final before = await _listAvatarTempEntries(
+        postId: 'post-1',
+        authorPeerId: 'peer-bob',
+      );
+
+      for (var i = 0; i < 3; i++) {
+        final (result, pass) = await createLocalPostPass(
+          p2pService: aliceService,
+          postRepo: posts,
+          contactRepo: contacts,
+          bridge: bridge,
+          postId: 'post-1',
+          senderPeerId: 'peer-alice',
+          senderUsername: 'Alice',
+          recipientPeerIds: const <String>['peer-cara'],
+          loadAvatarBytesFn: (_) async => avatarBytes,
+          avatarNormalizer: _makeThrowingAvatarNormalizer(),
+        );
+
+        expect(result, PassPostAlongResult.success);
+        expect(pass, isNotNull);
+      }
+
+      final after = await _listAvatarTempEntries(
+        postId: 'post-1',
+        authorPeerId: 'peer-bob',
+      );
+      expect(after, before);
     },
   );
 
@@ -360,6 +570,9 @@ void main() {
           requestedPeerIds.add(peerId);
           return Uint8List.fromList(const <int>[9, 8, 7]);
         },
+        avatarNormalizer: _makeAvatarNormalizer(
+          Uint8List.fromList(const <int>[9, 8, 7]),
+        ),
       );
 
       expect(result, PassPostAlongResult.success);
@@ -369,10 +582,11 @@ void main() {
   );
 
   test(
-    'createLocalPostPass persists avatar snapshot in durable state before delivery starts',
+    'createLocalPostPass persists processed avatar snapshot in durable state before delivery starts',
     () async {
       await posts.savePost(_directPost());
       final avatarBytes = Uint8List.fromList(const <int>[42, 41, 40, 39]);
+      final processedAvatarBytes = Uint8List.fromList(const <int>[99, 98, 97]);
 
       final (result, created) = await createLocalPostPass(
         p2pService: aliceService,
@@ -384,6 +598,7 @@ void main() {
         senderUsername: 'Alice',
         recipientPeerIds: const <String>['peer-cara'],
         loadAvatarBytesFn: (_) async => avatarBytes,
+        avatarNormalizer: _makeAvatarNormalizer(processedAvatarBytes),
       );
 
       expect(result, PassPostAlongResult.success);
@@ -392,7 +607,7 @@ void main() {
       expect(network.storeInInboxCallCount, 0);
       expect(
         await posts.loadPassAvatarSnapshot('post-1'),
-        orderedEquals(avatarBytes),
+        orderedEquals(processedAvatarBytes),
       );
     },
   );
@@ -424,6 +639,7 @@ void main() {
       expect(payload['participant_peer_ids'], <String>[
         'peer-alice',
         'peer-bob',
+        'peer-cara',
       ]);
     },
   );
@@ -504,6 +720,7 @@ void main() {
       expect(payload['participant_peer_ids'], <String>[
         'peer-alice',
         'peer-bob',
+        'peer-cara',
       ]);
       expect(payload['heart_baseline'], <String, Object?>{
         'active_peer_ids': const <String>[],
@@ -633,6 +850,12 @@ void main() {
       await _expectPersistedSharedThreadState(
         posts,
         innerPayloadJson: created!.pass.innerPayloadJson!,
+        expectedParticipantPeerIds: const <String>[
+          'peer-alice',
+          'peer-bob',
+          'peer-cara',
+          'peer-zoya',
+        ],
       );
     },
   );
@@ -707,6 +930,12 @@ void main() {
       await _expectPersistedSharedThreadState(
         posts,
         innerPayloadJson: pendingPass.innerPayloadJson!,
+        expectedParticipantPeerIds: const <String>[
+          'peer-alice',
+          'peer-bob',
+          'peer-cara',
+          'peer-zoya',
+        ],
       );
 
       final (result, pass) = await sendFuture;
@@ -1106,28 +1335,201 @@ Future<void> _seedExistingRepostThreadState(
 Future<void> _expectPersistedSharedThreadState(
   InMemoryPostRepository posts, {
   required String innerPayloadJson,
+  required List<String> expectedParticipantPeerIds,
 }) async {
   final payload = jsonDecode(innerPayloadJson) as Map<String, dynamic>;
   final heartBaseline = payload['heart_baseline'] as Map<String, dynamic>;
 
-  expect(await posts.loadRepostEngagementParticipantPeerIds('post-1'), <String>{
-    'peer-alice',
-    'peer-bob',
-    'peer-zoya',
-  });
+  expect(
+    await posts.loadRepostEngagementParticipantPeerIds('post-1'),
+    expectedParticipantPeerIds.toSet(),
+  );
   expect(await posts.loadRepostHeartBaselinePeerIds('post-1'), <String>{
     'peer-zoya',
   });
   expect(await posts.loadRepostTotalBaseline('post-1'), 2);
   expect(
     (payload['participant_peer_ids'] as List<dynamic>).cast<String>(),
-    <String>['peer-alice', 'peer-bob', 'peer-zoya'],
+    expectedParticipantPeerIds,
   );
   expect(
     (heartBaseline['active_peer_ids'] as List<dynamic>).cast<String>(),
     <String>['peer-zoya'],
   );
   expect(payload['repost_total_baseline'], 3);
+}
+
+Uint8List _validButOversizedAvatarBytes() {
+  final builder = BytesBuilder(copy: false)
+    ..add(_avatarSnapshotBytes())
+    ..add(Uint8List(70000));
+  return builder.toBytes();
+}
+
+Uint8List _avatarSnapshotBytes() {
+  return Uint8List.fromList(const <int>[
+    0x89,
+    0x50,
+    0x4E,
+    0x47,
+    0x0D,
+    0x0A,
+    0x1A,
+    0x0A,
+    0x00,
+    0x00,
+    0x00,
+    0x0D,
+    0x49,
+    0x48,
+    0x44,
+    0x52,
+    0x00,
+    0x00,
+    0x00,
+    0x01,
+    0x00,
+    0x00,
+    0x00,
+    0x01,
+    0x08,
+    0x06,
+    0x00,
+    0x00,
+    0x00,
+    0x1F,
+    0x15,
+    0xC4,
+    0x89,
+    0x00,
+    0x00,
+    0x00,
+    0x0A,
+    0x49,
+    0x44,
+    0x41,
+    0x54,
+    0x78,
+    0x9C,
+    0x62,
+    0x00,
+    0x00,
+    0x00,
+    0x02,
+    0x00,
+    0x01,
+    0xE5,
+    0x27,
+    0xDE,
+    0xFC,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x49,
+    0x45,
+    0x4E,
+    0x44,
+    0xAE,
+    0x42,
+    0x60,
+    0x82,
+  ]);
+}
+
+class _AvatarProcessingProbe {
+  int? quality;
+  bool? keepExif;
+  int? minWidth;
+  int? minHeight;
+}
+
+AvatarNormalizationHelper _makeAvatarNormalizer(
+  Uint8List processedBytes, {
+  _AvatarProcessingProbe? probe,
+}) {
+  return AvatarNormalizationHelper(
+    imageProcessor: ImageProcessor(
+      compressFile:
+          ({
+            required String path,
+            required int quality,
+            required bool keepExif,
+            int minWidth = 1920,
+            int minHeight = 1080,
+          }) async {
+            probe?.quality = quality;
+            probe?.keepExif = keepExif;
+            probe?.minWidth = minWidth;
+            probe?.minHeight = minHeight;
+            final outputPath = '${path}_processed.jpg';
+            await File(outputPath).writeAsBytes(processedBytes, flush: true);
+            return XFile(outputPath);
+          },
+    ),
+  );
+}
+
+AvatarNormalizationHelper _makeThrowingAvatarNormalizer() {
+  return AvatarNormalizationHelper(
+    imageProcessor: ImageProcessor(
+      compressFile:
+          ({
+            required String path,
+            required int quality,
+            required bool keepExif,
+            int minWidth = 1920,
+            int minHeight = 1080,
+          }) async {
+            throw const FileSystemException('avatar decode failed');
+          },
+    ),
+  );
+}
+
+Future<Set<String>> _listAvatarTempEntries({
+  required String postId,
+  required String authorPeerId,
+}) async {
+  final prefix = 'post-pass-avatar-${postId}_$authorPeerId-';
+  final entities = await Directory.systemTemp.list().toList();
+  return entities
+      .whereType<Directory>()
+      .map((directory) => directory.path.split(Platform.pathSeparator).last)
+      .where((name) => name.startsWith(prefix))
+      .toSet();
+}
+
+Future<List<Map<String, dynamic>>> _captureFlowEvents(
+  Future<void> Function() body,
+) async {
+  final originalDebugPrint = debugPrint;
+  final events = <Map<String, dynamic>>[];
+  debugPrint = (String? message, {int? wrapWidth}) {
+    if (message == null || !message.startsWith('[FLOW] ')) {
+      return;
+    }
+    final decoded = jsonDecode(message.substring('[FLOW] '.length));
+    if (decoded is Map<String, dynamic>) {
+      events.add(decoded);
+    }
+  };
+  try {
+    await body();
+  } finally {
+    debugPrint = originalDebugPrint;
+  }
+  return events;
+}
+
+List<Map<String, dynamic>> _flowEventDetails(
+  List<Map<String, dynamic>> events,
+  String eventName,
+) {
+  return events
+      .where((event) => event['event'] == eventName)
+      .map((event) => event['details'] as Map<String, dynamic>)
+      .toList(growable: false);
 }
 
 /// A no-op media preparation function that passes attachments through
@@ -1150,6 +1552,7 @@ class _ControlledP2PService extends FakeP2PService {
   final List<String> sendStartOrder = <String>[];
   final StreamController<void> _sendStarted =
       StreamController<void>.broadcast();
+  final Set<String> _dialedPeers = <String>{};
 
   int _inFlightSends = 0;
   int maxInFlightSends = 0;
@@ -1173,6 +1576,10 @@ class _ControlledP2PService extends FakeP2PService {
     int? timeoutMs,
   }) async {
     final policy = policies[targetPeerId] ?? const _PeerPolicy();
+    if (policy.requireDiscoverAndDialBeforeSend &&
+        !_dialedPeers.contains(targetPeerId)) {
+      return const SendMessageResult(sent: false);
+    }
     sendStartOrder.add(targetPeerId);
     _inFlightSends++;
     if (_inFlightSends > maxInFlightSends) {
@@ -1192,6 +1599,24 @@ class _ControlledP2PService extends FakeP2PService {
   }
 
   @override
+  Future<DiscoveredPeer?> discoverPeer(String peerId, {int? timeoutMs}) async {
+    return DiscoveredPeer(
+      id: peerId,
+      addresses: <String>['/ip4/127.0.0.1/tcp/4001/p2p/$peerId'],
+    );
+  }
+
+  @override
+  Future<bool> dialPeer(
+    String peerId, {
+    List<String>? addresses,
+    int? timeoutMs,
+  }) async {
+    _dialedPeers.add(peerId);
+    return true;
+  }
+
+  @override
   void dispose() {
     _sendStarted.close();
     super.dispose();
@@ -1200,6 +1625,10 @@ class _ControlledP2PService extends FakeP2PService {
 
 class _PeerPolicy {
   final Completer<void>? sendGate;
+  final bool requireDiscoverAndDialBeforeSend;
 
-  const _PeerPolicy({this.sendGate});
+  const _PeerPolicy({
+    this.sendGate,
+    this.requireDiscoverAndDialBeforeSend = false,
+  });
 }

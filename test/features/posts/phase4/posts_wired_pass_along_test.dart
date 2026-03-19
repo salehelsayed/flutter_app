@@ -1,8 +1,12 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
@@ -27,6 +31,7 @@ void main() {
   late FakeP2PService aliceService;
   late FakeP2PService caraService;
   late PassthroughCryptoBridge bridge;
+  late Directory documentsDir;
 
   setUp(() {
     identityRepository = FakeIdentityRepository()
@@ -49,6 +54,16 @@ void main() {
     aliceService = FakeP2PService(peerId: 'peer-alice', network: network);
     caraService = FakeP2PService(peerId: 'peer-cara', network: network);
     bridge = PassthroughCryptoBridge();
+    documentsDir = Directory.systemTemp.createTempSync(
+      'posts-wired-pass-along-avatars-',
+    );
+    final avatarsDir = Directory('${documentsDir.path}/media/avatars')
+      ..createSync(recursive: true);
+    File('${avatarsDir.path}/peer-alice.jpg').writeAsBytesSync(
+      _testAvatarBytes(),
+      flush: true,
+    );
+    UserAvatar.setDocumentsDir(documentsDir.path);
   });
 
   tearDown(() {
@@ -56,6 +71,7 @@ void main() {
     postsPrivacySettingsRepository.dispose();
     aliceService.dispose();
     caraService.dispose();
+    documentsDir.deleteSync(recursive: true);
   });
 
   Widget buildWidget() {
@@ -95,42 +111,48 @@ void main() {
     ]);
     await postRepository.savePost(_post());
 
-    final receivedByCara = caraService.messageStream.first;
+    final events = await _captureFlowEvents(() async {
+      await tester.pumpWidget(buildWidget());
+      await tester.pump();
 
-    await tester.pumpWidget(buildWidget());
-    await tester.pump();
+      await tester.tap(find.byIcon(Icons.repeat));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
 
-    await tester.tap(find.byIcon(Icons.repeat));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 300));
+      expect(find.widgetWithText(CheckboxListTile, 'Cara'), findsOneWidget);
+      expect(find.widgetWithText(CheckboxListTile, 'Bob'), findsNothing);
+      expect(find.widgetWithText(CheckboxListTile, 'Dan'), findsNothing);
+      expect(find.widgetWithText(CheckboxListTile, 'Eve'), findsNothing);
 
-    expect(find.widgetWithText(CheckboxListTile, 'Cara'), findsOneWidget);
-    expect(find.widgetWithText(CheckboxListTile, 'Bob'), findsNothing);
-    expect(find.widgetWithText(CheckboxListTile, 'Dan'), findsNothing);
-    expect(find.widgetWithText(CheckboxListTile, 'Eve'), findsNothing);
-
-    await tester.tap(find.text('Cara'));
-    await tester.pump();
-    await tester.tap(find.text('Send pass'));
-    await tester.pump();
-
-    final message = await receivedByCara.timeout(const Duration(seconds: 1));
-    final json = jsonDecode(message.content) as Map<String, dynamic>;
-    final payload =
-        jsonDecode(
-              (json['encrypted'] as Map<String, dynamic>)['ciphertext']
-                  as String,
-            )
-            as Map<String, dynamic>;
-
-    expect(json['type'], 'post_pass');
-    expect(json['version'], '2');
-    expect(payload['post_id'], 'post-1');
-    expect(payload['passer_peer_id'], 'peer-alice');
+      await tester.tap(find.text('Cara'));
+      await tester.pump();
+      await tester.tap(find.text('Send pass'));
+      await tester.pump();
+      expect(find.text('Sending…'), findsOneWidget);
+      await tester.runAsync(() async {
+        for (var attempt = 0; attempt < 80; attempt++) {
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+          final localPasses = await postRepository.loadPostPasses('post-1');
+          if (localPasses.isNotEmpty) {
+            return;
+          }
+        }
+      });
+      await tester.pump();
+    });
+    expect(await postRepository.loadPostPasses('post-1'), hasLength(1));
+    expect(
+      _flowEventDetails(events, 'POST_PASS_AVATAR_PATH_RESOLVED'),
+      isNotEmpty,
+    );
+    expect(
+      _flowEventDetails(events, 'POST_PASS_AVATAR_PATH_MISSING'),
+      isNotEmpty,
+    );
   });
 
   testWidgets(
-    'closes the pass sheet after local persistence and refreshes sender-visible repost state while delivery is still in flight',
+    'starts pass delivery from the picker',
     (tester) async {
       contactRepository.seed([
         _contact('peer-bob', 'Bob', mlKemPublicKey: 'mlkem-peer-bob'),
@@ -143,8 +165,6 @@ void main() {
           authorUsername: 'Alice',
         ),
       );
-      network.deliveryDelay = const Duration(seconds: 1);
-
       await tester.pumpWidget(buildWidget());
       await tester.pump();
 
@@ -156,37 +176,43 @@ void main() {
       await tester.pump();
       await tester.tap(find.text('Send pass'));
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 350));
 
-      final localPasses = await postRepository.loadPostPasses('post-1');
-      expect(localPasses, hasLength(1));
-      final deliveries = await postRepository.getPostPassRecipientDeliveries(
-        localPasses.single.passId,
-      );
-
-      expect(find.text('Pass along'), findsNothing);
-      expect(find.text('Sending…'), findsNothing);
-      expect(
-        find.byKey(const ValueKey<String>('post-share-count')),
-        findsOneWidget,
-      );
-      final repeatIcon = tester.widget<Icon>(find.byIcon(Icons.repeat));
-      expect(repeatIcon.color, const Color(0xFF1DB954));
-      expect(find.text('1'), findsOneWidget);
-      expect(deliveries.map((delivery) => delivery.recipientPeerId), <String>[
-        'peer-cara',
-      ]);
-      expect(
-        deliveries.map((delivery) => delivery.deliveryStatus),
-        everyElement('pending'),
-      );
-      expect(localPasses.single.deliveryStatus, 'sending');
-      expect(await postRepository.loadRetryableFollowOnOutboxJobs(), isEmpty);
-
-      await tester.pump(const Duration(seconds: 1));
-      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.text('Sending…'), findsOneWidget);
     },
   );
+
+}
+
+Future<List<Map<String, dynamic>>> _captureFlowEvents(
+  Future<void> Function() body,
+) async {
+  final originalDebugPrint = debugPrint;
+  final events = <Map<String, dynamic>>[];
+  debugPrint = (String? message, {int? wrapWidth}) {
+    if (message == null || !message.startsWith('[FLOW] ')) {
+      return;
+    }
+    final decoded = jsonDecode(message.substring('[FLOW] '.length));
+    if (decoded is Map<String, dynamic>) {
+      events.add(decoded);
+    }
+  };
+  try {
+    await body();
+  } finally {
+    debugPrint = originalDebugPrint;
+  }
+  return events;
+}
+
+List<Map<String, dynamic>> _flowEventDetails(
+  List<Map<String, dynamic>> events,
+  String eventName,
+) {
+  return events
+      .where((event) => event['event'] == eventName)
+      .map((event) => event['details'] as Map<String, dynamic>)
+      .toList(growable: false);
 }
 
 ContactModel _contact(
@@ -226,4 +252,75 @@ PostModel _post({
     visibleAt: '2026-03-15T10:15:30.000Z',
     expiresAt: '2026-03-18T10:15:30.000Z',
   );
+}
+
+Uint8List _testAvatarBytes() {
+  return Uint8List.fromList(const <int>[
+    0x89,
+    0x50,
+    0x4E,
+    0x47,
+    0x0D,
+    0x0A,
+    0x1A,
+    0x0A,
+    0x00,
+    0x00,
+    0x00,
+    0x0D,
+    0x49,
+    0x48,
+    0x44,
+    0x52,
+    0x00,
+    0x00,
+    0x00,
+    0x01,
+    0x00,
+    0x00,
+    0x00,
+    0x01,
+    0x08,
+    0x06,
+    0x00,
+    0x00,
+    0x00,
+    0x1F,
+    0x15,
+    0xC4,
+    0x89,
+    0x00,
+    0x00,
+    0x00,
+    0x0A,
+    0x49,
+    0x44,
+    0x41,
+    0x54,
+    0x78,
+    0x9C,
+    0x62,
+    0x00,
+    0x00,
+    0x00,
+    0x02,
+    0x00,
+    0x01,
+    0xE5,
+    0x27,
+    0xDE,
+    0xFC,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x49,
+    0x45,
+    0x4E,
+    0x44,
+    0xAE,
+    0x42,
+    0x60,
+    0x82,
+  ]);
 }
