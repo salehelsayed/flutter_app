@@ -681,6 +681,28 @@ func (b *redisPushTokenBackend) TokenCount() int {
 	return len(keys)
 }
 
+func (b *redisPushTokenBackend) PlatformCounts() map[string]int {
+	keys, err := scanRedisKeys(b.client, b.allPattern())
+	if err != nil {
+		log.Printf("[REDIS][PUSH] platform counts scan failed: %v", err)
+		return nil
+	}
+	counts := make(map[string]int)
+	ctx := context.Background()
+	for _, key := range keys {
+		payload, err := b.client.Get(ctx, key).Bytes()
+		if err != nil {
+			continue
+		}
+		var entry tokenEntry
+		if err := json.Unmarshal(payload, &entry); err != nil {
+			continue
+		}
+		counts[entry.Platform]++
+	}
+	return counts
+}
+
 func minInt(a int, b int) int {
 	if a < b {
 		return a

@@ -202,9 +202,13 @@ func TestProfileDelete(t *testing.T) {
 		t.Fatalf("delete: expected OK, got %s: %s", resp.Status, resp.Error)
 	}
 
-	// Verify gone from disk
-	if _, err := os.Stat(blobPath); !os.IsNotExist(err) {
-		t.Fatal("profile file should be removed from disk after delete")
+	// Verify tombstone on disk (zero-byte file remains to prevent re-signup miscounting)
+	info, err := os.Stat(blobPath)
+	if err != nil {
+		t.Fatalf("profile tombstone should exist on disk after delete: %v", err)
+	}
+	if info.Size() != 0 {
+		t.Fatalf("profile tombstone should be zero bytes, got %d", info.Size())
 	}
 
 	// Verify gone from index
