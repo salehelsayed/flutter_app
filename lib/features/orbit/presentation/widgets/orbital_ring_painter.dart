@@ -17,9 +17,9 @@ class OrbitalRingPainter extends CustomPainter {
       canvas,
       center,
       ring1Radius,
-      const Color(0x1F81E6D9), // rgba(129,230,217,0.12)
-      const Color(0x0881E6D9), // rgba(129,230,217,0.03) glow
-      1.0,
+      const Color(0x4081E6D9), // rgba(129,230,217,0.25)
+      const Color(0x1481E6D9), // rgba(129,230,217,0.08) glow
+      1.5,
     );
 
     // Ring 2: purple dashed
@@ -27,9 +27,9 @@ class OrbitalRingPainter extends CustomPainter {
       canvas,
       center,
       ring2Radius,
-      const Color(0x1AA78BFA), // rgba(167,139,250,0.10)
-      const Color(0x0881E6D9), // rgba(129,230,217,0.03) glow
-      1.0,
+      const Color(0x33A78BFA), // rgba(167,139,250,0.20)
+      const Color(0x1481E6D9), // rgba(129,230,217,0.08) glow
+      1.5,
     );
   }
 
@@ -55,7 +55,7 @@ class OrbitalRingPainter extends CustomPainter {
       ..style = PaintingStyle.stroke
       ..strokeWidth = strokeWidth;
 
-    const dashLength = 6.0;
+    const dashLength = 8.0;
     const gapLength = 4.0;
     final circumference = 2 * pi * radius;
     final totalDashes = (circumference / (dashLength + gapLength)).floor();

@@ -14,6 +14,7 @@ class ProfileUpdateListener {
   final Stream<ChatMessage> profileUpdateStream;
   final ContactRepository contactRepo;
   final Bridge bridge;
+  final DownloadProfilePictureFn downloadProfilePictureFn;
 
   StreamSubscription<ChatMessage>? _subscription;
   final _contactUpdatedController = StreamController<ContactModel>.broadcast();
@@ -22,7 +23,9 @@ class ProfileUpdateListener {
     required this.profileUpdateStream,
     required this.contactRepo,
     required this.bridge,
-  });
+    DownloadProfilePictureFn? downloadProfilePictureFn,
+  }) : downloadProfilePictureFn = downloadProfilePictureFn ??
+            downloadProfilePicture;
 
   /// Stream of contacts whose profile picture was updated.
   Stream<ContactModel> get contactUpdatedStream =>
@@ -107,7 +110,7 @@ class ProfileUpdateListener {
       }
 
       // Download the updated profile picture
-      final updated = await downloadProfilePicture(
+      final updated = await downloadProfilePictureFn(
         bridge: bridge,
         contactRepo: contactRepo,
         ownerPeerId: peerId,

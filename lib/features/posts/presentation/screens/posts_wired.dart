@@ -25,6 +25,7 @@ import 'package:flutter_app/features/conversation/presentation/screens/conversat
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository.dart';
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
+import 'package:flutter_app/features/settings/application/helpers/avatar_normalization_helper.dart';
 import 'package:flutter_app/features/settings/presentation/navigation/settings_route_transition.dart';
 import 'package:flutter_app/features/settings/presentation/screens/settings_wired.dart';
 import 'package:flutter_app/features/posts/application/attach_post_media_use_case.dart';
@@ -765,6 +766,9 @@ class _PostsWiredState extends State<PostsWired> {
             recipientPeerIds: recipientPeerIds,
             bridge: widget.bridge,
             loadAvatarBytesFn: _loadAvatarFromDisk,
+            avatarNormalizer: AvatarNormalizationHelper(
+              imageProcessor: widget.imageProcessor,
+            ),
             resolveStoredPathFn: widget.mediaFileManager?.resolveStoredPath,
           );
           if (mounted) {
@@ -1080,8 +1084,49 @@ String _kindFromMime(String mime) {
 
 Future<Uint8List?> _loadAvatarFromDisk(String peerId) async {
   final docsDir = UserAvatar.documentsDir;
-  if (docsDir == null) return null;
+  if (docsDir == null) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'POST_PASS_AVATAR_PATH_UNAVAILABLE',
+      details: {
+        'peerId': peerId,
+        'reason': 'documents_dir_unset',
+      },
+    );
+    return null;
+  }
   final file = File('$docsDir/media/avatars/$peerId.jpg');
-  if (await file.exists()) return file.readAsBytes();
-  return null;
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'POST_PASS_AVATAR_PATH_RESOLVED',
+    details: {
+      'peerId': peerId,
+      'avatarPath': file.path,
+    },
+  );
+  if (!await file.exists()) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'POST_PASS_AVATAR_PATH_MISSING',
+      details: {
+        'peerId': peerId,
+        'avatarPath': file.path,
+      },
+    );
+    return null;
+  }
+  try {
+    return await file.readAsBytes();
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'POST_PASS_AVATAR_PATH_READ_FAILED',
+      details: {
+        'peerId': peerId,
+        'avatarPath': file.path,
+        'error': e.toString(),
+      },
+    );
+    return null;
+  }
 }

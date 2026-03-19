@@ -50,10 +50,17 @@ handleIncomingPostReaction({
   }
 
   final sender = await contactRepo.getContact(envelope.senderPeerId);
-  if (sender == null) {
+  final trustedParticipant = sender == null
+      ? await isTrustedRepostThreadParticipant(
+          postRepo: postRepo,
+          postId: envelope.postId,
+          participantPeerId: envelope.senderPeerId,
+        )
+      : false;
+  if (sender == null && !trustedParticipant) {
     return (HandleIncomingPostReactionResult.unknownSender, null);
   }
-  if (sender.isBlocked) {
+  if (sender?.isBlocked ?? false) {
     return (HandleIncomingPostReactionResult.blockedSender, null);
   }
 
@@ -129,10 +136,17 @@ handleIncomingPostCommentReaction({
   }
 
   final sender = await contactRepo.getContact(envelope.senderPeerId);
-  if (sender == null) {
+  final trustedParticipant = sender == null
+      ? await isTrustedRepostThreadParticipant(
+          postRepo: postRepo,
+          postId: envelope.postId,
+          participantPeerId: envelope.senderPeerId,
+        )
+      : false;
+  if (sender == null && !trustedParticipant) {
     return (HandleIncomingPostCommentReactionResult.unknownSender, null);
   }
-  if (sender.isBlocked) {
+  if (sender?.isBlocked ?? false) {
     return (HandleIncomingPostCommentReactionResult.blockedSender, null);
   }
 

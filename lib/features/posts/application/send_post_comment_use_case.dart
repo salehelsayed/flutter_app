@@ -151,7 +151,7 @@ createLocalPostComment({
     senderPeerId: senderPeerId,
     envelope: envelope,
     createdAt: commentedAt,
-    recipientPeerIds: recipients.map((recipient) => recipient.peerId),
+    recipientPeerIds: recipients,
   );
   emitFlowEvent(
     layer: 'FL',

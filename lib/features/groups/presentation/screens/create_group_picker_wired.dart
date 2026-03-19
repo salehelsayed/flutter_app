@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
@@ -175,7 +176,7 @@ class _CreateGroupPickerWiredState extends State<CreateGroupPickerWired> {
       if (mounted) {
         setState(() => _isCreating = false);
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Failed to create group')),
+          SnackBar(content: Text(AppLocalizations.of(context)!.group_create_failed)),
         );
       }
     }

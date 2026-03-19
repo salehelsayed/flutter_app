@@ -1,6 +1,8 @@
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart' as intl;
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/blocked_banner.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/attachment_preview_strip.dart';
@@ -533,47 +535,30 @@ class _ConversationScreenState extends State<ConversationScreen> {
     }
   }
 
-  static const _months = [
-    'January',
-    'February',
-    'March',
-    'April',
-    'May',
-    'June',
-    'July',
-    'August',
-    'September',
-    'October',
-    'November',
-    'December',
-  ];
-
   String _formatDateLabel(String isoTimestamp) {
     try {
       final date = DateTime.parse(isoTimestamp);
       final now = DateTime.now();
       final today = DateTime(now.year, now.month, now.day);
       final messageDate = DateTime(date.year, date.month, date.day);
+      final l10n = AppLocalizations.of(context)!;
+      final locale = Localizations.localeOf(context).toString();
 
-      if (messageDate == today) return 'Today';
+      if (messageDate == today) return l10n.date_today;
       if (messageDate == today.subtract(const Duration(days: 1))) {
-        return 'Yesterday';
+        return l10n.date_yesterday;
       }
-      return '${_months[date.month - 1]} ${date.day}';
+      return intl.DateFormat.MMMd(locale).format(date);
     } catch (_) {
-      return 'Today';
+      return AppLocalizations.of(context)?.date_today ?? 'Today';
     }
   }
 
   String _formatTime(String isoTimestamp) {
     try {
       final date = DateTime.parse(isoTimestamp).toLocal();
-      final hour = date.hour == 0
-          ? 12
-          : (date.hour > 12 ? date.hour - 12 : date.hour);
-      final minute = date.minute.toString().padLeft(2, '0');
-      final period = date.hour < 12 ? 'AM' : 'PM';
-      return '$hour:$minute $period';
+      final locale = Localizations.localeOf(context).toString();
+      return intl.DateFormat.jm(locale).format(date);
     } catch (_) {
       return '';
     }

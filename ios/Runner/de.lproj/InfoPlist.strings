@@ -1,0 +1,5 @@
+NSCameraUsageDescription = "Diese App benötigt Kamerazugriff, um QR-Codes zu scannen und Fotos aufzunehmen";
+NSPhotoLibraryUsageDescription = "Diese App benötigt Zugriff auf deine Fotomediathek, um Bilder zu teilen";
+NSMicrophoneUsageDescription = "Diese App benötigt Mikrofonzugriff, um Sprachnachrichten aufzunehmen";
+NSLocationWhenInUseUsageDescription = "Diese App benötigt Standortzugriff, damit du Beiträge mit direkten Freunden in deiner Nähe teilen kannst";
+NSLocalNetworkUsageDescription = "mknoon sucht deine Freunde im selben WLAN, um Nachrichten direkt an ihr Handy zu senden. Das ist schneller, privater und wir sammeln niemals deine Daten.";

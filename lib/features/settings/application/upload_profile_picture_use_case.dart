@@ -11,6 +11,7 @@ import 'package:flutter_app/features/home/application/identity_avatar_resolver.d
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
+import 'package:flutter_app/features/settings/application/helpers/avatar_normalization_helper.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 
@@ -27,6 +28,7 @@ Future<bool> uploadProfilePicture({
   required P2PService p2pService,
   required String filePath,
   required String mime,
+  AvatarNormalizationHelper? avatarNormalizer,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -65,7 +67,11 @@ Future<bool> uploadProfilePicture({
     }
 
     final localPath = p.join(avatarsDir.path, '${identity.peerId}.jpg');
-    await File(filePath).copy(localPath);
+    final normalizer = avatarNormalizer ?? AvatarNormalizationHelper();
+    await normalizer.commitAvatar(
+      sourcePath: filePath,
+      canonicalPath: localPath,
+    );
 
     // Evict Flutter image cache so UserAvatar picks up the new file
     FileImage(File(localPath)).evict();

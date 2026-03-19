@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
@@ -45,6 +46,7 @@ import 'package:flutter_app/features/posts/domain/repositories/contact_presence_
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 import 'package:flutter_app/features/posts/domain/repositories/posts_privacy_settings_repository.dart';
 import 'package:flutter_app/features/feed/presentation/navigation/feed_route_transition.dart';
+import 'package:flutter_app/features/settings/application/helpers/avatar_normalization_helper.dart';
 import 'package:flutter_app/features/share/application/settle_share_intent_flow.dart';
 import 'package:flutter_app/features/share/presentation/navigation/share_target_picker_route.dart';
 import 'package:flutter_app/core/utils/startup_timing.dart';
@@ -258,7 +260,7 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: const Text('Failed to add contact. Please try again.'),
+          content: Text(AppLocalizations.of(context)!.error_add_contact),
           backgroundColor: Colors.red[700],
           behavior: SnackBarBehavior.floating,
         ),
@@ -408,17 +410,17 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
             const SizedBox(height: 16),
             ListTile(
               leading: const Icon(Icons.camera_alt, color: Colors.white),
-              title: const Text(
-                'Take Photo',
-                style: TextStyle(color: Colors.white),
+              title: Text(
+                AppLocalizations.of(ctx)!.picker_take_photo,
+                style: const TextStyle(color: Colors.white),
               ),
               onTap: () => Navigator.pop(ctx, ImageSource.camera),
             ),
             ListTile(
               leading: const Icon(Icons.photo_library, color: Colors.white),
-              title: const Text(
-                'Choose from Gallery',
-                style: TextStyle(color: Colors.white),
+              title: Text(
+                AppLocalizations.of(ctx)!.picker_gallery,
+                style: const TextStyle(color: Colors.white),
               ),
               onTap: () => Navigator.pop(ctx, ImageSource.gallery),
             ),
@@ -437,8 +439,10 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
 
       if (pickedFile == null) return;
 
-      // Process avatar: strip EXIF, compress to 512x512
-      final processedPath = await widget.imageProcessor.processAvatar(
+      final avatarNormalizer = AvatarNormalizationHelper(
+        imageProcessor: widget.imageProcessor,
+      );
+      final processedPath = await avatarNormalizer.prepareAvatar(
         inputPath: pickedFile.path,
       );
       final bytes = await File(processedPath).readAsBytes();
@@ -467,6 +471,7 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
         p2pService: widget.p2pService,
         filePath: processedPath,
         mime: 'image/jpeg',
+        avatarNormalizer: avatarNormalizer,
       );
 
       if (mounted) {
@@ -486,7 +491,7 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
       if (mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text('Failed to update photo: $e')));
+        ).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context)!.error_update_photo(e.toString()))));
       }
     }
   }

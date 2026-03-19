@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 class MnemonicInputScreen extends StatefulWidget {
   final Future<void> Function(String mnemonic) onRestorePressed;
@@ -53,18 +54,18 @@ class _MnemonicInputScreenState extends State<MnemonicInputScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const Text(
-                'Enter Recovery Phrase',
-                style: TextStyle(
+              Text(
+                AppLocalizations.of(context)!.mnemonic_title,
+                style: const TextStyle(
                   fontSize: 24,
                   fontWeight: FontWeight.bold,
                 ),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 16),
-              const Text(
-                'Enter your 12-word recovery phrase below',
-                style: TextStyle(
+              Text(
+                AppLocalizations.of(context)!.mnemonic_error_12,
+                style: const TextStyle(
                   fontSize: 16,
                   color: Colors.grey,
                 ),
@@ -75,7 +76,7 @@ class _MnemonicInputScreenState extends State<MnemonicInputScreen> {
                 controller: _mnemonicController,
                 maxLines: 4,
                 decoration: InputDecoration(
-                  hintText: 'word1 word2 word3 word4\nword5 word6 word7 word8\nword9 word10 word11 word12',
+                  hintText: AppLocalizations.of(context)!.mnemonic_hint,
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(8),
                   ),

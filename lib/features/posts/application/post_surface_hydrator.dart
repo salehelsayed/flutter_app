@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/posts/application/nearby_eligibility_service.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
@@ -28,6 +29,14 @@ Future<List<PostModel>> hydratePostSurfaceItems({
   final avatarSnapshots = await postRepo.loadPassAvatarSnapshotsForPosts(
     postList.map((post) => post.id).toList(growable: false),
   );
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'POST_SURFACE_HYDRATE_AVATAR_SNAPSHOTS_LOADED',
+    details: {
+      'postCount': postList.length,
+      'snapshotCount': avatarSnapshots.length,
+    },
+  );
   final viewerSharedToCounts = viewerPeerId == null
       ? const <String, int>{}
       : await postRepo.loadViewerSharedToCountsForPosts(
@@ -39,6 +48,23 @@ Future<List<PostModel>> hydratePostSurfaceItems({
     postList.map((post) async {
       final comments = await postRepo.loadComments(post.id);
       final reactions = await postRepo.loadPostReactions(post.id);
+      final originalAuthorAvatarBytes = avatarSnapshots[post.id];
+      if (originalAuthorAvatarBytes != null) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'POST_SURFACE_HYDRATE_AVATAR_SNAPSHOT_HIT',
+          details: {
+            'postId': post.id,
+            'avatarByteLength': originalAuthorAvatarBytes.length,
+          },
+        );
+      } else {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'POST_SURFACE_HYDRATE_AVATAR_SNAPSHOT_MISS',
+          details: {'postId': post.id},
+        );
+      }
       final activeHeartPeerIds = <String>{...?repostHeartBaselines[post.id]};
       for (final reaction in reactions) {
         if (reaction.senderPeerId.isEmpty) {
@@ -68,8 +94,8 @@ Future<List<PostModel>> hydratePostSurfaceItems({
                   post.nearbyDistanceM != null
               ? formatNearbyDistanceLabel(post.nearbyDistanceM!)
               : null,
-          originalAuthorAvatarBytes: avatarSnapshots[post.id] != null
-              ? Uint8List.fromList(avatarSnapshots[post.id]!)
+          originalAuthorAvatarBytes: originalAuthorAvatarBytes != null
+              ? Uint8List.fromList(originalAuthorAvatarBytes)
               : null,
         );
       }
@@ -102,8 +128,8 @@ Future<List<PostModel>> hydratePostSurfaceItems({
                 post.nearbyDistanceM != null
             ? formatNearbyDistanceLabel(post.nearbyDistanceM!)
             : null,
-        originalAuthorAvatarBytes: avatarSnapshots[post.id] != null
-            ? Uint8List.fromList(avatarSnapshots[post.id]!)
+        originalAuthorAvatarBytes: originalAuthorAvatarBytes != null
+            ? Uint8List.fromList(originalAuthorAvatarBytes)
             : null,
       );
     }),

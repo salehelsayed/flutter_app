@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/theme/feed_colors.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
@@ -99,12 +100,12 @@ class CollapsedModeCardBody extends StatelessWidget {
                   onTap: onTapExpand,
                   behavior: HitTestBehavior.opaque,
                   child: Column(
-                    children: [_buildPreviewContent(), _buildExpandHint()],
+                    children: [_buildPreviewContent(context), _buildExpandHint(context)],
                   ),
                 ),
         ),
         // Footer with input — not wrapped in the tap target
-        _buildFooter(),
+        _buildFooter(context),
       ],
     );
   }
@@ -190,7 +191,7 @@ class CollapsedModeCardBody extends StatelessWidget {
     );
   }
 
-  Widget _buildPreviewContent() {
+  Widget _buildPreviewContent(BuildContext context) {
     final ThreadMessage previewMsg;
     final String? displayText;
 
@@ -206,7 +207,7 @@ class CollapsedModeCardBody extends StatelessWidget {
     final isSent = sessionReply != null || !previewMsg.isIncoming;
     final String label;
     if (isSent) {
-      label = 'You';
+      label = AppLocalizations.of(context)!.feed_you;
     } else if (thread.isGroup) {
       label = previewMsg.senderUsername ?? thread.displayName;
     } else {
@@ -294,22 +295,22 @@ class CollapsedModeCardBody extends StatelessWidget {
     );
   }
 
-  Widget _buildExpandHint() {
-    return const Center(
+  Widget _buildExpandHint(BuildContext context) {
+    return Center(
       child: Padding(
-        padding: EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.only(bottom: 8),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(
+            const Icon(
               Icons.keyboard_arrow_down_rounded,
               size: 16,
               color: FeedColors.viewEarlierText,
             ),
-            SizedBox(width: 2),
+            const SizedBox(width: 2),
             Text(
-              'Tap to expand',
-              style: TextStyle(
+              AppLocalizations.of(context)!.feed_tap_expand,
+              style: const TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.w500,
                 color: FeedColors.viewEarlierText,
@@ -335,7 +336,7 @@ class CollapsedModeCardBody extends StatelessWidget {
     return null;
   }
 
-  Widget _buildFooter() {
+  Widget _buildFooter(BuildContext context) {
     if (!canWrite) {
       return _buildReadOnlyBanner();
     }
@@ -353,7 +354,7 @@ class CollapsedModeCardBody extends StatelessWidget {
           if (activeQuoteText != null)
             QuotePreviewBar(text: activeQuoteText!, onDismiss: onClearQuote),
           InlineReplyInput(
-            hintText: 'Continue...',
+            hintText: AppLocalizations.of(context)!.conversation_continue,
             onSend: (text) => onSend?.call(text),
             enabled: sendEnabled,
             initialText: initialText,

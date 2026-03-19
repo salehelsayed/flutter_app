@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
@@ -862,7 +863,7 @@ class _FeedWiredState extends State<FeedWired> {
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: const Text('Failed to add contact. Please try again.'),
+          content: Text(AppLocalizations.of(context)!.error_add_contact),
           backgroundColor: Colors.red[700],
           behavior: SnackBarBehavior.floating,
         ),
@@ -1103,7 +1104,7 @@ class _FeedWiredState extends State<FeedWired> {
         );
         final errorText = result == SendChatMessageResult.encryptionRequired
             ? 'Cannot send: contact does not support encryption.'
-            : 'Message failed to send. Try again.';
+            : AppLocalizations.of(context)!.error_send_message;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(errorText),
@@ -1127,7 +1128,7 @@ class _FeedWiredState extends State<FeedWired> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: const Text('Message failed to send. Try again.'),
+          content: Text(AppLocalizations.of(context)!.error_send_message),
           backgroundColor: Colors.red[700],
           behavior: SnackBarBehavior.floating,
         ),
@@ -1292,9 +1293,9 @@ class _FeedWiredState extends State<FeedWired> {
 
   void _showProcessingSnackBar() {
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Processing video\u2026'),
-        duration: Duration(minutes: 5),
+      SnackBar(
+        content: Text(AppLocalizations.of(context)!.status_processing_video),
+        duration: const Duration(minutes: 5),
         behavior: SnackBarBehavior.floating,
       ),
     );
@@ -1651,7 +1652,7 @@ class _FeedWiredState extends State<FeedWired> {
         );
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: const Text('Message failed to send. Try again.'),
+            content: Text(AppLocalizations.of(context)!.error_send_message),
             backgroundColor: Colors.red[700],
             behavior: SnackBarBehavior.floating,
           ),
@@ -1672,7 +1673,7 @@ class _FeedWiredState extends State<FeedWired> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: const Text('Message failed to send. Try again.'),
+          content: Text(AppLocalizations.of(context)!.error_send_message),
           backgroundColor: Colors.red[700],
           behavior: SnackBarBehavior.floating,
         ),
@@ -2025,7 +2026,7 @@ class _FeedWiredState extends State<FeedWired> {
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: const Text('Failed to update username. Please try again.'),
+          content: Text(AppLocalizations.of(context)!.error_update_username),
           backgroundColor: Colors.red[700],
           behavior: SnackBarBehavior.floating,
         ),

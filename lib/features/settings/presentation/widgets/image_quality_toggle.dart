@@ -1,5 +1,6 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 
 /// Toggle widget for media quality preference.
@@ -18,7 +19,7 @@ class ImageQualityToggle extends StatelessWidget {
     super.key,
     required this.value,
     required this.onChanged,
-    this.label = 'Photo Quality',
+    required this.label,
     this.icon = Icons.photo_size_select_large,
   });
 
@@ -70,14 +71,14 @@ class ImageQualityToggle extends StatelessWidget {
                   child: Row(
                     children: [
                       _buildOption(
-                        label: 'Compressed',
+                        label: AppLocalizations.of(context)!.settings_compressed,
                         isSelected:
                             value == ImageQualityPreference.compressed,
                         onTap: () =>
                             onChanged(ImageQualityPreference.compressed),
                       ),
                       _buildOption(
-                        label: 'Original',
+                        label: AppLocalizations.of(context)!.settings_original,
                         isSelected:
                             value == ImageQualityPreference.original,
                         onTap: () =>
@@ -89,8 +90,8 @@ class ImageQualityToggle extends StatelessWidget {
                 const SizedBox(height: 8),
                 Text(
                   value == ImageQualityPreference.original
-                      ? 'Full quality, larger file size. Metadata is always removed.'
-                      : 'Smaller file size, faster sending. Metadata is always removed.',
+                      ? AppLocalizations.of(context)!.settings_original_desc
+                      : AppLocalizations.of(context)!.settings_compressed_desc,
                   style: const TextStyle(
                     fontSize: 11,
                     color: Color.fromRGBO(255, 255, 255, 0.35),

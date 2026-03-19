@@ -1,5 +1,6 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/theme/feed_colors.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 
@@ -256,7 +257,7 @@ class _IntroductionConnectionCardState
           const SizedBox(width: 6),
         ],
         Text(
-          'Introduced by ${widget.introducedBy}',
+          AppLocalizations.of(context)!.introduced_by(widget.introducedBy),
           style: TextStyle(
             fontSize: compact ? 12 : 13,
             color: const Color(0x99FFFFFF),
@@ -290,12 +291,12 @@ class _IntroductionConnectionCardState
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             mainAxisSize: MainAxisSize.min,
-            children: const [
-              Icon(Icons.chat_bubble_outline_rounded, size: 18),
-              SizedBox(width: 8),
+            children: [
+              const Icon(Icons.chat_bubble_outline_rounded, size: 18),
+              const SizedBox(width: 8),
               Text(
-                'Send Message',
-                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+                AppLocalizations.of(context)!.send_message,
+                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
               ),
             ],
           ),

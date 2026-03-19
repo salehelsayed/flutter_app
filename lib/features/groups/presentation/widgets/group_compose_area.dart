@@ -1,5 +1,6 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 /// Compose area for group conversations.
 ///
@@ -133,7 +134,7 @@ class _GroupComposeAreaState extends State<GroupComposeArea>
                           color: Colors.white,
                         ),
                         decoration: InputDecoration(
-                          hintText: 'Message',
+                          hintText: AppLocalizations.of(context)!.group_message_hint,
                           hintStyle: TextStyle(
                             color: Colors.white.withOpacity(0.3),
                           ),

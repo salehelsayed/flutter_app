@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/feed_colors.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/shared/widgets/linkable_text.dart';
@@ -172,7 +173,7 @@ class MessageBubble extends StatelessWidget {
                   // Inline name + text + time + status
                   Padding(
                     padding: _contentPadding,
-                    child: _buildInlineContent(),
+                    child: _buildInlineContent(context),
                   ),
                 ],
               ),
@@ -197,8 +198,8 @@ class MessageBubble extends StatelessWidget {
     );
   }
 
-  Widget _buildInlineContent() {
-    final name = senderLabel ?? (isIncoming ? '' : 'You');
+  Widget _buildInlineContent(BuildContext context) {
+    final name = senderLabel ?? (isIncoming ? '' : AppLocalizations.of(context)!.feed_you);
     const nameStyle = TextStyle(
       fontSize: 14,
       fontWeight: FontWeight.w600,

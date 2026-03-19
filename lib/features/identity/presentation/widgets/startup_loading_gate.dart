@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/app_colors.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 const String startupStageCheckingIdentity = 'checking_identity';
 const String startupStageOpeningFeed = 'opening_feed';
@@ -17,7 +18,7 @@ class StartupLoadingGate extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final (title, subtitle) = _stageText(stage);
+    final (title, subtitle) = _stageText(stage, context);
 
     return SizedBox.expand(
       key: const ValueKey('startup-loading-gate'),
@@ -101,20 +102,22 @@ class StartupLoadingGate extends StatelessWidget {
     );
   }
 
-  (String, String) _stageText(String stage) {
+  (String, String) _stageText(String stage, BuildContext context) {
+    final l10n = AppLocalizations.of(context);
+    if (l10n == null) {
+      // Fallback before localization is ready
+      return ('Preparing your space...', 'Checking identity and startup state');
+    }
     switch (stage) {
       case startupStageOpeningFeed:
-        return ('Opening Feed...', 'Handing off to your conversations');
+        return (l10n.startup_feed, l10n.startup_feed_desc);
       case startupStageOpeningSetup:
-        return ('Opening setup...', 'Getting your first-time experience ready');
+        return (l10n.startup_setup, l10n.startup_setup_desc);
       case startupStageOpeningOnboarding:
-        return ('Opening onboarding...', 'Let\'s get your identity ready');
+        return (l10n.startup_onboarding, l10n.startup_onboarding_desc);
       case startupStageCheckingIdentity:
       default:
-        return (
-          'Preparing your space...',
-          'Checking identity and startup state',
-        );
+        return (l10n.startup_checking, l10n.startup_checking_desc);
     }
   }
 }

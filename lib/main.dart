@@ -118,6 +118,7 @@ import 'package:flutter_app/core/notifications/notification_route_dispatch.dart'
 import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/notifications/notification_route_target.dart';
 import 'package:flutter_app/core/theme/app_theme.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/startup_timing.dart';
 import 'dart:io' show Platform;
@@ -1523,6 +1524,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     return MaterialApp(
       title: 'mknoon',
       navigatorKey: MyApp.navigatorKey,
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
       theme: AppTheme.darkTheme,
       themeMode: ThemeMode.dark,
       home: StartupRouter(

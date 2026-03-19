@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 
@@ -66,7 +67,7 @@ class FriendPickerScreen extends StatelessWidget {
               children: [
                 Expanded(
                   child: Text(
-                    'Introduce to $recipientUsername',
+                    AppLocalizations.of(context)!.picker_introduce_to(recipientUsername),
                     style: const TextStyle(
                       fontSize: 17,
                       fontWeight: FontWeight.w600,
@@ -99,7 +100,7 @@ class FriendPickerScreen extends StatelessWidget {
                 onChanged: onSearchChanged,
                 style: const TextStyle(fontSize: 14, color: Color(0xF2FFFFFF)),
                 decoration: InputDecoration(
-                  hintText: 'Search friends...',
+                  hintText: AppLocalizations.of(context)!.picker_search,
                   hintStyle: TextStyle(
                     fontSize: 14,
                     color: Colors.white.withValues(alpha: 0.3),
@@ -126,8 +127,8 @@ class FriendPickerScreen extends StatelessWidget {
                     padding: const EdgeInsets.all(32),
                     child: Text(
                       searchQuery.isEmpty
-                          ? 'No friends available to introduce'
-                          : 'No friends matching "$searchQuery"',
+                          ? AppLocalizations.of(context)!.picker_no_friends
+                          : AppLocalizations.of(context)!.picker_no_results(searchQuery),
                       style: TextStyle(
                         fontSize: 14,
                         color: Colors.white.withValues(alpha: 0.4),
@@ -181,8 +182,8 @@ class FriendPickerScreen extends StatelessWidget {
                 ),
                 child: Text(
                   selectionCount > 0
-                      ? 'Introduce ($selectionCount)'
-                      : 'Introduce',
+                      ? AppLocalizations.of(context)!.picker_introduce_count(selectionCount)
+                      : AppLocalizations.of(context)!.picker_introduce,
                   style: const TextStyle(
                     fontSize: 15,
                     fontWeight: FontWeight.w600,

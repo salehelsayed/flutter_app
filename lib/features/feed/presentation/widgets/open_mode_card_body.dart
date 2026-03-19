@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/theme/feed_colors.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
@@ -85,7 +86,7 @@ class OpenModeCardBody extends StatelessWidget {
           ),
         ),
         // Footer with reply input
-        _buildFooter(),
+        _buildFooter(context),
       ],
     );
   }
@@ -145,7 +146,7 @@ class OpenModeCardBody extends StatelessWidget {
     );
   }
 
-  Widget _buildFooter() {
+  Widget _buildFooter(BuildContext context) {
     if (!canWrite) {
       return _buildReadOnlyBanner();
     }
@@ -163,7 +164,7 @@ class OpenModeCardBody extends StatelessWidget {
           if (activeQuoteText != null)
             QuotePreviewBar(text: activeQuoteText!, onDismiss: onClearQuote),
           InlineReplyInput(
-            hintText: 'Reply...',
+            hintText: AppLocalizations.of(context)!.conversation_reply,
             onSend: (text) => onSend?.call(text),
             enabled: sendEnabled,
             initialText: initialText,

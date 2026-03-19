@@ -1,0 +1,5 @@
+NSCameraUsageDescription = "This app needs camera access to scan QR codes and take photos";
+NSPhotoLibraryUsageDescription = "This app needs access to your photo library to share images";
+NSMicrophoneUsageDescription = "This app needs microphone access to record voice messages";
+NSLocationWhenInUseUsageDescription = "This app needs location access to share nearby posts with your direct friends";
+NSLocalNetworkUsageDescription = "mknoon looks for your friends on the same WiFi to send messages directly to their phone. It's faster, more private, and we never collect your data.";

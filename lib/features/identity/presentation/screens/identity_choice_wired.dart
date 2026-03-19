@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/identity/application/generate_identity_use_case.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/identity/presentation/navigation/startup_route_transition.dart';
@@ -134,7 +135,7 @@ class _IdentityChoiceWiredState extends State<IdentityChoiceWired> {
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Error: ${e.toString()}'),
+          content: Text(AppLocalizations.of(context)!.error_generic(e.toString())),
           backgroundColor: Colors.red,
         ),
       );

@@ -102,9 +102,9 @@ class _EditableUsernameWidgetState extends State<EditableUsernameWidget> {
               child: TextField(
                 controller: _controller,
                 focusNode: _focusNode,
-                maxLength: 20,
+                maxLength: 30,
                 inputFormatters: [
-                  FilteringTextInputFormatter.allow(RegExp(r'[a-zA-Z0-9_\-.]')),
+                  FilteringTextInputFormatter.allow(RegExp(r'[a-zA-Z0-9_\-.\u00C0-\u024F\u0600-\u06FF\u0750-\u077F]')),
                 ],
                 style: const TextStyle(
                   color: AppColors.textPrimary,

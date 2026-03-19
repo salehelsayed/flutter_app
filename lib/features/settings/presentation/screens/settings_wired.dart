@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
@@ -19,6 +20,7 @@ import 'package:flutter_app/features/identity/domain/repositories/identity_repos
 import 'package:flutter_app/features/posts/application/nearby_location_service.dart';
 import 'package:flutter_app/features/posts/domain/models/posts_privacy_settings.dart';
 import 'package:flutter_app/features/posts/domain/repositories/posts_privacy_settings_repository.dart';
+import 'package:flutter_app/features/settings/application/helpers/avatar_normalization_helper.dart';
 import 'package:flutter_app/features/settings/application/upload_profile_picture_use_case.dart';
 import 'settings_screen.dart';
 
@@ -250,8 +252,10 @@ class _SettingsWiredState extends State<SettingsWired> {
       final picked = await picker.pickImage(source: ImageSource.gallery);
       if (picked == null || !mounted) return;
 
-      // Process avatar: strip EXIF, compress to 512x512
-      final processedPath = await widget.imageProcessor.processAvatar(
+      final avatarNormalizer = AvatarNormalizationHelper(
+        imageProcessor: widget.imageProcessor,
+      );
+      final processedPath = await avatarNormalizer.prepareAvatar(
         inputPath: picked.path,
       );
       final bytes = await File(processedPath).readAsBytes();
@@ -269,6 +273,7 @@ class _SettingsWiredState extends State<SettingsWired> {
         p2pService: widget.p2pService,
         filePath: processedPath,
         mime: 'image/jpeg',
+        avatarNormalizer: avatarNormalizer,
       );
 
       if (!mounted) return;
@@ -285,7 +290,7 @@ class _SettingsWiredState extends State<SettingsWired> {
 
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Failed to upload profile picture')),
+            SnackBar(content: Text(AppLocalizations.of(context)!.settings_photo_fail)),
           );
         }
       }

@@ -1,7 +1,6 @@
 import 'package:uuid/uuid.dart';
 
 import 'package:flutter_app/core/services/p2p_service.dart';
-import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/posts/application/post_engagement_follow_on_support.dart';
 import 'package:flutter_app/features/posts/application/post_follow_on_delivery.dart';
@@ -83,7 +82,7 @@ Future<(SendPostReactionResult, PostReactionModel?)> sendPostReaction({
     senderPeerId: senderPeerId,
     envelope: envelope,
     createdAt: createdAt,
-    recipientPeerIds: recipients.map((recipient) => recipient.peerId),
+    recipientPeerIds: recipients,
     maxConcurrentRecipients: maxConcurrentRecipients,
   );
   return (
@@ -92,7 +91,7 @@ Future<(SendPostReactionResult, PostReactionModel?)> sendPostReaction({
   );
 }
 
-Future<List<ContactModel>> resolvePostEngagementRecipients({
+Future<List<String>> resolvePostEngagementRecipients({
   required PostRepository postRepo,
   required ContactRepository contactRepo,
   required String postId,
@@ -123,13 +122,19 @@ Future<List<ContactModel>> resolvePostEngagementRecipients({
         };
   peerIds.remove(senderPeerId);
 
-  final recipients = <ContactModel>[];
+  final recipients = <String>[];
   for (final peerId in peerIds) {
     final contact = await contactRepo.getContact(peerId);
-    if (contact == null || contact.isBlocked || contact.isArchived) {
+    if (contact != null) {
+      if (contact.isBlocked || contact.isArchived) {
+        continue;
+      }
+      recipients.add(contact.peerId);
       continue;
     }
-    recipients.add(contact);
+    if (repostParticipants.contains(peerId)) {
+      recipients.add(peerId);
+    }
   }
   return recipients;
 }

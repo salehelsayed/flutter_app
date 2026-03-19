@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/media/amplitude_buffer.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/downsample_waveform.dart';
@@ -372,9 +373,9 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
-                    'Create Post',
-                    style: TextStyle(
+                  Text(
+                    AppLocalizations.of(context)!.compose_title,
+                    style: const TextStyle(
                       color: Colors.white,
                       fontSize: 20,
                       fontWeight: FontWeight.w700,
@@ -403,8 +404,8 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                           Expanded(
                             child: Text(
                               widget.activePinCount == 1
-                                  ? 'You already have 1 active pinned post'
-                                  : 'You already have ${widget.activePinCount} active pinned posts',
+                                  ? AppLocalizations.of(context)!.compose_pinned_1
+                                  : AppLocalizations.of(context)!.compose_pinned_n(widget.activePinCount),
                               style: const TextStyle(
                                 color: Colors.white,
                                 fontSize: 13,
@@ -415,7 +416,7 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                           if (widget.onManagePins != null)
                             TextButton(
                               onPressed: widget.onManagePins,
-                              child: const Text('Manage'),
+                              child: Text(AppLocalizations.of(context)!.compose_manage),
                             ),
                         ],
                       ),
@@ -428,7 +429,7 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                     minLines: 4,
                     onChanged: (_) => setState(() {}),
                     decoration: InputDecoration(
-                      hintText: 'What do you want to share?',
+                      hintText: AppLocalizations.of(context)!.compose_hint,
                       hintStyle: const TextStyle(
                         color: Color.fromRGBO(255, 255, 255, 0.35),
                       ),
@@ -446,7 +447,7 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                     spacing: 10,
                     children: [
                       ChoiceChip(
-                        label: const Text('All Friends'),
+                        label: Text(AppLocalizations.of(context)!.compose_audience_all),
                         selected: _audienceKind == PostAudienceKind.allFriends,
                         onSelected: (_) {
                           setState(() {
@@ -456,7 +457,7 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                         },
                       ),
                       ChoiceChip(
-                        label: const Text('People Nearby'),
+                        label: Text(AppLocalizations.of(context)!.compose_audience_nearby),
                         selected:
                             _audienceKind == PostAudienceKind.peopleNearby,
                         onSelected: (_) {
@@ -467,7 +468,7 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                         },
                       ),
                       ChoiceChip(
-                        label: const Text('Pick People'),
+                        label: Text(AppLocalizations.of(context)!.compose_audience_pick),
                         selected: _audienceKind == PostAudienceKind.pickPeople,
                         onSelected: (_) {
                           setState(() {
@@ -479,9 +480,9 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                   ),
                   if (_audienceKind == PostAudienceKind.peopleNearby) ...[
                     const SizedBox(height: 16),
-                    const Text(
-                      'Radius',
-                      style: TextStyle(
+                    Text(
+                      AppLocalizations.of(context)!.compose_radius,
+                      style: const TextStyle(
                         color: Colors.white,
                         fontSize: 14,
                         fontWeight: FontWeight.w600,
@@ -492,10 +493,11 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                       spacing: 10,
                       children: <int>[500, 1000, 2000]
                           .map((radiusM) {
+                            final l10n = AppLocalizations.of(context)!;
                             final label = switch (radiusM) {
-                              500 => '500m',
-                              1000 => '1km',
-                              _ => '2km',
+                              500 => l10n.compose_radius_500,
+                              1000 => l10n.compose_radius_1k,
+                              _ => l10n.compose_radius_2k,
                             };
                             return ChoiceChip(
                               label: Text(label),
@@ -532,7 +534,7 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                           Icons.photo_library_outlined,
                           size: 18,
                         ),
-                        label: Text(_isAttaching ? 'Adding...' : 'Media'),
+                        label: Text(_isAttaching ? AppLocalizations.of(context)!.compose_media_adding : AppLocalizations.of(context)!.compose_media),
                       ),
                       const SizedBox(width: 10),
                       OutlinedButton.icon(
@@ -542,7 +544,7 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                             ? null
                             : _attachVoice,
                         icon: const Icon(Icons.mic_none_rounded, size: 18),
-                        label: const Text('Voice'),
+                        label: Text(AppLocalizations.of(context)!.compose_voice),
                       ),
                     ],
                   ),
@@ -567,7 +569,7 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                             Icons.stop_circle_outlined,
                             size: 18,
                           ),
-                          label: const Text('Stop'),
+                          label: Text(AppLocalizations.of(context)!.compose_voice_stop),
                         ),
                       ],
                     ),
@@ -586,8 +588,8 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                           Expanded(
                             child: Text(
                               _mediaDrafts.first.kind == 'voice'
-                                  ? 'Voice attached'
-                                  : '${_mediaDrafts.length} attachments',
+                                  ? AppLocalizations.of(context)!.compose_voice_attached
+                                  : AppLocalizations.of(context)!.compose_attachments(_mediaDrafts.length),
                               style: const TextStyle(
                                 color: Colors.white,
                                 fontWeight: FontWeight.w600,
@@ -607,9 +609,9 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                   ],
                   if (_audienceKind == PostAudienceKind.pickPeople) ...[
                     const SizedBox(height: 16),
-                    const Text(
-                      'Pick People',
-                      style: TextStyle(
+                    Text(
+                      AppLocalizations.of(context)!.compose_pick_people,
+                      style: const TextStyle(
                         color: Colors.white,
                         fontSize: 14,
                         fontWeight: FontWeight.w600,
@@ -667,7 +669,7 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                     width: double.infinity,
                     child: ElevatedButton(
                       onPressed: _canSubmit ? _submit : null,
-                      child: Text(_isSubmitting ? 'Posting...' : 'Post'),
+                      child: Text(_isSubmitting ? AppLocalizations.of(context)!.compose_posting : AppLocalizations.of(context)!.compose_post),
                     ),
                   ),
                 ],
@@ -695,31 +697,32 @@ class _NearbyComposeAvailabilityCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final title = switch (availability.state) {
-      NearbyComposeAvailabilityState.sharingOff =>
-        'People Nearby is off in Settings',
-      NearbyComposeAvailabilityState.ready => 'People Nearby is ready',
-      NearbyComposeAvailabilityState.stale => 'Refresh nearby before posting',
+      NearbyComposeAvailabilityState.sharingOff => l10n.compose_nearby_off,
+      NearbyComposeAvailabilityState.ready => l10n.compose_nearby_ready,
+      NearbyComposeAvailabilityState.stale => l10n.compose_nearby_refresh,
       NearbyComposeAvailabilityState.permissionRequired =>
-        'Allow location to use People Nearby',
+        l10n.compose_nearby_allow,
       NearbyComposeAvailabilityState.permissionDeniedForever =>
-        'Location permission is off',
-      NearbyComposeAvailabilityState.servicesOff => 'Turn on location services',
+        l10n.compose_nearby_perm_off,
+      NearbyComposeAvailabilityState.servicesOff =>
+        l10n.compose_nearby_services,
     };
 
     final subtitle = switch (availability.state) {
       NearbyComposeAvailabilityState.sharingOff =>
-        'Turn it on in Settings before posting to nearby friends.',
+        l10n.compose_nearby_off_desc,
       NearbyComposeAvailabilityState.ready =>
-        'Your nearby snapshot is fresh enough to use for posting.',
+        l10n.compose_nearby_ready_desc,
       NearbyComposeAvailabilityState.stale =>
-        'Refresh your nearby snapshot before using this audience.',
+        l10n.compose_nearby_refresh_desc,
       NearbyComposeAvailabilityState.permissionRequired =>
-        'Refresh nearby to grant location permission for nearby posts.',
+        l10n.compose_nearby_allow_desc,
       NearbyComposeAvailabilityState.permissionDeniedForever =>
-        'Open system settings to re-enable location access.',
+        l10n.compose_nearby_perm_desc,
       NearbyComposeAvailabilityState.servicesOff =>
-        'Enable location services, then refresh nearby again.',
+        l10n.compose_nearby_services_desc,
     };
 
     final canOpenSettingsShortcut =
@@ -742,7 +745,7 @@ class _NearbyComposeAvailabilityCard extends StatelessWidget {
               ),
             ),
             icon: const Icon(Icons.settings_outlined, size: 16),
-            label: const Text('Open Settings'),
+            label: Text(l10n.compose_open_settings),
           )
         : availability.canRefresh && onRefresh != null
         ? TextButton.icon(
@@ -759,7 +762,7 @@ class _NearbyComposeAvailabilityCard extends StatelessWidget {
               ),
             ),
             icon: const Icon(Icons.refresh_rounded, size: 16),
-            label: Text(isRefreshing ? 'Refreshing...' : 'Refresh nearby'),
+            label: Text(isRefreshing ? l10n.compose_refreshing : l10n.compose_refresh_nearby),
           )
         : null;
 

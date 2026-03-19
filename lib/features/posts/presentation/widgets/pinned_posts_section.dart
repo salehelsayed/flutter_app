@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
@@ -56,9 +57,9 @@ class _PinnedPostsSectionState extends State<PinnedPostsSection> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text(
-                          'Pinned posts',
-                          style: TextStyle(
+                        Text(
+                          AppLocalizations.of(context)!.pinned_title,
+                          style: const TextStyle(
                             color: Colors.white,
                             fontSize: 16,
                             fontWeight: FontWeight.w700,
@@ -77,7 +78,7 @@ class _PinnedPostsSectionState extends State<PinnedPostsSection> {
                   ),
                   const SizedBox(width: 12),
                   Text(
-                    _countCopy(widget.posts.length),
+                    _countCopy(widget.posts.length, context),
                     style: const TextStyle(
                       color: Color(0xFF8FD6B5),
                       fontSize: 13,
@@ -133,7 +134,7 @@ class _PinnedPostsSectionState extends State<PinnedPostsSection> {
                         );
                       },
                       child: Text(
-                        'See all ${widget.posts.length} pinned posts',
+                        AppLocalizations.of(context)!.pinned_see_all(widget.posts.length),
                         style: const TextStyle(
                           color: Color(0xFF8FD6B5),
                           fontSize: 13,
@@ -151,8 +152,9 @@ class _PinnedPostsSectionState extends State<PinnedPostsSection> {
     );
   }
 
-  static String _countCopy(int count) {
-    return count == 1 ? '1 pinned post' : '$count pinned posts';
+  static String _countCopy(int count, BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    return count == 1 ? l10n.pinned_count_1 : l10n.pinned_count_n(count);
   }
 
   static String _summaryCopy(List<PostModel> posts) {
@@ -239,22 +241,22 @@ class _PinnedPostCard extends StatelessWidget {
               if (!isAuthor && onDismiss != null)
                 TextButton(
                   onPressed: () => onDismiss!(post),
-                  child: const Text('Dismiss'),
+                  child: Text(AppLocalizations.of(context)!.pinned_dismiss),
                 ),
               if (!isAuthor && onMessage != null)
                 TextButton(
                   onPressed: () => onMessage!(post),
-                  child: Text('Message ${post.authorUsername}'),
+                  child: Text(AppLocalizations.of(context)!.pinned_message(post.authorUsername)),
                 ),
               if (isAuthor && onEdit != null)
                 TextButton(
                   onPressed: () => onEdit!(post),
-                  child: const Text('Edit'),
+                  child: Text(AppLocalizations.of(context)!.pinned_edit),
                 ),
               if (isAuthor && onRemove != null)
                 TextButton(
                   onPressed: () => onRemove!(post),
-                  child: const Text('Remove'),
+                  child: Text(AppLocalizations.of(context)!.pinned_remove),
                 ),
             ],
           ),
@@ -368,7 +370,7 @@ class _PinnedPostsSeeAllPage extends StatelessWidget {
         backgroundColor: Colors.transparent,
         foregroundColor: Colors.white,
         title: Text(
-          posts.length == 1 ? '1 pinned post' : '${posts.length} pinned posts',
+          posts.length == 1 ? AppLocalizations.of(context)!.pinned_count_1 : AppLocalizations.of(context)!.pinned_count_n(posts.length),
         ),
       ),
       body: ListView.separated(

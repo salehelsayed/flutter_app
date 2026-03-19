@@ -1,0 +1,5 @@
+NSCameraUsageDescription = "يحتاج هذا التطبيق إلى الوصول إلى الكاميرا لمسح رموز QR والتقاط الصور";
+NSPhotoLibraryUsageDescription = "يحتاج هذا التطبيق إلى الوصول إلى مكتبة الصور لمشاركة الصور";
+NSMicrophoneUsageDescription = "يحتاج هذا التطبيق إلى الوصول إلى الميكروفون لتسجيل الرسائل الصوتية";
+NSLocationWhenInUseUsageDescription = "يحتاج هذا التطبيق إلى الوصول إلى الموقع لمشاركة المنشورات القريبة مع أصدقائك المباشرين";
+NSLocalNetworkUsageDescription = "يبحث mknoon عن أصدقائك على نفس شبكة Wi‑Fi لإرسال الرسائل مباشرة إلى هواتفهم. هذا أسرع وأكثر خصوصية، ونحن لا نجمع بياناتك أبدًا.";

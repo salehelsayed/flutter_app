@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 
 /// Compact version of the connection origin marker.
@@ -24,9 +25,9 @@ class CompactOriginMarker extends StatelessWidget {
         children: [
           UserAvatar(peerId: contactPeerId, size: 48),
           const SizedBox(height: 4),
-          const Text(
-            'Connected!',
-            style: TextStyle(
+          Text(
+            AppLocalizations.of(context)!.connected_title,
+            style: const TextStyle(
               fontSize: 15,
               fontWeight: FontWeight.w600,
               color: Color(0xFF1DB954),

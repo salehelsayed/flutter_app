@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 /// "Friends" title with My QR / Scan pill buttons.
 ///
@@ -21,8 +22,8 @@ class FriendsListHeader extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 4),
       child: Row(
         children: [
-          const Text(
-            'Friends',
+          Text(
+            AppLocalizations.of(context)!.orbit_close_friends,
             style: TextStyle(
               fontSize: 16,
               fontWeight: FontWeight.w600,
@@ -32,13 +33,13 @@ class FriendsListHeader extends StatelessWidget {
           const Spacer(),
           if (!searchActive) ...[
             _PillButton(
-              label: 'My QR',
+              label: AppLocalizations.of(context)!.orbit_my_qr,
               icon: Icons.qr_code,
               onTap: onMyQR,
             ),
             const SizedBox(width: 8),
             _PillButton(
-              label: 'Scan',
+              label: AppLocalizations.of(context)!.orbit_scan,
               icon: Icons.camera_alt_outlined,
               onTap: onScanQR,
             ),

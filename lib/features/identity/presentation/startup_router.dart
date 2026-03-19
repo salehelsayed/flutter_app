@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
@@ -725,7 +726,7 @@ class _StartupRouterState extends State<StartupRouter> {
                   style: const TextStyle(color: Colors.grey),
                 ),
                 const SizedBox(height: 24),
-                ElevatedButton(onPressed: _retry, child: const Text('Retry')),
+                ElevatedButton(onPressed: _retry, child: Text(AppLocalizations.of(context)?.btn_retry ?? 'Retry')),
               ],
             ),
           ),

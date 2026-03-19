@@ -18,8 +18,8 @@ class OrbitSearchTrigger extends StatelessWidget {
         child: BackdropFilter(
           filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
           child: Container(
-            width: 36,
-            height: 36,
+            width: 44,
+            height: 44,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
               color: const Color(0x1AFFFFFF), // rgba(255,255,255,0.1)
@@ -29,7 +29,7 @@ class OrbitSearchTrigger extends StatelessWidget {
             ),
             child: Icon(
               Icons.search,
-              size: 20,
+              size: 22,
               color: Colors.white.withValues(alpha: 0.8),
             ),
           ),

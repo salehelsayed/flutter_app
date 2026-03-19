@@ -16,9 +16,29 @@ Future<RegisterPushTokenResult> registerPushToken({
     details: {},
   );
 
-  final effectiveGetToken = getTokenFn ?? () => FirebaseMessaging.instance.getToken();
   final effectiveGetPlatform = getPlatformFn ?? () => Platform.isIOS ? 'ios' : 'android';
 
+  // On iOS, the APNS token must be available before FCM can issue a token.
+  // Poll briefly to give the OS time to deliver the APNS token after
+  // the user grants notification permission.
+  if (getTokenFn == null && Platform.isIOS) {
+    String? apnsToken;
+    for (var i = 0; i < 10; i++) {
+      apnsToken = await FirebaseMessaging.instance.getAPNSToken();
+      if (apnsToken != null) break;
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+    }
+    if (apnsToken == null) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'PUSH_APNS_TOKEN_UNAVAILABLE',
+        details: {'waitedMs': 5000},
+      );
+      return RegisterPushTokenResult.noToken;
+    }
+  }
+
+  final effectiveGetToken = getTokenFn ?? () => FirebaseMessaging.instance.getToken();
   final token = await effectiveGetToken();
   if (token == null) {
     emitFlowEvent(
