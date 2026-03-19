@@ -20,6 +20,7 @@ void main() {
   late _EncryptedPassUser sender;
   late _EncryptedPassUser author;
   late _EncryptedPassUser recipient;
+  late _EncryptedPassUser secondRecipient;
 
   setUp(() {
     network = FakeP2PNetwork();
@@ -38,19 +39,28 @@ void main() {
       username: 'Cara',
       network: network,
     );
+    secondRecipient = _EncryptedPassUser.create(
+      peerId: 'peer-dana',
+      username: 'Dana',
+      network: network,
+    );
 
     sender.addContact(author);
     sender.addContact(recipient);
+    sender.addContact(secondRecipient);
     author.addContact(sender);
     recipient.addContact(sender);
+    secondRecipient.addContact(sender);
     author.start();
     recipient.start();
+    secondRecipient.start();
   });
 
   tearDown(() {
     sender.dispose();
     author.dispose();
     recipient.dispose();
+    secondRecipient.dispose();
   });
 
   test(
@@ -108,20 +118,118 @@ void main() {
       expect(authorPayload['participant_peer_ids'], <String>[
         'peer-alice',
         'peer-bob',
+        'peer-cara',
       ]);
       expect(recipientPayload['participant_peer_ids'], <String>[
         'peer-alice',
         'peer-bob',
+        'peer-cara',
       ]);
       expect(authorPayload['repost_total_baseline'], 0);
       expect(recipientPayload['repost_total_baseline'], 0);
       expect(await recipient.postRepo.getPost('post-1'), isNotNull);
       expect(await author.postRepo.getPost('post-1'), isNotNull);
       expect(
+        await author.postRepo.loadRepostEngagementParticipantPeerIds('post-1'),
+        <String>{'peer-alice', 'peer-bob', 'peer-cara'},
+      );
+      expect(
+        await recipient.postRepo.loadRepostEngagementParticipantPeerIds(
+          'post-1',
+        ),
+        <String>{'peer-alice', 'peer-bob', 'peer-cara'},
+      );
+      expect(
         sender.bridge.commandLog.where(
           (command) => command == 'message.encrypt',
         ),
         hasLength(2),
+      );
+    },
+  );
+
+  test(
+    'encrypted multi-recipient repost teaches the author about all new recipients while keeping each recipient copy scoped to itself',
+    () async {
+      await _seedSharedPost(sender: sender, author: author);
+      final authorWireMessage = author.p2pService.messageStream.first;
+      final recipientWireMessage = recipient.p2pService.messageStream.first;
+      final secondRecipientWireMessage =
+          secondRecipient.p2pService.messageStream.first;
+
+      final (result, pass) = await passPostAlong(
+        p2pService: sender.p2pService,
+        postRepo: sender.postRepo,
+        contactRepo: sender.contactRepo,
+        bridge: sender.bridge,
+        postId: 'post-1',
+        senderPeerId: sender.peerId,
+        senderUsername: sender.username,
+        recipientPeerIds: const <String>['peer-cara', 'peer-dana'],
+      );
+
+      expect(result, PassPostAlongResult.success);
+      expect(pass, isNotNull);
+      await _waitForPassCount(author, expectedCount: 1);
+      await _waitForPassCount(recipient, expectedCount: 1);
+      await _waitForPassCount(secondRecipient, expectedCount: 1);
+
+      final authorPayload = _decodeEncryptedPassPayload(
+        jsonDecode(
+              (await authorWireMessage.timeout(
+                const Duration(seconds: 1),
+              )).content,
+            )
+            as Map<String, dynamic>,
+      );
+      final recipientPayload = _decodeEncryptedPassPayload(
+        jsonDecode(
+              (await recipientWireMessage.timeout(
+                const Duration(seconds: 1),
+              )).content,
+            )
+            as Map<String, dynamic>,
+      );
+      final secondRecipientPayload = _decodeEncryptedPassPayload(
+        jsonDecode(
+              (await secondRecipientWireMessage.timeout(
+                const Duration(seconds: 1),
+              )).content,
+            )
+            as Map<String, dynamic>,
+      );
+
+      expect(authorPayload['participant_peer_ids'], <String>[
+        'peer-alice',
+        'peer-bob',
+        'peer-cara',
+        'peer-dana',
+      ]);
+      expect(recipientPayload['participant_peer_ids'], <String>[
+        'peer-alice',
+        'peer-bob',
+        'peer-cara',
+      ]);
+      expect(secondRecipientPayload['participant_peer_ids'], <String>[
+        'peer-alice',
+        'peer-bob',
+        'peer-dana',
+      ]);
+      expect(
+        await author.postRepo.loadRepostEngagementParticipantPeerIds('post-1'),
+        <String>{'peer-alice', 'peer-bob', 'peer-cara', 'peer-dana'},
+      );
+      expect(
+        await recipient.postRepo.loadRepostEngagementParticipantPeerIds(
+          'post-1',
+        ),
+        <String>{'peer-alice', 'peer-bob', 'peer-cara'},
+      );
+      expect(
+        await secondRecipient.postRepo.loadRepostEngagementParticipantPeerIds(
+          'post-1',
+        ),
+        <String>{'peer-alice', 'peer-bob', 'peer-dana'},
       );
     },
   );

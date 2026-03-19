@@ -12,7 +12,18 @@ import '../../../core/bridge/fake_bridge.dart';
 
 void main() {
   test('parses a renderable original snapshot from post_pass', () {
-    final envelope = PostPassEnvelope.fromJson(jsonEncode(_postPassJson()));
+    final envelope = PostPassEnvelope.fromJson(
+      jsonEncode(
+        _postPassJson(
+          participantPeerIds: const <String>[
+            'peer-james',
+            'peer-sarah',
+            'peer-cara',
+          ],
+          participantBasePeerIds: const <String>['peer-james', 'peer-sarah'],
+        ),
+      ),
+    );
 
     expect(envelope, isNotNull);
     expect(envelope!.postId, 'post-1');
@@ -28,6 +39,15 @@ void main() {
       envelope.originalSnapshot.originalAuthorAvatarBase64,
       base64Encode(_avatarBytes),
     );
+    expect(envelope.participantPeerIds, <String>[
+      'peer-cara',
+      'peer-james',
+      'peer-sarah',
+    ]);
+    expect(envelope.participantBasePeerIds, <String>[
+      'peer-james',
+      'peer-sarah',
+    ]);
     expect(envelope.toPostModel().visibleAt, '2026-03-15T11:15:00.000Z');
   });
 
@@ -83,6 +103,10 @@ void main() {
               PostPassEnvelope.buildJson(
                 pass: pass,
                 participantPeerIds: const <String>['peer-james', 'peer-sarah'],
+                participantBasePeerIds: const <String>[
+                  'peer-james',
+                  'peer-sarah',
+                ],
                 activeHeartPeerIds: const <String>['peer-dana'],
                 repostTotalBaseline: 3,
                 post: PostModel(
@@ -130,6 +154,10 @@ void main() {
     expect(json.containsKey('ciphertext'), isFalse);
     expect(json.containsKey('kem'), isFalse);
     expect(payload['participant_peer_ids'], <String>[
+      'peer-james',
+      'peer-sarah',
+    ]);
+    expect(payload['participant_base_peer_ids'], <String>[
       'peer-james',
       'peer-sarah',
     ]);
@@ -208,6 +236,7 @@ void main() {
           expiresAt: '2026-03-18T10:15:30.000Z',
         ),
         participantPeerIds: const <String>['peer-james', 'peer-sarah'],
+        participantBasePeerIds: const <String>['peer-james', 'peer-sarah'],
         activeHeartPeerIds: const <String>['peer-dana'],
         repostTotalBaseline: 2,
         originalAuthorAvatarBase64: base64Encode(_avatarBytes),
@@ -229,6 +258,10 @@ void main() {
 
       expect(decrypted, isNotNull);
       expect(decrypted!.participantPeerIds, <String>[
+        'peer-james',
+        'peer-sarah',
+      ]);
+      expect(decrypted.participantBasePeerIds, <String>[
         'peer-james',
         'peer-sarah',
       ]);
@@ -267,7 +300,11 @@ void main() {
 
 const List<int> _avatarBytes = <int>[1, 2, 3, 4, 5, 6];
 
-Map<String, Object?> _postPassJson({bool includeAvatar = true}) {
+Map<String, Object?> _postPassJson({
+  bool includeAvatar = true,
+  List<String> participantPeerIds = const <String>[],
+  List<String> participantBasePeerIds = const <String>[],
+}) {
   return <String, Object?>{
     'type': 'post_pass',
     'version': '1',
@@ -280,6 +317,10 @@ Map<String, Object?> _postPassJson({bool includeAvatar = true}) {
       'passed_at': '2026-03-15T11:15:00.000Z',
       'passer_peer_id': 'peer-james',
       'passer_username': 'James',
+      if (participantPeerIds.isNotEmpty)
+        'participant_peer_ids': participantPeerIds,
+      if (participantBasePeerIds.isNotEmpty)
+        'participant_base_peer_ids': participantBasePeerIds,
       'original_snapshot': <String, Object?>{
         'post_id': 'post-1',
         'author_peer_id': 'peer-sarah',

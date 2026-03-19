@@ -5,7 +5,9 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/features/home/presentation/widgets/ring_avatar.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/posts/application/handle_incoming_passed_post_use_case.dart';
@@ -20,6 +22,7 @@ import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_pass_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_reaction_model.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/post_card.dart';
+import 'package:flutter_app/features/settings/application/helpers/avatar_normalization_helper.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/fake_p2p_network.dart';
@@ -78,6 +81,7 @@ void main() {
       addTearDown(() => docsDir.deleteSync(recursive: true));
       UserAvatar.setDocumentsDir(docsDir.path);
       final avatarBytes = _avatarSnapshotBytes();
+      final avatarNormalizer = _makeAvatarNormalizer(avatarBytes);
 
       PostModel? post;
       await tester.runAsync(() async {
@@ -102,6 +106,7 @@ void main() {
             }
             return null;
           },
+          avatarNormalizer: avatarNormalizer,
         );
 
         expect(result, PassPostAlongResult.success);
@@ -145,6 +150,70 @@ void main() {
         orderedEquals(avatarBytes),
       );
       expect(find.byType(RingAvatar), findsNothing);
+    },
+  );
+
+  test(
+    "A↔B and B↔C without A↔C proves a legacy oversized avatar file is normalized at repost time without re-downloading first",
+    () async {
+      hisam.addContact(solz);
+      hisam.addContact(ibra);
+      ibra.addContact(hisam);
+      expect(await ibra.contactRepo.getContact(solz.peerId), isNull);
+
+      final senderDocsDir = Directory.systemTemp.createTempSync(
+        'post-pass-avatar-sender-oversized-',
+      );
+      addTearDown(() => senderDocsDir.deleteSync(recursive: true));
+
+      final avatarBytes = _largeAvatarSnapshotBytes();
+      expect(avatarBytes.length, greaterThan(65536));
+      final processedAvatarBytes = _avatarSnapshotBytes();
+      await _writeAvatarSnapshot(
+        docsDir: senderDocsDir,
+        peerId: solz.peerId,
+        avatarBytes: avatarBytes,
+      );
+
+      await _seedSourcePost(hisam, withMedia: true);
+      final ibraRepostMessage = _nextMessageOfType(
+        ibra.p2pService,
+        'post_pass',
+      );
+
+      final (result, pass) = await passPostAlong(
+        p2pService: hisam.p2pService,
+        postRepo: hisam.postRepo,
+        contactRepo: hisam.contactRepo,
+        bridge: hisam.bridge,
+        postId: 'post-1',
+        senderPeerId: hisam.peerId,
+        senderUsername: hisam.username,
+        recipientPeerIds: const <String>['peer-ibra'],
+        prepareRepostMediaFn: _noopMediaPrep,
+        loadAvatarBytesFn: (peerId) => _loadAvatarBytesFromDocsDir(
+          docsDir: senderDocsDir.path,
+          peerId: peerId,
+        ),
+        avatarNormalizer: _makeAvatarNormalizer(processedAvatarBytes),
+      );
+
+      expect(result, PassPostAlongResult.success);
+      expect(pass, isNotNull);
+
+      final repostMessage = await ibraRepostMessage.timeout(
+        const Duration(seconds: 1),
+      );
+      final oversizedEnvelope = await PostPassEnvelope.fromEncryptedJson(
+        jsonString: repostMessage.content,
+        bridge: ibra.bridge,
+        ownMlKemSecretKey: 'test-own-mlkem-sk',
+      );
+      expect(oversizedEnvelope, isNotNull);
+      expect(
+        oversizedEnvelope!.originalSnapshot.originalAuthorAvatarBase64,
+        base64Encode(processedAvatarBytes),
+      );
     },
   );
 
@@ -718,4 +787,66 @@ Uint8List _avatarSnapshotBytes() {
     0x60,
     0x82,
   ]);
+}
+
+Future<Uint8List?> _loadAvatarBytesFromDocsDir({
+  required String docsDir,
+  required String peerId,
+}) async {
+  final file = File('$docsDir/media/avatars/$peerId.jpg');
+  if (await file.exists()) {
+    return file.readAsBytes();
+  }
+  return null;
+}
+
+Future<void> _writeAvatarSnapshot({
+  required Directory docsDir,
+  required String peerId,
+  required Uint8List avatarBytes,
+}) async {
+  final avatarsDir = Directory('${docsDir.path}/media/avatars');
+  await avatarsDir.create(recursive: true);
+  final file = File('${avatarsDir.path}/$peerId.jpg');
+  await file.writeAsBytes(avatarBytes, flush: true);
+}
+
+Uint8List _largeAvatarSnapshotBytes() {
+  final builder = BytesBuilder(copy: false)
+    ..add(_avatarSnapshotBytes())
+    ..add(Uint8List(70000));
+  return builder.toBytes();
+}
+
+class _AvatarProcessingProbe {
+  int? quality;
+  bool? keepExif;
+  int? minWidth;
+  int? minHeight;
+}
+
+AvatarNormalizationHelper _makeAvatarNormalizer(
+  Uint8List processedBytes, {
+  _AvatarProcessingProbe? probe,
+}) {
+  return AvatarNormalizationHelper(
+    imageProcessor: ImageProcessor(
+      compressFile:
+          ({
+            required String path,
+            required int quality,
+            required bool keepExif,
+            int minWidth = 1920,
+            int minHeight = 1080,
+          }) async {
+            probe?.quality = quality;
+            probe?.keepExif = keepExif;
+            probe?.minWidth = minWidth;
+            probe?.minHeight = minHeight;
+            final outputPath = '${path}_processed.jpg';
+            await File(outputPath).writeAsBytes(processedBytes, flush: true);
+            return XFile(outputPath);
+          },
+    ),
+  );
 }

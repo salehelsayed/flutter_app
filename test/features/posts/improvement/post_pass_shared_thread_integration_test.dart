@@ -182,6 +182,101 @@ void main() {
   );
 
   test(
+    'A↔B and B↔C without A↔C should still deliver C comments on the repost to both A and B',
+    () async {
+      _connectChain(solz: solz, hisam: hisam, ibra: ibra);
+      expect(await solz.contactRepo.getContact(ibra.peerId), isNull);
+      expect(await ibra.contactRepo.getContact(solz.peerId), isNull);
+      solz.start();
+      hisam.start();
+      ibra.start();
+      await _seedSourcePost(solz: solz, hisam: hisam);
+
+      final (passResult, pass) = await passPostAlong(
+        p2pService: hisam.p2pService,
+        postRepo: hisam.postRepo,
+        contactRepo: hisam.contactRepo,
+        bridge: hisam.bridge,
+        postId: 'post-1',
+        senderPeerId: hisam.peerId,
+        senderUsername: hisam.username,
+        recipientPeerIds: const <String>['peer-ibra'],
+      );
+
+      expect(passResult, PassPostAlongResult.success);
+      expect(pass, isNotNull);
+      await _waitForPassCount(solz, expectedCount: 1);
+      await _waitForPassCount(ibra, expectedCount: 1);
+
+      final (commentResult, comment) = await sendPostComment(
+        p2pService: ibra.p2pService,
+        postRepo: ibra.postRepo,
+        contactRepo: ibra.contactRepo,
+        postId: 'post-1',
+        senderPeerId: ibra.peerId,
+        senderUsername: ibra.username,
+        body: 'This should reach both the passer and the original author.',
+      );
+
+      expect(commentResult, SendPostCommentResult.success);
+      expect(comment, isNotNull);
+      await _waitForCommentCount(solz, expectedCount: 1);
+      await _waitForCommentCount(hisam, expectedCount: 1);
+    },
+  );
+
+  test(
+    'A↔B and B↔C without A↔C should still deliver C hearts on the repost to both A and B',
+    () async {
+      _connectChain(solz: solz, hisam: hisam, ibra: ibra);
+      expect(await solz.contactRepo.getContact(ibra.peerId), isNull);
+      expect(await ibra.contactRepo.getContact(solz.peerId), isNull);
+      solz.start();
+      hisam.start();
+      ibra.start();
+      await _seedSourcePost(solz: solz, hisam: hisam);
+
+      final (passResult, pass) = await passPostAlong(
+        p2pService: hisam.p2pService,
+        postRepo: hisam.postRepo,
+        contactRepo: hisam.contactRepo,
+        bridge: hisam.bridge,
+        postId: 'post-1',
+        senderPeerId: hisam.peerId,
+        senderUsername: hisam.username,
+        recipientPeerIds: const <String>['peer-ibra'],
+      );
+
+      expect(passResult, PassPostAlongResult.success);
+      expect(pass, isNotNull);
+      await _waitForPassCount(solz, expectedCount: 1);
+      await _waitForPassCount(ibra, expectedCount: 1);
+
+      final (reactionResult, reaction) = await sendPostReaction(
+        p2pService: ibra.p2pService,
+        postRepo: ibra.postRepo,
+        contactRepo: ibra.contactRepo,
+        postId: 'post-1',
+        senderPeerId: ibra.peerId,
+        isActive: true,
+      );
+
+      expect(reactionResult, SendPostReactionResult.success);
+      expect(reaction, isNotNull);
+      await _waitForPostReaction(
+        solz,
+        senderPeerId: 'peer-ibra',
+        isActive: true,
+      );
+      await _waitForPostReaction(
+        hisam,
+        senderPeerId: 'peer-ibra',
+        isActive: true,
+      );
+    },
+  );
+
+  test(
     'original-audience recipients stay out of repost-thread follow-ons until they become repost participants',
     () async {
       _connectTriangle(solz: solz, hisam: hisam, ibra: ibra);
@@ -317,6 +412,17 @@ void _connectTriangle({
   hisam.addContact(solz);
   hisam.addContact(ibra);
   ibra.addContact(solz);
+  ibra.addContact(hisam);
+}
+
+void _connectChain({
+  required _RepostThreadUser solz,
+  required _RepostThreadUser hisam,
+  required _RepostThreadUser ibra,
+}) {
+  solz.addContact(hisam);
+  hisam.addContact(solz);
+  hisam.addContact(ibra);
   ibra.addContact(hisam);
 }
 

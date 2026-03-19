@@ -264,6 +264,7 @@ void main() {
       expect(payload['participant_peer_ids'], <String>[
         'peer-alice',
         'peer-bob',
+        'peer-cara',
       ]);
       expect(payload['repost_total_baseline'], 0);
     },
@@ -332,6 +333,7 @@ void main() {
       expect(payload['participant_peer_ids'], <String>[
         'peer-alice',
         'peer-bob',
+        'peer-cara',
       ]);
       expect(payload['repost_total_baseline'], 0);
       expect(
