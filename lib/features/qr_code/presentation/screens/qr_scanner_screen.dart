@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:flutter_app/core/theme/app_colors.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import '../widgets/scan_overlay.dart';
 
 /// QR code scanner screen with camera preview and overlay.
@@ -69,9 +70,9 @@ class _QRScannerScreenState extends State<QRScannerScreen> {
               child: Row(
                 children: [
                   _buildCloseButton(),
-                  const Expanded(
+                  Expanded(
                     child: Text(
-                      'Scan QR Code',
+                      AppLocalizations.of(context)!.qr_scan_title,
                       textAlign: TextAlign.center,
                       style: TextStyle(
                         color: Colors.white,
@@ -93,17 +94,17 @@ class _QRScannerScreenState extends State<QRScannerScreen> {
             right: 0,
             child: Column(
               children: [
-                const Text(
-                  'Point your camera at a friend\'s QR code',
+                Text(
+                  AppLocalizations.of(context)!.qr_scan_instruction,
                   textAlign: TextAlign.center,
-                  style: TextStyle(
+                  style: const TextStyle(
                     color: Colors.white70,
                     fontSize: 14,
                   ),
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'They\'ll be added to your circle',
+                  AppLocalizations.of(context)!.qr_scan_subtitle,
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     color: AppColors.primaryAccent,
@@ -124,9 +125,9 @@ class _QRScannerScreenState extends State<QRScannerScreen> {
                 child: TextButton.icon(
                   onPressed: _showPasteDialog,
                   icon: const Icon(Icons.paste, color: Colors.white70, size: 18),
-                  label: const Text(
-                    'Debug: Paste QR Data',
-                    style: TextStyle(color: Colors.white70, fontSize: 12),
+                  label: Text(
+                    AppLocalizations.of(context)!.qr_debug_paste,
+                    style: const TextStyle(color: Colors.white70, fontSize: 12),
                   ),
                 ),
               ),
@@ -143,16 +144,16 @@ class _QRScannerScreenState extends State<QRScannerScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: const Color(0xFF1A1A1A),
-        title: const Text(
-          'Paste QR Data',
-          style: TextStyle(color: Colors.white),
+        title: Text(
+          AppLocalizations.of(context)!.qr_paste_title,
+          style: const TextStyle(color: Colors.white),
         ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text(
-              'Paste the JSON QR payload from another device:',
-              style: TextStyle(color: Colors.white70, fontSize: 12),
+            Text(
+              AppLocalizations.of(context)!.qr_paste_hint,
+              style: const TextStyle(color: Colors.white70, fontSize: 12),
             ),
             const SizedBox(height: 12),
             TextField(
@@ -184,7 +185,7 @@ class _QRScannerScreenState extends State<QRScannerScreen> {
                 }
               },
               child: Text(
-                'Paste from Clipboard',
+                AppLocalizations.of(context)!.qr_paste_button,
                 style: TextStyle(color: AppColors.primaryAccent),
               ),
             ),
@@ -193,7 +194,7 @@ class _QRScannerScreenState extends State<QRScannerScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel', style: TextStyle(color: Colors.white54)),
+            child: Text(AppLocalizations.of(context)!.btn_cancel, style: const TextStyle(color: Colors.white54)),
           ),
           ElevatedButton(
             onPressed: () {
@@ -210,7 +211,7 @@ class _QRScannerScreenState extends State<QRScannerScreen> {
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.primaryAccent,
             ),
-            child: const Text('Submit'),
+            child: Text(AppLocalizations.of(context)!.btn_submit),
           ),
         ],
       ),

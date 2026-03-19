@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 class EditPinnedPostSheet extends StatefulWidget {
   final String initialText;
@@ -79,7 +80,7 @@ class _EditPinnedPostSheetState extends State<EditPinnedPostSheet> {
                   onChanged: (_) => setState(() {}),
                   style: const TextStyle(color: Colors.white),
                   decoration: InputDecoration(
-                    hintText: 'Update your post',
+                    hintText: AppLocalizations.of(context)!.edit_pinned_hint,
                     hintStyle: const TextStyle(
                       color: Color.fromRGBO(255, 255, 255, 0.35),
                     ),

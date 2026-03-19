@@ -2,6 +2,7 @@ import 'dart:typed_data';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/feed_navigation_bar.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/settings_peer_id_card.dart';
@@ -130,11 +131,11 @@ class SettingsScreen extends StatelessWidget {
                             ),
                           ),
                           // Title
-                          const Expanded(
+                          Expanded(
                             child: Text(
-                              'Settings',
+                              AppLocalizations.of(context)!.settings_title,
                               textAlign: TextAlign.center,
-                              style: TextStyle(
+                              style: const TextStyle(
                                 fontSize: 18,
                                 fontWeight: FontWeight.w600,
                                 color: Color.fromRGBO(255, 255, 255, 0.95),
@@ -177,6 +178,7 @@ class SettingsScreen extends StatelessWidget {
                           ImageQualityToggle(
                             value: currentQuality,
                             onChanged: onQualityChanged!,
+                            label: AppLocalizations.of(context)!.settings_photo_quality,
                           ),
                           const SizedBox(height: 24),
                         ],
@@ -184,7 +186,7 @@ class SettingsScreen extends StatelessWidget {
                           ImageQualityToggle(
                             value: currentVideoQuality,
                             onChanged: onVideoQualityChanged!,
-                            label: 'Video Quality',
+                            label: AppLocalizations.of(context)!.settings_video_quality,
                             icon: Icons.videocam,
                           ),
                           const SizedBox(height: 24),

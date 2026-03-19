@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/identity/application/restore_identity_use_case.dart';
 import 'package:flutter_app/features/identity/presentation/screens/mnemonic_input_screen.dart';
@@ -58,8 +59,8 @@ class MnemonicInputWired extends StatelessWidget {
           details: {'errorCode': 'invalidMnemonicFormat'},
         );
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Please enter exactly 12 words'),
+          SnackBar(
+            content: Text(AppLocalizations.of(context)!.mnemonic_error_12),
             backgroundColor: Colors.red,
           ),
         );
@@ -72,8 +73,8 @@ class MnemonicInputWired extends StatelessWidget {
           details: {'errorCode': 'invalidMnemonicCore'},
         );
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Invalid recovery phrase'),
+          SnackBar(
+            content: Text(AppLocalizations.of(context)!.mnemonic_error_invalid),
             backgroundColor: Colors.red,
           ),
         );
@@ -87,8 +88,8 @@ class MnemonicInputWired extends StatelessWidget {
           details: {'errorCode': result.name},
         );
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('An error occurred. Please try again.'),
+          SnackBar(
+            content: Text(AppLocalizations.of(context)!.mnemonic_error_generic),
             backgroundColor: Colors.red,
           ),
         );

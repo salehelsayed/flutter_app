@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
@@ -234,7 +235,7 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
       if (mounted) {
         setState(() => _isInviting = false);
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Failed to invite members')),
+          SnackBar(content: Text(AppLocalizations.of(context)!.group_invite_failed)),
         );
       }
     }

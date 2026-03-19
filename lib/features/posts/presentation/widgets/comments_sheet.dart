@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/posts/domain/models/post_comment_model.dart';
@@ -321,9 +322,9 @@ class _CommentsSheetState extends State<CommentsSheet> {
                                 minLines: 1,
                                 maxLines: 4,
                                 style: const TextStyle(color: Colors.white),
-                                decoration: const InputDecoration(
-                                  hintText: 'Write a comment...',
-                                  hintStyle: TextStyle(
+                                decoration: InputDecoration(
+                                  hintText: AppLocalizations.of(context)!.comment_hint,
+                                  hintStyle: const TextStyle(
                                     color: Color.fromRGBO(255, 255, 255, 0.42),
                                   ),
                                   border: InputBorder.none,

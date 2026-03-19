@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/app_colors.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 class IdentityProgressScreen extends StatefulWidget {
   final ValueListenable<String> stageListenable;
@@ -89,7 +90,7 @@ class _IdentityProgressScreenState extends State<IdentityProgressScreen> {
                     ValueListenableBuilder<String>(
                       valueListenable: widget.stageListenable,
                       builder: (context, stage, child) {
-                        final data = _stageData(stage);
+                        final data = _stageData(stage, context);
                         return AnimatedSwitcher(
                           duration: const Duration(milliseconds: 190),
                           switchInCurve: Curves.easeOutCubic,
@@ -181,23 +182,23 @@ class _StageData {
 
 enum _ProgressStepState { pending, active, complete }
 
-_StageData _stageData(String stage) {
+_StageData _stageData(String stage, BuildContext context) {
+  final l10n = AppLocalizations.of(context)!;
   switch (stage) {
     case 'saving':
-      return const _StageData(
-        title: 'Securing your identity',
-        subtitle: 'Saving your identity to secure storage.',
+      return _StageData(
+        title: l10n.progress_securing,
+        subtitle: l10n.progress_securing_desc,
         stepStates: [_ProgressStepState.complete, _ProgressStepState.active],
-        footer: 'Almost there.',
+        footer: l10n.progress_almost,
       );
     case 'generating_keys':
     default:
-      return const _StageData(
-        title: 'Creating your secure identity',
-        subtitle:
-            'Generating encryption keys on this device. This only happens once.',
+      return _StageData(
+        title: l10n.progress_creating,
+        subtitle: l10n.progress_creating_desc,
         stepStates: [_ProgressStepState.active, _ProgressStepState.pending],
-        footer: 'Please keep the app open.',
+        footer: l10n.progress_keep_open,
       );
   }
 }
@@ -209,7 +210,8 @@ class _ProgressSteps extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const labels = ['Generate keys', 'Save to device'];
+    final l10n = AppLocalizations.of(context)!;
+    final labels = [l10n.progress_step_keys, l10n.progress_step_save];
 
     return Column(
       mainAxisSize: MainAxisSize.min,

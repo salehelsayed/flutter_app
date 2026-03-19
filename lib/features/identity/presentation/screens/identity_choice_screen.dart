@@ -3,6 +3,7 @@ import 'package:flutter_app/core/theme/app_colors.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/brand_header.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/choice_card.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 /// Onboarding screen presenting two identity initialization options.
 ///
@@ -134,31 +135,38 @@ class _IdentityChoiceScreenState extends State<IdentityChoiceScreen>
                         ),
                         SizedBox(height: constraints.maxHeight * 0.12),
                         // Choice cards
-                        FadeTransition(
-                          opacity: _card1FadeAnimation,
-                          child: SlideTransition(
-                            position: _card1SlideAnimation,
-                            child: ChoiceCard(
-                              icon: Icons.add_circle_outline,
-                              title: "I'm new here",
-                              description: 'Generate a fresh identity',
-                              onTap: widget.onNewHere,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                        FadeTransition(
-                          opacity: _card2FadeAnimation,
-                          child: SlideTransition(
-                            position: _card2SlideAnimation,
-                            child: ChoiceCard(
-                              icon: Icons.key_outlined,
-                              title: 'Load my key',
-                              description: 'Restore from recovery phrase',
-                              onTap: widget.onLoadMyKey,
-                            ),
-                          ),
-                        ),
+                        Builder(builder: (context) {
+                          final l10n = AppLocalizations.of(context)!;
+                          return Column(
+                            children: [
+                              FadeTransition(
+                                opacity: _card1FadeAnimation,
+                                child: SlideTransition(
+                                  position: _card1SlideAnimation,
+                                  child: ChoiceCard(
+                                    icon: Icons.add_circle_outline,
+                                    title: l10n.onboarding_new_here,
+                                    description: l10n.onboarding_new_desc,
+                                    onTap: widget.onNewHere,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 16),
+                              FadeTransition(
+                                opacity: _card2FadeAnimation,
+                                child: SlideTransition(
+                                  position: _card2SlideAnimation,
+                                  child: ChoiceCard(
+                                    icon: Icons.key_outlined,
+                                    title: l10n.onboarding_load_key,
+                                    description: l10n.onboarding_load_desc,
+                                    onTap: widget.onLoadMyKey,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          );
+                        }),
                         SizedBox(height: constraints.maxHeight * 0.12),
                         // Privacy footer
                         FadeTransition(
@@ -180,7 +188,7 @@ class _IdentityChoiceScreenState extends State<IdentityChoiceScreen>
                                     ),
                                     const SizedBox(width: 6),
                                     Text(
-                                      'Only you can read your messages',
+                                      AppLocalizations.of(context)!.onboarding_privacy_1,
                                       style: TextStyle(
                                         color: AppColors.textMuted.withValues(
                                           alpha: 0.6,
@@ -192,7 +200,7 @@ class _IdentityChoiceScreenState extends State<IdentityChoiceScreen>
                                 ),
                                 const SizedBox(height: 4),
                                 Text(
-                                  'Everything stays on your phone. Nobody is watching.',
+                                  AppLocalizations.of(context)!.onboarding_privacy_2,
                                   style: TextStyle(
                                     color: AppColors.textMuted.withValues(
                                       alpha: 0.6,

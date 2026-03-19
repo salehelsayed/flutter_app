@@ -1,4 +1,4 @@
-import 'dart:convert' show base64Decode, base64Encode;
+import 'dart:convert' show base64Decode;
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -11,6 +11,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/posts/application/post_delivery_runner.dart';
+import 'package:flutter_app/features/posts/application/helpers/repost_avatar_snapshot_preparer.dart';
 import 'package:flutter_app/features/posts/application/post_repost_engagement_support.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
@@ -19,8 +20,10 @@ import 'package:flutter_app/features/posts/domain/models/post_pass_envelope.dart
 import 'package:flutter_app/features/posts/domain/models/post_pass_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_recipient_delivery.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
+import 'package:flutter_app/features/settings/application/helpers/avatar_normalization_helper.dart';
 
 const _uuid = Uuid();
+const _maxPassAvatarBytes = 65536;
 
 enum PassPostAlongResult {
   success,
@@ -82,6 +85,7 @@ Future<(PassPostAlongResult, PostPassModel?)> passPostAlong({
   int maxConcurrentRecipients = defaultPostDeliveryConcurrency,
   PrepareRepostMediaFn? prepareRepostMediaFn,
   LoadAvatarBytesFn? loadAvatarBytesFn,
+  AvatarNormalizationHelper? avatarNormalizer,
   ResolveStoredPathFn? resolveStoredPathFn,
 }) async {
   final (createResult, created) = await createLocalPostPass(
@@ -96,6 +100,7 @@ Future<(PassPostAlongResult, PostPassModel?)> passPostAlong({
     nowProvider: nowProvider,
     prepareRepostMediaFn: prepareRepostMediaFn,
     loadAvatarBytesFn: loadAvatarBytesFn,
+    avatarNormalizer: avatarNormalizer,
     resolveStoredPathFn: resolveStoredPathFn,
   );
   if (createResult != PassPostAlongResult.success || created == null) {
@@ -127,6 +132,7 @@ Future<(PassPostAlongResult, CreatedLocalPostPass?)> createLocalPostPass({
   DateTime Function()? nowProvider,
   PrepareRepostMediaFn? prepareRepostMediaFn,
   LoadAvatarBytesFn? loadAvatarBytesFn,
+  AvatarNormalizationHelper? avatarNormalizer,
   ResolveStoredPathFn? resolveStoredPathFn,
 }) async {
   if (!p2pService.currentState.isStarted) {
@@ -140,10 +146,7 @@ Future<(PassPostAlongResult, CreatedLocalPostPass?)> createLocalPostPass({
     return (PassPostAlongResult.postNotFound, null);
   }
   if (post.audience.kind == PostAudienceKind.pickPeople) {
-    _emitRepostCreateAbort(
-      postId: postId,
-      reason: 'pick_people_not_allowed',
-    );
+    _emitRepostCreateAbort(postId: postId, reason: 'pick_people_not_allowed');
     return (PassPostAlongResult.pickPeopleNotAllowed, null);
   }
   if (post.senderPeerId != post.authorPeerId) {
@@ -265,10 +268,69 @@ Future<(PassPostAlongResult, CreatedLocalPostPass?)> createLocalPostPass({
 
   // Phase 5: Load original-author avatar for self-renderable repost card.
   String? avatarBase64;
-  if (loadAvatarBytesFn != null) {
-    final avatarBytes = await loadAvatarBytesFn!(post.authorPeerId);
-    if (avatarBytes != null && avatarBytes.length <= 65536) {
-      avatarBase64 = base64Encode(avatarBytes);
+  int? avatarByteLength;
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'POST_PASS_AVATAR_LOAD_START',
+    details: {
+      'postId': post.id,
+      'authorPeerId': post.authorPeerId,
+      'loaderPresent': loadAvatarBytesFn != null,
+      'maxBytes': _maxPassAvatarBytes,
+    },
+  );
+  if (loadAvatarBytesFn == null) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'POST_PASS_AVATAR_LOAD_SKIPPED_NO_LOADER',
+      details: {'postId': post.id, 'authorPeerId': post.authorPeerId},
+    );
+  } else {
+    Uint8List? avatarBytes;
+    var avatarLoadFailed = false;
+    try {
+      avatarBytes = await loadAvatarBytesFn(post.authorPeerId);
+    } catch (e) {
+      avatarLoadFailed = true;
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'POST_PASS_AVATAR_LOAD_FAILED',
+        details: {
+          'postId': post.id,
+          'authorPeerId': post.authorPeerId,
+          'error': e.toString(),
+        },
+      );
+    }
+    if (avatarBytes == null) {
+      if (!avatarLoadFailed) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'POST_PASS_AVATAR_LOAD_MISSING',
+          details: {'postId': post.id, 'authorPeerId': post.authorPeerId},
+        );
+      }
+    } else {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'POST_PASS_AVATAR_LOAD_SUCCESS',
+        details: {
+          'postId': post.id,
+          'authorPeerId': post.authorPeerId,
+          'avatarByteLength': avatarBytes.length,
+        },
+      );
+      final preparedAvatar = await prepareRepostAvatarSnapshot(
+        postId: post.id,
+        authorPeerId: post.authorPeerId,
+        avatarBytes: avatarBytes,
+        avatarNormalizer: avatarNormalizer,
+        maxBytes: _maxPassAvatarBytes,
+      );
+      if (preparedAvatar != null) {
+        avatarByteLength = preparedAvatar.avatarByteLength;
+        avatarBase64 = preparedAvatar.avatarBase64;
+      }
     }
   }
 
@@ -279,6 +341,10 @@ Future<(PassPostAlongResult, CreatedLocalPostPass?)> createLocalPostPass({
     authorPeerId: post.authorPeerId,
     passerPeerId: senderPeerId,
   );
+  final localParticipantPeerIds = <String>{
+    ...sharedThreadBasePeerIds,
+    ...explicitRecipients.map((contact) => contact.peerId),
+  }.toList(growable: false)..sort();
   final hiddenHeartSenderPeerIds = await loadProjectedActiveHeartPeerIds(
     postRepo: postRepo,
     postId: post.id,
@@ -306,7 +372,8 @@ Future<(PassPostAlongResult, CreatedLocalPostPass?)> createLocalPostPass({
   final envelope = PostPassEnvelope.fromPass(
     pass: draftPass,
     post: mediaPost,
-    participantPeerIds: sharedThreadBasePeerIds,
+    participantPeerIds: localParticipantPeerIds,
+    participantBasePeerIds: sharedThreadBasePeerIds,
     activeHeartPeerIds: hiddenHeartSenderPeerIds,
     repostTotalBaseline: repostTotalBaseline,
     sharedToCountBaseline: sharedToCountBaseline,
@@ -335,7 +402,7 @@ Future<(PassPostAlongResult, CreatedLocalPostPass?)> createLocalPostPass({
   await seedRepostThreadState(
     postRepo: postRepo,
     postId: post.id,
-    participantPeerIds: sharedThreadBasePeerIds,
+    participantPeerIds: localParticipantPeerIds,
     activeHeartPeerIds: hiddenHeartSenderPeerIds,
     repostTotalBaseline: repostTotalBaseline,
     sharedToCountBaseline: sharedToCountBaseline,
@@ -350,6 +417,15 @@ Future<(PassPostAlongResult, CreatedLocalPostPass?)> createLocalPostPass({
       authorPeerId: post.authorPeerId,
       avatarBlob: base64Decode(avatarBase64),
       createdAt: now,
+    );
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'POST_PASS_AVATAR_SNAPSHOT_STORED',
+      details: {
+        'postId': post.id,
+        'authorPeerId': post.authorPeerId,
+        'avatarByteLength': avatarByteLength,
+      },
     );
   }
   final resolvedRecipients = recipients.values

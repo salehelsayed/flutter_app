@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 /// Two side-by-side QR action cards at the bottom of the friends list.
 class QRActionCards extends StatelessWidget {
@@ -13,13 +14,14 @@ class QRActionCards extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return Row(
       children: [
         Expanded(
           child: _ActionCard(
             icon: Icons.qr_code,
-            title: 'My QR Code',
-            subtitle: 'Share to add friends',
+            title: l10n.qr_my_code,
+            subtitle: l10n.orbit_qr_share,
             onTap: onMyQR,
           ),
         ),
@@ -27,8 +29,8 @@ class QRActionCards extends StatelessWidget {
         Expanded(
           child: _ActionCard(
             icon: Icons.camera_alt_outlined,
-            title: 'Scan QR',
-            subtitle: 'Add a friend instantly',
+            title: l10n.qr_scan_title,
+            subtitle: l10n.orbit_qr_scan_desc,
             onTap: onScanQR,
           ),
         ),

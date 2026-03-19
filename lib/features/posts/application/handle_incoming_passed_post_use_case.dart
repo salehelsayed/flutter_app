@@ -247,18 +247,67 @@ Future<void> _persistPassAvatarSnapshotIfPresent({
   required String createdAt,
 }) async {
   final avatarBase64 = originalSnapshot.originalAuthorAvatarBase64;
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'POST_PASS_RECEIVE_AVATAR_SNAPSHOT_START',
+    details: {
+      'postId': postId,
+      'authorPeerId': originalSnapshot.authorPeerId,
+      'hasAvatarBase64': avatarBase64 != null && avatarBase64.isNotEmpty,
+    },
+  );
   if (avatarBase64 == null || avatarBase64.isEmpty) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'POST_PASS_RECEIVE_AVATAR_SNAPSHOT_ABSENT',
+      details: {
+        'postId': postId,
+        'authorPeerId': originalSnapshot.authorPeerId,
+      },
+    );
+    return;
+  }
+  final avatarBlob = <int>[];
+  try {
+    avatarBlob.addAll(base64Decode(avatarBase64));
+  } catch (error) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'POST_PASS_RECEIVE_AVATAR_SNAPSHOT_DECODE_ERROR',
+      details: {
+        'postId': postId,
+        'authorPeerId': originalSnapshot.authorPeerId,
+        'error': error.toString(),
+      },
+    );
     return;
   }
   try {
     await postRepo.savePassAvatarSnapshot(
       postId: postId,
       authorPeerId: originalSnapshot.authorPeerId,
-      avatarBlob: base64Decode(avatarBase64),
+      avatarBlob: avatarBlob,
       createdAt: createdAt,
     );
-  } catch (_) {
-    // Corrupted avatar base64 — continue without avatar snapshot.
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'POST_PASS_RECEIVE_AVATAR_SNAPSHOT_STORED',
+      details: {
+        'postId': postId,
+        'authorPeerId': originalSnapshot.authorPeerId,
+        'avatarByteLength': avatarBlob.length,
+      },
+    );
+  } catch (error) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'POST_PASS_RECEIVE_AVATAR_SNAPSHOT_STORE_ERROR',
+      details: {
+        'postId': postId,
+        'authorPeerId': originalSnapshot.authorPeerId,
+        'error': error.toString(),
+      },
+    );
   }
 }
 

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 /// Bottom-docked search input panel that slides up from the bottom.
 ///
@@ -71,7 +72,7 @@ class OrbitSearchDock extends StatelessWidget {
                             color: Colors.white,
                           ),
                           decoration: InputDecoration(
-                            hintText: 'Search friends...',
+                            hintText: AppLocalizations.of(context)!.orbit_search,
                             hintStyle: TextStyle(
                               fontSize: 15,
                               color: Colors.white.withValues(alpha: 0.3),

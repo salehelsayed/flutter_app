@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/home/presentation/widgets/ring_avatar.dart';
@@ -177,7 +178,7 @@ class _ShareTargetPickerScreenState extends State<ShareTargetPickerScreen> {
         controller: _searchController,
         style: const TextStyle(color: Colors.white, fontSize: 14),
         decoration: InputDecoration(
-          hintText: 'Search contacts & groups',
+          hintText: AppLocalizations.of(context)!.picker_search_all,
           hintStyle: const TextStyle(color: Colors.white38, fontSize: 14),
           prefixIcon: const Icon(Icons.search, color: Colors.white38, size: 20),
           filled: true,

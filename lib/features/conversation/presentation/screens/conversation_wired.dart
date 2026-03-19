@@ -4,6 +4,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:uuid/uuid.dart';
+import 'package:intl/intl.dart' as intl;
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/amplitude_buffer.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
@@ -1284,7 +1286,7 @@ class _ConversationWiredState extends State<ConversationWired> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: const Text('Failed to send voice message.'),
+            content: Text(AppLocalizations.of(context)!.conversation_voice_fail),
             backgroundColor: Colors.red[700],
             behavior: SnackBarBehavior.floating,
           ),
@@ -1340,7 +1342,7 @@ class _ConversationWiredState extends State<ConversationWired> {
         final snackText = switch (result) {
           SendVoiceMessageResult.uploadFailed =>
             'Failed to upload voice message. Try again.',
-          _ => 'Failed to send voice message.',
+          _ => AppLocalizations.of(context)!.conversation_voice_fail,
         };
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -1736,7 +1738,7 @@ class _ConversationWiredState extends State<ConversationWired> {
 
     final confirmed = await showConfirmationDialog(
       context: context,
-      title: 'Block ${_contact.username}?',
+      title: AppLocalizations.of(context)!.conversation_block(_contact.username),
       description:
           'They won\'t be able to send you messages. You can unblock them later.',
       confirmLabel: 'Block',
@@ -1785,7 +1787,7 @@ class _ConversationWiredState extends State<ConversationWired> {
 
     final confirmed = await showConfirmationDialog(
       context: context,
-      title: 'Delete chat?',
+      title: AppLocalizations.of(context)!.conversation_delete_chat,
       description:
           'This will permanently remove ${_contact.username} and all messages. This cannot be undone.',
       confirmLabel: 'Delete',
@@ -1824,21 +1826,8 @@ class _ConversationWiredState extends State<ConversationWired> {
   String _formatConnectionDate() {
     try {
       final date = DateTime.parse(_contact.scannedAt);
-      const months = [
-        'January',
-        'February',
-        'March',
-        'April',
-        'May',
-        'June',
-        'July',
-        'August',
-        'September',
-        'October',
-        'November',
-        'December',
-      ];
-      return '${months[date.month - 1]} ${date.day}, ${date.year}';
+      final locale = Localizations.localeOf(context).toString();
+      return intl.DateFormat.yMMMd(locale).format(date);
     } catch (_) {
       return '';
     }

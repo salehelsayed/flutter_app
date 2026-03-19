@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/contact_picker_row.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
@@ -139,7 +140,7 @@ class _ContactPickerScreenState extends State<ContactPickerScreen> {
         controller: _searchController,
         style: const TextStyle(color: Colors.white, fontSize: 14),
         decoration: InputDecoration(
-          hintText: 'Search contacts...',
+          hintText: AppLocalizations.of(context)!.picker_search_contacts,
           hintStyle: TextStyle(
             color: Colors.white.withOpacity(0.35),
             fontSize: 14,

@@ -1,5 +1,6 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 
 /// Frosted-glass sticky header for the conversation screen.
@@ -85,7 +86,7 @@ class ConversationHeader extends StatelessWidget {
                     ),
                     const SizedBox(height: 1),
                     Text(
-                      'Connected $connectionDate',
+                      AppLocalizations.of(context)!.connected_date(connectionDate),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(

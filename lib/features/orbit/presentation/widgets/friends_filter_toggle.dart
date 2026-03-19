@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 /// Segmented filter toggle: "All (N)" / "Archived (N)".
 ///
@@ -34,7 +35,7 @@ class FriendsFilterToggle extends StatelessWidget {
         children: [
           Expanded(
             child: _FilterTab(
-              label: 'All',
+              label: AppLocalizations.of(context)!.orbit_filter_all,
               count: activeCount,
               showCount: true,
               isActive: activeFilter == 'all',
@@ -43,7 +44,7 @@ class FriendsFilterToggle extends StatelessWidget {
           ),
           Expanded(
             child: _FilterTab(
-              label: 'Intros',
+              label: AppLocalizations.of(context)!.orbit_filter_intros,
               count: introsCount,
               showCount: introsCount > 0,
               isActive: activeFilter == 'intros',
@@ -52,7 +53,7 @@ class FriendsFilterToggle extends StatelessWidget {
           ),
           Expanded(
             child: _FilterTab(
-              label: 'Archived',
+              label: AppLocalizations.of(context)!.orbit_filter_archived,
               count: archivedCount,
               showCount: archivedCount > 0,
               isActive: activeFilter == 'archived',

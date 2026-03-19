@@ -1,6 +1,7 @@
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 class PostsNearbySettingsCard extends StatelessWidget {
   final bool sharingEnabled;
@@ -36,9 +37,9 @@ class PostsNearbySettingsCard extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
-                        'Share People Nearby',
-                        style: TextStyle(
+                      Text(
+                        AppLocalizations.of(context)!.settings_share_nearby,
+                        style: const TextStyle(
                           color: Colors.white,
                           fontSize: 15,
                           fontWeight: FontWeight.w600,
@@ -46,7 +47,7 @@ class PostsNearbySettingsCard extends StatelessWidget {
                       ),
                       const SizedBox(height: 6),
                       Text(
-                        sharingEnabled ? 'On' : 'Off',
+                        sharingEnabled ? AppLocalizations.of(context)!.settings_share_nearby_on : AppLocalizations.of(context)!.settings_share_nearby_off,
                         style: const TextStyle(
                           color: Color.fromRGBO(255, 255, 255, 0.7),
                           fontSize: 13,
@@ -54,9 +55,9 @@ class PostsNearbySettingsCard extends StatelessWidget {
                         ),
                       ),
                       const SizedBox(height: 6),
-                      const Text(
-                        'Shares only an approximate location with direct friends. No live maps, and never strangers.',
-                        style: TextStyle(
+                      Text(
+                        AppLocalizations.of(context)!.settings_share_nearby_desc,
+                        style: const TextStyle(
                           color: Color.fromRGBO(255, 255, 255, 0.45),
                           fontSize: 12,
                           height: 1.35,

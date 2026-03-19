@@ -2,6 +2,7 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 
@@ -78,7 +79,7 @@ class GroupNamePanel extends StatelessWidget {
                 controller: nameController,
                 style: const TextStyle(color: Colors.white, fontSize: 14),
                 decoration: InputDecoration(
-                  hintText: 'Group name (optional)',
+                  hintText: AppLocalizations.of(context)!.group_name_optional,
                   hintStyle: TextStyle(
                     color: Colors.white.withOpacity(0.35),
                     fontSize: 14,

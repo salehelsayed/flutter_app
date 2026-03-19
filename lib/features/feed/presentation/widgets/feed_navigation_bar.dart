@@ -1,5 +1,6 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'nav_bar_button.dart';
 import 'nav_bar_theme.dart';
 
@@ -43,39 +44,42 @@ class FeedNavigationBar extends StatelessWidget {
               ),
             ],
           ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              NavBarButton(
-                label: 'Feed',
-                svgAsset: 'assets/icons/nav_feed.svg',
-                isActive: activeTab == 'feed',
-                onTap: () => onSwitchView('feed'),
-                badgeCount: feedBadgeCount,
-              ),
-              const SizedBox(width: NavBarTheme.buttonSpacing),
-              NavBarButton(
-                label: 'Remember',
-                svgAsset: 'assets/icons/nav_remember.svg',
-                isActive: activeTab == 'remember',
-                onTap: () => onSwitchView('remember'),
-              ),
-              const SizedBox(width: NavBarTheme.buttonSpacing),
-              NavBarButton(
-                label: 'Posts',
-                svgAsset: 'assets/icons/nav_posts.svg',
-                isActive: activeTab == 'posts',
-                onTap: () => onSwitchView('posts'),
-              ),
-              const SizedBox(width: NavBarTheme.buttonSpacing),
-              NavBarButton(
-                label: 'Orbit',
-                svgAsset: 'assets/icons/nav_orbit.svg',
-                isActive: activeTab == 'orbit',
-                onTap: () => onSwitchView('orbit'),
-              ),
-            ],
-          ),
+          child: Builder(builder: (context) {
+            final l10n = AppLocalizations.of(context)!;
+            return Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                NavBarButton(
+                  label: l10n.nav_feed,
+                  svgAsset: 'assets/icons/nav_feed.svg',
+                  isActive: activeTab == 'feed',
+                  onTap: () => onSwitchView('feed'),
+                  badgeCount: feedBadgeCount,
+                ),
+                const SizedBox(width: NavBarTheme.buttonSpacing),
+                NavBarButton(
+                  label: l10n.nav_remember,
+                  svgAsset: 'assets/icons/nav_remember.svg',
+                  isActive: activeTab == 'remember',
+                  onTap: () => onSwitchView('remember'),
+                ),
+                const SizedBox(width: NavBarTheme.buttonSpacing),
+                NavBarButton(
+                  label: l10n.nav_posts,
+                  svgAsset: 'assets/icons/nav_posts.svg',
+                  isActive: activeTab == 'posts',
+                  onTap: () => onSwitchView('posts'),
+                ),
+                const SizedBox(width: NavBarTheme.buttonSpacing),
+                NavBarButton(
+                  label: l10n.nav_orbit,
+                  svgAsset: 'assets/icons/nav_orbit.svg',
+                  isActive: activeTab == 'orbit',
+                  onTap: () => onSwitchView('orbit'),
+                ),
+              ],
+            );
+          }),
         ),
       ),
     );

@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 
 /// Empty state shown when a conversation has no messages yet.
@@ -54,9 +55,9 @@ class _EmptyConversationStateState extends State<EmptyConversationState>
                 children: [
                   _buildAvatarWithGlow(),
                   const SizedBox(height: 16),
-                  const Text(
-                    'Connected!',
-                    style: TextStyle(
+                  Text(
+                    AppLocalizations.of(context)!.connected_title,
+                    style: const TextStyle(
                       fontSize: 20,
                       fontWeight: FontWeight.w600,
                       color: Color(0xFF1DB954),

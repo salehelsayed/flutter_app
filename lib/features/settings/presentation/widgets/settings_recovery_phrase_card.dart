@@ -1,6 +1,7 @@
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 /// Glass card displaying the user's 12-word recovery phrase with blur-to-reveal.
 class SettingsRecoveryPhraseCard extends StatelessWidget {
@@ -29,11 +30,11 @@ class SettingsRecoveryPhraseCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // Section label
-          const Padding(
-            padding: EdgeInsets.only(left: 4, bottom: 8),
+          Padding(
+            padding: const EdgeInsets.only(left: 4, bottom: 8),
             child: Text(
-              'RECOVERY PHRASE',
-              style: TextStyle(
+              AppLocalizations.of(context)!.settings_recovery_title,
+              style: const TextStyle(
                 fontSize: 11,
                 fontWeight: FontWeight.w700,
                 letterSpacing: 0.88,
@@ -59,11 +60,11 @@ class SettingsRecoveryPhraseCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     // Warning text
-                    const Padding(
-                      padding: EdgeInsets.only(bottom: 14),
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 14),
                       child: Text(
-                        'Never share this phrase with anyone. It grants full access to your account.',
-                        style: TextStyle(
+                        AppLocalizations.of(context)!.settings_recovery_warning,
+                        style: const TextStyle(
                           fontSize: 13,
                           fontWeight: FontWeight.w500,
                           height: 1.4,
@@ -99,20 +100,20 @@ class SettingsRecoveryPhraseCard extends StatelessWidget {
                                       color: const Color.fromRGBO(
                                           10, 10, 15, 0.4),
                                     ),
-                                    child: const Column(
+                                    child: Column(
                                       mainAxisAlignment:
                                           MainAxisAlignment.center,
                                       children: [
-                                        Icon(
+                                        const Icon(
                                           Icons.visibility,
                                           size: 24,
                                           color: Color.fromRGBO(
                                               255, 255, 255, 0.6),
                                         ),
-                                        SizedBox(height: 8),
+                                        const SizedBox(height: 8),
                                         Text(
-                                          'Tap to reveal',
-                                          style: TextStyle(
+                                          AppLocalizations.of(context)!.settings_recovery_tap,
+                                          style: const TextStyle(
                                             fontSize: 14,
                                             fontWeight: FontWeight.w500,
                                             color: Color.fromRGBO(
@@ -176,8 +177,8 @@ class SettingsRecoveryPhraseCard extends StatelessWidget {
                                             const Duration(milliseconds: 200),
                                         child: Text(
                                           isCopied
-                                              ? 'Copied!'
-                                              : 'Copy to clipboard',
+                                              ? AppLocalizations.of(context)!.settings_recovery_copied
+                                              : AppLocalizations.of(context)!.settings_recovery_copy,
                                           key: ValueKey(isCopied),
                                           style: const TextStyle(
                                             fontSize: 13,
@@ -210,19 +211,19 @@ class SettingsRecoveryPhraseCard extends StatelessWidget {
                                         255, 255, 255, 0.12),
                                   ),
                                 ),
-                                child: const Row(
+                                child: Row(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
-                                    Icon(
+                                    const Icon(
                                       Icons.visibility_off,
                                       size: 18,
                                       color:
                                           Color.fromRGBO(255, 255, 255, 0.6),
                                     ),
-                                    SizedBox(width: 6),
+                                    const SizedBox(width: 6),
                                     Text(
-                                      'Hide',
-                                      style: TextStyle(
+                                      AppLocalizations.of(context)!.settings_recovery_hide,
+                                      style: const TextStyle(
                                         fontSize: 13,
                                         fontWeight: FontWeight.w500,
                                         color:

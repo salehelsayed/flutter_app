@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 import 'package:flutter_app/features/introduction/presentation/widgets/intro_group_header.dart';
@@ -228,11 +229,11 @@ class OrbitScreen extends StatelessWidget {
                                   .where((friend) => !friend.isBlocked)
                                   .toList(),
                             ),
-                            const Padding(
-                              padding: EdgeInsets.only(top: 20),
+                            Padding(
+                              padding: const EdgeInsets.only(top: 20),
                               child: Text(
-                                'Close Friends',
-                                style: TextStyle(
+                                AppLocalizations.of(context)!.orbit_close_friends,
+                                style: const TextStyle(
                                   fontSize: 14,
                                   color: Color(0x99FFFFFF),
                                 ),
@@ -306,8 +307,8 @@ class OrbitScreen extends StatelessWidget {
 
             // Layer 2: Close button (bottom-right, below search)
             Positioned(
-              bottom: 40,
-              right: 18,
+              bottom: 36,
+              right: 16,
               child: OrbitCloseButton(onTap: onClose),
             ),
 
@@ -317,8 +318,8 @@ class OrbitScreen extends StatelessWidget {
               builder: (context, child) {
                 final t = searchTriggerAnimation.value;
                 return Positioned(
-                  bottom: 80,
-                  right: 18,
+                  bottom: 88,
+                  right: 16,
                   child: Opacity(
                     opacity: t,
                     child: Transform.scale(
@@ -369,12 +370,12 @@ class OrbitScreen extends StatelessWidget {
               safeAreaPadding: MediaQuery.of(context).padding,
               items: [
                 ExpandableFabItem(
-                  label: 'New Group',
+                  label: AppLocalizations.of(context)!.orbit_new_group,
                   icon: Icons.group_outlined,
                   onTap: () => onCreateGroup(GroupType.chat),
                 ),
                 ExpandableFabItem(
-                  label: 'New Announce',
+                  label: AppLocalizations.of(context)!.orbit_new_announce,
                   icon: Icons.campaign_outlined,
                   onTap: () => onCreateGroup(GroupType.announcement),
                 ),

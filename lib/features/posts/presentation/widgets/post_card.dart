@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 import 'package:flutter_app/core/utils/ring_avatar_generator.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
@@ -55,7 +56,7 @@ class PostCard extends StatelessWidget {
     final resolvedRepostVisualState =
         repostVisualState ??
         resolvePostRepostVisualState(post, viewerPeerId: viewerPeerId);
-    final deliveryState = _deliveryStateFor(post);
+    final deliveryState = _deliveryStateFor(post, context);
     final hasMediaSkeleton = _hasMediaSkeleton(post);
     final isSending = post.deliveryStatus == 'sending';
     final resolvedOpenComments = isSending ? null : onOpenComments;
@@ -178,7 +179,7 @@ class PostCard extends StatelessWidget {
                           runSpacing: 4,
                           children: [
                             if (!isPassedAlong)
-                              const _Badge(label: 'Friend', isPrimary: true),
+                              _Badge(label: AppLocalizations.of(context)!.post_badge_friend, isPrimary: true),
                             if (scopeLabel != null) _Badge(label: scopeLabel),
                           ],
                         ),
@@ -311,38 +312,39 @@ class PostCard extends StatelessWidget {
     return post.mediaKind != 'none' && post.media.isEmpty;
   }
 
-  static _PostDeliveryStateVisual? _deliveryStateFor(PostModel post) {
+  static _PostDeliveryStateVisual? _deliveryStateFor(PostModel post, BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final isMediaSkeleton = _hasMediaSkeleton(post);
     return switch (post.deliveryStatus) {
-      'sending' when isMediaSkeleton => const _PostDeliveryStateVisual(
-        label: 'Uploading media...',
-        textColor: Color(0xFFD8F4FF),
-        backgroundColor: Color.fromRGBO(58, 112, 138, 0.22),
-        borderColor: Color.fromRGBO(120, 188, 220, 0.35),
+      'sending' when isMediaSkeleton => _PostDeliveryStateVisual(
+        label: l10n.post_uploading,
+        textColor: const Color(0xFFD8F4FF),
+        backgroundColor: const Color.fromRGBO(58, 112, 138, 0.22),
+        borderColor: const Color.fromRGBO(120, 188, 220, 0.35),
       ),
-      'sending' => const _PostDeliveryStateVisual(
-        label: 'Sending...',
-        textColor: Color(0xFFD8F4FF),
-        backgroundColor: Color.fromRGBO(58, 112, 138, 0.22),
-        borderColor: Color.fromRGBO(120, 188, 220, 0.35),
+      'sending' => _PostDeliveryStateVisual(
+        label: l10n.post_sending,
+        textColor: const Color(0xFFD8F4FF),
+        backgroundColor: const Color.fromRGBO(58, 112, 138, 0.22),
+        borderColor: const Color.fromRGBO(120, 188, 220, 0.35),
       ),
-      'partial' => const _PostDeliveryStateVisual(
-        label: 'Partially sent',
-        textColor: Color(0xFFFFE3B3),
-        backgroundColor: Color.fromRGBO(125, 88, 26, 0.24),
-        borderColor: Color.fromRGBO(230, 182, 84, 0.34),
+      'partial' => _PostDeliveryStateVisual(
+        label: l10n.post_partial,
+        textColor: const Color(0xFFFFE3B3),
+        backgroundColor: const Color.fromRGBO(125, 88, 26, 0.24),
+        borderColor: const Color.fromRGBO(230, 182, 84, 0.34),
       ),
-      'failed' when isMediaSkeleton => const _PostDeliveryStateVisual(
-        label: 'Upload failed',
-        textColor: Color(0xFFFFC9C9),
-        backgroundColor: Color.fromRGBO(130, 42, 42, 0.24),
-        borderColor: Color.fromRGBO(227, 110, 110, 0.34),
+      'failed' when isMediaSkeleton => _PostDeliveryStateVisual(
+        label: l10n.post_upload_failed,
+        textColor: const Color(0xFFFFC9C9),
+        backgroundColor: const Color.fromRGBO(130, 42, 42, 0.24),
+        borderColor: const Color.fromRGBO(227, 110, 110, 0.34),
       ),
-      'failed' => const _PostDeliveryStateVisual(
-        label: 'Send failed',
-        textColor: Color(0xFFFFC9C9),
-        backgroundColor: Color.fromRGBO(130, 42, 42, 0.24),
-        borderColor: Color.fromRGBO(227, 110, 110, 0.34),
+      'failed' => _PostDeliveryStateVisual(
+        label: l10n.post_send_failed,
+        textColor: const Color(0xFFFFC9C9),
+        backgroundColor: const Color.fromRGBO(130, 42, 42, 0.24),
+        borderColor: const Color.fromRGBO(227, 110, 110, 0.34),
       ),
       _ => null,
     };

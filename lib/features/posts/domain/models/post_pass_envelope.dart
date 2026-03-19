@@ -80,6 +80,7 @@ class PostPassEnvelope {
   final String passerUsername;
   final RenderablePostSnapshot originalSnapshot;
   final List<String> participantPeerIds;
+  final List<String> participantBasePeerIds;
   final List<String> activeHeartPeerIds;
   final int? repostTotalBaseline;
   final int? sharedToCountBaseline;
@@ -97,6 +98,7 @@ class PostPassEnvelope {
     required this.passerUsername,
     required this.originalSnapshot,
     this.participantPeerIds = const <String>[],
+    this.participantBasePeerIds = const <String>[],
     this.activeHeartPeerIds = const <String>[],
     this.repostTotalBaseline,
     this.sharedToCountBaseline,
@@ -108,6 +110,7 @@ class PostPassEnvelope {
     required PostPassModel pass,
     required PostModel post,
     List<String>? participantPeerIds,
+    List<String>? participantBasePeerIds,
     List<String>? activeHeartPeerIds,
     int? repostTotalBaseline,
     int? sharedToCountBaseline,
@@ -126,6 +129,9 @@ class PostPassEnvelope {
         return persistedEnvelope;
       }
     }
+    final resolvedParticipantPeerIds =
+        participantPeerIds ??
+        _sortedUniqueNonEmpty(<String>[post.authorPeerId, pass.passerPeerId]);
     return PostPassEnvelope(
       eventId: pass.eventId,
       createdAt: pass.createdAt,
@@ -148,9 +154,10 @@ class PostPassEnvelope {
         expiresAt: post.expiresAt,
         originalAuthorAvatarBase64: originalAuthorAvatarBase64,
       ),
-      participantPeerIds:
-          participantPeerIds ??
-          _sortedUniqueNonEmpty(<String>[post.authorPeerId, pass.passerPeerId]),
+      participantPeerIds: resolvedParticipantPeerIds,
+      participantBasePeerIds: _sortedUniqueNonEmpty(
+        participantBasePeerIds ?? resolvedParticipantPeerIds,
+      ),
       activeHeartPeerIds: _sortedUniqueNonEmpty(
         activeHeartPeerIds ?? const <String>[],
       ),
@@ -191,6 +198,10 @@ class PostPassEnvelope {
       final passerUsername = payload['passer_username'] as String?;
       final participantPeerIds =
           (payload['participant_peer_ids'] as List<dynamic>? ?? const [])
+              .map((value) => value.toString())
+              .toList(growable: false);
+      final participantBasePeerIds =
+          (payload['participant_base_peer_ids'] as List<dynamic>? ?? const [])
               .map((value) => value.toString())
               .toList(growable: false);
       final heartBaseline = payload['heart_baseline'] as Map<String, dynamic>?;
@@ -244,6 +255,7 @@ class PostPassEnvelope {
         passerUsername: passerUsername,
         originalSnapshot: snapshot,
         participantPeerIds: _sortedUniqueNonEmpty(participantPeerIds),
+        participantBasePeerIds: _sortedUniqueNonEmpty(participantBasePeerIds),
         activeHeartPeerIds: _sortedUniqueNonEmpty(activeHeartPeerIds),
         repostTotalBaseline: repostTotalBaseline,
         sharedToCountBaseline: sharedToCountBaseline,
@@ -335,6 +347,7 @@ class PostPassEnvelope {
     required PostPassModel pass,
     required PostModel post,
     List<String>? participantPeerIds,
+    List<String>? participantBasePeerIds,
     List<String>? activeHeartPeerIds,
     int? repostTotalBaseline,
     int? sharedToCountBaseline,
@@ -343,6 +356,7 @@ class PostPassEnvelope {
       pass: pass,
       post: post,
       participantPeerIds: participantPeerIds,
+      participantBasePeerIds: participantBasePeerIds,
       activeHeartPeerIds: activeHeartPeerIds,
       repostTotalBaseline: repostTotalBaseline,
       sharedToCountBaseline: sharedToCountBaseline,
@@ -420,6 +434,8 @@ class PostPassEnvelope {
       'passer_username': passerUsername,
       if (participantPeerIds.isNotEmpty)
         'participant_peer_ids': participantPeerIds,
+      if (participantBasePeerIds.isNotEmpty)
+        'participant_base_peer_ids': participantBasePeerIds,
       'heart_baseline': <String, Object?>{
         'active_peer_ids': activeHeartPeerIds,
       },

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 import '../../../../core/bridge/bridge.dart';
 import '../../../../core/utils/flow_event_emitter.dart';
@@ -178,7 +179,7 @@ class _QRDisplayWiredState extends State<QRDisplayWired> {
       case _QRDisplayState.noIdentity:
         return _buildErrorScreen(
           icon: Icons.person_off,
-          title: 'No Identity',
+          title: AppLocalizations.of(context)!.qr_no_identity,
           message: _errorMessage!,
           showRetry: false,
         );
@@ -186,7 +187,7 @@ class _QRDisplayWiredState extends State<QRDisplayWired> {
       case _QRDisplayState.error:
         return _buildErrorScreen(
           icon: Icons.error_outline,
-          title: 'Error',
+          title: AppLocalizations.of(context)!.qr_error,
           message: _errorMessage!,
           showRetry: true,
         );
@@ -207,7 +208,7 @@ class _QRDisplayWiredState extends State<QRDisplayWired> {
           icon: const Icon(Icons.arrow_back),
           onPressed: widget.onClose,
         ),
-        title: const Text('My QR Code'),
+        title: Text(AppLocalizations.of(context)!.qr_my_code),
         centerTitle: true,
       ),
       body: Center(
@@ -240,7 +241,7 @@ class _QRDisplayWiredState extends State<QRDisplayWired> {
                 ElevatedButton.icon(
                   onPressed: _buildPayload,
                   icon: const Icon(Icons.refresh),
-                  label: const Text('Try Again'),
+                  label: Text(AppLocalizations.of(context)!.qr_try_again),
                 ),
               ],
             ],

@@ -1,0 +1,304 @@
+{
+  "@@locale": "de",
+  "nav_feed": "Feed",
+  "nav_remember": "Erinnerungen",
+  "nav_posts": "Beiträge",
+  "nav_orbit": "Kreis",
+  "onboarding_new_here": "Ich bin neu hier",
+  "onboarding_new_desc": "Neue Identität erstellen",
+  "onboarding_load_key": "Schlüssel wiederherstellen",
+  "onboarding_load_desc": "Mit deiner Wiederherstellungsphrase wiederherstellen",
+  "onboarding_privacy_1": "Nur du kannst deine Nachrichten lesen",
+  "onboarding_privacy_2": "Alles bleibt auf deinem Handy. Niemand schaut mit.",
+  "progress_securing": "Deine Identität wird gesichert",
+  "progress_securing_desc": "Deine Identität wird sicher gespeichert.",
+  "progress_creating": "Deine sichere Identität wird erstellt",
+  "progress_creating_desc": "Auf diesem Gerät werden Verschlüsselungsschlüssel erstellt. Das passiert nur einmal.",
+  "progress_keep_open": "Bitte lass die App geöffnet.",
+  "progress_almost": "Fast geschafft.",
+  "progress_step_keys": "Schlüssel erstellen",
+  "progress_step_save": "Auf dem Gerät speichern",
+  "mnemonic_title": "Wiederherstellungsphrase",
+  "mnemonic_error_12": "Bitte gib genau 12 Wörter ein",
+  "mnemonic_error_invalid": "Ungültige Wiederherstellungsphrase",
+  "mnemonic_error_generic": "Es ist ein Fehler aufgetreten. Bitte versuche es erneut.",
+  "mnemonic_hint": "word1 word2 word3 word4\nword5 word6 word7 word8\nword9 word10 word11 word12",
+  "qr_show_desc": "Zeig das jemandem, den du in deinen Kreis aufnehmen willst...",
+  "qr_copy_hint": "QR-Code gedrückt halten, um die Daten zu kopieren",
+  "qr_copied": "QR-Daten in die Zwischenablage kopiert!",
+  "qr_scan_title": "QR-Code scannen",
+  "qr_scan_instruction": "Richte deine Kamera auf den QR-Code eines Freundes",
+  "qr_scan_subtitle": "Die Person wird deinem Kreis hinzugefügt",
+  "qr_my_code": "Mein QR-Code",
+  "qr_no_identity": "Keine Identität vorhanden",
+  "qr_error": "Fehler",
+  "qr_try_again": "Erneut versuchen",
+  "qr_paste_title": "QR-Daten einfügen",
+  "qr_paste_hint": "Füge die JSON-Daten des QR-Codes von einem anderen Gerät ein:",
+  "qr_paste_button": "Aus Zwischenablage einfügen",
+  "qr_debug_paste": "Debug: QR-Daten einfügen",
+  "posts_title": "Beiträge",
+  "posts_header_subtitle": "Was ist heute bei deinen Freunden los, {username}?",
+  "@posts_header_subtitle": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "posts_compose_button": "Teile etwas mit deinen Freunden",
+  "posts_empty_title": "Du bist auf dem neuesten Stand",
+  "posts_empty_desc": "Beiträge von deinen direkten Freunden erscheinen hier, sobald sie ankommen oder erneut geladen werden.",
+  "posts_empty_button": "Ersten Beitrag erstellen",
+  "posts_caught_up": "Du bist auf dem neuesten Stand",
+  "posts_time_now": "Gerade eben",
+  "posts_time_earlier": "Früher heute",
+  "posts_time_yesterday": "Gestern",
+  "compose_title": "Beitrag erstellen",
+  "compose_hint": "Was möchtest du teilen?",
+  "compose_audience_all": "Alle Freunde",
+  "compose_audience_nearby": "Leute in deiner Nähe",
+  "compose_audience_pick": "Personen auswählen",
+  "compose_radius": "Radius",
+  "compose_radius_500": "500m",
+  "compose_radius_1k": "1km",
+  "compose_radius_2k": "2km",
+  "compose_media": "Medien",
+  "compose_media_adding": "Wird hinzugefügt...",
+  "compose_voice": "Sprachnachricht",
+  "compose_voice_stop": "Stopp",
+  "compose_voice_attached": "Sprachnachricht angehängt",
+  "compose_attachments": "{count} Anhänge",
+  "@compose_attachments": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "compose_pick_people": "Personen auswählen",
+  "compose_posting": "Wird gepostet...",
+  "compose_post": "Posten",
+  "compose_manage": "Verwalten",
+  "compose_pinned_1": "Du hast bereits 1 aktiven angepinnten Beitrag",
+  "compose_pinned_n": "Du hast bereits {count} aktive angepinnte Beiträge",
+  "@compose_pinned_n": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "compose_nearby_off": "„Leute in deiner Nähe“ ist in den Einstellungen deaktiviert",
+  "compose_nearby_ready": "„Leute in deiner Nähe“ ist einsatzbereit",
+  "compose_nearby_refresh": "Nearby vor dem Posten aktualisieren",
+  "compose_nearby_allow": "Standort erlauben, um Leute in deiner Nähe zu nutzen",
+  "compose_nearby_perm_off": "Standortberechtigung ist deaktiviert",
+  "compose_nearby_services": "Ortungsdienste einschalten",
+  "compose_nearby_off_desc": "Aktiviere es in den Einstellungen, bevor du an Freunde in deiner Nähe postest.",
+  "compose_nearby_ready_desc": "Deine Nearby-Daten sind aktuell genug zum Posten.",
+  "compose_nearby_refresh_desc": "Aktualisiere deine Nearby-Daten, bevor du diese Zielgruppe nutzt.",
+  "compose_nearby_allow_desc": "Aktualisiere Nearby, um den Standortzugriff für diese Beiträge freizugeben.",
+  "compose_nearby_perm_desc": "Öffne die Systemeinstellungen, um den Standortzugriff wieder zu aktivieren.",
+  "compose_nearby_services_desc": "Aktiviere die Ortungsdienste und aktualisiere Nearby erneut.",
+  "compose_open_settings": "Einstellungen öffnen",
+  "compose_refreshing": "Wird aktualisiert...",
+  "compose_refresh_nearby": "Nearby aktualisieren",
+  "post_badge_friend": "Freund",
+  "post_uploading": "Medien werden hochgeladen...",
+  "post_sending": "Wird gesendet...",
+  "post_partial": "Teilweise gesendet",
+  "post_upload_failed": "Upload fehlgeschlagen",
+  "post_send_failed": "Senden fehlgeschlagen",
+  "pinned_title": "Angepinnte Beiträge",
+  "pinned_count_1": "1 angepinnter Beitrag",
+  "pinned_count_n": "{count} angepinnte Beiträge",
+  "@pinned_count_n": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "pinned_see_all": "Alle {count} angepinnten Beiträge ansehen",
+  "@pinned_see_all": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "pinned_dismiss": "Ausblenden",
+  "pinned_message": "Nachricht an {username}",
+  "@pinned_message": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "pinned_edit": "Bearbeiten",
+  "pinned_remove": "Entfernen",
+  "edit_pinned_hint": "Deinen Beitrag aktualisieren",
+  "orbit_close_friends": "Enge Freunde",
+  "orbit_new_group": "Neue Gruppe",
+  "orbit_new_announce": "Neue Ankündigung",
+  "orbit_my_qr": "Mein QR",
+  "orbit_scan": "Scannen",
+  "orbit_qr_share": "Teilen, um Freunde hinzuzufügen",
+  "orbit_qr_scan_desc": "Freund sofort hinzufügen",
+  "orbit_filter_all": "Alle",
+  "orbit_filter_intros": "Vorstellungen",
+  "orbit_filter_archived": "Archiviert",
+  "orbit_search": "Freunde suchen...",
+  "orbit_block_title": "{username} blockieren?",
+  "@orbit_block_title": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "orbit_delete_chat": "Chat löschen?",
+  "orbit_leave_group": "Gruppe verlassen und löschen?",
+  "conversation_hint": "Schreib etwas...",
+  "conversation_voice_fail": "Sprachnachricht konnte nicht gesendet werden.",
+  "conversation_block": "{username} blockieren?",
+  "@conversation_block": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "conversation_delete_chat": "Chat löschen?",
+  "conversation_reply": "Antworten...",
+  "conversation_continue": "Weiter...",
+  "comment_hint": "Schreib einen Kommentar...",
+  "group_create_title": "Gruppe erstellen",
+  "group_name_hint": "Gruppenname eingeben",
+  "group_desc_hint": "Worum geht es in dieser Gruppe?",
+  "group_name_optional": "Gruppenname (optional)",
+  "group_message_hint": "Nachricht",
+  "group_create_failed": "Gruppe konnte nicht erstellt werden",
+  "group_invite_failed": "Mitglieder konnten nicht eingeladen werden",
+  "picker_introduce_to": "An {username} vorstellen",
+  "@picker_introduce_to": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "picker_search": "Freunde suchen...",
+  "picker_no_friends": "Keine Freunde verfügbar, die du vorstellen kannst",
+  "picker_no_results": "Keine Freunde passend zu „{query}“",
+  "@picker_no_results": {
+    "placeholders": {
+      "query": {
+        "type": "String"
+      }
+    }
+  },
+  "picker_introduce_count": "Vorstellen ({count})",
+  "@picker_introduce_count": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "picker_introduce": "Vorstellen",
+  "picker_search_contacts": "Kontakte suchen...",
+  "picker_search_all": "Kontakte & Gruppen durchsuchen",
+  "settings_title": "Einstellungen",
+  "settings_video_quality": "Videoqualität",
+  "settings_compressed": "Komprimiert",
+  "settings_original": "Original",
+  "settings_original_desc": "Volle Qualität, größere Datei. Metadaten werden immer entfernt.",
+  "settings_compressed_desc": "Kleinere Datei, schnelleres Senden. Metadaten werden immer entfernt.",
+  "settings_photo_fail": "Profilbild konnte nicht hochgeladen werden",
+  "picker_take_photo": "Foto aufnehmen",
+  "picker_gallery": "Aus Galerie wählen",
+  "notif_new_intro": "Neue Vorstellung",
+  "notif_new_connection": "Neue Verbindung",
+  "startup_checking": "Dein Bereich wird vorbereitet...",
+  "startup_checking_desc": "Identität und Startzustand werden geprüft",
+  "startup_feed": "Feed wird geöffnet...",
+  "startup_feed_desc": "Wir wechseln zu deinen Unterhaltungen",
+  "startup_setup": "Einrichtung wird geöffnet...",
+  "startup_setup_desc": "Dein erster Start wird vorbereitet",
+  "startup_onboarding": "Onboarding wird geöffnet...",
+  "startup_onboarding_desc": "Wir richten deine Identität ein",
+  "btn_retry": "Erneut versuchen",
+  "btn_cancel": "Abbrechen",
+  "btn_submit": "Senden",
+  "error_add_contact": "Kontakt konnte nicht hinzugefügt werden. Bitte versuche es erneut.",
+  "error_send_message": "Nachricht konnte nicht gesendet werden. Bitte versuche es erneut.",
+  "error_update_photo": "Foto konnte nicht aktualisiert werden: {error}",
+  "@error_update_photo": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "error_update_username": "Benutzername konnte nicht aktualisiert werden. Bitte versuche es erneut.",
+  "error_generic": "Fehler: {error}",
+  "@error_generic": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "status_processing_video": "Video wird verarbeitet...",
+  "perm_camera": "Diese App benötigt Kamerazugriff, um QR-Codes zu scannen und Fotos aufzunehmen",
+  "perm_photos": "Diese App benötigt Zugriff auf deine Fotomediathek, um Bilder zu teilen",
+  "perm_microphone": "Diese App benötigt Mikrofonzugriff, um Sprachnachrichten aufzunehmen",
+  "perm_location": "Diese App benötigt Standortzugriff, damit du Beiträge mit direkten Freunden in deiner Nähe teilen kannst",
+  "perm_local_network": "mknoon sucht deine Freunde im selben WLAN, um Nachrichten direkt an ihr Handy zu senden. Das ist schneller, privater und wir sammeln niemals deine Daten.",
+  "perm_notifications": "Diese App benötigt Mitteilungszugriff, um dich über eingehende Nachrichten zu informieren",
+  "connected_date": "Verbunden {date}",
+  "@connected_date": {
+    "placeholders": {
+      "date": {
+        "type": "String"
+      }
+    }
+  },
+  "date_today": "Heute",
+  "date_yesterday": "Gestern",
+  "feed_collapse": "Einklappen",
+  "feed_tap_expand": "Zum Öffnen tippen",
+  "feed_you": "Du",
+  "feed_you_replied": "Du hast geantwortet {time}",
+  "@feed_you_replied": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "settings_photo_quality": "Fotoqualität",
+  "settings_share_nearby": "Leute in der Nähe teilen",
+  "settings_share_nearby_on": "An",
+  "settings_share_nearby_off": "Aus",
+  "settings_share_nearby_desc": "Teilt nur einen ungefähren Standort mit direkten Freunden. Keine Live-Karten und niemals Fremde.",
+  "settings_recovery_title": "WIEDERHERSTELLUNGSPHRASE",
+  "settings_recovery_warning": "Teile diese Phrase niemals mit jemandem. Sie gewährt vollen Zugriff auf dein Konto.",
+  "settings_recovery_tap": "Zum Anzeigen tippen",
+  "settings_recovery_copied": "Kopiert!",
+  "settings_recovery_copy": "In die Zwischenablage kopieren",
+  "settings_recovery_hide": "Verbergen",
+  "connected_title": "Verbunden!",
+  "send_message": "Nachricht senden",
+  "introduced_by": "Vorgestellt von {username}",
+  "@introduced_by": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  }
+}

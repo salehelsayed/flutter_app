@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_type_badge.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
@@ -79,7 +80,7 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
                     const SizedBox(height: 8),
                     _buildTextField(
                       controller: _nameController,
-                      hint: 'Enter group name',
+                      hint: AppLocalizations.of(context)!.group_name_hint,
                       onChanged: (_) => setState(() {}),
                     ),
                     const SizedBox(height: 24),
@@ -93,12 +94,12 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
                     const SizedBox(height: 8),
                     _buildTextField(
                       controller: _descriptionController,
-                      hint: 'What is this group about?',
+                      hint: AppLocalizations.of(context)!.group_desc_hint,
                       maxLines: 3,
                     ),
                     const SizedBox(height: 32),
                     // Create button
-                    _buildCreateButton(canSubmit),
+                    _buildCreateButton(context, canSubmit),
                   ],
                 ),
               ),
@@ -120,9 +121,9 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
             onPressed: widget.onBack,
           ),
           const SizedBox(width: 4),
-          const Text(
-            'Create Group',
-            style: TextStyle(
+          Text(
+            AppLocalizations.of(context)!.group_create_title,
+            style: const TextStyle(
               fontSize: 20,
               fontWeight: FontWeight.w600,
               color: Colors.white,
@@ -208,7 +209,7 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
     );
   }
 
-  Widget _buildCreateButton(bool canSubmit) {
+  Widget _buildCreateButton(BuildContext context, bool canSubmit) {
     return GestureDetector(
       onTap: canSubmit ? _onSubmit : null,
       child: Container(
@@ -231,10 +232,10 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
                   ),
                 ),
               )
-            : const Text(
-                'Create Group',
+            : Text(
+                AppLocalizations.of(context)!.group_create_title,
                 textAlign: TextAlign.center,
-                style: TextStyle(
+                style: const TextStyle(
                   fontSize: 15,
                   fontWeight: FontWeight.w600,
                   color: Colors.black,

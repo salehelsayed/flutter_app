@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/painting.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
+import 'package:flutter_app/features/settings/application/helpers/avatar_normalization_helper.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
@@ -31,6 +32,7 @@ Future<ContactModel?> downloadProfilePicture({
   required ContactRepository contactRepo,
   required String ownerPeerId,
   required String avatarVersion,
+  AvatarNormalizationHelper? avatarNormalizer,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -46,13 +48,14 @@ Future<ContactModel?> downloadProfilePicture({
       avatarsDir.createSync(recursive: true);
     }
 
-    final outputPath = p.join(avatarsDir.path, '$ownerPeerId.jpg');
+    final canonicalPath = p.join(avatarsDir.path, '$ownerPeerId.jpg');
+    final downloadPath = p.join(avatarsDir.path, '$ownerPeerId.raw.jpg');
 
     // 2. Download from relay
     final result = await callP2PProfileDownload(
       bridge,
       ownerPeerId: ownerPeerId,
-      outputPath: outputPath,
+      outputPath: downloadPath,
     );
 
     if (result['ok'] != true) {
@@ -64,8 +67,14 @@ Future<ContactModel?> downloadProfilePicture({
       return null;
     }
 
+    final normalizer = avatarNormalizer ?? AvatarNormalizationHelper();
+    final committedPath = await normalizer.normalizeAvatar(
+      inputPath: downloadPath,
+      canonicalPath: canonicalPath,
+    );
+
     // 3. Evict Flutter image cache so UserAvatar picks up the new file
-    FileImage(File(outputPath)).evict();
+    FileImage(File(committedPath)).evict();
     UserAvatar.invalidatePeer(ownerPeerId);
 
     // 4. Update contact

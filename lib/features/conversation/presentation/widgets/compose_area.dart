@@ -1,5 +1,6 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/quote_preview_bar.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/recording_overlay.dart';
@@ -290,7 +291,7 @@ class _ComposeAreaState extends State<ComposeArea>
                                 height: 1.5,
                               ),
                               decoration: InputDecoration(
-                                hintText: 'Write something...',
+                                hintText: AppLocalizations.of(context)!.conversation_hint,
                                 hintStyle: TextStyle(
                                   fontSize: 15,
                                   color: Color.fromRGBO(

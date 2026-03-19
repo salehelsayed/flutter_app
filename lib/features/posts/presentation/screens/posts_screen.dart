@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 import 'package:flutter_app/features/feed/presentation/widgets/feed_navigation_bar.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
@@ -121,7 +122,7 @@ class PostsScreen extends StatelessWidget {
                         padding: const EdgeInsets.fromLTRB(8, 8, 8, 10),
                         sliver: SliverToBoxAdapter(
                           child: Text(
-                            section.key,
+                            _translateGroupKey(section.key, context),
                             style: const TextStyle(
                               color: Color.fromRGBO(255, 255, 255, 0.6),
                               fontSize: 13,
@@ -168,8 +169,8 @@ class PostsScreen extends StatelessWidget {
                   SliverToBoxAdapter(
                     child: Padding(
                       padding: EdgeInsets.fromLTRB(20, 8, 20, 88 + bottomInset),
-                      child: const Text(
-                        "You're all caught up",
+                      child: Text(
+                        AppLocalizations.of(context)!.posts_caught_up,
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           color: Color.fromRGBO(255, 255, 255, 0.45),
@@ -205,12 +206,12 @@ class PostsScreen extends StatelessWidget {
       final timestamp = DateTime.tryParse(post.visibleAt)?.toLocal() ?? now;
       final diff = now.difference(timestamp);
       final key = switch (diff) {
-        _ when diff.inHours < 4 => 'Right now',
+        _ when diff.inHours < 4 => 'right_now',
         _
             when now.year == timestamp.year &&
                 now.month == timestamp.month &&
                 now.day == timestamp.day =>
-          'Earlier today',
+          'earlier_today',
         _
             when now
                     .subtract(const Duration(days: 1))
@@ -219,12 +220,26 @@ class PostsScreen extends StatelessWidget {
                     )
                     .inDays ==
                 0 =>
-          'Yesterday',
+          'yesterday',
         _ => '${timestamp.month}/${timestamp.day}/${timestamp.year}',
       };
       grouped.putIfAbsent(key, () => <PostModel>[]).add(post);
     }
     return grouped;
+  }
+
+  String _translateGroupKey(String key, BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    switch (key) {
+      case 'right_now':
+        return l10n.posts_time_now;
+      case 'earlier_today':
+        return l10n.posts_time_earlier;
+      case 'yesterday':
+        return l10n.posts_time_yesterday;
+      default:
+        return key; // date string like 3/18/2026
+    }
   }
 }
 
@@ -240,7 +255,7 @@ class _PostsHeader extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Posts',
+          AppLocalizations.of(context)!.posts_title,
           style: Theme.of(context).textTheme.headlineMedium?.copyWith(
             color: Colors.white,
             fontWeight: FontWeight.w700,
@@ -248,7 +263,7 @@ class _PostsHeader extends StatelessWidget {
         ),
         const SizedBox(height: 6),
         Text(
-          'What\'s happening around your friends today, $username?',
+          AppLocalizations.of(context)!.posts_header_subtitle(username),
           style: const TextStyle(
             color: Color.fromRGBO(255, 255, 255, 0.6),
             fontSize: 14,
@@ -267,17 +282,17 @@ class _PostsHeader extends StatelessWidget {
                 color: const Color.fromRGBO(255, 255, 255, 0.08),
               ),
             ),
-            child: const Row(
+            child: Row(
               children: [
-                Icon(Icons.edit_outlined, color: Colors.white70),
-                SizedBox(width: 12),
+                const Icon(Icons.edit_outlined, color: Colors.white70),
+                const SizedBox(width: 12),
                 Expanded(
                   child: Text(
-                    'Share something with your friends',
-                    style: TextStyle(color: Colors.white70, fontSize: 15),
+                    AppLocalizations.of(context)!.posts_compose_button,
+                    style: const TextStyle(color: Colors.white70, fontSize: 15),
                   ),
                 ),
-                Icon(Icons.chevron_right, color: Colors.white38),
+                const Icon(Icons.chevron_right, color: Colors.white38),
               ],
             ),
           ),
@@ -300,17 +315,17 @@ class _EmptyState extends StatelessWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Text(
-              "You're all caught up",
-              style: TextStyle(
+            Text(
+              AppLocalizations.of(context)!.posts_empty_title,
+              style: const TextStyle(
                 color: Colors.white,
                 fontSize: 22,
                 fontWeight: FontWeight.w700,
               ),
             ),
             const SizedBox(height: 10),
-            const Text(
-              'Your direct-friend posts will appear here after they land or replay.',
+            Text(
+              AppLocalizations.of(context)!.posts_empty_desc,
               textAlign: TextAlign.center,
               style: TextStyle(
                 color: Color.fromRGBO(255, 255, 255, 0.6),
@@ -320,7 +335,7 @@ class _EmptyState extends StatelessWidget {
             const SizedBox(height: 18),
             ElevatedButton(
               onPressed: onCompose,
-              child: const Text('Create your first post'),
+              child: Text(AppLocalizations.of(context)!.posts_empty_button),
             ),
           ],
         ),

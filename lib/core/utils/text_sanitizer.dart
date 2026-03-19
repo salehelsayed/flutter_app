@@ -2,7 +2,7 @@
 const int maxMessageLength = 10000;
 
 /// Maximum allowed username length.
-const int maxUsernameLength = 20;
+const int maxUsernameLength = 30;
 
 /// Regex matching bidi control characters and invisible formatting characters.
 ///
@@ -29,10 +29,14 @@ bool isMessageTooLong(String text) {
   return text.length > maxMessageLength;
 }
 
-/// Whether [username] contains only allowed characters: `a-zA-Z0-9_-.`
+/// Whether [username] contains only allowed characters:
+/// Latin + Extended Latin `\u00C0-\u024F` (covers German äöüÄÖÜß,
+/// French àâçéèêë, Scandinavian åæø, etc.), digits `0-9`, `_-.`,
+/// Arabic `\u0600-\u06FF`, Arabic Supplement `\u0750-\u077F`.
 bool isValidUsername(String username) {
   if (username.isEmpty) return false;
-  return RegExp(r'^[a-zA-Z0-9_\-\.]+$').hasMatch(username);
+  return RegExp(r'^[a-zA-Z0-9_\-\.\u00C0-\u024F\u0600-\u06FF\u0750-\u077F]+$')
+      .hasMatch(username);
 }
 
 /// Sanitizes message text by stripping bidi characters.

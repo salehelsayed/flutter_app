@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/theme/feed_colors.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
@@ -167,21 +168,21 @@ class _ScrollableMessagePreviewState extends State<ScrollableMessagePreview> {
     return GestureDetector(
       onTap: widget.onCollapse,
       behavior: HitTestBehavior.opaque,
-      child: const Center(
+      child: Center(
         child: Padding(
-          padding: EdgeInsets.symmetric(vertical: 6),
+          padding: const EdgeInsets.symmetric(vertical: 6),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(
+              const Icon(
                 Icons.keyboard_arrow_up_rounded,
                 size: 16,
                 color: FeedColors.viewEarlierText,
               ),
-              SizedBox(width: 2),
+              const SizedBox(width: 2),
               Text(
-                'Collapse',
-                style: TextStyle(
+                AppLocalizations.of(context)!.feed_collapse,
+                style: const TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w500,
                   color: FeedColors.viewEarlierText,
@@ -282,7 +283,7 @@ class _ScrollableMessagePreviewState extends State<ScrollableMessagePreview> {
               : null,
           senderLabel: msg.isIncoming
               ? (msg.senderUsername ?? widget.contactUsername)
-              : 'You',
+              : AppLocalizations.of(context)!.feed_you,
           media: msg.media,
           onMediaTap: msg.media.isNotEmpty
               ? (index) => _openMediaViewer(context, msg.media, index)

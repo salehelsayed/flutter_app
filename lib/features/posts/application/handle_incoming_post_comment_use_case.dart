@@ -41,10 +41,17 @@ handleIncomingPostComment({
   }
 
   final sender = await contactRepo.getContact(envelope.senderPeerId);
-  if (sender == null) {
+  final trustedParticipant = sender == null
+      ? await isTrustedRepostThreadParticipant(
+          postRepo: postRepo,
+          postId: envelope.postId,
+          participantPeerId: envelope.senderPeerId,
+        )
+      : false;
+  if (sender == null && !trustedParticipant) {
     return (HandleIncomingPostCommentResult.unknownSender, null);
   }
-  if (sender.isBlocked) {
+  if (sender?.isBlocked ?? false) {
     return (HandleIncomingPostCommentResult.blockedSender, null);
   }
   if (await postRepo.commentExists(envelope.commentId)) {
@@ -75,12 +82,13 @@ handleIncomingPostComment({
     participantPeerId: envelope.senderPeerId,
     createdAt: envelope.commentedAt,
   );
+  final authorUsername = sender?.username ?? envelope.senderPeerId;
   final comment = PostCommentModel(
     id: envelope.commentId,
     eventId: envelope.eventId,
     postId: envelope.postId,
     senderPeerId: envelope.senderPeerId,
-    authorUsername: sender.username,
+    authorUsername: authorUsername,
     body: envelope.body,
     commentedAt: envelope.commentedAt,
   );

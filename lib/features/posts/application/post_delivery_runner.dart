@@ -155,13 +155,15 @@ class PostDeliveryRunner {
       ),
     );
     var innerPayloadJson = pass.innerPayloadJson;
+    PostPassEnvelope? innerEnvelope;
     if (innerPayloadJson == null || innerPayloadJson.isEmpty) {
-      final participantPeerIds = await loadPersistedRepostParticipantPeerIds(
-        postRepo: postRepo,
-        postId: snapshotPost.id,
-        authorPeerId: snapshotPost.authorPeerId,
-        passerPeerId: pass.passerPeerId,
-      );
+      final participantBasePeerIds =
+          await loadPersistedRepostParticipantPeerIds(
+            postRepo: postRepo,
+            postId: snapshotPost.id,
+            authorPeerId: snapshotPost.authorPeerId,
+            passerPeerId: pass.passerPeerId,
+          );
       final activeHeartPeerIds = await loadProjectedActiveHeartPeerIds(
         postRepo: postRepo,
         postId: snapshotPost.id,
@@ -170,17 +172,30 @@ class PostDeliveryRunner {
         postRepo: postRepo,
         postId: snapshotPost.id,
       );
-      innerPayloadJson = PostPassEnvelope.fromPass(
+      final participantPeerIds = _mergeSortedParticipantPeerIds(
+        participantBasePeerIds,
+        allRecipientPeerIds,
+      );
+      innerEnvelope = PostPassEnvelope.fromPass(
         pass: pass,
         post: snapshotPost,
         participantPeerIds: participantPeerIds,
+        participantBasePeerIds: participantBasePeerIds,
         activeHeartPeerIds: activeHeartPeerIds,
         repostTotalBaseline: repostTotalBaseline > 0
             ? repostTotalBaseline - 1
             : 0,
-      ).toInnerJson();
+      );
+      innerPayloadJson = innerEnvelope.toInnerJson();
       progress.latestPass = pass.copyWith(innerPayloadJson: innerPayloadJson);
       await postRepo.savePostPass(progress.latestPass);
+    } else {
+      innerEnvelope = PostPassEnvelope.fromInnerJson(
+        innerJson: innerPayloadJson,
+        eventId: pass.eventId,
+        createdAt: pass.createdAt,
+        senderPeerId: pass.senderPeerId,
+      );
     }
 
     try {
@@ -189,9 +204,16 @@ class PostDeliveryRunner {
         maxConcurrentRecipients: maxConcurrentRecipients,
         resolvedRecipients: resolvedRecipients,
         buildWireEnvelope: (recipient) {
-          return _buildPostPassWireEnvelope(
+          final scopedInnerPayloadJson = _buildRecipientScopedPostPassInnerJson(
             pass: progress.latestPass,
             innerPayloadJson: innerPayloadJson!,
+            innerEnvelope: innerEnvelope,
+            recipientPeerId: recipient.contact.peerId,
+            allRecipientPeerIds: allRecipientPeerIds,
+          );
+          return _buildPostPassWireEnvelope(
+            pass: progress.latestPass,
+            innerPayloadJson: scopedInnerPayloadJson,
             bridge: bridge,
             recipient: recipient.contact,
           );
@@ -216,6 +238,68 @@ class PostDeliveryRunner {
 
     return (_resultForAggregate(progress.aggregate), progress.latestPass);
   }
+}
+
+String _buildRecipientScopedPostPassInnerJson({
+  required PostPassModel pass,
+  required String innerPayloadJson,
+  required String recipientPeerId,
+  required List<String> allRecipientPeerIds,
+  PostPassEnvelope? innerEnvelope,
+}) {
+  final envelope =
+      innerEnvelope ??
+      PostPassEnvelope.fromInnerJson(
+        innerJson: innerPayloadJson,
+        eventId: pass.eventId,
+        createdAt: pass.createdAt,
+        senderPeerId: pass.senderPeerId,
+      );
+  if (envelope == null) {
+    return innerPayloadJson;
+  }
+
+  final participantBasePeerIds = envelope.participantBasePeerIds.isNotEmpty
+      ? envelope.participantBasePeerIds
+      : envelope.participantPeerIds;
+  final scopedParticipantPeerIds =
+      recipientPeerId == envelope.originalSnapshot.authorPeerId
+      ? _mergeSortedParticipantPeerIds(
+          participantBasePeerIds,
+          allRecipientPeerIds,
+        )
+      : _mergeSortedParticipantPeerIds(participantBasePeerIds, <String>[
+          recipientPeerId,
+        ]);
+
+  return PostPassEnvelope(
+    eventId: pass.eventId,
+    createdAt: pass.createdAt,
+    senderPeerId: pass.senderPeerId,
+    passId: envelope.passId,
+    postId: envelope.postId,
+    passedAt: envelope.passedAt,
+    passerPeerId: envelope.passerPeerId,
+    passerUsername: envelope.passerUsername,
+    originalSnapshot: envelope.originalSnapshot,
+    participantPeerIds: scopedParticipantPeerIds,
+    participantBasePeerIds: participantBasePeerIds,
+    activeHeartPeerIds: envelope.activeHeartPeerIds,
+    repostTotalBaseline: envelope.repostTotalBaseline,
+    sharedToCountBaseline: envelope.sharedToCountBaseline,
+    recipientCount: envelope.recipientCount,
+    mediaKeys: envelope.mediaKeys,
+  ).toInnerJson();
+}
+
+List<String> _mergeSortedParticipantPeerIds(
+  Iterable<String> seedPeerIds,
+  Iterable<String> extraPeerIds,
+) {
+  final peerIds = <String>{...seedPeerIds, ...extraPeerIds}
+    ..removeWhere((peerId) => peerId.isEmpty);
+  final sortedPeerIds = peerIds.toList(growable: false)..sort();
+  return sortedPeerIds;
 }
 
 Future<(SendPostResult, PostModel)> _persistTerminalFailure(

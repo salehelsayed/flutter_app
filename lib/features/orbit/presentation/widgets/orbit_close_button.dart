@@ -15,8 +15,8 @@ class OrbitCloseButton extends StatelessWidget {
         child: BackdropFilter(
           filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
           child: Container(
-            width: 36,
-            height: 36,
+            width: 44,
+            height: 44,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
               color: const Color(0x1AFFFFFF), // rgba(255,255,255,0.1)
@@ -40,12 +40,12 @@ class _XPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
       ..color = const Color(0xCCFFFFFF) // rgba(255,255,255,0.8)
-      ..strokeWidth = 1.5
+      ..strokeWidth = 2.0
       ..strokeCap = StrokeCap.round;
 
     // Center the X in the 24x24 container
-    const inset = 10.0;
-    const containerSize = 36.0;
+    const inset = 15.0;
+    const containerSize = 44.0;
     canvas.drawLine(
       const Offset(inset, inset),
       const Offset(containerSize - inset, containerSize - inset),

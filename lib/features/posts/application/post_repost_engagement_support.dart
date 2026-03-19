@@ -69,6 +69,28 @@ Future<List<String>> loadPersistedRepostParticipantPeerIds({
   return sortedPeerIds;
 }
 
+Future<Set<String>> loadTrustedRepostThreadParticipantPeerIds({
+  required PostRepository postRepo,
+  required String postId,
+}) async {
+  return await postRepo.loadRepostEngagementParticipantPeerIds(postId);
+}
+
+Future<bool> isTrustedRepostThreadParticipant({
+  required PostRepository postRepo,
+  required String postId,
+  required String participantPeerId,
+}) async {
+  if (participantPeerId.isEmpty) {
+    return false;
+  }
+  final trustedParticipants = await loadTrustedRepostThreadParticipantPeerIds(
+    postRepo: postRepo,
+    postId: postId,
+  );
+  return trustedParticipants.contains(participantPeerId);
+}
+
 Future<bool> hasRepostThreadState({
   required PostRepository postRepo,
   required String postId,

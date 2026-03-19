@@ -95,7 +95,7 @@ sendPostCommentReaction({
     senderPeerId: senderPeerId,
     envelope: envelope,
     createdAt: createdAt,
-    recipientPeerIds: recipients.map((recipient) => recipient.peerId),
+    recipientPeerIds: recipients,
     maxConcurrentRecipients: maxConcurrentRecipients,
   );
   return (

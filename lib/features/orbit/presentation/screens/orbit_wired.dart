@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
@@ -940,7 +941,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   Future<void> _onBlockFriend(OrbitFriend friend) async {
     final confirmed = await showConfirmationDialog(
       context: context,
-      title: 'Block ${friend.username}?',
+      title: AppLocalizations.of(context)!.orbit_block_title(friend.username),
       description:
           'They won\'t be able to send you messages. You can unblock them later.',
       confirmLabel: 'Block',
@@ -984,7 +985,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   Future<void> _onDeleteFriend(OrbitFriend friend) async {
     final confirmed = await showConfirmationDialog(
       context: context,
-      title: 'Delete chat?',
+      title: AppLocalizations.of(context)!.orbit_delete_chat,
       description:
           'This will permanently remove ${friend.username} and all messages. This cannot be undone.',
       confirmLabel: 'Delete',
@@ -1242,7 +1243,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
 
     final confirmed = await showConfirmationDialog(
       context: context,
-      title: 'Leave & delete group?',
+      title: AppLocalizations.of(context)!.orbit_leave_group,
       description:
           'This will permanently leave the group and delete all messages. This cannot be undone.',
       confirmLabel: 'Delete',
