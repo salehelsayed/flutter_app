@@ -122,7 +122,8 @@ class PostNotificationOpenCoordinator {
       return;
     }
     _revealedPostId = postId;
-    appShellController.switchTo(AppShellTab.posts);
+    // Posts tab hidden for TestFlight — navigate to feed instead.
+    appShellController.switchTo(AppShellTab.feed);
     revealPostsSurface();
   }
 }
