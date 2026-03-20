@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
@@ -102,8 +103,10 @@ class _FakeP2PService implements P2PService {
   bool throwOnSend = false;
   bool storeResult = true;
   bool throwOnStore = false;
+  List<bool> storeResultsQueue = [];
   List<String> sentToPeers = [];
   List<String> storedToPeers = [];
+  int healthCheckCallCount = 0;
 
   @override
   Future<bool> sendMessage(String peerId, String message) async {
@@ -116,6 +119,9 @@ class _FakeP2PService implements P2PService {
   Future<bool> storeInInbox(String toPeerId, String message) async {
     if (throwOnStore) throw Exception('store error');
     storedToPeers.add(toPeerId);
+    if (storeResultsQueue.isNotEmpty) {
+      return storeResultsQueue.removeAt(0);
+    }
     return storeResult;
   }
 
@@ -160,7 +166,10 @@ class _FakeP2PService implements P2PService {
   @override
   Future<bool> registerPushToken(String token, String platform) async => true;
   @override
-  Future<void> performImmediateHealthCheck() async {}
+  Future<void> performImmediateHealthCheck() async {
+    healthCheckCallCount++;
+  }
+
   @override
   Future<void> drainOfflineInbox() async {}
   @override
@@ -207,13 +216,19 @@ class _FakePathProvider extends Fake
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-IdentityModel _makeIdentity({String peerId = '12D3KooWTestPeerId123456'}) {
+IdentityModel _makeIdentity({
+  String peerId = '12D3KooWTestPeerId123456',
+  List<int>? avatarBlob,
+  String? avatarVersion,
+}) {
   return IdentityModel(
     peerId: peerId,
     publicKey: 'pk_base64',
     privateKey: 'sk_base64',
     mnemonic12:
         'word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12',
+    avatarBlob: avatarBlob == null ? null : Uint8List.fromList(avatarBlob),
+    avatarVersion: avatarVersion,
     createdAt: '2024-01-01T00:00:00Z',
     updatedAt: '2024-01-01T00:00:00Z',
   );
@@ -387,6 +402,33 @@ void main() {
       DateTime.parse(identityRepo.lastSaved!.avatarVersion!);
     });
 
+    test(
+      'replaces a stale identity avatarBlob with the committed avatar bytes',
+      () async {
+        bridge.nextResponse = {'ok': true};
+        identityRepo.identityResult = _makeIdentity(
+          avatarBlob: <int>[1, 2, 3],
+          avatarVersion: '2026-03-01T12:00:00.000Z',
+        );
+        await sourceFile.writeAsBytes(<int>[9, 8, 7, 6], flush: true);
+
+        await uploadProfilePicture(
+          bridge: bridge,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          p2pService: p2pService,
+          filePath: sourceFile.path,
+          mime: 'image/jpeg',
+        );
+
+        expect(identityRepo.lastSaved, isNotNull);
+        expect(
+          identityRepo.lastSaved!.avatarBlob,
+          Uint8List.fromList(<int>[9, 8, 7, 6]),
+        );
+      },
+    );
+
     test('broadcasts profile_update envelope to all active contacts', () async {
       bridge.nextResponse = {'ok': true};
       identityRepo.identityResult = _makeIdentity();
@@ -429,6 +471,33 @@ void main() {
       );
 
       expect(p2pService.storedToPeers, contains('12D3KooWOfflinePeer1234'));
+    });
+
+    test('retries inbox fallback after a relay health recovery', () async {
+      bridge.nextResponse = {'ok': true};
+      identityRepo.identityResult = _makeIdentity();
+      contactRepo.activeContacts = [_makeContact('12D3KooWRecoverPeer1234')];
+      p2pService.sendWithReplyResult = const SendMessageResult(
+        sent: false,
+        acked: false,
+      );
+      p2pService.storeResultsQueue = [false, true];
+
+      final result = await uploadProfilePicture(
+        bridge: bridge,
+        identityRepo: identityRepo,
+        contactRepo: contactRepo,
+        p2pService: p2pService,
+        filePath: sourceFile.path,
+        mime: 'image/jpeg',
+      );
+
+      expect(result, isTrue);
+      expect(p2pService.healthCheckCallCount, 1);
+      expect(p2pService.storedToPeers, [
+        '12D3KooWRecoverPeer1234',
+        '12D3KooWRecoverPeer1234',
+      ]);
     });
 
     test('fallback: stores in inbox when direct send throws', () async {

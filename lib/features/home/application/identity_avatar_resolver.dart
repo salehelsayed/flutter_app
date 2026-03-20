@@ -17,11 +17,8 @@ class IdentityAvatarResolver {
     IdentityModel identity, {
     IdentityAvatarDocumentsDirLoader? documentsDirLoader,
   }) {
-    if (identity.avatarBlob != null) {
-      return Future<Uint8List?>.value(identity.avatarBlob);
-    }
     if (identity.avatarVersion == null) {
-      return Future<Uint8List?>.value(null);
+      return Future<Uint8List?>.value(identity.avatarBlob);
     }
 
     final cacheKey = _cacheKey(
@@ -75,9 +72,9 @@ class IdentityAvatarResolver {
       final file = File(avatarPath);
       if (!await file.exists()) {
         if (_generation == genAtStart) {
-          _cache[cacheKey] = null;
+          _cache[cacheKey] = identity.avatarBlob;
         }
-        return null;
+        return identity.avatarBlob;
       }
 
       final bytes = await file.readAsBytes();
@@ -87,9 +84,9 @@ class IdentityAvatarResolver {
       return bytes;
     } catch (_) {
       if (_generation == genAtStart) {
-        _cache[cacheKey] = null;
+        _cache[cacheKey] = identity.avatarBlob;
       }
-      return null;
+      return identity.avatarBlob;
     }
   }
 
