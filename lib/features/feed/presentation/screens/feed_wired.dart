@@ -75,7 +75,6 @@ import 'package:flutter_app/features/posts/application/pending_post_target_store
 import 'package:flutter_app/features/posts/domain/repositories/contact_presence_snapshot_repository.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 import 'package:flutter_app/features/posts/domain/repositories/posts_privacy_settings_repository.dart';
-import 'package:flutter_app/features/posts/presentation/screens/posts_wired.dart';
 import 'feed_screen.dart';
 
 enum _MediaSource { gallery, camera, videoCamera }
@@ -2140,35 +2139,7 @@ class _FeedWiredState extends State<FeedWired> {
   Widget build(BuildContext context) {
     final activeTab = _activeTab;
     final activeFocusPeerId = _visibleActiveFocusPeerId;
-    final body = activeTab == AppShellTab.posts
-        ? PostsWired(
-            identityRepo: widget.repository,
-            contactRepo: widget.contactRepository,
-            postRepo: widget.postRepository,
-            p2pService: widget.p2pService,
-            bridge: widget.bridge,
-            mediaFileManager: widget.mediaFileManager,
-            secureKeyStore: widget.secureKeyStore,
-            imageProcessor: widget.imageProcessor,
-            audioRecorderService: widget.audioRecorderService,
-            onSwitchView: _onSwitchView,
-            activeTab: activeTab,
-            appShellController: widget.appShellController,
-            pendingTargetStore: widget.pendingPostTargetStore,
-            postsPrivacySettingsRepository:
-                widget.postsPrivacySettingsRepository,
-            contactPresenceSnapshotRepository:
-                widget.contactPresenceSnapshotRepository,
-            nearbyLocationService: widget.nearbyLocationService,
-            messageRepo: widget.messageRepository,
-            chatMessageListener: widget.chatMessageListener,
-            mediaAttachmentRepo: widget.mediaAttachmentRepository,
-            reactionRepo: widget.reactionRepository,
-            reactionListener: widget.reactionListener,
-            introductionRepository: widget.introductionRepository,
-            conversationTracker: widget.conversationTracker,
-          )
-        : FeedScreen(
+    final body = FeedScreen(
             username: _username,
             userAvatarBytes: _avatarBytes,
             userPeerId: _peerId,
