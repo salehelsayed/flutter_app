@@ -52,6 +52,23 @@ void main() {
     expect(resolved, same(blob));
   });
 
+  test('prefers the canonical avatar file over a stale avatar blob', () async {
+    final identity = buildIdentity(
+      avatarBlob: Uint8List.fromList(<int>[1, 2, 3]),
+    );
+    final avatarsDir = Directory('${tempDir.path}/media/avatars')
+      ..createSync(recursive: true);
+    final file = File('${avatarsDir.path}/${identity.peerId}.jpg');
+    await file.writeAsBytes(<int>[9, 8, 7]);
+
+    final resolved = await IdentityAvatarResolver.resolve(
+      identity,
+      documentsDirLoader: () async => tempDir.path,
+    );
+
+    expect(resolved, Uint8List.fromList(<int>[9, 8, 7]));
+  });
+
   test('returns null when no avatar version and no blob exist', () async {
     final resolved = await IdentityAvatarResolver.resolve(
       buildIdentity(avatarVersion: null),
@@ -83,41 +100,43 @@ void main() {
     expect(second, Uint8List.fromList(<int>[9, 8, 7]));
   });
 
-  test('stale in-flight future does not pollute cache after invalidation',
-      () async {
-    final identity = buildIdentity();
-    final avatarsDir = Directory('${tempDir.path}/media/avatars')
-      ..createSync(recursive: true);
-    final file = File('${avatarsDir.path}/${identity.peerId}.jpg');
-    await file.writeAsBytes(<int>[10, 20, 30]);
+  test(
+    'stale in-flight future does not pollute cache after invalidation',
+    () async {
+      final identity = buildIdentity();
+      final avatarsDir = Directory('${tempDir.path}/media/avatars')
+        ..createSync(recursive: true);
+      final file = File('${avatarsDir.path}/${identity.peerId}.jpg');
+      await file.writeAsBytes(<int>[10, 20, 30]);
 
-    // First resolve — populates cache
-    final first = await IdentityAvatarResolver.resolve(
-      identity,
-      documentsDirLoader: () async => tempDir.path,
-    );
-    expect(first, Uint8List.fromList(<int>[10, 20, 30]));
+      // First resolve — populates cache
+      final first = await IdentityAvatarResolver.resolve(
+        identity,
+        documentsDirLoader: () async => tempDir.path,
+      );
+      expect(first, Uint8List.fromList(<int>[10, 20, 30]));
 
-    // Write new file, invalidate, then resolve with new version
-    await file.writeAsBytes(<int>[40, 50, 60]);
-    IdentityAvatarResolver.invalidatePeer(identity.peerId);
+      // Write new file, invalidate, then resolve with new version
+      await file.writeAsBytes(<int>[40, 50, 60]);
+      IdentityAvatarResolver.invalidatePeer(identity.peerId);
 
-    final updatedIdentity = buildIdentity(
-      avatarVersion: '2026-03-07T14:00:00.000Z',
-    );
-    final second = await IdentityAvatarResolver.resolve(
-      updatedIdentity,
-      documentsDirLoader: () async => tempDir.path,
-    );
-    expect(second, Uint8List.fromList(<int>[40, 50, 60]));
+      final updatedIdentity = buildIdentity(
+        avatarVersion: '2026-03-07T14:00:00.000Z',
+      );
+      final second = await IdentityAvatarResolver.resolve(
+        updatedIdentity,
+        documentsDirLoader: () async => tempDir.path,
+      );
+      expect(second, Uint8List.fromList(<int>[40, 50, 60]));
 
-    // Resolve again — should return cached new bytes, not stale
-    final third = await IdentityAvatarResolver.resolve(
-      updatedIdentity,
-      documentsDirLoader: () async => tempDir.path,
-    );
-    expect(third, Uint8List.fromList(<int>[40, 50, 60]));
-  });
+      // Resolve again — should return cached new bytes, not stale
+      final third = await IdentityAvatarResolver.resolve(
+        updatedIdentity,
+        documentsDirLoader: () async => tempDir.path,
+      );
+      expect(third, Uint8List.fromList(<int>[40, 50, 60]));
+    },
+  );
 
   test('invalidatePeer forces a reload for a newer avatar version', () async {
     final identity = buildIdentity();

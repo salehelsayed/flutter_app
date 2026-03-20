@@ -68,17 +68,19 @@ Future<bool> uploadProfilePicture({
 
     final localPath = p.join(avatarsDir.path, '${identity.peerId}.jpg');
     final normalizer = avatarNormalizer ?? AvatarNormalizationHelper();
-    await normalizer.commitAvatar(
+    final committedPath = await normalizer.commitAvatar(
       sourcePath: filePath,
       canonicalPath: localPath,
     );
+    final committedBytes = await File(committedPath).readAsBytes();
 
     // Evict Flutter image cache so UserAvatar picks up the new file
     FileImage(File(localPath)).evict();
     IdentityAvatarResolver.invalidatePeer(identity.peerId);
     UserAvatar.invalidatePeer(identity.peerId);
 
-    // 4. Update identity with new avatarVersion
+    // 4. Update identity with new avatarVersion and keep the DB blob aligned
+    // with the canonical avatar file.
     final updated = IdentityModel(
       peerId: identity.peerId,
       publicKey: identity.publicKey,
@@ -87,7 +89,7 @@ Future<bool> uploadProfilePicture({
       mlKemPublicKey: identity.mlKemPublicKey,
       mlKemSecretKey: identity.mlKemSecretKey,
       username: identity.username,
-      avatarBlob: identity.avatarBlob,
+      avatarBlob: committedBytes,
       avatarVersion: avatarVersion,
       createdAt: identity.createdAt,
       updatedAt: DateTime.now().toUtc().toIso8601String(),
@@ -101,20 +103,19 @@ Future<bool> uploadProfilePicture({
       'version': '1',
       'payload': {'peerId': identity.peerId, 'avatarVersion': avatarVersion},
     });
+    var contactsDelivered = 0;
+    var contactsFailed = 0;
 
     for (final contact in contacts) {
-      try {
-        final sendResult = await p2pService.sendMessageWithReply(
-          contact.peerId,
-          envelope,
-        );
-        if (!sendResult.sent || !sendResult.acknowledged) {
-          await p2pService.storeInInbox(contact.peerId, envelope);
-        }
-      } catch (_) {
-        try {
-          await p2pService.storeInInbox(contact.peerId, envelope);
-        } catch (_) {}
+      final delivered = await _notifyProfileUpdateContact(
+        p2pService: p2pService,
+        peerId: contact.peerId,
+        envelope: envelope,
+      );
+      if (delivered) {
+        contactsDelivered++;
+      } else {
+        contactsFailed++;
       }
     }
 
@@ -123,7 +124,8 @@ Future<bool> uploadProfilePicture({
       event: 'UPLOAD_PROFILE_PICTURE_SUCCESS',
       details: {
         'avatarVersion': avatarVersion,
-        'contactsNotified': contacts.length,
+        'contactsNotified': contactsDelivered,
+        'contactsFailed': contactsFailed,
       },
     );
 
@@ -134,6 +136,64 @@ Future<bool> uploadProfilePicture({
       event: 'UPLOAD_PROFILE_PICTURE_ERROR',
       details: {'error': e.toString()},
     );
+    return false;
+  }
+}
+
+Future<bool> _notifyProfileUpdateContact({
+  required P2PService p2pService,
+  required String peerId,
+  required String envelope,
+}) async {
+  try {
+    final sendResult = await p2pService.sendMessageWithReply(peerId, envelope);
+    if (sendResult.sent && sendResult.acknowledged) {
+      return true;
+    }
+  } catch (_) {}
+
+  if (await _storeProfileUpdateInInbox(
+    p2pService: p2pService,
+    peerId: peerId,
+    envelope: envelope,
+  )) {
+    return true;
+  }
+
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'UPLOAD_PROFILE_PICTURE_CONTACT_NOTIFY_RETRY',
+    details: {'peerId': peerId},
+  );
+
+  try {
+    await p2pService.performImmediateHealthCheck();
+  } catch (_) {}
+  final recovered = await _storeProfileUpdateInInbox(
+    p2pService: p2pService,
+    peerId: peerId,
+    envelope: envelope,
+  );
+
+  if (!recovered) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'UPLOAD_PROFILE_PICTURE_CONTACT_NOTIFY_FAILED',
+      details: {'peerId': peerId},
+    );
+  }
+
+  return recovered;
+}
+
+Future<bool> _storeProfileUpdateInInbox({
+  required P2PService p2pService,
+  required String peerId,
+  required String envelope,
+}) async {
+  try {
+    return await p2pService.storeInInbox(peerId, envelope);
+  } catch (_) {
     return false;
   }
 }
