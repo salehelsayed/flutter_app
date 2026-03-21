@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
 import 'secure_key_store.dart';
@@ -20,7 +21,7 @@ Future<void> migrateSecretsToSecureStorage({
 }) async {
   // Already migrated — fast exit
   if (await secureKeyStore.containsKey(_kSecretsMigrated)) {
-    print('[EAR] Secrets migration: ALREADY DONE (sentinel found)');
+    if (kDebugMode) print('[EAR] Secrets migration: ALREADY DONE (sentinel found)');
     emitFlowEvent(
       layer: 'FL',
       event: 'SECRETS_MIGRATION_ALREADY_DONE',
@@ -41,7 +42,7 @@ Future<void> migrateSecretsToSecureStorage({
   if (rows.isEmpty) {
     // Fresh install — no identity yet, mark as migrated
     await secureKeyStore.write(_kSecretsMigrated, 'true');
-    print('[EAR] Secrets migration: FRESH INSTALL (no identity row, sentinel set)');
+    if (kDebugMode) print('[EAR] Secrets migration: FRESH INSTALL (no identity row, sentinel set)');
     emitFlowEvent(
       layer: 'FL',
       event: 'SECRETS_MIGRATION_NO_IDENTITY',
@@ -81,11 +82,13 @@ Future<void> migrateSecretsToSecureStorage({
   // Set sentinel
   await secureKeyStore.write(_kSecretsMigrated, 'true');
 
-  print('[EAR] Secrets migration: COMPLETE');
-  print('[EAR]   private_key  → secure storage: ${privateKey != null ? "YES" : "n/a (was null)"}');
-  print('[EAR]   mnemonic12   → secure storage: ${mnemonic12 != null ? "YES" : "n/a (was null)"}');
-  print('[EAR]   mlkem_secret → secure storage: ${mlKemSecretKey != null ? "YES" : "n/a (was null)"}');
-  print('[EAR]   DB columns nulled: YES');
+  if (kDebugMode) {
+    print('[EAR] Secrets migration: COMPLETE');
+    print('[EAR]   private_key  → secure storage: ${privateKey != null ? "YES" : "n/a (was null)"}');
+    print('[EAR]   mnemonic12   → secure storage: ${mnemonic12 != null ? "YES" : "n/a (was null)"}');
+    print('[EAR]   mlkem_secret → secure storage: ${mlKemSecretKey != null ? "YES" : "n/a (was null)"}');
+    print('[EAR]   DB columns nulled: YES');
+  }
 
   emitFlowEvent(
     layer: 'FL',

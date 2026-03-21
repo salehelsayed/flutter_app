@@ -39,63 +39,73 @@ Future<bool?> handleAppResumed({
   Future<int> Function()? retryPendingPostDeliveries,
 }) async {
   final resumeStart = DateTime.now();
-  debugPrint(
-    '[RESUME] ====== APP RESUME BEGIN ====== ${resumeStart.toIso8601String()}',
-  );
-  debugPrint(
-    '[RESUME] currentState before resume: '
-    'isStarted=${p2pService.currentState.isStarted}, '
-    'circuitAddresses=${p2pService.currentState.circuitAddresses.length}, '
-    'connections=${p2pService.currentState.connections.length}',
-  );
+  if (kDebugMode) {
+    debugPrint(
+      '[RESUME] ====== APP RESUME BEGIN ====== ${resumeStart.toIso8601String()}',
+    );
+    debugPrint(
+      '[RESUME] currentState before resume: '
+      'isStarted=${p2pService.currentState.isStarted}, '
+      'circuitAddresses=${p2pService.currentState.circuitAddresses.length}, '
+      'connections=${p2pService.currentState.connections.length}',
+    );
+  }
 
   emitFlowEvent(layer: 'FL', event: 'APP_LIFECYCLE_RESUME_BEGIN', details: {});
 
   try {
     // 1. Check bridge health — reinitialize if dead
     final healthStart = DateTime.now();
-    debugPrint('[RESUME] Step 1: bridge.checkHealth() starting...');
+    if (kDebugMode) debugPrint('[RESUME] Step 1: bridge.checkHealth() starting...');
     final bridgeOk = await bridge.checkHealth();
     final healthMs = DateTime.now().difference(healthStart).inMilliseconds;
-    debugPrint(
-      '[RESUME] Step 1: bridge.checkHealth() = $bridgeOk (took ${healthMs}ms)',
-    );
+    if (kDebugMode) {
+      debugPrint(
+        '[RESUME] Step 1: bridge.checkHealth() = $bridgeOk (took ${healthMs}ms)',
+      );
+    }
 
     if (!bridgeOk) {
       final reinitStart = DateTime.now();
-      debugPrint('[RESUME] Step 1b: bridge.reinitialize() starting...');
+      if (kDebugMode) debugPrint('[RESUME] Step 1b: bridge.reinitialize() starting...');
       await bridge.reinitialize();
       final reinitMs = DateTime.now().difference(reinitStart).inMilliseconds;
-      debugPrint(
-        '[RESUME] Step 1b: bridge.reinitialize() done (took ${reinitMs}ms)',
-      );
+      if (kDebugMode) {
+        debugPrint(
+          '[RESUME] Step 1b: bridge.reinitialize() done (took ${reinitMs}ms)',
+        );
+      }
     }
 
     // 2. Immediate health check (re-dials relay, re-registers FCM)
     final hcStart = DateTime.now();
-    debugPrint('[RESUME] Step 2: performImmediateHealthCheck() starting...');
-    debugPrint(
-      '[RESUME] Step 2: state BEFORE health check: '
-      'isStarted=${p2pService.currentState.isStarted}, '
-      'circuitAddresses=${p2pService.currentState.circuitAddresses.length}',
-    );
+    if (kDebugMode) {
+      debugPrint('[RESUME] Step 2: performImmediateHealthCheck() starting...');
+      debugPrint(
+        '[RESUME] Step 2: state BEFORE health check: '
+        'isStarted=${p2pService.currentState.isStarted}, '
+        'circuitAddresses=${p2pService.currentState.circuitAddresses.length}',
+      );
+    }
     await p2pService.performImmediateHealthCheck();
     final hcMs = DateTime.now().difference(hcStart).inMilliseconds;
-    debugPrint(
-      '[RESUME] Step 2: performImmediateHealthCheck() done (took ${hcMs}ms)',
-    );
-    debugPrint(
-      '[RESUME] Step 2: state AFTER health check: '
-      'isStarted=${p2pService.currentState.isStarted}, '
-      'circuitAddresses=${p2pService.currentState.circuitAddresses.length}',
-    );
+    if (kDebugMode) {
+      debugPrint(
+        '[RESUME] Step 2: performImmediateHealthCheck() done (took ${hcMs}ms)',
+      );
+      debugPrint(
+        '[RESUME] Step 2: state AFTER health check: '
+        'isStarted=${p2pService.currentState.isStarted}, '
+        'circuitAddresses=${p2pService.currentState.circuitAddresses.length}',
+      );
+    }
 
     // 3. Drain offline inbox (messages queued while backgrounded)
     final drainStart = DateTime.now();
-    debugPrint('[RESUME] Step 3: drainOfflineInbox() starting...');
+    if (kDebugMode) debugPrint('[RESUME] Step 3: drainOfflineInbox() starting...');
     await p2pService.drainOfflineInbox();
     final drainMs = DateTime.now().difference(drainStart).inMilliseconds;
-    debugPrint('[RESUME] Step 3: drainOfflineInbox() done (took ${drainMs}ms)');
+    if (kDebugMode) debugPrint('[RESUME] Step 3: drainOfflineInbox() done (took ${drainMs}ms)');
 
     final resumeGroupRecoveryEnabled = _resumeGroupRecoveryEnabled(p2pService);
 
@@ -110,10 +120,12 @@ Future<bool?> handleAppResumed({
           ? RejoinReason.watchdogRestart
           : RejoinReason.inPlaceRecovery;
 
-      debugPrint(
-        '[RESUME] Step 3b: rejoinGroupTopics(reason=$reason, '
-        'needsGroupRecovery=$needsGroupRecovery) starting...',
-      );
+      if (kDebugMode) {
+        debugPrint(
+          '[RESUME] Step 3b: rejoinGroupTopics(reason=$reason, '
+          'needsGroupRecovery=$needsGroupRecovery) starting...',
+        );
+      }
       final rejoinStart = DateTime.now();
       final rejoinResult = await rejoinGroupTopics(
         bridge: bridge,
@@ -121,24 +133,30 @@ Future<bool?> handleAppResumed({
         reason: reason,
       );
       final rejoinMs = DateTime.now().difference(rejoinStart).inMilliseconds;
-      debugPrint(
-        '[RESUME] Step 3b: rejoinGroupTopics done '
-        '(joined=${rejoinResult.joinedGroupCount}, '
-        'skippedNoKey=${rejoinResult.skippedNoKeyCount}, '
-        'errors=${rejoinResult.errorCount}, took ${rejoinMs}ms)',
-      );
+      if (kDebugMode) {
+        debugPrint(
+          '[RESUME] Step 3b: rejoinGroupTopics done '
+          '(joined=${rejoinResult.joinedGroupCount}, '
+          'skippedNoKey=${rejoinResult.skippedNoKeyCount}, '
+          'errors=${rejoinResult.errorCount}, took ${rejoinMs}ms)',
+        );
+      }
 
       if (needsGroupRecovery && rejoinResult.errorCount == 0) {
         final ackStart = DateTime.now();
-        debugPrint(
-          '[RESUME] Step 3b.1: callGroupAcknowledgeRecovery() starting...',
-        );
+        if (kDebugMode) {
+          debugPrint(
+            '[RESUME] Step 3b.1: callGroupAcknowledgeRecovery() starting...',
+          );
+        }
         await callGroupAcknowledgeRecovery(bridge);
         final ackMs = DateTime.now().difference(ackStart).inMilliseconds;
-        debugPrint(
-          '[RESUME] Step 3b.1: callGroupAcknowledgeRecovery() done '
-          '(took ${ackMs}ms)',
-        );
+        if (kDebugMode) {
+          debugPrint(
+            '[RESUME] Step 3b.1: callGroupAcknowledgeRecovery() done '
+            '(took ${ackMs}ms)',
+          );
+        }
       }
     }
 
@@ -147,7 +165,7 @@ Future<bool?> handleAppResumed({
         groupMsgRepo != null &&
         resumeGroupRecoveryEnabled) {
       final groupDrainStart = DateTime.now();
-      debugPrint('[RESUME] Step 3c: drainGroupOfflineInbox() starting...');
+      if (kDebugMode) debugPrint('[RESUME] Step 3c: drainGroupOfflineInbox() starting...');
       await drainGroupOfflineInbox(
         bridge: bridge,
         groupRepo: groupRepo,
@@ -158,20 +176,24 @@ Future<bool?> handleAppResumed({
       final groupDrainMs = DateTime.now()
           .difference(groupDrainStart)
           .inMilliseconds;
-      debugPrint(
-        '[RESUME] Step 3c: drainGroupOfflineInbox done (took ${groupDrainMs}ms)',
-      );
+      if (kDebugMode) {
+        debugPrint(
+          '[RESUME] Step 3c: drainGroupOfflineInbox done (took ${groupDrainMs}ms)',
+        );
+      }
     } else if (!resumeGroupRecoveryEnabled &&
         (groupRepo != null || groupMsgRepo != null)) {
-      debugPrint(
-        '[RESUME] Step 3b/3c: group recovery disabled by feature flag',
-      );
+      if (kDebugMode) {
+        debugPrint(
+          '[RESUME] Step 3b/3c: group recovery disabled by feature flag',
+        );
+      }
     }
 
     // 4. Retry incomplete key exchanges (contacts without ML-KEM key)
     if (contactRepo != null && identityRepo != null) {
       final retryStart = DateTime.now();
-      debugPrint('[RESUME] Step 4: retryIncompleteKeyExchanges() starting...');
+      if (kDebugMode) debugPrint('[RESUME] Step 4: retryIncompleteKeyExchanges() starting...');
       final retried = await retryIncompleteKeyExchanges(
         contactRepo: contactRepo,
         identityRepo: identityRepo,
@@ -179,67 +201,79 @@ Future<bool?> handleAppResumed({
         bridge: bridge,
       );
       final retryMs = DateTime.now().difference(retryStart).inMilliseconds;
-      debugPrint(
-        '[RESUME] Step 4: retryIncompleteKeyExchanges() done '
-        '(retried=$retried, took ${retryMs}ms)',
-      );
+      if (kDebugMode) {
+        debugPrint(
+          '[RESUME] Step 4: retryIncompleteKeyExchanges() done '
+          '(retried=$retried, took ${retryMs}ms)',
+        );
+      }
     }
 
     if (nearbyLocationService != null) {
       final nearbyStart = DateTime.now();
-      debugPrint('[RESUME] Step 5: refreshSilentlyOnResume() starting...');
+      if (kDebugMode) debugPrint('[RESUME] Step 5: refreshSilentlyOnResume() starting...');
       try {
         await nearbyLocationService.refreshSilentlyOnResume();
         final nearbyMs = DateTime.now().difference(nearbyStart).inMilliseconds;
-        debugPrint(
-          '[RESUME] Step 5: refreshSilentlyOnResume() done '
-          '(took ${nearbyMs}ms)',
-        );
+        if (kDebugMode) {
+          debugPrint(
+            '[RESUME] Step 5: refreshSilentlyOnResume() done '
+            '(took ${nearbyMs}ms)',
+          );
+        }
       } catch (e) {
         final nearbyMs = DateTime.now().difference(nearbyStart).inMilliseconds;
-        debugPrint(
-          '[RESUME] Step 5: refreshSilentlyOnResume() error '
-          'after ${nearbyMs}ms: $e',
-        );
+        if (kDebugMode) {
+          debugPrint(
+            '[RESUME] Step 5: refreshSilentlyOnResume() error '
+            'after ${nearbyMs}ms: $e',
+          );
+        }
       }
     }
 
     if (retryPendingPostMediaUploads != null) {
       final mediaRetryStart = DateTime.now();
-      debugPrint('[RESUME] Step 6: retryPendingPostMediaUploads() starting...');
+      if (kDebugMode) debugPrint('[RESUME] Step 6: retryPendingPostMediaUploads() starting...');
       final retried = await retryPendingPostMediaUploads();
       final mediaRetryMs = DateTime.now()
           .difference(mediaRetryStart)
           .inMilliseconds;
-      debugPrint(
-        '[RESUME] Step 6: retryPendingPostMediaUploads() done '
-        '(retried=$retried, took ${mediaRetryMs}ms)',
-      );
+      if (kDebugMode) {
+        debugPrint(
+          '[RESUME] Step 6: retryPendingPostMediaUploads() done '
+          '(retried=$retried, took ${mediaRetryMs}ms)',
+        );
+      }
     }
 
     if (retryPendingPostDeliveries != null) {
       final postRetryStart = DateTime.now();
-      debugPrint('[RESUME] Step 7: retryPendingPostDeliveries() starting...');
+      if (kDebugMode) debugPrint('[RESUME] Step 7: retryPendingPostDeliveries() starting...');
       final retried = await retryPendingPostDeliveries();
       final postRetryMs = DateTime.now()
           .difference(postRetryStart)
           .inMilliseconds;
-      debugPrint(
-        '[RESUME] Step 7: retryPendingPostDeliveries() done '
-        '(retried=$retried, took ${postRetryMs}ms)',
-      );
+      if (kDebugMode) {
+        debugPrint(
+          '[RESUME] Step 7: retryPendingPostDeliveries() done '
+          '(retried=$retried, took ${postRetryMs}ms)',
+        );
+      }
     }
 
     final totalMs = DateTime.now().difference(resumeStart).inMilliseconds;
-    debugPrint(
-      '[RESUME] ====== APP RESUME COMPLETE ====== total ${totalMs}ms, bridgeWasHealthy=$bridgeOk',
-    );
-    debugPrint(
-      '[RESUME] Final state: '
-      'isStarted=${p2pService.currentState.isStarted}, '
-      'circuitAddresses=${p2pService.currentState.circuitAddresses.length}, '
-      'connections=${p2pService.currentState.connections.length}',
-    );
+    if (kDebugMode) {
+      debugPrint(
+        '[RESUME] ====== APP RESUME COMPLETE ====== total ${totalMs}ms, bridgeWasHealthy=$bridgeOk',
+      );
+      debugPrint(
+        '[RESUME] Final state: '
+        'isStarted=${p2pService.currentState.isStarted}, '
+        'circuitAddresses=${p2pService.currentState.circuitAddresses.length}, '
+        'connections=${p2pService.currentState.connections.length}',
+      );
+    }
 
     emitFlowEvent(
       layer: 'FL',
@@ -250,9 +284,11 @@ Future<bool?> handleAppResumed({
     return bridgeOk;
   } catch (e) {
     final totalMs = DateTime.now().difference(resumeStart).inMilliseconds;
-    debugPrint(
-      '[RESUME] ====== APP RESUME ERROR ====== after ${totalMs}ms: $e',
-    );
+    if (kDebugMode) {
+      debugPrint(
+        '[RESUME] ====== APP RESUME ERROR ====== after ${totalMs}ms: $e',
+      );
+    }
 
     emitFlowEvent(
       layer: 'FL',

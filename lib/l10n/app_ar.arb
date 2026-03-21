@@ -36,7 +36,6 @@
   "qr_paste_title": "لصق بيانات QR",
   "qr_paste_hint": "ألصق بيانات JSON الخاصة برمز QR من جهاز آخر:",
   "qr_paste_button": "لصق من الحافظة",
-  "qr_debug_paste": "تصحيح: لصق بيانات QR",
   "posts_title": "المنشورات",
   "posts_header_subtitle": "ما الذي يحدث اليوم بين أصدقائك يا {username}؟",
   "@posts_header_subtitle": {

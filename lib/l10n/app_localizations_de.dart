@@ -30,29 +30,25 @@ class AppLocalizationsDe extends AppLocalizations {
   String get onboarding_load_key => 'Schlüssel wiederherstellen';
 
   @override
-  String get onboarding_load_desc =>
-      'Mit deiner Wiederherstellungsphrase wiederherstellen';
+  String get onboarding_load_desc => 'Mit deiner Wiederherstellungsphrase wiederherstellen';
 
   @override
   String get onboarding_privacy_1 => 'Nur du kannst deine Nachrichten lesen';
 
   @override
-  String get onboarding_privacy_2 =>
-      'Alles bleibt auf deinem Handy. Niemand schaut mit.';
+  String get onboarding_privacy_2 => 'Alles bleibt auf deinem Handy. Niemand schaut mit.';
 
   @override
   String get progress_securing => 'Deine Identität wird gesichert';
 
   @override
-  String get progress_securing_desc =>
-      'Deine Identität wird sicher gespeichert.';
+  String get progress_securing_desc => 'Deine Identität wird sicher gespeichert.';
 
   @override
   String get progress_creating => 'Deine sichere Identität wird erstellt';
 
   @override
-  String get progress_creating_desc =>
-      'Auf diesem Gerät werden Verschlüsselungsschlüssel erstellt. Das passiert nur einmal.';
+  String get progress_creating_desc => 'Auf diesem Gerät werden Verschlüsselungsschlüssel erstellt. Das passiert nur einmal.';
 
   @override
   String get progress_keep_open => 'Bitte lass die App geöffnet.';
@@ -76,20 +72,16 @@ class AppLocalizationsDe extends AppLocalizations {
   String get mnemonic_error_invalid => 'Ungültige Wiederherstellungsphrase';
 
   @override
-  String get mnemonic_error_generic =>
-      'Es ist ein Fehler aufgetreten. Bitte versuche es erneut.';
+  String get mnemonic_error_generic => 'Es ist ein Fehler aufgetreten. Bitte versuche es erneut.';
 
   @override
-  String get mnemonic_hint =>
-      'word1 word2 word3 word4\nword5 word6 word7 word8\nword9 word10 word11 word12';
+  String get mnemonic_hint => 'word1 word2 word3 word4\nword5 word6 word7 word8\nword9 word10 word11 word12';
 
   @override
-  String get qr_show_desc =>
-      'Zeig das jemandem, den du in deinen Kreis aufnehmen willst...';
+  String get qr_show_desc => 'Zeig das jemandem, den du in deinen Kreis aufnehmen willst...';
 
   @override
-  String get qr_copy_hint =>
-      'QR-Code gedrückt halten, um die Daten zu kopieren';
+  String get qr_copy_hint => 'QR-Code gedrückt halten, um die Daten zu kopieren';
 
   @override
   String get qr_copied => 'QR-Daten in die Zwischenablage kopiert!';
@@ -98,8 +90,7 @@ class AppLocalizationsDe extends AppLocalizations {
   String get qr_scan_title => 'QR-Code scannen';
 
   @override
-  String get qr_scan_instruction =>
-      'Richte deine Kamera auf den QR-Code eines Freundes';
+  String get qr_scan_instruction => 'Richte deine Kamera auf den QR-Code eines Freundes';
 
   @override
   String get qr_scan_subtitle => 'Die Person wird deinem Kreis hinzugefügt';
@@ -120,14 +111,10 @@ class AppLocalizationsDe extends AppLocalizations {
   String get qr_paste_title => 'QR-Daten einfügen';
 
   @override
-  String get qr_paste_hint =>
-      'Füge die JSON-Daten des QR-Codes von einem anderen Gerät ein:';
+  String get qr_paste_hint => 'Füge die JSON-Daten des QR-Codes von einem anderen Gerät ein:';
 
   @override
   String get qr_paste_button => 'Aus Zwischenablage einfügen';
-
-  @override
-  String get qr_debug_paste => 'Debug: QR-Daten einfügen';
 
   @override
   String get posts_title => 'Beiträge';
@@ -144,8 +131,7 @@ class AppLocalizationsDe extends AppLocalizations {
   String get posts_empty_title => 'Du bist auf dem neuesten Stand';
 
   @override
-  String get posts_empty_desc =>
-      'Beiträge von deinen direkten Freunden erscheinen hier, sobald sie ankommen oder erneut geladen werden.';
+  String get posts_empty_desc => 'Beiträge von deinen direkten Freunden erscheinen hier, sobald sie ankommen oder erneut geladen werden.';
 
   @override
   String get posts_empty_button => 'Ersten Beitrag erstellen';
@@ -222,8 +208,7 @@ class AppLocalizationsDe extends AppLocalizations {
   String get compose_manage => 'Verwalten';
 
   @override
-  String get compose_pinned_1 =>
-      'Du hast bereits 1 aktiven angepinnten Beitrag';
+  String get compose_pinned_1 => 'Du hast bereits 1 aktiven angepinnten Beitrag';
 
   @override
   String compose_pinned_n(int count) {
@@ -231,8 +216,7 @@ class AppLocalizationsDe extends AppLocalizations {
   }
 
   @override
-  String get compose_nearby_off =>
-      '„Leute in deiner Nähe“ ist in den Einstellungen deaktiviert';
+  String get compose_nearby_off => '„Leute in deiner Nähe“ ist in den Einstellungen deaktiviert';
 
   @override
   String get compose_nearby_ready => '„Leute in deiner Nähe“ ist einsatzbereit';
@@ -241,8 +225,7 @@ class AppLocalizationsDe extends AppLocalizations {
   String get compose_nearby_refresh => 'Nearby vor dem Posten aktualisieren';
 
   @override
-  String get compose_nearby_allow =>
-      'Standort erlauben, um Leute in deiner Nähe zu nutzen';
+  String get compose_nearby_allow => 'Standort erlauben, um Leute in deiner Nähe zu nutzen';
 
   @override
   String get compose_nearby_perm_off => 'Standortberechtigung ist deaktiviert';
@@ -251,28 +234,22 @@ class AppLocalizationsDe extends AppLocalizations {
   String get compose_nearby_services => 'Ortungsdienste einschalten';
 
   @override
-  String get compose_nearby_off_desc =>
-      'Aktiviere es in den Einstellungen, bevor du an Freunde in deiner Nähe postest.';
+  String get compose_nearby_off_desc => 'Aktiviere es in den Einstellungen, bevor du an Freunde in deiner Nähe postest.';
 
   @override
-  String get compose_nearby_ready_desc =>
-      'Deine Nearby-Daten sind aktuell genug zum Posten.';
+  String get compose_nearby_ready_desc => 'Deine Nearby-Daten sind aktuell genug zum Posten.';
 
   @override
-  String get compose_nearby_refresh_desc =>
-      'Aktualisiere deine Nearby-Daten, bevor du diese Zielgruppe nutzt.';
+  String get compose_nearby_refresh_desc => 'Aktualisiere deine Nearby-Daten, bevor du diese Zielgruppe nutzt.';
 
   @override
-  String get compose_nearby_allow_desc =>
-      'Aktualisiere Nearby, um den Standortzugriff für diese Beiträge freizugeben.';
+  String get compose_nearby_allow_desc => 'Aktualisiere Nearby, um den Standortzugriff für diese Beiträge freizugeben.';
 
   @override
-  String get compose_nearby_perm_desc =>
-      'Öffne die Systemeinstellungen, um den Standortzugriff wieder zu aktivieren.';
+  String get compose_nearby_perm_desc => 'Öffne die Systemeinstellungen, um den Standortzugriff wieder zu aktivieren.';
 
   @override
-  String get compose_nearby_services_desc =>
-      'Aktiviere die Ortungsdienste und aktualisiere Nearby erneut.';
+  String get compose_nearby_services_desc => 'Aktiviere die Ortungsdienste und aktualisiere Nearby erneut.';
 
   @override
   String get compose_open_settings => 'Einstellungen öffnen';
@@ -382,8 +359,7 @@ class AppLocalizationsDe extends AppLocalizations {
   String get conversation_hint => 'Schreib etwas...';
 
   @override
-  String get conversation_voice_fail =>
-      'Sprachnachricht konnte nicht gesendet werden.';
+  String get conversation_voice_fail => 'Sprachnachricht konnte nicht gesendet werden.';
 
   @override
   String conversation_block(String username) {
@@ -421,8 +397,7 @@ class AppLocalizationsDe extends AppLocalizations {
   String get group_create_failed => 'Gruppe konnte nicht erstellt werden';
 
   @override
-  String get group_invite_failed =>
-      'Mitglieder konnten nicht eingeladen werden';
+  String get group_invite_failed => 'Mitglieder konnten nicht eingeladen werden';
 
   @override
   String picker_introduce_to(String username) {
@@ -433,8 +408,7 @@ class AppLocalizationsDe extends AppLocalizations {
   String get picker_search => 'Freunde suchen...';
 
   @override
-  String get picker_no_friends =>
-      'Keine Freunde verfügbar, die du vorstellen kannst';
+  String get picker_no_friends => 'Keine Freunde verfügbar, die du vorstellen kannst';
 
   @override
   String picker_no_results(String query) {
@@ -468,16 +442,13 @@ class AppLocalizationsDe extends AppLocalizations {
   String get settings_original => 'Original';
 
   @override
-  String get settings_original_desc =>
-      'Volle Qualität, größere Datei. Metadaten werden immer entfernt.';
+  String get settings_original_desc => 'Volle Qualität, größere Datei. Metadaten werden immer entfernt.';
 
   @override
-  String get settings_compressed_desc =>
-      'Kleinere Datei, schnelleres Senden. Metadaten werden immer entfernt.';
+  String get settings_compressed_desc => 'Kleinere Datei, schnelleres Senden. Metadaten werden immer entfernt.';
 
   @override
-  String get settings_photo_fail =>
-      'Profilbild konnte nicht hochgeladen werden';
+  String get settings_photo_fail => 'Profilbild konnte nicht hochgeladen werden';
 
   @override
   String get picker_take_photo => 'Foto aufnehmen';
@@ -495,8 +466,7 @@ class AppLocalizationsDe extends AppLocalizations {
   String get startup_checking => 'Dein Bereich wird vorbereitet...';
 
   @override
-  String get startup_checking_desc =>
-      'Identität und Startzustand werden geprüft';
+  String get startup_checking_desc => 'Identität und Startzustand werden geprüft';
 
   @override
   String get startup_feed => 'Feed wird geöffnet...';
@@ -526,12 +496,10 @@ class AppLocalizationsDe extends AppLocalizations {
   String get btn_submit => 'Senden';
 
   @override
-  String get error_add_contact =>
-      'Kontakt konnte nicht hinzugefügt werden. Bitte versuche es erneut.';
+  String get error_add_contact => 'Kontakt konnte nicht hinzugefügt werden. Bitte versuche es erneut.';
 
   @override
-  String get error_send_message =>
-      'Nachricht konnte nicht gesendet werden. Bitte versuche es erneut.';
+  String get error_send_message => 'Nachricht konnte nicht gesendet werden. Bitte versuche es erneut.';
 
   @override
   String error_update_photo(String error) {
@@ -539,8 +507,7 @@ class AppLocalizationsDe extends AppLocalizations {
   }
 
   @override
-  String get error_update_username =>
-      'Benutzername konnte nicht aktualisiert werden. Bitte versuche es erneut.';
+  String get error_update_username => 'Benutzername konnte nicht aktualisiert werden. Bitte versuche es erneut.';
 
   @override
   String error_generic(String error) {
@@ -551,28 +518,22 @@ class AppLocalizationsDe extends AppLocalizations {
   String get status_processing_video => 'Video wird verarbeitet...';
 
   @override
-  String get perm_camera =>
-      'Diese App benötigt Kamerazugriff, um QR-Codes zu scannen und Fotos aufzunehmen';
+  String get perm_camera => 'Diese App benötigt Kamerazugriff, um QR-Codes zu scannen und Fotos aufzunehmen';
 
   @override
-  String get perm_photos =>
-      'Diese App benötigt Zugriff auf deine Fotomediathek, um Bilder zu teilen';
+  String get perm_photos => 'Diese App benötigt Zugriff auf deine Fotomediathek, um Bilder zu teilen';
 
   @override
-  String get perm_microphone =>
-      'Diese App benötigt Mikrofonzugriff, um Sprachnachrichten aufzunehmen';
+  String get perm_microphone => 'Diese App benötigt Mikrofonzugriff, um Sprachnachrichten aufzunehmen';
 
   @override
-  String get perm_location =>
-      'Diese App benötigt Standortzugriff, damit du Beiträge mit direkten Freunden in deiner Nähe teilen kannst';
+  String get perm_location => 'Diese App benötigt Standortzugriff, damit du Beiträge mit direkten Freunden in deiner Nähe teilen kannst';
 
   @override
-  String get perm_local_network =>
-      'mknoon sucht deine Freunde im selben WLAN, um Nachrichten direkt an ihr Handy zu senden. Das ist schneller, privater und wir sammeln niemals deine Daten.';
+  String get perm_local_network => 'mknoon sucht deine Freunde im selben WLAN, um Nachrichten direkt an ihr Handy zu senden. Das ist schneller, privater und wir sammeln niemals deine Daten.';
 
   @override
-  String get perm_notifications =>
-      'Diese App benötigt Mitteilungszugriff, um dich über eingehende Nachrichten zu informieren';
+  String get perm_notifications => 'Diese App benötigt Mitteilungszugriff, um dich über eingehende Nachrichten zu informieren';
 
   @override
   String connected_date(String date) {
@@ -612,15 +573,13 @@ class AppLocalizationsDe extends AppLocalizations {
   String get settings_share_nearby_off => 'Aus';
 
   @override
-  String get settings_share_nearby_desc =>
-      'Teilt nur einen ungefähren Standort mit direkten Freunden. Keine Live-Karten und niemals Fremde.';
+  String get settings_share_nearby_desc => 'Teilt nur einen ungefähren Standort mit direkten Freunden. Keine Live-Karten und niemals Fremde.';
 
   @override
   String get settings_recovery_title => 'WIEDERHERSTELLUNGSPHRASE';
 
   @override
-  String get settings_recovery_warning =>
-      'Teile diese Phrase niemals mit jemandem. Sie gewährt vollen Zugriff auf dein Konto.';
+  String get settings_recovery_warning => 'Teile diese Phrase niemals mit jemandem. Sie gewährt vollen Zugriff auf dein Konto.';
 
   @override
   String get settings_recovery_tap => 'Zum Anzeigen tippen';

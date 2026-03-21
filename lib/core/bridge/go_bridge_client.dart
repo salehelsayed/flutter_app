@@ -106,11 +106,11 @@ class GoBridgeClient extends Bridge {
     );
 
     // Subscribe to push events from the Go layer
-    debugPrint('[BRIDGE] Subscribing to EventChannel...');
+    if (kDebugMode) debugPrint('[BRIDGE] Subscribing to EventChannel...');
     _eventSubscription = _eventChannel.receiveBroadcastStream().listen(
       _handleEvent,
       onError: (error) {
-        debugPrint('[BRIDGE] ⚠ EventChannel ERROR: $error');
+        if (kDebugMode) debugPrint('[BRIDGE] ⚠ EventChannel ERROR: $error');
         emitFlowEvent(
           layer: 'FL',
           event: 'GO_BRIDGE_EVENT_STREAM_ERROR',
@@ -118,10 +118,12 @@ class GoBridgeClient extends Bridge {
         );
       },
       onDone: () {
-        debugPrint(
-          '[BRIDGE] ⚠ EventChannel DONE — stream closed! '
-          'No more push events will be received.',
-        );
+        if (kDebugMode) {
+          debugPrint(
+            '[BRIDGE] ⚠ EventChannel DONE — stream closed! '
+            'No more push events will be received.',
+          );
+        }
         emitFlowEvent(
           layer: 'FL',
           event: 'GO_BRIDGE_EVENT_STREAM_DONE',
@@ -141,7 +143,7 @@ class GoBridgeClient extends Bridge {
 
   @override
   Future<bool> checkHealth() async {
-    debugPrint('[BRIDGE] checkHealth() called, _initialized=$_initialized');
+    if (kDebugMode) debugPrint('[BRIDGE] checkHealth() called, _initialized=$_initialized');
     if (!_initialized) return false;
 
     try {
@@ -152,15 +154,17 @@ class GoBridgeClient extends Bridge {
       final ms = DateTime.now().difference(start).inMilliseconds;
       final data = jsonDecode(response);
       final ok = data['ok'] == true;
-      debugPrint(
-        '[BRIDGE] checkHealth() → ok=$ok, '
-        'isStarted=${data['isStarted']}, '
-        'circuitAddresses=${(data['circuitAddresses'] as List?)?.length ?? 0} '
-        '(took ${ms}ms)',
-      );
+      if (kDebugMode) {
+        debugPrint(
+          '[BRIDGE] checkHealth() → ok=$ok, '
+          'isStarted=${data['isStarted']}, '
+          'circuitAddresses=${(data['circuitAddresses'] as List?)?.length ?? 0} '
+          '(took ${ms}ms)',
+        );
+      }
       return ok;
     } catch (e) {
-      debugPrint('[BRIDGE] checkHealth() FAILED: $e');
+      if (kDebugMode) debugPrint('[BRIDGE] checkHealth() FAILED: $e');
       emitFlowEvent(
         layer: 'FL',
         event: 'GO_BRIDGE_HEALTH_CHECK_FAILED',
@@ -172,10 +176,12 @@ class GoBridgeClient extends Bridge {
 
   @override
   Future<void> reinitialize() async {
-    debugPrint(
-      '[BRIDGE] reinitialize() starting — '
-      'cancelling event subscription and re-subscribing...',
-    );
+    if (kDebugMode) {
+      debugPrint(
+        '[BRIDGE] reinitialize() starting — '
+        'cancelling event subscription and re-subscribing...',
+      );
+    }
     emitFlowEvent(layer: 'FL', event: 'GO_BRIDGE_REINIT_START', details: {});
 
     // Preserve callbacks
@@ -191,7 +197,7 @@ class GoBridgeClient extends Bridge {
     await _eventSubscription?.cancel();
     _eventSubscription = null;
     _initialized = false;
-    debugPrint('[BRIDGE] Event subscription cancelled, re-initializing...');
+    if (kDebugMode) debugPrint('[BRIDGE] Event subscription cancelled, re-initializing...');
 
     // Restore callbacks
     onMessageReceived = savedOnMessage;
@@ -204,10 +210,12 @@ class GoBridgeClient extends Bridge {
 
     // Re-initialize
     await initialize();
-    debugPrint(
-      '[BRIDGE] reinitialize() complete — '
-      'event stream re-subscribed',
-    );
+    if (kDebugMode) {
+      debugPrint(
+        '[BRIDGE] reinitialize() complete — '
+        'event stream re-subscribed',
+      );
+    }
   }
 
   @override
@@ -234,7 +242,7 @@ class GoBridgeClient extends Bridge {
       final eventName = data['event'] as String?;
       final eventData = data['data'] as Map<String, dynamic>? ?? {};
 
-      debugPrint('[BRIDGE-EVENT] Push event received: $eventName');
+      if (kDebugMode) debugPrint('[BRIDGE-EVENT] Push event received: $eventName');
 
       emitFlowEvent(
         layer: 'FL',
@@ -249,7 +257,7 @@ class GoBridgeClient extends Bridge {
               final chatMessage = ChatMessage.fromJson(eventData);
               onMessageReceived!(chatMessage);
             } catch (e) {
-              debugPrint('[GoBridgeClient] Error parsing chat message: $e');
+              if (kDebugMode) debugPrint('[GoBridgeClient] Error parsing chat message: $e');
             }
           }
           break;
@@ -260,7 +268,7 @@ class GoBridgeClient extends Bridge {
               final connState = ConnectionState.fromJson(eventData);
               onPeerConnected!(connState);
             } catch (e) {
-              debugPrint('[GoBridgeClient] Error parsing peer connected: $e');
+              if (kDebugMode) debugPrint('[GoBridgeClient] Error parsing peer connected: $e');
             }
           }
           break;
@@ -271,9 +279,11 @@ class GoBridgeClient extends Bridge {
               final connState = ConnectionState.fromJson(eventData);
               onPeerDisconnected!(connState);
             } catch (e) {
-              debugPrint(
-                '[GoBridgeClient] Error parsing peer disconnected: $e',
-              );
+              if (kDebugMode) {
+                debugPrint(
+                  '[GoBridgeClient] Error parsing peer disconnected: $e',
+                );
+              }
             }
           }
           break;
@@ -305,7 +315,7 @@ class GoBridgeClient extends Bridge {
             try {
               onGroupMessageReceived!(eventData);
             } catch (e) {
-              debugPrint('[GoBridgeClient] Error handling group message: $e');
+              if (kDebugMode) debugPrint('[GoBridgeClient] Error handling group message: $e');
             }
           }
           break;
@@ -315,7 +325,7 @@ class GoBridgeClient extends Bridge {
             try {
               onGroupReactionReceived!(eventData);
             } catch (e) {
-              debugPrint('[GoBridgeClient] Error handling group reaction: $e');
+              if (kDebugMode) debugPrint('[GoBridgeClient] Error handling group reaction: $e');
             }
           }
           break;
@@ -331,10 +341,10 @@ class GoBridgeClient extends Bridge {
           break;
 
         default:
-          debugPrint('[GoBridgeClient] Unknown push event: $eventName');
+          if (kDebugMode) debugPrint('[GoBridgeClient] Unknown push event: $eventName');
       }
     } catch (e) {
-      debugPrint('[GoBridgeClient] Error handling event: $e');
+      if (kDebugMode) debugPrint('[GoBridgeClient] Error handling event: $e');
     }
   }
 

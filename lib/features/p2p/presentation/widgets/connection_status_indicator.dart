@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../../../../core/services/p2p_service.dart';
 import '../../domain/models/node_state.dart';
@@ -94,7 +95,7 @@ class ConnectionStatusIndicator extends StatelessWidget {
                   fontWeight: FontWeight.w500,
                 ),
               ),
-              if (health == ConnectionHealth.online && connectionCount > 0) ...[
+              if (kDebugMode && health == ConnectionHealth.online && connectionCount > 0) ...[
                 const SizedBox(width: 4),
                 Text(
                   '($connectionCount)',

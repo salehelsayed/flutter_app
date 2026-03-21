@@ -125,12 +125,12 @@ class P2PServiceImpl implements P2PService {
   @override
   Future<bool> startNodeCore(String privateKeyBase64, String peerId) async {
     if (_isStarting) {
-      debugPrint('[START] startNodeCore() skipped — already starting');
+      if (kDebugMode) debugPrint('[START] startNodeCore() skipped — already starting');
       return false;
     }
     _isStarting = true;
     _startNodeTime = DateTime.now();
-    debugPrint('[START] startNodeCore() beginning for peerId=$peerId');
+    if (kDebugMode) debugPrint('[START] startNodeCore() beginning for peerId=$peerId');
 
     emitFlowEvent(
       layer: 'FL',
@@ -220,10 +220,12 @@ class P2PServiceImpl implements P2PService {
   Future<void> warmBackground() async {
     if (!_currentState.isStarted) return;
 
-    debugPrint(
-      '[WARM] warmBackground() starting — '
-      'circuitAddresses=${_currentState.circuitAddresses.length}',
-    );
+    if (kDebugMode) {
+      debugPrint(
+        '[WARM] warmBackground() starting — '
+        'circuitAddresses=${_currentState.circuitAddresses.length}',
+      );
+    }
 
     emitFlowEvent(
       layer: 'FL',
@@ -239,9 +241,11 @@ class P2PServiceImpl implements P2PService {
     Future.delayed(const Duration(seconds: 2), () {
       if (_stopped) return;
       if (_currentState.isStarted && !_stateHasHealthyRelay(_currentState)) {
-        debugPrint(
-          '[WARM] Fast relay check — still not healthy after 2s, polling...',
-        );
+        if (kDebugMode) {
+          debugPrint(
+            '[WARM] Fast relay check — still not healthy after 2s, polling...',
+          );
+        }
         emitFlowEvent(
           layer: 'FL',
           event: 'P2P_FAST_CIRCUIT_CHECK',
@@ -252,11 +256,13 @@ class P2PServiceImpl implements P2PService {
         );
         _performHealthCheck();
       } else {
-        debugPrint(
-          '[WARM] Fast relay check — already healthy '
-          '(relayState=${_currentState.relayState}, '
-          'circuitAddresses=${_currentState.circuitAddresses.length}), skipping',
-        );
+        if (kDebugMode) {
+          debugPrint(
+            '[WARM] Fast relay check — already healthy '
+            '(relayState=${_currentState.relayState}, '
+            'circuitAddresses=${_currentState.circuitAddresses.length}), skipping',
+          );
+        }
       }
     });
 
@@ -442,7 +448,7 @@ class P2PServiceImpl implements P2PService {
       try {
         await _localP2P?.stop();
       } catch (e) {
-        debugPrint('[P2PService] Local P2P stop failed: $e');
+        if (kDebugMode) debugPrint('[P2PService] Local P2P stop failed: $e');
       }
 
       _stopHealthCheck();
@@ -697,12 +703,14 @@ class P2PServiceImpl implements P2PService {
   /// Start the periodic health check timer.
   void _startHealthCheck() {
     _healthCheckTimer?.cancel();
-    debugPrint(
-      '[HEALTH] Starting periodic health check timer '
-      '(every ${healthCheckInterval.inSeconds}s)',
-    );
+    if (kDebugMode) {
+      debugPrint(
+        '[HEALTH] Starting periodic health check timer '
+        '(every ${healthCheckInterval.inSeconds}s)',
+      );
+    }
     _healthCheckTimer = Timer.periodic(healthCheckInterval, (_) {
-      debugPrint('[HEALTH] Periodic health check firing...');
+      if (kDebugMode) debugPrint('[HEALTH] Periodic health check firing...');
       _performHealthCheck();
     });
   }
@@ -755,28 +763,32 @@ class P2PServiceImpl implements P2PService {
   /// Poll node:status, attempt recovery if degraded, and emit state changes.
   Future<void> _performHealthCheck() async {
     if (_isHealthChecking || _stopped) {
-      debugPrint(
-        '[HEALTH] _performHealthCheck() skipped — already in progress or stopped',
-      );
+      if (kDebugMode) {
+        debugPrint(
+          '[HEALTH] _performHealthCheck() skipped — already in progress or stopped',
+        );
+      }
       return;
     }
     _isHealthChecking = true;
     final hcStart = DateTime.now();
-    debugPrint('[HEALTH] _performHealthCheck() starting...');
+    if (kDebugMode) debugPrint('[HEALTH] _performHealthCheck() starting...');
     try {
       final statusStart = DateTime.now();
       final response = await callP2PNodeStatus(_bridge);
       if (_stopped) return;
       final statusMs = DateTime.now().difference(statusStart).inMilliseconds;
       final freshState = NodeState.fromJson(response);
-      debugPrint(
-        '[HEALTH] node:status took ${statusMs}ms → '
-        'isStarted=${freshState.isStarted}, '
-        'circuitAddresses=${freshState.circuitAddresses.length}, '
-        'connections=${freshState.connections.length}, '
-        'relayState=${freshState.relayState}, '
-        'peerId=${freshState.peerId}',
-      );
+      if (kDebugMode) {
+        debugPrint(
+          '[HEALTH] node:status took ${statusMs}ms → '
+          'isStarted=${freshState.isStarted}, '
+          'circuitAddresses=${freshState.circuitAddresses.length}, '
+          'connections=${freshState.connections.length}, '
+          'relayState=${freshState.relayState}, '
+          'peerId=${freshState.peerId}',
+        );
+      }
       if (_stateHasHealthyRelay(freshState)) {
         _hasEverBeenOnline = true;
       }
@@ -785,12 +797,14 @@ class P2PServiceImpl implements P2PService {
       // reconnect relays. If relayState is absent, fall back to circuit
       // addresses for compatibility with older bridges.
       if (_stateNeedsRelayRecovery(freshState) && _hasEverBeenOnline) {
-        debugPrint(
-          '[HEALTH] DEGRADED — relay not healthy '
-          '(relayState=${freshState.relayState}, '
-          'circuitAddresses=${freshState.circuitAddresses.length}). '
-          'Attempting recovery via relay:reconnect...',
-        );
+        if (kDebugMode) {
+          debugPrint(
+            '[HEALTH] DEGRADED — relay not healthy '
+            '(relayState=${freshState.relayState}, '
+            'circuitAddresses=${freshState.circuitAddresses.length}). '
+            'Attempting recovery via relay:reconnect...',
+          );
+        }
 
         emitFlowEvent(
           layer: 'FL',
@@ -813,30 +827,38 @@ class P2PServiceImpl implements P2PService {
             final recoveryMode = reconnectResponse['recoveryMode'] as String?;
             if (recoveryMode != null) {
               _lastRecoveryMethod = recoveryMode;
-              debugPrint(
-                '[HEALTH] relay:reconnect SUCCESS via $recoveryMode '
-                '(took ${reconnectMs}ms)',
-              );
+              if (kDebugMode) {
+                debugPrint(
+                  '[HEALTH] relay:reconnect SUCCESS via $recoveryMode '
+                  '(took ${reconnectMs}ms)',
+                );
+              }
             } else {
               _lastRecoveryMethod = 'in_place';
-              debugPrint(
-                '[HEALTH] relay:reconnect SUCCESS (took ${reconnectMs}ms)',
-              );
+              if (kDebugMode) {
+                debugPrint(
+                  '[HEALTH] relay:reconnect SUCCESS (took ${reconnectMs}ms)',
+                );
+              }
             }
             _consecutiveRefreshFailures = 0;
           } else {
             _consecutiveRefreshFailures++;
-            debugPrint(
-              '[HEALTH] relay:reconnect FAILED '
-              '(failure #$_consecutiveRefreshFailures, took ${reconnectMs}ms)',
-            );
+            if (kDebugMode) {
+              debugPrint(
+                '[HEALTH] relay:reconnect FAILED '
+                '(failure #$_consecutiveRefreshFailures, took ${reconnectMs}ms)',
+              );
+            }
           }
         } catch (e) {
           _consecutiveRefreshFailures++;
-          debugPrint(
-            '[HEALTH] relay:reconnect FAILED: $e '
-            '(failure #$_consecutiveRefreshFailures)',
-          );
+          if (kDebugMode) {
+            debugPrint(
+              '[HEALTH] relay:reconnect FAILED: $e '
+              '(failure #$_consecutiveRefreshFailures)',
+            );
+          }
           // Relay still unreachable — will retry on next health check
         }
         if (_stopped) return;
@@ -852,18 +874,22 @@ class P2PServiceImpl implements P2PService {
         if (_stateHasHealthyRelay(retryState)) {
           _hasEverBeenOnline = true;
         }
-        debugPrint(
-          '[HEALTH] Post-dial status (took ${retryStatusMs}ms) → '
-          'circuitAddresses=${retryState.circuitAddresses.length}, '
-          'connections=${retryState.connections.length}, '
-          'relayState=${retryState.relayState}',
-        );
+        if (kDebugMode) {
+          debugPrint(
+            '[HEALTH] Post-dial status (took ${retryStatusMs}ms) → '
+            'circuitAddresses=${retryState.circuitAddresses.length}, '
+            'connections=${retryState.connections.length}, '
+            'relayState=${retryState.relayState}',
+          );
+        }
 
         if (!_stateHasHealthyRelay(retryState)) {
-          debugPrint(
-            '[HEALTH] Relay still not healthy after re-dial. '
-            'Next health check in ${healthCheckInterval.inSeconds}s',
-          );
+          if (kDebugMode) {
+            debugPrint(
+              '[HEALTH] Relay still not healthy after re-dial. '
+              'Next health check in ${healthCheckInterval.inSeconds}s',
+            );
+          }
         }
 
         if (_stateMeaningfullyChanged(_currentState, retryState)) {
@@ -888,15 +914,17 @@ class P2PServiceImpl implements P2PService {
         }
 
         final totalMs = DateTime.now().difference(hcStart).inMilliseconds;
-        debugPrint('[HEALTH] Recovery health check done (total ${totalMs}ms)');
+        if (kDebugMode) debugPrint('[HEALTH] Recovery health check done (total ${totalMs}ms)');
         return;
       } else if (freshState.isStarted &&
           !_stateHasHealthyRelay(freshState) &&
           !_hasEverBeenOnline) {
-        debugPrint(
-          '[HEALTH] DEGRADED — relay not healthy yet '
-          '(relayState=${freshState.relayState}, first startup). Waiting...',
-        );
+        if (kDebugMode) {
+          debugPrint(
+            '[HEALTH] DEGRADED — relay not healthy yet '
+            '(relayState=${freshState.relayState}, first startup). Waiting...',
+          );
+        }
       }
 
       // Drain offline inbox on each health check so we pick up
@@ -908,13 +936,15 @@ class P2PServiceImpl implements P2PService {
       if (_stateMeaningfullyChanged(_currentState, freshState)) {
         _emitState(freshState);
 
-        debugPrint(
-          '[HEALTH] State changed → '
-          'isStarted=${freshState.isStarted}, '
-          'circuitAddresses=${freshState.circuitAddresses.length}, '
-          'connections=${freshState.connections.length}, '
-          'relayState=${freshState.relayState}',
-        );
+        if (kDebugMode) {
+          debugPrint(
+            '[HEALTH] State changed → '
+            'isStarted=${freshState.isStarted}, '
+            'circuitAddresses=${freshState.circuitAddresses.length}, '
+            'connections=${freshState.connections.length}, '
+            'relayState=${freshState.relayState}',
+          );
+        }
 
         emitFlowEvent(
           layer: 'FL',
@@ -926,10 +956,10 @@ class P2PServiceImpl implements P2PService {
           },
         );
       } else {
-        debugPrint('[HEALTH] No state change (online, all good)');
+        if (kDebugMode) debugPrint('[HEALTH] No state change (online, all good)');
       }
     } catch (e) {
-      debugPrint('[HEALTH] _performHealthCheck EXCEPTION: $e');
+      if (kDebugMode) debugPrint('[HEALTH] _performHealthCheck EXCEPTION: $e');
 
       // If the check itself fails, assume the node is down
       if (_currentState.isStarted) {
@@ -985,7 +1015,7 @@ class P2PServiceImpl implements P2PService {
   /// Handle peer connected event from bridge.
   void _handlePeerConnected(ConnectionState conn) {
     if (_stopped) return;
-    debugPrint('[CONN] peer:connected → ${conn.peerId} (${conn.status})');
+    if (kDebugMode) debugPrint('[CONN] peer:connected → ${conn.peerId} (${conn.status})');
 
     // Update current state with new connection
     final updatedConnections = List<ConnectionState>.from(
@@ -998,7 +1028,7 @@ class P2PServiceImpl implements P2PService {
   /// Handle peer disconnected event from bridge.
   void _handlePeerDisconnected(ConnectionState conn) {
     if (_stopped) return;
-    debugPrint('[CONN] peer:disconnected → ${conn.peerId}');
+    if (kDebugMode) debugPrint('[CONN] peer:disconnected → ${conn.peerId}');
 
     // Update current state by removing the connection
     final updatedConnections = _currentState.connections
@@ -1028,15 +1058,17 @@ class P2PServiceImpl implements P2PService {
     final wasConnecting = !wasHealthy;
     final nowOnline = nowHealthy;
 
-    debugPrint(
-      '[ADDR] addresses:updated push event → '
-      'listen=${listenAddresses.length}, circuit=${circuitAddresses.length}, '
-      'relayState=${previousState.relayState}, '
-      'elapsed=${flutterElapsedMs}ms'
-      '${wasConnecting && nowOnline ? " TRANSITION connecting->online" : ""}',
-    );
-    if (circuitAddresses.isNotEmpty) {
-      debugPrint('[ADDR] circuit addresses: ${circuitAddresses.join(", ")}');
+    if (kDebugMode) {
+      debugPrint(
+        '[ADDR] addresses:updated push event → '
+        'listen=${listenAddresses.length}, circuit=${circuitAddresses.length}, '
+        'relayState=${previousState.relayState}, '
+        'elapsed=${flutterElapsedMs}ms'
+        '${wasConnecting && nowOnline ? " TRANSITION connecting->online" : ""}',
+      );
+      if (circuitAddresses.isNotEmpty) {
+        debugPrint('[ADDR] circuit addresses: ${circuitAddresses.join(", ")}');
+      }
     }
 
     emitFlowEvent(
@@ -1073,10 +1105,12 @@ class P2PServiceImpl implements P2PService {
         wasHealthy &&
         !nowHealthy &&
         _hasEverBeenOnline) {
-      debugPrint(
-        '[ADDR] Legacy addresses push shows degradation — '
-        'triggering immediate recovery',
-      );
+      if (kDebugMode) {
+        debugPrint(
+          '[ADDR] Legacy addresses push shows degradation — '
+          'triggering immediate recovery',
+        );
+      }
       emitFlowEvent(
         layer: 'FL',
         event: 'P2P_SERVICE_RELAY_STATE_PUSH_RECOVERY',
@@ -1111,13 +1145,15 @@ class P2PServiceImpl implements P2PService {
     final wasHealthy = _stateHasHealthyRelay(previousState);
     final nowHealthy = _stateHasHealthyRelay(updatedState);
 
-    debugPrint(
-      '[RELAY] relay:state push event → '
-      'relayState=${updatedState.relayState}, '
-      'healthyRelayCount=${updatedState.healthyRelayCount}, '
-      'watchdogRestartCount=${updatedState.watchdogRestartCount}, '
-      'needsGroupRecovery=${updatedState.needsGroupRecovery}',
-    );
+    if (kDebugMode) {
+      debugPrint(
+        '[RELAY] relay:state push event → '
+        'relayState=${updatedState.relayState}, '
+        'healthyRelayCount=${updatedState.healthyRelayCount}, '
+        'watchdogRestartCount=${updatedState.watchdogRestartCount}, '
+        'needsGroupRecovery=${updatedState.needsGroupRecovery}',
+      );
+    }
 
     emitFlowEvent(
       layer: 'FL',
@@ -1144,9 +1180,11 @@ class P2PServiceImpl implements P2PService {
     }
 
     if (wasHealthy && !nowHealthy && _hasEverBeenOnline) {
-      debugPrint(
-        '[RELAY] relay:state shows degradation — triggering immediate recovery',
-      );
+      if (kDebugMode) {
+        debugPrint(
+          '[RELAY] relay:state shows degradation — triggering immediate recovery',
+        );
+      }
       emitFlowEvent(
         layer: 'FL',
         event: 'P2P_SERVICE_RELAY_STATE_PUSH_RECOVERY',
@@ -1285,7 +1323,7 @@ class P2PServiceImpl implements P2PService {
 
   @override
   Future<void> performImmediateHealthCheck() async {
-    debugPrint('[HEALTH] performImmediateHealthCheck() called');
+    if (kDebugMode) debugPrint('[HEALTH] performImmediateHealthCheck() called');
     emitFlowEvent(
       layer: 'FL',
       event: 'P2P_SERVICE_IMMEDIATE_HEALTH_CHECK_BEGIN',
@@ -1295,7 +1333,7 @@ class P2PServiceImpl implements P2PService {
     // Phase 5: Coalesce concurrent recovery attempts.
     // If a recovery is already running, just wait for it to complete.
     if (_recoveryInProgress != null) {
-      debugPrint('[HEALTH] Recovery already in progress — coalescing');
+      if (kDebugMode) debugPrint('[HEALTH] Recovery already in progress — coalescing');
       emitFlowEvent(
         layer: 'FL',
         event: 'P2P_SERVICE_RECOVERY_COALESCED',
@@ -1313,7 +1351,7 @@ class P2PServiceImpl implements P2PService {
       try {
         await _localP2P?.restartAdvertising();
       } catch (e) {
-        debugPrint('[P2PService] Local P2P restart advertising failed: $e');
+        if (kDebugMode) debugPrint('[P2PService] Local P2P restart advertising failed: $e');
       }
     } finally {
       final completer = _recoveryInProgress;
@@ -1321,7 +1359,7 @@ class P2PServiceImpl implements P2PService {
       completer?.complete();
     }
 
-    debugPrint('[HEALTH] performImmediateHealthCheck() done');
+    if (kDebugMode) debugPrint('[HEALTH] performImmediateHealthCheck() done');
   }
 
   @override

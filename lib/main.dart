@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/services/share_intent_model.dart';
 import 'package:flutter_app/core/services/share_intent_service.dart';
@@ -1435,7 +1436,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    debugPrint('[LIFECYCLE] AppLifecycleState changed → ${state.name}');
+    if (kDebugMode) debugPrint('[LIFECYCLE] AppLifecycleState changed → ${state.name}');
     emitFlowEvent(
       layer: 'FL',
       event: 'APP_LIFECYCLE_STATE_CHANGED',
@@ -1449,11 +1450,11 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
   Future<void> _onResumed() async {
     if (_isResuming) {
-      debugPrint('[LIFECYCLE] _onResumed() skipped — already resuming');
+      if (kDebugMode) debugPrint('[LIFECYCLE] _onResumed() skipped — already resuming');
       return;
     }
     _isResuming = true;
-    debugPrint('[LIFECYCLE] _onResumed() starting handleAppResumed...');
+    if (kDebugMode) debugPrint('[LIFECYCLE] _onResumed() starting handleAppResumed...');
 
     try {
       await handleAppResumed(
@@ -1476,7 +1477,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       );
     } finally {
       _isResuming = false;
-      debugPrint('[LIFECYCLE] _onResumed() finished');
+      if (kDebugMode) debugPrint('[LIFECYCLE] _onResumed() finished');
     }
   }
 
