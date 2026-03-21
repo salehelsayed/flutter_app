@@ -1,4 +1,4 @@
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:sqflite_sqlcipher/sqflite.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
 /// Migration 013: Add `waveform` column to `media_attachments` table.

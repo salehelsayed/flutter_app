@@ -48,8 +48,7 @@ class AppLocalizationsAr extends AppLocalizations {
   String get progress_creating => 'جارٍ إنشاء هويتك الآمنة';
 
   @override
-  String get progress_creating_desc =>
-      'جارٍ إنشاء مفاتيح التشفير على هذا الجهاز. يحدث هذا مرة واحدة فقط.';
+  String get progress_creating_desc => 'جارٍ إنشاء مفاتيح التشفير على هذا الجهاز. يحدث هذا مرة واحدة فقط.';
 
   @override
   String get progress_keep_open => 'يرجى إبقاء التطبيق مفتوحًا.';
@@ -76,8 +75,7 @@ class AppLocalizationsAr extends AppLocalizations {
   String get mnemonic_error_generic => 'حدث خطأ. يرجى المحاولة مرة أخرى.';
 
   @override
-  String get mnemonic_hint =>
-      'word1 word2 word3 word4\nword5 word6 word7 word8\nword9 word10 word11 word12';
+  String get mnemonic_hint => 'word1 word2 word3 word4\nword5 word6 word7 word8\nword9 word10 word11 word12';
 
   @override
   String get qr_show_desc => 'اعرض هذا على شخص تريد ضمّه إلى دائرتك...';
@@ -119,9 +117,6 @@ class AppLocalizationsAr extends AppLocalizations {
   String get qr_paste_button => 'لصق من الحافظة';
 
   @override
-  String get qr_debug_paste => 'تصحيح: لصق بيانات QR';
-
-  @override
   String get posts_title => 'المنشورات';
 
   @override
@@ -136,8 +131,7 @@ class AppLocalizationsAr extends AppLocalizations {
   String get posts_empty_title => 'أنت مطّلع على كل جديد';
 
   @override
-  String get posts_empty_desc =>
-      'ستظهر هنا منشورات أصدقائك المباشرين عندما تصل أو تُعاد مزامنتها.';
+  String get posts_empty_desc => 'ستظهر هنا منشورات أصدقائك المباشرين عندما تصل أو تُعاد مزامنتها.';
 
   @override
   String get posts_empty_button => 'أنشئ أول منشور لك';
@@ -240,28 +234,22 @@ class AppLocalizationsAr extends AppLocalizations {
   String get compose_nearby_services => 'فعّل خدمات الموقع';
 
   @override
-  String get compose_nearby_off_desc =>
-      'فعّلها من الإعدادات قبل النشر للأصدقاء القريبين منك.';
+  String get compose_nearby_off_desc => 'فعّلها من الإعدادات قبل النشر للأصدقاء القريبين منك.';
 
   @override
-  String get compose_nearby_ready_desc =>
-      'بيانات القريبين منك محدثة بما يكفي للنشر.';
+  String get compose_nearby_ready_desc => 'بيانات القريبين منك محدثة بما يكفي للنشر.';
 
   @override
-  String get compose_nearby_refresh_desc =>
-      'حدّث بيانات القريبين منك قبل استخدام هذه الفئة.';
+  String get compose_nearby_refresh_desc => 'حدّث بيانات القريبين منك قبل استخدام هذه الفئة.';
 
   @override
-  String get compose_nearby_allow_desc =>
-      'حدّث القريبين منك لتفعيل الوصول إلى الموقع لهذا النوع من المنشورات.';
+  String get compose_nearby_allow_desc => 'حدّث القريبين منك لتفعيل الوصول إلى الموقع لهذا النوع من المنشورات.';
 
   @override
-  String get compose_nearby_perm_desc =>
-      'افتح إعدادات النظام لإعادة تفعيل الوصول إلى الموقع.';
+  String get compose_nearby_perm_desc => 'افتح إعدادات النظام لإعادة تفعيل الوصول إلى الموقع.';
 
   @override
-  String get compose_nearby_services_desc =>
-      'فعّل خدمات الموقع ثم حدّث القريبين منك مرة أخرى.';
+  String get compose_nearby_services_desc => 'فعّل خدمات الموقع ثم حدّث القريبين منك مرة أخرى.';
 
   @override
   String get compose_open_settings => 'افتح الإعدادات';
@@ -454,12 +442,10 @@ class AppLocalizationsAr extends AppLocalizations {
   String get settings_original => 'أصلي';
 
   @override
-  String get settings_original_desc =>
-      'جودة كاملة وحجم ملف أكبر. تتم إزالة البيانات الوصفية دائمًا.';
+  String get settings_original_desc => 'جودة كاملة وحجم ملف أكبر. تتم إزالة البيانات الوصفية دائمًا.';
 
   @override
-  String get settings_compressed_desc =>
-      'حجم ملف أصغر وإرسال أسرع. تتم إزالة البيانات الوصفية دائمًا.';
+  String get settings_compressed_desc => 'حجم ملف أصغر وإرسال أسرع. تتم إزالة البيانات الوصفية دائمًا.';
 
   @override
   String get settings_photo_fail => 'فشل رفع الصورة الشخصية';
@@ -510,8 +496,7 @@ class AppLocalizationsAr extends AppLocalizations {
   String get btn_submit => 'إرسال';
 
   @override
-  String get error_add_contact =>
-      'فشل إضافة جهة الاتصال. يرجى المحاولة مرة أخرى.';
+  String get error_add_contact => 'فشل إضافة جهة الاتصال. يرجى المحاولة مرة أخرى.';
 
   @override
   String get error_send_message => 'فشل إرسال الرسالة. حاول مرة أخرى.';
@@ -522,8 +507,7 @@ class AppLocalizationsAr extends AppLocalizations {
   }
 
   @override
-  String get error_update_username =>
-      'فشل تحديث اسم المستخدم. يرجى المحاولة مرة أخرى.';
+  String get error_update_username => 'فشل تحديث اسم المستخدم. يرجى المحاولة مرة أخرى.';
 
   @override
   String error_generic(String error) {
@@ -534,28 +518,22 @@ class AppLocalizationsAr extends AppLocalizations {
   String get status_processing_video => 'جارٍ معالجة الفيديو...';
 
   @override
-  String get perm_camera =>
-      'يحتاج هذا التطبيق إلى الوصول إلى الكاميرا لمسح رموز QR والتقاط الصور';
+  String get perm_camera => 'يحتاج هذا التطبيق إلى الوصول إلى الكاميرا لمسح رموز QR والتقاط الصور';
 
   @override
-  String get perm_photos =>
-      'يحتاج هذا التطبيق إلى الوصول إلى مكتبة الصور لمشاركة الصور';
+  String get perm_photos => 'يحتاج هذا التطبيق إلى الوصول إلى مكتبة الصور لمشاركة الصور';
 
   @override
-  String get perm_microphone =>
-      'يحتاج هذا التطبيق إلى الوصول إلى الميكروفون لتسجيل الرسائل الصوتية';
+  String get perm_microphone => 'يحتاج هذا التطبيق إلى الوصول إلى الميكروفون لتسجيل الرسائل الصوتية';
 
   @override
-  String get perm_location =>
-      'يحتاج هذا التطبيق إلى الوصول إلى الموقع لمشاركة المنشورات القريبة مع أصدقائك المباشرين';
+  String get perm_location => 'يحتاج هذا التطبيق إلى الوصول إلى الموقع لمشاركة المنشورات القريبة مع أصدقائك المباشرين';
 
   @override
-  String get perm_local_network =>
-      'يبحث mknoon عن أصدقائك على نفس شبكة Wi‑Fi لإرسال الرسائل مباشرة إلى هواتفهم. هذا أسرع وأكثر خصوصية، ونحن لا نجمع بياناتك أبدًا.';
+  String get perm_local_network => 'يبحث mknoon عن أصدقائك على نفس شبكة Wi‑Fi لإرسال الرسائل مباشرة إلى هواتفهم. هذا أسرع وأكثر خصوصية، ونحن لا نجمع بياناتك أبدًا.';
 
   @override
-  String get perm_notifications =>
-      'يحتاج هذا التطبيق إلى الوصول إلى الإشعارات لتنبيهك عند وصول رسائل جديدة';
+  String get perm_notifications => 'يحتاج هذا التطبيق إلى الوصول إلى الإشعارات لتنبيهك عند وصول رسائل جديدة';
 
   @override
   String connected_date(String date) {
@@ -595,15 +573,13 @@ class AppLocalizationsAr extends AppLocalizations {
   String get settings_share_nearby_off => 'معطّل';
 
   @override
-  String get settings_share_nearby_desc =>
-      'يشارك موقعًا تقريبيًا فقط مع الأصدقاء المباشرين. لا خرائط مباشرة، ولا غرباء أبدًا.';
+  String get settings_share_nearby_desc => 'يشارك موقعًا تقريبيًا فقط مع الأصدقاء المباشرين. لا خرائط مباشرة، ولا غرباء أبدًا.';
 
   @override
   String get settings_recovery_title => 'عبارة الاسترداد';
 
   @override
-  String get settings_recovery_warning =>
-      'لا تشارك هذه العبارة مع أي شخص. تمنح الوصول الكامل إلى حسابك.';
+  String get settings_recovery_warning => 'لا تشارك هذه العبارة مع أي شخص. تمنح الوصول الكامل إلى حسابك.';
 
   @override
   String get settings_recovery_tap => 'اضغط للكشف';

@@ -36,7 +36,6 @@
   "qr_paste_title": "Paste QR Data",
   "qr_paste_hint": "Paste the JSON QR payload from another device:",
   "qr_paste_button": "Paste from Clipboard",
-  "qr_debug_paste": "Debug: Paste QR Data",
   "posts_title": "Posts",
   "posts_header_subtitle": "What's happening around your friends today, {username}?",
   "@posts_header_subtitle": {

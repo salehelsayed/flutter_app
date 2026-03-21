@@ -1,5 +1,5 @@
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:sqflite_sqlcipher/sqflite.dart';
 
 /// Migration 015: normalize legacy outgoing 'queued' rows.
 ///

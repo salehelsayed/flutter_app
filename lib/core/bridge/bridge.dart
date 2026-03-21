@@ -193,10 +193,6 @@ Future<bool> callVerifyPayload({
         .timeout(timeout);
     final response = jsonDecode(responseJson) as Map<String, dynamic>;
 
-    // Debug: print full response
-    // ignore: avoid_print
-    print('[callVerifyPayload] Response: $response');
-
     // Check both: ok means request succeeded, valid means signature is valid
     final requestOk = response['ok'] == true;
     final signatureValid = response['valid'] == true;

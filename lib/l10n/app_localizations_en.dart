@@ -36,22 +36,19 @@ class AppLocalizationsEn extends AppLocalizations {
   String get onboarding_privacy_1 => 'Only you can read your messages';
 
   @override
-  String get onboarding_privacy_2 =>
-      'Everything stays on your phone. Nobody is watching.';
+  String get onboarding_privacy_2 => 'Everything stays on your phone. Nobody is watching.';
 
   @override
   String get progress_securing => 'Securing your identity';
 
   @override
-  String get progress_securing_desc =>
-      'Saving your identity to secure storage.';
+  String get progress_securing_desc => 'Saving your identity to secure storage.';
 
   @override
   String get progress_creating => 'Creating your secure identity';
 
   @override
-  String get progress_creating_desc =>
-      'Generating encryption keys on this device. This only happens once.';
+  String get progress_creating_desc => 'Generating encryption keys on this device. This only happens once.';
 
   @override
   String get progress_keep_open => 'Please keep the app open.';
@@ -78,8 +75,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get mnemonic_error_generic => 'An error occurred. Please try again.';
 
   @override
-  String get mnemonic_hint =>
-      'word1 word2 word3 word4\\nword5 word6 word7 word8\\nword9 word10 word11 word12';
+  String get mnemonic_hint => 'word1 word2 word3 word4\\nword5 word6 word7 word8\\nword9 word10 word11 word12';
 
   @override
   String get qr_show_desc => 'Show this to someone you want in your circle...';
@@ -121,9 +117,6 @@ class AppLocalizationsEn extends AppLocalizations {
   String get qr_paste_button => 'Paste from Clipboard';
 
   @override
-  String get qr_debug_paste => 'Debug: Paste QR Data';
-
-  @override
   String get posts_title => 'Posts';
 
   @override
@@ -138,8 +131,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get posts_empty_title => 'You\'re all caught up';
 
   @override
-  String get posts_empty_desc =>
-      'Your direct-friend posts will appear here after they land or replay.';
+  String get posts_empty_desc => 'Your direct-friend posts will appear here after they land or replay.';
 
   @override
   String get posts_empty_button => 'Create your first post';
@@ -242,28 +234,22 @@ class AppLocalizationsEn extends AppLocalizations {
   String get compose_nearby_services => 'Turn on location services';
 
   @override
-  String get compose_nearby_off_desc =>
-      'Turn it on in Settings before posting to nearby friends.';
+  String get compose_nearby_off_desc => 'Turn it on in Settings before posting to nearby friends.';
 
   @override
-  String get compose_nearby_ready_desc =>
-      'Your nearby snapshot is fresh enough to use for posting.';
+  String get compose_nearby_ready_desc => 'Your nearby snapshot is fresh enough to use for posting.';
 
   @override
-  String get compose_nearby_refresh_desc =>
-      'Refresh your nearby snapshot before using this audience.';
+  String get compose_nearby_refresh_desc => 'Refresh your nearby snapshot before using this audience.';
 
   @override
-  String get compose_nearby_allow_desc =>
-      'Refresh nearby to grant location permission for nearby posts.';
+  String get compose_nearby_allow_desc => 'Refresh nearby to grant location permission for nearby posts.';
 
   @override
-  String get compose_nearby_perm_desc =>
-      'Open system settings to re-enable location access.';
+  String get compose_nearby_perm_desc => 'Open system settings to re-enable location access.';
 
   @override
-  String get compose_nearby_services_desc =>
-      'Enable location services, then refresh nearby again.';
+  String get compose_nearby_services_desc => 'Enable location services, then refresh nearby again.';
 
   @override
   String get compose_open_settings => 'Open Settings';
@@ -456,12 +442,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settings_original => 'Original';
 
   @override
-  String get settings_original_desc =>
-      'Full quality, larger file size. Metadata is always removed.';
+  String get settings_original_desc => 'Full quality, larger file size. Metadata is always removed.';
 
   @override
-  String get settings_compressed_desc =>
-      'Smaller file size, faster sending. Metadata is always removed.';
+  String get settings_compressed_desc => 'Smaller file size, faster sending. Metadata is always removed.';
 
   @override
   String get settings_photo_fail => 'Failed to upload profile picture';
@@ -523,8 +507,7 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String get error_update_username =>
-      'Failed to update username. Please try again.';
+  String get error_update_username => 'Failed to update username. Please try again.';
 
   @override
   String error_generic(String error) {
@@ -535,28 +518,22 @@ class AppLocalizationsEn extends AppLocalizations {
   String get status_processing_video => 'Processing video...';
 
   @override
-  String get perm_camera =>
-      'This app needs camera access to scan QR codes and take photos';
+  String get perm_camera => 'This app needs camera access to scan QR codes and take photos';
 
   @override
-  String get perm_photos =>
-      'This app needs access to your photo library to share images';
+  String get perm_photos => 'This app needs access to your photo library to share images';
 
   @override
-  String get perm_microphone =>
-      'This app needs microphone access to record voice messages';
+  String get perm_microphone => 'This app needs microphone access to record voice messages';
 
   @override
-  String get perm_location =>
-      'This app needs location access to share nearby posts with your direct friends';
+  String get perm_location => 'This app needs location access to share nearby posts with your direct friends';
 
   @override
-  String get perm_local_network =>
-      'mknoon looks for your friends on the same WiFi to send messages directly to their phone. It\'s faster, more private, and we never collect your data.';
+  String get perm_local_network => 'mknoon looks for your friends on the same WiFi to send messages directly to their phone. It\'s faster, more private, and we never collect your data.';
 
   @override
-  String get perm_notifications =>
-      'This app needs notification access to alert you of incoming messages';
+  String get perm_notifications => 'This app needs notification access to alert you of incoming messages';
 
   @override
   String connected_date(String date) {
@@ -596,15 +573,13 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settings_share_nearby_off => 'Off';
 
   @override
-  String get settings_share_nearby_desc =>
-      'Shares only an approximate location with direct friends. No live maps, and never strangers.';
+  String get settings_share_nearby_desc => 'Shares only an approximate location with direct friends. No live maps, and never strangers.';
 
   @override
   String get settings_recovery_title => 'RECOVERY PHRASE';
 
   @override
-  String get settings_recovery_warning =>
-      'Never share this phrase with anyone. It grants full access to your account.';
+  String get settings_recovery_warning => 'Never share this phrase with anyone. It grants full access to your account.';
 
   @override
   String get settings_recovery_tap => 'Tap to reveal';

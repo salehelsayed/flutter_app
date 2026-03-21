@@ -10,6 +10,6 @@ Future<void> refreshNearbyOnStartup({
   try {
     await nearbyLocationService.refreshSilentlyOnStartup();
   } catch (error) {
-    debugPrint('[POSTS] refreshNearbyOnStartup failed: $error');
+    if (kDebugMode) debugPrint('[POSTS] refreshNearbyOnStartup failed: $error');
   }
 }

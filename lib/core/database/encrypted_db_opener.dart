@@ -1,5 +1,6 @@
 import 'dart:math';
 
+import 'package:flutter/foundation.dart';
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
 import '../secure_storage/secure_key_store.dart';
@@ -40,24 +41,24 @@ Future<Database> openEncryptedDatabase({
   final isNewKey = key == null;
   if (isNewKey) {
     key = _generateRandomKey();
-    print('[EAR] DB encryption key: GENERATED NEW (256-bit random)');
+    if (kDebugMode) print('[EAR] DB encryption key: GENERATED NEW (256-bit random)');
   } else {
-    print('[EAR] DB encryption key: LOADED FROM SECURE STORAGE');
+    if (kDebugMode) print('[EAR] DB encryption key: LOADED FROM SECURE STORAGE');
   }
 
   // 2. Resolve full path
   final dbPath = await getDatabasesPath();
   final fullPath = '$dbPath/$dbName';
-  print('[EAR] DB path: $fullPath');
+  if (kDebugMode) print('[EAR] DB path: $fullPath');
 
   // 3. If we have a new key, check if a plaintext DB already exists
   if (isNewKey) {
     final exists = await databaseExists(fullPath);
-    print('[EAR] Existing DB file found: $exists');
+    if (kDebugMode) print('[EAR] Existing DB file found: $exists');
 
     if (exists) {
       // Existing plaintext DB — encrypt it
-      print('[EAR] MIGRATING plaintext DB → encrypted...');
+      if (kDebugMode) print('[EAR] MIGRATING plaintext DB → encrypted...');
       emitFlowEvent(
         layer: 'DB',
         event: 'ENCRYPTED_DB_MIGRATING_PLAINTEXT',
@@ -65,12 +66,12 @@ Future<Database> openEncryptedDatabase({
       );
 
       await _encryptExistingDatabase(fullPath, key);
-      print('[EAR] Plaintext → encrypted migration DONE');
+      if (kDebugMode) print('[EAR] Plaintext → encrypted migration DONE');
     }
 
     // Persist key after successful encryption (or for fresh DB)
     await secureKeyStore.write(_kDbEncryptionKey, key);
-    print('[EAR] Encryption key stored in secure storage');
+    if (kDebugMode) print('[EAR] Encryption key stored in secure storage');
   }
 
   // 4. Open the (now encrypted) database
@@ -88,10 +89,10 @@ Future<Database> openEncryptedDatabase({
     final cipherVersion = cipherResult.isNotEmpty
         ? cipherResult.first.values.first
         : 'UNKNOWN';
-    print('[EAR] SQLCipher version: $cipherVersion');
-    print('[EAR] DATABASE IS ENCRYPTED');
+    if (kDebugMode) print('[EAR] SQLCipher version: $cipherVersion');
+    if (kDebugMode) print('[EAR] DATABASE IS ENCRYPTED');
   } catch (e) {
-    print('[EAR] WARNING: Could not verify cipher_version — $e');
+    if (kDebugMode) print('[EAR] WARNING: Could not verify cipher_version — $e');
   }
 
   emitFlowEvent(

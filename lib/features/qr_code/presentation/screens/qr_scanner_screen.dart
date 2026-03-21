@@ -126,7 +126,7 @@ class _QRScannerScreenState extends State<QRScannerScreen> {
                   onPressed: _showPasteDialog,
                   icon: const Icon(Icons.paste, color: Colors.white70, size: 18),
                   label: Text(
-                    AppLocalizations.of(context)!.qr_debug_paste,
+                    AppLocalizations.of(context)!.qr_paste_title,
                     style: const TextStyle(color: Colors.white70, fontSize: 12),
                   ),
                 ),

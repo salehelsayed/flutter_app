@@ -36,7 +36,6 @@
   "qr_paste_title": "QR-Daten einfügen",
   "qr_paste_hint": "Füge die JSON-Daten des QR-Codes von einem anderen Gerät ein:",
   "qr_paste_button": "Aus Zwischenablage einfügen",
-  "qr_debug_paste": "Debug: QR-Daten einfügen",
   "posts_title": "Beiträge",
   "posts_header_subtitle": "Was ist heute bei deinen Freunden los, {username}?",
   "@posts_header_subtitle": {
