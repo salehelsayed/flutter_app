@@ -13,13 +13,16 @@ import (
 // groupInboxRequest is the JSON envelope sent to the relay server
 // for group inbox operations.
 type groupInboxRequest struct {
-	Action         string `json:"action"`
-	GroupId        string `json:"groupId,omitempty"`
-	From           string `json:"from,omitempty"`
-	Message        string `json:"message,omitempty"`
-	SinceTimestamp int64  `json:"sinceTimestamp,omitempty"`
-	Cursor         string `json:"cursor,omitempty"`
-	Limit          int    `json:"limit,omitempty"`
+	Action           string   `json:"action"`
+	GroupId          string   `json:"groupId,omitempty"`
+	From             string   `json:"from,omitempty"`
+	Message          string   `json:"message,omitempty"`
+	RecipientPeerIds []string `json:"recipientPeerIds,omitempty"`
+	PushTitle        string   `json:"pushTitle,omitempty"`
+	PushBody         string   `json:"pushBody,omitempty"`
+	SinceTimestamp   int64    `json:"sinceTimestamp,omitempty"`
+	Cursor           string   `json:"cursor,omitempty"`
+	Limit            int      `json:"limit,omitempty"`
 }
 
 // groupInboxResponse is the JSON envelope received from the relay
@@ -35,7 +38,13 @@ type groupInboxResponse struct {
 // GroupInboxStore stores a group message in the relay's group inbox.
 // This allows offline members to retrieve group messages they missed.
 // Tries each configured relay in order until one succeeds.
-func (n *Node) GroupInboxStore(groupId, message string) error {
+func (n *Node) GroupInboxStore(
+	groupId,
+	message string,
+	recipientPeerIds []string,
+	pushTitle,
+	pushBody string,
+) error {
 	n.mu.RLock()
 	h := n.host
 	n.mu.RUnlock()
@@ -63,12 +72,14 @@ func (n *Node) GroupInboxStore(groupId, message string) error {
 		defer finishStream(s, &streamOK)
 		setStreamDeadline(s, timeout)
 
-		req := groupInboxRequest{
-			Action:  "group_store",
-			GroupId: groupId,
-			From:    n.peerId,
-			Message: message,
-		}
+		req := buildGroupInboxStoreRequest(
+			groupId,
+			n.peerId,
+			message,
+			recipientPeerIds,
+			pushTitle,
+			pushBody,
+		)
 
 		reqBytes, err := json.Marshal(req)
 		if err != nil {
@@ -97,6 +108,25 @@ func (n *Node) GroupInboxStore(groupId, message string) error {
 		streamOK = true
 		return nil
 	})
+}
+
+func buildGroupInboxStoreRequest(
+	groupId,
+	from,
+	message string,
+	recipientPeerIds []string,
+	pushTitle,
+	pushBody string,
+) groupInboxRequest {
+	return groupInboxRequest{
+		Action:           "group_store",
+		GroupId:          groupId,
+		From:             from,
+		Message:          message,
+		RecipientPeerIds: recipientPeerIds,
+		PushTitle:        pushTitle,
+		PushBody:         pushBody,
+	}
 }
 
 // GroupInboxRetrieve retrieves missed group messages from the relay's group inbox

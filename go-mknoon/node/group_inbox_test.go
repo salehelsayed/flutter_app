@@ -1,9 +1,89 @@
 package node
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
+
+func TestBuildGroupInboxStoreRequest_MarshalsRecipientPeerIds(t *testing.T) {
+	req := buildGroupInboxStoreRequest(
+		"group-1",
+		"peer-self",
+		`{"text":"hello"}`,
+		[]string{"peer-2", "peer-3"},
+		"Test Group",
+		"Alice: hello",
+	)
+
+	raw, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	var decoded map[string]interface{}
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+
+	expect, ok := decoded["recipientPeerIds"].([]interface{})
+	if !ok {
+		t.Fatal("expected recipientPeerIds in marshaled request")
+	}
+	if len(expect) != 2 || expect[0] != "peer-2" || expect[1] != "peer-3" {
+		t.Fatalf("recipientPeerIds = %#v, want [peer-2 peer-3]", expect)
+	}
+}
+
+func TestBuildGroupInboxStoreRequest_MarshalsPushTitle(t *testing.T) {
+	req := buildGroupInboxStoreRequest(
+		"group-1",
+		"peer-self",
+		`{"text":"hello"}`,
+		nil,
+		"Test Group",
+		"Alice: hello",
+	)
+
+	raw, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	var decoded map[string]interface{}
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+
+	if decoded["pushTitle"] != "Test Group" {
+		t.Fatalf("pushTitle = %#v, want %q", decoded["pushTitle"], "Test Group")
+	}
+}
+
+func TestBuildGroupInboxStoreRequest_MarshalsPushBody(t *testing.T) {
+	req := buildGroupInboxStoreRequest(
+		"group-1",
+		"peer-self",
+		`{"text":"hello"}`,
+		nil,
+		"Test Group",
+		"Alice: hello",
+	)
+
+	raw, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	var decoded map[string]interface{}
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+
+	if decoded["pushBody"] != "Alice: hello" {
+		t.Fatalf("pushBody = %#v, want %q", decoded["pushBody"], "Alice: hello")
+	}
+}
 
 // ===========================================================================
 // Phase 6: GroupInboxRetrieveWithCursor — cursor stability tests

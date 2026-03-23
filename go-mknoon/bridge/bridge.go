@@ -1730,7 +1730,15 @@ func GroupDecryptMessage(paramsJSON string) (result string) {
 }
 
 // GroupInboxStore stores a group message in the relay's group inbox.
-// Input JSON: { "groupId": "...", "message": "..." }
+//
+//	Input JSON: {
+//	  "groupId": "...",
+//	  "message": "...",
+//	  "recipientPeerIds": ["peer-2"],
+//	  "pushTitle": "...",
+//	  "pushBody": "..."
+//	}
+//
 // Returns JSON: { "ok": true }
 func GroupInboxStore(paramsJSON string) (result string) {
 	defer func() {
@@ -1748,8 +1756,11 @@ func GroupInboxStore(paramsJSON string) (result string) {
 	}
 
 	var params struct {
-		GroupId string `json:"groupId"`
-		Message string `json:"message"`
+		GroupId          string   `json:"groupId"`
+		Message          string   `json:"message"`
+		RecipientPeerIds []string `json:"recipientPeerIds"`
+		PushTitle        string   `json:"pushTitle"`
+		PushBody         string   `json:"pushBody"`
 	}
 	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
 		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
@@ -1759,7 +1770,13 @@ func GroupInboxStore(paramsJSON string) (result string) {
 		return errJSON("INVALID_INPUT", "missing groupId or message")
 	}
 
-	if err := n.GroupInboxStore(params.GroupId, params.Message); err != nil {
+	if err := n.GroupInboxStore(
+		params.GroupId,
+		params.Message,
+		params.RecipientPeerIds,
+		params.PushTitle,
+		params.PushBody,
+	); err != nil {
 		return errJSON("GROUP_INBOX_ERROR", err.Error())
 	}
 

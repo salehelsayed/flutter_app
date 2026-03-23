@@ -1503,6 +1503,20 @@ func TestGroupInboxStore_MissingFields(t *testing.T) {
 	assertNotOk(t, m, "INVALID_INPUT")
 }
 
+func TestGroupInboxStore_AcceptsPushFanoutFields(t *testing.T) {
+	withSingletonNode(t)
+	result := GroupInboxStore(`{
+		"groupId": "g1",
+		"message": "hello",
+		"recipientPeerIds": ["peer-2", "peer-3"],
+		"pushTitle": "Test Group",
+		"pushBody": "Alice: hello"
+	}`)
+	m := parseJSON(t, result)
+
+	assertNotOk(t, m, "GROUP_INBOX_ERROR")
+}
+
 func TestGroupInboxRetrieve_InvalidJSON(t *testing.T) {
 	withSingletonNode(t)
 	result := GroupInboxRetrieve("not valid json")

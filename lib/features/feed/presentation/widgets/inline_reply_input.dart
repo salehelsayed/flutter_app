@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/utils/text_sanitizer.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
+import 'package:flutter_app/shared/widgets/media/recording_overlay.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/voice_record_button.dart';
 
 /// Pill-shaped single-line inline reply input with animated send button.
@@ -20,6 +22,7 @@ class InlineReplyInput extends StatefulWidget {
   final VoidCallback? onRecordStop;
   final VoidCallback? onRecordCancel;
   final bool isRecording;
+  final VoiceRecordingState recordingState;
   final Duration recordingDuration;
   final List<double> amplitudeValues;
 
@@ -37,6 +40,7 @@ class InlineReplyInput extends StatefulWidget {
     this.onRecordStop,
     this.onRecordCancel,
     this.isRecording = false,
+    this.recordingState = VoiceRecordingState.idle,
     this.recordingDuration = Duration.zero,
     this.amplitudeValues = const [],
   });
@@ -128,7 +132,17 @@ class _InlineReplyInputState extends State<InlineReplyInput>
   bool get _canRecordVoice =>
       widget.onRecordStart != null && widget.onRecordStop != null;
 
-  bool get _shouldShowMicButton => !_hasText && _canRecordVoice;
+  VoiceRecordingState get _effectiveRecordingState =>
+      widget.recordingState != VoiceRecordingState.idle
+      ? widget.recordingState
+      : (widget.isRecording
+            ? VoiceRecordingState.recording
+            : VoiceRecordingState.idle);
+
+  bool get _isRecording => _effectiveRecordingState.isActive;
+
+  bool get _shouldShowMicButton =>
+      (!_hasText || _isRecording) && _canRecordVoice;
 
   @override
   void dispose() {
@@ -144,7 +158,7 @@ class _InlineReplyInputState extends State<InlineReplyInput>
       behavior: HitTestBehavior.opaque,
       onTap: () {}, // absorb taps
       child: SizedBox(
-        height: 44,
+        height: _isRecording ? 56 : 44,
         child: Row(
           children: [
             if (widget.onAttach != null) ...[
@@ -172,79 +186,84 @@ class _InlineReplyInputState extends State<InlineReplyInput>
               const SizedBox(width: 8),
             ],
             Expanded(
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                decoration: BoxDecoration(
-                  color: const Color.fromRGBO(255, 255, 255, 0.06),
-                  borderRadius: BorderRadius.circular(22),
-                  border: Border.all(
-                    color: _hasFocus
-                        ? const Color.fromRGBO(255, 255, 255, 0.20)
-                        : const Color.fromRGBO(255, 255, 255, 0.10),
-                  ),
-                  boxShadow: _hasFocus
-                      ? const [
-                          BoxShadow(
-                            color: Color.fromRGBO(255, 255, 255, 0.08),
-                            blurRadius: 0,
-                            spreadRadius: 1,
+              child: _isRecording
+                  ? RecordingOverlay(
+                      elapsed: widget.recordingDuration,
+                      onCancel: widget.onRecordCancel ?? () {},
+                      amplitudeValues: widget.amplitudeValues,
+                    )
+                  : AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      decoration: BoxDecoration(
+                        color: const Color.fromRGBO(255, 255, 255, 0.06),
+                        borderRadius: BorderRadius.circular(22),
+                        border: Border.all(
+                          color: _hasFocus
+                              ? const Color.fromRGBO(255, 255, 255, 0.20)
+                              : const Color.fromRGBO(255, 255, 255, 0.10),
+                        ),
+                        boxShadow: _hasFocus
+                            ? const [
+                                BoxShadow(
+                                  color: Color.fromRGBO(255, 255, 255, 0.08),
+                                  blurRadius: 0,
+                                  spreadRadius: 1,
+                                ),
+                                BoxShadow(
+                                  color: Color.fromRGBO(0, 0, 0, 0.3),
+                                  blurRadius: 20,
+                                  offset: Offset(0, 4),
+                                ),
+                              ]
+                            : [
+                                const BoxShadow(
+                                  color: Color.fromRGBO(0, 0, 0, 0.24),
+                                  blurRadius: 12,
+                                  offset: Offset(0, 6),
+                                ),
+                              ],
+                      ),
+                      child: TextField(
+                        controller: _controller,
+                        focusNode: _focusNode,
+                        enabled: widget.enabled && !_isRecording,
+                        maxLines: 1,
+                        maxLength: maxMessageLength,
+                        style: const TextStyle(
+                          fontSize: 15,
+                          color: Color.fromRGBO(255, 255, 255, 0.95),
+                          height: 1.5,
+                        ),
+                        textAlignVertical: TextAlignVertical.center,
+                        decoration: InputDecoration(
+                          hintText: widget.hintText,
+                          hintStyle: TextStyle(
+                            fontSize: 15,
+                            color: Color.fromRGBO(
+                              255,
+                              255,
+                              255,
+                              _hasFocus ? 0.2 : 0.3,
+                            ),
                           ),
-                          BoxShadow(
-                            color: Color.fromRGBO(0, 0, 0, 0.3),
-                            blurRadius: 20,
-                            offset: Offset(0, 4),
+                          border: InputBorder.none,
+                          counterText: '',
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 12,
                           ),
-                        ]
-                      : [
-                          const BoxShadow(
-                            color: Color.fromRGBO(0, 0, 0, 0.24),
-                            blurRadius: 12,
-                            offset: Offset(0, 6),
-                          ),
-                        ],
-                ),
-                child: TextField(
-                  controller: _controller,
-                  focusNode: _focusNode,
-                  enabled: widget.enabled,
-                  maxLines: 1,
-                  maxLength: maxMessageLength,
-                  style: const TextStyle(
-                    fontSize: 15,
-                    color: Color.fromRGBO(255, 255, 255, 0.95),
-                    height: 1.5,
-                  ),
-                  textAlignVertical: TextAlignVertical.center,
-                  decoration: InputDecoration(
-                    hintText: widget.hintText,
-                    hintStyle: TextStyle(
-                      fontSize: 15,
-                      color: Color.fromRGBO(
-                        255,
-                        255,
-                        255,
-                        _hasFocus ? 0.2 : 0.3,
+                          isDense: true,
+                        ),
                       ),
                     ),
-                    border: InputBorder.none,
-                    counterText: '',
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 12,
-                    ),
-                    isDense: true,
-                  ),
-                ),
-              ),
             ),
             const SizedBox(width: 8),
-            // Mic button or Send button
             if (_shouldShowMicButton)
               VoiceRecordButton(
                 onTapDown: widget.onRecordStart!,
                 onTapUp: widget.onRecordStop!,
                 onTapCancel: widget.onRecordCancel ?? () {},
-                isRecording: widget.isRecording,
+                isRecording: _isRecording,
               )
             else
               ScaleTransition(

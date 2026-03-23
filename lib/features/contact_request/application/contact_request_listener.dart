@@ -10,6 +10,7 @@ import 'package:flutter_app/features/contact_request/domain/repositories/contact
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
+import 'package:flutter_app/features/settings/application/download_profile_picture_use_case.dart';
 
 /// Bounded replay cache that stores message IDs with timestamps.
 ///
@@ -63,10 +64,12 @@ class ContactRequestListener {
   final Bridge bridge;
   final String Function() getOwnPeerId;
   final Future<String?> Function()? getOwnPrivateKey;
+  final DownloadProfilePictureFn downloadProfilePictureFn;
 
   StreamSubscription<ChatMessage>? _subscription;
   final _requestController = StreamController<ContactRequestModel>.broadcast();
-  final _contactKeyUpdatedController = StreamController<ContactModel>.broadcast();
+  final _contactKeyUpdatedController =
+      StreamController<ContactModel>.broadcast();
   final ReplayCache _replayCache;
 
   ContactRequestListener({
@@ -76,8 +79,11 @@ class ContactRequestListener {
     required this.bridge,
     required this.getOwnPeerId,
     this.getOwnPrivateKey,
+    DownloadProfilePictureFn? downloadProfilePictureFn,
     ReplayCache? replayCache,
-  }) : _replayCache = replayCache ?? ReplayCache();
+  }) : downloadProfilePictureFn =
+           downloadProfilePictureFn ?? downloadProfilePicture,
+       _replayCache = replayCache ?? ReplayCache();
 
   /// Stream of new contact requests for the UI to listen to.
   Stream<ContactRequestModel> get requestStream => _requestController.stream;
@@ -101,10 +107,18 @@ class ContactRequestListener {
     _subscription = contactRequestStream.listen(
       _onMessage,
       onError: (error) {
-        emitFlowEvent(layer: 'FL', event: 'CONTACT_REQUEST_LISTENER_STREAM_ERROR', details: {'error': error.toString()});
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'CONTACT_REQUEST_LISTENER_STREAM_ERROR',
+          details: {'error': error.toString()},
+        );
       },
       onDone: () {
-        emitFlowEvent(layer: 'FL', event: 'CONTACT_REQUEST_LISTENER_STREAM_DONE', details: {});
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'CONTACT_REQUEST_LISTENER_STREAM_DONE',
+          details: {},
+        );
       },
     );
   }
@@ -126,6 +140,25 @@ class ContactRequestListener {
     stop();
     _requestController.close();
     _contactKeyUpdatedController.close();
+  }
+
+  void _prefetchRequestAvatar(ContactRequestModel request) {
+    () async {
+      try {
+        await downloadProfilePictureFn(
+          bridge: bridge,
+          contactRepo: contactRepo,
+          ownerPeerId: request.peerId,
+          avatarVersion: 'initial',
+        );
+      } catch (e) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'CONTACT_REQUEST_PREFETCH_AVATAR_ERROR',
+          details: {'peerId': request.peerId, 'error': e.toString()},
+        );
+      }
+    }();
   }
 
   Future<void> _onMessage(ChatMessage message) async {
@@ -168,12 +201,10 @@ class ContactRequestListener {
         emitFlowEvent(
           layer: 'FL',
           event: 'CONTACT_REQUEST_LISTENER_NEW_REQUEST',
-          details: {
-            'peerId': peerIdPrefix,
-            'username': request.username,
-          },
+          details: {'peerId': peerIdPrefix, 'username': request.username},
         );
 
+        _prefetchRequestAvatar(request);
         _requestController.add(request);
       } else if (result == HandleMessageResult.contactKeyUpdated &&
           keyUpdatePeerId != null) {

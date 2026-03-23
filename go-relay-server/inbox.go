@@ -34,8 +34,12 @@ const (
 // --- Push service ---
 
 type PushService struct {
-	client       *messaging.Client
+	sender       pushMessageSender
 	tokenBackend PushTokenBackend
+}
+
+type pushMessageSender interface {
+	Send(ctx context.Context, msg *messaging.Message) (string, error)
 }
 
 type tokenEntry struct {
@@ -70,20 +74,28 @@ func newPushServiceWithTokenBackend(
 		return ps
 	}
 
-	ps.client = client
+	ps.sender = client
 	log.Println("[PUSH] Firebase Admin SDK initialized")
 	return ps
 }
 
 // NewPushServiceWithBackend creates a PushService with a custom token backend.
 func NewPushServiceWithBackend(tokenBackend PushTokenBackend) *PushService {
+	return newPushServiceWithSender(tokenBackend, nil)
+}
+
+func newPushServiceWithSender(
+	tokenBackend PushTokenBackend,
+	sender pushMessageSender,
+) *PushService {
 	return &PushService{
+		sender:       sender,
 		tokenBackend: tokenBackend,
 	}
 }
 
 func (ps *PushService) Status() string {
-	if ps.client != nil {
+	if ps.sender != nil {
 		return "enabled"
 	}
 	return "disabled (no service account)"
@@ -100,18 +112,22 @@ func (ps *PushService) UnregisterToken(peerId string) {
 }
 
 func (ps *PushService) SendNotification(ctx context.Context, toPeerId, fromPeerId string) {
-	if ps.client == nil {
+	if ps.sender == nil {
 		return
 	}
 
 	entry := ps.tokenBackend.LookupToken(toPeerId)
 	if entry == nil {
+		log.Printf("[PUSH] No token registered for %s; skipping push", toPeerId[:min(20, len(toPeerId))])
 		return
 	}
 
-	msg := buildPushMessage(entry.Token, fromPeerId)
+	msg := buildChatPushMessage(chatPushRequest{
+		Token:      entry.Token,
+		FromPeerID: fromPeerId,
+	})
 
-	_, err := ps.client.Send(ctx, msg)
+	_, err := ps.sender.Send(ctx, msg)
 	if err != nil {
 		log.Printf("[PUSH] Failed to send to %s: %v", toPeerId[:min(20, len(toPeerId))], err)
 		// Remove invalid tokens
@@ -128,21 +144,46 @@ func (ps *PushService) SendNotification(ctx context.Context, toPeerId, fromPeerI
 	log.Printf("[PUSH] Notification sent to %s", toPeerId[:min(20, len(toPeerId))])
 }
 
-func buildPushMessage(token, fromPeerId string) *messaging.Message {
+type chatPushRequest struct {
+	Token      string
+	FromPeerID string
+	Title      string
+	Body       string
+	ChannelID  string
+}
+
+func buildChatPushMessage(req chatPushRequest) *messaging.Message {
+	title := req.Title
+	if title == "" {
+		title = pushNotificationTitle
+	}
+	body := req.Body
+	if body == "" {
+		body = pushNotificationBody
+	}
+	channelID := req.ChannelID
+	if channelID == "" {
+		channelID = pushNotificationChannelID
+	}
+
 	return &messaging.Message{
-		Token: token,
+		Token: req.Token,
+		Notification: &messaging.Notification{
+			Title: title,
+			Body:  body,
+		},
 		Data: map[string]string{
-			"type":  "new_message",
-			"from":  fromPeerId,
-			"title": pushNotificationTitle,
-			"body":  pushNotificationBody,
+			"type":      "new_message",
+			"sender_id": req.FromPeerID,
+			"title":     title,
+			"body":      body,
 		},
 		Android: &messaging.AndroidConfig{
 			Priority: "high",
 			Notification: &messaging.AndroidNotification{
-				Title:     pushNotificationTitle,
-				Body:      pushNotificationBody,
-				ChannelID: pushNotificationChannelID,
+				Title:     title,
+				Body:      body,
+				ChannelID: channelID,
 			},
 		},
 		APNS: &messaging.APNSConfig{
@@ -154,12 +195,116 @@ func buildPushMessage(token, fromPeerId string) *messaging.Message {
 				Aps: &messaging.Aps{
 					ContentAvailable: true,
 					Alert: &messaging.ApsAlert{
-						Title: pushNotificationTitle,
-						Body:  pushNotificationBody,
+						Title: title,
+						Body:  body,
 					},
 				},
 			},
 		},
+	}
+}
+
+type groupPushRequest struct {
+	Token     string
+	GroupID   string
+	Title     string
+	Body      string
+	ChannelID string
+}
+
+func buildGroupPushMessage(req groupPushRequest) *messaging.Message {
+	title := req.Title
+	if title == "" {
+		title = pushNotificationTitle
+	}
+	body := req.Body
+	if body == "" {
+		body = pushNotificationBody
+	}
+	channelID := req.ChannelID
+	if channelID == "" {
+		channelID = pushNotificationChannelID
+	}
+
+	return &messaging.Message{
+		Token: req.Token,
+		Data: map[string]string{
+			"type":    "group_message",
+			"groupId": req.GroupID,
+			"title":   title,
+			"body":    body,
+		},
+		Android: &messaging.AndroidConfig{
+			Priority: "high",
+			Notification: &messaging.AndroidNotification{
+				Title:     title,
+				Body:      body,
+				ChannelID: channelID,
+			},
+		},
+		APNS: &messaging.APNSConfig{
+			Headers: map[string]string{
+				"apns-priority":  "10",
+				"apns-push-type": "alert",
+			},
+			Payload: &messaging.APNSPayload{
+				Aps: &messaging.Aps{
+					ContentAvailable: true,
+					Alert: &messaging.ApsAlert{
+						Title: title,
+						Body:  body,
+					},
+				},
+			},
+		},
+	}
+}
+
+func (ps *PushService) SendGroupNotifications(
+	ctx context.Context,
+	recipientPeerIds []string,
+	senderPeerId,
+	groupId,
+	title,
+	body string,
+) {
+	if ps.sender == nil {
+		return
+	}
+
+	for _, recipientPeerId := range recipientPeerIds {
+		if recipientPeerId == "" || recipientPeerId == senderPeerId {
+			continue
+		}
+
+		entry := ps.tokenBackend.LookupToken(recipientPeerId)
+		if entry == nil {
+			log.Printf("[PUSH] No token registered for %s; skipping group push", recipientPeerId[:min(20, len(recipientPeerId))])
+			continue
+		}
+
+		msg := buildGroupPushMessage(groupPushRequest{
+			Token:   entry.Token,
+			GroupID: groupId,
+			Title:   title,
+			Body:    body,
+		})
+
+		_, err := ps.sender.Send(ctx, msg)
+		if err != nil {
+			log.Printf("[PUSH] Failed to send group push to %s: %v", recipientPeerId[:min(20, len(recipientPeerId))], err)
+			if isInvalidTokenError(err) {
+				ps.tokenBackend.UnregisterToken(recipientPeerId)
+				pushSentCounter.WithLabelValues("invalid_token").Inc()
+				log.Printf("[PUSH] Removed invalid token for %s", recipientPeerId[:min(20, len(recipientPeerId))])
+			} else {
+				pushSentCounter.WithLabelValues("failed").Inc()
+			}
+			continue
+		}
+
+		pushSentCounter.WithLabelValues("success").Inc()
+		log.Printf("[PUSH] Group notification sent to %s", recipientPeerId[:min(20, len(recipientPeerId))])
 	}
 }
 
@@ -372,14 +517,17 @@ func writeFrame(w io.Writer, data []byte) error {
 // --- Inbox stream handler ---
 
 type inboxRequest struct {
-	Action   string                 `json:"action"`
-	To       string                 `json:"to,omitempty"`
-	From     string                 `json:"from,omitempty"`
-	Message  string                 `json:"message,omitempty"`
-	Metadata map[string]interface{} `json:"metadata,omitempty"`
-	Limit    int                    `json:"limit,omitempty"`
-	Token    string                 `json:"token,omitempty"`
-	Platform string                 `json:"platform,omitempty"`
+	Action           string                 `json:"action"`
+	To               string                 `json:"to,omitempty"`
+	From             string                 `json:"from,omitempty"`
+	Message          string                 `json:"message,omitempty"`
+	Metadata         map[string]interface{} `json:"metadata,omitempty"`
+	Limit            int                    `json:"limit,omitempty"`
+	Token            string                 `json:"token,omitempty"`
+	Platform         string                 `json:"platform,omitempty"`
+	RecipientPeerIds []string               `json:"recipientPeerIds,omitempty"`
+	PushTitle        string                 `json:"pushTitle,omitempty"`
+	PushBody         string                 `json:"pushBody,omitempty"`
 	// Group inbox fields.
 	GroupId        string `json:"groupId,omitempty"`
 	SinceTimestamp int64  `json:"sinceTimestamp,omitempty"`
@@ -486,6 +634,14 @@ func HandleInboxStream(s network.Stream, inbox *InboxStore, groupInbox *GroupInb
 				resp = inboxResponse{Status: "ERROR", Error: err.Error()}
 			} else {
 				resp = inboxResponse{Status: "OK"}
+				go inbox.push.SendGroupNotifications(
+					context.Background(),
+					req.RecipientPeerIds,
+					from,
+					req.GroupId,
+					req.PushTitle,
+					req.PushBody,
+				)
 			}
 		}
 

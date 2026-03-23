@@ -734,7 +734,7 @@ void main() {
         expect(message!.status, 'delivered');
         expect(message.transport, 'direct');
         expect(p2pService.discoverCallCount, 1);
-        expect(p2pService.dialCallCount, 0);
+        expect(p2pService.dialCallCount, 1);
         expect(p2pService.probeRelayCallCount, 1);
         expect(p2pService.sendCallCount, 1);
         expect(p2pService.storeInInboxCallCount, 0);
@@ -761,7 +761,7 @@ void main() {
         expect(message!.status, 'delivered');
         expect(message.transport, 'direct');
         expect(p2pService.discoverCallCount, 1);
-        expect(p2pService.dialCallCount, 1);
+        expect(p2pService.dialCallCount, 2);
         expect(p2pService.probeRelayCallCount, 1);
         expect(p2pService.sendCallCount, 1);
         expect(p2pService.storeInInboxCallCount, 0);
@@ -952,6 +952,40 @@ void main() {
         expect(message!.status, 'delivered');
         // Only one message should be persisted regardless of how many paths won
         expect(messageRepo.saved.length, 1);
+      },
+    );
+
+    test(
+      'existing relay circuit connection persists relay transport instead of reuse',
+      () async {
+        p2pService = FakeP2PService(
+          currentState: NodeState(
+            isStarted: true,
+            connections: [
+              const p2p.ConnectionState(
+                peerId: 'target-peer',
+                multiaddrs: [
+                  '/dns4/relay.example/tcp/4001/p2p/relay-peer/p2p-circuit',
+                ],
+                direction: 'outbound',
+                status: 'connected',
+              ),
+            ],
+          ),
+        );
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Relay route!',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message, isNotNull);
+        expect(message!.transport, 'relay');
       },
     );
 

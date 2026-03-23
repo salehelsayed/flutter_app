@@ -583,6 +583,9 @@ Future<void> callGroupInboxStore(
   Bridge bridge,
   String groupId,
   String message, {
+  List<String>? recipientPeerIds,
+  String? pushTitle,
+  String? pushBody,
   Duration timeout = const Duration(seconds: 10),
 }) async {
   emitFlowEvent(
@@ -595,7 +598,14 @@ Future<void> callGroupInboxStore(
 
   final request = {
     'cmd': 'group:inboxStore',
-    'payload': {'groupId': groupId, 'message': message},
+    'payload': {
+      'groupId': groupId,
+      'message': message,
+      if (recipientPeerIds != null && recipientPeerIds.isNotEmpty)
+        'recipientPeerIds': recipientPeerIds,
+      if (pushTitle != null && pushTitle.isNotEmpty) 'pushTitle': pushTitle,
+      if (pushBody != null && pushBody.isNotEmpty) 'pushBody': pushBody,
+    },
   };
 
   try {

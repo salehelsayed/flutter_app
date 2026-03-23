@@ -1,0 +1,825 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>mknoon -- Keep your circle close</title>
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/drafts.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <nav class="nav" id="nav">
+    <div class="nav-inner">
+      <a href="#" class="nav-logo">mknoon</a>
+      <div class="nav-links">
+        <a href="#introductions">Introductions</a>
+        <a href="#privacy">Privacy</a>
+        <a href="privacy-policy.html">Policy</a>
+      </div>
+      <a href="#download" class="nav-cta">Download</a>
+    </div>
+  </nav>
+
+  <section class="hero" id="hero">
+    <canvas id="network-canvas" aria-hidden="true"></canvas>
+    <div class="hero-content hero-brand-lockup">
+      <div class="hero-brand-mark reveal" aria-hidden="true">
+        <svg
+          width="100%"
+          height="100%"
+          viewBox="0 0 100 100"
+          fill="none"
+          xmlns="http://www.w3.org/2000/svg"
+          class="logo-cosmic-animated hero-cosmic-logo"
+        >
+          <defs>
+            <radialGradient id="heroNebulaCore" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" stop-color="#1DB954" stop-opacity="0.9"></stop>
+              <stop offset="35%" stop-color="#1DB954" stop-opacity="0.3"></stop>
+              <stop offset="60%" stop-color="#0d7a35" stop-opacity="0.1"></stop>
+              <stop offset="100%" stop-color="#000000" stop-opacity="0"></stop>
+            </radialGradient>
+            <radialGradient id="heroCosmicHaze" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" stop-color="#1DB954" stop-opacity="0.06"></stop>
+              <stop offset="50%" stop-color="#0d4a2a" stop-opacity="0.03"></stop>
+              <stop offset="100%" stop-color="#000000" stop-opacity="0"></stop>
+            </radialGradient>
+            <radialGradient id="heroWarmthGlow" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" stop-color="#ff3b3b" stop-opacity="0.25"></stop>
+              <stop offset="60%" stop-color="#ff3b3b" stop-opacity="0.05"></stop>
+              <stop offset="100%" stop-color="#000000" stop-opacity="0"></stop>
+            </radialGradient>
+          </defs>
+
+          <circle cx="50" cy="50" r="48" fill="url(#heroCosmicHaze)"></circle>
+
+          <ellipse cx="50" cy="50" rx="46" ry="18" stroke="#1DB954" stroke-width="0.6" stroke-dasharray="3 5" opacity="0.2" transform="rotate(-25 50 50)" class="logo-cosmic-ring-1"></ellipse>
+          <ellipse cx="50" cy="50" rx="42" ry="20" stroke="#ffffff" stroke-width="0.7" stroke-dasharray="4 4" opacity="0.12" transform="rotate(35 50 50)" class="logo-cosmic-ring-2"></ellipse>
+          <ellipse cx="50" cy="50" rx="38" ry="10" stroke="#1DB954" stroke-width="0.8" opacity="0.25" transform="rotate(-60 50 50)" class="logo-cosmic-ring-3"></ellipse>
+          <ellipse cx="50" cy="50" rx="35" ry="35" stroke="#ffffff" stroke-width="0.5" stroke-dasharray="2 6" opacity="0.1"></ellipse>
+          <ellipse cx="50" cy="50" rx="26" ry="12" stroke="#ffffff" stroke-width="1" stroke-dasharray="6 3" opacity="0.18" transform="rotate(15 50 50)" class="logo-cosmic-ring-4"></ellipse>
+          <ellipse cx="50" cy="50" rx="20" ry="8" stroke="#1DB954" stroke-width="1.2" opacity="0.35" transform="rotate(-40 50 50)" class="logo-cosmic-ring-5"></ellipse>
+          <ellipse cx="50" cy="50" rx="14" ry="6" stroke="#ff3b3b" stroke-width="0.8" stroke-dasharray="2 3" opacity="0.3" transform="rotate(55 50 50)" class="logo-cosmic-ring-6"></ellipse>
+
+          <circle cx="50" cy="50" r="10" fill="url(#heroWarmthGlow)"></circle>
+          <circle cx="50" cy="50" r="8" fill="url(#heroNebulaCore)"></circle>
+          <circle cx="50" cy="50" r="3" fill="#1DB954" opacity="0.5"></circle>
+          <circle cx="50" cy="50" r="1.8" fill="#ffffff" opacity="0.85"></circle>
+
+          <circle cx="50" cy="6" r="1" fill="#1DB954" opacity="0.5" class="logo-cosmic-dot-1"></circle>
+          <circle cx="88" cy="35" r="0.8" fill="#ffffff" opacity="0.35" class="logo-cosmic-dot-2"></circle>
+          <circle cx="15" cy="62" r="0.7" fill="#ff3b3b" opacity="0.3" class="logo-cosmic-dot-3"></circle>
+          <circle cx="82" cy="72" r="0.9" fill="#1DB954" opacity="0.4" class="logo-cosmic-dot-4"></circle>
+          <circle cx="25" cy="20" r="0.6" fill="#ffffff" opacity="0.25" class="logo-cosmic-dot-5"></circle>
+        </svg>
+      </div>
+      <div class="hero-brand-copy reveal" style="transition-delay: 0.08s">
+        <h1 class="hero-wordmark" aria-label="mknoon">m k n o o n</h1>
+        <p class="hero-tagline">Be heard by those who chose you.</p>
+      </div>
+    </div>
+    <div class="hero-scroll-hint" aria-hidden="true">
+      <div class="scroll-line"></div>
+    </div>
+  </section>
+
+  <section class="section-qr phone-mockup-page" aria-label="Phone mockup of the mknoon QR code screen">
+    <div class="phone-mockup-bg" aria-hidden="true">
+      <div class="phone-mockup-glow phone-mockup-glow-1"></div>
+      <div class="phone-mockup-glow phone-mockup-glow-2"></div>
+    </div>
+
+    <div class="phone-mockup-shell">
+      <div class="phone-mockup-stage reveal" style="transition-delay: 0.15s">
+        <div class="phone-stage-orbit phone-stage-orbit-1" aria-hidden="true"></div>
+        <div class="phone-stage-orbit phone-stage-orbit-2" aria-hidden="true"></div>
+
+        <div class="phone-device-wrapper">
+          <div class="phone-device">
+            <div class="phone-btn phone-btn-silent"></div>
+            <div class="phone-btn phone-btn-vol-up"></div>
+            <div class="phone-btn phone-btn-vol-down"></div>
+            <div class="phone-btn phone-btn-power"></div>
+            <div class="phone-bezel-highlight"></div>
+
+            <div class="phone-screen">
+              <div class="phone-dynamic-island"></div>
+              <div class="phone-screen-sheen"></div>
+
+              <div class="phone-screen-image">
+                <div class="qr-share-screen">
+                  <div class="qr-share-ambient" aria-hidden="true">
+                    <div class="qr-share-ambient-top"></div>
+                    <div class="qr-share-ambient-bottom"></div>
+                  </div>
+
+                  <div class="qr-share-statusbar">
+                    <span>02:57</span>
+                    <div class="qr-share-statusbar-right">
+                      <svg width="16" height="12" viewBox="0 0 16 12" fill="white" aria-hidden="true">
+                        <path d="M8 0C3.58 0 0 2.69 0 6h2c0-2.21 2.69-4 6-4s6 1.79 6 4h2c0-3.31-3.58-6-8-6z" opacity=".3"></path>
+                        <path d="M8 4C5.79 4 4 5.12 4 6.5h2c0-.28.9-.5 2-.5s2 .22 2 .5h2C12 5.12 10.21 4 8 4z" opacity=".6"></path>
+                        <circle cx="8" cy="9" r="1.5"></circle>
+                      </svg>
+                      <svg width="18" height="12" viewBox="0 0 24 12" fill="white" aria-hidden="true">
+                        <rect x="1" y="1" width="20" height="10" rx="2" stroke="white" stroke-width="1.5" fill="none"></rect>
+                        <rect x="22" y="4" width="2" height="4" rx="0.5" fill="white" opacity=".4"></rect>
+                        <rect x="2.5" y="2.5" width="14" height="7" rx="1" fill="white"></rect>
+                      </svg>
+                    </div>
+                  </div>
+
+                  <div class="qr-share-topbar">
+                    <div class="qr-share-settings">
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="rgba(29,185,84,0.8)" stroke-width="2.5" stroke-linecap="round" aria-hidden="true">
+                        <polyline points="15 18 9 12 15 6"></polyline>
+                      </svg>
+                      <span class="qr-share-settings-label">Settings</span>
+                    </div>
+
+                    <div class="qr-share-online-badge">
+                      <span class="qr-share-online-dot"></span>
+                      <span>Online</span>
+                      <span>(1)</span>
+                    </div>
+                  </div>
+
+                  <div class="qr-share-avatar">
+                    <img src="https://images.unsplash.com/photo-1531891437562-4301cf35b7e4?w=200&h=200&fit=crop&crop=face" alt="" loading="lazy">
+                    <div class="qr-share-camera-badge" aria-hidden="true">
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5">
+                        <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
+                        <circle cx="12" cy="13" r="4"></circle>
+                      </svg>
+                    </div>
+                  </div>
+
+                  <div class="qr-share-userrow">
+                    <span class="qr-share-prefix">mknoon/</span>
+                    <span class="qr-share-handle">@Rami</span>
+                    <svg class="qr-share-edit" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.35)" stroke-width="2" aria-hidden="true">
+                      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                    </svg>
+                  </div>
+
+                  <div class="qr-share-description">Show this to someone you want in your circle...</div>
+
+                  <div class="qr-share-code-card" aria-hidden="true">
+                    <img class="qr-share-code-image" src="qr-code.png" alt="" loading="lazy">
+                  </div>
+
+                  <div class="qr-share-hint">Long-press QR to copy data</div>
+
+                  <div class="qr-share-scan-card">
+                    <div class="qr-share-scan-icon" aria-hidden="true">
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="2" stroke-linecap="round">
+                        <path d="M3 7V5a2 2 0 0 1 2-2h2"></path>
+                        <path d="M17 3h2a2 2 0 0 1 2 2v2"></path>
+                        <path d="M21 17v2a2 2 0 0 1-2 2h-2"></path>
+                        <path d="M7 21H5a2 2 0 0 1-2-2v-2"></path>
+                      </svg>
+                    </div>
+                    <div class="qr-share-scan-copy">
+                      <div class="qr-share-scan-title">Scan a friend&rsquo;s code</div>
+                      <div class="qr-share-scan-subtitle">Add someone to your circle</div>
+                    </div>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.25)" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                      <polyline points="9 18 15 12 9 6"></polyline>
+                    </svg>
+                  </div>
+
+                  <div class="qr-share-empty-state">
+                    <div class="qr-share-empty-orbit" aria-hidden="true">
+                      <span class="qr-share-ring qr-share-ring-1"></span>
+                      <span class="qr-share-ring qr-share-ring-2"></span>
+                      <span class="qr-share-ring qr-share-ring-3"></span>
+                      <svg class="qr-share-empty-dots" viewBox="0 0 56 56" role="presentation">
+                        <circle cx="28" cy="8" r="2" fill="rgba(29,185,84,0.4)"></circle>
+                        <circle cx="14" cy="34" r="1.5" fill="rgba(29,185,84,0.25)"></circle>
+                        <circle cx="42" cy="30" r="2" fill="rgba(29,185,84,0.35)"></circle>
+                        <circle cx="22" cy="44" r="1.5" fill="rgba(29,185,84,0.2)"></circle>
+                        <circle cx="36" cy="46" r="1" fill="rgba(29,185,84,0.3)"></circle>
+                      </svg>
+                    </div>
+
+                    <div class="qr-share-empty-title">Your circle is waiting to be filled</div>
+                    <div class="qr-share-empty-subtitle">Scan a friend&rsquo;s code or share yours to connect</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="phone-mockup-copy reveal">
+        <span class="phone-mockup-eyebrow">Add Friends</span>
+        <div class="phone-mockup-copy-stack">
+          <h2 class="phone-mockup-title">The closest people aren&rsquo;t found online.</h2>
+          <p class="phone-mockup-subtitle">Add people by QR code, get introduced through friends you trust, and grow a circle that stays personal.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section section-feed-live-preview" id="feed-live-preview">
+    <div class="container">
+      <div class="feed-live-layout">
+        <div class="feed-live-visual reveal">
+          <div class="intros-phone-mockup feed-live-phone" aria-hidden="true">
+            <div class="intros-phone-stage">
+              <div class="intros-phone-orbit intros-phone-orbit-1"></div>
+              <div class="intros-phone-orbit intros-phone-orbit-2"></div>
+              <div class="intros-phone-device-wrap">
+                <div class="intros-phone-device">
+                  <div class="intros-phone-btn intros-phone-btn-silent"></div>
+                  <div class="intros-phone-btn intros-phone-btn-vol-up"></div>
+                  <div class="intros-phone-btn intros-phone-btn-vol-down"></div>
+                  <div class="intros-phone-btn intros-phone-btn-power"></div>
+                  <div class="intros-phone-bezel-highlight"></div>
+                  <div class="intros-phone-screen">
+                    <div class="intros-phone-dynamic-island"></div>
+                    <div class="intros-phone-screen-sheen"></div>
+                    <div class="intros-phone-screen-image">
+                      <div class="feed-live-screen">
+                        <div class="feed-live-statusbar">
+                          <span>02:29</span>
+                          <div class="feed-live-statusbar-right">
+                            <svg width="16" height="12" viewBox="0 0 16 12" fill="white" aria-hidden="true">
+                              <path d="M8 0C3.58 0 0 2.69 0 6h2c0-2.21 2.69-4 6-4s6 1.79 6 4h2c0-3.31-3.58-6-8-6z" opacity=".3"></path>
+                              <path d="M8 4C5.79 4 4 5.12 4 6.5h2c0-.28.9-.5 2-.5s2 .22 2 .5h2C12 5.12 10.21 4 8 4z" opacity=".6"></path>
+                              <circle cx="8" cy="9" r="1.5"></circle>
+                            </svg>
+                            <svg width="18" height="12" viewBox="0 0 24 12" fill="white" aria-hidden="true">
+                              <rect x="1" y="1" width="20" height="10" rx="2" stroke="white" stroke-width="1.5" fill="none"></rect>
+                              <rect x="22" y="4" width="2" height="4" rx="0.5" fill="white" opacity=".4"></rect>
+                              <rect x="2.5" y="2.5" width="14" height="7" rx="1" fill="white"></rect>
+                            </svg>
+                          </div>
+                        </div>
+                        <div class="feed-live-header">
+                          <div class="feed-live-header-left">
+                            <span class="feed-live-handle">mknoon/@Rami</span>
+                            <svg class="feed-live-edit" width="10" height="10" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" stroke="rgba(255,255,255,0.35)" stroke-width="2"></path>
+                              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" stroke="rgba(255,255,255,0.35)" stroke-width="2"></path>
+                            </svg>
+                          </div>
+                          <div class="feed-live-header-right">
+                            <div class="feed-live-online-badge">
+                              <span class="feed-live-online-dot"></span>
+                              <span class="feed-live-online-text">Online</span>
+                              <span class="feed-live-online-count">(3)</span>
+                            </div>
+                            <div class="feed-live-avatar">
+                              <img src="https://images.unsplash.com/photo-1531891437562-4301cf35b7e4?w=200&h=200&fit=crop&crop=face" alt="" loading="lazy">
+                            </div>
+                          </div>
+                        </div>
+                        <div class="feed-live-scroll">
+                          <article class="feed-live-card">
+                            <div class="feed-live-card-head">
+                              <div class="feed-live-card-avatar">
+                                <img src="https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=200&h=200&fit=crop&crop=face" alt="" loading="lazy">
+                              </div>
+                              <div class="feed-live-card-meta">
+                                <div class="feed-live-card-name">Sara</div>
+                                <div class="feed-live-card-time">2:27 AM</div>
+                              </div>
+                              <div class="feed-live-card-badge">1</div>
+                            </div>
+                            <div class="feed-live-card-context">View earlier messages</div>
+                            <div class="feed-live-card-body">
+                              <img
+                                class="feed-live-card-image"
+                                src="https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=600&h=400&fit=crop"
+                                alt=""
+                                loading="lazy"
+                              >
+                              <p class="feed-live-card-message"><strong>Sara:</strong> one day we'll visit this place together</p>
+                              <div class="feed-live-card-footer-time">2:27 AM</div>
+                            </div>
+                            <div class="feed-live-card-collapse"><span>&#9652;</span> Collapse</div>
+                            <div class="feed-live-replybar">
+                              <div class="feed-live-reply-plus">+</div>
+                              <div class="feed-live-reply-input">Reply...</div>
+                              <div class="feed-live-reply-send">&#8593;</div>
+                            </div>
+                          </article>
+
+                          <article class="feed-live-card is-collapsed">
+                            <div class="feed-live-card-head">
+                              <div class="feed-live-card-avatar">
+                                <img src="https://images.unsplash.com/photo-1463453091185-61582044d556?w=200&h=200&fit=crop&crop=face" alt="" loading="lazy">
+                              </div>
+                              <div class="feed-live-card-meta">
+                                <div class="feed-live-card-name">Oliver</div>
+                                <div class="feed-live-card-time">2:25 AM</div>
+                              </div>
+                              <div class="feed-live-card-badge">1</div>
+                            </div>
+                            <div class="feed-live-card-context">View earlier messages</div>
+                            <div class="feed-live-card-body">
+                              <p class="feed-live-card-message"><strong>Oliver:</strong> just finished the playlist, you&rsquo;re gonna love it</p>
+                              <div class="feed-live-card-footer-time">2:25 AM</div>
+                            </div>
+                            <div class="feed-live-replybar">
+                              <div class="feed-live-reply-plus">+</div>
+                              <div class="feed-live-reply-input">Reply...</div>
+                              <div class="feed-live-reply-send">&#8593;</div>
+                            </div>
+                          </article>
+
+                          <article class="feed-live-card is-collapsed">
+                            <div class="feed-live-card-head">
+                              <div class="feed-live-card-avatar">
+                                <img src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200&h=200&fit=crop&crop=face" alt="" loading="lazy">
+                              </div>
+                              <div class="feed-live-card-meta">
+                                <div class="feed-live-card-name">Nora</div>
+                                <div class="feed-live-card-time">1:48 AM</div>
+                              </div>
+                            </div>
+                            <div class="feed-live-card-context">View earlier messages</div>
+                            <div class="feed-live-card-body">
+                              <p class="feed-live-card-message"><strong>Nora:</strong> remind me to tell you about what happened today</p>
+                              <div class="feed-live-card-footer-time">1:48 AM</div>
+                            </div>
+                            <div class="feed-live-replybar">
+                              <div class="feed-live-reply-plus">+</div>
+                              <div class="feed-live-reply-input">Reply...</div>
+                              <div class="feed-live-reply-send">&#8593;</div>
+                            </div>
+                          </article>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="feed-live-copy reveal" style="transition-delay: 0.15s">
+          <span class="feed-live-eyebrow">Live Feed Preview</span>
+          <div class="feed-live-copy-stack">
+            <h2 class="feed-live-title">Every message has a face.</h2>
+            <p class="feed-live-desc">Your feed is private messages from friends. Open, reply, keep moving.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section section-intros" id="introductions">
+    <div class="container">
+      <div class="intros-layout">
+        <div class="intros-text reveal">
+          <div class="intro-badge-tag">
+            <span class="intro-badge-avatar"></span>
+            Introduced by <strong>Sara</strong>
+          </div>
+          <h2 class="section-title">Introductions are personal. That&rsquo;s the point.</h2>
+          <p class="section-desc">
+            When you connect friends, your name goes with it.
+            mknoon keeps introductions built on trust.
+          </p>
+        </div>
+        <div class="intros-visual reveal" style="transition-delay: 0.15s">
+          <div class="intros-phone-mockup" aria-hidden="true">
+            <div class="intros-phone-stage">
+              <div class="intros-phone-orbit intros-phone-orbit-1"></div>
+              <div class="intros-phone-orbit intros-phone-orbit-2"></div>
+              <div class="intros-phone-device-wrap">
+                <div class="intros-phone-device">
+                  <div class="intros-phone-btn intros-phone-btn-silent"></div>
+                  <div class="intros-phone-btn intros-phone-btn-vol-up"></div>
+                  <div class="intros-phone-btn intros-phone-btn-vol-down"></div>
+                  <div class="intros-phone-btn intros-phone-btn-power"></div>
+                  <div class="intros-phone-bezel-highlight"></div>
+                  <div class="intros-phone-screen">
+                    <div class="intros-phone-dynamic-island"></div>
+                    <div class="intros-phone-screen-sheen"></div>
+                    <div class="intros-phone-screen-image">
+                      <div class="mini-feed">
+                        <div class="mini-feed-statusbar">
+                          <span class="mini-feed-time">01:22</span>
+                          <div class="mini-feed-statusbar-right">
+                            <svg width="16" height="12" viewBox="0 0 16 12" fill="white" aria-hidden="true">
+                              <path d="M8 0C3.58 0 0 2.69 0 6h2c0-2.21 2.69-4 6-4s6 1.79 6 4h2c0-3.31-3.58-6-8-6z" opacity=".3"></path>
+                              <path d="M8 4C5.79 4 4 5.12 4 6.5h2c0-.28.9-.5 2-.5s2 .22 2 .5h2C12 5.12 10.21 4 8 4z" opacity=".6"></path>
+                              <circle cx="8" cy="9" r="1.5"></circle>
+                            </svg>
+                            <svg width="18" height="12" viewBox="0 0 24 12" fill="white" aria-hidden="true">
+                              <rect x="1" y="1" width="20" height="10" rx="2" stroke="white" stroke-width="1.5" fill="none"></rect>
+                              <rect x="22" y="4" width="2" height="4" rx="0.5" fill="white" opacity=".4"></rect>
+                              <rect x="2.5" y="2.5" width="14" height="7" rx="1" fill="white"></rect>
+                            </svg>
+                          </div>
+                        </div>
+                        <div class="mini-feed-header">
+                          <div class="mini-feed-header-left">
+                            <span class="mini-feed-username">mknoon/@Rami</span>
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.35)" stroke-width="2" aria-hidden="true">
+                              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                            </svg>
+                          </div>
+                          <div class="mini-feed-header-right">
+                            <div class="mini-feed-online-badge">
+                              <span class="mini-feed-online-dot"></span>
+                              <span class="mini-feed-online-text">Online</span>
+                              <span class="mini-feed-online-count">(2)</span>
+                            </div>
+                            <div class="mini-feed-avatar">
+                              <img src="https://images.unsplash.com/photo-1531891437562-4301cf35b7e4?w=200&amp;h=200&amp;fit=crop&amp;crop=face" alt="Rami">
+                            </div>
+                          </div>
+                        </div>
+                        <div class="mini-feed-composer">
+                          <span class="mini-feed-composer-plus">+</span>
+                          <span class="mini-feed-composer-text">Continue...</span>
+                          <span class="mini-feed-composer-send">↑</span>
+                        </div>
+                        <div class="mini-feed-card">
+                          <div class="mini-feed-intro-top">
+                            <div class="mini-feed-intro-avatar-small">
+                              <img src="https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=200&amp;h=200&amp;fit=crop&amp;crop=face" alt="Sara">
+                            </div>
+                            <span class="mini-feed-intro-label">Introduced by Sara</span>
+                          </div>
+                          <div class="mini-feed-intro-avatars">
+                            <div class="mini-feed-intro-person">
+                              <div class="mini-feed-intro-photo mini-feed-intro-photo--plain">
+                                <img src="https://images.unsplash.com/photo-1531891437562-4301cf35b7e4?w=200&amp;h=200&amp;fit=crop&amp;crop=face" alt="Rami">
+                              </div>
+                              <span class="mini-feed-intro-name">Rami</span>
+                            </div>
+                            <svg class="mini-feed-intro-line" width="32" height="6" viewBox="0 0 32 6" aria-hidden="true">
+                              <line x1="0" y1="3" x2="32" y2="3" stroke="#4ade80" stroke-width="1.5" stroke-dasharray="4 3" stroke-linecap="round"></line>
+                            </svg>
+                            <div class="mini-feed-intro-person">
+                              <div class="mini-feed-intro-photo mini-feed-intro-photo--plain">
+                                <img src="https://images.unsplash.com/photo-1463453091185-61582044d556?w=200&amp;h=200&amp;fit=crop&amp;crop=face" alt="Oliver">
+                              </div>
+                              <span class="mini-feed-intro-name">Oliver</span>
+                            </div>
+                          </div>
+                          <button class="mini-feed-send-btn" type="button">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                            </svg>
+                            Send Message
+                          </button>
+                        </div>
+                        <div class="mini-feed-card mini-feed-card--connected">
+                          <h3 class="mini-feed-connected-title">Connected!</h3>
+                          <div class="mini-feed-connected-avatar">
+                            <div class="mini-feed-intro-photo mini-feed-intro-photo--plain">
+                              <img src="https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=200&amp;h=200&amp;fit=crop&amp;crop=face" alt="Sara">
+                            </div>
+                          </div>
+                          <div class="mini-feed-connected-name">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="#1DB954" aria-hidden="true">
+                              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"></path>
+                            </svg>
+                            <span>Sara</span>
+                          </div>
+                          <button class="mini-feed-send-btn" type="button">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                            </svg>
+                            Send Message
+                          </button>
+                        </div>
+                        <div class="mini-feed-nav">
+                          <div class="mini-feed-nav-item mini-feed-nav-item--active">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+                              <line x1="4" y1="7" x2="20" y2="7"></line>
+                              <line x1="4" y1="12" x2="16" y2="12"></line>
+                              <line x1="4" y1="17" x2="20" y2="17"></line>
+                            </svg>
+                            <span>Feed</span>
+                          </div>
+                          <div class="mini-feed-nav-item">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                            </svg>
+                            <span>Remember</span>
+                          </div>
+                          <div class="mini-feed-nav-item">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                              <circle cx="12" cy="12" r="3"></circle>
+                              <path d="M12 2v2m0 16v2M2 12h2m16 0h2"></path>
+                              <path d="M4.93 4.93l1.41 1.41m11.32 11.32l1.41 1.41M4.93 19.07l1.41-1.41m11.32-11.32l1.41-1.41"></path>
+                            </svg>
+                            <span>Orbit</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section section-circle-preview" id="circle-preview">
+    <div class="container">
+      <div class="circle-preview-layout">
+        <div class="circle-preview-visual reveal">
+          <div class="circle-preview-phone" aria-hidden="true">
+            <div class="circle-preview-stage">
+              <div class="circle-preview-stage-orbit circle-preview-stage-orbit-1"></div>
+              <div class="circle-preview-stage-orbit circle-preview-stage-orbit-2"></div>
+              <div class="circle-preview-device-wrap">
+                <div class="circle-preview-device">
+                  <div class="circle-preview-btn circle-preview-btn-silent"></div>
+                  <div class="circle-preview-btn circle-preview-btn-vol-up"></div>
+                  <div class="circle-preview-btn circle-preview-btn-vol-down"></div>
+                  <div class="circle-preview-btn circle-preview-btn-power"></div>
+                  <div class="circle-preview-bezel"></div>
+                  <div class="circle-preview-screen">
+                    <div class="circle-preview-island"></div>
+                    <div class="circle-preview-sheen"></div>
+                    <div class="circle-preview-screen-canvas">
+                      <div class="circle-preview-screen-static">
+                        <div class="circle-preview-ambient"></div>
+                        <div class="circle-preview-toolbar">
+                          <span class="circle-preview-icon">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true">
+                              <line x1="18" y1="6" x2="6" y2="18"></line>
+                              <line x1="6" y1="6" x2="18" y2="18"></line>
+                            </svg>
+                          </span>
+                          <span class="circle-preview-icon circle-preview-icon--add">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true">
+                              <line x1="12" y1="6" x2="12" y2="18"></line>
+                              <line x1="6" y1="12" x2="18" y2="12"></line>
+                            </svg>
+                          </span>
+                        </div>
+
+                        <div class="circle-preview-orbital-section">
+                          <div class="circle-preview-orbital-kicker">Your Inner Circle</div>
+                          <div class="circle-preview-orbital-map">
+                            <div class="circle-preview-orbital-ring circle-preview-orbital-ring--1"></div>
+                            <div class="circle-preview-orbital-ring circle-preview-orbital-ring--2"></div>
+
+                            <div class="circle-preview-orbital-center">
+                              <img src="https://images.unsplash.com/photo-1603415526960-f7e0328c63b1?w=200&amp;h=200&amp;fit=crop&amp;crop=face" alt="You">
+                            </div>
+
+                            <div class="circle-preview-orbital-friend" style="--x: 0px; --y: -62px; --size: 38px; --stroke: #1DB954;">
+                              <img src="https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=200&amp;h=200&amp;fit=crop&amp;crop=face" alt="Sarah">
+                              <span class="circle-preview-orbital-online"></span>
+                            </div>
+                            <div class="circle-preview-orbital-friend" style="--x: 58px; --y: -19px; --size: 38px; --stroke: #4ecdc4;">
+                              <img src="https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=200&amp;h=200&amp;fit=crop&amp;crop=face" alt="Mike">
+                            </div>
+                            <div class="circle-preview-orbital-friend" style="--x: 36px; --y: 50px; --size: 38px; --stroke: #a855f7;">
+                              <img src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200&amp;h=200&amp;fit=crop&amp;crop=face" alt="Emma">
+                              <span class="circle-preview-orbital-online"></span>
+                            </div>
+                            <div class="circle-preview-orbital-friend" style="--x: -36px; --y: 50px; --size: 38px; --stroke: #f59e0b;">
+                              <img src="https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=200&amp;h=200&amp;fit=crop&amp;crop=face" alt="James">
+                            </div>
+                            <div class="circle-preview-orbital-friend" style="--x: -58px; --y: -19px; --size: 38px; --stroke: #10b981;">
+                              <img src="https://images.unsplash.com/photo-1517841905240-472988babdf9?w=200&amp;h=200&amp;fit=crop&amp;crop=face" alt="Olivia">
+                              <span class="circle-preview-orbital-online"></span>
+                            </div>
+
+                            <div class="circle-preview-orbital-friend" style="--x: 0px; --y: -108px; --size: 30px; --stroke: #3b82f6;">
+                              <img src="https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=200&amp;h=200&amp;fit=crop&amp;crop=face" alt="Alex">
+                            </div>
+                            <div class="circle-preview-orbital-friend" style="--x: 76px; --y: -76px; --size: 30px; --stroke: #ef4444;">
+                              <img src="https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=200&amp;h=200&amp;fit=crop&amp;crop=face" alt="Zoe">
+                              <span class="circle-preview-orbital-online circle-preview-orbital-online--small"></span>
+                            </div>
+                            <div class="circle-preview-orbital-friend" style="--x: 108px; --y: 0px; --size: 30px; --stroke: #ec4899;">
+                              <img src="https://images.unsplash.com/photo-1488426862026-3ee34a7d66df?w=200&amp;h=200&amp;fit=crop&amp;crop=face" alt="Liam">
+                            </div>
+                            <div class="circle-preview-orbital-friend" style="--x: 76px; --y: 76px; --size: 30px; --stroke: #8b5cf6;">
+                              <img src="https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=200&amp;h=200&amp;fit=crop&amp;crop=face" alt="Mia">
+                            </div>
+                            <div class="circle-preview-orbital-friend" style="--x: 0px; --y: 108px; --size: 30px; --stroke: #06b6d4;">
+                              <img src="https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=200&amp;h=200&amp;fit=crop&amp;crop=face" alt="Noah">
+                              <span class="circle-preview-orbital-online circle-preview-orbital-online--small"></span>
+                            </div>
+                            <div class="circle-preview-orbital-friend" style="--x: -76px; --y: 76px; --size: 30px; --stroke: #f97316;">
+                              <img src="https://images.unsplash.com/photo-1531746020798-e6953c6e8e04?w=200&amp;h=200&amp;fit=crop&amp;crop=face" alt="Ava">
+                            </div>
+                            <div class="circle-preview-orbital-friend" style="--x: -108px; --y: 0px; --size: 30px; --stroke: #84cc16;">
+                              <img src="https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=200&amp;h=200&amp;fit=crop&amp;crop=face" alt="Ethan">
+                            </div>
+                            <div class="circle-preview-orbital-friend" style="--x: -76px; --y: -76px; --size: 30px; --stroke: #14b8a6;">
+                              <img src="https://images.unsplash.com/photo-1554151228-14d9def656e4?w=200&amp;h=200&amp;fit=crop&amp;crop=face" alt="Isla">
+                              <span class="circle-preview-orbital-online circle-preview-orbital-online--small"></span>
+                            </div>
+
+                          </div>
+                          <p class="circle-preview-orbital-caption">Close Friends</p>
+                        </div>
+
+                        <div class="circle-preview-friends">
+                          <div class="circle-preview-friends-head">
+                            <h3>Friends</h3>
+                            <div class="circle-preview-actions">
+                              <span class="circle-preview-action-chip">My QR</span>
+                              <span class="circle-preview-action-chip">Scan</span>
+                            </div>
+                          </div>
+
+                          <div class="circle-preview-filter-row">
+                            <span class="circle-preview-filter circle-preview-filter--active">All <span class="circle-preview-filter-count">100</span></span>
+                            <span class="circle-preview-filter">Intros <span class="circle-preview-filter-count circle-preview-filter-count--green">5</span></span>
+                            <span class="circle-preview-filter">Archived</span>
+                          </div>
+
+                          <div class="circle-preview-banner">
+                            <div class="circle-preview-banner-icon">
+                              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                                <circle cx="9" cy="7" r="4"></circle>
+                                <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                                <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+                              </svg>
+                            </div>
+                            <div class="circle-preview-banner-text">
+                              <span class="circle-preview-banner-title">5 introductions from Noor</span>
+                              <span class="circle-preview-banner-desc">Review and accept to start chatting</span>
+                            </div>
+                            <span class="circle-preview-banner-badge">New</span>
+                          </div>
+
+                          <div class="circle-preview-friend-row">
+                            <div class="circle-preview-friend-avatar">
+                              <img src="https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=200&amp;h=200&amp;fit=crop&amp;crop=face" alt="Sarah">
+                              <span class="circle-preview-friend-online"></span>
+                            </div>
+                            <div class="circle-preview-friend-info">
+                              <span class="circle-preview-friend-name">Sarah</span>
+                              <span class="circle-preview-friend-user">@sarah_1</span>
+                            </div>
+                            <div class="circle-preview-friend-meta">
+                              <span class="circle-preview-friend-badge">5</span>
+                              <span class="circle-preview-friend-time">Active now</span>
+                            </div>
+                          </div>
+
+                          <div class="circle-preview-friend-row">
+                            <div class="circle-preview-friend-avatar">
+                              <img src="https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=200&amp;h=200&amp;fit=crop&amp;crop=face" alt="Mike">
+                              <span class="circle-preview-friend-online"></span>
+                            </div>
+                            <div class="circle-preview-friend-info">
+                              <span class="circle-preview-friend-name">Mike</span>
+                              <span class="circle-preview-friend-user">@mike_2</span>
+                            </div>
+                            <div class="circle-preview-friend-meta">
+                              <span class="circle-preview-friend-time">2m ago</span>
+                            </div>
+                          </div>
+
+                          <div class="circle-preview-friend-row">
+                            <div class="circle-preview-friend-avatar">
+                              <img src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200&amp;h=200&amp;fit=crop&amp;crop=face" alt="Emma">
+                            </div>
+                            <div class="circle-preview-friend-info">
+                              <span class="circle-preview-friend-name">Emma</span>
+                              <span class="circle-preview-friend-user">@emma_3</span>
+                            </div>
+                            <div class="circle-preview-friend-meta">
+                              <span class="circle-preview-friend-badge">3</span>
+                              <span class="circle-preview-friend-time">5m ago</span>
+                            </div>
+                          </div>
+
+                          <div class="circle-preview-search">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                              <circle cx="11" cy="11" r="8"></circle>
+                              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                            </svg>
+                            <span>Search friends...</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="circle-preview-copy reveal" style="transition-delay: 0.1s">
+          <span class="circle-preview-eyebrow">Actual App Preview</span>
+          <div class="circle-preview-copy-stack">
+            <h2 class="section-title circle-preview-title">Watch your circle grow the right way</h2>
+            <p class="section-desc circle-preview-desc">
+              Your circle builds the way it does in real life: slowly, naturally, through people you trust.
+              Over time, introductions turn one connection into a connected world. Still close, still yours.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section section-privacy" id="privacy">
+    <div class="container">
+      <div class="privacy-center reveal">
+        <div class="section-label">Privacy</div>
+        <h2 class="section-title">Private means <span class="gradient-text">private</span></h2>
+        <p class="section-desc privacy-desc">
+          mknoon is built for honest conversations.
+          Chats are encrypted, and the app isn't designed around public reach.
+        </p>
+        <div class="privacy-pills">
+          <div class="privacy-pill">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#1DB954" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+            </svg>
+            <span>Encrypted conversations</span>
+          </div>
+          <div class="privacy-pill">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#A78BFA" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+              <circle cx="9" cy="7" r="4"/>
+              <line x1="18" y1="8" x2="23" y2="13"/>
+              <line x1="23" y1="8" x2="18" y2="13"/>
+            </svg>
+            <span>No public profiles to browse</span>
+          </div>
+          <div class="privacy-pill">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#81E6D9" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+              <circle cx="11" cy="11" r="8"/>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+              <line x1="8" y1="11" x2="14" y2="11"/>
+            </svg>
+            <span>No "add by searching"</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section section-local">
+    <div class="container">
+      <div class="local-content reveal">
+        <div class="section-label">Local reach</div>
+        <h2 class="section-title">Made for your <span class="gradient-text">actual world</span></h2>
+        <p class="section-desc local-desc">
+          The best connections aren't global. They're nearby.
+          Your community, your routines, your places&mdash;kept close and intentional.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section class="section section-closing" id="download">
+    <div class="container">
+      <div class="closing-card reveal">
+        <div class="closing-glow"></div>
+        <div class="section-label">Download</div>
+        <h2 class="section-title">Start with someone you trust</h2>
+        <p class="section-desc closing-desc">
+          One scan. One conversation. Then introductions, when it feels right.
+        </p>
+        <div class="closing-actions">
+          <a href="#" class="btn btn-primary">
+            <span>Download mknoon</span>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="7 10 12 15 17 10"/>
+              <line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+          </a>
+          <a href="#" class="btn btn-ghost">Show my QR</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer class="footer">
+    <div class="container">
+      <div class="footer-minimal">
+        <span class="nav-logo">mknoon</span>
+        <p>Built on open networking tech: <strong>libp2p</strong>.</p>
+        <a href="privacy-policy.html" class="footer-policy-link">Privacy Policy</a>
+      </div>
+    </div>
+  </footer>
+
+  <script src="js/main.js"></script>
+</body>
+</html>

@@ -6,6 +6,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_picker.dart';
@@ -277,6 +278,9 @@ void main() {
     }) {
       final g = group ?? makeChatGroup();
       return MaterialApp(
+        locale: const Locale('en'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
         home: GroupConversationWired(
           group: g,
           groupRepo: groupRepo,
@@ -568,7 +572,7 @@ void main() {
         recorder.emitAmplitude(0.5);
         await tester.pump();
 
-        expect(find.text('Slide to cancel'), findsOneWidget);
+        expect(find.text('Cancel'), findsOneWidget);
         expect(find.text('0:02'), findsOneWidget);
         expect(identical(headerElement, tester.element(headerFinder)), isTrue);
         expect(identical(listElement, tester.element(listFinder)), isTrue);
@@ -580,6 +584,45 @@ void main() {
 
         await gesture.up();
         await tester.pump();
+      },
+    );
+
+    testWidgets(
+      'voice record callbacks switch the group composer into and out of recording',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        final recorder = FakeAudioRecorderService()..fakeDurationMs = 100;
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            audioRecorderService: recorder,
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        final recordingScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        final startRecording =
+            recordingScreen.onRecordStart! as Future<void> Function();
+        await startRecording();
+        await tester.pump();
+
+        expect(find.byIcon(Icons.stop_rounded), findsOneWidget);
+        expect(find.text('Cancel'), findsOneWidget);
+
+        final stopScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        final stopRecording =
+            stopScreen.onRecordStop! as Future<void> Function();
+        await stopRecording();
+        await tester.pump();
+
+        expect(find.byIcon(Icons.mic_rounded), findsOneWidget);
       },
     );
 
@@ -828,6 +871,9 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
           home: GroupConversationWired(
             group: group,
             groupRepo: groupRepo,
@@ -855,6 +901,9 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
           home: GroupConversationWired(
             group: group,
             groupRepo: groupRepo,
@@ -1209,15 +1258,12 @@ void main() {
         );
         await pumpFrames(tester, count: 20);
 
-        // Long-press mic to start recording, single pump for _onRecordStart
-        final gesture = await tester.startGesture(
-          tester.getCenter(find.byIcon(Icons.mic_rounded)),
-        );
-        await tester.pump(kLongPressTimeout + const Duration(milliseconds: 50));
+        await tester.tap(find.byIcon(Icons.mic_rounded));
         await tester.pump();
 
-        // Release to stop recording
-        await gesture.up();
+        expect(find.byIcon(Icons.stop_rounded), findsOneWidget);
+
+        await tester.tap(find.byIcon(Icons.stop_rounded));
         // _onRecordStop has several awaits (cancel subs, recorder.stop) that
         // need the real event loop to resolve. Use runAsync to let them settle.
         await tester.runAsync(() async {
@@ -1429,17 +1475,14 @@ void main() {
       // Mic button should be visible for admin in announcement group
       expect(find.byIcon(Icons.mic_rounded), findsOneWidget);
 
-      // Start recording to verify the long press callback works
-      final gesture = await tester.startGesture(
-        tester.getCenter(find.byIcon(Icons.mic_rounded)),
-      );
-      await tester.pump(kLongPressTimeout + const Duration(milliseconds: 50));
+      await tester.tap(find.byIcon(Icons.mic_rounded));
       await tester.pump();
 
       // Recording overlay should appear
-      expect(find.text('Slide to cancel'), findsOneWidget);
+      expect(find.text('Cancel'), findsOneWidget);
+      expect(find.byIcon(Icons.stop_rounded), findsOneWidget);
 
-      await gesture.up();
+      await tester.tap(find.byIcon(Icons.stop_rounded));
       await tester.runAsync(() async {
         await Future<void>.delayed(const Duration(milliseconds: 100));
       });

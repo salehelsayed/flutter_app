@@ -59,6 +59,7 @@ app.*.map.json
 # Firebase config files (contain API keys)
 GoogleService-Info.plist
 google-services.json
+*-firebase-adminsdk-*.json
 
 # Flutter Version Manager
 .fvm/

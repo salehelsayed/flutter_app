@@ -1,10 +1,145 @@
 package main
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"log"
+	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"firebase.google.com/go/v4/messaging"
+	"github.com/libp2p/go-libp2p/core/host"
+	"github.com/libp2p/go-libp2p/core/network"
+	mocknet "github.com/libp2p/go-libp2p/p2p/net/mock"
 )
+
+type recordingPushSender struct {
+	mu         sync.Mutex
+	sendCalls  int
+	lastMsg    *messaging.Message
+	messages   []*messaging.Message
+	err        error
+	onSend     func(context.Context, *messaging.Message) (string, error)
+	sentSignal chan struct{}
+}
+
+func newRecordingPushSender() *recordingPushSender {
+	return &recordingPushSender{
+		sentSignal: make(chan struct{}, 10),
+	}
+}
+
+func (s *recordingPushSender) Send(ctx context.Context, msg *messaging.Message) (string, error) {
+	s.mu.Lock()
+	s.sendCalls++
+	s.lastMsg = msg
+	s.messages = append(s.messages, msg)
+	s.mu.Unlock()
+
+	select {
+	case s.sentSignal <- struct{}{}:
+	default:
+	}
+
+	if s.onSend != nil {
+		return s.onSend(ctx, msg)
+	}
+	return "mock-message-id", s.err
+}
+
+func (s *recordingPushSender) SendCallCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.sendCalls
+}
+
+func (s *recordingPushSender) LastMessage() *messaging.Message {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lastMsg
+}
+
+func (s *recordingPushSender) Messages() []*messaging.Message {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]*messaging.Message(nil), s.messages...)
+}
+
+type inboxStreamEnv struct {
+	server    host.Host
+	sender    host.Host
+	recipient host.Host
+}
+
+func setupInboxStreamEnv(t *testing.T, inbox *InboxStore, groupInbox *GroupInboxStore) *inboxStreamEnv {
+	t.Helper()
+
+	mn := mocknet.New()
+	server, err := mn.GenPeer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sender, err := mn.GenPeer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	recipient, err := mn.GenPeer()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := mn.LinkAll(); err != nil {
+		t.Fatal(err)
+	}
+	if err := mn.ConnectAllButSelf(); err != nil {
+		t.Fatal(err)
+	}
+
+	server.SetStreamHandler(InboxProtocol, func(s network.Stream) {
+		HandleInboxStream(s, inbox, groupInbox)
+	})
+
+	t.Cleanup(func() {
+		server.Close()
+		sender.Close()
+		recipient.Close()
+	})
+
+	return &inboxStreamEnv{
+		server:    server,
+		sender:    sender,
+		recipient: recipient,
+	}
+}
+
+func sendInboxReq(t *testing.T, s io.Writer, req inboxRequest) {
+	t.Helper()
+	data, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	if err := writeFrame(s, data); err != nil {
+		t.Fatalf("write frame: %v", err)
+	}
+}
+
+func recvInboxResp(t *testing.T, s io.Reader) inboxResponse {
+	t.Helper()
+	data, err := readFrame(s)
+	if err != nil {
+		t.Fatalf("read frame: %v", err)
+	}
+	var resp inboxResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	return resp
+}
 
 // --- TestGroupInboxStore_Basic ---
 
@@ -367,8 +502,11 @@ func TestInboxStore_PaginatedRetrieveKeepsFIFOAcrossInstances(t *testing.T) {
 	}
 }
 
-func TestBuildPushMessage_IncludesAndroidAlertAndData(t *testing.T) {
-	msg := buildPushMessage("fcm-token", "peer-from")
+func TestBuildChatPushMessage_IncludesAndroidAlertAndData(t *testing.T) {
+	msg := buildChatPushMessage(chatPushRequest{
+		Token:      "fcm-token",
+		FromPeerID: "peer-from",
+	})
 
 	if msg.Token != "fcm-token" {
 		t.Fatalf("token = %q, want %q", msg.Token, "fcm-token")
@@ -418,8 +556,11 @@ func TestBuildPushMessage_IncludesAndroidAlertAndData(t *testing.T) {
 	}
 }
 
-func TestBuildPushMessage_PreservesIOSAlertPayload(t *testing.T) {
-	msg := buildPushMessage("fcm-token", "peer-from")
+func TestBuildChatPushMessage_PreservesIOSAlertPayload(t *testing.T) {
+	msg := buildChatPushMessage(chatPushRequest{
+		Token:      "fcm-token",
+		FromPeerID: "peer-from",
+	})
 
 	if msg.APNS == nil || msg.APNS.Payload == nil || msg.APNS.Payload.Aps == nil {
 		t.Fatal("expected APNS payload")
@@ -429,6 +570,13 @@ func TestBuildPushMessage_PreservesIOSAlertPayload(t *testing.T) {
 			"apns-push-type = %q, want %q",
 			msg.APNS.Headers["apns-push-type"],
 			"alert",
+		)
+	}
+	if msg.APNS.Headers["apns-priority"] != "10" {
+		t.Fatalf(
+			"apns-priority = %q, want %q",
+			msg.APNS.Headers["apns-priority"],
+			"10",
 		)
 	}
 	if msg.APNS.Payload.Aps.Alert == nil {
@@ -451,4 +599,314 @@ func TestBuildPushMessage_PreservesIOSAlertPayload(t *testing.T) {
 	if !msg.APNS.Payload.Aps.ContentAvailable {
 		t.Fatal("expected APNS content-available")
 	}
+}
+
+func TestHandleInboxStream_StoreTriggersPushSendAfterPersistence(t *testing.T) {
+	backend := newMemoryInboxBackend()
+	tokenBackend := newMemoryPushTokenStore()
+	pushSender := newRecordingPushSender()
+	push := newPushServiceWithSender(tokenBackend, pushSender)
+	inbox := NewInboxStoreWithBackend(backend, push)
+	groupInbox := NewGroupInboxStore(maxMessagesPerGroup, groupMessageTTL)
+	env := setupInboxStreamEnv(t, inbox, groupInbox)
+
+	recipientID := env.recipient.ID().String()
+	push.RegisterToken(recipientID, "fcm-token", "ios")
+
+	observedStoredCount := 0
+	pushSender.onSend = func(_ context.Context, msg *messaging.Message) (string, error) {
+		observedStoredCount = inbox.Count(recipientID)
+		if msg.Data["type"] != "new_message" {
+			t.Fatalf("type = %q, want %q", msg.Data["type"], "new_message")
+		}
+		if msg.Data["from"] != env.sender.ID().String() {
+			t.Fatalf("from = %q, want %q", msg.Data["from"], env.sender.ID().String())
+		}
+		return "mock-message-id", nil
+	}
+
+	stream, err := env.sender.NewStream(context.Background(), env.server.ID(), InboxProtocol)
+	if err != nil {
+		t.Fatalf("open inbox stream: %v", err)
+	}
+	defer stream.Close()
+
+	sendInboxReq(t, stream, inboxRequest{
+		Action:  "store",
+		To:      recipientID,
+		Message: "hello from sender",
+	})
+
+	resp := recvInboxResp(t, stream)
+	if resp.Status != "OK" {
+		t.Fatalf("status = %q, want %q", resp.Status, "OK")
+	}
+
+	waitFor(t, time.Second, func() bool {
+		return pushSender.SendCallCount() == 1
+	}, "expected push send after store")
+
+	if observedStoredCount != 1 {
+		t.Fatalf("stored count observed by push sender = %d, want 1", observedStoredCount)
+	}
+
+	stored := inbox.Retrieve(recipientID, 50)
+	if len(stored) != 1 {
+		t.Fatalf("expected 1 stored inbox message, got %d", len(stored))
+	}
+	if stored[0].Message != "hello from sender" {
+		t.Fatalf("message = %q, want %q", stored[0].Message, "hello from sender")
+	}
+	if stored[0].From != env.sender.ID().String() {
+		t.Fatalf("from = %q, want %q", stored[0].From, env.sender.ID().String())
+	}
+}
+
+func TestPushService_SendNotification_UnregistersInvalidToken(t *testing.T) {
+	tokenBackend := newMemoryPushTokenStore()
+	pushSender := newRecordingPushSender()
+	pushSender.err = fmt.Errorf("registration-token-not-registered")
+	push := newPushServiceWithSender(tokenBackend, pushSender)
+
+	push.RegisterToken("peer-target", "fcm-token", "ios")
+	push.SendNotification(context.Background(), "peer-target", "peer-from")
+
+	if pushSender.SendCallCount() != 1 {
+		t.Fatalf("send calls = %d, want 1", pushSender.SendCallCount())
+	}
+	if entry := tokenBackend.LookupToken("peer-target"); entry != nil {
+		t.Fatal("expected invalid token to be unregistered")
+	}
+}
+
+func TestPushService_SendNotification_LogsWhenTokenMissing(t *testing.T) {
+	tokenBackend := newMemoryPushTokenStore()
+	pushSender := newRecordingPushSender()
+	push := newPushServiceWithSender(tokenBackend, pushSender)
+
+	var logBuffer bytes.Buffer
+	previousWriter := log.Writer()
+	log.SetOutput(&logBuffer)
+	t.Cleanup(func() {
+		log.SetOutput(previousWriter)
+	})
+
+	push.SendNotification(context.Background(), "peer-target", "peer-from")
+
+	if pushSender.SendCallCount() != 0 {
+		t.Fatalf("send calls = %d, want 0", pushSender.SendCallCount())
+	}
+	if !strings.Contains(logBuffer.String(), "[PUSH] No token registered for peer-target; skipping push") {
+		t.Fatalf("expected missing-token push log, got %q", logBuffer.String())
+	}
+}
+
+func TestHandleInboxStream_GroupStoreFansOutPushToRecipientsWithTokens(t *testing.T) {
+	backend := newMemoryInboxBackend()
+	tokenBackend := newMemoryPushTokenStore()
+	pushSender := newRecordingPushSender()
+	push := newPushServiceWithSender(tokenBackend, pushSender)
+	inbox := NewInboxStoreWithBackend(backend, push)
+	groupInbox := NewGroupInboxStore(maxMessagesPerGroup, groupMessageTTL)
+	env := setupInboxStreamEnv(t, inbox, groupInbox)
+
+	senderID := env.sender.ID().String()
+	recipientOne := env.recipient.ID().String()
+	recipientTwo := "peer-with-token-2"
+	noTokenRecipient := "peer-without-token"
+
+	push.RegisterToken(senderID, "self-token", "ios")
+	push.RegisterToken(recipientOne, "token-1", "ios")
+	push.RegisterToken(recipientTwo, "token-2", "android")
+
+	stream, err := env.sender.NewStream(context.Background(), env.server.ID(), InboxProtocol)
+	if err != nil {
+		t.Fatalf("open inbox stream: %v", err)
+	}
+	defer stream.Close()
+
+	sendInboxReq(t, stream, inboxRequest{
+		Action:           "group_store",
+		GroupId:          "group-42",
+		Message:          `{"text":"hello group"}`,
+		RecipientPeerIds: []string{senderID, recipientOne, recipientTwo, noTokenRecipient},
+		PushTitle:        "Test Group",
+		PushBody:         "Alice: hello group",
+	})
+
+	resp := recvInboxResp(t, stream)
+	if resp.Status != "OK" {
+		t.Fatalf("status = %q, want %q", resp.Status, "OK")
+	}
+
+	waitFor(t, time.Second, func() bool {
+		return pushSender.SendCallCount() == 2
+	}, "expected group push fanout to registered recipients only")
+
+	sentMessages := pushSender.Messages()
+	if len(sentMessages) != 2 {
+		t.Fatalf("sent messages = %d, want 2", len(sentMessages))
+	}
+
+	tokens := map[string]bool{}
+	for _, msg := range sentMessages {
+		tokens[msg.Token] = true
+		if msg.Data["type"] != "group_message" {
+			t.Fatalf("type = %q, want %q", msg.Data["type"], "group_message")
+		}
+		if msg.Data["groupId"] != "group-42" {
+			t.Fatalf("groupId = %q, want %q", msg.Data["groupId"], "group-42")
+		}
+		if msg.Data["title"] != "Test Group" {
+			t.Fatalf("title = %q, want %q", msg.Data["title"], "Test Group")
+		}
+		if msg.Data["body"] != "Alice: hello group" {
+			t.Fatalf("body = %q, want %q", msg.Data["body"], "Alice: hello group")
+		}
+	}
+
+	if !tokens["token-1"] || !tokens["token-2"] {
+		t.Fatalf("expected fanout to token-1 and token-2, got %#v", tokens)
+	}
+	if tokens["self-token"] {
+		t.Fatal("sender should be excluded from group push fanout")
+	}
+
+	storedMessages := groupInbox.Retrieve("group-42", 0)
+	if len(storedMessages) != 1 {
+		t.Fatalf("expected 1 stored group inbox message, got %d", len(storedMessages))
+	}
+	if storedMessages[0].Message != `{"text":"hello group"}` {
+		t.Fatalf(
+			"stored message = %q, want %q",
+			storedMessages[0].Message,
+			`{"text":"hello group"}`,
+		)
+	}
+}
+
+// --- Phase B: Top-level Notification field tests ---
+
+func TestBuildChatPushMessage_TopLevelNotification(t *testing.T) {
+	t.Run("has non-nil Notification with correct Title and Body", func(t *testing.T) {
+		msg := buildChatPushMessage(chatPushRequest{
+			Token:      "fcm-token",
+			FromPeerID: "peer-from",
+		})
+
+		if msg.Notification == nil {
+			t.Fatal("expected top-level Notification to be non-nil")
+		}
+		if msg.Notification.Title != pushNotificationTitle {
+			t.Fatalf("Notification.Title = %q, want %q", msg.Notification.Title, pushNotificationTitle)
+		}
+		if msg.Notification.Body != pushNotificationBody {
+			t.Fatalf("Notification.Body = %q, want %q", msg.Notification.Body, pushNotificationBody)
+		}
+	})
+
+	t.Run("uses custom Title and Body when provided", func(t *testing.T) {
+		msg := buildChatPushMessage(chatPushRequest{
+			Token:      "fcm-token",
+			FromPeerID: "peer-from",
+			Title:      "Custom Title",
+			Body:       "Custom Body",
+		})
+
+		if msg.Notification == nil {
+			t.Fatal("expected top-level Notification to be non-nil")
+		}
+		if msg.Notification.Title != "Custom Title" {
+			t.Fatalf("Notification.Title = %q, want %q", msg.Notification.Title, "Custom Title")
+		}
+		if msg.Notification.Body != "Custom Body" {
+			t.Fatalf("Notification.Body = %q, want %q", msg.Notification.Body, "Custom Body")
+		}
+	})
+
+	t.Run("preserves Data map with type, from, title, body", func(t *testing.T) {
+		msg := buildChatPushMessage(chatPushRequest{
+			Token:      "fcm-token",
+			FromPeerID: "peer-from",
+		})
+
+		expected := map[string]string{
+			"type":  "new_message",
+			"from":  "peer-from",
+			"title": pushNotificationTitle,
+			"body":  pushNotificationBody,
+		}
+		for key, want := range expected {
+			got, ok := msg.Data[key]
+			if !ok {
+				t.Fatalf("Data[%q] missing", key)
+			}
+			if got != want {
+				t.Fatalf("Data[%q] = %q, want %q", key, got, want)
+			}
+		}
+	})
+
+	t.Run("preserves Android.Notification with ChannelID", func(t *testing.T) {
+		msg := buildChatPushMessage(chatPushRequest{
+			Token:      "fcm-token",
+			FromPeerID: "peer-from",
+		})
+
+		if msg.Android == nil {
+			t.Fatal("expected Android config to be non-nil")
+		}
+		if msg.Android.Notification == nil {
+			t.Fatal("expected Android.Notification to be non-nil")
+		}
+		if msg.Android.Notification.ChannelID != pushNotificationChannelID {
+			t.Fatalf(
+				"Android.Notification.ChannelID = %q, want %q",
+				msg.Android.Notification.ChannelID,
+				pushNotificationChannelID,
+			)
+		}
+		if msg.Android.Notification.Title != pushNotificationTitle {
+			t.Fatalf(
+				"Android.Notification.Title = %q, want %q",
+				msg.Android.Notification.Title,
+				pushNotificationTitle,
+			)
+		}
+		if msg.Android.Notification.Body != pushNotificationBody {
+			t.Fatalf(
+				"Android.Notification.Body = %q, want %q",
+				msg.Android.Notification.Body,
+				pushNotificationBody,
+			)
+		}
+	})
+
+	t.Run("preserves APNS.Payload.Aps.Alert", func(t *testing.T) {
+		msg := buildChatPushMessage(chatPushRequest{
+			Token:      "fcm-token",
+			FromPeerID: "peer-from",
+		})
+
+		if msg.APNS == nil || msg.APNS.Payload == nil || msg.APNS.Payload.Aps == nil {
+			t.Fatal("expected APNS payload to be non-nil")
+		}
+		if msg.APNS.Payload.Aps.Alert == nil {
+			t.Fatal("expected APNS Alert to be non-nil")
+		}
+		if msg.APNS.Payload.Aps.Alert.Title != pushNotificationTitle {
+			t.Fatalf(
+				"APNS Alert.Title = %q, want %q",
+				msg.APNS.Payload.Aps.Alert.Title,
+				pushNotificationTitle,
+			)
+		}
+		if msg.APNS.Payload.Aps.Alert.Body != pushNotificationBody {
+			t.Fatalf(
+				"APNS Alert.Body = %q, want %q",
+				msg.APNS.Payload.Aps.Alert.Body,
+				pushNotificationBody,
+			)
+		}
+	})
 }

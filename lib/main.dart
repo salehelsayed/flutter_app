@@ -123,7 +123,6 @@ import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/startup_timing.dart';
 import 'dart:io' show Platform;
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:path_provider/path_provider.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -135,6 +134,10 @@ import 'package:flutter_app/features/orbit/presentation/navigation/orbit_route_t
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
 import 'package:flutter_app/features/push/application/background_message_handler.dart';
+import 'package:flutter_app/features/push/application/prepare_notification_open_use_case.dart';
+import 'package:flutter_app/features/push/application/push_registration_coordinator.dart';
+import 'package:flutter_app/features/push/application/register_push_token_use_case.dart';
+import 'package:flutter_app/features/push/application/request_push_permission_use_case.dart';
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
 import 'package:flutter_app/features/posts/application/download_post_media_use_case.dart';
 import 'package:flutter_app/features/posts/application/nearby_location_service.dart';
@@ -147,6 +150,7 @@ import 'package:flutter_app/features/posts/application/post_pin_listener.dart';
 import 'package:flutter_app/features/posts/application/post_pass_listener.dart';
 import 'package:flutter_app/features/posts/application/post_reaction_listener.dart';
 import 'package:flutter_app/features/posts/application/sweep_expired_posts_use_case.dart';
+import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
 import 'package:flutter_app/features/posts/domain/repositories/contact_presence_snapshot_repository_impl.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository_impl.dart';
 import 'package:flutter_app/features/posts/domain/repositories/posts_privacy_settings_repository_impl.dart';
@@ -1000,6 +1004,15 @@ void main() async {
     mediaFileManager: mediaFileManager,
   );
 
+  final pushRegistrationCoordinator = PushRegistrationCoordinator(
+    isEnabled: () => !isDesktop && Firebase.apps.isNotEmpty,
+    requestPermission: requestPushPermission,
+    registerPushToken: () => registerPushToken(p2pService: p2pService),
+    tokenRefreshStream: Firebase.apps.isNotEmpty
+        ? FirebaseMessaging.instance.onTokenRefresh
+        : const Stream<String>.empty(),
+  );
+
   runApp(
     MyApp(
       repository: repository,
@@ -1048,6 +1061,7 @@ void main() async {
       introductionRepository: introductionRepository,
       introductionListener: introductionListener,
       shareIntentService: shareIntentService,
+      pushRegistrationCoordinator: pushRegistrationCoordinator,
     ),
   );
   StartupTiming.instance.mark('run_app_called');
@@ -1100,6 +1114,7 @@ class MyApp extends StatefulWidget {
   final IntroductionRepositoryImpl introductionRepository;
   final IntroductionListener introductionListener;
   final ShareIntentService shareIntentService;
+  final PushRegistrationCoordinator pushRegistrationCoordinator;
 
   static final navigatorKey = GlobalKey<NavigatorState>();
 
@@ -1151,6 +1166,7 @@ class MyApp extends StatefulWidget {
     required this.introductionRepository,
     required this.introductionListener,
     required this.shareIntentService,
+    required this.pushRegistrationCoordinator,
   });
 
   @override
@@ -1223,10 +1239,34 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     widget.notificationService.onNotificationTap = _onNotificationTap;
   }
 
+  Future<void> _prepareNotificationRouteTarget(
+    NotificationRouteTarget routeTarget,
+  ) async {
+    final result = await prepareNotificationOpen(
+      routeTarget: routeTarget,
+      drainOfflineInbox: widget.p2pService.drainOfflineInbox,
+      drainGroupOfflineInboxForGroup: (groupId) {
+        return drainGroupOfflineInboxForGroup(
+          bridge: widget.bridge,
+          groupRepo: widget.groupRepository,
+          msgRepo: widget.groupMessageRepository,
+          groupId: groupId,
+          mediaAttachmentRepo: widget.mediaAttachmentRepository,
+          reactionRepo: widget.reactionRepository,
+        );
+      },
+    );
+
+    if (!result.ok) {
+      throw StateError(result.error ?? 'notification open preparation failed');
+    }
+  }
+
   Future<void> _handleInitialLocalNotificationLaunch() async {
     try {
       await routeInitialLocalNotificationOpen(
         consumeInitialPayload: widget.notificationService.consumeInitialPayload,
+        onBeforeRouteTarget: _prepareNotificationRouteTarget,
         onRouteTarget: _handleNotificationRouteTarget,
       );
     } catch (e) {
@@ -1242,6 +1282,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     try {
       await routeNotificationPayload(
         payload: payload,
+        onBeforeRouteTarget: _prepareNotificationRouteTarget,
         onRouteTarget: _handleNotificationRouteTarget,
       );
     } catch (e) {
@@ -1422,6 +1463,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     widget.postPinListener.dispose();
     widget.chatMessageListener.dispose();
     widget.contactRequestListener.dispose();
+    widget.pushRegistrationCoordinator.dispose();
     _postNotificationOpenCoordinator.dispose();
     widget.contactPresenceSnapshotRepository.dispose();
     widget.postRepository.dispose();
@@ -1436,7 +1478,9 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (kDebugMode) debugPrint('[LIFECYCLE] AppLifecycleState changed → ${state.name}');
+    if (kDebugMode) {
+      debugPrint('[LIFECYCLE] AppLifecycleState changed → ${state.name}');
+    }
     emitFlowEvent(
       layer: 'FL',
       event: 'APP_LIFECYCLE_STATE_CHANGED',
@@ -1450,11 +1494,15 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
   Future<void> _onResumed() async {
     if (_isResuming) {
-      if (kDebugMode) debugPrint('[LIFECYCLE] _onResumed() skipped — already resuming');
+      if (kDebugMode) {
+        debugPrint('[LIFECYCLE] _onResumed() skipped — already resuming');
+      }
       return;
     }
     _isResuming = true;
-    if (kDebugMode) debugPrint('[LIFECYCLE] _onResumed() starting handleAppResumed...');
+    if (kDebugMode) {
+      debugPrint('[LIFECYCLE] _onResumed() starting handleAppResumed...');
+    }
 
     try {
       await handleAppResumed(
@@ -1471,6 +1519,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
             widget.pendingPostMediaUploadRetrier.retryNow,
         retryPendingPostDeliveries: widget.pendingPostDeliveryRetrier.retryNow,
       );
+      await widget.pushRegistrationCoordinator.retryNow();
       await sweepExpiredPosts(
         postRepo: widget.postRepository,
         mediaFileManager: widget.mediaFileManager,
@@ -1506,6 +1555,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         unawaited(
           routeRemoteNotificationOpen(
             data: message.data,
+            onBeforeRouteTarget: _prepareNotificationRouteTarget,
             onRouteTarget: _handleNotificationRouteTarget,
             onMissingRouteTarget: widget.p2pService.drainOfflineInbox,
           ),
@@ -1561,6 +1611,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         contactPresenceSnapshotRepository:
             widget.contactPresenceSnapshotRepository,
         nearbyLocationService: widget.nearbyLocationService,
+        pushRegistrationCoordinator: widget.pushRegistrationCoordinator,
         onNotificationRouteTarget: _handleNotificationRouteTarget,
       ),
       debugShowCheckedModeBanner: false,

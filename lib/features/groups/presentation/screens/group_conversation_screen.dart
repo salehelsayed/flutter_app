@@ -43,6 +43,7 @@ class GroupConversationScreen extends StatelessWidget {
   final VoidCallback? onRecordStop;
   final VoidCallback? onRecordCancel;
   final bool isRecording;
+  final VoiceRecordingState recordingState;
   final Duration recordingDuration;
   final List<double> amplitudeValues;
   final ValueListenable<ConversationComposerViewState>? composerStateListenable;
@@ -78,6 +79,7 @@ class GroupConversationScreen extends StatelessWidget {
     this.onRecordStop,
     this.onRecordCancel,
     this.isRecording = false,
+    this.recordingState = VoiceRecordingState.idle,
     this.recordingDuration = Duration.zero,
     this.amplitudeValues = const [],
     this.composerStateListenable,
@@ -98,7 +100,11 @@ class GroupConversationScreen extends StatelessWidget {
         isUploading: isUploading,
         isProcessing: isProcessing,
         processingProgress: processingProgress,
-        isRecording: isRecording,
+        recordingState: recordingState != VoiceRecordingState.idle
+            ? recordingState
+            : (isRecording
+                  ? VoiceRecordingState.recording
+                  : VoiceRecordingState.idle),
         recordingDuration: recordingDuration,
         amplitudeValues: amplitudeValues,
       );
@@ -150,10 +156,10 @@ class GroupConversationScreen extends StatelessWidget {
             onAttach: onAttach,
             hasAttachments: composerState.pendingAttachments.isNotEmpty,
             isProcessing: composerState.isProcessing,
+            recordingState: composerState.recordingState,
             onRecordStart: onRecordStart,
             onRecordStop: onRecordStop,
             onRecordCancel: onRecordCancel,
-            isRecording: composerState.isRecording,
             recordingDuration: composerState.recordingDuration,
             amplitudeValues: composerState.amplitudeValues,
             initialText: initialText,

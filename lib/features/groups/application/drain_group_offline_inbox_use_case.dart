@@ -69,6 +69,44 @@ Future<void> drainGroupOfflineInbox({
   );
 }
 
+Future<void> drainGroupOfflineInboxForGroup({
+  required Bridge bridge,
+  required GroupRepository groupRepo,
+  required GroupMessageRepository msgRepo,
+  required String groupId,
+  MediaAttachmentRepository? mediaAttachmentRepo,
+  ReactionRepository? reactionRepo,
+  bool drainAllPages = true,
+  int pageSize = 50,
+}) async {
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'GROUP_DRAIN_OFFLINE_INBOX_SINGLE_BEGIN',
+    details: {
+      'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+    },
+  );
+
+  await _drainGroupInbox(
+    bridge: bridge,
+    groupRepo: groupRepo,
+    msgRepo: msgRepo,
+    groupId: groupId,
+    mediaAttachmentRepo: mediaAttachmentRepo,
+    reactionRepo: reactionRepo,
+    drainAllPages: drainAllPages,
+    pageSize: pageSize,
+  );
+
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'GROUP_DRAIN_OFFLINE_INBOX_SINGLE_DONE',
+    details: {
+      'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+    },
+  );
+}
+
 /// Drains a single group's offline inbox using cursor-based pagination.
 ///
 /// If a cursor is returned by the bridge, fetches subsequent pages until
@@ -86,7 +124,6 @@ Future<void> _drainGroupInbox({
 }) async {
   String cursor = '';
   int totalMessages = 0;
-  bool isFirstPage = true;
 
   do {
     final result = await callGroupInboxRetrieveWithCursor(
@@ -108,7 +145,7 @@ Future<void> _drainGroupInbox({
         if (reactionJson.isNotEmpty) {
           await handleIncomingGroupReaction(
             groupRepo: groupRepo,
-            reactionRepo: reactionRepo!,
+            reactionRepo: reactionRepo,
             groupId: groupId,
             senderId:
                 payload['senderId'] as String? ??
@@ -142,7 +179,6 @@ Future<void> _drainGroupInbox({
 
     totalMessages += messages.length;
     cursor = nextCursor;
-    isFirstPage = false;
 
     // If caller only wants the first page, stop here.
     if (!drainAllPages && cursor.isNotEmpty) {

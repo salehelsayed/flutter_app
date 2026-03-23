@@ -1,6 +1,26 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
+import 'package:flutter_app/l10n/app_localizations_en.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
+
+class _TestAppLocalizationsDelegate
+    extends LocalizationsDelegate<AppLocalizations> {
+  const _TestAppLocalizationsDelegate();
+
+  @override
+  bool isSupported(Locale locale) => locale.languageCode == 'en';
+
+  @override
+  Future<AppLocalizations> load(Locale locale) =>
+      SynchronousFuture<AppLocalizations>(AppLocalizationsEn());
+
+  @override
+  bool shouldReload(covariant LocalizationsDelegate<AppLocalizations> old) =>
+      false;
+}
 
 void main() {
   Widget buildTestWidget({
@@ -15,22 +35,28 @@ void main() {
     VoidCallback? onClearQuote,
   }) {
     return MaterialApp(
+      locale: const Locale('en'),
+      localizationsDelegates: const <LocalizationsDelegate<dynamic>>[
+        _TestAppLocalizationsDelegate(),
+        GlobalMaterialLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+      ],
+      supportedLocales: const <Locale>[Locale('en')],
       home: Scaffold(
-        body: Column(
-          children: [
-            const Spacer(),
-            ComposeArea(
-              onSend: onSend ?? (_) {},
-              onAttach: onAttach,
-              hasAttachments: hasAttachments,
-              isProcessing: isProcessing,
-              isSending: isSending,
-              initialText: initialText,
-              quotedText: quotedText,
-              isQuoteUnavailable: isQuoteUnavailable,
-              onClearQuote: onClearQuote,
-            ),
-          ],
+        body: Align(
+          alignment: Alignment.bottomCenter,
+          child: ComposeArea(
+            onSend: onSend ?? (_) {},
+            onAttach: onAttach,
+            hasAttachments: hasAttachments,
+            isProcessing: isProcessing,
+            isSending: isSending,
+            initialText: initialText,
+            quotedText: quotedText,
+            isQuoteUnavailable: isQuoteUnavailable,
+            onClearQuote: onClearQuote,
+          ),
         ),
       ),
     );
@@ -159,6 +185,14 @@ void main() {
 
         await tester.pumpWidget(
           MaterialApp(
+            locale: const Locale('en'),
+            localizationsDelegates: const <LocalizationsDelegate<dynamic>>[
+              _TestAppLocalizationsDelegate(),
+              GlobalMaterialLocalizations.delegate,
+              GlobalCupertinoLocalizations.delegate,
+              GlobalWidgetsLocalizations.delegate,
+            ],
+            supportedLocales: const <Locale>[Locale('en')],
             home: Scaffold(
               body: StatefulBuilder(
                 builder: (context, setState) {
@@ -392,26 +426,32 @@ void main() {
       VoidCallback? onRecordStart,
       VoidCallback? onRecordStop,
       VoidCallback? onRecordCancel,
-      bool isRecording = false,
+      VoiceRecordingState recordingState = VoiceRecordingState.idle,
       Duration recordingDuration = Duration.zero,
     }) {
       return MaterialApp(
+        locale: const Locale('en'),
+        localizationsDelegates: const <LocalizationsDelegate<dynamic>>[
+          _TestAppLocalizationsDelegate(),
+          GlobalMaterialLocalizations.delegate,
+          GlobalCupertinoLocalizations.delegate,
+          GlobalWidgetsLocalizations.delegate,
+        ],
+        supportedLocales: const <Locale>[Locale('en')],
         home: Scaffold(
-          body: Column(
-            children: [
-              const Spacer(),
-              ComposeArea(
-                onSend: onSend ?? (_) {},
-                onAttach: onAttach,
-                hasAttachments: hasAttachments,
-                isProcessing: isProcessing,
-                onRecordStart: onRecordStart,
-                onRecordStop: onRecordStop,
-                onRecordCancel: onRecordCancel,
-                isRecording: isRecording,
-                recordingDuration: recordingDuration,
-              ),
-            ],
+          body: Align(
+            alignment: Alignment.bottomCenter,
+            child: ComposeArea(
+              onSend: onSend ?? (_) {},
+              onAttach: onAttach,
+              hasAttachments: hasAttachments,
+              isProcessing: isProcessing,
+              onRecordStart: onRecordStart,
+              onRecordStop: onRecordStop,
+              onRecordCancel: onRecordCancel,
+              recordingState: recordingState,
+              recordingDuration: recordingDuration,
+            ),
           ),
         ),
       );
@@ -470,7 +510,7 @@ void main() {
     ) async {
       await tester.pumpWidget(
         buildVoiceWidget(
-          isRecording: true,
+          recordingState: VoiceRecordingState.recording,
           recordingDuration: const Duration(seconds: 3),
           onRecordStart: () {},
           onRecordStop: () {},
@@ -479,7 +519,7 @@ void main() {
       );
 
       expect(find.text('0:03'), findsOneWidget);
-      expect(find.text('Slide to cancel'), findsOneWidget);
+      expect(find.text('Cancel'), findsOneWidget);
       expect(find.byIcon(Icons.stop_rounded), findsOneWidget);
       expect(find.byIcon(Icons.arrow_upward_rounded), findsNothing);
     });
@@ -489,20 +529,40 @@ void main() {
     ) async {
       await tester.pumpWidget(
         buildVoiceWidget(
-          isRecording: false,
+          recordingState: VoiceRecordingState.idle,
           onRecordStart: () {},
           onRecordStop: () {},
           onRecordCancel: () {},
         ),
       );
 
-      expect(find.text('Slide to cancel'), findsNothing);
+      expect(find.text('Cancel'), findsNothing);
+    });
+
+    testWidgets('recording overlay cancel gesture forwards onRecordCancel', (
+      tester,
+    ) async {
+      var cancelled = false;
+      await tester.pumpWidget(
+        buildVoiceWidget(
+          recordingState: VoiceRecordingState.recording,
+          onRecordStart: () {},
+          onRecordStop: () {},
+          onRecordCancel: () => cancelled = true,
+        ),
+      );
+
+      expect(find.text('Cancel'), findsOneWidget);
+      await tester.tap(find.text('Cancel'));
+      await tester.pump();
+
+      expect(cancelled, isTrue);
     });
 
     testWidgets('text field hidden during recording', (tester) async {
       await tester.pumpWidget(
         buildVoiceWidget(
-          isRecording: true,
+          recordingState: VoiceRecordingState.recording,
           onRecordStart: () {},
           onRecordStop: () {},
           onRecordCancel: () {},

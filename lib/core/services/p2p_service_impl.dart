@@ -9,6 +9,7 @@ import '../local_discovery/local_p2p_service.dart';
 import '../utils/key_conversion.dart';
 import '../utils/chat_console_logger.dart';
 import '../utils/flow_event_emitter.dart';
+import '../utils/push_diagnostics_logger.dart';
 import '../../features/p2p/domain/models/node_state.dart';
 import '../../features/p2p/domain/models/chat_message.dart';
 import '../../features/p2p/domain/models/discovered_peer.dart';
@@ -64,7 +65,9 @@ class P2PServiceImpl implements P2PService {
       _localP2P = localP2PService {
     // Register event handlers on the bridge
     _bridge.onMessageReceived = (msg) {
-      _handleMessageReceived(msg.copyWith(transport: 'relay'));
+      final transport =
+          msg.transport ?? _inferTransportForPeer(msg.from) ?? 'relay';
+      _handleMessageReceived(msg.copyWith(transport: transport));
     };
     _bridge.onPeerConnected = _handlePeerConnected;
     _bridge.onPeerDisconnected = _handlePeerDisconnected;
@@ -125,12 +128,14 @@ class P2PServiceImpl implements P2PService {
   @override
   Future<bool> startNodeCore(String privateKeyBase64, String peerId) async {
     if (_isStarting) {
-      if (kDebugMode) debugPrint('[START] startNodeCore() skipped — already starting');
+      if (kDebugMode)
+        debugPrint('[START] startNodeCore() skipped — already starting');
       return false;
     }
     _isStarting = true;
     _startNodeTime = DateTime.now();
-    if (kDebugMode) debugPrint('[START] startNodeCore() beginning for peerId=$peerId');
+    if (kDebugMode)
+      debugPrint('[START] startNodeCore() beginning for peerId=$peerId');
 
     emitFlowEvent(
       layer: 'FL',
@@ -748,6 +753,22 @@ class P2PServiceImpl implements P2PService {
     return state.circuitAddresses.isEmpty;
   }
 
+  String? _inferTransportForPeer(String peerId) {
+    var sawDirectConnection = false;
+    for (final connection in _currentState.connections) {
+      if (connection.peerId != peerId) continue;
+      for (final multiaddr in connection.multiaddrs) {
+        if (multiaddr.contains('/p2p-circuit')) {
+          return 'relay';
+        }
+        if (multiaddr.isNotEmpty) {
+          sawDirectConnection = true;
+        }
+      }
+    }
+    return sawDirectConnection ? 'direct' : null;
+  }
+
   bool _stateMeaningfullyChanged(NodeState previous, NodeState next) {
     return previous.peerId != next.peerId ||
         previous.isStarted != next.isStarted ||
@@ -914,7 +935,10 @@ class P2PServiceImpl implements P2PService {
         }
 
         final totalMs = DateTime.now().difference(hcStart).inMilliseconds;
-        if (kDebugMode) debugPrint('[HEALTH] Recovery health check done (total ${totalMs}ms)');
+        if (kDebugMode)
+          debugPrint(
+            '[HEALTH] Recovery health check done (total ${totalMs}ms)',
+          );
         return;
       } else if (freshState.isStarted &&
           !_stateHasHealthyRelay(freshState) &&
@@ -956,7 +980,8 @@ class P2PServiceImpl implements P2PService {
           },
         );
       } else {
-        if (kDebugMode) debugPrint('[HEALTH] No state change (online, all good)');
+        if (kDebugMode)
+          debugPrint('[HEALTH] No state change (online, all good)');
       }
     } catch (e) {
       if (kDebugMode) debugPrint('[HEALTH] _performHealthCheck EXCEPTION: $e');
@@ -1015,7 +1040,8 @@ class P2PServiceImpl implements P2PService {
   /// Handle peer connected event from bridge.
   void _handlePeerConnected(ConnectionState conn) {
     if (_stopped) return;
-    if (kDebugMode) debugPrint('[CONN] peer:connected → ${conn.peerId} (${conn.status})');
+    if (kDebugMode)
+      debugPrint('[CONN] peer:connected → ${conn.peerId} (${conn.status})');
 
     // Update current state with new connection
     final updatedConnections = List<ConnectionState>.from(
@@ -1278,6 +1304,10 @@ class P2PServiceImpl implements P2PService {
 
   @override
   Future<bool> registerPushToken(String token, String platform) async {
+    logPushDiagnostic(
+      'bridge_register_push_token_begin',
+      details: {'platform': platform, 'token': summarizePushToken(token)},
+    );
     emitFlowEvent(
       layer: 'FL',
       event: 'P2P_SERVICE_REGISTER_PUSH_TOKEN_BEGIN',
@@ -1295,6 +1325,12 @@ class P2PServiceImpl implements P2PService {
         _lastFcmToken = token;
         _lastFcmPlatform = platform;
       }
+      logPushDiagnostic(
+        ok
+            ? 'bridge_register_push_token_success'
+            : 'bridge_register_push_token_error',
+        details: {'platform': platform},
+      );
       emitFlowEvent(
         layer: 'FL',
         event: ok
@@ -1304,6 +1340,10 @@ class P2PServiceImpl implements P2PService {
       );
       return ok;
     } catch (e) {
+      logPushDiagnostic(
+        'bridge_register_push_token_exception',
+        details: {'platform': platform, 'error': e.toString()},
+      );
       emitFlowEvent(
         layer: 'FL',
         event: 'P2P_SERVICE_REGISTER_PUSH_TOKEN_EXCEPTION',
@@ -1333,7 +1373,8 @@ class P2PServiceImpl implements P2PService {
     // Phase 5: Coalesce concurrent recovery attempts.
     // If a recovery is already running, just wait for it to complete.
     if (_recoveryInProgress != null) {
-      if (kDebugMode) debugPrint('[HEALTH] Recovery already in progress — coalescing');
+      if (kDebugMode)
+        debugPrint('[HEALTH] Recovery already in progress — coalescing');
       emitFlowEvent(
         layer: 'FL',
         event: 'P2P_SERVICE_RECOVERY_COALESCED',
@@ -1351,7 +1392,8 @@ class P2PServiceImpl implements P2PService {
       try {
         await _localP2P?.restartAdvertising();
       } catch (e) {
-        if (kDebugMode) debugPrint('[P2PService] Local P2P restart advertising failed: $e');
+        if (kDebugMode)
+          debugPrint('[P2PService] Local P2P restart advertising failed: $e');
       }
     } finally {
       final completer = _recoveryInProgress;

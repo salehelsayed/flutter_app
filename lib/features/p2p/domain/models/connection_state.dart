@@ -19,17 +19,27 @@ class ConnectionState {
     String? connectedAt;
     final ca = json['connectedAt'];
     if (ca is int) {
-      connectedAt = DateTime.fromMillisecondsSinceEpoch(ca).toUtc().toIso8601String();
+      connectedAt = DateTime.fromMillisecondsSinceEpoch(
+        ca,
+      ).toUtc().toIso8601String();
     } else if (ca is String) {
       connectedAt = ca;
     }
 
+    final parsedMultiaddrs =
+        (json['multiaddrs'] as List<dynamic>?)
+            ?.map((e) => e.toString())
+            .toList() ??
+        [];
+    final singleAddress = json['address']?.toString();
+
     return ConnectionState(
       peerId: json['peerId'] as String,
-      multiaddrs: (json['multiaddrs'] as List<dynamic>?)
-              ?.map((e) => e.toString())
-              .toList() ??
-          [],
+      multiaddrs: parsedMultiaddrs.isNotEmpty
+          ? parsedMultiaddrs
+          : (singleAddress == null || singleAddress.isEmpty
+                ? const []
+                : [singleAddress]),
       direction: json['direction']?.toString() ?? 'outbound',
       status: json['status']?.toString() ?? 'connected',
       connectedAt: connectedAt,

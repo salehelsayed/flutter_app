@@ -982,7 +982,7 @@ func cmdGroupInboxStore(params map[string]interface{}) map[string]interface{} {
 		return errResult(fmt.Sprintf("marshal group inbox payload: %v", err))
 	}
 
-	if err := state.node.GroupInboxStore(groupId, string(payloadBytes)); err != nil {
+	if err := state.node.GroupInboxStore(groupId, string(payloadBytes), nil, "", ""); err != nil {
 		return errResult(fmt.Sprintf("group inbox store: %v", err))
 	}
 

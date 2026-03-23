@@ -19,6 +19,7 @@ import 'package:flutter_app/features/conversation/domain/models/media_attachment
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_screen.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/attachment_preview_strip.dart';
@@ -355,6 +356,10 @@ void main() {
   }) async {
     await tester.pumpWidget(
       MaterialApp(
+        locale: const Locale('en'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        // Material delegates are included in AppLocalizations.localizationsDelegates.
         home: ConversationWired(
           contact: makeContact(),
           identityRepo: identityRepo,
@@ -934,7 +939,7 @@ void main() {
         recorder.emitAmplitude(0.3);
         await tester.pump();
 
-        expect(find.text('Slide to cancel'), findsOneWidget);
+        expect(find.text('Cancel'), findsOneWidget);
         expect(find.text('0:01'), findsOneWidget);
         expect(identical(headerElement, tester.element(headerFinder)), isTrue);
         expect(identical(listElement, tester.element(listFinder)), isTrue);
@@ -942,6 +947,50 @@ void main() {
 
         await gesture.up();
         await tester.pump();
+      },
+    );
+
+    testWidgets(
+      'voice record callbacks switch the composer into and out of recording',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final recorder = FakeAudioRecorderService()..fakeDurationMs = 100;
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+          audioRecorderService: recorder,
+        );
+
+        final recordingScreen = tester.widget<ConversationScreen>(
+          find.byType(ConversationScreen),
+        );
+        final startRecording =
+            recordingScreen.onRecordStart! as Future<void> Function();
+        await startRecording();
+        await tester.pump();
+
+        expect(find.byIcon(Icons.stop_rounded), findsOneWidget);
+        expect(find.text('Cancel'), findsOneWidget);
+
+        final stopScreen = tester.widget<ConversationScreen>(
+          find.byType(ConversationScreen),
+        );
+        final stopRecording =
+            stopScreen.onRecordStop! as Future<void> Function();
+        await stopRecording();
+        await tester.pump();
+
+        expect(find.byIcon(Icons.mic_rounded), findsOneWidget);
       },
     );
 

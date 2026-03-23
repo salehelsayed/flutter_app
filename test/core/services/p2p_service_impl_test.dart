@@ -78,6 +78,104 @@ void main() {
     service.dispose();
   });
 
+  group('transport inference', () {
+    test(
+      'incoming Go message uses direct transport from peer connection',
+      () async {
+        bridge.whenCommand(
+          'node:start',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'self-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+            'circuitAddresses': [],
+            'connections': [],
+          }),
+        );
+
+        await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
+
+        final received = <ChatMessage>[];
+        final sub = service.messageStream.listen(received.add);
+
+        bridge.onPeerConnected?.call(
+          const p2p.ConnectionState(
+            peerId: 'remote-peer',
+            multiaddrs: ['/ip4/192.168.1.10/tcp/4001'],
+            direction: 'outbound',
+            status: 'connected',
+          ),
+        );
+        bridge.onMessageReceived?.call(
+          const ChatMessage(
+            from: 'remote-peer',
+            to: 'self-peer',
+            content: 'hello',
+            timestamp: '2026-01-01T00:00:00.000Z',
+            isIncoming: true,
+          ),
+        );
+
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+
+        expect(received, hasLength(1));
+        expect(received.single.transport, 'direct');
+
+        await sub.cancel();
+      },
+    );
+
+    test(
+      'incoming Go message uses relay transport from circuit connection',
+      () async {
+        bridge.whenCommand(
+          'node:start',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'self-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+            'circuitAddresses': [],
+            'connections': [],
+          }),
+        );
+
+        await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
+
+        final received = <ChatMessage>[];
+        final sub = service.messageStream.listen(received.add);
+
+        bridge.onPeerConnected?.call(
+          const p2p.ConnectionState(
+            peerId: 'remote-peer',
+            multiaddrs: [
+              '/dns4/relay.example/tcp/4001/p2p/relay-peer/p2p-circuit',
+            ],
+            direction: 'outbound',
+            status: 'connected',
+          ),
+        );
+        bridge.onMessageReceived?.call(
+          const ChatMessage(
+            from: 'remote-peer',
+            to: 'self-peer',
+            content: 'hello',
+            timestamp: '2026-01-01T00:00:00.000Z',
+            isIncoming: true,
+          ),
+        );
+
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+
+        expect(received, hasLength(1));
+        expect(received.single.transport, 'relay');
+
+        await sub.cancel();
+      },
+    );
+  });
+
   group('Phase 1 — startup and warm background', () {
     test(
       'startNode returns before background warm continuation drains remaining inbox pages',

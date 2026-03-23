@@ -2,8 +2,10 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_screen.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bubble.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -46,6 +48,9 @@ void main() {
     Map<String, List<MediaAttachment>> mediaMap = const {},
   }) {
     return MaterialApp(
+      locale: const Locale('en'),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
       home: Scaffold(
         body: GroupConversationScreen(
           group: group ?? testGroup,
@@ -168,7 +173,7 @@ void main() {
       );
 
       composerState.value = const ConversationComposerViewState(
-        isRecording: true,
+        recordingState: VoiceRecordingState.recording,
         recordingDuration: Duration(seconds: 4),
         amplitudeValues: [0.1, 0.3, 0.8],
       );

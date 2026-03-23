@@ -47,6 +47,8 @@
 	<string>NSFileProtectionComplete</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>mknoon looks for your friends on the same WiFi to send messages directly to their phone. It's faster, more private, and we never collect your data.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>This app needs location access to share nearby posts with your direct friends</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>This app needs location access to share nearby posts with your direct friends</string>
 	<key>NSMicrophoneUsageDescription</key>
@@ -78,6 +80,7 @@
 	<true/>
 	<key>UIBackgroundModes</key>
 	<array>
+		<string>fetch</string>
 		<string>remote-notification</string>
 	</array>
 	<key>UILaunchStoryboardName</key>
