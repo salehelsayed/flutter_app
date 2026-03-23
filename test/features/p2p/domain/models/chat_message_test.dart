@@ -106,11 +106,14 @@ void main() {
     });
 
     group('equality', () {
-      test('equal when from/to/content/timestamp match regardless of isIncoming', () {
-        final incoming = baseMsg;
-        final outgoing = baseMsg.copyWith(isIncoming: false);
-        expect(incoming, equals(outgoing));
-      });
+      test(
+        'equal when from/to/content/timestamp match regardless of isIncoming',
+        () {
+          final incoming = baseMsg;
+          final outgoing = baseMsg.copyWith(isIncoming: false);
+          expect(incoming, equals(outgoing));
+        },
+      );
 
       test('not equal when content differs', () {
         final other = baseMsg.copyWith(content: 'goodbye');
@@ -150,7 +153,7 @@ void main() {
     });
 
     group('transport contract', () {
-      test('fromJson ignores transport key in JSON', () {
+      test('fromJson parses transport key in JSON', () {
         final msg = ChatMessage.fromJson({
           'from': 'peer-a',
           'to': 'peer-b',
@@ -159,7 +162,7 @@ void main() {
           'isIncoming': true,
           'transport': 'wifi',
         });
-        expect(msg.transport, isNull);
+        expect(msg.transport, 'wifi');
       });
 
       test('toJson excludes transport', () {

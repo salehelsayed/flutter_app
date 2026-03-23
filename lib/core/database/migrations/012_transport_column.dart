@@ -3,8 +3,8 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
 /// Migration 012: Add `transport` column to `messages` table.
 ///
-/// Stores the transport type used for the message: 'wifi', 'relay', 'inbox',
-/// or NULL (unknown / pre-migration messages).
+/// Stores the transport type used for the message: 'wifi', 'local', 'direct',
+/// 'reuse', 'relay', 'inbox', or NULL (unknown / pre-migration messages).
 Future<void> runTransportColumnMigration(Database db) async {
   final columns = await db.rawQuery('PRAGMA table_info(messages)');
   final hasColumn = columns.any((col) => col['name'] == 'transport');
@@ -24,9 +24,7 @@ Future<void> runTransportColumnMigration(Database db) async {
   );
 
   try {
-    await db.execute(
-      'ALTER TABLE messages ADD COLUMN transport TEXT',
-    );
+    await db.execute('ALTER TABLE messages ADD COLUMN transport TEXT');
     emitFlowEvent(
       layer: 'DB',
       event: 'TRANSPORT_COLUMN_MIGRATION_SUCCESS',

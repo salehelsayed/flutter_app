@@ -9,6 +9,7 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/posts/application/attach_post_media_use_case.dart';
 import 'package:flutter_app/features/posts/application/nearby_location_service.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
 import 'package:flutter_app/shared/widgets/media/recording_overlay.dart';
 
 class ComposePostResult {
@@ -72,7 +73,8 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
   final Set<String> _selectedPeerIds = <String>{};
   bool _isSubmitting = false;
   bool _isAttaching = false;
-  bool _isRecording = false;
+  VoiceRecordingState _recordingState = VoiceRecordingState.idle;
+  bool _pendingRecordingAbort = false;
   Duration _recordingDuration = Duration.zero;
   List<double> _recordingAmplitudes = const <double>[];
   List<PostMediaDraft> _mediaDrafts = const <PostMediaDraft>[];
@@ -101,7 +103,7 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
     if ((_textController.text.trim().isEmpty && _mediaDrafts.isEmpty) ||
         _isSubmitting ||
         _isAttaching ||
-        _isRecording) {
+        _recordingState.isActive) {
       return false;
     }
     if (_audienceKind == PostAudienceKind.pickPeople &&
@@ -114,6 +116,8 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
     }
     return true;
   }
+
+  bool get _isRecording => _recordingState.isActive;
 
   Future<void> _submit() async {
     if (!_canSubmit) return;
@@ -158,7 +162,7 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
   @override
   void dispose() {
     _cancelRecorderSubscriptions();
-    if (_isRecording) {
+    if (_recordingState.isActive) {
       unawaited(widget.audioRecorderService?.cancel());
     }
     _textController.dispose();
@@ -184,7 +188,7 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
   }
 
   Future<void> _attachVoice() async {
-    if (_isAttaching || _isRecording) {
+    if (_isAttaching || _recordingState.isActive) {
       return;
     }
     if (widget.audioRecorderService != null) {
@@ -214,14 +218,43 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
       return;
     }
 
+    _pendingRecordingAbort = false;
+    setState(() {
+      _recordingState = VoiceRecordingState.arming;
+      _recordingDuration = Duration.zero;
+      _recordingAmplitudes = const <double>[];
+    });
+
     final hasPermission = await recorder.requestPermission();
-    if (!hasPermission || !mounted) {
+    if (!mounted || _pendingRecordingAbort) {
+      if (mounted) {
+        setState(_resetRecordingState);
+      }
       return;
     }
 
-    await recorder.start(outputPath: '');
-    if (!mounted) {
+    if (!hasPermission) {
+      if (mounted) {
+        setState(_resetRecordingState);
+      }
+      return;
+    }
+
+    try {
+      await recorder.start(outputPath: '');
+    } catch (_) {
+      if (mounted) {
+        setState(_resetRecordingState);
+      }
+      return;
+    }
+    if (!mounted ||
+        _pendingRecordingAbort ||
+        _recordingState == VoiceRecordingState.stopping) {
       await recorder.cancel();
+      if (mounted) {
+        setState(_resetRecordingState);
+      }
       return;
     }
 
@@ -244,7 +277,7 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
     });
 
     setState(() {
-      _isRecording = true;
+      _recordingState = VoiceRecordingState.recording;
       _recordingDuration = Duration.zero;
       _recordingAmplitudes = _amplitudeBuffer.values;
       _mediaDrafts = const <PostMediaDraft>[];
@@ -253,10 +286,17 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
 
   Future<void> _stopVoiceRecording() async {
     final recorder = widget.audioRecorderService;
-    if (recorder == null || !_isRecording) {
+    if (recorder == null || !_recordingState.isActive) {
       return;
     }
 
+    if (_recordingState == VoiceRecordingState.arming) {
+      _pendingRecordingAbort = true;
+      setState(() => _recordingState = VoiceRecordingState.stopping);
+      return;
+    }
+
+    setState(() => _recordingState = VoiceRecordingState.stopping);
     final waveform = downsampleWaveform(_waveformSamples, 50);
     final recording = await recorder.stop();
     _cancelRecorderSubscriptions();
@@ -284,9 +324,15 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
 
   Future<void> _cancelVoiceRecording() async {
     final recorder = widget.audioRecorderService;
-    if (recorder == null || !_isRecording) {
+    if (recorder == null || !_recordingState.isActive) {
       return;
     }
+    if (_recordingState == VoiceRecordingState.arming) {
+      _pendingRecordingAbort = true;
+      setState(() => _recordingState = VoiceRecordingState.stopping);
+      return;
+    }
+    setState(() => _recordingState = VoiceRecordingState.stopping);
     _cancelRecorderSubscriptions();
     await recorder.cancel();
     if (!mounted) {
@@ -309,7 +355,8 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
   }
 
   void _resetRecordingState() {
-    _isRecording = false;
+    _pendingRecordingAbort = false;
+    _recordingState = VoiceRecordingState.idle;
     _recordingDuration = Duration.zero;
     _recordingAmplitudes = const <double>[];
     _waveformSamples = <double>[];
@@ -404,8 +451,12 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                           Expanded(
                             child: Text(
                               widget.activePinCount == 1
-                                  ? AppLocalizations.of(context)!.compose_pinned_1
-                                  : AppLocalizations.of(context)!.compose_pinned_n(widget.activePinCount),
+                                  ? AppLocalizations.of(
+                                      context,
+                                    )!.compose_pinned_1
+                                  : AppLocalizations.of(
+                                      context,
+                                    )!.compose_pinned_n(widget.activePinCount),
                               style: const TextStyle(
                                 color: Colors.white,
                                 fontSize: 13,
@@ -416,7 +467,9 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                           if (widget.onManagePins != null)
                             TextButton(
                               onPressed: widget.onManagePins,
-                              child: Text(AppLocalizations.of(context)!.compose_manage),
+                              child: Text(
+                                AppLocalizations.of(context)!.compose_manage,
+                              ),
                             ),
                         ],
                       ),
@@ -447,7 +500,9 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                     spacing: 10,
                     children: [
                       ChoiceChip(
-                        label: Text(AppLocalizations.of(context)!.compose_audience_all),
+                        label: Text(
+                          AppLocalizations.of(context)!.compose_audience_all,
+                        ),
                         selected: _audienceKind == PostAudienceKind.allFriends,
                         onSelected: (_) {
                           setState(() {
@@ -457,7 +512,9 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                         },
                       ),
                       ChoiceChip(
-                        label: Text(AppLocalizations.of(context)!.compose_audience_nearby),
+                        label: Text(
+                          AppLocalizations.of(context)!.compose_audience_nearby,
+                        ),
                         selected:
                             _audienceKind == PostAudienceKind.peopleNearby,
                         onSelected: (_) {
@@ -468,7 +525,9 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                         },
                       ),
                       ChoiceChip(
-                        label: Text(AppLocalizations.of(context)!.compose_audience_pick),
+                        label: Text(
+                          AppLocalizations.of(context)!.compose_audience_pick,
+                        ),
                         selected: _audienceKind == PostAudienceKind.pickPeople,
                         onSelected: (_) {
                           setState(() {
@@ -534,7 +593,13 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                           Icons.photo_library_outlined,
                           size: 18,
                         ),
-                        label: Text(_isAttaching ? AppLocalizations.of(context)!.compose_media_adding : AppLocalizations.of(context)!.compose_media),
+                        label: Text(
+                          _isAttaching
+                              ? AppLocalizations.of(
+                                  context,
+                                )!.compose_media_adding
+                              : AppLocalizations.of(context)!.compose_media,
+                        ),
                       ),
                       const SizedBox(width: 10),
                       OutlinedButton.icon(
@@ -544,7 +609,9 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                             ? null
                             : _attachVoice,
                         icon: const Icon(Icons.mic_none_rounded, size: 18),
-                        label: Text(AppLocalizations.of(context)!.compose_voice),
+                        label: Text(
+                          AppLocalizations.of(context)!.compose_voice,
+                        ),
                       ),
                     ],
                   ),
@@ -569,7 +636,9 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                             Icons.stop_circle_outlined,
                             size: 18,
                           ),
-                          label: Text(AppLocalizations.of(context)!.compose_voice_stop),
+                          label: Text(
+                            AppLocalizations.of(context)!.compose_voice_stop,
+                          ),
                         ),
                       ],
                     ),
@@ -588,8 +657,12 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                           Expanded(
                             child: Text(
                               _mediaDrafts.first.kind == 'voice'
-                                  ? AppLocalizations.of(context)!.compose_voice_attached
-                                  : AppLocalizations.of(context)!.compose_attachments(_mediaDrafts.length),
+                                  ? AppLocalizations.of(
+                                      context,
+                                    )!.compose_voice_attached
+                                  : AppLocalizations.of(
+                                      context,
+                                    )!.compose_attachments(_mediaDrafts.length),
                               style: const TextStyle(
                                 color: Colors.white,
                                 fontWeight: FontWeight.w600,
@@ -669,7 +742,11 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                     width: double.infinity,
                     child: ElevatedButton(
                       onPressed: _canSubmit ? _submit : null,
-                      child: Text(_isSubmitting ? AppLocalizations.of(context)!.compose_posting : AppLocalizations.of(context)!.compose_post),
+                      child: Text(
+                        _isSubmitting
+                            ? AppLocalizations.of(context)!.compose_posting
+                            : AppLocalizations.of(context)!.compose_post,
+                      ),
                     ),
                   ),
                 ],
@@ -711,12 +788,9 @@ class _NearbyComposeAvailabilityCard extends StatelessWidget {
     };
 
     final subtitle = switch (availability.state) {
-      NearbyComposeAvailabilityState.sharingOff =>
-        l10n.compose_nearby_off_desc,
-      NearbyComposeAvailabilityState.ready =>
-        l10n.compose_nearby_ready_desc,
-      NearbyComposeAvailabilityState.stale =>
-        l10n.compose_nearby_refresh_desc,
+      NearbyComposeAvailabilityState.sharingOff => l10n.compose_nearby_off_desc,
+      NearbyComposeAvailabilityState.ready => l10n.compose_nearby_ready_desc,
+      NearbyComposeAvailabilityState.stale => l10n.compose_nearby_refresh_desc,
       NearbyComposeAvailabilityState.permissionRequired =>
         l10n.compose_nearby_allow_desc,
       NearbyComposeAvailabilityState.permissionDeniedForever =>
@@ -762,7 +836,11 @@ class _NearbyComposeAvailabilityCard extends StatelessWidget {
               ),
             ),
             icon: const Icon(Icons.refresh_rounded, size: 16),
-            label: Text(isRefreshing ? l10n.compose_refreshing : l10n.compose_refresh_nearby),
+            label: Text(
+              isRefreshing
+                  ? l10n.compose_refreshing
+                  : l10n.compose_refresh_nearby,
+            ),
           )
         : null;
 

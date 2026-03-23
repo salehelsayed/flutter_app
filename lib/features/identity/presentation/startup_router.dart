@@ -36,9 +36,9 @@ import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_app/features/p2p/application/start_node_use_case.dart';
-import 'package:flutter_app/features/push/application/request_push_permission_use_case.dart';
-import 'package:flutter_app/features/push/application/register_push_token_use_case.dart';
 import 'package:flutter_app/features/push/application/handle_initial_remote_message_use_case.dart';
+import 'package:flutter_app/features/push/application/prepare_notification_open_use_case.dart';
+import 'package:flutter_app/features/push/application/push_registration_coordinator.dart';
 import 'package:flutter_app/core/utils/startup_timing.dart';
 import 'package:flutter_app/core/config/startup_config.dart';
 import 'package:flutter_app/features/groups/application/rejoin_group_topics_use_case.dart';
@@ -146,6 +146,7 @@ class StartupRouter extends StatefulWidget {
   final PostsPrivacySettingsRepository postsPrivacySettingsRepository;
   final ContactPresenceSnapshotRepository? contactPresenceSnapshotRepository;
   final NearbyLocationService? nearbyLocationService;
+  final PushRegistrationCoordinator? pushRegistrationCoordinator;
   final Future<void> Function(NotificationRouteTarget routeTarget)?
   onNotificationRouteTarget;
 
@@ -181,6 +182,7 @@ class StartupRouter extends StatefulWidget {
     required this.postsPrivacySettingsRepository,
     this.contactPresenceSnapshotRepository,
     this.nearbyLocationService,
+    this.pushRegistrationCoordinator,
     this.onNotificationRouteTarget,
   });
 
@@ -449,7 +451,10 @@ class _StartupRouterState extends State<StartupRouter> {
         ),
       );
       unawaited(_handleInitialPushOpen());
-      _registerPushToken();
+      final pushRegistrationCoordinator = widget.pushRegistrationCoordinator;
+      if (pushRegistrationCoordinator != null) {
+        unawaited(pushRegistrationCoordinator.ensureStarted());
+      }
 
       // Now that the Go node is running (pubsub initialized), rejoin group
       // topics and drain offline inboxes. Fire-and-forget — errors are logged
@@ -492,9 +497,9 @@ class _StartupRouterState extends State<StartupRouter> {
           );
           await routeRemoteNotificationOpen(
             data: message.data,
+            onBeforeRouteTarget: _prepareNotificationRouteTarget,
             onRouteTarget: (routeTarget) async {
               if (widget.onNotificationRouteTarget == null) {
-                await widget.p2pService.drainOfflineInbox();
                 return;
               }
               await widget.onNotificationRouteTarget!(routeTarget);
@@ -554,33 +559,6 @@ class _StartupRouterState extends State<StartupRouter> {
       emitFlowEvent(
         layer: 'FL',
         event: 'MLKEM_MIGRATION_ERROR',
-        details: {'error': e.toString()},
-      );
-    }
-  }
-
-  Future<void> _registerPushToken() async {
-    // Push notifications only available on mobile (iOS/Android)
-    if (kIsWeb || Platform.isLinux || Platform.isWindows || Platform.isMacOS) {
-      return;
-    }
-
-    if (Firebase.apps.isEmpty) return;
-
-    try {
-      final granted = await requestPushPermission();
-      if (!granted) return;
-
-      await registerPushToken(p2pService: widget.p2pService);
-
-      // Re-register when FCM token refreshes
-      FirebaseMessaging.instance.onTokenRefresh.listen((_) {
-        registerPushToken(p2pService: widget.p2pService);
-      });
-    } catch (e) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'PUSH_REGISTER_TOKEN_ERROR',
         details: {'error': e.toString()},
       );
     }
@@ -667,6 +645,35 @@ class _StartupRouterState extends State<StartupRouter> {
     setState(() => _startupStage = stage);
   }
 
+  Future<void> _prepareNotificationRouteTarget(
+    NotificationRouteTarget routeTarget,
+  ) async {
+    final result = await prepareNotificationOpen(
+      routeTarget: routeTarget,
+      drainOfflineInbox: widget.p2pService.drainOfflineInbox,
+      drainGroupOfflineInboxForGroup: (groupId) async {
+        final groupRepo = widget.groupRepository;
+        final groupMsgRepo = widget.groupMessageRepository;
+        if (groupRepo == null || groupMsgRepo == null) {
+          throw StateError('group notification recovery is unavailable');
+        }
+
+        await drainGroupOfflineInboxForGroup(
+          bridge: widget.bridge,
+          groupRepo: groupRepo,
+          msgRepo: groupMsgRepo,
+          groupId: groupId,
+          mediaAttachmentRepo: widget.mediaAttachmentRepository,
+          reactionRepo: widget.reactionRepository,
+        );
+      },
+    );
+
+    if (!result.ok) {
+      throw StateError(result.error ?? 'notification open preparation failed');
+    }
+  }
+
   Route<void> _buildPendingShareRoute(ShareIntent intent) {
     return buildShareTargetPickerRoute(
       shareIntent: intent,
@@ -726,7 +733,12 @@ class _StartupRouterState extends State<StartupRouter> {
                   style: const TextStyle(color: Colors.grey),
                 ),
                 const SizedBox(height: 24),
-                ElevatedButton(onPressed: _retry, child: Text(AppLocalizations.of(context)?.btn_retry ?? 'Retry')),
+                ElevatedButton(
+                  onPressed: _retry,
+                  child: Text(
+                    AppLocalizations.of(context)?.btn_retry ?? 'Retry',
+                  ),
+                ),
               ],
             ),
           ),

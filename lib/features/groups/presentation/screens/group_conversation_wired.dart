@@ -21,6 +21,7 @@ import 'package:flutter_app/features/conversation/application/download_media_use
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_screen.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/conversation/application/load_reactions_use_case.dart';
@@ -137,12 +138,13 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
   StreamSubscription<double>? _amplitudeSub;
   final _amplitudeBuffer = AmplitudeBuffer(size: 25);
   List<double> _waveformSamples = [];
+  bool _pendingRecorderAbort = false;
 
   ConversationComposerViewState get _composerViewState => _composerState.value;
 
   MediaPicker get _mediaPicker => widget.mediaPicker ?? _defaultMediaPicker;
 
-  bool get _isRecording => _composerViewState.isRecording;
+  bool get _isRecording => _composerViewState.recordingState.isActive;
 
   @override
   void initState() {
@@ -787,7 +789,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
     bool? isUploading,
     bool? isProcessing,
     double? processingProgress,
-    bool? isRecording,
+    VoiceRecordingState? recordingState,
     Duration? recordingDuration,
     List<double>? amplitudeValues,
   }) {
@@ -797,7 +799,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
       isUploading: isUploading,
       isProcessing: isProcessing,
       processingProgress: processingProgress,
-      isRecording: isRecording,
+      recordingState: recordingState,
       recordingDuration: recordingDuration,
       amplitudeValues: amplitudeValues,
     );
@@ -812,7 +814,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
     return a.isUploading == b.isUploading &&
         a.isProcessing == b.isProcessing &&
         a.processingProgress == b.processingProgress &&
-        a.isRecording == b.isRecording &&
+        a.recordingState == b.recordingState &&
         a.recordingDuration == b.recordingDuration &&
         listEquals(a.amplitudeValues, b.amplitudeValues) &&
         _fileListsEqual(a.pendingAttachments, b.pendingAttachments);
@@ -854,9 +856,27 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
 
   Future<void> _onRecordStart() async {
     final recorder = widget.audioRecorderService;
-    if (recorder == null || _isRecording) return;
+    if (recorder == null || _composerViewState.recordingState.isActive) {
+      return;
+    }
+
+    _pendingRecorderAbort = false;
+    _updateComposerState(
+      recordingState: VoiceRecordingState.arming,
+      recordingDuration: Duration.zero,
+      amplitudeValues: const [],
+    );
 
     final hasPermission = await recorder.requestPermission();
+    if (!mounted || _pendingRecorderAbort) {
+      _updateComposerState(
+        recordingState: VoiceRecordingState.idle,
+        recordingDuration: Duration.zero,
+        amplitudeValues: const [],
+      );
+      return;
+    }
+
     if (!hasPermission) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -868,7 +888,22 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
             behavior: SnackBarBehavior.floating,
           ),
         );
+        _updateComposerState(
+          recordingState: VoiceRecordingState.idle,
+          recordingDuration: Duration.zero,
+          amplitudeValues: const [],
+        );
       }
+      return;
+    }
+
+    if (_pendingRecorderAbort ||
+        _composerViewState.recordingState == VoiceRecordingState.stopping) {
+      _updateComposerState(
+        recordingState: VoiceRecordingState.idle,
+        recordingDuration: Duration.zero,
+        amplitudeValues: const [],
+      );
       return;
     }
 
@@ -880,6 +915,26 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
         event: 'GROUP_CONV_FL_RECORD_START_ERROR',
         details: {'error': e.toString()},
       );
+      _updateComposerState(
+        recordingState: VoiceRecordingState.idle,
+        recordingDuration: Duration.zero,
+        amplitudeValues: const [],
+      );
+      return;
+    }
+
+    if (!mounted ||
+        _pendingRecorderAbort ||
+        _composerViewState.recordingState == VoiceRecordingState.stopping) {
+      await recorder.cancel();
+      if (mounted) {
+        _pendingRecorderAbort = false;
+        _updateComposerState(
+          recordingState: VoiceRecordingState.idle,
+          recordingDuration: Duration.zero,
+          amplitudeValues: const [],
+        );
+      }
       return;
     }
 
@@ -901,7 +956,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
 
     if (mounted) {
       _updateComposerState(
-        isRecording: true,
+        recordingState: VoiceRecordingState.recording,
         recordingDuration: Duration.zero,
         amplitudeValues: _amplitudeBuffer.values,
       );
@@ -910,7 +965,17 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
 
   Future<void> _onRecordStop() async {
     final recorder = widget.audioRecorderService;
-    if (recorder == null || !_isRecording) return;
+    if (recorder == null || !_composerViewState.recordingState.isActive) {
+      return;
+    }
+
+    if (_composerViewState.recordingState == VoiceRecordingState.arming) {
+      _pendingRecorderAbort = true;
+      _updateComposerState(recordingState: VoiceRecordingState.stopping);
+      return;
+    }
+
+    _updateComposerState(recordingState: VoiceRecordingState.stopping);
     final quotedMessageId = _activeQuoteMessageId;
 
     final durationSub = _durationSub;
@@ -931,8 +996,9 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
     final recording = await recorder.stop();
 
     if (mounted) {
+      _pendingRecorderAbort = false;
       _updateComposerState(
-        isRecording: false,
+        recordingState: VoiceRecordingState.idle,
         recordingDuration: Duration.zero,
         amplitudeValues: const [],
       );
@@ -1125,8 +1191,17 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
 
   Future<void> _onRecordCancel() async {
     final recorder = widget.audioRecorderService;
-    if (recorder == null || !_isRecording) return;
+    if (recorder == null || !_composerViewState.recordingState.isActive) {
+      return;
+    }
 
+    if (_composerViewState.recordingState == VoiceRecordingState.arming) {
+      _pendingRecorderAbort = true;
+      _updateComposerState(recordingState: VoiceRecordingState.stopping);
+      return;
+    }
+
+    _updateComposerState(recordingState: VoiceRecordingState.stopping);
     await _durationSub?.cancel();
     _durationSub = null;
     await _amplitudeSub?.cancel();
@@ -1137,8 +1212,9 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
     await recorder.cancel();
 
     if (mounted) {
+      _pendingRecorderAbort = false;
       _updateComposerState(
-        isRecording: false,
+        recordingState: VoiceRecordingState.idle,
         recordingDuration: Duration.zero,
         amplitudeValues: const [],
       );
@@ -1396,6 +1472,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
       onRecordCancel: widget.audioRecorderService != null
           ? _onRecordCancel
           : null,
+      recordingState: _composerViewState.recordingState,
       onMediaTap: _onMediaTap,
       reactions: _reactions,
       onReactionSelected: widget.reactionRepo != null

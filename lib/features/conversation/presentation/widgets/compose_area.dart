@@ -6,6 +6,12 @@ import 'package:flutter_app/features/feed/presentation/widgets/quote_preview_bar
 import 'package:flutter_app/features/conversation/presentation/widgets/recording_overlay.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/voice_record_button.dart';
 
+enum VoiceRecordingState { idle, arming, recording, stopping }
+
+extension VoiceRecordingStateX on VoiceRecordingState {
+  bool get isActive => this != VoiceRecordingState.idle;
+}
+
 /// Compose area at the bottom of the conversation screen.
 ///
 /// Auto-growing text field with glassmorphic styling,
@@ -17,10 +23,11 @@ class ComposeArea extends StatefulWidget {
   final bool hasAttachments;
   final bool isProcessing;
   final bool isSending;
+  final bool isRecording;
+  final VoiceRecordingState recordingState;
   final VoidCallback? onRecordStart;
   final VoidCallback? onRecordStop;
   final VoidCallback? onRecordCancel;
-  final bool isRecording;
   final Duration recordingDuration;
   final List<double> amplitudeValues;
   final String? initialText;
@@ -36,10 +43,11 @@ class ComposeArea extends StatefulWidget {
     this.hasAttachments = false,
     this.isProcessing = false,
     this.isSending = false,
+    this.isRecording = false,
+    this.recordingState = VoiceRecordingState.idle,
     this.onRecordStart,
     this.onRecordStop,
     this.onRecordCancel,
-    this.isRecording = false,
     this.recordingDuration = Duration.zero,
     this.amplitudeValues = const [],
     this.initialText,
@@ -153,10 +161,15 @@ class _ComposeAreaState extends State<ComposeArea>
     super.dispose();
   }
 
-  bool get _shouldShowSendButton => _hasText || widget.hasAttachments;
+  bool get _shouldShowSendButton =>
+      (_hasText || widget.hasAttachments) && !_isRecording;
 
   bool get _canRecordVoice =>
       widget.onRecordStart != null && widget.onRecordStop != null;
+
+  bool get _isRecording => widget.recordingState != VoiceRecordingState.idle
+      ? widget.recordingState.isActive
+      : widget.isRecording;
 
   bool get _shouldShowMicButton => !_shouldShowSendButton && _canRecordVoice;
 
@@ -197,7 +210,7 @@ class _ComposeAreaState extends State<ComposeArea>
                   Padding(
                     padding: const EdgeInsets.only(bottom: 3),
                     child: GestureDetector(
-                      onTap: widget.isProcessing || widget.isRecording
+                      onTap: widget.isProcessing || _isRecording
                           ? null
                           : widget.onAttach,
                       behavior: HitTestBehavior.opaque,
@@ -239,7 +252,7 @@ class _ComposeAreaState extends State<ComposeArea>
                   const SizedBox(width: 8),
                   // Text input or recording overlay
                   Expanded(
-                    child: widget.isRecording
+                    child: _isRecording
                         ? RecordingOverlay(
                             elapsed: widget.recordingDuration,
                             onCancel: widget.onRecordCancel ?? () {},
@@ -284,14 +297,16 @@ class _ComposeAreaState extends State<ComposeArea>
                               focusNode: _focusNode,
                               maxLines: null,
                               maxLength: maxMessageLength,
-                              enabled: !widget.isRecording,
+                              enabled: !_isRecording,
                               style: const TextStyle(
                                 fontSize: 15,
                                 color: Color.fromRGBO(255, 255, 255, 0.95),
                                 height: 1.5,
                               ),
                               decoration: InputDecoration(
-                                hintText: AppLocalizations.of(context)!.conversation_hint,
+                                hintText: AppLocalizations.of(
+                                  context,
+                                )!.conversation_hint,
                                 hintStyle: TextStyle(
                                   fontSize: 15,
                                   color: Color.fromRGBO(
@@ -320,7 +335,7 @@ class _ComposeAreaState extends State<ComposeArea>
                             onTapDown: widget.onRecordStart!,
                             onTapUp: widget.onRecordStop!,
                             onTapCancel: widget.onRecordCancel ?? () {},
-                            isRecording: widget.isRecording,
+                            isRecording: _isRecording,
                           )
                         : AnimatedBuilder(
                             animation: _sendButtonController,

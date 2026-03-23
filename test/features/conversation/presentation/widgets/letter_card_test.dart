@@ -104,9 +104,7 @@ void main() {
         expect(find.byIcon(Icons.done_all_rounded), findsOneWidget);
       });
 
-      testWidgets('shows two ticks when status is queued', (
-        tester,
-      ) async {
+      testWidgets('shows two ticks when status is queued', (tester) async {
         await tester.pumpWidget(
           buildTestWidget(isIncoming: false, status: 'queued'),
         );
@@ -142,48 +140,56 @@ void main() {
 
     group('transport icons', () {
       testWidgets('shows wifi icon when transport is wifi', (tester) async {
-        await tester.pumpWidget(
-          buildTestWidget(transport: 'wifi'),
-        );
+        await tester.pumpWidget(buildTestWidget(transport: 'wifi'));
+        expect(find.byIcon(Icons.wifi), findsOneWidget);
+      });
+
+      testWidgets('shows wifi icon when transport is local', (tester) async {
+        await tester.pumpWidget(buildTestWidget(transport: 'local'));
         expect(find.byIcon(Icons.wifi), findsOneWidget);
       });
 
       testWidgets('shows relay icon when transport is relay', (tester) async {
-        await tester.pumpWidget(
-          buildTestWidget(transport: 'relay'),
-        );
+        await tester.pumpWidget(buildTestWidget(transport: 'relay'));
         expect(find.byIcon(Icons.cell_tower), findsOneWidget);
       });
 
+      testWidgets('shows direct icon when transport is direct', (tester) async {
+        await tester.pumpWidget(buildTestWidget(transport: 'direct'));
+        expect(find.byIcon(Icons.device_hub), findsOneWidget);
+      });
+
+      testWidgets('shows direct icon when transport is reuse', (tester) async {
+        await tester.pumpWidget(buildTestWidget(transport: 'reuse'));
+        expect(find.byIcon(Icons.device_hub), findsOneWidget);
+      });
+
       testWidgets('shows inbox icon when transport is inbox', (tester) async {
-        await tester.pumpWidget(
-          buildTestWidget(transport: 'inbox'),
-        );
+        await tester.pumpWidget(buildTestWidget(transport: 'inbox'));
         expect(find.byIcon(Icons.inbox), findsOneWidget);
       });
 
-      testWidgets('shows no transport icon when transport is null',
-          (tester) async {
-        await tester.pumpWidget(
-          buildTestWidget(transport: null),
-        );
+      testWidgets('shows no transport icon when transport is null', (
+        tester,
+      ) async {
+        await tester.pumpWidget(buildTestWidget(transport: null));
         expect(find.byIcon(Icons.wifi), findsNothing);
         expect(find.byIcon(Icons.cell_tower), findsNothing);
         expect(find.byIcon(Icons.inbox), findsNothing);
       });
 
-      testWidgets('unrecognized transport shows help_outline icon',
-          (tester) async {
-        await tester.pumpWidget(
-          buildTestWidget(transport: 'carrier_pigeon'),
-        );
+      testWidgets('unrecognized transport shows help_outline icon', (
+        tester,
+      ) async {
+        await tester.pumpWidget(buildTestWidget(transport: 'carrier_pigeon'));
         expect(find.byIcon(Icons.help_outline), findsOneWidget);
       });
     });
 
     group('URL links', () {
-      testWidgets('URL in message body renders as tappable link',
-          (tester) async {
+      testWidgets('URL in message body renders as tappable link', (
+        tester,
+      ) async {
         await tester.pumpWidget(
           buildTestWidget(text: 'Check https://example.com out'),
         );
@@ -191,9 +197,7 @@ void main() {
       });
 
       testWidgets('URL has underline decoration', (tester) async {
-        await tester.pumpWidget(
-          buildTestWidget(text: 'https://example.com'),
-        );
+        await tester.pumpWidget(buildTestWidget(text: 'https://example.com'));
         final richText = tester.widget<RichText>(
           find.descendant(
             of: find.byType(LinkableText),
@@ -207,9 +211,7 @@ void main() {
       });
 
       testWidgets('plain text without URLs still renders', (tester) async {
-        await tester.pumpWidget(
-          buildTestWidget(text: 'Just a plain message'),
-        );
+        await tester.pumpWidget(buildTestWidget(text: 'Just a plain message'));
         expect(find.byType(LinkableText), findsOneWidget);
         expect(find.textContaining('Just a plain message'), findsOneWidget);
       });
@@ -219,10 +221,7 @@ void main() {
       testWidgets('fires onLongPress on long-press', (tester) async {
         var pressed = false;
         await tester.pumpWidget(
-          buildTestWidget(
-            text: 'Hello',
-            onLongPress: () => pressed = true,
-          ),
+          buildTestWidget(text: 'Hello', onLongPress: () => pressed = true),
         );
         await tester.longPress(find.text('Hello'));
         expect(pressed, isTrue);
@@ -264,8 +263,7 @@ void main() {
         ),
       ];
 
-      testWidgets('reactions and timestamp share the same Row',
-          (tester) async {
+      testWidgets('reactions and timestamp share the same Row', (tester) async {
         await tester.pumpWidget(
           buildTestWidget(
             text: 'Hello',
@@ -297,12 +295,16 @@ void main() {
 
         expect(emojiRow, isNotNull, reason: 'Emoji should have a Row ancestor');
         expect(timeRow, isNotNull, reason: 'Time should have a Row ancestor');
-        expect(emojiRow, same(timeRow),
-            reason: 'Emoji and time should share the same Row');
+        expect(
+          emojiRow,
+          same(timeRow),
+          reason: 'Emoji and time should share the same Row',
+        );
       });
 
-      testWidgets('no reactions still right-aligns timestamp in footer Row',
-          (tester) async {
+      testWidgets('no reactions still right-aligns timestamp in footer Row', (
+        tester,
+      ) async {
         await tester.pumpWidget(buildTestWidget(text: 'Hello'));
 
         final timeElement = find.text('3:30 PM').evaluate().first;
@@ -317,8 +319,9 @@ void main() {
         expect(timeRow, isNotNull, reason: 'Timestamp should be inside a Row');
       });
 
-      testWidgets('no standalone ReactionDisplay when reactions provided',
-          (tester) async {
+      testWidgets('no standalone ReactionDisplay when reactions provided', (
+        tester,
+      ) async {
         await tester.pumpWidget(
           buildTestWidget(
             text: 'Hello',
@@ -330,8 +333,9 @@ void main() {
         expect(find.byType(ReactionDisplay), findsNothing);
       });
 
-      testWidgets('multiple reaction emojis render inline with counts',
-          (tester) async {
+      testWidgets('multiple reaction emojis render inline with counts', (
+        tester,
+      ) async {
         const reactions = [
           MessageReaction(
             id: 'r1',
@@ -393,71 +397,75 @@ void main() {
           ),
         );
 
-        final containers =
-            tester.widgetList<Container>(find.byType(Container));
+        final containers = tester.widgetList<Container>(find.byType(Container));
         final tealBorderChip = containers.where((c) {
           final decoration = c.decoration;
           if (decoration is BoxDecoration && decoration.border is Border) {
             final border = decoration.border as Border;
-            return border.top.color ==
-                const Color.fromRGBO(78, 205, 196, 0.30);
+            return border.top.color == const Color.fromRGBO(78, 205, 196, 0.30);
           }
           return false;
         });
-        expect(tealBorderChip.isNotEmpty, isTrue,
-            reason: 'Own reaction chip should have teal border');
+        expect(
+          tealBorderChip.isNotEmpty,
+          isTrue,
+          reason: 'Own reaction chip should have teal border',
+        );
         expect(find.byType(ReactionDisplay), findsNothing);
       });
 
       testWidgets(
-          'sent message with reactions and delivery status renders inline',
-          (tester) async {
-        await tester.pumpWidget(
-          buildTestWidget(
-            text: 'Sent msg',
-            time: '4:00 PM',
-            isIncoming: false,
-            status: 'delivered',
-            ownPeerId: 'my-peer',
-            reactions: kReactions,
-          ),
-        );
+        'sent message with reactions and delivery status renders inline',
+        (tester) async {
+          await tester.pumpWidget(
+            buildTestWidget(
+              text: 'Sent msg',
+              time: '4:00 PM',
+              isIncoming: false,
+              status: 'delivered',
+              ownPeerId: 'my-peer',
+              reactions: kReactions,
+            ),
+          );
 
-        expect(find.text('👍'), findsOneWidget);
-        expect(find.text('4:00 PM'), findsOneWidget);
-        expect(find.byIcon(Icons.done_all_rounded), findsOneWidget);
+          expect(find.text('👍'), findsOneWidget);
+          expect(find.text('4:00 PM'), findsOneWidget);
+          expect(find.byIcon(Icons.done_all_rounded), findsOneWidget);
 
-        // Verify emoji and time share the same Row
-        final emojiElement = find.text('👍').evaluate().first;
-        final timeElement = find.text('4:00 PM').evaluate().first;
+          // Verify emoji and time share the same Row
+          final emojiElement = find.text('👍').evaluate().first;
+          final timeElement = find.text('4:00 PM').evaluate().first;
 
-        Row? emojiRow;
-        emojiElement.visitAncestorElements((element) {
-          if (element.widget is Row) {
-            emojiRow = element.widget as Row;
-            return false;
-          }
-          return true;
-        });
+          Row? emojiRow;
+          emojiElement.visitAncestorElements((element) {
+            if (element.widget is Row) {
+              emojiRow = element.widget as Row;
+              return false;
+            }
+            return true;
+          });
 
-        Row? timeRow;
-        timeElement.visitAncestorElements((element) {
-          if (element.widget is Row) {
-            timeRow = element.widget as Row;
-            return false;
-          }
-          return true;
-        });
+          Row? timeRow;
+          timeElement.visitAncestorElements((element) {
+            if (element.widget is Row) {
+              timeRow = element.widget as Row;
+              return false;
+            }
+            return true;
+          });
 
-        expect(emojiRow, same(timeRow),
-            reason: 'Emoji, time, and status should share the same Row');
-      });
+          expect(
+            emojiRow,
+            same(timeRow),
+            reason: 'Emoji, time, and status should share the same Row',
+          );
+        },
+      );
 
-      testWidgets('timestamp appears in footer row, not in header',
-          (tester) async {
-        await tester.pumpWidget(
-          buildTestWidget(text: 'Hello'),
-        );
+      testWidgets('timestamp appears in footer row, not in header', (
+        tester,
+      ) async {
+        await tester.pumpWidget(buildTestWidget(text: 'Hello'));
 
         final timeElement = find.text('3:30 PM').evaluate().first;
 
@@ -483,18 +491,19 @@ void main() {
         );
         // Check there's no 32x32 avatar in the same row
         bool hasAvatar = false;
-        timeRowElement!.visitChildElements(
-          (child) {
-            child.visitChildElements((grandchild) {
-              if (grandchild.widget is SizedBox) {
-                final sb = grandchild.widget as SizedBox;
-                if (sb.width == 32 && sb.height == 32) hasAvatar = true;
-              }
-            });
-          },
+        timeRowElement!.visitChildElements((child) {
+          child.visitChildElements((grandchild) {
+            if (grandchild.widget is SizedBox) {
+              final sb = grandchild.widget as SizedBox;
+              if (sb.width == 32 && sb.height == 32) hasAvatar = true;
+            }
+          });
+        });
+        expect(
+          hasAvatar,
+          isFalse,
+          reason: 'Timestamp Row should not contain the avatar (header)',
         );
-        expect(hasAvatar, isFalse,
-            reason: 'Timestamp Row should not contain the avatar (header)');
       });
     });
   });

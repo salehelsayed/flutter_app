@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
+import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
@@ -54,6 +55,13 @@ class _InboxStoreFailBridge extends FakeBridge {
 
     return super.send(message);
   }
+}
+
+Map<String, dynamic> _lastGroupInboxStorePayload(FakeBridge bridge) {
+  final inboxMsg = bridge.sentMessages.lastWhere(
+    (m) => (jsonDecode(m) as Map)['cmd'] == 'group:inboxStore',
+  );
+  return (jsonDecode(inboxMsg) as Map)['payload'] as Map<String, dynamic>;
 }
 
 void main() {
@@ -224,6 +232,155 @@ void main() {
     expect(bridge.commandLog, contains('group:publish'));
     expect(bridge.commandLog, contains('group:inboxStore'));
   });
+
+  test(
+    'group send loads members and excludes sender from push recipients',
+    () async {
+      final joinedAt = DateTime.utc(2026, 1, 1);
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-1',
+          username: 'Alice',
+          role: MemberRole.admin,
+          joinedAt: joinedAt,
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-2',
+          username: 'Bob',
+          role: MemberRole.writer,
+          joinedAt: joinedAt.add(const Duration(seconds: 1)),
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-3',
+          username: 'Cara',
+          role: MemberRole.reader,
+          joinedAt: joinedAt.add(const Duration(seconds: 2)),
+        ),
+      );
+
+      await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        text: 'Hello group!',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        senderUsername: 'Alice',
+      );
+
+      final inboxPayload = _lastGroupInboxStorePayload(bridge);
+      expect(
+        inboxPayload['recipientPeerIds'],
+        unorderedEquals(['peer-2', 'peer-3']),
+      );
+      expect(inboxPayload['pushTitle'], equals('Test Group'));
+      expect(inboxPayload['pushBody'], equals('Alice: Hello group!'));
+    },
+  );
+
+  test('text group message builds preview body like Sender: hello', () async {
+    await groupRepo.saveMember(
+      GroupMember(
+        groupId: 'group-1',
+        peerId: 'peer-2',
+        username: 'Bob',
+        role: MemberRole.writer,
+        joinedAt: DateTime.utc(2026, 1, 2),
+      ),
+    );
+
+    await sendGroupMessage(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      groupId: 'group-1',
+      text: 'hello',
+      senderPeerId: 'peer-1',
+      senderPublicKey: 'pk-1',
+      senderPrivateKey: 'sk-1',
+      senderUsername: 'Sender',
+    );
+
+    final inboxPayload = _lastGroupInboxStorePayload(bridge);
+    expect(inboxPayload['pushBody'], equals('Sender: hello'));
+  });
+
+  test(
+    'media-only group message builds a non-empty fallback preview body',
+    () async {
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-2',
+          username: 'Bob',
+          role: MemberRole.writer,
+          joinedAt: DateTime.utc(2026, 1, 2),
+        ),
+      );
+
+      final voiceAttachment = MediaAttachment(
+        id: 'att-voice',
+        messageId: '',
+        mime: 'audio/mp4',
+        size: 48000,
+        mediaType: 'audio',
+        downloadStatus: 'done',
+        createdAt: DateTime.now().toUtc().toIso8601String(),
+        localPath: '/tmp/voice.m4a',
+        durationMs: 3000,
+        waveform: [0.1, 0.5, 0.8, 0.3],
+      );
+
+      await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        text: '',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        senderUsername: 'Alice',
+        mediaAttachments: [voiceAttachment],
+      );
+
+      final inboxPayload = _lastGroupInboxStorePayload(bridge);
+      expect((inboxPayload['pushBody'] as String), isNotEmpty);
+      expect(inboxPayload['pushBody'], contains('Alice'));
+    },
+  );
+
+  test(
+    'empty recipient list does not crash and still stores group inbox',
+    () async {
+      final (result, _) = await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        text: 'Only me here',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        senderUsername: 'Alice',
+      );
+
+      expect(result, SendGroupMessageResult.success);
+      expect(bridge.commandLog, contains('group:inboxStore'));
+
+      final inboxPayload = _lastGroupInboxStorePayload(bridge);
+      expect(inboxPayload.containsKey('recipientPeerIds'), isFalse);
+    },
+  );
 
   test('send succeeds even if inbox store throws', () async {
     final failBridge = _InboxStoreFailBridge();

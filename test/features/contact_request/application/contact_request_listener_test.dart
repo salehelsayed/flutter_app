@@ -69,8 +69,7 @@ class _FakeContactRequestRepository implements ContactRequestRepository {
   @override
   Future<List<ContactRequestModel>> getPendingRequests() async => [];
   @override
-  Future<void> updateStatus(
-      String peerId, ContactRequestStatus status) async {}
+  Future<void> updateStatus(String peerId, ContactRequestStatus status) async {}
 }
 
 class _FakeContactRepository implements ContactRepository {
@@ -142,10 +141,7 @@ ChatMessage _makeContactRequestMessage({
 
   final envelope = jsonEncode({
     'type': 'contact_request',
-    'payload': {
-      ...payload,
-      'sig': sig,
-    },
+    'payload': {...payload, 'sig': sig},
   });
 
   return ChatMessage(
@@ -213,20 +209,22 @@ void main() {
       expect(requests.length, equals(1));
     });
 
-    test('start is idempotent (calling twice does not duplicate subscriptions)',
-        () async {
-      listener.start();
-      listener.start(); // second call should be no-op
+    test(
+      'start is idempotent (calling twice does not duplicate subscriptions)',
+      () async {
+        listener.start();
+        listener.start(); // second call should be no-op
 
-      final requests = <ContactRequestModel>[];
-      listener.requestStream.listen(requests.add);
+        final requests = <ContactRequestModel>[];
+        listener.requestStream.listen(requests.add);
 
-      streamController.add(_makeContactRequestMessage());
-      await Future.delayed(const Duration(milliseconds: 100));
+        streamController.add(_makeContactRequestMessage());
+        await Future.delayed(const Duration(milliseconds: 100));
 
-      // Should only get 1, not 2
-      expect(requests.length, equals(1));
-    });
+        // Should only get 1, not 2
+        expect(requests.length, equals(1));
+      },
+    );
 
     test('stop cancels subscription', () async {
       listener.start();
@@ -253,10 +251,7 @@ void main() {
 
       // The request stream should be closed
       bool streamDone = false;
-      listener.requestStream.listen(
-        (_) {},
-        onDone: () => streamDone = true,
-      );
+      listener.requestStream.listen((_) {}, onDone: () => streamDone = true);
       await Future.delayed(const Duration(milliseconds: 50));
       expect(streamDone, isTrue);
     });
@@ -266,8 +261,45 @@ void main() {
   // message processing
   // ---------------------------------------------------------------------------
   group('message processing', () {
-    test('emits ContactRequestModel on requestStream for valid contact request',
-        () async {
+    test(
+      'emits ContactRequestModel on requestStream for valid contact request',
+      () async {
+        listener.start();
+
+        final requests = <ContactRequestModel>[];
+        listener.requestStream.listen(requests.add);
+
+        streamController.add(_makeContactRequestMessage());
+        await Future.delayed(const Duration(milliseconds: 100));
+
+        expect(requests.length, equals(1));
+        expect(requests.first.peerId, equals(_testPeerId));
+        expect(requests.first.username, equals('TestUser'));
+      },
+    );
+
+    test('prefetches avatar for valid contact request', () async {
+      String? capturedPeerId;
+      String? capturedAvatarVersion;
+
+      listener = ContactRequestListener(
+        contactRequestStream: streamController.stream,
+        requestRepo: requestRepo,
+        contactRepo: contactRepo,
+        bridge: bridge,
+        getOwnPeerId: () => _testOwnPeerId,
+        downloadProfilePictureFn:
+            ({
+              required bridge,
+              required contactRepo,
+              required ownerPeerId,
+              required avatarVersion,
+            }) async {
+              capturedPeerId = ownerPeerId;
+              capturedAvatarVersion = avatarVersion;
+              return null;
+            },
+      );
       listener.start();
 
       final requests = <ContactRequestModel>[];
@@ -277,8 +309,41 @@ void main() {
       await Future.delayed(const Duration(milliseconds: 100));
 
       expect(requests.length, equals(1));
+      expect(capturedPeerId, equals(_testPeerId));
+      expect(capturedAvatarVersion, equals('initial'));
+    });
+
+    test('avatar prefetch failure does not block request emission', () async {
+      var prefetchCalls = 0;
+
+      listener = ContactRequestListener(
+        contactRequestStream: streamController.stream,
+        requestRepo: requestRepo,
+        contactRepo: contactRepo,
+        bridge: bridge,
+        getOwnPeerId: () => _testOwnPeerId,
+        downloadProfilePictureFn:
+            ({
+              required bridge,
+              required contactRepo,
+              required ownerPeerId,
+              required avatarVersion,
+            }) async {
+              prefetchCalls++;
+              throw Exception('profile download failed');
+            },
+      );
+      listener.start();
+
+      final requests = <ContactRequestModel>[];
+      listener.requestStream.listen(requests.add);
+
+      streamController.add(_makeContactRequestMessage());
+      await Future.delayed(const Duration(milliseconds: 100));
+
+      expect(prefetchCalls, equals(1));
+      expect(requests.length, equals(1));
       expect(requests.first.peerId, equals(_testPeerId));
-      expect(requests.first.username, equals('TestUser'));
     });
 
     test('does not emit for regular chat messages (non-JSON)', () async {
@@ -311,15 +376,35 @@ void main() {
     });
 
     test('does not emit for already-existing contacts', () async {
-      contactRepo.addTestContact(ContactModel(
-        peerId: _testPeerId,
-        publicKey: _testPublicKey,
-        rendezvous: '/addr',
-        username: 'TestUser',
-        signature: 'sig',
-        scannedAt: '2024-01-01T00:00:00Z',
-        mlKemPublicKey: 'existingKey',
-      ));
+      var prefetchCalls = 0;
+      contactRepo.addTestContact(
+        ContactModel(
+          peerId: _testPeerId,
+          publicKey: _testPublicKey,
+          rendezvous: '/addr',
+          username: 'TestUser',
+          signature: 'sig',
+          scannedAt: '2024-01-01T00:00:00Z',
+          mlKemPublicKey: 'existingKey',
+        ),
+      );
+      listener = ContactRequestListener(
+        contactRequestStream: streamController.stream,
+        requestRepo: requestRepo,
+        contactRepo: contactRepo,
+        bridge: bridge,
+        getOwnPeerId: () => _testOwnPeerId,
+        downloadProfilePictureFn:
+            ({
+              required bridge,
+              required contactRepo,
+              required ownerPeerId,
+              required avatarVersion,
+            }) async {
+              prefetchCalls++;
+              return null;
+            },
+      );
       listener.start();
 
       final requests = <ContactRequestModel>[];
@@ -329,6 +414,7 @@ void main() {
       await Future.delayed(const Duration(milliseconds: 100));
 
       expect(requests, isEmpty);
+      expect(prefetchCalls, equals(0));
     });
 
     test('does not emit for duplicate pending requests', () async {
@@ -359,108 +445,120 @@ void main() {
       listener.requestStream.listen(requests.add);
 
       // Build a message where the claimed peerId = own peerId
-      streamController.add(_makeContactRequestMessage(
-        peerId: _testOwnPeerId,
-        from: _testOwnPeerId,
-      ));
+      streamController.add(
+        _makeContactRequestMessage(
+          peerId: _testOwnPeerId,
+          from: _testOwnPeerId,
+        ),
+      );
       await Future.delayed(const Duration(milliseconds: 100));
 
       expect(requests, isEmpty);
     });
 
-    test('swallows exception from handleIncomingMessage without crashing',
-        () async {
-      // Make bridge throw to cause exception inside handler
-      bridge.shouldThrow = true;
-      listener.start();
+    test(
+      'swallows exception from handleIncomingMessage without crashing',
+      () async {
+        // Make bridge throw to cause exception inside handler
+        bridge.shouldThrow = true;
+        listener.start();
 
-      final requests = <ContactRequestModel>[];
-      listener.requestStream.listen(requests.add);
+        final requests = <ContactRequestModel>[];
+        listener.requestStream.listen(requests.add);
 
-      // Should not crash
-      streamController.add(_makeContactRequestMessage());
-      await Future.delayed(const Duration(milliseconds: 100));
+        // Should not crash
+        streamController.add(_makeContactRequestMessage());
+        await Future.delayed(const Duration(milliseconds: 100));
 
-      expect(requests, isEmpty);
-    });
+        expect(requests, isEmpty);
+      },
+    );
   });
 
   // ---------------------------------------------------------------------------
   // contactKeyUpdatedStream
   // ---------------------------------------------------------------------------
   group('contactKeyUpdatedStream', () {
-    test('emits updated contact when existing contact has null ML-KEM key',
-        () async {
-      // Seed a contact WITHOUT ML-KEM key
-      contactRepo.addTestContact(ContactModel(
-        peerId: _testPeerId,
-        publicKey: _testPublicKey,
-        rendezvous: '/addr',
-        username: 'TestUser',
-        signature: 'sig',
-        scannedAt: '2024-01-01T00:00:00Z',
-        mlKemPublicKey: null,
-      ));
-      listener.start();
+    test(
+      'emits updated contact when existing contact has null ML-KEM key',
+      () async {
+        // Seed a contact WITHOUT ML-KEM key
+        contactRepo.addTestContact(
+          ContactModel(
+            peerId: _testPeerId,
+            publicKey: _testPublicKey,
+            rendezvous: '/addr',
+            username: 'TestUser',
+            signature: 'sig',
+            scannedAt: '2024-01-01T00:00:00Z',
+            mlKemPublicKey: null,
+          ),
+        );
+        listener.start();
 
-      final updates = <ContactModel>[];
-      listener.contactKeyUpdatedStream.listen(updates.add);
+        final updates = <ContactModel>[];
+        listener.contactKeyUpdatedStream.listen(updates.add);
 
-      final requests = <ContactRequestModel>[];
-      listener.requestStream.listen(requests.add);
+        final requests = <ContactRequestModel>[];
+        listener.requestStream.listen(requests.add);
 
-      // Send a contact_request with mlkem key from the existing contact
-      streamController.add(
-        _makeContactRequestMessage(mlkem: 'newMlKemPublicKey'),
-      );
-      await Future.delayed(const Duration(milliseconds: 100));
+        // Send a contact_request with mlkem key from the existing contact
+        streamController.add(
+          _makeContactRequestMessage(mlkem: 'newMlKemPublicKey'),
+        );
+        await Future.delayed(const Duration(milliseconds: 100));
 
-      // contactKeyUpdatedStream should emit
-      expect(updates.length, equals(1));
-      expect(updates.first.peerId, equals(_testPeerId));
-      expect(updates.first.mlKemPublicKey, equals('newMlKemPublicKey'));
+        // contactKeyUpdatedStream should emit
+        expect(updates.length, equals(1));
+        expect(updates.first.peerId, equals(_testPeerId));
+        expect(updates.first.mlKemPublicKey, equals('newMlKemPublicKey'));
 
-      // requestStream should NOT emit (this is not a new request)
-      expect(requests, isEmpty);
-    });
+        // requestStream should NOT emit (this is not a new request)
+        expect(requests, isEmpty);
+      },
+    );
 
-    test('does not emit when existing contact already has ML-KEM key',
-        () async {
-      // Seed a contact WITH an existing ML-KEM key
-      contactRepo.addTestContact(ContactModel(
-        peerId: _testPeerId,
-        publicKey: _testPublicKey,
-        rendezvous: '/addr',
-        username: 'TestUser',
-        signature: 'sig',
-        scannedAt: '2024-01-01T00:00:00Z',
-        mlKemPublicKey: 'existingKey',
-      ));
-      listener.start();
+    test(
+      'does not emit when existing contact already has ML-KEM key',
+      () async {
+        // Seed a contact WITH an existing ML-KEM key
+        contactRepo.addTestContact(
+          ContactModel(
+            peerId: _testPeerId,
+            publicKey: _testPublicKey,
+            rendezvous: '/addr',
+            username: 'TestUser',
+            signature: 'sig',
+            scannedAt: '2024-01-01T00:00:00Z',
+            mlKemPublicKey: 'existingKey',
+          ),
+        );
+        listener.start();
 
-      final updates = <ContactModel>[];
-      listener.contactKeyUpdatedStream.listen(updates.add);
+        final updates = <ContactModel>[];
+        listener.contactKeyUpdatedStream.listen(updates.add);
 
-      streamController.add(
-        _makeContactRequestMessage(mlkem: 'differentKey'),
-      );
-      await Future.delayed(const Duration(milliseconds: 100));
+        streamController.add(_makeContactRequestMessage(mlkem: 'differentKey'));
+        await Future.delayed(const Duration(milliseconds: 100));
 
-      // Should NOT emit — existing key is never overwritten
-      expect(updates, isEmpty);
-    });
+        // Should NOT emit — existing key is never overwritten
+        expect(updates, isEmpty);
+      },
+    );
 
     test('does not emit when payload has no mlkem field', () async {
       // Seed a contact WITHOUT ML-KEM key
-      contactRepo.addTestContact(ContactModel(
-        peerId: _testPeerId,
-        publicKey: _testPublicKey,
-        rendezvous: '/addr',
-        username: 'TestUser',
-        signature: 'sig',
-        scannedAt: '2024-01-01T00:00:00Z',
-        mlKemPublicKey: null,
-      ));
+      contactRepo.addTestContact(
+        ContactModel(
+          peerId: _testPeerId,
+          publicKey: _testPublicKey,
+          rendezvous: '/addr',
+          username: 'TestUser',
+          signature: 'sig',
+          scannedAt: '2024-01-01T00:00:00Z',
+          mlKemPublicKey: null,
+        ),
+      );
       listener.start();
 
       final updates = <ContactModel>[];
@@ -474,23 +572,23 @@ void main() {
     });
 
     test('emitted contact preserves all fields', () async {
-      contactRepo.addTestContact(ContactModel(
-        peerId: _testPeerId,
-        publicKey: _testPublicKey,
-        rendezvous: '/addr',
-        username: 'TestUser',
-        signature: 'sig',
-        scannedAt: '2024-01-01T00:00:00Z',
-        mlKemPublicKey: null,
-      ));
+      contactRepo.addTestContact(
+        ContactModel(
+          peerId: _testPeerId,
+          publicKey: _testPublicKey,
+          rendezvous: '/addr',
+          username: 'TestUser',
+          signature: 'sig',
+          scannedAt: '2024-01-01T00:00:00Z',
+          mlKemPublicKey: null,
+        ),
+      );
       listener.start();
 
       final updates = <ContactModel>[];
       listener.contactKeyUpdatedStream.listen(updates.add);
 
-      streamController.add(
-        _makeContactRequestMessage(mlkem: 'newKey'),
-      );
+      streamController.add(_makeContactRequestMessage(mlkem: 'newKey'));
       await Future.delayed(const Duration(milliseconds: 100));
 
       expect(updates.length, equals(1));
@@ -620,13 +718,15 @@ void main() {
           'nonce': 'nonce',
         },
       });
-      streamController.add(ChatMessage(
-        from: _testPeerId,
-        to: _testOwnPeerId,
-        content: envelope,
-        timestamp: DateTime.now().toUtc().toIso8601String(),
-        isIncoming: true,
-      ));
+      streamController.add(
+        ChatMessage(
+          from: _testPeerId,
+          to: _testOwnPeerId,
+          content: envelope,
+          timestamp: DateTime.now().toUtc().toIso8601String(),
+          isIncoming: true,
+        ),
+      );
       await Future.delayed(const Duration(milliseconds: 100));
 
       expect(requests, isEmpty);
@@ -646,57 +746,62 @@ void main() {
       expect(requests.length, equals(1));
     });
 
-    test('v2 contactKeyUpdated: peerId from decrypted payload, not message.from',
-        () async {
-      // Seed a contact WITHOUT ML-KEM key
-      contactRepo.addTestContact(ContactModel(
-        peerId: _testPeerId,
-        publicKey: _testPublicKey,
-        rendezvous: '/addr',
-        username: 'TestUser',
-        signature: 'sig',
-        scannedAt: '2024-01-01T00:00:00Z',
-        mlKemPublicKey: null,
-      ));
+    test(
+      'v2 contactKeyUpdated: peerId from decrypted payload, not message.from',
+      () async {
+        // Seed a contact WITHOUT ML-KEM key
+        contactRepo.addTestContact(
+          ContactModel(
+            peerId: _testPeerId,
+            publicKey: _testPublicKey,
+            rendezvous: '/addr',
+            username: 'TestUser',
+            signature: 'sig',
+            scannedAt: '2024-01-01T00:00:00Z',
+            mlKemPublicKey: null,
+          ),
+        );
 
-      final v2Listener = ContactRequestListener(
-        contactRequestStream: streamController.stream,
-        requestRepo: requestRepo,
-        contactRepo: contactRepo,
-        bridge: bridge,
-        getOwnPeerId: () => _testOwnPeerId,
-        getOwnPrivateKey: () async => 'ownPrivKeyBase64',
-      );
-      v2Listener.start();
+        final v2Listener = ContactRequestListener(
+          contactRequestStream: streamController.stream,
+          requestRepo: requestRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          getOwnPeerId: () => _testOwnPeerId,
+          getOwnPrivateKey: () async => 'ownPrivKeyBase64',
+        );
+        v2Listener.start();
 
-      final updates = <ContactModel>[];
-      v2Listener.contactKeyUpdatedStream.listen(updates.add);
+        final updates = <ContactModel>[];
+        v2Listener.contactKeyUpdatedStream.listen(updates.add);
 
-      // message.from is 'unknown' — peerId must come from decrypted payload
-      streamController.add(_makeV2Message(
-        from: 'unknown',
-        mlkem: 'newMlKemKey',
-      ));
-      await Future.delayed(const Duration(milliseconds: 200));
+        // message.from is 'unknown' — peerId must come from decrypted payload
+        streamController.add(
+          _makeV2Message(from: 'unknown', mlkem: 'newMlKemKey'),
+        );
+        await Future.delayed(const Duration(milliseconds: 200));
 
-      expect(updates.length, equals(1));
-      expect(updates.first.peerId, equals(_testPeerId));
-      expect(updates.first.mlKemPublicKey, equals('newMlKemKey'));
+        expect(updates.length, equals(1));
+        expect(updates.first.peerId, equals(_testPeerId));
+        expect(updates.first.mlKemPublicKey, equals('newMlKemKey'));
 
-      v2Listener.dispose();
-    });
+        v2Listener.dispose();
+      },
+    );
 
     test('v2 contactKeyUpdated: works with matching message.from', () async {
       // Seed a contact WITHOUT ML-KEM key
-      contactRepo.addTestContact(ContactModel(
-        peerId: _testPeerId,
-        publicKey: _testPublicKey,
-        rendezvous: '/addr',
-        username: 'TestUser',
-        signature: 'sig',
-        scannedAt: '2024-01-01T00:00:00Z',
-        mlKemPublicKey: null,
-      ));
+      contactRepo.addTestContact(
+        ContactModel(
+          peerId: _testPeerId,
+          publicKey: _testPublicKey,
+          rendezvous: '/addr',
+          username: 'TestUser',
+          signature: 'sig',
+          scannedAt: '2024-01-01T00:00:00Z',
+          mlKemPublicKey: null,
+        ),
+      );
 
       final v2Listener = ContactRequestListener(
         contactRequestStream: streamController.stream,
@@ -722,30 +827,32 @@ void main() {
       v2Listener.dispose();
     });
 
-    test('v2 new contact request: peerId from decrypted payload with from=unknown',
-        () async {
-      final v2Listener = ContactRequestListener(
-        contactRequestStream: streamController.stream,
-        requestRepo: requestRepo,
-        contactRepo: contactRepo,
-        bridge: bridge,
-        getOwnPeerId: () => _testOwnPeerId,
-        getOwnPrivateKey: () async => 'ownPrivKeyBase64',
-      );
-      v2Listener.start();
+    test(
+      'v2 new contact request: peerId from decrypted payload with from=unknown',
+      () async {
+        final v2Listener = ContactRequestListener(
+          contactRequestStream: streamController.stream,
+          requestRepo: requestRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          getOwnPeerId: () => _testOwnPeerId,
+          getOwnPrivateKey: () async => 'ownPrivKeyBase64',
+        );
+        v2Listener.start();
 
-      final requests = <ContactRequestModel>[];
-      v2Listener.requestStream.listen(requests.add);
+        final requests = <ContactRequestModel>[];
+        v2Listener.requestStream.listen(requests.add);
 
-      // message.from is 'unknown' — peerId extracted from decrypted payload
-      streamController.add(_makeV2Message(from: 'unknown'));
-      await Future.delayed(const Duration(milliseconds: 200));
+        // message.from is 'unknown' — peerId extracted from decrypted payload
+        streamController.add(_makeV2Message(from: 'unknown'));
+        await Future.delayed(const Duration(milliseconds: 200));
 
-      expect(requests.length, equals(1));
-      expect(requests.first.peerId, equals(_testPeerId));
+        expect(requests.length, equals(1));
+        expect(requests.first.peerId, equals(_testPeerId));
 
-      v2Listener.dispose();
-    });
+        v2Listener.dispose();
+      },
+    );
   });
 
   // ---------------------------------------------------------------------------

@@ -21,7 +21,9 @@ class ChatMessage {
     String timestamp;
     final ts = json['timestamp'];
     if (ts is int) {
-      timestamp = DateTime.fromMillisecondsSinceEpoch(ts).toUtc().toIso8601String();
+      timestamp = DateTime.fromMillisecondsSinceEpoch(
+        ts,
+      ).toUtc().toIso8601String();
     } else if (ts is String) {
       timestamp = ts;
     } else {
@@ -34,6 +36,7 @@ class ChatMessage {
       content: json['content'] as String,
       timestamp: timestamp,
       isIncoming: json['isIncoming'] as bool? ?? true,
+      transport: json['transport']?.toString(),
     );
   }
 

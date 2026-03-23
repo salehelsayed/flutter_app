@@ -15,6 +15,44 @@ import 'package:flutter_app/features/groups/domain/repositories/group_repository
 /// Result of sending a group message.
 enum SendGroupMessageResult { success, groupNotFound, unauthorized, error }
 
+String _buildGroupPushTitle(GroupModel group) => group.name;
+
+String _buildGroupPushBody({
+  required String senderUsername,
+  required String text,
+  List<MediaAttachment>? mediaAttachments,
+}) {
+  final trimmedText = text.trim();
+  if (trimmedText.isNotEmpty) {
+    return '$senderUsername: $trimmedText';
+  }
+
+  final primaryType = mediaAttachments != null && mediaAttachments.isNotEmpty
+      ? mediaAttachments.first.mediaType
+      : null;
+  final descriptor = switch (primaryType) {
+    'audio' => 'a voice message',
+    'image' => 'a photo',
+    'video' => 'a video',
+    'file' => 'an attachment',
+    _ => 'an attachment',
+  };
+  return '$senderUsername sent $descriptor';
+}
+
+Future<List<String>> _loadGroupPushRecipients({
+  required GroupRepository groupRepo,
+  required String groupId,
+  required String senderPeerId,
+}) async {
+  final members = await groupRepo.getMembers(groupId);
+  return members
+      .map((member) => member.peerId)
+      .where((peerId) => peerId.isNotEmpty && peerId != senderPeerId)
+      .toSet()
+      .toList();
+}
+
 /// Sends a message to a group.
 ///
 /// Verifies the group exists and the sender has write permission.
@@ -85,6 +123,17 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
   final resolvedMessageId = messageId ?? const Uuid().v4();
 
   final mediaJson = mediaAttachments?.map((a) => a.toJson()).toList();
+  final recipientPeerIds = await _loadGroupPushRecipients(
+    groupRepo: groupRepo,
+    groupId: groupId,
+    senderPeerId: senderPeerId,
+  );
+  final pushTitle = _buildGroupPushTitle(group);
+  final pushBody = _buildGroupPushBody(
+    senderUsername: senderUsername,
+    text: text,
+    mediaAttachments: mediaAttachments,
+  );
 
   // Start both operations concurrently
   final publishFuture = callGroupPublish(
@@ -110,6 +159,9 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     messageId: resolvedMessageId,
     quotedMessageId: quotedMessageId,
     media: mediaJson,
+    recipientPeerIds: recipientPeerIds,
+    pushTitle: pushTitle,
+    pushBody: pushBody,
   );
 
   // Await publish — determines success/failure
@@ -190,6 +242,9 @@ Future<void> _safeInboxStore({
   required String messageId,
   String? quotedMessageId,
   List<Map<String, dynamic>>? media,
+  List<String>? recipientPeerIds,
+  String? pushTitle,
+  String? pushBody,
 }) async {
   try {
     final inboxPayload = jsonEncode({
@@ -204,7 +259,14 @@ Future<void> _safeInboxStore({
         'quotedMessageId': quotedMessageId,
       if (media != null && media.isNotEmpty) 'media': media,
     });
-    await callGroupInboxStore(bridge, groupId, inboxPayload);
+    await callGroupInboxStore(
+      bridge,
+      groupId,
+      inboxPayload,
+      recipientPeerIds: recipientPeerIds,
+      pushTitle: pushTitle,
+      pushBody: pushBody,
+    );
   } catch (e) {
     emitFlowEvent(
       layer: 'FL',

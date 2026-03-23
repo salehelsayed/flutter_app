@@ -21,6 +21,8 @@ class RecordingOverlay extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final cancelLabel = MaterialLocalizations.of(context).cancelButtonLabel;
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: const BoxDecoration(
@@ -53,25 +55,47 @@ class RecordingOverlay extends StatelessWidget {
               child: AmplitudeBars(values: amplitudeValues),
             ),
           ),
-          GestureDetector(
+          const SizedBox(width: 12),
+          Semantics(
+            button: true,
+            label: cancelLabel,
             onTap: onCancel,
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: const [
-                Icon(
-                  Icons.chevron_left,
-                  size: 16,
-                  color: Color.fromRGBO(255, 255, 255, 0.4),
-                ),
-                SizedBox(width: 2),
-                Text(
-                  'Slide to cancel',
-                  style: TextStyle(
-                    color: Color.fromRGBO(255, 255, 255, 0.4),
-                    fontSize: 13,
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: onCancel,
+                borderRadius: BorderRadius.circular(18),
+                child: Container(
+                  height: 44,
+                  padding: const EdgeInsets.symmetric(horizontal: 14),
+                  decoration: BoxDecoration(
+                    color: const Color.fromRGBO(255, 255, 255, 0.08),
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(
+                      color: const Color.fromRGBO(255, 255, 255, 0.12),
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(
+                        Icons.close_rounded,
+                        size: 16,
+                        color: Color.fromRGBO(255, 255, 255, 0.75),
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        cancelLabel,
+                        style: const TextStyle(
+                          color: Color.fromRGBO(255, 255, 255, 0.75),
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-              ],
+              ),
             ),
           ),
         ],

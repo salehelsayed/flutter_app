@@ -14,6 +14,31 @@ void main() {
   });
 
   group('maybeShowNotification', () {
+    test(
+      'keeps group payload contract for local group notifications',
+      () async {
+        await maybeShowNotification(
+          notificationService: notificationService,
+          conversationTracker: tracker,
+          getAppLifecycleState: () => AppLifecycleState.paused,
+          contactPeerId: 'group:group-123',
+          senderUsername: 'Team Chat',
+          messageText: 'Alice: Hello group!',
+        );
+
+        expect(notificationService.shown, hasLength(1));
+        expect(
+          notificationService.shown.first.contactPeerId,
+          'group:group-123',
+        );
+        expect(notificationService.shown.first.senderUsername, 'Team Chat');
+        expect(
+          notificationService.shown.first.messageText,
+          'Alice: Hello group!',
+        );
+      },
+    );
+
     test('shows notification when app is backgrounded', () async {
       await maybeShowNotification(
         notificationService: notificationService,
@@ -29,54 +54,76 @@ void main() {
       expect(notificationService.shown.first.messageText, 'Hello!');
     });
 
-    test('shows notification when app is resumed but on different screen',
-        () async {
-      // Not viewing any conversation
-      await maybeShowNotification(
-        notificationService: notificationService,
-        conversationTracker: tracker,
-        getAppLifecycleState: () => AppLifecycleState.resumed,
-        contactPeerId: 'peer-123',
-        senderUsername: 'Alice',
-        messageText: 'Hello!',
-      );
+    test(
+      'shows notification when app is resumed but on different screen',
+      () async {
+        // Not viewing any conversation
+        await maybeShowNotification(
+          notificationService: notificationService,
+          conversationTracker: tracker,
+          getAppLifecycleState: () => AppLifecycleState.resumed,
+          contactPeerId: 'peer-123',
+          senderUsername: 'Alice',
+          messageText: 'Hello!',
+        );
 
-      expect(notificationService.shown, hasLength(1));
-    });
+        expect(notificationService.shown, hasLength(1));
+      },
+    );
 
     test(
-        'shows notification when app is resumed and viewing a different conversation',
-        () async {
-      tracker.setActive('peer-456'); // viewing someone else
+      'shows notification when app is resumed and viewing a different conversation',
+      () async {
+        tracker.setActive('peer-456'); // viewing someone else
 
-      await maybeShowNotification(
-        notificationService: notificationService,
-        conversationTracker: tracker,
-        getAppLifecycleState: () => AppLifecycleState.resumed,
-        contactPeerId: 'peer-123',
-        senderUsername: 'Alice',
-        messageText: 'Hello!',
-      );
+        await maybeShowNotification(
+          notificationService: notificationService,
+          conversationTracker: tracker,
+          getAppLifecycleState: () => AppLifecycleState.resumed,
+          contactPeerId: 'peer-123',
+          senderUsername: 'Alice',
+          messageText: 'Hello!',
+        );
 
-      expect(notificationService.shown, hasLength(1));
-    });
+        expect(notificationService.shown, hasLength(1));
+      },
+    );
 
     test(
-        'suppresses notification when app is resumed and viewing sender conversation',
-        () async {
-      tracker.setActive('peer-123'); // viewing sender's conversation
+      'suppresses notification when app is resumed and viewing active 1:1 conversation',
+      () async {
+        tracker.setActive('peer-123'); // viewing sender's conversation
 
-      await maybeShowNotification(
-        notificationService: notificationService,
-        conversationTracker: tracker,
-        getAppLifecycleState: () => AppLifecycleState.resumed,
-        contactPeerId: 'peer-123',
-        senderUsername: 'Alice',
-        messageText: 'Hello!',
-      );
+        await maybeShowNotification(
+          notificationService: notificationService,
+          conversationTracker: tracker,
+          getAppLifecycleState: () => AppLifecycleState.resumed,
+          contactPeerId: 'peer-123',
+          senderUsername: 'Alice',
+          messageText: 'Hello!',
+        );
 
-      expect(notificationService.shown, isEmpty);
-    });
+        expect(notificationService.shown, isEmpty);
+      },
+    );
+
+    test(
+      'suppresses notification when app is resumed and viewing active group conversation',
+      () async {
+        tracker.setActive('group:group-123');
+
+        await maybeShowNotification(
+          notificationService: notificationService,
+          conversationTracker: tracker,
+          getAppLifecycleState: () => AppLifecycleState.resumed,
+          contactPeerId: 'group:group-123',
+          senderUsername: 'Team Chat',
+          messageText: 'Alice: Hello group!',
+        );
+
+        expect(notificationService.shown, isEmpty);
+      },
+    );
 
     test('shows notification when app is inactive (not resumed)', () async {
       tracker.setActive('peer-123');

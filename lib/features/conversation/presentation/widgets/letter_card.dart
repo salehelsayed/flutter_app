@@ -355,9 +355,10 @@ class LetterCard extends StatelessWidget {
       case 'wifi':
       case 'local':
         return Icons.wifi;
-      case 'relay':
       case 'direct':
       case 'reuse':
+        return Icons.device_hub;
+      case 'relay':
         return Icons.cell_tower;
       case 'inbox':
         return Icons.inbox;

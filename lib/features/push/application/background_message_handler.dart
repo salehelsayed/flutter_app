@@ -48,12 +48,11 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     details: {
       'messageId': message.messageId,
       'dataKeys': message.data.keys.toList(),
-      'note': 'inbox drain deferred to next app resume',
+      'note': 'local notification shown if routable; inbox drain on next resume',
     },
   );
 
-  if (!Platform.isAndroid ||
-      !shouldShowBackgroundPushFallbackNotification(message)) {
+  if (!shouldShowBackgroundPushFallbackNotification(message)) {
     return;
   }
 

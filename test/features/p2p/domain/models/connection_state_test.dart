@@ -63,10 +63,16 @@ void main() {
       });
 
       test('defaults multiaddrs to empty list when missing', () {
+        final state = ConnectionState.fromJson({'peerId': 'peer-1'});
+        expect(state.multiaddrs, isEmpty);
+      });
+
+      test('falls back to single address field when multiaddrs missing', () {
         final state = ConnectionState.fromJson({
           'peerId': 'peer-1',
+          'address': '/ip4/192.168.1.15/tcp/4001',
         });
-        expect(state.multiaddrs, isEmpty);
+        expect(state.multiaddrs, ['/ip4/192.168.1.15/tcp/4001']);
       });
     });
 

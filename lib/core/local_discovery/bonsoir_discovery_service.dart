@@ -14,10 +14,10 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
 
   BonsoirBroadcast? _broadcast;
   BonsoirDiscovery? _discovery;
+  StreamSubscription<BonsoirDiscoveryEvent>? _discoverySub;
 
   final _peers = <String, LocalPeer>{};
-  final _peersController =
-      StreamController<Map<String, LocalPeer>>.broadcast();
+  final _peersController = StreamController<Map<String, LocalPeer>>.broadcast();
 
   String? _ownPeerId;
 
@@ -46,9 +46,9 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
     // Start discovery of other peers.
     _discovery = BonsoirDiscovery(type: _serviceType);
     await _discovery!.ready;
+    _discoverySub?.cancel();
+    _discoverySub = _discovery!.eventStream!.listen(_handleDiscoveryEvent);
     await _discovery!.start();
-
-    _discovery!.eventStream!.listen(_handleDiscoveryEvent);
 
     emitFlowEvent(
       layer: 'FL',
@@ -60,7 +60,11 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
   void _handleDiscoveryEvent(BonsoirDiscoveryEvent event) {
     switch (event.type) {
       case BonsoirDiscoveryEventType.discoveryServiceFound:
-        // Service found but not yet resolved — wait for resolve.
+        final discovery = _discovery;
+        final service = event.service;
+        if (discovery == null || service == null) return;
+        // Bonsoir requires explicit resolution after a service is found.
+        unawaited(service.resolve(discovery.serviceResolver));
         break;
       case BonsoirDiscoveryEventType.discoveryServiceResolved:
         final service = event.service as ResolvedBonsoirService;
@@ -108,17 +112,15 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
     await _broadcast?.stop();
     _broadcast = null;
 
+    await _discoverySub?.cancel();
+    _discoverySub = null;
     await _discovery?.stop();
     _discovery = null;
 
     _peers.clear();
     _peersController.add(Map.unmodifiable(_peers));
 
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'LOCAL_MDNS_ADVERTISE_STOP',
-      details: {},
-    );
+    emitFlowEvent(layer: 'FL', event: 'LOCAL_MDNS_ADVERTISE_STOP', details: {});
   }
 
   @override

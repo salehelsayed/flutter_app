@@ -1,0 +1,60 @@
+/* MknoonCosmic.css — Animations for the Cosmic logo variant */
+
+/* Ring rotations — alternating directions at different speeds */
+.logo-cosmic-animated .logo-cosmic-ring-1 {
+  animation: cosmicSpin 40s linear infinite;
+  transform-origin: 50% 50%;
+}
+.logo-cosmic-animated .logo-cosmic-ring-2 {
+  animation: cosmicSpinReverse 35s linear infinite;
+  transform-origin: 50% 50%;
+}
+.logo-cosmic-animated .logo-cosmic-ring-3 {
+  animation: cosmicSpin 28s linear infinite;
+  transform-origin: 50% 50%;
+}
+.logo-cosmic-animated .logo-cosmic-ring-4 {
+  animation: cosmicSpinReverse 22s linear infinite;
+  transform-origin: 50% 50%;
+}
+.logo-cosmic-animated .logo-cosmic-ring-5 {
+  animation: cosmicSpin 18s linear infinite;
+  transform-origin: 50% 50%;
+}
+.logo-cosmic-animated .logo-cosmic-ring-6 {
+  animation: cosmicSpinReverse 14s linear infinite;
+  transform-origin: 50% 50%;
+}
+
+/* Dot pulse — fading in and out */
+.logo-cosmic-animated .logo-cosmic-dot-1 {
+  animation: cosmicPulse 3s ease-in-out infinite;
+}
+.logo-cosmic-animated .logo-cosmic-dot-2 {
+  animation: cosmicPulse 3s ease-in-out 0.6s infinite;
+}
+.logo-cosmic-animated .logo-cosmic-dot-3 {
+  animation: cosmicPulse 3s ease-in-out 1.2s infinite;
+}
+.logo-cosmic-animated .logo-cosmic-dot-4 {
+  animation: cosmicPulse 3s ease-in-out 1.8s infinite;
+}
+.logo-cosmic-animated .logo-cosmic-dot-5 {
+  animation: cosmicPulse 3s ease-in-out 2.4s infinite;
+}
+
+/* Keyframes */
+@keyframes cosmicSpin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes cosmicSpinReverse {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(-360deg); }
+}
+
+@keyframes cosmicPulse {
+  0%, 100% { opacity: 0.2; r: 0.6; }
+  50% { opacity: 0.7; r: 1.2; }
+}

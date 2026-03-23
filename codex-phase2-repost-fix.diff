@@ -1,0 +1,1752 @@
+diff --git a/lib/core/database/helpers/post_passes_db_helpers.dart b/lib/core/database/helpers/post_passes_db_helpers.dart
+index 3ce9265..8ac78d6 100644
+--- a/lib/core/database/helpers/post_passes_db_helpers.dart
++++ b/lib/core/database/helpers/post_passes_db_helpers.dart
+@@ -1,9 +1,17 @@
+ import 'package:sqflite_sqlcipher/sqflite.dart';
+ 
+ Future<void> dbUpsertPostPass(Database db, Map<String, Object?> row) async {
++  final insertRow = Map<String, Object?>.from(row);
++  final columns = await db.rawQuery("PRAGMA table_info(post_passes)");
++  final hasDeliveryStatus = columns.any(
++    (column) => column['name'] == 'delivery_status',
++  );
++  if (!hasDeliveryStatus) {
++    insertRow.remove('delivery_status');
++  }
+   await db.insert(
+     'post_passes',
+-    row,
++    insertRow,
+     conflictAlgorithm: ConflictAlgorithm.replace,
+   );
+ }
+@@ -54,3 +62,26 @@ Future<List<Map<String, Object?>>> dbLoadPostPassCounts(
+       GROUP BY post_id
+     ''', postIds);
+ }
++
++Future<List<Map<String, Object?>>> dbLoadRetryableOutgoingPostPasses(
++  Database db,
++) async {
++  final columns = await db.rawQuery("PRAGMA table_info(post_passes)");
++  final hasDeliveryStatus = columns.any(
++    (column) => column['name'] == 'delivery_status',
++  );
++  if (!hasDeliveryStatus) {
++    return db.query(
++      'post_passes',
++      where: 'is_incoming = ?',
++      whereArgs: const <Object?>[0],
++      orderBy: 'passed_at DESC, pass_id DESC',
++    );
++  }
++  return db.query(
++    'post_passes',
++    where: 'is_incoming = ? AND delivery_status IN (?, ?, ?)',
++    whereArgs: const <Object?>[0, 'sending', 'partial', 'failed'],
++    orderBy: 'passed_at DESC, pass_id DESC',
++  );
++}
+diff --git a/lib/core/database/helpers/post_recipients_db_helpers.dart b/lib/core/database/helpers/post_recipients_db_helpers.dart
+index 239f19e..4372ba8 100644
+--- a/lib/core/database/helpers/post_recipients_db_helpers.dart
++++ b/lib/core/database/helpers/post_recipients_db_helpers.dart
+@@ -9,9 +9,21 @@ Future<void> dbUpsertPostRecipientDelivery(
+   final hasNearbyDistanceM = columns.any(
+     (column) => column['name'] == 'nearby_distance_m',
+   );
++  final hasDeliveryOwnerKind = columns.any(
++    (column) => column['name'] == 'delivery_owner_kind',
++  );
++  final hasDeliveryOwnerId = columns.any(
++    (column) => column['name'] == 'delivery_owner_id',
++  );
+   if (!hasNearbyDistanceM) {
+     insertRow.remove('nearby_distance_m');
+   }
++  if (!hasDeliveryOwnerKind) {
++    insertRow.remove('delivery_owner_kind');
++  }
++  if (!hasDeliveryOwnerId) {
++    insertRow.remove('delivery_owner_id');
++  }
+   await db.insert(
+     'post_recipients',
+     insertRow,
+@@ -23,10 +35,41 @@ Future<List<Map<String, Object?>>> dbLoadPostRecipientDeliveries(
+   Database db,
+   String postId,
+ ) async {
++  final columns = await db.rawQuery("PRAGMA table_info(post_recipients)");
++  final hasDeliveryOwnerColumns =
++      columns.any((column) => column['name'] == 'delivery_owner_kind') &&
++      columns.any((column) => column['name'] == 'delivery_owner_id');
++  if (!hasDeliveryOwnerColumns) {
++    return db.query(
++      'post_recipients',
++      where: 'post_id = ?',
++      whereArgs: <Object?>[postId],
++      orderBy: 'recipient_peer_id ASC',
++    );
++  }
++  return db.query(
++    'post_recipients',
++    where: 'delivery_owner_kind = ? AND delivery_owner_id = ?',
++    whereArgs: <Object?>['post', postId],
++    orderBy: 'recipient_peer_id ASC',
++  );
++}
++
++Future<List<Map<String, Object?>>> dbLoadPostPassRecipientDeliveries(
++  Database db,
++  String passId,
++) async {
++  final columns = await db.rawQuery("PRAGMA table_info(post_recipients)");
++  final hasDeliveryOwnerColumns =
++      columns.any((column) => column['name'] == 'delivery_owner_kind') &&
++      columns.any((column) => column['name'] == 'delivery_owner_id');
++  if (!hasDeliveryOwnerColumns) {
++    return const <Map<String, Object?>>[];
++  }
+   return db.query(
+     'post_recipients',
+-    where: 'post_id = ?',
+-    whereArgs: <Object?>[postId],
++    where: 'delivery_owner_kind = ? AND delivery_owner_id = ?',
++    whereArgs: <Object?>['post_pass', passId],
+     orderBy: 'recipient_peer_id ASC',
+   );
+ }
+diff --git a/lib/features/posts/application/pass_post_along_use_case.dart b/lib/features/posts/application/pass_post_along_use_case.dart
+index fa67c35..957f36a 100644
+--- a/lib/features/posts/application/pass_post_along_use_case.dart
++++ b/lib/features/posts/application/pass_post_along_use_case.dart
+@@ -3,13 +3,13 @@ import 'package:uuid/uuid.dart';
+ import 'package:flutter_app/core/services/p2p_service.dart';
+ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+ import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
+-import 'package:flutter_app/features/posts/application/post_follow_on_delivery.dart';
+-import 'package:flutter_app/features/posts/application/post_pass_follow_on_support.dart';
++import 'package:flutter_app/features/posts/application/post_delivery_runner.dart';
+ import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
+ import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
+ import 'package:flutter_app/features/posts/domain/models/post_model.dart';
+ import 'package:flutter_app/features/posts/domain/models/post_pass_envelope.dart';
+ import 'package:flutter_app/features/posts/domain/models/post_pass_model.dart';
++import 'package:flutter_app/features/posts/domain/models/post_recipient_delivery.dart';
+ import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
+ 
+ const _uuid = Uuid();
+@@ -26,6 +26,28 @@ enum PassPostAlongResult {
+   sendFailed,
+ }
+ 
++class CreatedLocalPostPass {
++  final PostPassModel pass;
++  final PostModel snapshotPost;
++  final String envelope;
++  final List<CreatedLocalPostRecipient> resolvedRecipients;
++  final List<String> allRecipientPeerIds;
++
++  const CreatedLocalPostPass({
++    required this.pass,
++    required this.snapshotPost,
++    required this.envelope,
++    required this.resolvedRecipients,
++    this.allRecipientPeerIds = const <String>[],
++  });
++
++  List<String> get recipientPeerIds => allRecipientPeerIds.isNotEmpty
++      ? allRecipientPeerIds
++      : resolvedRecipients
++            .map((recipient) => recipient.contact.peerId)
++            .toList(growable: false);
++}
++
+ Future<(PassPostAlongResult, PostPassModel?)> passPostAlong({
+   required P2PService p2pService,
+   required PostRepository postRepo,
+@@ -35,7 +57,43 @@ Future<(PassPostAlongResult, PostPassModel?)> passPostAlong({
+   required String senderUsername,
+   required List<String> recipientPeerIds,
+   DateTime Function()? nowProvider,
+-  int maxConcurrentRecipients = defaultPostFollowOnDeliveryConcurrency,
++  int maxConcurrentRecipients = defaultPostDeliveryConcurrency,
++}) async {
++  final (createResult, created) = await createLocalPostPass(
++    p2pService: p2pService,
++    postRepo: postRepo,
++    contactRepo: contactRepo,
++    postId: postId,
++    senderPeerId: senderPeerId,
++    senderUsername: senderUsername,
++    recipientPeerIds: recipientPeerIds,
++    nowProvider: nowProvider,
++  );
++  if (createResult != PassPostAlongResult.success || created == null) {
++    return (createResult, created?.pass);
++  }
++
++  final deliveryResult = await deliverCreatedLocalPostPass(
++    p2pService: p2pService,
++    postRepo: postRepo,
++    created: created,
++    maxConcurrentRecipients: maxConcurrentRecipients,
++  );
++  return (
++    _passPostAlongResultForDeliveryResult(deliveryResult.$1),
++    deliveryResult.$2,
++  );
++}
++
++Future<(PassPostAlongResult, CreatedLocalPostPass?)> createLocalPostPass({
++  required P2PService p2pService,
++  required PostRepository postRepo,
++  required ContactRepository contactRepo,
++  required String postId,
++  required String senderPeerId,
++  required String senderUsername,
++  required List<String> recipientPeerIds,
++  DateTime Function()? nowProvider,
+ }) async {
+   if (!p2pService.currentState.isStarted) {
+     return (PassPostAlongResult.nodeNotRunning, null);
+@@ -102,18 +160,53 @@ Future<(PassPostAlongResult, PostPassModel?)> passPostAlong({
+   );
+   final envelope = PostPassEnvelope.buildJson(pass: pass, post: renderablePost);
+   await postRepo.savePostPass(pass);
+-  final deliveryResult = await queueAndSendPostPassFollowOn(
+-    postRepo: postRepo,
++  final resolvedRecipients = recipients.values
++      .map((contact) => CreatedLocalPostRecipient(contact: contact))
++      .toList(growable: false);
++  for (final recipient in resolvedRecipients) {
++    await postRepo.saveRecipientDelivery(
++      PostRecipientDelivery(
++        postId: post.id,
++        deliveryOwnerKind: postRecipientDeliveryOwnerKindPass,
++        deliveryOwnerId: pass.passId,
++        recipientPeerId: recipient.contact.peerId,
++        deliveryStatus: 'pending',
++        lastAttemptAt: now,
++        deliveryPath: 'pending',
++        nearbyDistanceM: recipient.nearbyDistanceM,
++        createdAt: now,
++        updatedAt: now,
++      ),
++    );
++  }
++  return (
++    PassPostAlongResult.success,
++    CreatedLocalPostPass(
++      pass: pass,
++      snapshotPost: renderablePost,
++      envelope: envelope,
++      resolvedRecipients: resolvedRecipients,
++      allRecipientPeerIds: recipients.keys.toList(growable: false),
++    ),
++  );
++}
++
++Future<(SendPostResult, PostPassModel)> deliverCreatedLocalPostPass({
++  required P2PService p2pService,
++  required PostRepository postRepo,
++  required CreatedLocalPostPass created,
++  int maxConcurrentRecipients = defaultPostDeliveryConcurrency,
++}) {
++  return PostDeliveryRunner(
+     p2pService: p2pService,
+-    eventId: pass.eventId,
+-    postId: post.id,
+-    senderPeerId: senderPeerId,
+-    envelope: envelope,
+-    createdAt: now,
+-    recipientPeerIds: recipients.keys,
++    postRepo: postRepo,
+     maxConcurrentRecipients: maxConcurrentRecipients,
++  ).executePostPass(
++    pass: created.pass,
++    snapshotPost: created.snapshotPost,
++    resolvedRecipients: created.resolvedRecipients,
++    allRecipientPeerIds: created.recipientPeerIds,
+   );
+-  return (_passPostAlongResultForSettlement(deliveryResult.settlement), pass);
+ }
+ 
+ Future<List<ContactModel>> _resolveRecipients({
+@@ -131,13 +224,12 @@ Future<List<ContactModel>> _resolveRecipients({
+   return recipients.values.toList(growable: false);
+ }
+ 
+-PassPostAlongResult _passPostAlongResultForSettlement(
+-  PostFollowOnSettlement settlement,
++PassPostAlongResult _passPostAlongResultForDeliveryResult(
++  SendPostResult result,
+ ) {
+-  return switch (settlement) {
+-    PostFollowOnSettlement.fullySettled => PassPostAlongResult.success,
+-    PostFollowOnSettlement.partiallySettled =>
+-      PassPostAlongResult.partiallySettled,
+-    PostFollowOnSettlement.notSettled => PassPostAlongResult.queuedForRetry,
++  return switch (result) {
++    SendPostResult.success => PassPostAlongResult.success,
++    SendPostResult.partialSuccess => PassPostAlongResult.partiallySettled,
++    _ => PassPostAlongResult.queuedForRetry,
+   };
+ }
+diff --git a/lib/features/posts/application/pending_post_delivery_retrier.dart b/lib/features/posts/application/pending_post_delivery_retrier.dart
+index be3b5de..e24731a 100644
+--- a/lib/features/posts/application/pending_post_delivery_retrier.dart
++++ b/lib/features/posts/application/pending_post_delivery_retrier.dart
+@@ -5,6 +5,7 @@ import 'package:flutter_app/core/services/p2p_service.dart';
+ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+ import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
+ import 'package:flutter_app/features/posts/application/post_delivery_runner.dart';
++import 'package:flutter_app/features/posts/application/post_follow_on_delivery.dart';
+ import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
+ import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
+ 
+@@ -230,5 +231,102 @@ Future<int> retryPendingPostDeliveries({
+     );
+   }
+ 
++  final retryablePasses = await postRepo.loadRetryableOutgoingPostPasses();
++  for (final pass in retryablePasses) {
++    if (pass.isIncoming) {
++      continue;
++    }
++
++    final deliveries = await postRepo.getPostPassRecipientDeliveries(
++      pass.passId,
++    );
++    if (deliveries.isEmpty) {
++      continue;
++    }
++
++    final aggregate = aggregatePostDeliveryStatusFromDeliveries(deliveries);
++    final unresolvedDeliveries = deliveries
++        .where(
++          (delivery) =>
++              !isSuccessfulRecipientDeliveryStatus(delivery.deliveryStatus),
++        )
++        .toList(growable: false);
++    if (unresolvedDeliveries.isEmpty) {
++      if (aggregate.deliveryStatus != pass.deliveryStatus) {
++        await postRepo.savePostPass(
++          pass.copyWith(deliveryStatus: aggregate.deliveryStatus),
++        );
++      }
++      continue;
++    }
++
++    final sourcePost = await postRepo.getPost(pass.postId);
++    if (sourcePost == null) {
++      emitFlowEvent(
++        layer: 'FL',
++        event: 'PENDING_POST_RETRIER_MISSING_PASS_SOURCE_POST',
++        details: {'passId': pass.passId, 'postId': pass.postId},
++      );
++      continue;
++    }
++
++    final attachments = await postRepo.loadPostMediaAttachments(sourcePost.id);
++    final hydratedPost = sourcePost.copyWith(
++      mediaKind: sourcePost.mediaKind == 'none' && attachments.isNotEmpty
++          ? PostMediaAttachmentModel.deriveMediaKind(attachments)
++          : sourcePost.mediaKind,
++      media: attachments,
++    );
++    if (hydratedPost.mediaKind != 'none' && hydratedPost.media.isEmpty) {
++      emitFlowEvent(
++        layer: 'FL',
++        event: 'PENDING_POST_RETRIER_SKIPPED_PENDING_PASS_MEDIA',
++        details: {'passId': pass.passId, 'postId': hydratedPost.id},
++      );
++      continue;
++    }
++
++    final retryRecipients = <CreatedLocalPostRecipient>[];
++    for (final delivery in unresolvedDeliveries) {
++      final contact = await contactRepo.getContact(delivery.recipientPeerId);
++      if (contact == null) {
++        emitFlowEvent(
++          layer: 'FL',
++          event: 'PENDING_POST_RETRIER_MISSING_PASS_CONTACT',
++          details: {
++            'passId': pass.passId,
++            'recipientPeerId': delivery.recipientPeerId,
++          },
++        );
++        continue;
++      }
++      retryRecipients.add(
++        CreatedLocalPostRecipient(
++          contact: contact,
++          nearbyDistanceM: delivery.nearbyDistanceM,
++        ),
++      );
++    }
++
++    if (retryRecipients.isEmpty) {
++      continue;
++    }
++
++    retriedCount++;
++    await PostDeliveryRunner(
++      p2pService: p2pService,
++      postRepo: postRepo,
++      bridge: bridge,
++      maxConcurrentRecipients: defaultPostFollowOnDeliveryConcurrency,
++    ).executePostPass(
++      pass: pass,
++      snapshotPost: hydratedPost,
++      resolvedRecipients: retryRecipients,
++      allRecipientPeerIds: deliveries
++          .map((delivery) => delivery.recipientPeerId)
++          .toList(growable: false),
++    );
++  }
++
+   return retriedCount;
+ }
+diff --git a/lib/features/posts/application/post_delivery_runner.dart b/lib/features/posts/application/post_delivery_runner.dart
+index 5c2a016..b45821e 100644
+--- a/lib/features/posts/application/post_delivery_runner.dart
++++ b/lib/features/posts/application/post_delivery_runner.dart
+@@ -8,6 +8,8 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+ import 'package:flutter_app/features/posts/application/post_media_draft.dart';
+ import 'package:flutter_app/features/posts/domain/models/post_create_envelope.dart';
+ import 'package:flutter_app/features/posts/domain/models/post_model.dart';
++import 'package:flutter_app/features/posts/domain/models/post_pass_envelope.dart';
++import 'package:flutter_app/features/posts/domain/models/post_pass_model.dart';
+ import 'package:flutter_app/features/posts/domain/models/post_recipient_delivery.dart';
+ import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
+ 
+@@ -37,8 +39,7 @@ class CreatedLocalPost {
+     this.allRecipientPeerIds = const <String>[],
+   });
+ 
+-  List<String> get recipientPeerIds =>
+-      allRecipientPeerIds.isNotEmpty
++  List<String> get recipientPeerIds => allRecipientPeerIds.isNotEmpty
+       ? allRecipientPeerIds
+       : resolvedRecipients
+             .map((recipient) => recipient.contact.peerId)
+@@ -81,8 +82,8 @@ class PostDeliveryRunner {
+     required this.p2pService,
+     required this.postRepo,
+     this.bridge,
+-    int maxConcurrentRecipients = defaultPostDeliveryConcurrency,
+-  }) : maxConcurrentRecipients = maxConcurrentRecipients {
++    this.maxConcurrentRecipients = defaultPostDeliveryConcurrency,
++  }) {
+     if (maxConcurrentRecipients < 1) {
+       throw ArgumentError.value(
+         maxConcurrentRecipients,
+@@ -104,80 +105,28 @@ class PostDeliveryRunner {
+         ),
+       );
+       final recipientPeerIds = created.recipientPeerIds;
+-      final pendingRecipients = Queue<CreatedLocalPostRecipient>.of(
+-        created.resolvedRecipients,
+-      );
+-      final inFlight = <Future<void>>[];
+-      AsyncError? fatalError;
+-      final completionQueue = _SerializedPostCompletionQueue(
+-        onError: (error, stackTrace) {
+-          fatalError ??= AsyncError(error, stackTrace);
+-        },
+-      );
+-
+-      Future<void> runRecipient(CreatedLocalPostRecipient recipient) async {
+-        try {
+-          final attemptedAt = DateTime.now().toUtc().toIso8601String();
+-          final wireEnvelope = await _buildWireEnvelope(
++      await _runRecipientFanout(
++        p2pService: p2pService,
++        maxConcurrentRecipients: maxConcurrentRecipients,
++        resolvedRecipients: created.resolvedRecipients,
++        buildWireEnvelope: (recipient) {
++          return _buildWireEnvelope(
+             post: created.post,
+             bridge: bridge,
+             recipient: recipient.contact,
+             recipientPeerIds: recipientPeerIds,
+             nearbyDistanceM: recipient.nearbyDistanceM,
+           );
+-          final delivery = await _deliverToRecipient(
+-            p2pService: p2pService,
++        },
++        persistRecipientCompletion: (recipient, attemptedAt, delivery) {
++          return progress!.applyRecipientCompletion(
++            postRepo: postRepo,
+             recipientPeerId: recipient.contact.peerId,
+-            wireEnvelope: wireEnvelope,
++            attemptedAt: attemptedAt,
++            delivery: delivery,
+           );
+-
+-          if (fatalError != null) {
+-            return;
+-          }
+-
+-          completionQueue.enqueue(() {
+-            if (fatalError != null) {
+-              return Future<void>.value();
+-            }
+-            return progress!.applyRecipientCompletion(
+-              postRepo: postRepo,
+-              recipientPeerId: recipient.contact.peerId,
+-              attemptedAt: attemptedAt,
+-              delivery: delivery,
+-            );
+-          });
+-        } catch (error, stackTrace) {
+-          fatalError ??= AsyncError(error, stackTrace);
+-        }
+-      }
+-
+-      while (pendingRecipients.isNotEmpty || inFlight.isNotEmpty) {
+-        while (fatalError == null &&
+-            pendingRecipients.isNotEmpty &&
+-            inFlight.length < maxConcurrentRecipients) {
+-          final recipient = pendingRecipients.removeFirst();
+-          late final Future<void> task;
+-          task = runRecipient(recipient).whenComplete(() {
+-            inFlight.remove(task);
+-          });
+-          inFlight.add(task);
+-        }
+-
+-        if (inFlight.isEmpty) {
+-          break;
+-        }
+-
+-        await Future.any(inFlight);
+-      }
+-
+-      await completionQueue.flush();
+-      final uncaughtError = fatalError;
+-      if (uncaughtError != null) {
+-        Error.throwWithStackTrace(
+-          uncaughtError.error,
+-          uncaughtError.stackTrace,
+-        );
+-      }
++        },
++      );
+     } catch (error) {
+       return _persistTerminalFailure(
+         created.post.id,
+@@ -189,6 +138,48 @@ class PostDeliveryRunner {
+ 
+     return (_resultForAggregate(progress.aggregate), progress.latestPost);
+   }
++
++  Future<(SendPostResult, PostPassModel)> executePostPass({
++    required PostPassModel pass,
++    required PostModel snapshotPost,
++    required List<CreatedLocalPostRecipient> resolvedRecipients,
++    List<String> allRecipientPeerIds = const <String>[],
++  }) async {
++    final progress = _PostPassDeliveryProgress(
++      latestPass: pass,
++      deliveriesByRecipient: await _loadExistingPostPassDeliveries(
++        pass.passId,
++        postRepo,
++      ),
++    );
++    final envelope = PostPassEnvelope.buildJson(pass: pass, post: snapshotPost);
++
++    try {
++      await _runRecipientFanout(
++        p2pService: p2pService,
++        maxConcurrentRecipients: maxConcurrentRecipients,
++        resolvedRecipients: resolvedRecipients,
++        buildWireEnvelope: (_) async => envelope,
++        persistRecipientCompletion: (recipient, attemptedAt, delivery) {
++          return progress.applyRecipientCompletion(
++            postRepo: postRepo,
++            postId: snapshotPost.id,
++            recipientPeerId: recipient.contact.peerId,
++            attemptedAt: attemptedAt,
++            delivery: delivery,
++          );
++        },
++      );
++    } catch (error) {
++      await progress.markUnsettledAsFailed(
++        postRepo: postRepo,
++        postId: snapshotPost.id,
++        error: error,
++      );
++    }
++
++    return (_resultForAggregate(progress.aggregate), progress.latestPass);
++  }
+ }
+ 
+ Future<(SendPostResult, PostModel)> _persistTerminalFailure(
+@@ -226,6 +217,91 @@ Future<Map<String, PostRecipientDelivery>> _loadExistingDeliveries(
+   };
+ }
+ 
++Future<Map<String, PostRecipientDelivery>> _loadExistingPostPassDeliveries(
++  String passId,
++  PostRepository postRepo,
++) async {
++  final deliveries = await postRepo.getPostPassRecipientDeliveries(passId);
++  return <String, PostRecipientDelivery>{
++    for (final delivery in deliveries) delivery.recipientPeerId: delivery,
++  };
++}
++
++Future<void> _runRecipientFanout({
++  required P2PService p2pService,
++  required int maxConcurrentRecipients,
++  required List<CreatedLocalPostRecipient> resolvedRecipients,
++  required Future<String> Function(CreatedLocalPostRecipient recipient)
++  buildWireEnvelope,
++  required Future<void> Function(
++    CreatedLocalPostRecipient recipient,
++    String attemptedAt,
++    _DeliveryAttempt delivery,
++  )
++  persistRecipientCompletion,
++}) async {
++  final pendingRecipients = Queue<CreatedLocalPostRecipient>.of(
++    resolvedRecipients,
++  );
++  final inFlight = <Future<void>>[];
++  AsyncError? fatalError;
++  final completionQueue = _SerializedPostCompletionQueue(
++    onError: (error, stackTrace) {
++      fatalError ??= AsyncError(error, stackTrace);
++    },
++  );
++
++  Future<void> runRecipient(CreatedLocalPostRecipient recipient) async {
++    try {
++      final attemptedAt = DateTime.now().toUtc().toIso8601String();
++      final wireEnvelope = await buildWireEnvelope(recipient);
++      final delivery = await _deliverToRecipient(
++        p2pService: p2pService,
++        recipientPeerId: recipient.contact.peerId,
++        wireEnvelope: wireEnvelope,
++      );
++
++      if (fatalError != null) {
++        return;
++      }
++
++      completionQueue.enqueue(() {
++        if (fatalError != null) {
++          return Future<void>.value();
++        }
++        return persistRecipientCompletion(recipient, attemptedAt, delivery);
++      });
++    } catch (error, stackTrace) {
++      fatalError ??= AsyncError(error, stackTrace);
++    }
++  }
++
++  while (pendingRecipients.isNotEmpty || inFlight.isNotEmpty) {
++    while (fatalError == null &&
++        pendingRecipients.isNotEmpty &&
++        inFlight.length < maxConcurrentRecipients) {
++      final recipient = pendingRecipients.removeFirst();
++      late final Future<void> task;
++      task = runRecipient(recipient).whenComplete(() {
++        inFlight.remove(task);
++      });
++      inFlight.add(task);
++    }
++
++    if (inFlight.isEmpty) {
++      break;
++    }
++
++    await Future.any(inFlight);
++  }
++
++  await completionQueue.flush();
++  final uncaughtError = fatalError;
++  if (uncaughtError != null) {
++    Error.throwWithStackTrace(uncaughtError.error, uncaughtError.stackTrace);
++  }
++}
++
+ PostDeliveryAggregate aggregatePostDeliveryStatusFromDeliveries(
+   Iterable<PostRecipientDelivery> deliveries,
+ ) {
+@@ -395,6 +471,10 @@ class _PostDeliveryProgress {
+       nearbyDistanceM: existingDelivery?.nearbyDistanceM,
+       createdAt: existingDelivery?.createdAt ?? attemptedAt,
+       updatedAt: attemptedAt,
++      deliveryOwnerKind:
++          existingDelivery?.deliveryOwnerKind ??
++          postRecipientDeliveryOwnerKindPost,
++      deliveryOwnerId: existingDelivery?.deliveryOwnerId ?? latestPost.id,
+     );
+     deliveriesByRecipient[recipientPeerId] = updatedDelivery;
+     await postRepo.saveRecipientDelivery(updatedDelivery);
+@@ -407,6 +487,83 @@ class _PostDeliveryProgress {
+   }
+ }
+ 
++class _PostPassDeliveryProgress {
++  PostPassModel latestPass;
++  final Map<String, PostRecipientDelivery> deliveriesByRecipient;
++  PostDeliveryAggregate aggregate;
++
++  _PostPassDeliveryProgress({
++    required this.latestPass,
++    required this.deliveriesByRecipient,
++  }) : aggregate = aggregatePostDeliveryStatusFromDeliveries(
++         deliveriesByRecipient.values,
++       );
++
++  Future<void> applyRecipientCompletion({
++    required PostRepository postRepo,
++    required String postId,
++    required String recipientPeerId,
++    required String attemptedAt,
++    required _DeliveryAttempt delivery,
++  }) async {
++    final existingDelivery = deliveriesByRecipient[recipientPeerId];
++    final updatedDelivery = PostRecipientDelivery(
++      postId: postId,
++      recipientPeerId: recipientPeerId,
++      deliveryStatus: delivery.deliveryStatus,
++      lastAttemptAt: attemptedAt,
++      deliveryPath: delivery.deliveryPath,
++      lastError: delivery.lastError,
++      nearbyDistanceM: existingDelivery?.nearbyDistanceM,
++      createdAt: existingDelivery?.createdAt ?? attemptedAt,
++      updatedAt: attemptedAt,
++      deliveryOwnerKind: postRecipientDeliveryOwnerKindPass,
++      deliveryOwnerId: latestPass.passId,
++    );
++    deliveriesByRecipient[recipientPeerId] = updatedDelivery;
++    await postRepo.saveRecipientDelivery(updatedDelivery);
++
++    aggregate = aggregatePostDeliveryStatusFromDeliveries(
++      deliveriesByRecipient.values,
++    );
++    latestPass = latestPass.copyWith(deliveryStatus: aggregate.deliveryStatus);
++    await postRepo.savePostPass(latestPass);
++  }
++
++  Future<void> markUnsettledAsFailed({
++    required PostRepository postRepo,
++    required String postId,
++    required Object error,
++  }) async {
++    final attemptedAt = DateTime.now().toUtc().toIso8601String();
++    final unsettledDeliveries = deliveriesByRecipient.values
++        .where(
++          (delivery) =>
++              !isSuccessfulRecipientDeliveryStatus(delivery.deliveryStatus),
++        )
++        .toList(growable: false);
++    for (final delivery in unsettledDeliveries) {
++      final failedDelivery = delivery.copyWith(
++        deliveryStatus: 'failed',
++        deliveryPath: 'failed',
++        lastError: error.toString(),
++        lastAttemptAt: attemptedAt,
++        updatedAt: attemptedAt,
++        deliveryOwnerKind: postRecipientDeliveryOwnerKindPass,
++        deliveryOwnerId: latestPass.passId,
++      );
++      deliveriesByRecipient[delivery.recipientPeerId] = failedDelivery;
++      await postRepo.saveRecipientDelivery(failedDelivery);
++    }
++
++    aggregate = aggregatePostDeliveryStatusFromDeliveries(
++      deliveriesByRecipient.values,
++    );
++    latestPass = latestPass.copyWith(deliveryStatus: aggregate.deliveryStatus);
++    await postRepo.savePostPass(latestPass);
++  }
++}
++
+ class _SerializedPostCompletionQueue {
+   final void Function(Object error, StackTrace stackTrace) onError;
+   Future<void> _tail = Future<void>.value();
+diff --git a/lib/features/posts/domain/models/post_pass_model.dart b/lib/features/posts/domain/models/post_pass_model.dart
+index 09f15a3..364797e 100644
+--- a/lib/features/posts/domain/models/post_pass_model.dart
++++ b/lib/features/posts/domain/models/post_pass_model.dart
+@@ -8,6 +8,7 @@ class PostPassModel {
+   final String passedAt;
+   final String createdAt;
+   final bool isIncoming;
++  final String deliveryStatus;
+ 
+   const PostPassModel({
+     required this.passId,
+@@ -19,9 +20,12 @@ class PostPassModel {
+     required this.passedAt,
+     required this.createdAt,
+     this.isIncoming = true,
+-  });
++    String? deliveryStatus,
++  }) : deliveryStatus =
++           deliveryStatus ?? (isIncoming ? 'available' : 'sending');
+ 
+   factory PostPassModel.fromMap(Map<String, Object?> map) {
++    final isIncoming = (map['is_incoming'] as int? ?? 1) == 1;
+     return PostPassModel(
+       passId: map['pass_id'] as String,
+       eventId: map['event_id'] as String,
+@@ -31,7 +35,10 @@ class PostPassModel {
+       passerUsername: map['passer_username'] as String,
+       passedAt: map['passed_at'] as String,
+       createdAt: map['created_at'] as String,
+-      isIncoming: (map['is_incoming'] as int? ?? 1) == 1,
++      isIncoming: isIncoming,
++      deliveryStatus:
++          map['delivery_status'] as String? ??
++          (isIncoming ? 'available' : 'sending'),
+     );
+   }
+ 
+@@ -46,6 +53,33 @@ class PostPassModel {
+       'passed_at': passedAt,
+       'created_at': createdAt,
+       'is_incoming': isIncoming ? 1 : 0,
++      'delivery_status': deliveryStatus,
+     };
+   }
++
++  PostPassModel copyWith({
++    String? senderPeerId,
++    String? passerPeerId,
++    String? passerUsername,
++    String? passedAt,
++    String? createdAt,
++    bool? isIncoming,
++    String? deliveryStatus,
++  }) {
++    final resolvedIncoming = isIncoming ?? this.isIncoming;
++    return PostPassModel(
++      passId: passId,
++      eventId: eventId,
++      postId: postId,
++      senderPeerId: senderPeerId ?? this.senderPeerId,
++      passerPeerId: passerPeerId ?? this.passerPeerId,
++      passerUsername: passerUsername ?? this.passerUsername,
++      passedAt: passedAt ?? this.passedAt,
++      createdAt: createdAt ?? this.createdAt,
++      isIncoming: resolvedIncoming,
++      deliveryStatus:
++          deliveryStatus ??
++          (resolvedIncoming ? 'available' : this.deliveryStatus),
++    );
++  }
+ }
+diff --git a/lib/features/posts/domain/models/post_recipient_delivery.dart b/lib/features/posts/domain/models/post_recipient_delivery.dart
+index 6a4e071..08f49f1 100644
+--- a/lib/features/posts/domain/models/post_recipient_delivery.dart
++++ b/lib/features/posts/domain/models/post_recipient_delivery.dart
+@@ -1,3 +1,6 @@
++const String postRecipientDeliveryOwnerKindPost = 'post';
++const String postRecipientDeliveryOwnerKindPass = 'post_pass';
++
+ class PostRecipientDelivery {
+   final String postId;
+   final String recipientPeerId;
+@@ -8,6 +11,8 @@ class PostRecipientDelivery {
+   final int? nearbyDistanceM;
+   final String createdAt;
+   final String updatedAt;
++  final String deliveryOwnerKind;
++  final String deliveryOwnerId;
+ 
+   const PostRecipientDelivery({
+     required this.postId,
+@@ -19,11 +24,14 @@ class PostRecipientDelivery {
+     this.nearbyDistanceM,
+     required this.createdAt,
+     required this.updatedAt,
+-  });
++    this.deliveryOwnerKind = postRecipientDeliveryOwnerKindPost,
++    String? deliveryOwnerId,
++  }) : deliveryOwnerId = deliveryOwnerId ?? postId;
+ 
+   factory PostRecipientDelivery.fromMap(Map<String, Object?> map) {
++    final postId = map['post_id'] as String;
+     return PostRecipientDelivery(
+-      postId: map['post_id'] as String,
++      postId: postId,
+       recipientPeerId: map['recipient_peer_id'] as String,
+       deliveryStatus: map['delivery_status'] as String? ?? 'pending',
+       lastAttemptAt: map['last_attempt_at'] as String,
+@@ -32,6 +40,10 @@ class PostRecipientDelivery {
+       nearbyDistanceM: (map['nearby_distance_m'] as num?)?.toInt(),
+       createdAt: map['created_at'] as String,
+       updatedAt: map['updated_at'] as String,
++      deliveryOwnerKind:
++          map['delivery_owner_kind'] as String? ??
++          postRecipientDeliveryOwnerKindPost,
++      deliveryOwnerId: map['delivery_owner_id'] as String? ?? postId,
+     );
+   }
+ 
+@@ -46,6 +58,8 @@ class PostRecipientDelivery {
+       'nearby_distance_m': nearbyDistanceM,
+       'created_at': createdAt,
+       'updated_at': updatedAt,
++      'delivery_owner_kind': deliveryOwnerKind,
++      'delivery_owner_id': deliveryOwnerId,
+     };
+   }
+ 
+@@ -56,6 +70,8 @@ class PostRecipientDelivery {
+     String? lastError,
+     int? nearbyDistanceM,
+     String? updatedAt,
++    String? deliveryOwnerKind,
++    String? deliveryOwnerId,
+   }) {
+     return PostRecipientDelivery(
+       postId: postId,
+@@ -67,6 +83,8 @@ class PostRecipientDelivery {
+       nearbyDistanceM: nearbyDistanceM ?? this.nearbyDistanceM,
+       createdAt: createdAt,
+       updatedAt: updatedAt ?? this.updatedAt,
++      deliveryOwnerKind: deliveryOwnerKind ?? this.deliveryOwnerKind,
++      deliveryOwnerId: deliveryOwnerId ?? this.deliveryOwnerId,
+     );
+   }
+ }
+diff --git a/lib/features/posts/domain/repositories/post_repository.dart b/lib/features/posts/domain/repositories/post_repository.dart
+index 02ba9ec..d1bb998 100644
+--- a/lib/features/posts/domain/repositories/post_repository.dart
++++ b/lib/features/posts/domain/repositories/post_repository.dart
+@@ -103,8 +103,14 @@ abstract class PostRepository {
+ 
+   Future<List<PostRecipientDelivery>> getRecipientDeliveries(String postId);
+ 
++  Future<List<PostRecipientDelivery>> getPostPassRecipientDeliveries(
++    String passId,
++  );
++
+   Future<void> savePostPass(PostPassModel pass);
+ 
++  Future<List<PostPassModel>> loadRetryableOutgoingPostPasses();
++
+   Future<bool> postPassExists(String passId);
+ 
+   Future<List<PostPassModel>> loadPostPasses(String postId);
+diff --git a/lib/features/posts/domain/repositories/post_repository_impl.dart b/lib/features/posts/domain/repositories/post_repository_impl.dart
+index b6acaa0..c47be5d 100644
+--- a/lib/features/posts/domain/repositories/post_repository_impl.dart
++++ b/lib/features/posts/domain/repositories/post_repository_impl.dart
+@@ -30,10 +30,14 @@ class PostRepositoryImpl implements PostRepository {
+   dbUpsertRecipientDelivery;
+   final Future<List<Map<String, Object?>>> Function(String postId)
+   dbLoadRecipientDeliveries;
++  final Future<List<Map<String, Object?>>> Function(String passId)?
++  dbLoadPostPassRecipientDeliveries;
+   final Future<void> Function(Map<String, Object?> row)? dbUpsertPostPass;
+   final Future<Map<String, Object?>?> Function(String passId)? dbLoadPostPass;
+   final Future<List<Map<String, Object?>>> Function(String postId)?
+   dbLoadPostPasses;
++  final Future<List<Map<String, Object?>>> Function()?
++  dbLoadRetryableOutgoingPostPasses;
+   final Future<int> Function(String postId)? dbCountPostPasses;
+   final Future<List<Map<String, Object?>>> Function(List<String> postIds)?
+   dbLoadPostPassCounts;
+@@ -111,9 +115,11 @@ class PostRepositoryImpl implements PostRepository {
+     this.dbDeletePostCascade,
+     required this.dbUpsertRecipientDelivery,
+     required this.dbLoadRecipientDeliveries,
++    this.dbLoadPostPassRecipientDeliveries,
+     this.dbUpsertPostPass,
+     this.dbLoadPostPass,
+     this.dbLoadPostPasses,
++    this.dbLoadRetryableOutgoingPostPasses,
+     this.dbCountPostPasses,
+     this.dbLoadPostPassCounts,
+     this.dbUpsertPostOrigin,
+@@ -591,6 +597,18 @@ class PostRepositoryImpl implements PostRepository {
+     return rows.map(PostRecipientDelivery.fromMap).toList(growable: false);
+   }
+ 
++  @override
++  Future<List<PostRecipientDelivery>> getPostPassRecipientDeliveries(
++    String passId,
++  ) async {
++    final dbLoad = _require(
++      dbLoadPostPassRecipientDeliveries,
++      'Post pass recipient deliveries are not configured for this repository.',
++    );
++    final rows = await dbLoad(passId);
++    return rows.map(PostRecipientDelivery.fromMap).toList(growable: false);
++  }
++
+   @override
+   Future<void> savePostPass(PostPassModel pass) async {
+     final dbUpsert = _require(
+@@ -610,6 +628,16 @@ class PostRepositoryImpl implements PostRepository {
+     return await dbLoad(passId) != null;
+   }
+ 
++  @override
++  Future<List<PostPassModel>> loadRetryableOutgoingPostPasses() async {
++    final dbLoad = _require(
++      dbLoadRetryableOutgoingPostPasses,
++      'Retryable outgoing post-pass loading is not configured for this repository.',
++    );
++    final rows = await dbLoad();
++    return rows.map(PostPassModel.fromMap).toList(growable: false);
++  }
++
+   @override
+   Future<List<PostPassModel>> loadPostPasses(String postId) async {
+     final dbLoad = _require(
+diff --git a/lib/main.dart b/lib/main.dart
+index ea1267b..562ac0c 100644
+--- a/lib/main.dart
++++ b/lib/main.dart
+@@ -50,6 +50,7 @@ import 'package:flutter_app/core/database/migrations/031_posts_pins.dart';
+ import 'package:flutter_app/core/database/migrations/032_posts_retry_recipient_context.dart';
+ import 'package:flutter_app/core/database/migrations/033_posts_follow_on_outbox.dart';
+ import 'package:flutter_app/core/database/migrations/034_posts_media_upload_recovery.dart';
++import 'package:flutter_app/core/database/migrations/035_posts_repost_delivery_state.dart';
+ import 'package:flutter_app/core/database/helpers/introductions_db_helpers.dart';
+ import 'package:flutter_app/core/database/helpers/post_comments_db_helpers.dart';
+ import 'package:flutter_app/core/database/helpers/post_comment_reactions_db_helpers.dart';
+@@ -182,7 +183,7 @@ void main() async {
+   final db = await openEncryptedDatabase(
+     secureKeyStore: secureKeyStore,
+     dbName: 'identity.db',
+-    version: 34,
++    version: 35,
+     onCreate: (db, version) async {
+       await runIdentityTableMigration(db);
+       await runMessagesTableMigration(db);
+@@ -218,6 +219,7 @@ void main() async {
+       await runPostsRetryRecipientContextMigration(db);
+       await runPostsFollowOnOutboxMigration(db);
+       await runPostsMediaUploadRecoveryMigration(db);
++      await runPostsRepostDeliveryStateMigration(db);
+     },
+     onUpgrade: (db, oldVersion, newVersion) async {
+       if (oldVersion < 2) {
+@@ -317,6 +319,9 @@ void main() async {
+       if (oldVersion < 34) {
+         await runPostsMediaUploadRecoveryMigration(db);
+       }
++      if (oldVersion < 35) {
++        await runPostsRepostDeliveryStateMigration(db);
++      }
+     },
+   );
+ 
+@@ -410,9 +415,13 @@ void main() async {
+     dbUpsertRecipientDelivery: (row) => dbUpsertPostRecipientDelivery(db, row),
+     dbLoadRecipientDeliveries: (postId) =>
+         dbLoadPostRecipientDeliveries(db, postId),
++    dbLoadPostPassRecipientDeliveries: (passId) =>
++        dbLoadPostPassRecipientDeliveries(db, passId),
+     dbUpsertPostPass: (row) => dbUpsertPostPass(db, row),
+     dbLoadPostPass: (passId) => dbLoadPostPass(db, passId),
+     dbLoadPostPasses: (postId) => dbLoadPostPasses(db, postId),
++    dbLoadRetryableOutgoingPostPasses: () =>
++        dbLoadRetryableOutgoingPostPasses(db),
+     dbCountPostPasses: (postId) => dbCountPostPasses(db, postId),
+     dbLoadPostPassCounts: (postIds) => dbLoadPostPassCounts(db, postIds),
+     dbUpsertPostOrigin: (row) => dbUpsertPostOrigin(db, row),
+diff --git a/test/core/services/pending_post_delivery_retrier_test.dart b/test/core/services/pending_post_delivery_retrier_test.dart
+index a931b6a..1d3042e 100644
+--- a/test/core/services/pending_post_delivery_retrier_test.dart
++++ b/test/core/services/pending_post_delivery_retrier_test.dart
+@@ -7,6 +7,7 @@ import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
+ import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
+ import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
+ import 'package:flutter_app/features/posts/domain/models/post_model.dart';
++import 'package:flutter_app/features/posts/domain/models/post_pass_model.dart';
+ import 'package:flutter_app/features/posts/domain/models/post_recipient_delivery.dart';
+ 
+ import '../../features/contacts/domain/repositories/fake_contact_repository.dart';
+@@ -184,6 +185,69 @@ void main() {
+       expect((await posts.getPost('post-ordered'))!.deliveryStatus, 'sent');
+     },
+   );
++
++  test(
++    'offline to online transition retries queued repost deliveries through the post delivery retrier',
++    () async {
++      contacts.seed(<ContactModel>[_contact('peer-bob', 'Bob')]);
++      await posts.savePost(
++        _post(
++          id: 'post-pass-source',
++          deliveryStatus: 'available',
++          isIncoming: true,
++        ).copyWith(authorUsername: 'Bob'),
++      );
++      const pass = PostPassModel(
++        passId: 'pass-1',
++        eventId: 'evt-pass-1',
++        postId: 'post-pass-source',
++        senderPeerId: 'peer-self',
++        passerPeerId: 'peer-self',
++        passerUsername: 'Alice',
++        passedAt: '2026-03-15T10:00:02.000Z',
++        createdAt: '2026-03-15T10:00:02.000Z',
++        isIncoming: false,
++        deliveryStatus: 'failed',
++      );
++      await posts.savePostPass(pass);
++      await posts.saveRecipientDelivery(
++        const PostRecipientDelivery(
++          postId: 'post-pass-source',
++          deliveryOwnerKind: postRecipientDeliveryOwnerKindPass,
++          deliveryOwnerId: 'pass-1',
++          recipientPeerId: 'peer-bob',
++          deliveryStatus: 'failed',
++          lastAttemptAt: '2026-03-15T10:00:03.000Z',
++          deliveryPath: 'failed',
++          createdAt: '2026-03-15T10:00:02.000Z',
++          updatedAt: '2026-03-15T10:00:03.000Z',
++        ),
++      );
++
++      retrier.start();
++      p2pService.emitState(
++        const NodeState(
++          isStarted: true,
++          peerId: 'peer-self',
++          circuitAddresses: <String>['/p2p-circuit/addr1'],
++        ),
++      );
++      await Future<void>.delayed(const Duration(milliseconds: 20));
++
++      expect(p2pService.sendMessageWithReplyCallCount, 1);
++      final deliveries = await posts.getPostPassRecipientDeliveries(
++        pass.passId,
++      );
++      expect(deliveries, hasLength(1));
++      expect(deliveries.single.deliveryStatus, 'delivered');
++      expect(await posts.loadRetryableOutgoingPostPasses(), isEmpty);
++      expect(
++        (await posts.loadPostPasses('post-pass-source')).single.deliveryStatus,
++        'sent',
++      );
++      expect(await posts.loadRetryableFollowOnOutboxJobs(), isEmpty);
++    },
++  );
+ }
+ 
+ class _RecordingFakeP2PService extends FakeP2PService {
+diff --git a/test/core/services/pending_post_follow_on_retrier_test.dart b/test/core/services/pending_post_follow_on_retrier_test.dart
+index 3afab6a..6b34ff3 100644
+--- a/test/core/services/pending_post_follow_on_retrier_test.dart
++++ b/test/core/services/pending_post_follow_on_retrier_test.dart
+@@ -3,6 +3,10 @@ import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
+ import 'package:flutter_app/features/posts/application/pending_post_follow_on_retrier.dart';
+ import 'package:flutter_app/features/posts/domain/models/post_follow_on_outbox_event.dart';
+ import 'package:flutter_app/features/posts/domain/models/post_follow_on_outbox_recipient_delivery.dart';
++import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
++import 'package:flutter_app/features/posts/domain/models/post_model.dart';
++import 'package:flutter_app/features/posts/domain/models/post_pass_model.dart';
++import 'package:flutter_app/features/posts/domain/models/post_recipient_delivery.dart';
+ 
+ import '../../shared/fakes/in_memory_post_repository.dart';
+ import 'fake_p2p_service.dart';
+@@ -71,39 +75,64 @@ void main() {
+     expect(p2pService.sendMessageWithReplyCallCount, 1);
+   });
+ 
+-  test('start while already online retries queued pass follow-ons', () async {
+-    await postRepo.saveFollowOnOutboxEvent(
+-      const PostFollowOnOutboxEvent(
+-        eventId: 'evt-pass-1',
+-        eventType: 'post_pass_along',
+-        postId: 'post-1',
+-        senderPeerId: 'peer-self',
+-        rawEnvelope: '{"type":"post_pass"}',
+-        createdAt: '2026-03-15T11:25:00.000Z',
+-      ),
+-    );
+-    await postRepo.saveFollowOnOutboxRecipientDelivery(
+-      const PostFollowOnOutboxRecipientDelivery(
+-        eventId: 'evt-pass-1',
+-        recipientPeerId: 'peer-bob',
+-        deliveryStatus: 'failed',
+-        deliveryPath: 'failed',
+-        lastError: 'inbox_store_failed',
+-        lastAttemptAt: '2026-03-15T11:25:10.000Z',
+-        createdAt: '2026-03-15T11:25:00.000Z',
+-        updatedAt: '2026-03-15T11:25:10.000Z',
+-      ),
+-    );
++  test(
++    'start while already online ignores repost delivery state because repost no longer uses follow-on outbox jobs',
++    () async {
++      await postRepo.savePost(
++        const PostModel(
++          id: 'post-1',
++          eventId: 'evt-post-1',
++          senderPeerId: 'peer-bob',
++          authorPeerId: 'peer-bob',
++          authorUsername: 'Bob',
++          text: 'Need a ladder',
++          audience: PostAudience(kind: PostAudienceKind.allFriends),
++          createdAt: '2026-03-15T10:00:00.000Z',
++          visibleAt: '2026-03-15T10:00:00.000Z',
++          expiresAt: '2026-03-18T10:00:00.000Z',
++          isIncoming: true,
++        ),
++      );
++      await postRepo.savePostPass(
++        const PostPassModel(
++          passId: 'pass-1',
++          eventId: 'evt-pass-1',
++          postId: 'post-1',
++          senderPeerId: 'peer-self',
++          passerPeerId: 'peer-self',
++          passerUsername: 'Alice',
++          passedAt: '2026-03-15T11:25:00.000Z',
++          createdAt: '2026-03-15T11:25:00.000Z',
++          isIncoming: false,
++          deliveryStatus: 'failed',
++        ),
++      );
++      await postRepo.saveRecipientDelivery(
++        const PostRecipientDelivery(
++          postId: 'post-1',
++          deliveryOwnerKind: postRecipientDeliveryOwnerKindPass,
++          deliveryOwnerId: 'pass-1',
++          recipientPeerId: 'peer-bob',
++          deliveryStatus: 'failed',
++          deliveryPath: 'failed',
++          lastError: 'inbox_store_failed',
++          lastAttemptAt: '2026-03-15T11:25:10.000Z',
++          createdAt: '2026-03-15T11:25:00.000Z',
++          updatedAt: '2026-03-15T11:25:10.000Z',
++        ),
++      );
+ 
+-    retrier.start();
+-    await Future<void>.delayed(const Duration(milliseconds: 20));
++      retrier.start();
++      await Future<void>.delayed(const Duration(milliseconds: 20));
+ 
+-    final deliveries = await postRepo.loadFollowOnOutboxRecipientDeliveries(
+-      'evt-pass-1',
+-    );
+-    expect(deliveries, hasLength(1));
+-    expect(deliveries.single.deliveryStatus, 'delivered');
+-    expect(await postRepo.loadRetryableFollowOnOutboxJobs(), isEmpty);
+-    expect(p2pService.sendMessageWithReplyCallCount, 1);
+-  });
++      final deliveries = await postRepo.getPostPassRecipientDeliveries(
++        'pass-1',
++      );
++      expect(deliveries, hasLength(1));
++      expect(deliveries.single.deliveryStatus, 'failed');
++      expect(await postRepo.loadRetryableOutgoingPostPasses(), hasLength(1));
++      expect(await postRepo.loadRetryableFollowOnOutboxJobs(), isEmpty);
++      expect(p2pService.sendMessageWithReplyCallCount, 0);
++    },
++  );
+ }
+diff --git a/test/features/posts/improvement/post_pass_retry_integration_test.dart b/test/features/posts/improvement/post_pass_retry_integration_test.dart
+index c3f3a1f..2ef434c 100644
+--- a/test/features/posts/improvement/post_pass_retry_integration_test.dart
++++ b/test/features/posts/improvement/post_pass_retry_integration_test.dart
+@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
+ import 'package:flutter_app/core/services/incoming_message_router.dart';
+ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+ import 'package:flutter_app/features/posts/application/pass_post_along_use_case.dart';
++import 'package:flutter_app/features/posts/application/pending_post_delivery_retrier.dart';
+ import 'package:flutter_app/features/posts/application/pending_post_follow_on_retrier.dart';
+ import 'package:flutter_app/features/posts/application/post_pass_listener.dart';
+ import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
+@@ -51,7 +52,7 @@ void main() {
+   });
+ 
+   test(
+-    'pass retry preserves explicit recipient plus author notification and does not duplicate pass records',
++    'pass retry uses the post delivery retrier, preserves explicit recipient plus author notification, and does not duplicate pass records',
+     () async {
+       await _seedSharedPost(sender: sender, author: author);
+       author.p2pService.setOnline(false);
+@@ -77,24 +78,36 @@ void main() {
+       );
+       expect(await author.postRepo.loadPostPasses('post-1'), isEmpty);
+ 
+-      final retryableJobs = await sender.postRepo
+-          .loadRetryableFollowOnOutboxJobs();
+-      expect(retryableJobs, hasLength(1));
+-      expect(retryableJobs.single.event.eventType, 'post_pass_along');
++      final retryablePasses = await sender.postRepo
++          .loadRetryableOutgoingPostPasses();
++      expect(retryablePasses, hasLength(1));
++      expect(retryablePasses.single.passId, pass!.passId);
++      expect(await sender.postRepo.loadRetryableFollowOnOutboxJobs(), isEmpty);
+       expect(
+-        retryableJobs.single.recipientDeliveries.map(
+-          (delivery) => delivery.recipientPeerId,
+-        ),
++        (await sender.postRepo.getPostPassRecipientDeliveries(pass.passId))
++            .where(
++              (delivery) =>
++                  delivery.deliveryStatus != 'delivered' &&
++                  delivery.deliveryStatus != 'inbox',
++            )
++            .map((delivery) => delivery.recipientPeerId),
+         <String>[author.peerId],
+       );
+ 
+       author.p2pService.setOnline(true);
+       network.inboxDisabled = false;
+ 
+-      final retried = await retryPendingPostFollowOns(
++      final followOnRetried = await retryPendingPostFollowOns(
+         postRepo: sender.postRepo,
+         p2pService: sender.p2pService,
+       );
++      expect(followOnRetried, 0);
++
++      final retried = await retryPendingPostDeliveries(
++        postRepo: sender.postRepo,
++        contactRepo: sender.contactRepo,
++        p2pService: sender.p2pService,
++      );
+ 
+       expect(retried, 1);
+       await _waitForPassCount(
+@@ -106,10 +119,12 @@ void main() {
+       expect(await recipient.postRepo.loadPostPasses('post-1'), hasLength(1));
+       expect(await author.postRepo.loadPostPasses('post-1'), hasLength(1));
+       expect(await author.postRepo.loadPostPassCount('post-1'), 1);
++      expect(await sender.postRepo.loadRetryableOutgoingPostPasses(), isEmpty);
+       expect(await sender.postRepo.loadRetryableFollowOnOutboxJobs(), isEmpty);
+ 
+-      final secondRetry = await retryPendingPostFollowOns(
++      final secondRetry = await retryPendingPostDeliveries(
+         postRepo: sender.postRepo,
++        contactRepo: sender.contactRepo,
+         p2pService: sender.p2pService,
+       );
+ 
+diff --git a/test/features/posts/phase4/pass_post_along_use_case_test.dart b/test/features/posts/phase4/pass_post_along_use_case_test.dart
+index 6fa1cfe..6213772 100644
+--- a/test/features/posts/phase4/pass_post_along_use_case_test.dart
++++ b/test/features/posts/phase4/pass_post_along_use_case_test.dart
+@@ -4,9 +4,11 @@ import 'dart:convert';
+ import 'package:flutter_test/flutter_test.dart';
+ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+ import 'package:flutter_app/features/posts/application/pass_post_along_use_case.dart';
++import 'package:flutter_app/features/posts/application/post_delivery_runner.dart';
+ import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
+ import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
+ import 'package:flutter_app/features/posts/domain/models/post_model.dart';
++import 'package:flutter_app/features/posts/domain/models/post_recipient_delivery.dart';
+ 
+ import '../../../shared/fakes/fake_p2p_network.dart';
+ import '../../../shared/fakes/fake_p2p_service_integration.dart';
+@@ -129,7 +131,54 @@ void main() {
+   );
+ 
+   test(
+-    'persists a local pass and outbox recipients before delivery completes',
++    'createLocalPostPass persists a local pass and queued recipient deliveries before background delivery starts',
++    () async {
++      await posts.savePost(_directPost());
++
++      final (result, created) = await createLocalPostPass(
++        p2pService: aliceService,
++        postRepo: posts,
++        contactRepo: contacts,
++        postId: 'post-1',
++        senderPeerId: 'peer-alice',
++        senderUsername: 'Alice',
++        recipientPeerIds: const <String>['peer-cara'],
++      );
++
++      expect(result, PassPostAlongResult.success);
++      expect(created, isNotNull);
++      expect(network.deliverCallCount, 0);
++      expect(network.storeInInboxCallCount, 0);
++
++      final localPasses = await posts.loadPostPasses('post-1');
++      expect(localPasses, hasLength(1));
++      expect(created!.pass.passId, localPasses.single.passId);
++      expect(localPasses.single.deliveryStatus, 'sending');
++      final deliveries = await posts.getPostPassRecipientDeliveries(
++        created.pass.passId,
++      );
++      expect(deliveries.map((delivery) => delivery.recipientPeerId), <String>[
++        'peer-bob',
++        'peer-cara',
++      ]);
++      expect(
++        deliveries.map((delivery) => delivery.deliveryStatus),
++        everyElement('pending'),
++      );
++      expect(
++        deliveries.map((delivery) => delivery.deliveryOwnerKind),
++        everyElement(postRecipientDeliveryOwnerKindPass),
++      );
++      expect(
++        deliveries.map((delivery) => delivery.deliveryOwnerId),
++        everyElement(created.pass.passId),
++      );
++      expect(await posts.loadRetryableFollowOnOutboxJobs(), isEmpty);
++    },
++  );
++
++  test(
++    'persists a local pass and shared recipient deliveries before delivery completes',
+     () async {
+       await posts.savePost(_directPost());
+       network.deliveryDelay = const Duration(milliseconds: 150);
+@@ -148,14 +197,9 @@ void main() {
+ 
+       final localPasses = await posts.loadPostPasses('post-1');
+       expect(localPasses, hasLength(1));
+-      expect(
+-        (await posts.getFollowOnOutboxEvent(
+-          localPasses.single.eventId,
+-        ))?.eventType,
+-        'post_pass_along',
+-      );
+-      final deliveries = await posts.loadFollowOnOutboxRecipientDeliveries(
+-        localPasses.single.eventId,
++      expect(localPasses.single.deliveryStatus, 'sending');
++      final deliveries = await posts.getPostPassRecipientDeliveries(
++        localPasses.single.passId,
+       );
+       expect(deliveries.map((delivery) => delivery.recipientPeerId), <String>[
+         'peer-bob',
+@@ -165,6 +209,7 @@ void main() {
+         deliveries.map((delivery) => delivery.deliveryStatus),
+         everyElement('pending'),
+       );
++      expect(await posts.loadRetryableFollowOnOutboxJobs(), isEmpty);
+ 
+       final (result, pass) = await sendFuture;
+       expect(result, PassPostAlongResult.success);
+@@ -173,7 +218,57 @@ void main() {
+   );
+ 
+   test(
+-    'keeps a local pass and retryable outbox state when the author notification is unresolved',
++    'deliverCreatedLocalPostPass keeps the local pass and queued recipient deliveries when every delivery path fails',
++    () async {
++      await posts.savePost(_directPost());
++      bobService.setOnline(false);
++      caraService.setOnline(false);
++      network.inboxDisabled = true;
++
++      final (createResult, created) = await createLocalPostPass(
++        p2pService: aliceService,
++        postRepo: posts,
++        contactRepo: contacts,
++        postId: 'post-1',
++        senderPeerId: 'peer-alice',
++        senderUsername: 'Alice',
++        recipientPeerIds: const <String>['peer-cara'],
++      );
++
++      expect(createResult, PassPostAlongResult.success);
++      expect(created, isNotNull);
++
++      final deliveryResult = await deliverCreatedLocalPostPass(
++        p2pService: aliceService,
++        postRepo: posts,
++        created: created!,
++      );
++
++      expect(deliveryResult.$1, SendPostResult.sendFailed);
++      final localPasses = await posts.loadPostPasses('post-1');
++      expect(localPasses, hasLength(1));
++      expect(localPasses.single.deliveryStatus, 'failed');
++
++      final deliveries = await posts.getPostPassRecipientDeliveries(
++        created.pass.passId,
++      );
++      expect(deliveries.map((delivery) => delivery.recipientPeerId), <String>[
++        'peer-bob',
++        'peer-cara',
++      ]);
++      expect(deliveries.map((delivery) => delivery.deliveryStatus), <String>[
++        'failed',
++        'failed',
++      ]);
++
++      final retryablePasses = await posts.loadRetryableOutgoingPostPasses();
++      expect(retryablePasses, hasLength(1));
++      expect(retryablePasses.single.passId, created.pass.passId);
++    },
++  );
++
++  test(
++    'keeps a local pass and retryable recipient-delivery state when the author notification is unresolved',
+     () async {
+       await posts.savePost(_directPost());
+       bobService.setOnline(false);
+@@ -193,8 +288,8 @@ void main() {
+       expect(pass, isNotNull);
+       expect(await posts.loadPostPasses('post-1'), hasLength(1));
+ 
+-      final deliveries = await posts.loadFollowOnOutboxRecipientDeliveries(
+-        pass!.eventId,
++      final deliveries = await posts.getPostPassRecipientDeliveries(
++        pass!.passId,
+       );
+       expect(deliveries.map((delivery) => delivery.recipientPeerId), <String>[
+         'peer-bob',
+@@ -205,20 +300,26 @@ void main() {
+         'delivered',
+       ]);
+ 
+-      final retryableJobs = await posts.loadRetryableFollowOnOutboxJobs();
+-      expect(retryableJobs, hasLength(1));
+-      expect(retryableJobs.single.event.eventType, 'post_pass_along');
++      final retryablePasses = await posts.loadRetryableOutgoingPostPasses();
++      expect(retryablePasses, hasLength(1));
++      expect(retryablePasses.single.passId, pass.passId);
++      expect(retryablePasses.single.deliveryStatus, 'partial');
+       expect(
+-        retryableJobs.single.recipientDeliveries.map(
+-          (delivery) => delivery.recipientPeerId,
+-        ),
++        deliveries
++            .where(
++              (delivery) =>
++                  delivery.deliveryStatus != 'delivered' &&
++                  delivery.deliveryStatus != 'inbox',
++            )
++            .map((delivery) => delivery.recipientPeerId),
+         <String>['peer-bob'],
+       );
++      expect(await posts.loadRetryableFollowOnOutboxJobs(), isEmpty);
+     },
+   );
+ 
+   test(
+-    'rejects a non-renderable snapshot before persisting a local pass or outbox state',
++    'rejects a non-renderable snapshot before persisting a local pass or recipient-delivery state',
+     () async {
+       await posts.savePost(_directPost(mediaKind: 'image'));
+ 
+@@ -235,6 +336,7 @@ void main() {
+       expect(result, PassPostAlongResult.sendFailed);
+       expect(pass, isNull);
+       expect(await posts.loadPostPasses('post-1'), isEmpty);
++      expect(await posts.loadRetryableOutgoingPostPasses(), isEmpty);
+       expect(await posts.loadRetryableFollowOnOutboxJobs(), isEmpty);
+     },
+   );
+diff --git a/test/features/posts/phase4/posts_wired_pass_along_test.dart b/test/features/posts/phase4/posts_wired_pass_along_test.dart
+index 2709b1f..aef27b5 100644
+--- a/test/features/posts/phase4/posts_wired_pass_along_test.dart
++++ b/test/features/posts/phase4/posts_wired_pass_along_test.dart
+@@ -109,6 +109,63 @@ void main() {
+     expect(payload['post_id'], 'post-1');
+     expect(payload['passer_peer_id'], 'peer-alice');
+   });
++
++  testWidgets(
++    'closes the pass sheet after local persistence and refreshes sender-visible repost state while delivery is still in flight',
++    (tester) async {
++      contactRepository.seed([
++        _contact('peer-bob', 'Bob'),
++        _contact('peer-cara', 'Cara'),
++      ]);
++      await postRepository.savePost(
++        _post(
++          senderPeerId: 'peer-alice',
++          authorPeerId: 'peer-alice',
++          authorUsername: 'Alice',
++        ),
++      );
++      network.deliveryDelay = const Duration(seconds: 1);
++
++      await tester.pumpWidget(buildWidget());
++      await tester.pump();
++
++      await tester.tap(find.byIcon(Icons.repeat));
++      await tester.pump();
++      await tester.pump(const Duration(milliseconds: 300));
++
++      await tester.tap(find.text('Cara'));
++      await tester.pump();
++      await tester.tap(find.text('Send pass'));
++      await tester.pump();
++      await tester.pump(const Duration(milliseconds: 350));
++
++      final localPasses = await postRepository.loadPostPasses('post-1');
++      expect(localPasses, hasLength(1));
++      final deliveries = await postRepository.getPostPassRecipientDeliveries(
++        localPasses.single.passId,
++      );
++
++      expect(find.text('Pass along'), findsNothing);
++      expect(find.text('Sending…'), findsNothing);
++      expect(
++        find.byKey(const ValueKey<String>('post-share-count')),
++        findsOneWidget,
++      );
++      expect(find.text('1'), findsOneWidget);
++      expect(deliveries.map((delivery) => delivery.recipientPeerId), <String>[
++        'peer-cara',
++      ]);
++      expect(
++        deliveries.map((delivery) => delivery.deliveryStatus),
++        everyElement('pending'),
++      );
++      expect(localPasses.single.deliveryStatus, 'sending');
++      expect(await postRepository.loadRetryableFollowOnOutboxJobs(), isEmpty);
++
++      await tester.pump(const Duration(seconds: 1));
++      await tester.pump(const Duration(milliseconds: 300));
++    },
++  );
+ }
+ 
+ ContactModel _contact(
+@@ -129,13 +186,17 @@ ContactModel _contact(
+   );
+ }
+ 
+-PostModel _post() {
++PostModel _post({
++  String senderPeerId = 'peer-bob',
++  String authorPeerId = 'peer-bob',
++  String authorUsername = 'Bob',
++}) {
+   return PostModel(
+     id: 'post-1',
+     eventId: 'evt-post-1',
+-    senderPeerId: 'peer-bob',
+-    authorPeerId: 'peer-bob',
+-    authorUsername: 'Bob',
++    senderPeerId: senderPeerId,
++    authorPeerId: authorPeerId,
++    authorUsername: authorUsername,
+     text: 'Lost dog near Neckar bridge.',
+     audience: PostAudience.peopleNearby(radiusM: 2000),
+     createdAt: '2026-03-15T10:15:30.000Z',
+diff --git a/test/shared/fakes/in_memory_post_repository.dart b/test/shared/fakes/in_memory_post_repository.dart
+index b206271..a358400 100644
+--- a/test/shared/fakes/in_memory_post_repository.dart
++++ b/test/shared/fakes/in_memory_post_repository.dart
+@@ -37,7 +37,7 @@ class InMemoryPostRepository implements PostRepository {
+   final Map<String, List<PostMediaUploadRecoveryItem>>
+   _postMediaUploadRecoveryByPostId =
+       <String, List<PostMediaUploadRecoveryItem>>{};
+-  final Map<String, List<PostRecipientDelivery>> _deliveries =
++  final Map<String, List<PostRecipientDelivery>> _deliveriesByOwner =
+       <String, List<PostRecipientDelivery>>{};
+   final Map<String, PostPassModel> _postPassesById = <String, PostPassModel>{};
+   final Map<String, List<PostPassModel>> _postPassesByPostId =
+@@ -148,7 +148,15 @@ class InMemoryPostRepository implements PostRepository {
+       _postMediaById.remove(attachment.mediaId);
+     });
+     _postMediaUploadRecoveryByPostId.remove(postId);
+-    _deliveries.remove(postId);
++    final deliveryOwnerKeys = _deliveriesByOwner.keys.toList(growable: false);
++    for (final ownerKey in deliveryOwnerKeys) {
++      _deliveriesByOwner[ownerKey]?.removeWhere(
++        (delivery) => delivery.postId == postId,
++      );
++      if ((_deliveriesByOwner[ownerKey] ?? const []).isEmpty) {
++        _deliveriesByOwner.remove(ownerKey);
++      }
++    }
+     _postOrigins.remove(postId);
+     _pinStates.remove(postId);
+     _pinDismissals.remove(postId);
+@@ -529,14 +537,15 @@ class InMemoryPostRepository implements PostRepository {
+ 
+   @override
+   Future<void> saveRecipientDelivery(PostRecipientDelivery delivery) async {
+-    final deliveries = _deliveries.putIfAbsent(
+-      delivery.postId,
++    final deliveries = _deliveriesByOwner.putIfAbsent(
++      _deliveryOwnerKey(delivery.deliveryOwnerKind, delivery.deliveryOwnerId),
+       () => <PostRecipientDelivery>[],
+     );
+     deliveries.removeWhere(
+       (existing) => existing.recipientPeerId == delivery.recipientPeerId,
+     );
+     deliveries.add(delivery);
++    deliveries.sort((a, b) => a.recipientPeerId.compareTo(b.recipientPeerId));
+     _changes.add(delivery.postId);
+   }
+ 
+@@ -544,7 +553,26 @@ class InMemoryPostRepository implements PostRepository {
+   Future<List<PostRecipientDelivery>> getRecipientDeliveries(
+     String postId,
+   ) async {
+-    return List<PostRecipientDelivery>.from(_deliveries[postId] ?? const []);
++    return List<PostRecipientDelivery>.from(
++      _deliveriesByOwner[_deliveryOwnerKey(
++            postRecipientDeliveryOwnerKindPost,
++            postId,
++          )] ??
++          const [],
++    );
++  }
++
++  @override
++  Future<List<PostRecipientDelivery>> getPostPassRecipientDeliveries(
++    String passId,
++  ) async {
++    return List<PostRecipientDelivery>.from(
++      _deliveriesByOwner[_deliveryOwnerKey(
++            postRecipientDeliveryOwnerKindPass,
++            passId,
++          )] ??
++          const [],
++    );
+   }
+ 
+   @override
+@@ -570,6 +598,26 @@ class InMemoryPostRepository implements PostRepository {
+   Future<bool> postPassExists(String passId) async =>
+       _postPassesById.containsKey(passId);
+ 
++  @override
++  Future<List<PostPassModel>> loadRetryableOutgoingPostPasses() async {
++    return _postPassesById.values
++        .where(
++          (pass) =>
++              !pass.isIncoming &&
++              (pass.deliveryStatus == 'sending' ||
++                  pass.deliveryStatus == 'partial' ||
++                  pass.deliveryStatus == 'failed'),
++        )
++        .toList(growable: false)
++      ..sort((a, b) {
++        final passedCompare = b.passedAt.compareTo(a.passedAt);
++        if (passedCompare != 0) {
++          return passedCompare;
++        }
++        return b.passId.compareTo(a.passId);
++      });
++  }
++
+   @override
+   Future<List<PostPassModel>> loadPostPasses(String postId) async {
+     return List<PostPassModel>.from(_postPassesByPostId[postId] ?? const []);
+@@ -658,6 +706,10 @@ class InMemoryPostRepository implements PostRepository {
+     _changes.close();
+   }
+ 
++  String _deliveryOwnerKey(String ownerKind, String ownerId) {
++    return '$ownerKind::$ownerId';
++  }
++
+   PostModel _decoratePost(PostModel post) {
+     final origin = _postOrigins[post.id];
+     final passCount =

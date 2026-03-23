@@ -3,8 +3,11 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/compose_post_sheet.dart';
+
+import '../../../shared/fakes/fake_audio_recorder_service.dart';
 
 void main() {
   testWidgets('pick-people flow excludes blocked and archived contacts', (
@@ -14,6 +17,9 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
+        locale: const Locale('en'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
         home: Scaffold(
           body: ComposePostSheet(
             eligibleContacts: <ContactModel>[
@@ -55,6 +61,9 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
+        locale: const Locale('en'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
         home: Builder(
           builder: (context) => Scaffold(
             body: FilledButton(
@@ -90,11 +99,100 @@ void main() {
     await tester.pump();
   });
 
+  testWidgets(
+    'tap voice starts recording immediately and stop produces a voice draft',
+    (tester) async {
+      ComposePostResult? submitted;
+      final recorder = FakeAudioRecorderService()
+        ..fakeDurationMs = 6400
+        ..fakeOutputPath = '/tmp/post_voice.m4a';
+      addTearDown(() async {
+        await recorder.dispose();
+      });
+
+      await tester.pumpWidget(
+        MaterialApp(
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(
+            body: ComposePostSheet(
+              eligibleContacts: const <ContactModel>[],
+              audioRecorderService: recorder,
+              onSubmit: (result) async {
+                submitted = result;
+              },
+            ),
+          ),
+        ),
+      );
+
+      await tester.tap(find.text('Voice'));
+      await tester.pump();
+
+      expect(find.text('Cancel'), findsOneWidget);
+      expect(find.byIcon(Icons.stop_circle_outlined), findsOneWidget);
+
+      recorder.emitDuration(const Duration(seconds: 4));
+      recorder.emitAmplitude(0.2);
+      recorder.emitAmplitude(0.6);
+      recorder.emitAmplitude(1.0);
+      await tester.pump();
+
+      expect(find.text('0:04'), findsOneWidget);
+
+      await tester.tap(find.text('Stop'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Voice attached'), findsOneWidget);
+
+      await tester.enterText(find.byType(TextField), 'post draft');
+      await tester.pump();
+      await tester.tap(find.text('Post'));
+      await tester.pumpAndSettle();
+
+      expect(submitted, isNotNull);
+      expect(submitted!.text, 'post draft');
+      expect(submitted!.mediaDrafts, hasLength(1));
+      expect(submitted!.mediaDrafts.single.mime, 'audio/mp4');
+    },
+  );
+
+  test(
+    'fake recorder cancels a delayed voice start when stop is requested',
+    () async {
+      final recorder = FakeAudioRecorderService()
+        ..fakeDurationMs = 6400
+        ..startGate = Completer<void>();
+
+      addTearDown(() async {
+        await recorder.dispose();
+      });
+
+      final startFuture = recorder.start(outputPath: '/tmp/delayed_voice.m4a');
+      expect(recorder.startCallCount, 1);
+      expect(recorder.isRecording, false);
+
+      final stopFuture = recorder.stop();
+      expect(recorder.stopCallCount, 1);
+      expect(recorder.isRecording, false);
+
+      recorder.startGate!.complete();
+      await startFuture;
+
+      expect(await stopFuture, isNull);
+      expect(recorder.isRecording, false);
+    },
+  );
+
   testWidgets('closes the sheet once submit outcome says to close', (
     tester,
   ) async {
     await tester.pumpWidget(
       MaterialApp(
+        locale: const Locale('en'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
         home: Builder(
           builder: (context) => Scaffold(
             body: FilledButton(
@@ -134,6 +232,9 @@ void main() {
   ) async {
     await tester.pumpWidget(
       MaterialApp(
+        locale: const Locale('en'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
         home: Builder(
           builder: (context) => Scaffold(
             body: FilledButton(

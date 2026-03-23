@@ -3,9 +3,11 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_screen.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/conversation_header.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/attachment_preview_strip.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bubble.dart';
@@ -31,6 +33,9 @@ void main() {
     ValueChanged<String>? onQuoteReply,
   }) {
     return MaterialApp(
+      locale: const Locale('en'),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
       home: Scaffold(
         body: ConversationScreen(
           contactPeerId: '12D3KooWTestPeerId1234567890',
@@ -361,13 +366,13 @@ void main() {
         );
 
         composerState.value = const ConversationComposerViewState(
-          isRecording: true,
+          recordingState: VoiceRecordingState.recording,
           recordingDuration: Duration(seconds: 3),
           amplitudeValues: [0.2, 0.5, 0.8],
         );
         await tester.pump();
 
-        expect(find.text('Slide to cancel'), findsOneWidget);
+        expect(find.text('Cancel'), findsOneWidget);
         expect(find.text('0:03'), findsOneWidget);
         expect(
           identical(

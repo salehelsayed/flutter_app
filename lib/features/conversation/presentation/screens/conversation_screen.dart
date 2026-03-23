@@ -28,7 +28,7 @@ class ConversationComposerViewState {
   final bool isUploading;
   final bool isProcessing;
   final double processingProgress;
-  final bool isRecording;
+  final VoiceRecordingState recordingState;
   final Duration recordingDuration;
   final List<double> amplitudeValues;
 
@@ -37,7 +37,7 @@ class ConversationComposerViewState {
     this.isUploading = false,
     this.isProcessing = false,
     this.processingProgress = 0.0,
-    this.isRecording = false,
+    this.recordingState = VoiceRecordingState.idle,
     this.recordingDuration = Duration.zero,
     this.amplitudeValues = const [],
   });
@@ -47,7 +47,7 @@ class ConversationComposerViewState {
     bool? isUploading,
     bool? isProcessing,
     double? processingProgress,
-    bool? isRecording,
+    VoiceRecordingState? recordingState,
     Duration? recordingDuration,
     List<double>? amplitudeValues,
   }) {
@@ -56,11 +56,13 @@ class ConversationComposerViewState {
       isUploading: isUploading ?? this.isUploading,
       isProcessing: isProcessing ?? this.isProcessing,
       processingProgress: processingProgress ?? this.processingProgress,
-      isRecording: isRecording ?? this.isRecording,
+      recordingState: recordingState ?? this.recordingState,
       recordingDuration: recordingDuration ?? this.recordingDuration,
       amplitudeValues: amplitudeValues ?? this.amplitudeValues,
     );
   }
+
+  bool get isRecording => recordingState.isActive;
 }
 
 /// Pure UI conversation screen.
@@ -89,10 +91,11 @@ class ConversationScreen extends StatefulWidget {
   final bool isProcessing;
   final bool isSending;
   final double processingProgress;
+  final bool isRecording;
+  final VoiceRecordingState recordingState;
   final VoidCallback? onRecordStart;
   final VoidCallback? onRecordStop;
   final VoidCallback? onRecordCancel;
-  final bool isRecording;
   final Duration recordingDuration;
   final List<double> amplitudeValues;
   final ValueListenable<ConversationComposerViewState>? composerStateListenable;
@@ -133,10 +136,11 @@ class ConversationScreen extends StatefulWidget {
     this.isProcessing = false,
     this.isSending = false,
     this.processingProgress = 0.0,
+    this.isRecording = false,
+    this.recordingState = VoiceRecordingState.idle,
     this.onRecordStart,
     this.onRecordStop,
     this.onRecordCancel,
-    this.isRecording = false,
     this.recordingDuration = Duration.zero,
     this.amplitudeValues = const [],
     this.composerStateListenable,
@@ -168,7 +172,11 @@ class _ConversationScreenState extends State<ConversationScreen> {
         isUploading: widget.isUploading,
         isProcessing: widget.isProcessing,
         processingProgress: widget.processingProgress,
-        isRecording: widget.isRecording,
+        recordingState: widget.recordingState != VoiceRecordingState.idle
+            ? widget.recordingState
+            : (widget.isRecording
+                  ? VoiceRecordingState.recording
+                  : VoiceRecordingState.idle),
         recordingDuration: widget.recordingDuration,
         amplitudeValues: widget.amplitudeValues,
       );
@@ -262,10 +270,10 @@ class _ConversationScreenState extends State<ConversationScreen> {
           hasAttachments: composerState.pendingAttachments.isNotEmpty,
           isProcessing: composerState.isProcessing,
           isSending: widget.isSending,
+          recordingState: composerState.recordingState,
           onRecordStart: widget.onRecordStart,
           onRecordStop: widget.onRecordStop,
           onRecordCancel: widget.onRecordCancel,
-          isRecording: composerState.isRecording,
           recordingDuration: composerState.recordingDuration,
           amplitudeValues: composerState.amplitudeValues,
           initialText: widget.initialText,

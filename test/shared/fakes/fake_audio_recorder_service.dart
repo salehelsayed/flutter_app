@@ -4,11 +4,19 @@ import 'package:flutter_app/features/conversation/domain/models/audio_recording.
 
 class FakeAudioRecorderService implements AudioRecorderService {
   bool _isRecording = false;
+  bool _startInProgress = false;
+  bool _stopRequestedWhileStarting = false;
   String? _currentOutputPath;
   int fakeDurationMs = 3000;
   int fakeSizeBytes = 48000;
   bool permissionGranted = true;
   bool shouldFailStart = false;
+  int startCallCount = 0;
+  int stopCallCount = 0;
+  int cancelCallCount = 0;
+  Completer<void>? startGate;
+  Completer<void>? stopGate;
+
   /// When set, [stop] returns this path instead of [_currentOutputPath].
   String? fakeOutputPath;
   final List<String> deletedPaths = [];
@@ -32,22 +40,49 @@ class FakeAudioRecorderService implements AudioRecorderService {
 
   @override
   Future<void> start({required String outputPath}) async {
-    if (_isRecording) {
+    startCallCount++;
+    if (_isRecording || _startInProgress) {
       throw StateError('Already recording');
     }
     if (shouldFailStart) {
       throw StateError('Recording start failed');
     }
-    _isRecording = true;
+    _startInProgress = true;
     _currentOutputPath = outputPath;
+
+    final gate = startGate;
+    if (gate != null) {
+      await gate.future;
+    }
+
+    _startInProgress = false;
+    if (_stopRequestedWhileStarting) {
+      _stopRequestedWhileStarting = false;
+      _currentOutputPath = null;
+      return;
+    }
+    _isRecording = true;
   }
 
   @override
   Future<AudioRecording?> stop() async {
+    stopCallCount++;
+    final gate = stopGate;
+    if (_startInProgress) {
+      _stopRequestedWhileStarting = true;
+      if (gate != null) {
+        await gate.future;
+      }
+      return null;
+    }
     if (!_isRecording) return null;
     _isRecording = false;
     final path = fakeOutputPath ?? _currentOutputPath!;
     _currentOutputPath = null;
+
+    if (gate != null) {
+      await gate.future;
+    }
 
     if (fakeDurationMs < 500) return null;
 
@@ -60,6 +95,7 @@ class FakeAudioRecorderService implements AudioRecorderService {
 
   @override
   Future<void> cancel() async {
+    cancelCallCount++;
     if (!_isRecording) return;
     _isRecording = false;
     if (_currentOutputPath != null) {

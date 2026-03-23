@@ -4,18 +4,18 @@ import 'package:flutter_app/features/conversation/presentation/widgets/voice_rec
 
 void main() {
   Widget buildTestWidget({
-    VoidCallback? onTapDown,
-    VoidCallback? onTapUp,
-    VoidCallback? onTapCancel,
-    bool isRecording = false,
+    required bool isRecording,
+    required VoidCallback onTapDown,
+    required VoidCallback onTapUp,
+    required VoidCallback onTapCancel,
   }) {
     return MaterialApp(
       home: Scaffold(
         body: Center(
           child: VoiceRecordButton(
-            onTapDown: onTapDown ?? () {},
-            onTapUp: onTapUp ?? () {},
-            onTapCancel: onTapCancel ?? () {},
+            onTapDown: onTapDown,
+            onTapUp: onTapUp,
+            onTapCancel: onTapCancel,
             isRecording: isRecording,
           ),
         ),
@@ -24,110 +24,188 @@ void main() {
   }
 
   group('VoiceRecordButton', () {
-    testWidgets('renders mic icon when not recording', (tester) async {
-      await tester.pumpWidget(buildTestWidget());
+    testWidgets('renders a larger accessible tap target', (tester) async {
+      await tester.pumpWidget(
+        buildTestWidget(
+          isRecording: false,
+          onTapDown: () {},
+          onTapUp: () {},
+          onTapCancel: () {},
+        ),
+      );
+
+      expect(
+        tester.getSize(find.byType(VoiceRecordButton)),
+        const Size(48, 48),
+      );
+      expect(find.bySemanticsLabel('Start voice recording'), findsOneWidget);
+    });
+
+    testWidgets(
+      'starts recording immediately on tap down and does not stop on the same tap',
+      (tester) async {
+        var isRecording = false;
+        var downCount = 0;
+        var upCount = 0;
+        var cancelCount = 0;
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: Center(
+                child: StatefulBuilder(
+                  builder: (context, setState) {
+                    return VoiceRecordButton(
+                      isRecording: isRecording,
+                      onTapDown: () {
+                        downCount++;
+                        setState(() => isRecording = true);
+                      },
+                      onTapUp: () {
+                        upCount++;
+                        setState(() => isRecording = false);
+                      },
+                      onTapCancel: () {
+                        cancelCount++;
+                        setState(() => isRecording = false);
+                      },
+                    );
+                  },
+                ),
+              ),
+            ),
+          ),
+        );
+
+        final gesture = await tester.startGesture(
+          tester.getCenter(find.byType(VoiceRecordButton)),
+        );
+        await tester.pump();
+
+        expect(downCount, 1);
+        expect(upCount, 0);
+        expect(cancelCount, 0);
+        expect(isRecording, true);
+        expect(find.byIcon(Icons.stop_rounded), findsOneWidget);
+
+        await gesture.up();
+        await tester.pump();
+
+        expect(downCount, 1);
+        expect(upCount, 0);
+        expect(cancelCount, 0);
+        expect(isRecording, true);
+        expect(find.byIcon(Icons.stop_rounded), findsOneWidget);
+      },
+    );
+
+    testWidgets('stops recording on a second tap when already recording', (
+      tester,
+    ) async {
+      var isRecording = false;
+      var downCount = 0;
+      var upCount = 0;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Center(
+              child: StatefulBuilder(
+                builder: (context, setState) {
+                  return VoiceRecordButton(
+                    isRecording: isRecording,
+                    onTapDown: () {
+                      downCount++;
+                      setState(() => isRecording = true);
+                    },
+                    onTapUp: () {
+                      upCount++;
+                      setState(() => isRecording = false);
+                    },
+                    onTapCancel: () {},
+                  );
+                },
+              ),
+            ),
+          ),
+        ),
+      );
+
+      final firstGesture = await tester.startGesture(
+        tester.getCenter(find.byType(VoiceRecordButton)),
+      );
+      await tester.pump();
+      await firstGesture.up();
+      await tester.pump();
+      expect(isRecording, true);
+
+      await tester.tap(find.byType(VoiceRecordButton));
+      await tester.pump();
+
+      expect(downCount, 1);
+      expect(upCount, 1);
+      expect(isRecording, false);
       expect(find.byIcon(Icons.mic_rounded), findsOneWidget);
     });
 
-    testWidgets('renders stop icon when recording', (tester) async {
-      await tester.pumpWidget(buildTestWidget(isRecording: true));
-      expect(find.byIcon(Icons.stop_rounded), findsOneWidget);
-    });
+    testWidgets(
+      'calls onTapCancel when a recording start gesture is cancelled',
+      (tester) async {
+        var isRecording = false;
+        var cancelCount = 0;
 
-    testWidgets('onTapDown called on long press start', (tester) async {
-      var called = false;
-      await tester.pumpWidget(buildTestWidget(onTapDown: () => called = true));
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: Center(
+                child: StatefulBuilder(
+                  builder: (context, setState) {
+                    return VoiceRecordButton(
+                      isRecording: isRecording,
+                      onTapDown: () {
+                        setState(() => isRecording = true);
+                      },
+                      onTapUp: () {},
+                      onTapCancel: () {
+                        cancelCount++;
+                        setState(() => isRecording = false);
+                      },
+                    );
+                  },
+                ),
+              ),
+            ),
+          ),
+        );
 
-      final gesture = await tester.startGesture(
-        tester.getCenter(find.byType(VoiceRecordButton)),
-      );
-      await tester.pump(const Duration(milliseconds: 500));
+        final gesture = await tester.startGesture(
+          tester.getCenter(find.byType(VoiceRecordButton)),
+        );
+        await tester.pump();
 
-      expect(called, true);
-      await gesture.up();
-    });
+        await gesture.cancel();
+        await tester.pump();
 
-    testWidgets('onTapUp called on long press end', (tester) async {
-      var downCalled = false;
-      var upCalled = false;
-      var cancelCalled = false;
-      await tester.pumpWidget(
-        buildTestWidget(
-          onTapDown: () => downCalled = true,
-          onTapUp: () => upCalled = true,
-          onTapCancel: () => cancelCalled = true,
-        ),
-      );
+        expect(cancelCount, 1);
+        expect(isRecording, false);
+        expect(find.byIcon(Icons.mic_rounded), findsOneWidget);
+      },
+    );
 
-      // Start long press
-      final gesture = await tester.startGesture(
-        tester.getCenter(find.byType(VoiceRecordButton)),
-      );
-      await tester.pump(const Duration(milliseconds: 500));
-      expect(downCalled, true);
-
-      // End long press
-      await gesture.up();
-      await tester.pump();
-      expect(upCalled, true);
-      expect(cancelCalled, false);
-    });
-
-    testWidgets('drag-left cancel prevents send on release', (tester) async {
-      var downCalled = false;
-      var upCalled = false;
-      var cancelCalled = false;
-      await tester.pumpWidget(
-        buildTestWidget(
-          onTapDown: () => downCalled = true,
-          onTapUp: () => upCalled = true,
-          onTapCancel: () => cancelCalled = true,
-        ),
-      );
-
-      final center = tester.getCenter(find.byType(VoiceRecordButton));
-      final gesture = await tester.startGesture(center);
-      await tester.pump(const Duration(milliseconds: 500));
-      expect(downCalled, true);
-
-      // Exceed cancel threshold.
-      await gesture.moveBy(const Offset(-120, 0));
-      await tester.pump();
-      expect(cancelCalled, true);
-
-      // Releasing should not send after cancel.
-      await gesture.up();
-      await tester.pump();
-      expect(upCalled, false);
-    });
-
-    testWidgets('onTapCancel called when drag exits button bounds', (
+    testWidgets('shows the recording state with the stop icon and semantics', (
       tester,
     ) async {
-      var cancelCalled = false;
       await tester.pumpWidget(
-        buildTestWidget(onTapCancel: () => cancelCalled = true),
+        buildTestWidget(
+          isRecording: true,
+          onTapDown: () {},
+          onTapUp: () {},
+          onTapCancel: () {},
+        ),
       );
 
-      final center = tester.getCenter(find.byType(VoiceRecordButton));
-      final gesture = await tester.startGesture(center);
-      await tester.pump(const Duration(milliseconds: 500));
-
-      // Drag far away from button
-      await gesture.moveBy(const Offset(-300, 0));
-      await tester.pump();
-      // Cancel is triggered by the long press cancel
-      await gesture.cancel();
-      await tester.pump();
-
-      expect(cancelCalled, true);
-    });
-
-    testWidgets('has teal accent color', (tester) async {
-      await tester.pumpWidget(buildTestWidget());
-
-      final icon = tester.widget<Icon>(find.byIcon(Icons.mic_rounded));
-      expect(icon.color, const Color(0xFF1DB954));
+      expect(find.byIcon(Icons.stop_rounded), findsOneWidget);
+      expect(find.bySemanticsLabel('Stop recording'), findsOneWidget);
     });
   });
 }

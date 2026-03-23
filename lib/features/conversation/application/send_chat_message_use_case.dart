@@ -710,12 +710,18 @@ Future<ConversationMessage> _persistOutgoingSendResult({
   required bool acknowledged,
   required String via,
 }) async {
+  final persistedTransport = _resolvePersistedTransport(
+    p2pService: p2pService,
+    targetPeerId: targetPeerId,
+    via: via,
+  );
+
   if (acknowledged) {
     return payload.toConversationMessage(
       contactPeerId: targetPeerId,
       isIncoming: false,
       status: 'delivered',
-      transport: via,
+      transport: persistedTransport,
     );
   }
 
@@ -754,7 +760,36 @@ Future<ConversationMessage> _persistOutgoingSendResult({
     contactPeerId: targetPeerId,
     isIncoming: false,
     status: 'sent',
-    transport: via,
+    transport: persistedTransport,
     wireEnvelope: jsonString,
   );
+}
+
+String _resolvePersistedTransport({
+  required P2PService p2pService,
+  required String targetPeerId,
+  required String via,
+}) {
+  if (via == 'local' || via == 'wifi' || via == 'inbox') {
+    return via;
+  }
+
+  var sawDirectConnection = false;
+  for (final connection in p2pService.currentState.connections) {
+    if (connection.peerId != targetPeerId) continue;
+    for (final multiaddr in connection.multiaddrs) {
+      if (multiaddr.contains('/p2p-circuit')) {
+        return 'relay';
+      }
+      if (multiaddr.isNotEmpty) {
+        sawDirectConnection = true;
+      }
+    }
+  }
+
+  if (sawDirectConnection) {
+    return 'direct';
+  }
+
+  return via;
 }
