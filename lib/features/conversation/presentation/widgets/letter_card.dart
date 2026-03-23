@@ -1,5 +1,6 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
@@ -216,6 +217,7 @@ class LetterCard extends StatelessWidget {
                         padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
                         child: LinkableText(
                           text: text,
+                          textDirection: detectTextDirection(text),
                           style: TextStyle(
                             fontSize: 15,
                             fontWeight: FontWeight.w400,
@@ -331,6 +333,7 @@ class LetterCard extends StatelessWidget {
             displayText,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
+            textDirection: detectTextDirection(displayText),
             style: TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w400,

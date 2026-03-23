@@ -4,18 +4,19 @@ const int maxMessageLength = 10000;
 /// Maximum allowed username length.
 const int maxUsernameLength = 30;
 
-/// Regex matching bidi control characters and invisible formatting characters.
+/// Regex matching dangerous bidi control characters and invisible formatting.
 ///
 /// Strips: U+200B (zero-width space), U+200C (ZWNJ),
-/// U+200E-200F (LRM/RLM), U+202A-202E (bidi embedding/override),
-/// U+2066-2069 (bidi isolate), U+061C (ALM), U+FEFF (BOM/ZWNBS).
+/// U+202A-U+202E (legacy bidi embedding/override), and U+FEFF (BOM/ZWNBS).
 ///
-/// Preserves U+200D (zero-width joiner) for emoji sequences.
+/// Preserves safe/helpful markers:
+/// - U+200D (ZWJ) for emoji sequences
+/// - U+200E (LRM) and U+200F (RLM) for mixed-direction text
+/// - U+061C (ALM) for Arabic numeric/context handling
+/// - U+2066 (LRI), U+2067 (RLI), U+2068 (FSI), U+2069 (PDI) isolates
 final _bidiPattern = RegExp(
-  '[\u200B\u200C\u200E\u200F'
+  '[\u200B\u200C'
   '\u202A-\u202E'
-  '\u2066-\u2069'
-  '\u061C'
   '\uFEFF]',
 );
 
@@ -35,8 +36,9 @@ bool isMessageTooLong(String text) {
 /// Arabic `\u0600-\u06FF`, Arabic Supplement `\u0750-\u077F`.
 bool isValidUsername(String username) {
   if (username.isEmpty) return false;
-  return RegExp(r'^[a-zA-Z0-9_\-\.\u00C0-\u024F\u0600-\u06FF\u0750-\u077F]+$')
-      .hasMatch(username);
+  return RegExp(
+    r'^[a-zA-Z0-9_\-\.\u00C0-\u024F\u0600-\u06FF\u0750-\u077F]+$',
+  ).hasMatch(username);
 }
 
 /// Sanitizes message text by stripping bidi characters.

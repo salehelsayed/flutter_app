@@ -1,3 +1,5 @@
+import 'dart:ui' show TextDirection;
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -144,6 +146,74 @@ void main() {
       final opacityWidgets = tester.widgetList<Opacity>(find.byType(Opacity));
       final fullOpacity = opacityWidgets.where((o) => o.opacity == 1.0);
       expect(fullOpacity, isNotEmpty);
+    });
+
+    group('BiDi input direction', () {
+      testWidgets('TextField defaults to LTR when empty', (tester) async {
+        await tester.pumpWidget(buildTestWidget());
+        await tester.pump();
+
+        final textField = tester.widget<TextField>(find.byType(TextField));
+        expect(textField.textDirection, TextDirection.ltr);
+      });
+
+      testWidgets('TextField switches to RTL when Arabic is typed', (
+        tester,
+      ) async {
+        await tester.pumpWidget(buildTestWidget());
+        await tester.pump();
+
+        await tester.enterText(find.byType(TextField), 'مرحبا');
+        await tester.pump();
+
+        final textField = tester.widget<TextField>(find.byType(TextField));
+        expect(textField.textDirection, TextDirection.rtl);
+      });
+
+      testWidgets('TextField switches to RTL for Arabic-first mixed text', (
+        tester,
+      ) async {
+        await tester.pumpWidget(buildTestWidget());
+        await tester.pump();
+
+        await tester.enterText(find.byType(TextField), 'مرحبا Hello');
+        await tester.pump();
+
+        final textField = tester.widget<TextField>(find.byType(TextField));
+        expect(textField.textDirection, TextDirection.rtl);
+      });
+
+      testWidgets('TextField stays LTR when English is typed', (tester) async {
+        await tester.pumpWidget(buildTestWidget());
+        await tester.pump();
+
+        await tester.enterText(find.byType(TextField), 'Hello');
+        await tester.pump();
+
+        final textField = tester.widget<TextField>(find.byType(TextField));
+        expect(textField.textDirection, TextDirection.ltr);
+      });
+
+      testWidgets('TextField switches back to LTR after clearing text', (
+        tester,
+      ) async {
+        await tester.pumpWidget(buildTestWidget());
+        await tester.pump();
+
+        await tester.enterText(find.byType(TextField), 'مرحبا');
+        await tester.pump();
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).textDirection,
+          TextDirection.rtl,
+        );
+
+        await tester.enterText(find.byType(TextField), 'Hello');
+        await tester.pump();
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).textDirection,
+          TextDirection.ltr,
+        );
+      });
     });
 
     testWidgets('onSend is called with trimmed text', (tester) async {
