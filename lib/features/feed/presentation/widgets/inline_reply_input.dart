@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
 import 'package:flutter_app/shared/widgets/media/recording_overlay.dart';
@@ -53,6 +54,7 @@ class _InlineReplyInputState extends State<InlineReplyInput>
     with SingleTickerProviderStateMixin {
   final _controller = TextEditingController();
   final _focusNode = FocusNode();
+  TextDirection _inputDirection = TextDirection.ltr;
   bool _hasText = false;
   bool _hasFocus = false;
 
@@ -83,12 +85,15 @@ class _InlineReplyInputState extends State<InlineReplyInput>
     }
 
     _controller.addListener(_onTextChanged);
+    _controller.addListener(_updateInputDirection);
     _focusNode.addListener(_onFocusChanged);
     if (widget.initialText.isNotEmpty) {
       _controller.text = widget.initialText;
       _hasText = widget.initialText.trim().isNotEmpty;
       if (_hasText) _sendButtonController.value = 1.0;
     }
+
+    _updateInputDirection();
   }
 
   @override
@@ -99,6 +104,13 @@ class _InlineReplyInputState extends State<InlineReplyInput>
     }
     if (widget.shouldRequestFocus && !_focusNode.hasFocus) {
       _focusNode.requestFocus();
+    }
+  }
+
+  void _updateInputDirection() {
+    final nextDirection = detectTextDirection(_controller.text);
+    if (nextDirection != _inputDirection) {
+      setState(() => _inputDirection = nextDirection);
     }
   }
 
@@ -146,6 +158,7 @@ class _InlineReplyInputState extends State<InlineReplyInput>
 
   @override
   void dispose() {
+    _controller.removeListener(_updateInputDirection);
     _controller.dispose();
     _focusNode.dispose();
     _sendButtonController.dispose();
@@ -226,6 +239,7 @@ class _InlineReplyInputState extends State<InlineReplyInput>
                       child: TextField(
                         controller: _controller,
                         focusNode: _focusNode,
+                        textDirection: _inputDirection,
                         enabled: widget.enabled && !_isRecording,
                         maxLines: 1,
                         maxLength: maxMessageLength,

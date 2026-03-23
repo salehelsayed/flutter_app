@@ -18,6 +18,7 @@ class LinkableText extends StatefulWidget {
   final TextOverflow? overflow;
   final List<InlineSpan>? prefixSpans;
   final List<InlineSpan>? suffixSpans;
+  final TextDirection? textDirection;
 
   const LinkableText({
     super.key,
@@ -29,6 +30,7 @@ class LinkableText extends StatefulWidget {
     this.overflow,
     this.prefixSpans,
     this.suffixSpans,
+    this.textDirection,
   });
 
   @override
@@ -84,16 +86,15 @@ class _LinkableTextState extends State<LinkableText> {
           ..onTap = () => _handleTap(segment.text);
         _recognizers.add(recognizer);
 
-        spans.add(TextSpan(
-          text: segment.text,
-          style: widget.linkStyle ?? defaultLinkStyle,
-          recognizer: recognizer,
-        ));
+        spans.add(
+          TextSpan(
+            text: segment.text,
+            style: widget.linkStyle ?? defaultLinkStyle,
+            recognizer: recognizer,
+          ),
+        );
       } else {
-        spans.add(TextSpan(
-          text: segment.text,
-          style: widget.style,
-        ));
+        spans.add(TextSpan(text: segment.text, style: widget.style));
       }
     }
 
@@ -128,6 +129,7 @@ class _LinkableTextState extends State<LinkableText> {
       TextSpan(children: allSpans),
       maxLines: widget.maxLines,
       overflow: widget.overflow ?? TextOverflow.clip,
+      textDirection: widget.textDirection,
     );
   }
 }

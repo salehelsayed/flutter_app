@@ -5,6 +5,7 @@ import 'package:uuid/uuid.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
@@ -76,12 +77,13 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
   List<MediaAttachment>? mediaAttachments,
   MediaAttachmentRepository? mediaAttachmentRepo,
 }) async {
+  final sanitizedText = sanitizeMessageText(text);
   emitFlowEvent(
     layer: 'FL',
     event: 'GROUP_SEND_MSG_USE_CASE_BEGIN',
     details: {
       'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
-      'textLength': text.length,
+      'textLength': sanitizedText.length,
     },
   );
 
@@ -108,7 +110,7 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
 
   // 2b. Reject empty messages (no text and no media)
   final hasMedia = mediaAttachments != null && mediaAttachments.isNotEmpty;
-  if (text.trim().isEmpty && !hasMedia) {
+  if (sanitizedText.trim().isEmpty && !hasMedia) {
     emitFlowEvent(
       layer: 'FL',
       event: 'GROUP_SEND_MSG_USE_CASE_EMPTY',
@@ -131,7 +133,7 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
   final pushTitle = _buildGroupPushTitle(group);
   final pushBody = _buildGroupPushBody(
     senderUsername: senderUsername,
-    text: text,
+    text: sanitizedText,
     mediaAttachments: mediaAttachments,
   );
 
@@ -139,7 +141,7 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
   final publishFuture = callGroupPublish(
     bridge,
     groupId: groupId,
-    text: text,
+    text: sanitizedText,
     senderPeerId: senderPeerId,
     senderPublicKey: senderPublicKey,
     senderPrivateKey: senderPrivateKey,
@@ -154,7 +156,7 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     senderPeerId: senderPeerId,
     senderUsername: senderUsername,
     keyEpoch: latestKey?.keyGeneration ?? 0,
-    text: text,
+    text: sanitizedText,
     timestamp: now,
     messageId: resolvedMessageId,
     quotedMessageId: quotedMessageId,
@@ -196,7 +198,7 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     groupId: groupId,
     senderPeerId: senderPeerId,
     senderUsername: senderUsername,
-    text: text,
+    text: sanitizedText,
     timestamp: now,
     quotedMessageId: quotedMessageId,
     keyGeneration: latestKey?.keyGeneration ?? 0,

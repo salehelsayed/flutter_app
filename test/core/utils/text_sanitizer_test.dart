@@ -11,26 +11,26 @@ void main() {
       expect(stripBidiCharacters('hello\u200Cworld'), 'helloworld');
     });
 
-    test('removes LRM (U+200E) and RLM (U+200F)', () {
-      expect(stripBidiCharacters('hello\u200E\u200Fworld'), 'helloworld');
+    test('preserves LRM (U+200E) and RLM (U+200F)', () {
+      expect(
+        stripBidiCharacters('hello\u200E\u200Fworld'),
+        'hello\u200E\u200Fworld',
+      );
     });
 
     test('removes bidi embedding/override (U+202A-202E)', () {
-      expect(
-        stripBidiCharacters('ab\u202A\u202B\u202C\u202D\u202Ecd'),
-        'abcd',
-      );
+      expect(stripBidiCharacters('ab\u202A\u202B\u202C\u202D\u202Ecd'), 'abcd');
     });
 
-    test('removes bidi isolate (U+2066-2069)', () {
+    test('preserves bidi isolates (U+2066-2069)', () {
       expect(
         stripBidiCharacters('ab\u2066\u2067\u2068\u2069cd'),
-        'abcd',
+        'ab\u2066\u2067\u2068\u2069cd',
       );
     });
 
-    test('removes ALM (U+061C)', () {
-      expect(stripBidiCharacters('hello\u061Cworld'), 'helloworld');
+    test('preserves ALM (U+061C)', () {
+      expect(stripBidiCharacters('hello\u061Cworld'), 'hello\u061Cworld');
     });
 
     test('removes BOM (U+FEFF)', () {
@@ -48,11 +48,69 @@ void main() {
     });
 
     test('handles string of only bidi characters', () {
-      expect(stripBidiCharacters('\u200B\u200C\u200E\u202A\uFEFF'), '');
+      expect(stripBidiCharacters('\u200B\u200C\u200E\u202A\uFEFF'), '\u200E');
     });
 
     test('preserves normal text', () {
       expect(stripBidiCharacters('Hello, World!'), 'Hello, World!');
+    });
+  });
+
+  group('stripBidiCharacters - BiDi marker preservation', () {
+    test('preserves LRM (U+200E) in mixed text', () {
+      expect(stripBidiCharacters('hello\u200Eworld'), 'hello\u200Eworld');
+    });
+
+    test('preserves RLM (U+200F) in mixed text', () {
+      expect(stripBidiCharacters('hello\u200Fworld'), 'hello\u200Fworld');
+    });
+
+    test('preserves FSI (U+2068) and PDI (U+2069) isolates', () {
+      expect(
+        stripBidiCharacters('ab\u2068hello\u2069cd'),
+        'ab\u2068hello\u2069cd',
+      );
+    });
+
+    test('preserves LRI (U+2066) and RLI (U+2067) isolates', () {
+      expect(
+        stripBidiCharacters('ab\u2066hello\u2069cd'),
+        'ab\u2066hello\u2069cd',
+      );
+    });
+
+    test('still strips dangerous LRO (U+202D) override', () {
+      expect(stripBidiCharacters('ab\u202Dcd'), 'abcd');
+    });
+
+    test('still strips dangerous RLO (U+202E) override', () {
+      expect(stripBidiCharacters('ab\u202Ecd'), 'abcd');
+    });
+
+    test('still strips zero-width space (U+200B)', () {
+      expect(stripBidiCharacters('hello\u200Bworld'), 'helloworld');
+    });
+
+    test('still strips ZWNJ (U+200C)', () {
+      expect(stripBidiCharacters('hello\u200Cworld'), 'helloworld');
+    });
+
+    test('still strips BOM (U+FEFF)', () {
+      expect(stripBidiCharacters('\uFEFFhello'), 'hello');
+    });
+
+    test('preserves ALM (U+061C) for Arabic numeric context', () {
+      expect(stripBidiCharacters('hello\u061Cworld'), 'hello\u061Cworld');
+    });
+
+    test('still preserves ZWJ (U+200D) for emoji', () {
+      const family = '\u{1F468}\u200D\u{1F469}\u200D\u{1F467}';
+      expect(stripBidiCharacters(family), family);
+    });
+
+    test('mixed Arabic/English with LRM preserved', () {
+      const mixed = 'Hello \u200Eمرحبا\u200E World';
+      expect(stripBidiCharacters(mixed), mixed);
     });
   });
 

@@ -1,3 +1,5 @@
+import 'dart:ui' show TextDirection;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
@@ -13,6 +15,8 @@ void main() {
     String text = 'Hello, this is a test message.',
     String time = '3:30 PM',
     String? transport,
+    String? quotedText,
+    bool isQuoteUnavailable = false,
     List<MessageReaction> reactions = const [],
     String? ownPeerId,
     VoidCallback? onLongPress,
@@ -29,6 +33,8 @@ void main() {
             isIncoming: isIncoming,
             status: status,
             transport: transport,
+            quotedText: quotedText,
+            isQuoteUnavailable: isQuoteUnavailable,
             reactions: reactions,
             ownPeerId: ownPeerId,
             onLongPress: onLongPress,
@@ -196,6 +202,58 @@ void main() {
         expect(find.byType(LinkableText), findsOneWidget);
       });
 
+      testWidgets('Arabic-first mixed text drives RTL on body RichText', (
+        tester,
+      ) async {
+        await tester.pumpWidget(buildTestWidget(text: 'مرحبا Hello كيف حالك'));
+
+        final richText = tester.widget<RichText>(
+          find.descendant(
+            of: find.byType(LinkableText),
+            matching: find.byType(RichText),
+          ),
+        );
+        expect(richText.textDirection, TextDirection.rtl);
+      });
+
+      testWidgets('English-first mixed text drives LTR on body RichText', (
+        tester,
+      ) async {
+        await tester.pumpWidget(buildTestWidget(text: 'Hello مرحبا World'));
+
+        final richText = tester.widget<RichText>(
+          find.descendant(
+            of: find.byType(LinkableText),
+            matching: find.byType(RichText),
+          ),
+        );
+        expect(richText.textDirection, TextDirection.ltr);
+      });
+
+      testWidgets('Arabic text drives RTL on body RichText', (tester) async {
+        await tester.pumpWidget(buildTestWidget(text: 'مرحبا بالعالم'));
+
+        final richText = tester.widget<RichText>(
+          find.descendant(
+            of: find.byType(LinkableText),
+            matching: find.byType(RichText),
+          ),
+        );
+        expect(richText.textDirection, TextDirection.rtl);
+      });
+
+      testWidgets('English text drives LTR on body RichText', (tester) async {
+        await tester.pumpWidget(buildTestWidget(text: 'Hello world'));
+
+        final richText = tester.widget<RichText>(
+          find.descendant(
+            of: find.byType(LinkableText),
+            matching: find.byType(RichText),
+          ),
+        );
+        expect(richText.textDirection, TextDirection.ltr);
+      });
+
       testWidgets('URL has underline decoration', (tester) async {
         await tester.pumpWidget(buildTestWidget(text: 'https://example.com'));
         final richText = tester.widget<RichText>(
@@ -214,6 +272,58 @@ void main() {
         await tester.pumpWidget(buildTestWidget(text: 'Just a plain message'));
         expect(find.byType(LinkableText), findsOneWidget);
         expect(find.textContaining('Just a plain message'), findsOneWidget);
+      });
+    });
+
+    group('BiDi text direction', () {
+      testWidgets('Arabic quote text drives RTL on quote bar', (tester) async {
+        await tester.pumpWidget(
+          buildTestWidget(text: 'Reply body', quotedText: 'مرحبا بالعالم'),
+        );
+
+        final quoteTextWidget = tester
+            .widgetList<Text>(
+              find.descendant(
+                of: find.byType(LetterCard),
+                matching: find.byType(Text),
+              ),
+            )
+            .firstWhere((t) => t.data == 'مرحبا بالعالم');
+        expect(quoteTextWidget.textDirection, TextDirection.rtl);
+      });
+
+      testWidgets('English quote text drives LTR on quote bar', (tester) async {
+        await tester.pumpWidget(
+          buildTestWidget(text: 'Reply body', quotedText: 'Hello world'),
+        );
+
+        final quoteTextWidget = tester
+            .widgetList<Text>(
+              find.descendant(
+                of: find.byType(LetterCard),
+                matching: find.byType(Text),
+              ),
+            )
+            .firstWhere((t) => t.data == 'Hello world');
+        expect(quoteTextWidget.textDirection, TextDirection.ltr);
+      });
+
+      testWidgets('Arabic-first mixed quoted text drives RTL on quote bar', (
+        tester,
+      ) async {
+        await tester.pumpWidget(
+          buildTestWidget(text: 'Reply body', quotedText: 'مرحبا Hello كيف'),
+        );
+
+        final quoteTextWidget = tester
+            .widgetList<Text>(
+              find.descendant(
+                of: find.byType(LetterCard),
+                matching: find.byType(Text),
+              ),
+            )
+            .firstWhere((t) => t.data == 'مرحبا Hello كيف');
+        expect(quoteTextWidget.textDirection, TextDirection.rtl);
       });
     });
 

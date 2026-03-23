@@ -56,6 +56,33 @@ void main() {
     expect(result.senderPeerId, 'peer-sender');
   });
 
+  test(
+    'strips dangerous bidi controls and preserves safe markers on incoming save',
+    () async {
+      const rawText = 'Hello\u202E\u200E world';
+      const sanitizedText = 'Hello\u200E world';
+
+      final result = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 0,
+        text: rawText,
+        timestamp: DateTime.now().toUtc().toIso8601String(),
+      );
+
+      expect(result, isNotNull);
+      expect(result!.text, sanitizedText);
+
+      final saved = await msgRepo.getMessage(result.id);
+      expect(saved, isNotNull);
+      expect(saved!.text, sanitizedText);
+      expect(saved.text, isNot(contains('\u202E')));
+    },
+  );
+
   test('ignores message for unknown group', () async {
     final result = await handleIncomingGroupMessage(
       groupRepo: groupRepo,
@@ -157,6 +184,39 @@ void main() {
     expect(result2, isNull); // duplicate → skipped
     expect(msgRepo.count, 1); // still only 1 message
   });
+
+  test(
+    'deduplicates messages after sanitizing invisible bidi controls',
+    () async {
+      final ts = DateTime.now().toUtc().toIso8601String();
+
+      final result1 = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 0,
+        text: 'Hello world',
+        timestamp: ts,
+      );
+      expect(result1, isNotNull);
+
+      final result2 = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 0,
+        text: 'Hello\u200B world',
+        timestamp: ts,
+      );
+
+      expect(result2, isNull);
+      expect(msgRepo.count, 1);
+    },
+  );
 
   test('allows messages with different text or timestamp', () async {
     final ts1 = DateTime(2026, 1, 1).toUtc().toIso8601String();

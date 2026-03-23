@@ -654,3 +654,868 @@ Start with the requested phase only.
   - feat(posts): implement <accepted phase label>
 
   Begin with Phase 4 only, then auto-advance according to the rules above.
+
+
+===========================================================================
+
+
+
+Use $libp2p-phase-orchestrator in auto-advance mode.
+
+  Plan path:
+  - UI-21-POST/3.6-Repost-media-improv.md
+
+  Controller mode:
+  - auto-advance
+
+  Start phase:
+  - Phase 1: Reproduce Repost Fidelity And Security Gaps
+
+  Allowed phase sequence:
+  - Phase 1: Reproduce Repost Fidelity And Security Gaps
+  - Phase 2: Encrypt Repost Payloads End To End
+  - Phase 3: Persist Repost Engagement Participants And Historical Engagement Baselines
+  - Phase 4: Make Reposted Media Independently Retrievable And Blob-Encrypted At Rest
+  - Phase 5: Make Original-Author Avatars Self-Renderable Inside Encrypted Reposts
+  - Phase 6: Guard Retry, Idempotency, Security Compatibility, And Shared-Thread Continuity
+
+  Stop condition:
+  - Stop when a phase is blocked or when Phase 6 is accepted.
+  - Do not start any work beyond Phase 6 unless I explicitly request it in a later session.
+
+  Accepted phase context:
+  - No 3.6 phases are accepted yet.
+  - Resume from Phase 1 only.
+
+  Agent orchestration rules:
+  - Spawn a separate implementer/dev agent for each phase.
+  - Spawn a separate reviewer/QA agent for each phase.
+  - Never let the implementer review its own phase.
+  - If review finds blocking gaps, spawn a separate fix agent for that same phase, or a fresh implementer-context fix agent, but do not reuse the reviewer as the fixer.
+  - After a phase is accepted, discard or close the phase-local implementer, reviewer, and fixer agents before advancing.
+  - Start the next phase with fresh agents so context does not accumulate across phases.
+
+  Phase control rules:
+  - Run one controller session per phase, but auto-advance after acceptance.
+  - Treat UI-21-POST/3.6-Repost-media-improv.md as the authoritative active phase-scoped implementation doc.
+  - Treat the plan's `Required Skills By Phase` section as binding for implementer and reviewer setup.
+  - Phase 1 is a test-locking phase: reproduce the current repost failures first and do not fix later-phase behavior during Phase 1.
+  - For production phases, require strict `RED -> GREEN -> REFACTOR` and capture the exact failing tests or commands before production edits.
+  - If QA returns `PASS` and the phase is accepted, move to the next phase automatically.
+  - If QA returns `NEEDS WORK` or `FAIL`, run the fix loop for that same phase and review again before any advancement.
+  - Do not widen scope into later phases unless required for compilation.
+  - Follow the 3.6 plan's locked decisions, non-goals, required skills by phase, verification matrix, suggested file touch order, risks, and exit gates.
+  - Record residual risks, explicit deferrals, and next-phase prerequisites before advancing.
+  - Rebuild each next phase contract from the 3.6 plan instead of carrying hidden assumptions forward.
+  - Treat Phase 6 as a hardening gate: optimize for regression closure, idempotency, retry safety, and compatibility verification rather than feature expansion.
+
+  Reviewer fallback rule:
+  - If a reviewer/QA agent fails twice to return a usable `PASS` / `NEEDS WORK` / `FAIL` verdict, treat that as a review-orchestration failure, not an implementation failure.
+  - In that case, perform a manual controller review in the main session against the active phase contract and issue exactly one verdict: `PASS`, `NEEDS WORK`, or `FAIL`.
+  - Do not advance without a verdict.
+
+  3.6 execution rules:
+  - Keep repost delivery on the existing runner/retry stack it already uses today; do not spend Phase 2 re-migrating reposts onto the runner.
+  - Reuse `PostDeliveryRunner`, `post_recipients`, aggregate delivery status, and `PendingPostDeliveryRetrier` wherever the runner can be extended safely.
+  - Do not reintroduce or route runtime repost send/retry through `post_pass_follow_on_support.dart`; treat it as dead cleanup only.
+  - Phase 2 must add per-recipient app-level encryption on the existing runner path, extend `PostPassEnvelope` with v2 inner/encrypted helpers, and thread `Bridge` plus own ML-KEM secret access through repost send and receive.
+  - Phase 3 must persist repost engagement participants plus explicit repost-total and hidden-heart baselines; do not rely on `COUNT(post_passes)` alone for fresh recipients.
+  - Phase 4 must implement repost-owned media re-encryption with Go-backed file crypto bridge commands for large blobs, persisted attachment crypto metadata, and decrypt-after-download from stored attachment state.
+  - Phase 5 must implement original-author avatar snapshot persistence and rendering inside encrypted reposts.
+  - Phase 6 must harden retry, idempotency, security compatibility, and broader regression coverage without expanding feature scope.
+  - Preserve one-hop limit, `pickPeople` rejection, explicit-recipient plus original-author notification behavior, current direct-then-inbox semantics, and current settlement semantics.
+  - Do not widen comment, reaction, comment-reaction, or pin transport encryption beyond the repost-specific continuity required by 3.6.
+  - Do not widen into 3.5, 3.7, or unrelated resilience-plan work except for the smallest compatibility fix required by the active 3.6 phase.
+
+  Verification reminders:
+  - Use the 3.6 plan's per-phase verification matrix as the minimum targeted command set.
+  - Run the new migration/helper regression tests whenever a phase adds schema or helper-backed persistence.
+  - Include `integration_test/posts_phase4_fake_test.dart` in regression coverage.
+  - When Phase 4 changes real bridge/go commands and a device is available, also run `integration_test/conversation_bridge_test.dart` as the optional device-backed bridge smoke from the 3.6 plan.
+  - Before final acceptance of the plan, run the broader regression commands listed in the 3.6 plan's broader regression section.
+
+  Commit rule after acceptance, if a commit is requested:
+  - feat(posts): implement <accepted phase label>
+
+  Begin with Phase 1 only, then auto-advance according to the rules above.
+
+
+
+  ==========
+  
+  Use $libp2p-phase-orchestrator.
+
+  Plan path:
+  - UI-21-POST/3.6-Repost-media-improv.md
+
+  Controller mode:
+  - single-phase
+
+  Active phase:
+  - Phase 6: Guard Retry, Idempotency, Security Compatibility, And Shared-Thread Continuity
+
+  Stop condition:
+  - Stop when Phase 6 is accepted or blocked.
+  - Do not start any work beyond Phase 6 in this session.
+
+  Accepted phase context:
+  - Phase 1 accepted
+  - Phase 2 accepted
+  - Phase 3 accepted
+  - Phase 4 accepted
+  - Phase 5 accepted
+  - Resume from Phase 6 only
+
+  Required skills:
+  - flutter-feature-module-implementer
+  - flutter-test-orchestrator
+
+  Phase 5 acceptance context to preserve:
+  - Phase 5 avatar snapshot is in acceptance shape.
+  - The real Phase 5 blocker was fixed in `lib/features/posts/application/handle_incoming_passed_post_use_case.dart` so receive-side avatar persistence now updates both on first insert and when a repost resurfaces an already-stored post.
+  - The original envelope/avatar contract gap is closed in `lib/features/posts/domain/models/post_pass_envelope.dart`.
+  - Phase 5 coverage is present in:
+    - `test/features/posts/phase4/post_pass_envelope_test.dart`
+    - `test/features/posts/phase4/pass_post_along_use_case_test.dart`
+    - `test/features/posts/phase4/posts_pass_repository_test.dart`
+    - `test/features/posts/phase4/post_card_passed_along_test.dart`
+    - `test/features/posts/improvement/post_pass_media_avatar_smoke_test.dart`
+    - `test/core/database/migrations/039_posts_pass_avatar_snapshots_test.dart`
+  - These Phase 5 verification commands were green:
+    - `flutter test test/features/posts/phase4/post_pass_envelope_test.dart`
+    - `flutter test test/features/posts/phase4/pass_post_along_use_case_test.dart`
+    - `flutter test test/features/posts/phase4/handle_incoming_passed_post_use_case_test.dart test/features/posts/phase4/posts_pass_repository_test.dart`
+    - `flutter test test/features/posts/phase4/post_card_passed_along_test.dart test/features/posts/phase4/posts_pass_repository_test.dart`
+    - `flutter test test/features/posts/improvement/post_pass_media_avatar_smoke_test.dart`
+    - `flutter test test/core/database/migrations/039_posts_pass_avatar_snapshots_test.dart`
+
+  Residual Phase 5 follow-up to carry into Phase 6:
+  - Post deletion still appears not to clear `post_pass_avatar_snapshots` rows.
+  - Treat that as an allowed Phase 6 hardening candidate.
+  - If it is reproducible and can be fixed without widening scope, close it in Phase 6.
+  - If it is not required to satisfy Phase 6 exit gates, record it clearly as a residual risk or explicit deferral rather than reopening Phase 5.
+
+  Agent orchestration rules:
+  - Spawn a separate implementer/dev agent for Phase 6.
+  - Spawn a separate reviewer/QA agent for Phase 6.
+  - Never let the implementer review its own work.
+  - If review finds blocking gaps, spawn a separate fix agent for Phase 6, or a fresh implementer- context fix agent, but do not reuse the reviewer as the fixer.
+  - After Phase 6 is accepted or blocked, close the phase-local implementer, reviewer, and fixer agents.
+
+  Phase control rules:
+  - Build the Phase 6 contract from `UI-21-POST/3.6-Repost-media-improv.md` only.
+  - Treat the plan's `Required Skills By Phase` section as binding.
+  - Treat Phase 6 as a hardening gate: optimize for regression closure, retry safety, idempotency,compatibility, and acceptance-quality verification rather than featur expansion.
+  - Require strict `RED -> GREEN -> REFACTOR` for any production changes that are still needed.
+  - Capture the exact failing tests or commands before production edits.
+  - Do not widen into unrelated feature work or later-plan ideas unless a minimal compatibility change is required for compilation or for an explicit Phase 6 exit gate.
+  - Follow the 3.6 plan's locked decisions, non-goals, verification matrix, suggested file touch order, risks, and exit gates.
+  - Record residual risks, explicit deferrals, and final hardening notes before issuing the acceptance decision.
+
+  Phase 6 execution requirements:
+  - Verify that repost retry, idempotency, encrypted repost delivery, encrypted repost media, avatar snapshot persistence, and repost-thread continuity all remain correct together.
+  - Verify that repost send/retry stays on the existing `post_create` runner stack and does not regress back onto the dead repost follow-on helper path.
+  - Verify that explicit-recipient behavior plus original-author notification still works.
+  - Verify that one-hop limit and `pickPeople` rejection remain intact.
+  - Verify that repost validation still rejects non-renderable, inaccessible, or unencryptable snapshots before local persistence.
+  - Verify that duplicate or retried repost delivery does not create duplicate pass rows, duplicate repost media rows, duplicate ciphertext uploads, duplicated repost participants, duplicated hidden heart-baseline state, duplicated repost-total baseline state, or corrupted avatar snapshot state.
+  - Verify that direct `post_create` behavior does not regress.
+  - If the `post_pass_avatar_snapshots` deletion leak is reproducible, fix it only as a Phase 6 hardening change and cover it with targeted regression tests.
+
+  Inspect-first files:
+  - `lib/features/posts/application/handle_incoming_passed_post_use_case.dart`
+  - `lib/features/posts/domain/models/post_pass_envelope.dart`
+  - `lib/features/posts/application/post_delivery_runner.dart`
+  - `lib/features/posts/application/pending_post_delivery_retrier.dart`
+  - `lib/features/posts/application/pass_post_along_use_case.dart`
+  - `lib/features/posts/application/attach_post_media_use_case.dart`
+  - `lib/features/posts/application/download_post_media_use_case.dart`
+  - `lib/features/posts/domain/models/post_media_attachment_model.dart`
+  - `lib/features/posts/domain/repositories/post_repository.dart`
+  - `lib/features/posts/domain/repositories/post_repository_impl.dart`
+  - `lib/core/services/incoming_message_router.dart`
+  - `lib/features/posts/presentation/widgets/post_card.dart`
+  - `lib/core/database/migrations/039_posts_pass_avatar_snapshots_test.dart`
+  - `test/features/posts/phase4/post_pass_envelope_test.dart`
+  - `test/features/posts/phase4/pass_post_along_use_case_test.dart`
+  - `test/features/posts/phase4/handle_incoming_passed_post_use_case_test.dart`
+  - `test/features/posts/phase4/posts_pass_repository_test.dart`
+  - `test/features/posts/phase4/post_card_passed_along_test.dart`
+  - `test/features/posts/improvement/post_pass_retry_integration_test.dart`
+  - `test/features/posts/improvement/post_pass_encrypted_delivery_integration_test.dart`
+  - `test/features/posts/improvement/post_pass_encrypted_media_integration_test.dart`
+  - `test/features/posts/improvement/post_pass_shared_thread_integration_test.dart`
+  - `test/features/posts/improvement/post_pass_engagement_baseline_integration_test.dart`
+  - `test/features/posts/improvement/post_pass_media_avatar_smoke_test.dart`
+  - `test/features/posts/improvement/post_delivery_runner_parallel_test.dart`
+  - `test/core/services/pending_post_delivery_retrier_test.dart`
+  - `test/core/services/incoming_message_router_posts_pass_test.dart`
+
+  Verification requirements:
+  - Use the 3.6 plan's targeted verification matrix as the minimum required command set for Phase 6.
+  - Re-run the highest-value Phase 4 and Phase 5 suites that prove encrypted media, avatar snapshots, retry, and shared-thread continuity together.
+  - Run the broader regression commands listed in the 3.6 plan before final acceptance.
+  - If any Go-side or bridge-side regressions are suspected, include the corresponding Go and bridge test commands from the plan.
+  - Report exact commands run, exact results, exact tests added or updated, and any remaining residual risks or deferrals.
+
+  Reviewer fallback rule:
+  - If the reviewer/QA agent fails twice to return a usable `PASS` / `NEEDS WORK` / `FAIL` verdict, treat that as a review-orchestration failure, not an implementation failure.
+  - In that case, perform a manual controller review in the main session against the Phase 6 contract and issue exactly one verdict: `PASS`, `NEEDS WORK`, or `FAIL`.
+  - Do not accept Phase 6 without a verdict.
+
+  Commit rule after acceptance, if a commit is requested:
+  - feat(posts): implement Phase 6: Guard Retry, Idempotency, Security Compatibility, And Shared-Thread Continuity
+
+  Begin with Phase 6 only.
+
+
+
+  =============
+   Use $libp2p-phase-orchestrator in auto-advance mode.
+
+  Plan path:
+  - UI-21-POST/3.7-Repost-visual-improv.md
+
+  Controller mode:
+  - auto-advance
+
+  Start phase:
+  - Phase 1: Reproduce The Visual And Metric Gap
+
+  Allowed phase sequence:
+  - Phase 1: Reproduce The Visual And Metric Gap
+  - Phase 2: Add A Durable Repost Visual Metric Contract
+  - Phase 3: Surface The New Repost Visual State On Cards
+  - Phase 4: Guard Refresh Timing, Idempotency, And Compatibility
+
+  Stop condition:
+  - Stop when a phase is blocked or when Phase 4 is accepted.
+  - Do not start any work beyond Phase 4 unless I explicitly request it in a later session.
+
+  Agent orchestration rules:
+  - Spawn a separate implementer/dev agent for each phase.
+  - Spawn a separate reviewer/QA agent for each phase.
+  - Never let the implementer review its own phase.
+  - If review finds blocking gaps, spawn a separate fix agent for that same phase, or a fresh
+  implementer-context fix agent, but do not reuse the reviewer as the fixer.
+  - After a phase is accepted, discard or close the phase-local implementer, reviewer, and fixer
+  agents before advancing.
+  - Start the next phase with fresh agents so context does not accumulate across phases.
+
+  Phase control rules:
+  - Run one controller session per phase, but auto-advance after acceptance.
+  - Treat UI-21-POST/3.7-Repost-visual-improv.md as the authoritative active phase-scoped
+  implementation doc.
+  - Do not require a separate master plan for this run.
+  - For production phases, require strict `RED -> GREEN -> REFACTOR` and capture the exact failing
+  tests or commands before production edits.
+  - If QA returns `PASS` and the phase is accepted, move to the next phase automatically.
+  - If QA returns `NEEDS WORK` or `FAIL`, run the fix loop for that same phase and review again
+  before any advancement.
+  - Do not widen scope into later phases unless required for compilation.
+  - Follow the 3.7 plan's locked decisions, product assumption, non-goals, verification matrix,
+  suggested file touch order, residual risks, and exit gates.
+  - Record residual risks, explicit deferrals, and next-phase prerequisites before advancing.
+  - Rebuild each next phase contract from the 3.7 plan instead of carrying hidden assumptions
+  forward.
+
+  Repost visual-metric execution rules:
+  - Keep this plan scoped to repost visual state and repost share metrics on the card.
+  - Coordinate with 3.6 for carried repost-total baseline transport and persistence, but keep metric
+  projection and UI rules in 3.7.
+  - Do not overload `shareCount` with a second meaning.
+  - Introduce explicit repost-visual metrics in the Posts surface model:
+    - `totalSharedToCount`
+    - `viewerSharedToCount`
+    - `viewerHasPassed`
+  - Define `totalSharedToCount` as the carried repost-total baseline plus later locally known repost
+  deltas, or the smallest equivalent authoritative projection.
+  - Define `viewerSharedToCount` as the sum of `recipient_count` across the current viewer's local
+  outgoing repost events for that post.
+  - Define `viewerHasPassed` as `viewerSharedToCount > 0`.
+  - Add `recipient_count` to repost persistence and repost send/receive contracts where Phase 2
+  requires it.
+  - Exclude the original-author notification delivery from `recipient_count`.
+  - On the reposter's own card, show the viewer-local shared-to count across that viewer's local
+  reposts of the post.
+  - On the original author's card, show the aggregate shared-to count across repost events known to
+  that author.
+  - On a passed-along receiver's card, show the aggregate shared-to count when a carried or
+  reconstructed total exists, but keep the repost control visually neutral unless the viewer is also
+  the author or reposter.
+  - Make the repost action visually active only on:
+    - the reposter's card when `viewerHasPassed == true`
+    - the original author's card when `totalSharedToCount > 0`
+  - Keep passive receiver cards visually neutral even when they show an aggregate repost count.
+  - Keep the visual change scoped to the repost action itself; do not redesign the whole card.
+  - Keep repost counts driven from durable Posts state, not transient widget state.
+  - Preserve existing repost durability, one-hop limit, `pickPeople` rejection, and retry semantics.
+  - Preserve author-notification privacy by carrying only numeric `recipient_count`, not recipient
+  identity lists for metric rendering.
+  - Keep compatibility for older rows and envelopes with the smallest safe fallback.
+  - Do not widen into repost sender-speed work from 3.5.
+  - Do not widen into repost media, avatar, encryption, or heart-baseline work from 3.6 except for
+  the smallest compatibility hook needed by the active 3.7 phase.
+  - Do not change who can repost, repost fanout concurrency, or the heart metric contract in this
+  plan.
+  - Do not attempt a globally deduped unique historical recipient count across all repost history in
+  this plan.
+
+  Phase-specific execution reminders:
+  - Phase 1 must reproduce and lock the current visual and metric gap before changing product
+  behavior:
+    - repost control stays visually neutral after local repost
+    - reposter card shows no repost count
+    - author card still uses repost-event count semantics instead of people-shared-to semantics
+    - passive receiver cards still hide repost count
+  - Phase 2 must add a durable repost visual metric contract:
+    - persist `recipient_count`
+    - exclude original-author notification from that count
+    - persist incoming `recipient_count`
+    - persist or project the carried repost-total baseline needed for passed-along receiver cards
+    - expose `totalSharedToCount`, `viewerSharedToCount`, and `viewerHasPassed`
+    - keep duplicate delivery idempotent
+    - keep legacy rows readable with a compatible fallback
+  - Phase 3 must surface the new repost visual state on cards:
+    - reposter card shows active repost styling plus `viewerSharedToCount`
+    - original-author card shows active repost styling plus `totalSharedToCount`
+    - passive receiver card shows `totalSharedToCount` neutrally when available
+    - narrow-card wrapping must remain stable
+  - Phase 4 must guard refresh timing, idempotency, and compatibility:
+    - local repost persistence refreshes the reposter card promptly without waiting for full network
+  settlement
+    - later incoming repost notifications refresh the original author's aggregate count
+    - carried baselines on passed-along receiver cards surface promptly and continue from later
+  repost deltas
+    - retries and duplicate processing do not double-increment the metric
+    - compatibility rows created before `recipient_count` still render a stable fallback
+    - passed-along banners, share attribution, and feed ordering do not regress
+
+  Verification reminders:
+  - Use the 3.7 plan's per-phase verification matrix as the minimum targeted command set.
+  - Before final acceptance of the plan, run the broader regression commands listed in the 3.7
+  plan's broader regression section.
+
+  Commit rule after acceptance, if a commit is requested:
+  - feat(posts): implement <accepted phase label>
+
+  Begin with Phase 1 only, then auto-advance according to the rules above
+
+
+  ========================================
+Use $libp2p-phase-orchestrator in auto-advance mode.
+
+  Plan path:
+  - UI-21-POST/3.7-Repost-visual-improv.md
+
+  Controller mode:
+  - auto-advance
+
+  Start phase:
+  - Phase 1: Reproduce The Visual And Metric Gap
+
+  Allowed phase sequence:
+  - Phase 1: Reproduce The Visual And Metric Gap
+  - Phase 2: Add A Durable Repost Visual Metric Contract
+  - Phase 3: Surface The New Repost Visual State On Cards
+  - Phase 4: Guard Refresh Timing, Idempotency, And Compatibility
+
+  Stop condition:
+  - Stop on the first blocked phase or when Phase 4 is accepted.
+  - Do not start anything beyond Phase 4 unless I explicitly request it later.
+
+  Agent rules:
+  - Use fresh isolated agents per phase: one implementer, one reviewer, and a separate fixer only if review finds blocking gaps.
+  - Never let the implementer review its own phase.
+  - Close phase-local agents before advancing.
+
+  Phase-control rules:
+  - Treat UI-21-POST/3.7-Repost-visual-improv.md as the authoritative phase-scoped plan for this run.
+  - Do not require a separate master plan.
+  - Enforce strict RED -> GREEN -> REFACTOR for every production phase and capture exact failing tests or commands before production edits.
+  - Auto-advance only after reviewer verdict PASS and phase acceptance.
+  - If review returns NEEDS WORK or FAIL, stay in the same phase, run a fix loop, and review again before any advancement.
+  - Rebuild each next phase contract from the 3.7 doc itself.
+  - Follow the 3.7 plan’s locked decisions, product assumption, non-goals, verification matrix, suggested file touch order, residual risks, and exit gates.
+  - Record residual risks, explicit deferrals, and next-phase prerequisites before advancing.
+  - Do not widen into later phases unless required for compilation.
+
+  3.7 execution rules:
+  - Keep scope limited to repost visual state and repost share metrics on the card.
+  - Coordinate with 3.6 only for the smallest compatibility hook needed for carried repost-total baseline transport/persistence.
+  - Do not overload `shareCount`.
+  - Implement and use explicit metrics: `totalSharedToCount`, `viewerSharedToCount`,`viewerHasPassed`.
+  - Persist `recipient_count` for reposts where Phase 2 requires it.
+  - Exclude original-author notification from `recipient_count`.
+  - Reposter card: active repost control plus viewer-local shared-to count when `viewerHasPassed == true`.
+  - Original-author card: active repost control plus aggregate shared-to count when `totalSharedToCount > 0`.
+  - Passed-along receiver card: show aggregate shared-to count neutrally when available; do not impersonate author/reposter ownership.
+  - Keep counts driven by durable Posts state, not transient widget state.
+  - Preserve repost durability, retry semantics, one-hop limit, `pickPeople` rejection, and author- notification privacy.
+  - Keep compatibility for older rows/envelopes with the smallest safe fallback.
+  - Do not widen into 3.5 sender-speed work, 3.6 media/avatar/encryption or heart-metric work, repost fanout-concurrency changes, or broader card redesign.
+
+  Phase reminders:
+  - Phase 1: prove the current gap only; neutral repost icon, missing reposter count, wrong event- count semantics, and hidden passive-receiver count.
+  - Phase 2: add durable metric contract; `recipient_count`, carried aggregate baseline support, idempotent persistence, and compatible fallback for legacy rows.
+  - Phase 3: surface correct visual state and count rules on reposter, original-author, and passive receiver cards without layout overflow.
+  - Phase 4: guard prompt refresh, carried-baseline continuity, retry/idempotency safety, compatibility rows, passed-along banners, share attribution, and feed ordering.
+
+  Verification:
+  - Use the 3.7 per-phase verification matrix as the minimum required command set.
+  - Before final acceptance, run the broader regression commands listed in the 3.7 broader regression section.
+
+  Commit rule if a commit is requested:
+  - feat(posts): implement <accepted phase label>
+
+  Begin with Phase 1 only, then auto-advance according to these rules.
+
+
+  =========
+
+
+   Use $libp2p-phase-orchestrator in auto-advance mode.
+
+  Plan path:
+  - UI-21-POST/3.9-Repost-avatar-processAvatar-alignment.md
+
+  Controller mode:
+  - auto-advance
+
+  Start phase:
+  - The first explicit phase defined in UI-21-POST/3.9-Repost-avatar-processAvatar-alignment.md
+
+  Allowed phase sequence:
+  - Derive the ordered phase list directly from UI-21-POST/3.9-Repost-avatar-processAvatar-
+  alignment.md.
+  - Do not invent, rename, merge, skip, or reorder phases.
+  - Use the document’s exact phase labels and titles.
+
+  Stop condition:
+  - Stop when a phase is blocked or when the final explicit phase in the 3.9 doc is accepted.
+  - Do not start any work beyond the last phase defined in the 3.9 doc unless I explicitly request
+  it in a later session.
+
+  Accepted phase context:
+  - No 3.9 phases are accepted yet.
+  - Resume from the first explicit phase only.
+
+  Agent orchestration rules:
+  - Spawn a separate implementer/dev agent for each phase.
+  - Spawn a separate reviewer/QA agent for each phase.
+  - Never let the implementer review its own phase.
+  - If review finds blocking gaps, spawn a separate fix agent for that same phase, or a fresh
+  implementer-context fix agent, but do not reuse the reviewer as the fixer.
+  - After a phase is accepted, discard or close the phase-local implementer, reviewer, and fixer
+  agents before advancing.
+  - Start the next phase with fresh agents so context does not accumulate across phases.
+
+  Phase control rules:
+  - Run one controller session per phase, but auto-advance after acceptance.
+  - Treat UI-21-POST/3.9-Repost-avatar-processAvatar-alignment.md as the authoritative active phase-
+  scoped implementation doc.
+  - Treat the doc’s `Required Skills By Phase` section as binding for implementer and reviewer setup
+  when present.
+  - If the first phase is a test-locking, contract-only, or non-production phase, do not write
+  production code in that phase.
+  - For production phases, require strict `RED -> GREEN -> REFACTOR` and capture the exact failing
+  tests or commands before production edits.
+  - If QA returns `PASS` and the phase is accepted, move to the next phase automatically.
+  - If QA returns `NEEDS WORK` or `FAIL`, run the fix loop for that same phase and review again
+  before any advancement.
+  - Do not widen scope into later phases unless required for compilation.
+  - Follow the 3.9 doc’s locked decisions, non-goals, required skills by phase, verification matrix,
+  suggested file touch order, risks, internal slices, and exit gates.
+  - Record residual risks, explicit deferrals, and next-phase prerequisites before advancing.
+  - Rebuild each next phase contract from the 3.9 doc instead of carrying hidden assumptions
+  forward.
+  - If the final phase is a hardening gate, optimize for regression closure, idempotency,
+  compatibility verification, and coverage quality rather than feature expansion.
+
+  Reviewer fallback rule:
+  - If a reviewer/QA agent fails twice to return a usable `PASS` / `NEEDS WORK` / `FAIL` verdict,
+  treat that as a review-orchestration failure, not an implementation failure.
+  - In that case, perform a manual controller review in the main session against the active phase
+  contract and issue exactly one verdict: `PASS`, `NEEDS WORK`, or `FAIL`.
+  - Do not advance without a verdict.
+
+  3.9 execution rules:
+  - Treat UI-21-POST/3.9-Repost-avatar-processAvatar-alignment.md as the sole source of truth for
+  processAvatar alignment behavior, scope, sequencing, and acceptance criteria.
+  - Preserve all existing repost behavior outside the explicit scope of the active 3.9 phase.
+  - Do not widen into 3.5, 3.6, 3.7, 3.8, unrelated repost work, or unrelated resilience-plan work
+  except for the smallest compatibility fix required by the active 3.9 phase.
+  - Do not bundle unrelated encryption, media, retry, schema, transport, or UI work unless the
+  active 3.9 phase explicitly requires it.
+  - If the 3.9 doc defines ownership, rendering, persistence, caching, source-precedence,
+  processAvatar, or avatar-fidelity rules, follow those rules exactly.
+  - If the 3.9 doc defines phase-specific invariants or regressions to preserve, treat them as
+  mandatory.
+
+  Verification reminders:
+  - Use the 3.9 doc’s per-phase verification matrix as the minimum targeted command set.
+  - Run any migration/helper regression tests whenever a phase adds schema or helper-backed
+  persistence.
+  - Run any avatar-rendering, repost, or UI regression tests the 3.9 doc marks as required.
+  - Before final acceptance of the plan, run the broader regression commands listed in the 3.9 doc’s
+  broader regression section.
+
+  Commit rule after acceptance, if a commit is requested:
+  - feat(posts): implement <accepted phase label>
+
+  Begin with the first explicit phase only, then auto-advance according to the rules above.
+
+  ===================
+
+  Use $libp2p-phase-orchestrator in auto-advance mode.
+
+  Plan path:
+  - UI-21-POST/3.9-Repost-avatar-processAvatar-alignment.md
+
+  Controller mode:
+  - auto-advance
+
+  Start phase:
+  - Phase 1: Reproduce The Client-Side Avatar Contract Drift
+
+  Allowed phase sequence:
+  - Phase 1: Reproduce The Client-Side Avatar Contract Drift
+  - Phase 2: Canonicalize Local Contact Avatar Storage Through processAvatar()
+  - Phase 3: Align Repost Sender With The Canonical Avatar Contract
+  - Phase 4: Guard Legacy Files, Diagnostics, And Receiver Compatibility
+
+  Stop condition:
+  - Stop when a phase is blocked or when Phase 4 is accepted.
+  - Do not start any work beyond Phase 4 unless I explicitly request it in a later session.
+
+  Accepted phase context:
+  - No 3.9 phases are accepted yet.
+  - Resume from Phase 1 only.
+
+  Dependency context:
+  - UI-21-POST/3.6-Repost-media-improv.md
+  - UI-21-POST/3.8-Repost-author-fidelity-and-thread-continuity.md
+  - Use these only as dependency/background context.
+  - Do not widen scope beyond what UI-21-POST/3.9-Repost-avatar-processAvatar-alignment.md explicitly requires.
+
+  Agent orchestration rules:
+  - Spawn a separate implementer/dev agent for each phase.
+  - Spawn a separate reviewer/QA agent for each phase.
+  - Never let the implementer review its own phase.
+  - If review finds blocking gaps, spawn a separate fix agent for that same phase, or a fresh
+  implementer-context fix agent, but do not reuse the reviewer as the fixer.
+  - After a phase is accepted, discard or close the phase-local implementer, reviewer, and fixer agents before advancing.
+  - Start the next phase with fresh agents so context does not accumulate across phases.
+
+  Phase control rules:
+  - Run one controller session per phase, but auto-advance after acceptance.
+  - Treat UI-21-POST/3.9-Repost-avatar-processAvatar-alignment.md as the authoritative active phase- scoped implementation doc.
+  - Treat the 3.9 doc’s `Suggested File Touch Order`, `Verification Matrix`, `Locked Decisions`,
+  `Non-Goals`, `Residual Risks To Track`, and `Exit Gate` sections as binding controller guidance.
+  - Treat any `Required Skills By Phase` section in the 3.9 doc as binding for implementer and reviewer setup if present.
+  - Phase 1 is a test-locking phase: reproduce the current avatar-contract drift first and do not fix later-phase behavior during Phase 1.
+  - For production phases, require strict `RED -> GREEN -> REFACTOR` and capture the exact failing tests or commands before production edits.
+  - If QA returns `PASS` and the phase is accepted, move to the next phase automatically.
+  - If QA returns `NEEDS WORK` or `FAIL`, run the fix loop for that same phase and review again before any advancement.
+  - Do not widen scope into later phases unless required for compilation.
+  - Record residual risks, explicit deferrals, and next-phase prerequisites before advancing.
+  - Rebuild each next phase contract from the 3.9 doc instead of carrying hidden assumptions forward.
+  - Treat Phase 4 as the final compatibility and diagnostics hardening gate rather than a feature- expansion phase.
+
+  Reviewer fallback rule:
+  - If a reviewer/QA agent fails twice to return a usable `PASS` / `NEEDS WORK` / `FAIL` verdict, treat that as a review-orchestration failure, not an implementation failure.
+  - In that case, perform a manual controller review in the main session against the active phase contract and issue exactly one verdict: `PASS`, `NEEDS WORK`, or `FAIL`.
+  - Do not advance without a verdict.
+
+  3.9 execution rules:
+  - `ImageProcessor.processAvatar(...)` is the canonical client-side avatar processing contract for repost avatar snapshots.
+  - Preserve that contract exactly:
+    - `512x512`
+    - quality `80`
+    - EXIF stripped
+  - Do not use raw local avatar bytes as the repost transport contract.
+  - Do not use the pre-processed raw file size as the primary inclusion gate.
+  - Newly downloaded contact avatars must be normalized client-side through the same
+  `processAvatar()` contract before becoming the canonical local avatar file.
+  - Repost sender must still protect legacy or previously downloaded oversized avatar files by preparing a processed avatar snapshot at send time or through a shared normalization helper.
+  - Keep `original_author_avatar_base64` as the repost payload field unless tests prove an envelope
+  change is necessary.
+  - Keep avatar persistence and hydrate behavior inside Posts-owned state.
+  - Add explicit FLOW diagnostics for:
+    - local avatar path resolution
+    - avatar processing start
+    - avatar processing success
+    - avatar processing failure
+    - avatar snapshot include/omit result
+  - Preserve one-hop repost depth, retry semantics, and current repost media behavior.
+  - Do not widen into:
+    - repost-thread trust/fanout fixes from 3.8
+    - repost visual-state work from 3.7
+    - generic avatar redesign or `UserAvatar` styling changes
+    - relay avatar schema changes
+    - a broad media-pipeline rewrite outside avatar normalization
+    - new friends-of-friends contact behavior
+  - Phase 2 must canonicalize local contact avatar storage through `processAvatar()`.
+  - Phase 3 must align repost sender with the canonical avatar contract and explicitly cover legacy oversized local avatar files already present on disk.
+  - Phase 4 must harden legacy-file handling, diagnostics, receiver compatibility, safe fallback behavior, and temp-file cleanup without expanding scope.
+  - Keep processing logic in application/helper code, not `Wired` UI code, except for the smallest dependency-wiring change required by the active phase.
+
+  Verification reminders:
+  - Use the 3.9 doc’s per-phase verification matrix as the minimum targeted command set.
+
+  Phase 1 minimum:
+  - `flutter test test/features/settings/application/download_profile_picture_use_case_test.dart`
+  - `flutter test test/features/posts/phase4/pass_post_along_use_case_test.dart`
+  - `flutter test test/features/posts/improvement/post_pass_media_avatar_smoke_test.dart`
+
+  Phase 2 minimum:
+  - `flutter test test/features/settings/application/download_profile_picture_use_case_test.dart`
+  - `flutter test test/features/settings/application/profile_update_listener_test.dart`
+  - `flutter test test/features/settings/integration/profile_picture_flow_test.dart`
+
+  Phase 3 minimum:
+  - `flutter test test/features/posts/phase4/pass_post_along_use_case_test.dart`
+  - `flutter test test/features/posts/phase4/handle_incoming_passed_post_use_case_test.dart`
+  - `flutter test test/features/posts/improvement/post_pass_media_avatar_smoke_test.dart`
+
+  Phase 4 minimum:
+  - `flutter test test/features/posts/phase4/pass_post_along_use_case_test.dart`
+  - `flutter test test/features/posts/phase4/handle_incoming_passed_post_use_case_test.dart`
+  - `flutter test test/features/posts/improvement/post_pass_media_avatar_smoke_test.dart`
+
+  Broader regression before final acceptance:
+  - `flutter test test/core/media/image_processor_test.dart`
+  - `flutter test test/features/settings/application/upload_profile_picture_use_case_test.dart`
+  - `flutter test test/features/settings`
+  - `flutter test test/features/posts/phase4`
+  - `flutter test test/features/posts/improvement`
+
+  Commit rule after acceptance, if a commit is requested:
+  - feat(posts): implement <accepted phase label>
+
+  Begin with Phase 1 only, then auto-advance according to the rules above.
+
+
+  ====
+
+
+Use $libp2p-phase-orchestrator in auto-advance mode.
+
+  Goal:
+  - Implement the full BiDi text rendering fix end-to-end so mixed Arabic + English text renders correctly in display widgets and compose inputs, and safe BiDi markers are preserved through send/receive flows.
+
+  Plan path:
+  - UI-TestFlight-1/bidi-text-fix-tdd-plan.md
+
+  Controller mode:
+  - auto-advance
+
+  Start phase:
+  - Phase 1: Text Direction Detection Utility
+
+  Allowed phase sequence:
+  - Phase 1: Text Direction Detection Utility
+  - Phase 2: Update Text Sanitizer — Preserve Helpful BiDi Markers
+  - Phase 3: Add `textDirection` to LinkableText Widget
+  - Phase 4: Wire Direction Detection into Display Widgets
+  - Phase 5: Auto-Detect Direction on Compose Input Fields
+  - Phase 6: Symmetric Sanitization — Send + Group Paths
+
+  Stop condition:
+  - Stop on the first blocked phase or when Phase 6 is accepted.
+  - Do not stop for intermediate approval between phases.
+  - Do not start anything beyond Phase 6 unless I explicitly request it later.
+
+  Agent rules:
+  - Use fresh isolated agents per phase: one implementer, one reviewer, and a separate fixer only if review finds blocking gaps.
+  - Never let the implementer review its own phase.
+  - Close phase-local agents before advancing.
+
+  Phase-control rules:
+  - Treat UI-TestFlight-1/bidi-text-fix-tdd-plan.md as the authoritative phase-scoped plan for this run.
+  - Do not require a separate master plan.
+  - Enforce strict RED -> GREEN -> REFACTOR for every production phase and capture exact failing tests or commands before production edits.
+  - Auto-advance only after reviewer verdict PASS and phase acceptance.
+  - If review returns NEEDS WORK or FAIL, stay in the same phase, run a fix loop, and review again before any advancement.
+  - Rebuild each next phase contract from the bidi plan itself.
+  - Follow the bidi plan’s phase goals, file scopes, test files, implementation notes, summary table, and run commands.
+  - Record residual risks, explicit deferrals, and next-phase prerequisites before advancing.
+  - Do not widen into later phases unless required for compilation.
+  - If the plan labels a test file as “new” but that file already exists in the repo, extend the existing file instead of creating a duplicate suite.
+
+  BiDi execution rules:
+  - Keep scope limited to fixing mixed Arabic/English rendering, BiDi marker preservation, widget `textDirection` wiring, compose-field direction detection, and symmetric sanitization on send/receive paths.
+  - Implement and use `detectTextDirection()` with the first-strong-character heuristic described in the plan.
+  - Preserve safe/helpful markers: `LRM` (U+200E), `RLM` (U+200F), `ALM` (U+061C), `LRI` (U+2066), `RLI` (U+2067), `FSI` (U+2068), `PDI` (U+2069), and `ZWJ` (U+200D).
+  - Continue stripping only the dangerous/invisible characters called out by the plan, including zero-width space, ZWNJ, legacy bidi embedding/override characters, and BOM.
+  - Keep `LinkableText` backward-compatible when `textDirection` is null.
+  - In display widgets, detect direction from the actual message body or quoted text as specified by the plan.
+  - In compose widgets, update `TextField.textDirection` dynamically from controller text as the user types.
+  - In send/receive flows, sanitize text once at the top of each flow and reuse the sanitized value consistently for save, dedupe, publish, inbox-store, and wire payload generation.
+  - Do not introduce unrelated UI redesigns, localization refactors, or chat-pipeline changes outside the plan.
+
+  Phase reminders:
+  - Phase 1: add the direction-detection utility and its tests.
+  - Phase 2: update sanitizer behavior to preserve helpful BiDi markers, including ALM, and update existing sanitizer tests.
+  - Phase 3: add optional `textDirection` support to `LinkableText` and verify backward compatibility.
+  - Phase 4: wire direction detection into `LetterCard`, `MessageBubble`, and `QuotePreviewBar`, including quote-bar text.
+  - Phase 5: wire live input direction into `ComposeArea`, `InlineReplyInput`, and `ExpandedComposeInput`.
+  - Phase 6: add symmetric sanitization to chat send, group send, and group receive, with tests that verify saved data plus wire/publish/inbox/dedupe behavior.
+
+  Scope guardrails:
+  - Keep production edits limited to the files named in the plan unless a minimal compatibility change is required for compilation.
+  - Keep test edits limited to the plan’s listed suites unless a minimal helper update is required to make those tests compile.
+  - Do not add new architecture, new persistence formats, or unrelated cleanup.
+
+  Verification:
+  - Use the phase-specific run commands in the plan as the minimum required command set for each phase.
+  - Before final acceptance, run a final regression sweep across all touched suites:
+    - flutter test test/core/utils/text_direction_utils_test.dart
+    - flutter test test/core/utils/text_sanitizer_test.dart
+    - flutter test test/shared/widgets/linkable_text_test.dart
+    - flutter test test/features/conversation/presentation/widgets/letter_card_test.dart
+    - flutter test test/features/feed/presentation/widgets/message_bubble_test.dart
+    - flutter test test/features/feed/presentation/widgets/quote_preview_bar_test.dart
+    - flutter test test/features/conversation/presentation/widgets/compose_area_test.dart
+    - flutter test test/features/feed/presentation/widgets/inline_reply_input_test.dart
+    - flutter test test/features/feed/presentation/widgets/expanded_compose_input_test.dart
+    - flutter test test/features/conversation/application/send_chat_message_use_case_test.dart
+    - flutter test test/features/groups/application/send_group_message_use_case_test.dart
+    - flutter test test/features/groups/application/handle_incoming_group_message_use_case_test.dart
+
+  Commit rule if a commit is requested:
+  - fix(chat): implement <accepted phase label>
+
+  Assume the plan is approved and ready.
+  Begin with Phase 1 only, then auto-advance through Phase 6 according to these rules without pausing for intermediate approval unless a phase is genuinely blocked.
+
+
+
+
+
+
+===============================
+
+
+  Use $libp2p-phase-orchestrator in auto-advance mode. If that skill is unavailable, follow the same
+  controller workflow manually.
+
+  Goal
+  - Implement the full BiDi text rendering fix end-to-end so mixed Arabic + English text renders
+  correctly in display widgets and compose inputs, and safe BiDi markers are preserved through send/
+  receive flows.
+
+  Plan Path
+  - UI-TestFlight-1/bidi-text-fix-tdd-plan.md
+
+  Controller Mode
+  - auto-advance
+
+  Start Phase
+  - Phase 1: Text Direction Detection Utility
+
+  Allowed Phase Sequence
+  1. Phase 1: Text Direction Detection Utility
+  2. Phase 2: Update Text Sanitizer — Preserve Helpful BiDi Markers
+  3. Phase 3: Add `textDirection` to LinkableText Widget
+  4. Phase 4: Wire Direction Detection into Display Widgets
+  5. Phase 5: Auto-Detect Direction on Compose Input Fields
+  6. Phase 6: Symmetric Sanitization — Send + Group Paths
+
+  Stop Condition
+  - Stop on the first blocked phase or when Phase 6 is accepted.
+  - Do not stop for intermediate approval between phases.
+  - Do not start anything beyond Phase 6 unless I explicitly request it later.
+
+  Agent Rules
+  - Use fresh isolated agents per phase: one implementer, one reviewer, and a separate fixer only if
+  review finds blocking gaps.
+  - Never let the implementer review its own phase.
+  - Close all phase-local agents before advancing.
+
+  Phase-Control Rules
+  - Treat `UI-TestFlight-1/bidi-text-fix-tdd-plan.md` as the authoritative phase-scoped plan for this
+  run.
+  - Do not require a separate master plan.
+  - Rebuild each phase contract from the BiDi plan itself.
+  - Enforce strict `RED -> GREEN -> REFACTOR` for every production phase and capture the exact failing
+  tests or commands before production edits.
+  - Auto-advance only after reviewer verdict `PASS` and phase acceptance.
+  - If review returns `NEEDS WORK` or `FAIL`, stay in the same phase, run a fix loop, and review again
+  before any advancement.
+  - Follow the BiDi plan’s phase goals, file scopes, test files, implementation notes, summary table,
+  and run commands.
+  - Record residual risks, explicit deferrals, and next-phase prerequisites before advancing.
+  - Do not widen into later phases unless required for compilation.
+  - If the plan labels a test file as `new` but that file already exists in the repo, extend the
+  existing file instead of creating a duplicate suite.
+
+  BiDi Execution Rules
+  - Keep scope limited to fixing mixed Arabic/English rendering, BiDi marker preservation, widget
+  `textDirection` wiring, compose-field direction detection, and symmetric sanitization on send/receive
+  paths.
+  - Implement and use `detectTextDirection()` with the first-strong-character heuristic described in the
+  plan.
+  - Preserve these safe/helpful markers:
+    - `LRM` (`U+200E`)
+    - `RLM` (`U+200F`)
+    - `ALM` (`U+061C`)
+    - `LRI` (`U+2066`)
+    - `RLI` (`U+2067`)
+    - `FSI` (`U+2068`)
+    - `PDI` (`U+2069`)
+    - `ZWJ` (`U+200D`)
+  - Continue stripping only the dangerous/invisible characters called out by the plan, including zero-
+  width space, ZWNJ, legacy bidi embedding/override characters, and BOM.
+  - Keep `LinkableText` backward-compatible when `textDirection` is null.
+  - In display widgets, detect direction from the actual message body or quoted text as specified by the
+  plan.
+  - In compose widgets, update `TextField.textDirection` dynamically from controller text as the user
+  types.
+  - In send/receive flows, sanitize text once at the top of each flow and reuse the sanitized value
+  consistently for save, dedupe, publish, inbox-store, and wire payload generation.
+  - Do not introduce unrelated UI redesigns, localization refactors, or chat-pipeline changes outside
+  the plan.
+
+  Phase Reminders
+  - Phase 1: add the direction-detection utility and its tests.
+  - Phase 2: update sanitizer behavior to preserve helpful BiDi markers, including ALM, and update
+  existing sanitizer tests.
+  - Phase 3: add optional `textDirection` support to `LinkableText` and verify backward compatibility.
+  - Phase 4: wire direction detection into `LetterCard`, `MessageBubble`, and `QuotePreviewBar`,
+  including quote-bar text.
+  - Phase 5: wire live input direction into `ComposeArea`, `InlineReplyInput`, and
+  `ExpandedComposeInput`.
+  - Phase 6: add symmetric sanitization to chat send, group send, and group receive, with tests that
+  verify saved data plus wire/publish/inbox/dedupe behavior.
+
+  Scope Guardrails
+  - Keep production edits limited to the files named in the plan unless a minimal compatibility change
+  is required for compilation.
+  - Keep test edits limited to the plan’s listed suites unless a minimal helper update is required to
+  make those tests compile.
+  - Do not add new architecture, new persistence formats, or unrelated cleanup.
+
+  Verification
+  - Use the phase-specific run commands in the plan as the minimum required command set for each phase.
+  - Before final acceptance, run this final regression sweep across all touched suites:
+    - `flutter test test/core/utils/text_direction_utils_test.dart`
+    - `flutter test test/core/utils/text_sanitizer_test.dart`
+    - `flutter test test/shared/widgets/linkable_text_test.dart`
+    - `flutter test test/features/conversation/presentation/widgets/letter_card_test.dart`
+    - `flutter test test/features/feed/presentation/widgets/message_bubble_test.dart`
+    - `flutter test test/features/feed/presentation/widgets/quote_preview_bar_test.dart`
+    - `flutter test test/features/conversation/presentation/widgets/compose_area_test.dart`
+    - `flutter test test/features/feed/presentation/widgets/inline_reply_input_test.dart`
+    - `flutter test test/features/feed/presentation/widgets/expanded_compose_input_test.dart`
+    - `flutter test test/features/conversation/application/send_chat_message_use_case_test.dart`
+    - `flutter test test/features/groups/application/send_group_message_use_case_test.dart`
+    - `flutter test test/features/groups/application/handle_incoming_group_message_use_case_test.dart`
+
+  Commit Rule
+  - If a commit is requested, use: `fix(chat): implement <accepted phase label>`
+
+  Assumptions
+  - Assume the plan is approved and ready.
+  - Begin with Phase 1 only, then auto-advance through Phase 6 according to these rules without pausing
+  for intermediate approval unless a phase is genuinely blocked.

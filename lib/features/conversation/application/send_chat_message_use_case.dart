@@ -6,6 +6,7 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/chat_console_logger.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_payload.dart';
@@ -66,9 +67,10 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   final targetPrefix = targetPeerId.length > 10
       ? targetPeerId.substring(0, 10)
       : targetPeerId;
-  final textPreview = buildTextPreview(text);
   final hasAttachments =
       mediaAttachments != null && mediaAttachments.isNotEmpty;
+  final sanitizedText = sanitizeMessageText(text);
+  final textPreview = buildTextPreview(sanitizedText);
 
   emitFlowEvent(
     layer: 'FL',
@@ -77,7 +79,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   );
 
   // 1. Validate
-  if (text.trim().isEmpty && !hasAttachments) {
+  if (sanitizedText.trim().isEmpty && !hasAttachments) {
     emitFlowEvent(
       layer: 'FL',
       event: 'CHAT_MSG_SEND_INVALID',
@@ -113,7 +115,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
 
   final payload = MessagePayload(
     id: resolvedMessageId,
-    text: text,
+    text: sanitizedText,
     senderPeerId: senderPeerId,
     senderUsername: senderUsername,
     timestamp: resolvedTimestamp,
@@ -126,7 +128,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     messageId: resolvedMessageId,
     toPeerId: targetPeerId,
     status: 'queued',
-    text: text,
+    text: sanitizedText,
   );
 
   // 4. Serialize (v2 encrypted envelope if ML-KEM key available, v1 plaintext otherwise)
@@ -204,7 +206,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
           via: 'reuse',
           resolvedMessageId: resolvedMessageId,
           textPreview: textPreview,
-          text: text,
+          text: sanitizedText,
           mediaAttachmentRepo: mediaAttachmentRepo,
           attachments: normalizedAttachments,
         );
@@ -315,7 +317,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       via: raceResult.via!,
       resolvedMessageId: resolvedMessageId,
       textPreview: textPreview,
-      text: text,
+      text: sanitizedText,
       mediaAttachmentRepo: mediaAttachmentRepo,
       attachments: normalizedAttachments,
     );
@@ -340,7 +342,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
         via: relayProbeResult.via!,
         resolvedMessageId: resolvedMessageId,
         textPreview: textPreview,
-        text: text,
+        text: sanitizedText,
         mediaAttachmentRepo: mediaAttachmentRepo,
         attachments: normalizedAttachments,
       );
@@ -386,7 +388,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
         messageId: resolvedMessageId,
         toPeerId: targetPeerId,
         status: 'delivered',
-        text: text,
+        text: sanitizedText,
       );
       return (
         SendChatMessageResult.success,
@@ -427,7 +429,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     messageId: resolvedMessageId,
     toPeerId: targetPeerId,
     status: 'failed',
-    text: text,
+    text: sanitizedText,
   );
   return (
     _resultForFailureReason(failureReason),

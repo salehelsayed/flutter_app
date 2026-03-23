@@ -1,3 +1,5 @@
+import 'dart:ui' show TextDirection;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/inline_reply_input.dart';
@@ -32,6 +34,58 @@ void main() {
       await tester.enterText(find.byType(TextField), 'Hello');
       await tester.pump();
       expect(find.byIcon(Icons.arrow_upward_rounded), findsOneWidget);
+    });
+
+    group('BiDi input direction', () {
+      testWidgets('TextField defaults to LTR when empty', (tester) async {
+        await tester.pumpWidget(wrap(InlineReplyInput(onSend: (_) {})));
+        await tester.pump();
+
+        final textField = tester.widget<TextField>(find.byType(TextField));
+        expect(textField.textDirection, TextDirection.ltr);
+      });
+
+      testWidgets('TextField switches to RTL when Arabic is typed', (
+        tester,
+      ) async {
+        await tester.pumpWidget(wrap(InlineReplyInput(onSend: (_) {})));
+
+        await tester.enterText(find.byType(TextField), 'مرحبا');
+        await tester.pump();
+
+        final textField = tester.widget<TextField>(find.byType(TextField));
+        expect(textField.textDirection, TextDirection.rtl);
+      });
+
+      testWidgets('TextField stays LTR when English is typed', (tester) async {
+        await tester.pumpWidget(wrap(InlineReplyInput(onSend: (_) {})));
+
+        await tester.enterText(find.byType(TextField), 'Hello');
+        await tester.pump();
+
+        final textField = tester.widget<TextField>(find.byType(TextField));
+        expect(textField.textDirection, TextDirection.ltr);
+      });
+
+      testWidgets('TextField switches back to LTR after clearing text', (
+        tester,
+      ) async {
+        await tester.pumpWidget(wrap(InlineReplyInput(onSend: (_) {})));
+
+        await tester.enterText(find.byType(TextField), 'مرحبا');
+        await tester.pump();
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).textDirection,
+          TextDirection.rtl,
+        );
+
+        await tester.enterText(find.byType(TextField), 'Hello');
+        await tester.pump();
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).textDirection,
+          TextDirection.ltr,
+        );
+      });
     });
 
     testWidgets('calls onSend with text when send button tapped', (
@@ -132,28 +186,27 @@ void main() {
     testWidgets('mic button forwards record start and stop callbacks', (
       tester,
     ) async {
-        var started = false;
-        var stopped = false;
+      var started = false;
+      var stopped = false;
 
-        await tester.pumpWidget(
-          wrap(
-            InlineReplyInput(
-              onSend: (_) {},
-              onRecordStart: () => started = true,
-              onRecordStop: () => stopped = true,
-            ),
+      await tester.pumpWidget(
+        wrap(
+          InlineReplyInput(
+            onSend: (_) {},
+            onRecordStart: () => started = true,
+            onRecordStop: () => stopped = true,
           ),
-        );
+        ),
+      );
 
-        final button = tester.widget<VoiceRecordButton>(
-          find.byType(VoiceRecordButton),
-        );
-        button.onTapDown();
-        button.onTapUp();
+      final button = tester.widget<VoiceRecordButton>(
+        find.byType(VoiceRecordButton),
+      );
+      button.onTapDown();
+      button.onTapUp();
 
-        expect(started, isTrue);
-        expect(stopped, isTrue);
-      },
-    );
+      expect(started, isTrue);
+      expect(stopped, isTrue);
+    });
   });
 }

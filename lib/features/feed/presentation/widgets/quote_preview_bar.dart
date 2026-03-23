@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/core/theme/feed_colors.dart';
 
 /// Compose preview bar shown above the expanded input when quoting a message.
@@ -8,11 +9,7 @@ class QuotePreviewBar extends StatelessWidget {
   final String text;
   final VoidCallback? onDismiss;
 
-  const QuotePreviewBar({
-    super.key,
-    required this.text,
-    this.onDismiss,
-  });
+  const QuotePreviewBar({super.key, required this.text, this.onDismiss});
 
   @override
   Widget build(BuildContext context) {
@@ -49,6 +46,7 @@ class QuotePreviewBar extends StatelessWidget {
                   text,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
+                  textDirection: detectTextDirection(text),
                   style: const TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w400,

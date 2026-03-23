@@ -357,6 +357,32 @@ void main() {
       expect(p2pService.lastSentMessage, contains('"text":"Hello!"'));
     });
 
+    test(
+      'strips dangerous bidi controls and preserves safe markers in saved and wire text',
+      () async {
+        const rawText = 'Hello\u202E\u200E مرحبا\u200F!';
+        const sanitizedText = 'Hello\u200E مرحبا\u200F!';
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: rawText,
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message, isNotNull);
+        expect(message!.text, sanitizedText);
+        expect(messageRepo.saved.first.text, sanitizedText);
+
+        expect(p2pService.lastSentMessage, isNotNull);
+        expect(p2pService.lastSentMessage, contains('"text":"$sanitizedText"'));
+        expect(p2pService.lastSentMessage, isNot(contains('\u202E')));
+      },
+    );
+
     test('uses provided messageId and timestamp when passed', () async {
       const fixedMessageId = 'msg-fixed-001';
       const fixedTimestamp = '2026-02-11T10:00:00.000Z';

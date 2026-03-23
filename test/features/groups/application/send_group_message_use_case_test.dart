@@ -215,6 +215,50 @@ void main() {
     },
   );
 
+  test(
+    'strips dangerous bidi controls and preserves safe markers across publish, inbox, save, and push body',
+    () async {
+      const rawText = 'Hello\u202E\u200E group\u200F!';
+      const sanitizedText = 'Hello\u200E group\u200F!';
+
+      final (result, message) = await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        text: rawText,
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        senderUsername: 'Alice',
+      );
+
+      expect(result, SendGroupMessageResult.success);
+      expect(message, isNotNull);
+      expect(message!.text, sanitizedText);
+
+      final saved = await msgRepo.getMessage(message.id);
+      expect(saved, isNotNull);
+      expect(saved!.text, sanitizedText);
+
+      final publishMsg = bridge.sentMessages.firstWhere(
+        (m) => (jsonDecode(m) as Map)['cmd'] == 'group:publish',
+      );
+      final publishPayload =
+          (jsonDecode(publishMsg) as Map)['payload'] as Map<String, dynamic>;
+      expect(publishPayload['text'], sanitizedText);
+      expect(publishPayload['text'], isNot(contains('\u202E')));
+
+      final inboxPayload = _lastGroupInboxStorePayload(bridge);
+      expect(inboxPayload['pushBody'], equals('Alice: $sanitizedText'));
+      expect(inboxPayload['pushBody'], isNot(contains('\u202E')));
+
+      final innerPayload =
+          jsonDecode(inboxPayload['message'] as String) as Map<String, dynamic>;
+      expect(innerPayload['text'], sanitizedText);
+    },
+  );
+
   test('stores message in relay inbox on publish', () async {
     await sendGroupMessage(
       bridge: bridge,

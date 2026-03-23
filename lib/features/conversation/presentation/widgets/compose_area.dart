@@ -1,5 +1,6 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/quote_preview_bar.dart';
@@ -65,6 +66,7 @@ class _ComposeAreaState extends State<ComposeArea>
     with SingleTickerProviderStateMixin {
   final _controller = TextEditingController();
   final _focusNode = FocusNode();
+  TextDirection _inputDirection = TextDirection.ltr;
   bool _hasFocus = false;
   bool _hasText = false;
 
@@ -89,6 +91,7 @@ class _ComposeAreaState extends State<ComposeArea>
     );
 
     _controller.addListener(_onTextChanged);
+    _controller.addListener(_updateInputDirection);
     _focusNode.addListener(_onFocusChanged);
 
     if (widget.initialText != null && widget.initialText!.isNotEmpty) {
@@ -97,6 +100,8 @@ class _ComposeAreaState extends State<ComposeArea>
         offset: _controller.text.length,
       );
     }
+
+    _updateInputDirection();
 
     if (widget.hasAttachments || _controller.text.trim().isNotEmpty) {
       _sendButtonController.value = 1.0;
@@ -142,6 +147,13 @@ class _ComposeAreaState extends State<ComposeArea>
     }
   }
 
+  void _updateInputDirection() {
+    final nextDirection = detectTextDirection(_controller.text);
+    if (nextDirection != _inputDirection) {
+      setState(() => _inputDirection = nextDirection);
+    }
+  }
+
   void _onFocusChanged() {
     setState(() => _hasFocus = _focusNode.hasFocus);
   }
@@ -155,6 +167,7 @@ class _ComposeAreaState extends State<ComposeArea>
 
   @override
   void dispose() {
+    _controller.removeListener(_updateInputDirection);
     _controller.dispose();
     _focusNode.dispose();
     _sendButtonController.dispose();
@@ -295,6 +308,7 @@ class _ComposeAreaState extends State<ComposeArea>
                             child: TextField(
                               controller: _controller,
                               focusNode: _focusNode,
+                              textDirection: _inputDirection,
                               maxLines: null,
                               maxLength: maxMessageLength,
                               enabled: !_isRecording,

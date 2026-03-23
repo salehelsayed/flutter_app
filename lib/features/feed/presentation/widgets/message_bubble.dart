@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/feed_colors.dart';
+import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
@@ -71,116 +72,116 @@ class MessageBubble extends StatelessWidget {
               borderRadius: BorderRadius.circular(14),
               border: Border.all(color: _borderColor),
             ),
-          child: Stack(
-            children: [
-              // Accent edge glow
-              if (isIncoming)
-                Positioned(
-                  left: 0,
-                  top: 0,
-                  bottom: 0,
-                  width: 60,
-                  child: IgnorePointer(
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.centerLeft,
-                          end: Alignment.centerRight,
-                          colors: [
-                            FeedColors.accentTeal.withValues(alpha: 0.08),
-                            Colors.transparent,
-                          ],
+            child: Stack(
+              children: [
+                // Accent edge glow
+                if (isIncoming)
+                  Positioned(
+                    left: 0,
+                    top: 0,
+                    bottom: 0,
+                    width: 60,
+                    child: IgnorePointer(
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.centerLeft,
+                            end: Alignment.centerRight,
+                            colors: [
+                              FeedColors.accentTeal.withValues(alpha: 0.08),
+                              Colors.transparent,
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  )
+                else
+                  Positioned(
+                    right: 0,
+                    top: 0,
+                    bottom: 0,
+                    width: 60,
+                    child: IgnorePointer(
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.centerRight,
+                            end: Alignment.centerLeft,
+                            colors: [
+                              FeedColors.accentTeal.withValues(alpha: 0.04),
+                              Colors.transparent,
+                            ],
+                          ),
                         ),
                       ),
                     ),
                   ),
-                )
-              else
+                // Accent border edge
                 Positioned(
-                  right: 0,
+                  left: isIncoming ? 0 : null,
+                  right: isIncoming ? null : 0,
                   top: 0,
                   bottom: 0,
-                  width: 60,
-                  child: IgnorePointer(
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.centerRight,
-                          end: Alignment.centerLeft,
-                          colors: [
-                            FeedColors.accentTeal.withValues(alpha: 0.04),
-                            Colors.transparent,
-                          ],
+                  child: Container(
+                    width: 3,
+                    decoration: BoxDecoration(
+                      color: isIncoming
+                          ? FeedColors.accentTeal
+                          : FeedColors.accentTeal.withValues(alpha: 0.25),
+                      borderRadius: BorderRadius.only(
+                        topLeft: isIncoming
+                            ? const Radius.circular(14)
+                            : Radius.zero,
+                        bottomLeft: isIncoming
+                            ? const Radius.circular(14)
+                            : Radius.zero,
+                        topRight: isIncoming
+                            ? Radius.zero
+                            : const Radius.circular(14),
+                        bottomRight: isIncoming
+                            ? Radius.zero
+                            : const Radius.circular(14),
+                      ),
+                    ),
+                  ),
+                ),
+                // Card content
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Quote bar
+                    if (quotedText != null || isQuoteUnavailable)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+                        child: _buildQuoteBar(),
+                      ),
+                    // Media grid
+                    if (_imageVideoMedia.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
+                        child: MediaGrid(
+                          media: _imageVideoMedia,
+                          onTap: onMediaTap,
                         ),
                       ),
-                    ),
-                  ),
-                ),
-              // Accent border edge
-              Positioned(
-                left: isIncoming ? 0 : null,
-                right: isIncoming ? null : 0,
-                top: 0,
-                bottom: 0,
-                child: Container(
-                  width: 3,
-                  decoration: BoxDecoration(
-                    color: isIncoming
-                        ? FeedColors.accentTeal
-                        : FeedColors.accentTeal.withValues(alpha: 0.25),
-                    borderRadius: BorderRadius.only(
-                      topLeft: isIncoming
-                          ? const Radius.circular(14)
-                          : Radius.zero,
-                      bottomLeft: isIncoming
-                          ? const Radius.circular(14)
-                          : Radius.zero,
-                      topRight: isIncoming
-                          ? Radius.zero
-                          : const Radius.circular(14),
-                      bottomRight: isIncoming
-                          ? Radius.zero
-                          : const Radius.circular(14),
-                    ),
-                  ),
-                ),
-              ),
-              // Card content
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Quote bar
-                  if (quotedText != null || isQuoteUnavailable)
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
-                      child: _buildQuoteBar(),
-                    ),
-                  // Media grid
-                  if (_imageVideoMedia.isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
-                      child: MediaGrid(
-                        media: _imageVideoMedia,
-                        onTap: onMediaTap,
+                    // Audio players
+                    for (final audio in _audioMedia)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
+                        child: AudioPlayerWidget(attachment: audio),
                       ),
-                    ),
-                  // Audio players
-                  for (final audio in _audioMedia)
+                    // Inline name + text + time + status
                     Padding(
-                      padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
-                      child: AudioPlayerWidget(attachment: audio),
+                      padding: _contentPadding,
+                      child: _buildInlineContent(context),
                     ),
-                  // Inline name + text + time + status
-                  Padding(
-                    padding: _contentPadding,
-                    child: _buildInlineContent(context),
-                  ),
-                ],
-              ),
-            ],
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
-      ),
       ),
     );
   }
@@ -190,16 +191,13 @@ class MessageBubble extends StatelessWidget {
         (quotedText != null || isQuoteUnavailable) ||
         _imageVideoMedia.isNotEmpty ||
         _audioMedia.isNotEmpty;
-    return EdgeInsets.fromLTRB(
-      12,
-      hasMediaAbove ? 6 : 8,
-      12,
-      8,
-    );
+    return EdgeInsets.fromLTRB(12, hasMediaAbove ? 6 : 8, 12, 8);
   }
 
   Widget _buildInlineContent(BuildContext context) {
-    final name = senderLabel ?? (isIncoming ? '' : AppLocalizations.of(context)!.feed_you);
+    final name =
+        senderLabel ??
+        (isIncoming ? '' : AppLocalizations.of(context)!.feed_you);
     const nameStyle = TextStyle(
       fontSize: 14,
       fontWeight: FontWeight.w600,
@@ -252,6 +250,7 @@ class MessageBubble extends StatelessWidget {
     if (text.isNotEmpty) {
       textWidget = LinkableText(
         text: text,
+        textDirection: detectTextDirection(text),
         style: bodyStyle,
         prefixSpans: name.isNotEmpty
             ? [TextSpan(text: '$name: ', style: nameStyle)]
@@ -273,11 +272,7 @@ class MessageBubble extends StatelessWidget {
         Stack(
           children: [
             textWidget,
-            Positioned(
-              right: 0,
-              bottom: 0,
-              child: trailingWidget,
-            ),
+            Positioned(right: 0, bottom: 0, child: trailingWidget),
           ],
         ),
         if (hasReactions) ...[
@@ -305,11 +300,9 @@ class MessageBubble extends StatelessWidget {
           ownPeerId != null && list.any((r) => r.senderPeerId == ownPeerId);
 
       return GestureDetector(
-        onTap:
-            onReactionTap != null ? () => onReactionTap!(emoji) : null,
+        onTap: onReactionTap != null ? () => onReactionTap!(emoji) : null,
         child: Container(
-          padding:
-              const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
           decoration: BoxDecoration(
             color: const Color.fromRGBO(255, 255, 255, 0.08),
             borderRadius: BorderRadius.circular(12),
@@ -354,6 +347,7 @@ class MessageBubble extends StatelessWidget {
             displayText,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
+            textDirection: detectTextDirection(displayText),
             style: TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w400,

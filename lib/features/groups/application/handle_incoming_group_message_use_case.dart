@@ -1,6 +1,7 @@
 import 'package:uuid/uuid.dart';
 
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
@@ -70,6 +71,8 @@ Future<GroupMessage?> handleIncomingGroupMessage({
     parsedTimestamp = now;
   }
 
+  final sanitizedText = sanitizeMessageText(text);
+
   // Prefer messageId-based dedupe when a wire messageId is available.
   // This catches the case where both pubsub and group inbox deliver the
   // same message — content-based dedupe might miss it if timestamps
@@ -101,7 +104,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
   final isDuplicate = await msgRepo.existsByContent(
     groupId,
     senderId,
-    text,
+    sanitizedText,
     parsedTimestamp,
   );
   if (isDuplicate) {
@@ -128,7 +131,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
     groupId: groupId,
     senderPeerId: senderId,
     senderUsername: senderUsername,
-    text: text,
+    text: sanitizedText,
     timestamp: parsedTimestamp,
     quotedMessageId: quotedMessageId,
     keyGeneration: keyEpoch,

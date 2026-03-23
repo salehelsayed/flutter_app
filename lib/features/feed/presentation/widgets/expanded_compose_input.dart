@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/core/theme/feed_colors.dart';
 
@@ -36,6 +37,7 @@ class _ExpandedComposeInputState extends State<ExpandedComposeInput>
     with SingleTickerProviderStateMixin {
   final _controller = TextEditingController();
   final _focusNode = FocusNode();
+  TextDirection _inputDirection = TextDirection.ltr;
   bool _hasText = false;
   bool _hasFocus = false;
 
@@ -54,12 +56,15 @@ class _ExpandedComposeInputState extends State<ExpandedComposeInput>
       curve: Curves.ease,
     );
     _controller.addListener(_onTextChanged);
+    _controller.addListener(_updateInputDirection);
     _focusNode.addListener(_onFocusChanged);
     if (widget.initialText.isNotEmpty) {
       _controller.text = widget.initialText;
       _hasText = widget.initialText.trim().isNotEmpty;
       if (_hasText) _sendButtonController.value = 1.0;
     }
+
+    _updateInputDirection();
   }
 
   @override
@@ -70,6 +75,13 @@ class _ExpandedComposeInputState extends State<ExpandedComposeInput>
     }
     if (widget.shouldRequestFocus && !_focusNode.hasFocus) {
       _focusNode.requestFocus();
+    }
+  }
+
+  void _updateInputDirection() {
+    final nextDirection = detectTextDirection(_controller.text);
+    if (nextDirection != _inputDirection) {
+      setState(() => _inputDirection = nextDirection);
     }
   }
 
@@ -102,6 +114,7 @@ class _ExpandedComposeInputState extends State<ExpandedComposeInput>
 
   @override
   void dispose() {
+    _controller.removeListener(_updateInputDirection);
     _controller.dispose();
     _focusNode.dispose();
     _sendButtonController.dispose();
@@ -145,7 +158,10 @@ class _ExpandedComposeInputState extends State<ExpandedComposeInput>
               Expanded(
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 200),
-                  constraints: const BoxConstraints(minHeight: 44, maxHeight: 120),
+                  constraints: const BoxConstraints(
+                    minHeight: 44,
+                    maxHeight: 120,
+                  ),
                   decoration: BoxDecoration(
                     color: _hasFocus
                         ? const Color.fromRGBO(255, 255, 255, 0.08)
@@ -160,6 +176,7 @@ class _ExpandedComposeInputState extends State<ExpandedComposeInput>
                   child: TextField(
                     controller: _controller,
                     focusNode: _focusNode,
+                    textDirection: _inputDirection,
                     enabled: widget.enabled,
                     maxLines: null,
                     maxLength: maxMessageLength,
