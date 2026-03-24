@@ -6,14 +6,14 @@ void main() {
   Widget wrap(Widget child) => MaterialApp(home: Scaffold(body: child));
 
   group('OrbitSearchTrigger', () {
-    testWidgets('renders a 36px circle container', (tester) async {
+    testWidgets('renders a 44px circle container', (tester) async {
       await tester.pumpWidget(wrap(OrbitSearchTrigger(
         onSearchTap: () {},
       )));
 
       final container = tester.widget<Container>(find.byType(Container));
-      expect(container.constraints?.maxWidth, 36);
-      expect(container.constraints?.maxHeight, 36);
+      expect(container.constraints?.maxWidth, 44);
+      expect(container.constraints?.maxHeight, 44);
     });
 
     testWidgets('renders search icon', (tester) async {

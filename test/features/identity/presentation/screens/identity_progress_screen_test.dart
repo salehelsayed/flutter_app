@@ -2,9 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/identity/presentation/screens/identity_progress_screen.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/choice_card.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 void main() {
-  Widget wrap(Widget child) => MaterialApp(home: child);
+  Widget wrap(Widget child) => MaterialApp(
+    locale: const Locale('en'),
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
+    supportedLocales: AppLocalizations.supportedLocales,
+    home: child,
+  );
 
   group('IdentityProgressScreen', () {
     testWidgets(
@@ -105,6 +111,9 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
           home: Builder(
             builder: (context) => Scaffold(
               body: Center(

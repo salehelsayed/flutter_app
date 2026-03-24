@@ -5,6 +5,7 @@ import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_comment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/comments_sheet.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 void main() {
   testWidgets(
@@ -12,6 +13,9 @@ void main() {
     (tester) async {
       await tester.pumpWidget(
         MaterialApp(
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
           home: Scaffold(
             body: CommentsSheet(
               post: _post(),
@@ -76,6 +80,9 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
           home: Scaffold(
             body: CommentsSheet(
               post: _post(),

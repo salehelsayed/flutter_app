@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/introduction_connection_card.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 void main() {
   Widget wrap(Widget child) => MaterialApp(
+        locale: const Locale('en'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
         home: Scaffold(
           body: SingleChildScrollView(
             child: Center(
@@ -97,7 +101,6 @@ void main() {
 
     testWidgets('disables Send Message button when blocked', (tester) async {
       suppressOverflow();
-      var sendPressed = false;
       await tester.pumpWidget(wrap(IntroductionConnectionCard(
         ownPeerId: 'own-peer-123',
         ownUsername: 'me',
@@ -105,7 +108,7 @@ void main() {
         contactUsername: 'alice',
         introducedBy: 'bob',
         isBlocked: true,
-        onSendMessage: () => sendPressed = true,
+        onSendMessage: () {},
       )));
       await tester.pumpAndSettle();
       final button =

@@ -123,7 +123,7 @@ void main() {
       await harness.postRepository.savePost(_post(id: 'post-observed'));
       await Future<void>.delayed(const Duration(milliseconds: 20));
 
-      expect(harness.appShellController.activeTab, AppShellTab.posts);
+      expect(harness.appShellController.activeTab, AppShellTab.feed);
       expect(harness.revealPostsSurfaceCalls, 1);
       expect(harness.pendingTargetStore.statusMessage, isNull);
     });
@@ -146,7 +146,7 @@ void main() {
         timeoutHarness.pendingTargetStore.statusMessage,
         PostNotificationOpenCoordinator.loadingFallbackMessage,
       );
-      expect(timeoutHarness.appShellController.activeTab, AppShellTab.posts);
+      expect(timeoutHarness.appShellController.activeTab, AppShellTab.feed);
       expect(timeoutHarness.revealPostsSurfaceCalls, 1);
     });
 

@@ -37,6 +37,7 @@ import 'package:flutter_app/features/feed/presentation/widgets/collapsed_mode_ca
 import 'package:flutter_app/features/feed/presentation/widgets/open_mode_card_body.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/scrollable_message_preview.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
@@ -188,6 +189,9 @@ void main() {
         );
 
     return MaterialApp(
+      locale: const Locale('en'),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
       navigatorObservers: navigatorObservers ?? const <NavigatorObserver>[],
       home: FeedWired(
         repository: identityRepo,
@@ -458,7 +462,6 @@ void main() {
       // The FeedNavigationBar renders NavBarButton with label 'Orbit'
       expect(find.text('Orbit'), findsOneWidget);
       expect(find.text('Feed'), findsOneWidget);
-      expect(find.text('Remember'), findsOneWidget);
     });
 
     testWidgets('collapse from open-mode card does not expand collapsed card', (

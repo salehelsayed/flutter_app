@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
@@ -168,6 +169,9 @@ void main() {
 
     Widget buildWidget() {
       return MaterialApp(
+        locale: const Locale('en'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
         home: GroupListWired(
           groupRepo: groupRepo,
           msgRepo: msgRepo,
@@ -205,6 +209,9 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
           home: GroupListWired(
             groupRepo: slowGroupRepo,
             msgRepo: msgRepo,
@@ -345,6 +352,9 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
           home: GroupListWired(
             groupRepo: errorGroupRepo,
             msgRepo: msgRepo,

@@ -11,13 +11,13 @@ import 'package:flutter_app/core/services/share_intent_model.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
-import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/share/presentation/screens/share_target_picker_wired.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../core/services/fake_p2p_service.dart';
@@ -46,6 +46,9 @@ void main() {
     ImageProcessor? imageProcessor,
   }) {
     return MaterialApp(
+      locale: const Locale('en'),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
       home: ShareTargetPickerWired(
         shareIntent: shareIntent,
         identityRepo: identityRepository,
@@ -449,6 +452,9 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
+        locale: const Locale('en'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
         home: Builder(
           builder: (context) => Scaffold(
             body: Column(

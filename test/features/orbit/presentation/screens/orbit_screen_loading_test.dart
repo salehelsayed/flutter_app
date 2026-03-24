@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/expandable_fab.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_group.dart';
@@ -67,6 +68,9 @@ void main() {
     addTearDown(headerNotifier.dispose);
     addTearDown(listNotifier.dispose);
     return MaterialApp(
+      locale: const Locale('en'),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
       home: OrbitScreen(
         headerProjectionListenable: headerNotifier,
         listProjectionListenable: listNotifier,
@@ -195,7 +199,7 @@ void main() {
         );
         await tester.pump(const Duration(milliseconds: 300));
 
-        expect(find.text('Friends'), findsOneWidget);
+        expect(find.text('Close Friends'), findsWidgets);
         expect(find.byType(OrbitCloseButton), findsOneWidget);
         expect(find.byType(OrbitSearchTrigger), findsOneWidget);
         expect(find.byType(ExpandableFab), findsOneWidget);

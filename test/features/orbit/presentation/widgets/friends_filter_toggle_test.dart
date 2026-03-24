@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/friends_filter_toggle.dart';
 
 void main() {
@@ -10,6 +11,9 @@ void main() {
     ValueChanged<String>? onFilterChanged,
   }) {
     return MaterialApp(
+      locale: const Locale('en'),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
       home: Scaffold(
         body: FriendsFilterToggle(
           activeFilter: activeFilter,

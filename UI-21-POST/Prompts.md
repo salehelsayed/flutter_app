@@ -1397,13 +1397,10 @@ Use $libp2p-phase-orchestrator in auto-advance mode.
 ===============================
 
 
-  Use $libp2p-phase-orchestrator in auto-advance mode. If that skill is unavailable, follow the same
-  controller workflow manually.
+  Use $libp2p-phase-orchestrator in auto-advance mode. If that skill is unavailable, follow the same controller workflow manually.
 
   Goal
-  - Implement the full BiDi text rendering fix end-to-end so mixed Arabic + English text renders
-  correctly in display widgets and compose inputs, and safe BiDi markers are preserved through send/
-  receive flows.
+  - Implement the full BiDi text rendering fix end-to-end so mixed Arabic + English text renders correctly in display widgets and compose inputs, and safe BiDi markers are preserved through send/receive flows.
 
   Plan Path
   - UI-TestFlight-1/bidi-text-fix-tdd-plan.md
@@ -1428,34 +1425,25 @@ Use $libp2p-phase-orchestrator in auto-advance mode.
   - Do not start anything beyond Phase 6 unless I explicitly request it later.
 
   Agent Rules
-  - Use fresh isolated agents per phase: one implementer, one reviewer, and a separate fixer only if
-  review finds blocking gaps.
+  - Use fresh isolated agents per phase: one implementer, one reviewer, and a separate fixer only if review finds blocking gaps.
   - Never let the implementer review its own phase.
   - Close all phase-local agents before advancing.
 
   Phase-Control Rules
-  - Treat `UI-TestFlight-1/bidi-text-fix-tdd-plan.md` as the authoritative phase-scoped plan for this
-  run.
+  - Treat `UI-TestFlight-1/bidi-text-fix-tdd-plan.md` as the authoritative phase-scoped plan for this run.
   - Do not require a separate master plan.
   - Rebuild each phase contract from the BiDi plan itself.
-  - Enforce strict `RED -> GREEN -> REFACTOR` for every production phase and capture the exact failing
-  tests or commands before production edits.
+  - Enforce strict `RED -> GREEN -> REFACTOR` for every production phase and capture the exact failing tests or commands before production edits.
   - Auto-advance only after reviewer verdict `PASS` and phase acceptance.
-  - If review returns `NEEDS WORK` or `FAIL`, stay in the same phase, run a fix loop, and review again
-  before any advancement.
-  - Follow the BiDi plan’s phase goals, file scopes, test files, implementation notes, summary table,
-  and run commands.
+  - If review returns `NEEDS WORK` or `FAIL`, stay in the same phase, run a fix loop, and review again before any advancement.
+  - Follow the BiDi plan’s phase goals, file scopes, test files, implementation notes, summary table, and run commands.
   - Record residual risks, explicit deferrals, and next-phase prerequisites before advancing.
   - Do not widen into later phases unless required for compilation.
-  - If the plan labels a test file as `new` but that file already exists in the repo, extend the
-  existing file instead of creating a duplicate suite.
+  - If the plan labels a test file as `new` but that file already exists in the repo, extend the existing file instead of creating a duplicate suite.
 
   BiDi Execution Rules
-  - Keep scope limited to fixing mixed Arabic/English rendering, BiDi marker preservation, widget
-  `textDirection` wiring, compose-field direction detection, and symmetric sanitization on send/receive
-  paths.
-  - Implement and use `detectTextDirection()` with the first-strong-character heuristic described in the
-  plan.
+  - Keep scope limited to fixing mixed Arabic/English rendering, BiDi marker preservation, widget `textDirection` wiring, compose-field direction detection, and symmetric sanitization on send/receive paths.
+  - Implement and use `detectTextDirection()` with the first-strong-character heuristic described in the plan.
   - Preserve these safe/helpful markers:
     - `LRM` (`U+200E`)
     - `RLM` (`U+200F`)
@@ -1465,35 +1453,24 @@ Use $libp2p-phase-orchestrator in auto-advance mode.
     - `FSI` (`U+2068`)
     - `PDI` (`U+2069`)
     - `ZWJ` (`U+200D`)
-  - Continue stripping only the dangerous/invisible characters called out by the plan, including zero-
-  width space, ZWNJ, legacy bidi embedding/override characters, and BOM.
+  - Continue stripping only the dangerous/invisible characters called out by the plan, including zero- width space, ZWNJ, legacy bidi embedding/override characters, and BOM.
   - Keep `LinkableText` backward-compatible when `textDirection` is null.
-  - In display widgets, detect direction from the actual message body or quoted text as specified by the
-  plan.
-  - In compose widgets, update `TextField.textDirection` dynamically from controller text as the user
-  types.
-  - In send/receive flows, sanitize text once at the top of each flow and reuse the sanitized value
-  consistently for save, dedupe, publish, inbox-store, and wire payload generation.
-  - Do not introduce unrelated UI redesigns, localization refactors, or chat-pipeline changes outside
-  the plan.
+  - In display widgets, detect direction from the actual message body or quoted text as specified by the plan.
+  - In compose widgets, update `TextField.textDirection` dynamically from controller text as the user types.
+  - In send/receive flows, sanitize text once at the top of each flow and reuse the sanitized value consistently for save, dedupe, publish, inbox-store, and wire payload generation.
+  - Do not introduce unrelated UI redesigns, localization refactors, or chat-pipeline changes outside the plan.
 
   Phase Reminders
   - Phase 1: add the direction-detection utility and its tests.
-  - Phase 2: update sanitizer behavior to preserve helpful BiDi markers, including ALM, and update
-  existing sanitizer tests.
+  - Phase 2: update sanitizer behavior to preserve helpful BiDi markers, including ALM, and update existing sanitizer tests.
   - Phase 3: add optional `textDirection` support to `LinkableText` and verify backward compatibility.
-  - Phase 4: wire direction detection into `LetterCard`, `MessageBubble`, and `QuotePreviewBar`,
-  including quote-bar text.
-  - Phase 5: wire live input direction into `ComposeArea`, `InlineReplyInput`, and
-  `ExpandedComposeInput`.
-  - Phase 6: add symmetric sanitization to chat send, group send, and group receive, with tests that
-  verify saved data plus wire/publish/inbox/dedupe behavior.
+  - Phase 4: wire direction detection into `LetterCard`, `MessageBubble`, and `QuotePreviewBar`, including quote-bar text.
+  - Phase 5: wire live input direction into `ComposeArea`, `InlineReplyInput`, and `ExpandedComposeInput`.
+  - Phase 6: add symmetric sanitization to chat send, group send, and group receive, with tests that verify saved data plus wire/publish/inbox/dedupe behavior.
 
   Scope Guardrails
-  - Keep production edits limited to the files named in the plan unless a minimal compatibility change
-  is required for compilation.
-  - Keep test edits limited to the plan’s listed suites unless a minimal helper update is required to
-  make those tests compile.
+  - Keep production edits limited to the files named in the plan unless a minimal compatibility change is required for compilation.
+  - Keep test edits limited to the plan’s listed suites unless a minimal helper update is required to make those tests compile.
   - Do not add new architecture, new persistence formats, or unrelated cleanup.
 
   Verification
@@ -1517,5 +1494,604 @@ Use $libp2p-phase-orchestrator in auto-advance mode.
 
   Assumptions
   - Assume the plan is approved and ready.
-  - Begin with Phase 1 only, then auto-advance through Phase 6 according to these rules without pausing
-  for intermediate approval unless a phase is genuinely blocked.
+  - Begin with Phase 1 only, then auto-advance through Phase 6 according to these rules without pausing for intermediate approval unless a phase is genuinely blocked.
+
+
+
+
+
+
+
+======================
+
+  Use $libp2p-phase-orchestrator in auto-advance mode. If that skill is unavailable, follow the same controller workflow manually with fresh isolated implementer/reviewer/fixer agents per section.
+
+  Important
+  - The authoritative plan for this run is `UI-TestFlight-1/message-delivery-reliability-tdd-plan.md`.
+  - Treat that document, including its audit notes, addenda,stale-test updates, smoke matrices, and prerequisite notes, as authoritative for scope and sequencing.
+  - Do not use any other TestFlight or UI plan as the source of truth for this run.
+
+  Goal
+  - Implement the full message-delivery reliability plan end- to-end so the original send-then-lock failure is actually fixed:
+    Alice sends a message, Alice’s phone locks or backgrounds, the message is not lost, Bob receives it, and Bob gets the correct notification/deep-link behavior.
+  - Cover the full plan, not just the narrow 1:1 sender path. That includes the specified relay, notification, lifecycle, retry, media/voice recovery, and integration-test work defined by the plan.
+
+  Phase Granularity
+  - Treat each top-level `Section` in `UI-TestFlight-1/message- delivery-reliability-tdd-plan.md` as one controller phase.
+  - Treat the section’s internal `Part` / `Step` / addendum items as internal slices that must be completed within the same section before advancing.
+  - Do not stop mid-section for approval unless the section is genuinely blocked.
+
+  Controller Mode
+  - `auto-advance`
+
+  Start Phase
+  - `Section 4: Direct-First Send with Early wireEnvelope Persistence`
+
+  Allowed Phase Sequence
+  1. `Section 4: Direct-First Send with Early wireEnvelope Persistence`
+  2. `Section 5: FCM and Notification Fixes`
+  3. `Section 1: Stuck-Sending Message Recovery`
+  4. `Section 2: App Lifecycle Pause Handler`
+  5. `Section 3: iOS Background Task Assertion`
+  6. `Section 6: Test Infrastructure and Integration`
+
+  Stop Condition
+  - Stop on the first blocked section or when Section 6 is accepted.
+  - Do not stop for intermediate approval between sections.
+  - Do not start anything beyond Section 6 unless I explicitly request it later.
+
+  Agent Rules
+  - Use fresh isolated agents per section: one implementer, one
+  reviewer, and a separate fixer only if review finds blocking gaps.
+  - Never let the implementer review its own section.
+  - Close all section-local agents before advancing.
+  - Do not run overlapping implementers on the same edit surface.
+
+  Section-Control Rules
+  - Build a fresh phase contract from the plan at the start of each section.
+  - Internal parts/steps remain inside the current section; do not confuse them with phase advancement.
+  - Enforce strict `RED -> GREEN -> REFACTOR` for every production section.
+  - Capture the exact failing tests, compile failures, or commands before any production edits.
+  - Auto-advance only after reviewer verdict `PASS` and explicit section acceptance.
+  - If review returns `NEEDS WORK` or `FAIL`, stay in the same section, run a fix loop, and review again before advancing.
+  - Record residual risks, explicit deferrals, stale-test updates applied, and next-section prerequisites before advancing.
+  - Do not widen into later sections unless a minimal compatibility change is required for compilation.
+  - If the plan says a test file is `new` but it already exists in the repo, extend the existing file instead of creating a duplicate suite.
+  - If the plan’s audit notes say a referenced file or interface does not exist, verify the repo state first, then implement the prerequisite exactly as needed for the section.
+
+  Global Execution Rules
+  - Follow the plan’s recommended implementation order above, not numeric section order.
+  - Respect the plan’s dependency graph:
+    - Section 4 improves the post-serialization window but is not sufficient alone.
+    - Section 1 creates recovery infrastructure that Section 2 depends on.
+    - Section 3 protects the full send pipeline from the presentation layer only.
+    - Section 6 comes after the fix sections and proves the actual bug is fixed.
+  - Review against the plan contract, not generic completeness.
+  - Keep scope inside the plan’s named files and explicit prerequisite helpers unless a minimal compile fix is required.
+  - Do not introduce unrelated architecture changes, protocol changes, persistence redesigns, or UI rewrites.
+
+  Section-Specific Rules
+
+  Section 4 — Direct-First Send with Early wireEnvelope Persistence
+  - Complete the full section, including Step 4.5 and the Section 4 Addendum.
+  - Persist media attachment metadata at optimistic write time in `conversation_wired.dart`.
+  - Persist `wireEnvelope` immediately after serialization and before the transport race in `send_chat_message_use_case.dart`.
+  - Preserve inbox as fallback behavior; do not introduce unconditional optimistic inbox store.
+  - Implement the relay/client idempotency contract required by
+  Step 4.5:
+    - relay-side inbox dedup by `messageId`
+    - client-side retry guard when transport is already `inbox`
+  - Preserve the invariant that direct ACK’d sends do not trigger phantom inbox/push behavior.
+  - Account for duplicate-push risk explicitly; do not hand-wave it away.
+
+  Section 5 — FCM and Notification Fixes
+  - Complete the full section, including Bug A, Bug B, Bug C, and Bug D / media-notification-body work.
+  - Bug A:
+    - fix `sender_id` vs `from` routing in `notification_route_target.dart`
+    - keep legacy fallback only where the plan allows
+    - do not add redundant server aliases if the plan says the client fix is sufficient
+  - Bug B:
+    - add the missing top-level `Notification` struct for group push in `go-relay-server/inbox.go`
+    - keep this scoped to the plan’s group-push parity hardening
+  - Bug C:
+    - implement the deployment/config/test requirements around Redis-backed push-token durability exactly as the plan specifies
+    - treat production Redis requirement as in-scope, not optional commentary
+  - Bug D:
+    - implement media hydration and notification body generation so image/video/audio-only notifications show the correct body
+    - update stale tests identified by the plan
+  - Keep the distinction clear:
+    - some fixes are required for 1:1 sufficiency
+    - Bug B is group-specific and should stay narrowly scoped
+    - but still implement the full section because this run is for the full plan
+
+  Section 1 — Stuck-Sending Message Recovery
+  - Complete the entire section, including Parts A, B, C, D, F, and G, plus the later gap-closure items called out inside Parts F/G.
+  - Keep Section 1 scoped to 1:1 text/media/voice reliability; group sends remain out of scope for this section as the plan states.
+  - Implement the stuck-sending recovery path end-to-end:
+    - DB helpers for stuck `sending` rows
+    - repository methods and interfaces
+    - `recoverStuckSendingMessages()` use case
+    - `PendingMessageRetrier` support for `sending` rows and cold-start initial sweep
+    - resume-triggered retry callbacks with strict step ordering and fault isolation
+    - media-aware replay safety for `retryFailedMessages`
+    - null safety in `retryUnackedMessages`
+    - incomplete-upload re-upload flow
+    - pre-upload media/voice persistence and durable storage handling
+  - Respect the plan’s ordering contracts for resume and retrier flows.
+  - Do not quietly stop after Part D; Parts F and G are part of the same section acceptance.
+
+  Section 2 — App Lifecycle Pause Handler
+  - Complete the full section, including all Step 2.x work and acceptance checks.
+  - `handleAppPaused()` must be local DB only. No network calls in the pause handler.
+  - Add paused/hidden lifecycle handling in the real `_MyAppState` flow in `main.dart`, not a fake harness-only path.
+  - Use conditional status transition semantics so completed messages are not overwritten back to `failed`.
+  - Carry the repository/message-stream/UI-refresh contract through to the conversation screen so `failed` status actually becomes visible.
+  - Preserve idempotency and race safety exactly as the plan requires.
+  - Respect the plan’s state-specific guidance: do not widen to `inactive` if the plan excludes it.
+
+  Section 3 — iOS Background Task Assertion
+  - Complete the full section, including Swift XCTest, Dart bridge contract tests, presentation-layer wiring, Android no- op parity, and helper refactor.
+  - Enforce the canonical owner rule:
+    - `bg:begin` / `bg:end` live only in presentation-layer wired widgets
+    - never in use cases or domain/application-layer send
+  functions
+  - Cover all four presentation-layer 1:1 send call sites the
+  plan names:
+    - `_onSend`
+    - `_onVoiceRecordingStopped` local WiFi branch
+    - `_onVoiceRecordingStopped` relay branch
+    - `_onInlineSend` in feed
+  - Start the background task before upload/transfer/send, and release it in `finally`.
+  - Confirm `sendVoiceMessage` and `sendChatMessage` do not own background-task calls.
+  - Use the iOS and Android bridge changes exactly as the plan specifies.
+
+  Section 6 — Test Infrastructure and Integration
+  - Complete the entire section last: Part A shared infrastructure, Part B integration tests, Part C smoke checklist, Part D execution order/CI concerns.
+  - Use the existing `TestUser` + `FakeP2PNetwork` harness patterns from the repo.
+  - Do not replace them with isolated dead-stream fakes for the cross-cutting integration tests.
+  - Use mutable lifecycle closures for pause/resume simulation where the plan says to.
+  - Create/extend only the shared fakes/helpers/fixtures the plan names.
+  - Respect the plan’s testing discipline:
+    - fake isolation per test
+    - no shared bridge/service instances across tests
+    - avoid `fake_async` except where the plan allows it
+    - keep XCTest separate on macOS CI
+  - The primary acceptance target is the real send-then-lock scenario plus the other cross-cutting regressions and notification flows.
+
+  Scope Guardrails
+  - Keep production edits limited to the plan’s named Dart, Go, Swift, Kotlin, and test files unless a minimal compatibility change is required for compilation.
+  - Keep test edits limited to the plan’s named suites plus the stale-test updates the plan explicitly calls out.
+  - Do not bundle unrelated cleanups.
+  - Do not redesign transport architecture.
+  - Do not move background-task ownership into application/ domain use cases.
+  - Do not add unconditional inbox sends.
+  - Do not expand Section 1 into group-message durability beyond what the plan explicitly allows.
+  - Do not ignore the plan’s stale-test-update notes; apply them when the green-phase behavior changes those expectations.
+
+  Verification Rules
+  - Use the plan’s phase-specific run commands as the minimum required command set for each section.
+  - Before accepting each section, run that section’s targeted Dart/Go/Swift tests and record exact results.
+  - Before final acceptance, run the full regression required by the plan across the touched areas, including:
+    - targeted `flutter test` runs for all new/updated section suites
+    - `flutter test`
+    - `flutter test test/unit/`
+    - `flutter test test/integration/ --timeout 60s`
+    - `flutter test test/core/resilience/ --timeout 120s`
+    - `flutter test test/core/services/ pending_message_retrier_test.dart`
+    - `flutter test test/core/lifecycle/ handle_app_paused_test.dart`
+    - `flutter test test/features/push/`
+    - targeted `go test` runs for the relay server files/ packages touched by Sections 4 and 5
+    - `xcodebuild test -scheme Runner -destination 'platform=iOS Simulator,name=iPhone 16'` for the iOS background-task tests
+  - If any verification cannot be run, report the exact blocker and do not silently accept the section.
+
+  Manual QA / Smoke Expectations
+  - Use the smoke scenarios/checklists in Sections 1, 3, 5, and 6 as required evidence, not optional notes.
+  - Record which smoke scenarios were executed versus deferred.
+  - If a smoke scenario cannot be executed in this environment, record it as an explicit residual risk/deferral.
+
+  Acceptance Rules
+  - Accept a section only if:
+    - all required behavior for that section is implemented
+    - required red tests were captured before production edits
+    - required targeted tests/commands are green, or any non- green item is explicitly understood and accepted
+    - the reviewer reports `PASS`
+    - scope stayed inside the section boundary
+    - residual risks, deferrals, and next-section prerequisites are written down
+  - In auto-advance mode, advance only if the current section is accepted and the next section is inside the allowed sequence.
+
+  Commit Rule
+  - If a commit is requested, use: `fix(chat): implement <accepted section label>`
+
+  Assumptions
+  - Assume the plan is approved and ready.
+  - Begin with Section 4 only, then auto-advance through the allowed sequence without pausing for intermediate approval unless a section is genuinely blocked
+
+  ================
+
+
+
+====================
+
+Use $libp2p-phase-orchestrator in auto-advance mode. If unavailable, follow the same controller workflow manually with fresh isolated implementer/reviewer/fixer agents per section.
+
+  Authoritative plan
+  - `UI-TestFlight-1/message-delivery-reliability-tdd-plan.md`
+
+  Goal
+  - Implement the full message-delivery reliability plan end-to-end so the real bug is fixed: sender sends, sender locks/ backgrounds immediately, message is not lost, recipient receives it, and notification/deep-link behavior is correct.
+  - Implement the whole plan, not just the narrow 1:1 sender path.
+
+  Phase model
+  - Treat each top-level `Section` in the plan as one controller phase.
+  - Treat each section’s internal `Part` / `Step` / addendum items as internal slices that must be completed before that section is accepted.
+  - Do not stop mid-section for approval unless genuinely blocked.
+
+  Controller mode
+  - `auto-advance`
+
+  Start phase
+  - `Section 4: Direct-First Send with Early wireEnvelope Persistence`
+
+  Allowed phase sequence
+  1. `Section 4: Direct-First Send with Early wireEnvelope Persistence`
+  2. `Section 5: FCM and Notification Fixes`
+  3. `Section 1: Stuck-Sending Message Recovery`
+  4. `Section 2: App Lifecycle Pause Handler`
+  5. `Section 3: iOS Background Task Assertion`
+  6. `Section 6: Test Infrastructure and Integration`
+
+  Stop condition
+  - Stop on the first blocked section or when Section 6 is accepted.
+  - Do not pause for intermediate approval between sections.
+  - Do not start anything beyond Section 6 unless I explicitly request it later.
+
+  Agent rules
+  - Use fresh isolated agents per section: one implementer, one reviewer, and a separate fixer only if review finds blocking
+
+
+  =====================
+# QA
+
+    Use $libp2p-phase-orchestrator in auto-advance mode. If that
+  skill is unavailable, follow the same controller workflow
+  manually with fresh isolated reviewer/verifier/fixer agents
+  per section.
+
+  Authoritative plan
+  - `UI-TestFlight-1/message-delivery-reliability-tdd-plan.md`
+
+  Goal
+  - QA and harden the already-implemented message-delivery
+  reliability work against the plan above.
+  - Assume the implementation already exists in the repo. This
+  run is not a greenfield implementation run.
+  - Prove whether the plan is sufficiently implemented end-to-
+  end, identify any gaps or regressions, and fix only the
+  blocking gaps needed for acceptance.
+  - The acceptance bar is the real user outcome: sender sends,
+  sender locks/backgrounds immediately, message is not lost,
+  recipient receives it, and notification/deep-link behavior is
+  correct.
+
+  Mode
+  - Treat each top-level `Section` in the plan as one
+  hardening/QA phase.
+  - Treat each section’s internal `Part` / `Step` / addendum
+  items as internal acceptance slices inside that section.
+  - Use review-before-acceptance for every section.
+  - Use minimal targeted fixes only when needed to close
+  blocking gaps.
+
+  Controller mode
+  - `auto-advance`
+
+  Start phase
+  - `Section 4: Direct-First Send with Early wireEnvelope
+  Persistence`
+
+  Allowed phase sequence
+  1. `Section 4: Direct-First Send with Early wireEnvelope
+  Persistence`
+  2. `Section 5: FCM and Notification Fixes`
+  3. `Section 1: Stuck-Sending Message Recovery`
+  4. `Section 2: App Lifecycle Pause Handler`
+  5. `Section 3: iOS Background Task Assertion`
+  6. `Section 6: Test Infrastructure and Integration`
+
+  Stop condition
+  - Stop on the first blocked section or when Section 6 is
+  accepted.
+  - Do not pause for intermediate approval between sections.
+  - Do not start anything beyond Section 6 unless I explicitly
+  request it later.
+
+  Agent rules
+  - Use fresh isolated agents per section: one reviewer/
+  auditor, one verifier, and a separate fixer only if review
+  finds blocking gaps.
+  - Never let the fixer review its own fixes.
+  - Close all section-local agents before advancing.
+  - Do not run overlapping fixers on the same files.
+
+  Section-control rules
+  - Rebuild the section contract from `UI-TestFlight-1/message-
+  delivery-reliability-tdd-plan.md` at the start of each
+  section.
+  - Treat the plan, including audit notes, stale-test notes,
+  addenda, smoke matrices, and prerequisites, as authoritative.
+  - Start each section by inspecting the current
+  implementation, touched files, existing tests, and current
+  repo state before deciding whether anything needs to change.
+  - Audit against the exact plan contract, not generic
+  completeness.
+  - Do not assume the implementation is sufficient just because
+  the code compiles or broad tests pass.
+  - If the current section is already sufficiently implemented
+  and verified, do not edit code; accept it with evidence.
+  - If review returns `NEEDS WORK` or `FAIL`, run a minimal fix
+  loop scoped only to the blocking gaps, rerun targeted
+  verification, and review again before advancing.
+  - Do not widen into later sections unless a minimal
+  compatibility change is required for compilation.
+  - Record residual risks, explicit deferrals, stale-test
+  updates applied or still missing, and next-section
+  prerequisites before advancing.
+
+  Per-section QA workflow
+  1. Build the expected contract from the plan.
+  2. Inspect the actual implementation and compare expected vs
+  actual behavior/file scope/tests.
+  3. Run the section’s required verification commands from the
+  plan.
+  4. Produce findings first, ordered by severity, with file/
+  line references where possible.
+  5. Decide one verdict only: `PASS`, `NEEDS WORK`, or `FAIL`.
+  6. If needed, apply only minimal fixes for blocking gaps.
+  7. Rerun targeted verification and re-review.
+  8. Accept only if behavior, tests, scope, and evidence all
+  meet the section contract.
+
+  Required evidence for every section
+  - Expected files and behaviors from the plan
+  - Actual files touched / relevant current implementation
+  - Missing items from the plan, if any
+  - Unexpected scope leakage, if any
+  - Tests already present vs missing tests vs stale tests that
+  required updates
+  - Exact commands run and whether they passed
+  - Whether any smoke scenarios were executed or deferred
+  - Residual risks and explicit deferrals
+  - Clear acceptance or blocked decision
+
+  Section-specific QA requirements
+
+  Section 4
+  - Verify the full section, including Step 4.5 and the Section
+  4 Addendum.
+  - Confirm media attachment metadata is persisted at
+  optimistic write time in `conversation_wired.dart`.
+  - Confirm `wireEnvelope` is persisted immediately after
+  serialization and before discover/dial/send.
+  - Confirm inbox remains fallback behavior only; no
+  unconditional optimistic inbox store was introduced.
+  - Confirm Step 4.5 idempotency protections exist:
+    - relay-side inbox dedup by `messageId`
+    - client-side retry guard when transport is already `inbox`
+  - Confirm the implementation does not create phantom pushes
+  or duplicate user-visible delivery on successful direct ACK
+  paths.
+
+  Section 5
+  - Verify the full section, including Bug A, Bug B, Bug C, and the media-notification-body work.
+  - Confirm `sender_id` routing is fixed in `notification_route_target.dart`.
+  - Confirm group push now includes the top-level `Notification` struct in `go-relay-server/inbox.go`.
+  - Confirm Redis-backed token durability requirements and tests/docs/config changes from the plan are present where required.
+  - Confirm media hydration and notification body generation are implemented so image/video/audio-only notifications show correct bodies.
+  - Confirm the stale tests named by the plan were updated if the new behavior changed their assumptions.
+
+  Section 1
+  - Verify the entire section, including Parts A, B, C, D, F, and G, plus the later gap-closure work inside F/G.
+  - Do not accept the section if only Parts A-D landed; Parts F/G are required for full section acceptance.
+  - Confirm stuck `sending` recovery exists end-to-end:
+    - DB helpers
+    - repository/interface changes
+    - recovery use case
+    - retrier support for `sending` rows and initial sweep on cold start
+    - resume-triggered retry callbacks with the plan’s required ordering and fault isolation
+    - media-aware replay safety in `retryFailedMessages`
+    - null guard in `retryUnackedMessages`
+    - incomplete upload re-upload flow
+    - pre-upload media/voice persistence and durable storage handling
+  - Keep Section 1 scoped to 1:1 text/media/voice as the plan states.
+
+  Section 2
+  - Verify the full section, including all Step 2.x work and acceptance checks.
+  - Confirm `handleAppPaused()` is local DB only. No network calls.
+  - Confirm paused/hidden lifecycle handling was added in real `_MyAppState` flow in `main.dart`.
+  - Confirm conditional transition semantics prevent overwriting already-completed messages back to `failed`.
+  - Confirm the repository/message-stream/UI-refresh chain is closed so `failed` status becomes visible in the conversation UI.
+
+  Section 3
+  - Verify the full section, including Swift XCTest, Dart bridge contract tests, presentation-layer wiring, Android no-op parity, and helper refactor.
+  - Enforce the canonical owner rule:
+    - `bg:begin` / `bg:end` live only in presentation-layer wired widgets
+    - never in use cases or domain/application layer
+  - Confirm all four named 1:1 send call sites are covered:
+    - `_onSend`
+    - `_onVoiceRecordingStopped` local WiFi branch
+    - `_onVoiceRecordingStopped` relay branch
+    - `_onInlineSend` in feed
+  - Confirm background protection starts before upload/transfer/send and ends in `finally`.
+  - Confirm `sendVoiceMessage` and `sendChatMessage` do not own background-task calls.
+
+  Section 6
+  - Verify the entire section last: Part A shared infrastructure, Part B integration tests, Part C smoke checklist, Part D execution order/CI concerns.
+  - Confirm the implementation uses the repo’s existing `TestUser` + `FakeP2PNetwork` harness patterns for cross- cutting integration tests.
+  - Confirm lifecycle simulation helpers, fake extensions, and fixtures required by the plan exist and are used appropriately.
+  - Confirm the cross-cutting integration coverage actually proves the real bug is fixed, not just isolated unit behavior.
+  - Confirm CI/test execution notes are reflected where the plan expects them.
+
+  Scope guardrails
+  - Keep edits limited to the plan’s named Dart, Go, Swift, Kotlin, and test files unless a minimal compatibility change is required for compilation.
+  - Keep test edits limited to the plan’s named suites plus the stale-test updates explicitly called out by the plan.
+  - Do not bundle unrelated cleanups or refactors.
+  - Do not redesign transport architecture.
+  - Do not move background-task ownership into application/ domain use cases.
+  - Do not add unconditional inbox sends.
+  - Do not expand Section 1 into group-message durability beyond what the plan explicitly allows.
+
+  Verification rules
+  - Use the plan’s section-specific run commands as the minimum required command set for each section.
+  - Before accepting each section, run that section’s targeted verification and record exact results.
+  - Before final acceptance, run the broad regression required by the plan across the touched areas, including:
+    - `flutter test`
+    - `flutter test test/unit/`
+    - `flutter test test/integration/ --timeout 60s`
+    - `flutter test test/core/resilience/ --timeout 120s`
+    - `flutter test test/core/services/pending_message_retrier_test.dart`
+    - `flutter test test/core/lifecycle/handle_app_paused_test.dart`
+    - `flutter test test/features/push/`
+    - targeted `go test` runs for touched relay-server files/ packages
+    - `xcodebuild test -scheme Runner -destination 'platform=iOS Simulator,name=iPhone 16'`
+  - If any required verification cannot be run, report the exact blocker and do not silently accept the section.
+
+  Smoke / manual QA rules
+  - Use the smoke scenarios/checklists in Sections 1, 3, 5, and 6 as required evidence.
+  - Record which smoke scenarios were executed versus deferred.
+  - If a smoke scenario cannot be executed in this environment, record it as an explicit residual risk/deferral rather than silently ignoring it.
+
+  Acceptance rules
+  - Accept a section only if:
+    - required behavior is present
+    - required tests and verification are green, or any non- green item is explicitly understood and accepted
+    - reviewer verdict is `PASS`
+    - scope stayed inside the section boundary
+    - residual risks, deferrals, and next-section prerequisites are written down
+  - In auto-advance mode, advance only if the current section is accepted and the next section is inside the allowed sequence.
+
+  Output format
+  - Keep the orchestration output compact and structured with:
+    - `Mode`
+    - `Plan path`
+    - `Active phase`
+    - `Allowed phase sequence`
+    - `Entry gates`
+    - `Phase contract`
+    - `Implementation audit`
+    - `Reviewer prompt`
+    - `Fix prompt` when needed
+    - `Gap ledger`
+    - `Acceptance decision`
+    - `Next state`
+    - `Next phase trigger`
+  - Findings must come first, ordered by severity.
+  - If no blocking findings exist for a section, say that explicitly and still list residual risks/testing gaps if any remain.
+
+  Commit rule
+  - If a commit is requested and code changes were needed, use: `fix(chat): harden <accepted section label>`
+
+  Assumptions
+  - Assume the plan has already been implemented.
+  - Begin with Section 4 only, then auto-advance through the allowed sequence without pausing for intermediate approval unless a section is genuinely blocked.
+
+
+
+
+  =================================
+
+
+  Use `$libp2p-phase-orchestrator` in `auto-advance` mode. If unavailable, follow the same controller
+  workflow manually with fresh isolated implementer/reviewer/fixer agents per phase and parallel
+  implementers only for disjoint within-phase slices.
+
+  Authoritative plan
+  - `docs/qa/BIDI_FEED_ORBIT_TDD_PLAN.md`
+
+  Goal
+  - Implement the full BiDi cross-surface plan end-to-end so mixed Arabic/English user content is
+  rendered, entered, previewed, and persisted correctly across Feed, Orbit, 1:1 chat, groups,
+  announcements, posts, comments, share previews, intro/contact-request surfaces, and notification
+  passthrough.
+  - Fix the real bugs, not just isolated widgets: sender/receiver parity, open/collapsed parity,
+  timestamp/footer layout, optimistic/send parity, and sanitization policy must all be correct.
+  - Implement the whole plan, not just the original Feed and Orbit regressions.
+
+  Phase model
+  - Treat each top-level `Phase` in the plan as one controller phase.
+  - Treat each phase’s internal bullets, tests, policy decisions, and addendum items as internal slices
+  that must be completed before that phase is accepted.
+  - Do not stop mid-phase for approval unless genuinely blocked.
+
+  Controller mode
+  - `auto-advance`
+
+  Start phase
+  - `Phase 0: Create stable BiDi-specific test surfaces`
+
+  Allowed phase sequence
+  1. `Phase 0: Create stable BiDi-specific test surfaces`
+  2. `Phase 1: Lock collapsed Feed direction behavior`
+  3. `Phase 2: Lock Orbit direction behavior`
+  4. `Phase 3: Replace the fragile expanded Feed timestamp layout`
+  5. `Phase 4: Prove open/collapsed parity on Feed`
+  6. `Phase 5: Cover group and announcement summary previews`
+  7. `Phase 6: Cover posts main text input/render`
+  8. `Phase 7: Cover post comments and sanitization parity`
+  9. `Phase 8: Cover 1:1 send-side sanitization and optimistic parity`
+  10. `Phase 9: Cover share preview and share-boundary policy`
+  11. `Phase 10: Cover intro/contact-request renderers and notification passthrough`
+  12. `Phase 11: Align helper and sanitization policy across domains`
+
+  Stop condition
+  - Stop on the first blocked phase or when `Phase 11` is accepted.
+  - Do not pause for intermediate approval between phases.
+  - Do not start anything beyond `Phase 11` unless I explicitly request it later.
+
+  Agent orchestration rules
+  - Use fresh isolated agents per phase.
+  - Phase progression must stay sequential. Do not work on multiple phases at once.
+  - Inside a phase, parallelize only when slices have disjoint edit zones.
+  - Before coding each phase, explicitly decide whether that phase should use one implementer or
+  multiple parallel implementers, and justify the choice from file ownership.
+  - If parallel implementers are used, give each agent explicit ownership of a non-overlapping file set.
+  - Use one reviewer agent for the whole phase after integration.
+  - Use a separate fixer agent only if the review finds blocking gaps.
+  - Close or discard all phase agents before advancing to the next phase.
+  - Review may use additional read-only explorers in parallel for disjoint audit areas, but the final
+  verdict must be a single phase-level `PASS`, `NEEDS WORK`, or `FAIL`.
+  - Do not orchestrate overlapping implementers on the same widget, helper, or test file.
+
+  Parallelism guidance
+  - Likely parallelizable when file ownership stays disjoint: `Phase 0`, `Phase 5`, `Phase 6`, `Phase
+  7`, `Phase 8`, and `Phase 10`.
+  - Likely better as single-implementer phases because edits converge tightly: `Phase 3`, `Phase 4`, and
+  `Phase 11`.
+  - Do not force parallelism if the current phase depends on a shared helper refactor or the same test
+  fixture.
+
+  Implementation requirements
+  - Follow strict `RED -> GREEN -> REFACTOR` for every production phase.
+  - Record the exact failing tests or commands observed before production edits.
+  - Implement only the current phase, plus the minimum compatibility changes required to compile.
+  - Add or update only the tests required by the current phase.
+  - Use the plan’s dedicated BiDi test files as the main entry point instead of the known noisy baseline
+  in `test/features/feed/presentation/widgets/collapsed_mode_card_body_test.dart`.
+  - Preserve the plan’s explicit policy decision points, especially share-boundary sanitization and
+  cross-domain helper usage.
+  - Do not rely on ambient text direction for user content unless the current phase explicitly proves
+  that exception is intentional.
+
+  Acceptance rules
+  - Accept a phase only if the required behavior is implemented, the required tests are green, the
+  reviewer returns `PASS`, and there is no later-phase scope leakage.
+  - If the reviewer returns `NEEDS WORK` or `FAIL`, run a focused fixer agent only on the reviewer’s
+  blocking gap ledger, then re-review before advancing.
+
+  Deliverables per accepted phase
+  - Acceptance note
+  - Files changed
+  - Tests added or updated
+  - RED evidence
+  - GREEN verification
+  - Residual risks or deferrals
+  - Next-phase trigger

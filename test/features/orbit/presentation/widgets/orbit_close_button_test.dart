@@ -6,7 +6,7 @@ void main() {
   Widget wrap(Widget child) => MaterialApp(home: Scaffold(body: child));
 
   group('OrbitCloseButton', () {
-    testWidgets('renders a 36px circle container', (tester) async {
+    testWidgets('renders a 44px circle container', (tester) async {
       await tester.pumpWidget(wrap(OrbitCloseButton(onTap: () {})));
       final container = tester.widgetList<Container>(find.byType(Container)).where(
         (c) {
@@ -17,7 +17,7 @@ void main() {
           return false;
         },
       ).first;
-      expect(container.constraints?.maxWidth, 36);
+      expect(container.constraints?.maxWidth, 44);
     });
 
     testWidgets('calls onTap when tapped', (tester) async {

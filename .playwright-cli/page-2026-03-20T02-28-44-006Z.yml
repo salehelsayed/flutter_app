@@ -1,0 +1,318 @@
+- generic [active] [ref=e1]:
+  - navigation [ref=e2]:
+    - generic [ref=e3]:
+      - link "mknoon" [ref=e4] [cursor=pointer]:
+        - /url: "#"
+      - generic [ref=e5]:
+        - link "The vibe" [ref=e6] [cursor=pointer]:
+          - /url: "#the-vibe"
+        - link "Introductions" [ref=e7] [cursor=pointer]:
+          - /url: "#introductions"
+        - link "Privacy" [ref=e8] [cursor=pointer]:
+          - /url: "#privacy"
+        - link "Policy" [ref=e9] [cursor=pointer]:
+          - /url: privacy-policy.html
+      - link "Download" [ref=e10] [cursor=pointer]:
+        - /url: "#download"
+  - generic [ref=e12]:
+    - heading "Keep your circle close." [level=1] [ref=e13]:
+      - text: Keep your circle
+      - text: close.
+    - paragraph [ref=e14]: mknoon is a chat app for real connections. You add people by scanning a QR code—because trust starts with meeting, not searching.
+    - generic [ref=e15]:
+      - link "Get mknoon" [ref=e16] [cursor=pointer]:
+        - /url: "#download"
+        - generic [ref=e17]: Get mknoon
+        - img [ref=e18]
+      - link "How it works" [ref=e20] [cursor=pointer]:
+        - /url: "#the-vibe"
+    - paragraph [ref=e21]: Not a stage. Not a feed. Just your people.
+  - generic [ref=e26]:
+    - generic [ref=e27]: The vibe
+    - heading "A door, not a spotlight" [level=2] [ref=e28]
+    - paragraph [ref=e29]: Most apps are built for being seen. mknoon is built for being connected. If you're here, it's because someone actually knows you—and chose to connect.
+    - generic [ref=e30]:
+      - generic [ref=e33]: Scan in. Talk freely.
+      - generic [ref=e36]: No strangers. No noise.
+      - generic [ref=e39]: Real people, real names.
+  - region "Phone mockup of the mknoon QR code screen" [ref=e40]:
+    - generic [ref=e41]:
+      - generic [ref=e49]:
+        - generic:
+          - generic:
+            - generic:
+              - generic: 02:57
+              - generic:
+                - img
+                - img
+            - generic:
+              - generic:
+                - img
+                - generic: Settings
+              - generic:
+                - generic: Online
+                - generic: (1)
+            - generic:
+              - generic:
+                - img
+            - generic:
+              - generic: mknoon/
+              - generic: "@Username"
+              - img
+            - generic: Show this to someone you want in your circle...
+            - generic: Long-press QR to copy data
+            - generic:
+              - generic:
+                - img
+              - generic:
+                - generic: Scan a friend’s code
+                - generic: Add someone to your circle
+              - img
+            - generic:
+              - generic: Your circle is waiting to be filled
+              - generic: Scan a friend’s code or share yours to connect
+      - generic [ref=e51]:
+        - generic [ref=e52]: Add Friends
+        - generic [ref=e53]:
+          - heading "The closest people aren’t found online." [level=2] [ref=e54]
+          - paragraph [ref=e55]: Add people by QR code, get introduced through friends you trust, and grow a circle that stays personal.
+  - generic [ref=e58]:
+    - generic [ref=e71]:
+      - generic [ref=e72]:
+        - generic [ref=e73]: 02:29
+        - generic [ref=e74]:
+          - img [ref=e75]
+          - img [ref=e79]
+      - generic [ref=e83]:
+        - generic [ref=e84]:
+          - generic [ref=e85]: mknoon/@Rami
+          - img [ref=e86]
+        - generic [ref=e90]:
+          - generic [ref=e92]: Online
+          - generic [ref=e93]: (3)
+      - generic [ref=e95]:
+        - article [ref=e96]:
+          - generic [ref=e97]:
+            - generic [ref=e99]:
+              - generic [ref=e100]: Sara
+              - generic [ref=e101]: 2:27 AM
+            - generic [ref=e102]: "1"
+          - generic [ref=e103]: View earlier messages
+          - generic [ref=e104]:
+            - paragraph [ref=e105]:
+              - strong [ref=e106]: "Sara:"
+              - text: one day we'll visit this place together
+            - generic [ref=e107]: 2:27 AM
+          - generic [ref=e108]:
+            - generic [ref=e109]: ▴
+            - text: Collapse
+          - generic [ref=e110]:
+            - generic [ref=e111]: +
+            - generic [ref=e112]: Reply...
+            - generic [ref=e113]: ↑
+        - article [ref=e114]:
+          - generic [ref=e115]:
+            - generic [ref=e117]:
+              - generic [ref=e118]: Oliver
+              - generic [ref=e119]: 2:25 AM
+            - generic [ref=e120]: "1"
+          - generic [ref=e121]: View earlier messages
+          - generic [ref=e122]:
+            - paragraph [ref=e123]:
+              - strong [ref=e124]: "Oliver:"
+              - text: just finished the playlist, you’re gonna love it
+            - generic [ref=e125]: 2:25 AM
+          - generic [ref=e126]:
+            - generic [ref=e127]: +
+            - generic [ref=e128]: Reply...
+            - generic [ref=e129]: ↑
+        - article [ref=e130]:
+          - generic [ref=e133]:
+            - generic [ref=e134]: Nora
+            - generic [ref=e135]: 1:48 AM
+          - generic [ref=e136]: View earlier messages
+          - generic [ref=e137]:
+            - paragraph [ref=e138]:
+              - strong [ref=e139]: "Nora:"
+              - text: remind me to tell you about what happened today
+            - generic [ref=e140]: 1:48 AM
+          - generic [ref=e141]:
+            - generic [ref=e142]: +
+            - generic [ref=e143]: Reply...
+            - generic [ref=e144]: ↑
+    - generic [ref=e145]:
+      - generic [ref=e146]: Live Feed Preview
+      - generic [ref=e147]:
+        - heading "Every message has a face." [level=2] [ref=e148]
+        - paragraph [ref=e149]: Your feed is private messages from friends. Open, reply, keep moving.
+  - generic [ref=e152]:
+    - generic [ref=e153]:
+      - generic [ref=e154]:
+        - text: Introduced by
+        - strong [ref=e156]: Sara
+      - heading "Introductions are personal. That’s the point." [level=2] [ref=e157]
+      - paragraph [ref=e158]: When you connect friends, your name goes with it. mknoon keeps introductions built on trust.
+    - generic [ref=e171]:
+      - generic [ref=e172]:
+        - generic [ref=e173]: 01:22
+        - generic [ref=e174]:
+          - img [ref=e175]
+          - img [ref=e179]
+      - generic [ref=e183]:
+        - generic [ref=e184]:
+          - generic [ref=e185]: mknoon/@Rami
+          - img [ref=e186]
+        - generic [ref=e189]:
+          - generic [ref=e190]:
+            - generic [ref=e192]: Online
+            - generic [ref=e193]: (2)
+          - img [ref=e195]
+      - generic [ref=e196]:
+        - generic [ref=e197]: +
+        - generic [ref=e198]: Continue...
+        - generic [ref=e199]: ↑
+      - generic [ref=e200]:
+        - generic [ref=e201]:
+          - img [ref=e203]
+          - generic [ref=e204]: Introduced by Sara
+        - generic [ref=e205]:
+          - generic [ref=e206]:
+            - img [ref=e208]
+            - generic [ref=e209]: Rami
+          - img [ref=e210]
+          - generic [ref=e211]:
+            - img [ref=e213]
+            - generic [ref=e214]: Oliver
+        - button [ref=e215]:
+          - img [ref=e216]
+          - text: Send Message
+      - generic [ref=e218]:
+        - heading [level=3] [ref=e219]: Connected!
+        - img [ref=e222]
+        - generic [ref=e223]:
+          - img [ref=e224]
+          - generic [ref=e226]: Sara
+        - button [ref=e227]:
+          - img [ref=e228]
+          - text: Send Message
+      - generic [ref=e230]:
+        - generic [ref=e231]:
+          - img [ref=e232]
+          - generic [ref=e233]: Feed
+        - generic [ref=e234]:
+          - img [ref=e235]
+          - generic [ref=e237]: Remember
+        - generic [ref=e238]:
+          - img [ref=e239]
+          - generic [ref=e243]: Orbit
+  - generic [ref=e246]:
+    - generic [ref=e259]:
+      - generic [ref=e261]:
+        - img [ref=e263]
+        - img [ref=e267]
+      - generic [ref=e268]:
+        - generic [ref=e269]: Your Inner Circle
+        - generic [ref=e270]:
+          - img [ref=e274]
+          - img [ref=e276]
+          - img [ref=e279]
+          - img [ref=e281]
+          - img [ref=e284]
+          - img [ref=e286]
+          - img [ref=e289]
+          - img [ref=e291]
+          - img [ref=e294]
+          - img [ref=e296]
+          - img [ref=e298]
+          - img [ref=e301]
+          - img [ref=e303]
+          - img [ref=e305]
+        - paragraph [ref=e307]: Close Friends
+      - generic [ref=e308]:
+        - generic [ref=e309]:
+          - heading [level=3] [ref=e310]: Friends
+          - generic [ref=e311]:
+            - generic [ref=e312]: My QR
+            - generic [ref=e313]: Scan
+        - generic [ref=e314]:
+          - generic [ref=e315]:
+            - text: All
+            - generic [ref=e316]: "100"
+          - generic [ref=e317]:
+            - text: Intros
+            - generic [ref=e318]: "5"
+          - generic [ref=e319]: Archived
+        - generic [ref=e320]:
+          - img [ref=e322]
+          - generic [ref=e327]:
+            - generic [ref=e328]: 5 introductions from Noor
+            - generic [ref=e329]: Review and accept to start chatting
+          - generic [ref=e330]: New
+        - generic [ref=e331]:
+          - img [ref=e333]
+          - generic [ref=e335]:
+            - generic [ref=e336]: Sarah
+            - generic [ref=e337]: "@sarah_1"
+          - generic [ref=e338]:
+            - generic [ref=e339]: "5"
+            - generic [ref=e340]: Active now
+        - generic [ref=e341]:
+          - img [ref=e343]
+          - generic [ref=e345]:
+            - generic [ref=e346]: Mike
+            - generic [ref=e347]: "@mike_2"
+          - generic [ref=e349]: 2m ago
+        - generic [ref=e350]:
+          - img [ref=e352]
+          - generic [ref=e353]:
+            - generic [ref=e354]: Emma
+            - generic [ref=e355]: "@emma_3"
+          - generic [ref=e356]:
+            - generic [ref=e357]: "3"
+            - generic [ref=e358]: 5m ago
+        - generic [ref=e359]:
+          - img [ref=e360]
+          - generic [ref=e363]: Search friends...
+    - generic [ref=e364]:
+      - generic [ref=e365]: Actual App Preview
+      - generic [ref=e366]:
+        - heading "Watch your circle grow the right way" [level=2] [ref=e367]
+        - paragraph [ref=e368]: "Your circle builds the way it does in real life: slowly, naturally, through people you trust. Over time, introductions turn one connection into a connected world. Still close, still yours."
+  - generic [ref=e371]:
+    - generic [ref=e372]: Privacy
+    - heading "Private means private" [level=2] [ref=e373]
+    - paragraph [ref=e374]: mknoon is built for honest conversations. Chats are encrypted, and the app isn't designed around public reach.
+    - generic [ref=e375]:
+      - generic [ref=e376]:
+        - img [ref=e377]
+        - generic [ref=e380]: Encrypted conversations
+      - generic [ref=e381]:
+        - img [ref=e382]
+        - generic [ref=e387]: No public profiles to browse
+      - generic [ref=e388]:
+        - img [ref=e389]
+        - generic [ref=e392]: No "add by searching"
+  - generic [ref=e395]:
+    - generic [ref=e396]: Local reach
+    - heading "Made for your actual world" [level=2] [ref=e397]
+    - paragraph [ref=e398]: The best connections aren't global. They're nearby. Your community, your routines, your places—kept close and intentional.
+  - generic [ref=e401]:
+    - generic [ref=e402]: Download
+    - heading "Start with someone you trust" [level=2] [ref=e403]
+    - paragraph [ref=e404]: One scan. One conversation. Then introductions, when it feels right.
+    - generic [ref=e405]:
+      - link "Download mknoon" [ref=e406] [cursor=pointer]:
+        - /url: "#"
+        - generic [ref=e407]: Download mknoon
+        - img [ref=e408]
+      - link "Show my QR" [ref=e411] [cursor=pointer]:
+        - /url: "#"
+  - contentinfo [ref=e412]:
+    - generic [ref=e414]:
+      - generic [ref=e415]: mknoon
+      - paragraph [ref=e416]:
+        - text: "Built on open networking tech:"
+        - strong [ref=e417]: libp2p
+        - text: .
+      - link "Privacy Policy" [ref=e418] [cursor=pointer]:
+        - /url: privacy-policy.html

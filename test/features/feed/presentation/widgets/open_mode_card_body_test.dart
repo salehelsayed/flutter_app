@@ -6,13 +6,20 @@ import 'package:flutter_app/features/feed/presentation/widgets/message_bubble.da
 import 'package:flutter_app/features/feed/presentation/widgets/open_mode_card_body.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/scrollable_message_preview.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 void main() {
   Widget wrap(Widget child) => MaterialApp(
+    locale: const Locale('en'),
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
+    supportedLocales: AppLocalizations.supportedLocales,
     home: Scaffold(body: SingleChildScrollView(child: child)),
   );
 
-  ThreadFeedItem _thread({List<ThreadMessage>? messages, int unreadCount = 2}) {
+  ThreadFeedItem buildThread({
+    List<ThreadMessage>? messages,
+    int unreadCount = 2,
+  }) {
     final msgs =
         messages ??
         [
@@ -55,27 +62,27 @@ void main() {
     testWidgets('renders ScrollableMessagePreview with unread messages', (
       tester,
     ) async {
-      await tester.pumpWidget(wrap(OpenModeCardBody(thread: _thread())));
+      await tester.pumpWidget(wrap(OpenModeCardBody(thread: buildThread())));
       expect(find.byType(ScrollableMessagePreview), findsOneWidget);
       expect(find.textContaining('Unread 1'), findsOneWidget);
       expect(find.textContaining('Unread 2'), findsOneWidget);
     });
 
     testWidgets('shows ViewEarlierLink when hasEarlierHistory', (tester) async {
-      await tester.pumpWidget(wrap(OpenModeCardBody(thread: _thread())));
+      await tester.pumpWidget(wrap(OpenModeCardBody(thread: buildThread())));
       // Thread has a read message before unread, so hasEarlierHistory = true
       expect(find.text('View earlier messages'), findsOneWidget);
     });
 
     testWidgets('renders InlineReplyInput with Reply... hint', (tester) async {
-      await tester.pumpWidget(wrap(OpenModeCardBody(thread: _thread())));
+      await tester.pumpWidget(wrap(OpenModeCardBody(thread: buildThread())));
       expect(find.text('Reply...'), findsOneWidget);
     });
 
     testWidgets(
       'resolves reply quotes from full thread history, not unread slice only',
       (tester) async {
-        final thread = _thread(
+        final thread = buildThread(
           unreadCount: 1,
           messages: [
             ThreadMessage(
@@ -111,7 +118,7 @@ void main() {
         await tester.pumpWidget(
           wrap(
             OpenModeCardBody(
-              thread: _thread(),
+              thread: buildThread(),
               activeQuoteText: 'Quoted message text',
               onClearQuote: () => dismissed = true,
             ),
@@ -129,13 +136,13 @@ void main() {
     );
 
     testWidgets('renders friend indicator with name and time', (tester) async {
-      await tester.pumpWidget(wrap(OpenModeCardBody(thread: _thread())));
+      await tester.pumpWidget(wrap(OpenModeCardBody(thread: buildThread())));
       expect(find.text('Alice'), findsAtLeast(1));
     });
 
     testWidgets('shows UnreadCountBadge when count > 0', (tester) async {
       await tester.pumpWidget(
-        wrap(OpenModeCardBody(thread: _thread(unreadCount: 3))),
+        wrap(OpenModeCardBody(thread: buildThread(unreadCount: 3))),
       );
       expect(find.text('3'), findsOneWidget);
     });

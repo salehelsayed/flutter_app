@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/connection_card.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 void main() {
   Widget wrap(Widget child) => MaterialApp(
+        locale: const Locale('en'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
         home: Scaffold(
           body: SingleChildScrollView(
             child: Center(
@@ -141,12 +145,11 @@ void main() {
       };
       addTearDown(() => FlutterError.onError = oldHandler);
 
-      var sendPressed = false;
       await tester.pumpWidget(wrap(ConnectionCard(
         contactPeerId: 'peer-abc-123',
         contactUsername: 'alice',
         isBlocked: true,
-        onSendMessage: () => sendPressed = true,
+        onSendMessage: () {},
       )));
       await tester.pumpAndSettle();
       final button = tester.widget<ElevatedButton>(find.byType(ElevatedButton));

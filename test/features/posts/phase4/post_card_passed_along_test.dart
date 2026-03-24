@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/home/presentation/widgets/ring_avatar.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
@@ -10,27 +11,32 @@ import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/post_card.dart';
 
 void main() {
+  Widget wrap(Widget child) => MaterialApp(
+    locale: const Locale('en'),
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
+    supportedLocales: AppLocalizations.supportedLocales,
+    home: Scaffold(body: child),
+  );
+
   testWidgets(
     'renders passed-along attribution on a resurfaced direct-author card without the direct-friend badge',
     (tester) async {
       await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: PostCard(
-              post: PostModel(
-                id: 'post-1',
-                eventId: 'evt-direct-1',
-                senderPeerId: 'peer-sarah',
-                authorPeerId: 'peer-sarah',
-                authorUsername: 'Sarah',
-                text: 'Lost dog near Neckar bridge.',
-                audience: PostAudience.peopleNearby(radiusM: 2000),
-                createdAt: '2026-03-15T10:15:30.000Z',
-                visibleAt: '2026-03-15T11:15:00.000Z',
-                expiresAt: '2026-03-18T10:15:30.000Z',
-                passedByUsername: 'James',
-                passedAt: '2026-03-15T11:15:00.000Z',
-              ),
+        wrap(
+          PostCard(
+            post: PostModel(
+              id: 'post-1',
+              eventId: 'evt-direct-1',
+              senderPeerId: 'peer-sarah',
+              authorPeerId: 'peer-sarah',
+              authorUsername: 'Sarah',
+              text: 'Lost dog near Neckar bridge.',
+              audience: PostAudience.peopleNearby(radiusM: 2000),
+              createdAt: '2026-03-15T10:15:30.000Z',
+              visibleAt: '2026-03-15T11:15:00.000Z',
+              expiresAt: '2026-03-18T10:15:30.000Z',
+              passedByUsername: 'James',
+              passedAt: '2026-03-15T11:15:00.000Z',
             ),
           ),
         ),
@@ -54,25 +60,23 @@ void main() {
       final avatarBytes = _avatarSnapshotBytes();
 
       await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: PostCard(
-              post: PostModel(
-                id: 'post-1',
-                eventId: 'evt-pass-1',
-                senderPeerId: 'peer-hisam',
-                authorPeerId: 'peer-solz',
-                authorUsername: 'Solz',
-                text: 'Avatar snapshot should win over contact lookup.',
-                audience: PostAudience.allFriends(),
-                createdAt: '2026-03-15T10:15:30.000Z',
-                visibleAt: '2026-03-15T11:15:00.000Z',
-                expiresAt: '2026-03-18T10:15:30.000Z',
-                passedByPeerId: 'peer-hisam',
-                passedByUsername: 'Hisam',
-                passedAt: '2026-03-15T11:15:00.000Z',
-                originalAuthorAvatarBytes: avatarBytes,
-              ),
+        wrap(
+          PostCard(
+            post: PostModel(
+              id: 'post-1',
+              eventId: 'evt-pass-1',
+              senderPeerId: 'peer-hisam',
+              authorPeerId: 'peer-solz',
+              authorUsername: 'Solz',
+              text: 'Avatar snapshot should win over contact lookup.',
+              audience: PostAudience.allFriends(),
+              createdAt: '2026-03-15T10:15:30.000Z',
+              visibleAt: '2026-03-15T11:15:00.000Z',
+              expiresAt: '2026-03-18T10:15:30.000Z',
+              passedByPeerId: 'peer-hisam',
+              passedByUsername: 'Hisam',
+              passedAt: '2026-03-15T11:15:00.000Z',
+              originalAuthorAvatarBytes: avatarBytes,
             ),
           ),
         ),
@@ -95,24 +99,22 @@ void main() {
       UserAvatar.setDocumentsDir(docsDir.path);
 
       await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: PostCard(
-              post: PostModel(
-                id: 'post-1',
-                eventId: 'evt-pass-1',
-                senderPeerId: 'peer-hisam',
-                authorPeerId: 'peer-solz',
-                authorUsername: 'Solz',
-                text: 'Broken avatar snapshot repro.',
-                audience: PostAudience.allFriends(),
-                createdAt: '2026-03-15T10:15:30.000Z',
-                visibleAt: '2026-03-15T11:15:00.000Z',
-                expiresAt: '2026-03-18T10:15:30.000Z',
-                passedByPeerId: 'peer-hisam',
-                passedByUsername: 'Hisam',
-                passedAt: '2026-03-15T11:15:00.000Z',
-              ),
+        wrap(
+          PostCard(
+            post: PostModel(
+              id: 'post-1',
+              eventId: 'evt-pass-1',
+              senderPeerId: 'peer-hisam',
+              authorPeerId: 'peer-solz',
+              authorUsername: 'Solz',
+              text: 'Broken avatar snapshot repro.',
+              audience: PostAudience.allFriends(),
+              createdAt: '2026-03-15T10:15:30.000Z',
+              visibleAt: '2026-03-15T11:15:00.000Z',
+              expiresAt: '2026-03-18T10:15:30.000Z',
+              passedByPeerId: 'peer-hisam',
+              passedByUsername: 'Hisam',
+              passedAt: '2026-03-15T11:15:00.000Z',
             ),
           ),
         ),

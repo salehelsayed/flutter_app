@@ -10,6 +10,7 @@ import 'package:flutter_app/features/feed/presentation/widgets/open_mode_card_bo
 import 'package:flutter_app/features/feed/presentation/widgets/scrollable_message_preview.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bubble.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 void main() {
   void setPhoneViewport(WidgetTester tester) {
@@ -68,6 +69,9 @@ void main() {
     void Function(GroupThreadFeedItem)? onGroupAttach,
   }) {
     return MaterialApp(
+      locale: const Locale('en'),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
       home: Scaffold(
         body: Builder(
           builder: (context) => MediaQuery(
@@ -114,7 +118,7 @@ void main() {
     expect(find.textContaining('Your feed is ready'), findsNothing);
     expect(find.text('Feed'), findsOneWidget);
     expect(find.text('Orbit'), findsOneWidget);
-    expect(find.text('Remember'), findsOneWidget);
+    expect(find.text('Remember'), findsNothing);
   });
 
   testWidgets('renders empty state once feed load completes with no items', (

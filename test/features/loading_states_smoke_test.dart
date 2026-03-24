@@ -7,8 +7,18 @@ import 'package:flutter_app/features/share/presentation/screens/share_target_pic
 import 'package:flutter_app/features/home/presentation/widgets/qr_code_section.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
 import 'package:flutter_app/features/identity/presentation/screens/identity_choice_screen.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 void main() {
+  Widget buildTestApp(Widget child) {
+    return MaterialApp(
+      locale: const Locale('en'),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      home: Scaffold(body: child),
+    );
+  }
+
   void setPhoneViewport(WidgetTester tester) {
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1.0;
@@ -23,15 +33,13 @@ void main() {
       setPhoneViewport(tester);
 
       await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: FeedScreen(
-              username: 'Alice',
-              feedItems: const <FeedItem>[],
-              feedLoaded: false,
-              onSwitchView: (_) {},
-              activeTab: 'feed',
-            ),
+        buildTestApp(
+          FeedScreen(
+            username: 'Alice',
+            feedItems: const <FeedItem>[],
+            feedLoaded: false,
+            onSwitchView: (_) {},
+            activeTab: 'feed',
           ),
         ),
       );
@@ -44,14 +52,12 @@ void main() {
 
     testWidgets('Group list loading renders without overflow', (tester) async {
       await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: GroupListScreen(
-              groups: [],
-              isLoading: true,
-              onGroupTap: (_) {},
-              onBack: () {},
-            ),
+        buildTestApp(
+          GroupListScreen(
+            groups: [],
+            isLoading: true,
+            onGroupTap: (_) {},
+            onBack: () {},
           ),
         ),
       );
@@ -63,16 +69,14 @@ void main() {
       tester,
     ) async {
       await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: ShareTargetPickerScreen(
-              contacts: [],
-              groups: [],
-              isLoading: true,
-              onContactSelected: (_) {},
-              onGroupSelected: (_) {},
-              onCancel: () {},
-            ),
+        buildTestApp(
+          ShareTargetPickerScreen(
+            contacts: [],
+            groups: [],
+            isLoading: true,
+            onContactSelected: (_) {},
+            onGroupSelected: (_) {},
+            onCancel: () {},
           ),
         ),
       );
@@ -84,7 +88,7 @@ void main() {
       tester,
     ) async {
       await tester.pumpWidget(
-        MaterialApp(home: Scaffold(body: QRCodeSection(qrData: null))),
+        buildTestApp(QRCodeSection(qrData: null)),
       );
       await tester.pump(const Duration(seconds: 2));
       expect(tester.takeException(), isNull);
@@ -94,9 +98,7 @@ void main() {
       tester,
     ) async {
       await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(body: ComposeArea(isSending: true, onSend: (_) {})),
-        ),
+        buildTestApp(ComposeArea(isSending: true, onSend: (_) {})),
       );
       await tester.pump();
       expect(tester.takeException(), isNull);
@@ -106,10 +108,8 @@ void main() {
       'Identity choice renders with null callbacks without overflow',
       (tester) async {
         await tester.pumpWidget(
-          MaterialApp(
-            home: Scaffold(
-              body: IdentityChoiceScreen(onNewHere: null, onLoadMyKey: null),
-            ),
+          buildTestApp(
+            IdentityChoiceScreen(onNewHere: null, onLoadMyKey: null),
           ),
         );
         await tester.pump(const Duration(milliseconds: 1300));
@@ -121,16 +121,14 @@ void main() {
       tester,
     ) async {
       await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: ShareTargetPickerScreen(
-              contacts: [],
-              groups: [],
-              isLoading: false,
-              onContactSelected: (_) {},
-              onGroupSelected: (_) {},
-              onCancel: () {},
-            ),
+        buildTestApp(
+          ShareTargetPickerScreen(
+            contacts: [],
+            groups: [],
+            isLoading: false,
+            onContactSelected: (_) {},
+            onGroupSelected: (_) {},
+            onCancel: () {},
           ),
         ),
       );

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/conversation_header.dart';
+import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 void main() {
   Widget buildTestWidget({
@@ -8,6 +10,9 @@ void main() {
     VoidCallback? onOverflow,
   }) {
     return MaterialApp(
+      locale: const Locale('en'),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
       home: Scaffold(
         body: ConversationHeader(
           contactPeerId: '12D3KooWTestPeerId1234567890',
@@ -64,13 +69,8 @@ void main() {
     testWidgets('renders RingAvatar with 36px size', (tester) async {
       await tester.pumpWidget(buildTestWidget());
 
-      // RingAvatar renders a SizedBox with CustomPaint
-      final sizedBoxes = tester.widgetList<SizedBox>(find.byType(SizedBox));
-      // Find one that is 36x36
-      final avatar36 = sizedBoxes.where(
-        (sb) => sb.width == 36 && sb.height == 36,
-      );
-      expect(avatar36, isNotEmpty);
+      final avatar = tester.widget<UserAvatar>(find.byType(UserAvatar));
+      expect(avatar.size, 36);
     });
   });
 }

@@ -6,6 +6,7 @@ import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_route_target.dart';
 import 'package:flutter_app/features/posts/presentation/screens/posts_wired.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 import '../../../shared/fakes/in_memory_post_repository.dart';
 import '../../../shared/fakes/in_memory_posts_privacy_settings_repository.dart';
@@ -68,6 +69,9 @@ void main() {
 
   Widget buildWidget() {
     return MaterialApp(
+      locale: const Locale('en'),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
       home: PostsWired(
         identityRepo: identityRepository,
         contactRepo: contactRepository,

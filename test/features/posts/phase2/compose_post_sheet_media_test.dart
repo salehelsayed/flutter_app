@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/posts/application/attach_post_media_use_case.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/compose_post_sheet.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 import '../../../shared/fakes/fake_audio_recorder_service.dart';
 
@@ -13,6 +14,9 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
+        locale: const Locale('en'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
         home: Scaffold(
           body: ComposePostSheet(
             eligibleContacts: const [],
@@ -48,6 +52,9 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
+        locale: const Locale('en'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
         home: Scaffold(
           body: ComposePostSheet(
             eligibleContacts: const [],
@@ -87,6 +94,9 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
+        locale: const Locale('en'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
         home: Scaffold(
           body: ComposePostSheet(
             eligibleContacts: const [],
@@ -102,7 +112,7 @@ void main() {
     await tester.tap(find.text('Voice'));
     await tester.pump();
 
-    expect(find.text('Slide to cancel'), findsOneWidget);
+    expect(find.text('Cancel'), findsOneWidget);
 
     recorder.emitDuration(const Duration(seconds: 4));
     recorder.emitAmplitude(0.2);

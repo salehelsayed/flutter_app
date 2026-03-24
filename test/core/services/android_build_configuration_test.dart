@@ -92,9 +92,7 @@ void main() {
       expect(shareEntitlements, contains('group.com.mknoon.app.share'));
       expect(
         pbxproj,
-        contains(
-          'PRODUCT_BUNDLE_IDENTIFIER = "com.mknoon.app.ShareExtension"',
-        ),
+        contains('PRODUCT_BUNDLE_IDENTIFIER = com.mknoon.app.ShareExtension'),
       );
     });
 

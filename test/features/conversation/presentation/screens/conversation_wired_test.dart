@@ -23,6 +23,7 @@ import 'package:flutter_app/features/conversation/presentation/screens/conversat
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/attachment_preview_strip.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/conversation_header.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/recording_overlay.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bubble.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
@@ -1092,7 +1093,8 @@ void main() {
         recorder.emitAmplitude(0.3);
         await tester.pump();
 
-        expect(find.text('Slide to cancel'), findsOneWidget);
+        expect(find.byType(RecordingOverlay), findsOneWidget);
+        expect(find.text('Cancel'), findsOneWidget);
         expect(find.text('0:01'), findsOneWidget);
         expect(identical(headerElement, tester.element(headerFinder)), isTrue);
         expect(identical(listElement, tester.element(listFinder)), isTrue);

@@ -4,6 +4,7 @@ import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/post_card.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 void main() {
   testWidgets('renders an image carousel counter badge for multi-image posts', (
@@ -11,6 +12,9 @@ void main() {
   ) async {
     await tester.pumpWidget(
       MaterialApp(
+        locale: const Locale('en'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
         home: Scaffold(
           body: SingleChildScrollView(
             child: PostCard(
@@ -53,6 +57,9 @@ void main() {
   testWidgets('renders a video duration badge for video posts', (tester) async {
     await tester.pumpWidget(
       MaterialApp(
+        locale: const Locale('en'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
         home: Scaffold(
           body: SingleChildScrollView(
             child: PostCard(

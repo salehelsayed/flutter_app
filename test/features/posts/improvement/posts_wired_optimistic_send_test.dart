@@ -12,6 +12,7 @@ import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_recipient_delivery.dart';
 import 'package:flutter_app/features/posts/presentation/screens/posts_wired.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/compose_post_sheet.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../../../core/secure_storage/fake_secure_key_store.dart';
@@ -503,6 +504,9 @@ Widget _buildWidget({
   ImageProcessor? imageProcessor,
 }) {
   return MaterialApp(
+    locale: const Locale('en'),
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
+    supportedLocales: AppLocalizations.supportedLocales,
     home: PostsWired(
       identityRepo: identityRepository,
       contactRepo: contactRepository,

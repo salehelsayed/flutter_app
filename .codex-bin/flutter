@@ -1,0 +1,13 @@
+#!/bin/sh
+set -e
+FLUTTER_ROOT=/Users/I560101/development/flutter
+export FLUTTER_ROOT
+export FLUTTER_ALREADY_LOCKED=true
+export FLUTTER_SUPPRESS_ANALYTICS=true
+export DART_SUPPRESS_ANALYTICS=true
+HOME_DIR=${HOME:-$(pwd)/.codex-home}
+export HOME="$HOME_DIR"
+exec "$FLUTTER_ROOT/bin/cache/dart-sdk/bin/dart" \
+  "$FLUTTER_ROOT/packages/flutter_tools/bin/flutter_tools.dart" \
+  --no-version-check \
+  "$@"

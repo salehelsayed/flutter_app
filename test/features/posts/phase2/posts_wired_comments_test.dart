@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_comment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_recipient_delivery.dart';
 import 'package:flutter_app/features/posts/presentation/screens/posts_wired.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 import '../../../shared/fakes/fake_p2p_network.dart';
 import '../../../shared/fakes/fake_p2p_service_integration.dart';
@@ -14,7 +16,6 @@ import '../../../shared/fakes/in_memory_post_repository.dart';
 import '../../../shared/fakes/in_memory_posts_privacy_settings_repository.dart';
 import '../../contacts/domain/repositories/fake_contact_repository.dart';
 import '../../identity/domain/repositories/fake_identity_repository.dart';
-import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 
 void main() {
   late FakeIdentityRepository identityRepository;
@@ -53,6 +54,9 @@ void main() {
 
   Widget buildWidget() {
     return MaterialApp(
+      locale: const Locale('en'),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
       home: PostsWired(
         identityRepo: identityRepository,
         contactRepo: contactRepository,

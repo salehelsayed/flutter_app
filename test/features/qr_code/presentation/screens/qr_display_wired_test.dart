@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/qr_code/presentation/screens/qr_display_screen.dart';
 import 'package:flutter_app/features/qr_code/presentation/screens/qr_display_wired.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 import '../../../../core/bridge/fake_bridge.dart';
 import '../../../identity/domain/repositories/fake_identity_repository.dart';
@@ -35,6 +36,9 @@ void main() {
     VoidCallback? onClose,
   }) {
     final widget = MaterialApp(
+      locale: const Locale('en'),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
       home: QRDisplayWired(
         repo: repoOverride ?? repo,
         bridgeClient: bridgeOverride ?? bridge,

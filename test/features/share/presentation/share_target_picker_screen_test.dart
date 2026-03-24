@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/share/presentation/screens/share_target_picker_screen.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 void main() {
   ContactModel makeContact({required String peerId, required String username}) {
@@ -40,6 +41,9 @@ void main() {
     VoidCallback? onCancel,
   }) {
     return MaterialApp(
+      locale: const Locale('en'),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
       home: ShareTargetPickerScreen(
         sharedText: sharedText,
         sharedFilePaths: sharedFilePaths,

@@ -5,6 +5,7 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/groups/presentation/screens/create_group_picker_screen.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/contact_picker_row.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_name_panel.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 // --- Test data ---
 
@@ -40,13 +41,11 @@ void main() {
   group('CreateGroupPickerScreen', () {
     late Set<String> selectedPeerIds;
     ContactModel? lastToggled;
-    String? lastStartGroupName;
     bool backCalled = false;
 
     setUp(() {
       selectedPeerIds = {};
       lastToggled = null;
-      lastStartGroupName = null;
       backCalled = false;
     });
 
@@ -56,11 +55,14 @@ void main() {
       bool isCreating = false,
     }) {
       return MaterialApp(
+        locale: const Locale('en'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
         home: CreateGroupPickerScreen(
           contacts: contacts ?? [contactAlice, contactBob, contactCharlie],
           selectedPeerIds: selected ?? selectedPeerIds,
           onToggle: (contact) => lastToggled = contact,
-          onStartGroup: (name) => lastStartGroupName = name,
+          onStartGroup: (_) {},
           onBack: () => backCalled = true,
           isCreating: isCreating,
         ),

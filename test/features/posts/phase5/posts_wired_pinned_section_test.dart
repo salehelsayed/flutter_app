@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
 import 'package:flutter_app/features/posts/domain/models/post_pin_state_model.dart';
 import 'package:flutter_app/features/posts/presentation/screens/posts_wired.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 import '../../../shared/fakes/fake_p2p_network.dart';
 import '../../../shared/fakes/fake_p2p_service_integration.dart';
@@ -11,7 +13,6 @@ import '../../../shared/fakes/in_memory_post_repository.dart';
 import '../../../shared/fakes/in_memory_posts_privacy_settings_repository.dart';
 import '../../contacts/domain/repositories/fake_contact_repository.dart';
 import '../../identity/domain/repositories/fake_identity_repository.dart';
-import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'support/post_pin_fixtures.dart';
 
 void main() {
@@ -51,6 +52,9 @@ void main() {
 
   Widget buildWidget() {
     return MaterialApp(
+      locale: const Locale('en'),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
       home: PostsWired(
         identityRepo: identityRepository,
         contactRepo: contactRepository,
@@ -67,8 +71,21 @@ void main() {
   testWidgets(
     'renders pinned section, expands it, and dismisses locally without removing the feed card',
     (tester) async {
+      final createdAt = DateTime.now()
+          .toUtc()
+          .subtract(const Duration(hours: 2))
+          .toIso8601String();
+      final expiresAt = DateTime.now()
+          .toUtc()
+          .add(const Duration(days: 2))
+          .toIso8601String();
       await postRepository.savePost(
-        postPinBasePost(text: 'Need a ladder', keepAvailable: true),
+        postPinBasePost(
+          text: 'Need a ladder',
+          createdAt: createdAt,
+          expiresAt: expiresAt,
+          keepAvailable: true,
+        ),
       );
       await postRepository.savePostPinState(
         const PostPinStateModel(
@@ -108,8 +125,21 @@ void main() {
   testWidgets(
     'removes a recipient pinned section when the author unpins remotely',
     (tester) async {
+      final createdAt = DateTime.now()
+          .toUtc()
+          .subtract(const Duration(hours: 2))
+          .toIso8601String();
+      final expiresAt = DateTime.now()
+          .toUtc()
+          .add(const Duration(days: 2))
+          .toIso8601String();
       await postRepository.savePost(
-        postPinBasePost(text: 'Need a ladder', keepAvailable: true),
+        postPinBasePost(
+          text: 'Need a ladder',
+          createdAt: createdAt,
+          expiresAt: expiresAt,
+          keepAvailable: true,
+        ),
       );
       await postRepository.savePostPinState(
         const PostPinStateModel(
@@ -131,7 +161,12 @@ void main() {
       expect(find.text('Need a ladder'), findsOneWidget);
 
       await postRepository.savePost(
-        postPinBasePost(text: 'Need a ladder', keepAvailable: false),
+        postPinBasePost(
+          text: 'Need a ladder',
+          createdAt: createdAt,
+          expiresAt: expiresAt,
+          keepAvailable: false,
+        ),
       );
       await postRepository.savePostPinState(
         const PostPinStateModel(

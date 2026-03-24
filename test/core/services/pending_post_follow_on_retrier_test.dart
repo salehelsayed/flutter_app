@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
+import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
 import 'package:flutter_app/features/posts/application/pending_post_follow_on_retrier.dart';
 import 'package:flutter_app/features/posts/domain/models/post_follow_on_outbox_event.dart';
 import 'package:flutter_app/features/posts/domain/models/post_follow_on_outbox_recipient_delivery.dart';
@@ -15,6 +16,10 @@ void main() {
   late FakeP2PService p2pService;
   late InMemoryPostRepository postRepo;
   late PendingPostFollowOnRetrier retrier;
+  const discoverablePeer = DiscoveredPeer(
+    id: 'peer-bob',
+    addresses: <String>['/dns4/example.invalid/tcp/443'],
+  );
 
   setUp(() {
     p2pService = FakeP2PService(
@@ -23,6 +28,7 @@ void main() {
         peerId: 'peer-self',
         circuitAddresses: <String>['/p2p-circuit/addr1'],
       ),
+      discoverPeerResult: discoverablePeer,
     );
     postRepo = InMemoryPostRepository();
     retrier = PendingPostFollowOnRetrier(

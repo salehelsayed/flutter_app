@@ -9,6 +9,7 @@ import 'package:flutter_app/features/feed/domain/models/session_reply.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/collapsed_mode_card_body.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/scrollable_message_preview.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 /// Minimal valid 1x1 red PNG (67 bytes).
 final Uint8List _tinyPng = Uint8List.fromList([
@@ -25,6 +26,9 @@ final Uint8List _tinyPng = Uint8List.fromList([
 
 void main() {
   Widget wrap(Widget child) => MaterialApp(
+    locale: const Locale('en'),
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
+    supportedLocales: AppLocalizations.supportedLocales,
     home: Scaffold(body: SingleChildScrollView(child: child)),
   );
 
@@ -309,7 +313,7 @@ void main() {
   });
 
   group('CollapsedModeCardBody expanded state', () {
-    ThreadFeedItem _readThread({int messageCount = 3}) {
+    ThreadFeedItem readThread({int messageCount = 3}) {
       return ThreadFeedItem(
         id: 'thread_1',
         timestamp: DateTime(2026, 2, 9, 15, 0),
@@ -333,7 +337,7 @@ void main() {
       tester,
     ) async {
       await tester.pumpWidget(
-        wrap(CollapsedModeCardBody(thread: _readThread(), isExpanded: false)),
+        wrap(CollapsedModeCardBody(thread: readThread(), isExpanded: false)),
       );
       expect(find.byType(ScrollableMessagePreview), findsNothing);
     });
@@ -342,21 +346,21 @@ void main() {
       tester,
     ) async {
       await tester.pumpWidget(
-        wrap(CollapsedModeCardBody(thread: _readThread(), isExpanded: true)),
+        wrap(CollapsedModeCardBody(thread: readThread(), isExpanded: true)),
       );
       expect(find.byType(ScrollableMessagePreview), findsOneWidget);
     });
 
     testWidgets('header still shows username when expanded', (tester) async {
       await tester.pumpWidget(
-        wrap(CollapsedModeCardBody(thread: _readThread(), isExpanded: true)),
+        wrap(CollapsedModeCardBody(thread: readThread(), isExpanded: true)),
       );
       expect(find.text('Alice'), findsOneWidget);
     });
 
     testWidgets('InlineReplyInput still present when expanded', (tester) async {
       await tester.pumpWidget(
-        wrap(CollapsedModeCardBody(thread: _readThread(), isExpanded: true)),
+        wrap(CollapsedModeCardBody(thread: readThread(), isExpanded: true)),
       );
       expect(find.text('Continue...'), findsOneWidget);
     });
@@ -452,7 +456,7 @@ void main() {
       await tester.pumpWidget(
         wrap(
           CollapsedModeCardBody(
-            thread: _readThread(),
+            thread: readThread(),
             isExpanded: true,
             onTapExpand: () => tapped = true,
           ),
@@ -467,7 +471,7 @@ void main() {
       await tester.pumpWidget(
         wrap(
           CollapsedModeCardBody(
-            thread: _readThread(),
+            thread: readThread(),
             isExpanded: true,
             onCollapse: () {},
           ),

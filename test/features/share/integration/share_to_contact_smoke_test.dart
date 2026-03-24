@@ -22,6 +22,7 @@ import 'package:flutter_app/features/home/presentation/screens/first_time_experi
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/presentation/screens/identity_choice_wired.dart';
 import 'package:flutter_app/features/identity/presentation/startup_router.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
 import 'package:flutter_app/features/share/presentation/screens/share_target_picker_wired.dart';
@@ -168,6 +169,9 @@ void main() {
 
   Widget buildSharePickerApp({required ShareIntent shareIntent}) {
     return MaterialApp(
+      locale: const Locale('en'),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
       home: ShareTargetPickerWired(
         shareIntent: shareIntent,
         identityRepo: identityRepository,
@@ -405,6 +409,9 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
           home: buildStartupRouter(
             contactRequestListener: requestListener,
             shareIntentService: shareIntentService,
@@ -434,6 +441,9 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
           home: buildStartupRouter(
             contactRequestListener: requestListener,
             shareIntentService: shareIntentService,
@@ -468,6 +478,8 @@ void main() {
 
       expect(find.text('Share with...'), findsOneWidget);
       expect(find.text('after onboarding'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 5));
+      await tester.pump();
     },
   );
 
@@ -491,6 +503,9 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
           home: buildStartupRouter(
             contactRequestListener: requestListener,
             shareIntentService: shareIntentService,
@@ -519,6 +534,8 @@ void main() {
 
       expect(find.text('Share with...'), findsOneWidget);
       expect(find.text('after first contact'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 5));
+      await tester.pump();
     },
   );
 

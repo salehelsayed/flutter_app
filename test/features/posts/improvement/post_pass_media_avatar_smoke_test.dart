@@ -23,6 +23,7 @@ import 'package:flutter_app/features/posts/domain/models/post_pass_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_reaction_model.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/post_card.dart';
 import 'package:flutter_app/features/settings/application/helpers/avatar_normalization_helper.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/fake_p2p_network.dart';
@@ -136,6 +137,9 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
           home: Scaffold(
             body: SingleChildScrollView(child: PostCard(post: post!)),
           ),
@@ -284,6 +288,9 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
           home: Scaffold(
             body: SingleChildScrollView(child: PostCard(post: post!)),
           ),
