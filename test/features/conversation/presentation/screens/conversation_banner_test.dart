@@ -4,6 +4,7 @@ import 'package:flutter_app/features/conversation/domain/models/conversation_mes
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_screen.dart';
 import 'package:flutter_app/features/introduction/application/check_intro_banner_use_case.dart';
 import 'package:flutter_app/features/introduction/presentation/widgets/intro_banner.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../../../shared/fakes/in_memory_contact_repository.dart';
@@ -16,6 +17,9 @@ Widget _buildScreen({
   List<ConversationMessage> messages = const [],
 }) {
   return MaterialApp(
+    locale: const Locale('en'),
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
+    supportedLocales: AppLocalizations.supportedLocales,
     home: Scaffold(
       body: ConversationScreen(
         contactPeerId: 'peer-B',

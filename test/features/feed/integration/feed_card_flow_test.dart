@@ -6,13 +6,17 @@ import 'package:flutter_app/features/feed/presentation/widgets/collapsed_mode_ca
 import 'package:flutter_app/features/feed/presentation/widgets/feed_card.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/open_mode_card_body.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/scrollable_message_preview.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 void main() {
   Widget wrap(Widget child) => MaterialApp(
+        locale: const Locale('en'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
         home: Scaffold(body: SingleChildScrollView(child: child)),
       );
 
-  ThreadMessage _msg(
+  ThreadMessage msg(
     String id, {
     bool isUnread = false,
     bool isIncoming = true,
@@ -37,9 +41,9 @@ void main() {
           contactPeerId: 'peer1',
           contactUsername: 'Alice',
           messages: [
-            _msg('m1'), // read
-            _msg('m2', isUnread: true),
-            _msg('m3', isUnread: true),
+            msg('m1'), // read
+            msg('m2', isUnread: true),
+            msg('m3', isUnread: true),
           ],
           unreadCount: 2,
           conversationState: ConversationState.unread,
@@ -61,8 +65,8 @@ void main() {
           contactPeerId: 'peer1',
           contactUsername: 'Alice',
           messages: [
-            _msg('m1', isIncoming: true),
-            _msg('m2', isIncoming: false),
+            msg('m1', isIncoming: true),
+            msg('m2', isIncoming: false),
           ],
           conversationState: ConversationState.replied,
           lastRepliedAt: DateTime.now().subtract(const Duration(hours: 2)),
@@ -83,7 +87,7 @@ void main() {
           contactPeerId: 'peer1',
           contactUsername: 'Alice',
           messages: [
-            _msg('m1', isUnread: true),
+            msg('m1', isUnread: true),
           ],
           conversationState: ConversationState.unread,
         );
@@ -111,7 +115,7 @@ void main() {
           timestamp: DateTime(2026, 2, 9),
           contactPeerId: 'peer1',
           contactUsername: 'Alice',
-          messages: [_msg('m1')],
+          messages: [msg('m1')],
           conversationState: ConversationState.read,
         );
 
@@ -136,7 +140,7 @@ void main() {
           timestamp: DateTime(2026, 2, 9),
           contactPeerId: 'peer1',
           contactUsername: 'Alice',
-          messages: [_msg('m1', isUnread: true)],
+          messages: [msg('m1', isUnread: true)],
           conversationState: ConversationState.unread,
         );
         final readThread = ThreadFeedItem(
@@ -144,7 +148,7 @@ void main() {
           timestamp: DateTime(2026, 2, 9),
           contactPeerId: 'peer2',
           contactUsername: 'Bob',
-          messages: [_msg('m2')],
+          messages: [msg('m2')],
           conversationState: ConversationState.read,
         );
 
@@ -168,7 +172,7 @@ void main() {
           timestamp: DateTime(2026, 2, 9),
           contactPeerId: 'peer1',
           contactUsername: 'Alice',
-          messages: [_msg('m1')],
+          messages: [msg('m1')],
           conversationState: ConversationState.read,
           isBlocked: true,
         );
@@ -188,11 +192,11 @@ void main() {
           contactPeerId: 'peer1',
           contactUsername: 'Alice',
           messages: [
-            _msg('m1', isUnread: true),
-            _msg('m2', isUnread: true),
-            _msg('m3', isUnread: true),
-            _msg('m4', isUnread: true),
-            _msg('m5', isUnread: true),
+            msg('m1', isUnread: true),
+            msg('m2', isUnread: true),
+            msg('m3', isUnread: true),
+            msg('m4', isUnread: true),
+            msg('m5', isUnread: true),
           ],
           unreadCount: 5,
           conversationState: ConversationState.unread,
@@ -214,7 +218,7 @@ void main() {
           contactPeerId: 'peer1',
           contactUsername: 'Alice',
           messages: [
-            _msg('m1', isUnread: true),
+            msg('m1', isUnread: true),
           ],
           conversationState: ConversationState.active,
         );
@@ -247,7 +251,7 @@ void main() {
           timestamp: DateTime(2026, 2, 9),
           contactPeerId: 'peer1',
           contactUsername: 'Alice',
-          messages: [_msg('m1'), _msg('m2'), _msg('m3')],
+          messages: [msg('m1'), msg('m2'), msg('m3')],
           conversationState: ConversationState.read,
         );
 
@@ -283,8 +287,8 @@ void main() {
           contactPeerId: 'peer1',
           contactUsername: 'Alice',
           messages: [
-            _msg('m1'), // read (creates earlier history)
-            _msg('m2', isUnread: true),
+            msg('m1'), // read (creates earlier history)
+            msg('m2', isUnread: true),
           ],
           unreadCount: 1,
           conversationState: ConversationState.unread,

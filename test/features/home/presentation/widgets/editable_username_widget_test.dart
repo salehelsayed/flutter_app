@@ -1,9 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/home/presentation/widgets/editable_username_widget.dart';
 
 void main() {
-  Widget wrap(Widget child) => MaterialApp(home: Scaffold(body: child));
+  Widget wrap(Widget child) => MaterialApp(
+    locale: const Locale('en'),
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
+    supportedLocales: AppLocalizations.supportedLocales,
+    home: Scaffold(body: child),
+  );
 
   group('EditableUsernameWidget', () {
     testWidgets('renders username in display mode', (tester) async {
@@ -38,7 +44,7 @@ void main() {
       await tester.tap(find.byType(GestureDetector).first);
       await tester.pump();
       final textField = tester.widget<TextField>(find.byType(TextField));
-      expect(textField.maxLength, 20);
+      expect(textField.maxLength, 30);
     });
 
     testWidgets('edit mode avoids IntrinsicWidth layout', (tester) async {

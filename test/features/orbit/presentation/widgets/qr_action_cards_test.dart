@@ -1,9 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/qr_action_cards.dart';
 
 void main() {
-  Widget wrap(Widget child) => MaterialApp(home: Scaffold(body: child));
+  Widget wrap(Widget child) => MaterialApp(
+    locale: const Locale('en'),
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
+    supportedLocales: AppLocalizations.supportedLocales,
+    home: Scaffold(body: child),
+  );
 
   group('QRActionCards', () {
     testWidgets('renders two action cards in a Row', (tester) async {
@@ -40,7 +46,7 @@ void main() {
         onMyQR: () {},
         onScanQR: () => scanQRTapped = true,
       )));
-      await tester.tap(find.text('Scan QR'));
+      await tester.tap(find.text('Scan QR Code'));
       expect(scanQRTapped, isTrue);
     });
 
@@ -51,7 +57,7 @@ void main() {
       )));
       expect(find.text('My QR Code'), findsOneWidget);
       expect(find.text('Share to add friends'), findsOneWidget);
-      expect(find.text('Scan QR'), findsOneWidget);
+      expect(find.text('Scan QR Code'), findsOneWidget);
       expect(find.text('Add a friend instantly'), findsOneWidget);
     });
   });

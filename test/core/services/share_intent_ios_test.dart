@@ -8,7 +8,7 @@ import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 void main() {
   group('iOS share extension configuration', () {
     test(
-      '4e: app group, URL scheme, pod target, and plugin controller are configured',
+      '4e: app group, URL scheme, and extension controller fallback are configured',
       () {
         final runnerInfo = File('ios/Runner/Info.plist').readAsStringSync();
         final extensionInfo = File(
@@ -17,6 +17,9 @@ void main() {
         final podfile = File('ios/Podfile').readAsStringSync();
         final controller = File(
           'ios/Share Extension/ShareViewController.swift',
+        ).readAsStringSync();
+        final fallback = File(
+          'ios/Share Extension/RSIShareFallback.swift',
         ).readAsStringSync();
         final runnerEntitlements = File(
           'ios/Runner/Runner.entitlements',
@@ -39,13 +42,14 @@ void main() {
           extensionInfo,
           contains('NSExtensionActivationSupportsWebURLWithMaxCount'),
         );
-        expect(podfile, contains("target 'Share Extension' do"));
-        expect(podfile, contains('inherit! :search_paths'));
-        expect(controller, contains('import receive_sharing_intent'));
+        expect(podfile, isNot(contains("target 'Share Extension' do")));
+        expect(controller, contains('canImport(receive_sharing_intent)'));
         expect(
           controller,
           contains('class ShareViewController: RSIShareViewController'),
         );
+        expect(fallback, contains('#if !canImport(receive_sharing_intent)'));
+        expect(fallback, contains('open class RSIShareViewController'));
         expect(runnerEntitlements, contains('group.com.mknoon.app.share'));
         expect(extensionEntitlements, contains('group.com.mknoon.app.share'));
         expect(
@@ -58,9 +62,7 @@ void main() {
         );
         expect(
           project,
-          contains(
-            'PRODUCT_BUNDLE_IDENTIFIER = "com.mknoon.app.ShareExtension";',
-          ),
+          contains('PRODUCT_BUNDLE_IDENTIFIER = com.mknoon.app.ShareExtension;'),
         );
         expect(project, isNot(contains('com.example.makerGenerated')));
         expect(

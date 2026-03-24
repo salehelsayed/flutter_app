@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_name_panel.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 // --- Test data ---
 
@@ -43,6 +44,9 @@ void main() {
       VoidCallback? onStartGroup,
     }) {
       return MaterialApp(
+        locale: const Locale('en'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
         home: Scaffold(
           body: GroupNamePanel(
             selectedContacts: selectedContacts,

@@ -1,43 +1,46 @@
-import 'dart:ui';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/feed_navigation_bar.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/nav_bar_button.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/nav_bar_theme.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 void main() {
   // SVG assets may not load in test environment — suppress render errors.
   void suppressAssetErrors(WidgetTester tester) {
     final oldHandler = FlutterError.onError;
-    FlutterError.onError = (details) {
-      final msg = details.exceptionAsString();
-      if (msg.contains('Unable to load asset') ||
-          msg.contains('SvgPicture') ||
-          msg.contains('ImageFilter'))
-        return;
-      oldHandler?.call(details);
-    };
+      FlutterError.onError = (details) {
+        final msg = details.exceptionAsString();
+        if (msg.contains('Unable to load asset') ||
+            msg.contains('SvgPicture') ||
+            msg.contains('ImageFilter')) {
+          return;
+        }
+        oldHandler?.call(details);
+      };
     addTearDown(() => FlutterError.onError = oldHandler);
   }
 
   Widget wrap(Widget child) => MaterialApp(
+    locale: const Locale('en'),
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
+    supportedLocales: AppLocalizations.supportedLocales,
     home: Scaffold(body: Center(child: child)),
   );
 
   group('FeedNavigationBar', () {
-    testWidgets('renders 4 NavBarButtons with correct labels', (tester) async {
+    testWidgets('renders 2 NavBarButtons with correct labels', (tester) async {
       suppressAssetErrors(tester);
       await tester.pumpWidget(
         wrap(FeedNavigationBar(activeTab: 'feed', onSwitchView: (_) {})),
       );
       await tester.pump();
 
-      expect(find.byType(NavBarButton), findsNWidgets(4));
+      expect(find.byType(NavBarButton), findsNWidgets(2));
       expect(find.text('Feed'), findsOneWidget);
-      expect(find.text('Remember'), findsOneWidget);
-      expect(find.text('Posts'), findsOneWidget);
       expect(find.text('Orbit'), findsOneWidget);
+      expect(find.text('Remember'), findsNothing);
+      expect(find.text('Posts'), findsNothing);
     });
 
     testWidgets('feedBadgeCount is only passed to Feed button', (tester) async {
@@ -57,9 +60,7 @@ void main() {
           .widgetList<NavBarButton>(find.byType(NavBarButton))
           .toList();
       expect(buttons[0].badgeCount, 5); // Feed
-      expect(buttons[1].badgeCount, 0); // Remember
-      expect(buttons[2].badgeCount, 0); // Posts
-      expect(buttons[3].badgeCount, 0); // Orbit
+      expect(buttons[1].badgeCount, 0); // Orbit
     });
 
     testWidgets('bar shrink-wraps to fit buttons', (tester) async {
@@ -151,8 +152,8 @@ void main() {
           .widgetList<SizedBox>(find.byType(SizedBox))
           .where((s) => s.width == NavBarTheme.buttonSpacing)
           .toList();
-      // 3 spacers between 4 buttons
-      expect(spacers.length, 3);
+      // 1 spacer between 2 buttons
+      expect(spacers.length, 1);
     });
 
     testWidgets('tap callbacks fire correctly', (tester) async {
@@ -171,11 +172,8 @@ void main() {
       await tester.tap(find.text('Orbit'));
       expect(tapped, 'orbit');
 
-      await tester.tap(find.text('Remember'));
-      expect(tapped, 'remember');
-
-      await tester.tap(find.text('Posts'));
-      expect(tapped, 'posts');
+      expect(find.text('Remember'), findsNothing);
+      expect(find.text('Posts'), findsNothing);
     });
   });
 }

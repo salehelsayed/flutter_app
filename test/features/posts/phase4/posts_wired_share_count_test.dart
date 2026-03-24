@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
@@ -41,6 +42,9 @@ void main() {
 
   Widget buildWidget() {
     return MaterialApp(
+      locale: const Locale('en'),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
       home: PostsWired(
         identityRepo: identityRepository,
         contactRepo: contactRepository,
@@ -176,7 +180,7 @@ void main() {
       );
       expect(find.text('4'), findsOneWidget);
       final repeatIcon = tester.widget<Icon>(find.byIcon(Icons.repeat));
-      expect(repeatIcon.color?.opacity, closeTo(0.35, 0.01));
+      expect(repeatIcon.color?.a, closeTo(0.35, 0.01));
     },
   );
 }

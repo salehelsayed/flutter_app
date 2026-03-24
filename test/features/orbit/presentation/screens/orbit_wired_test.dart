@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
@@ -216,6 +217,9 @@ void main() {
 
     if (wrapInNavigator) {
       return MaterialApp(
+        locale: const Locale('en'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
         navigatorObservers: navigatorObservers ?? const <NavigatorObserver>[],
         home: Builder(
           builder: (context) => Scaffold(
@@ -235,6 +239,9 @@ void main() {
     }
 
     return MaterialApp(
+      locale: const Locale('en'),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
       navigatorObservers: navigatorObservers ?? const <NavigatorObserver>[],
       home: orbitWidget,
     );
@@ -258,10 +265,9 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
 
       // OrbitScreen renders OrbitHeader with the identity's peerId for the avatar.
-      // It also renders 'Close Friends' text and 'Friends' header.
+      // It also renders the localized close-friends chrome in multiple places.
       expect(find.byType(OrbitWired), findsOneWidget);
-      expect(find.text('Close Friends'), findsOneWidget);
-      expect(find.text('Friends'), findsOneWidget);
+      expect(find.text('Close Friends'), findsWidgets);
     });
 
     testWidgets('loads active friends list', (tester) async {

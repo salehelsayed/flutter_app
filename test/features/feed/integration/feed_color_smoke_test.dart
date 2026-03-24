@@ -3,13 +3,21 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/theme/feed_colors.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/feed_card.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 void main() {
   Widget wrap(Widget child) => MaterialApp(
+        locale: const Locale('en'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
         home: Scaffold(body: SingleChildScrollView(child: child)),
       );
 
-  ThreadMessage _msg(String id, {bool isUnread = false, bool isIncoming = true}) =>
+  ThreadMessage buildMessage(
+    String id, {
+    bool isUnread = false,
+    bool isIncoming = true,
+  }) =>
       ThreadMessage(
         id: id,
         text: 'Message $id',
@@ -42,7 +50,7 @@ void main() {
         timestamp: DateTime(2026, 2, 9),
         contactPeerId: 'peer1',
         contactUsername: 'Alice',
-        messages: [_msg('m1', isUnread: true)],
+        messages: [buildMessage('m1', isUnread: true)],
         conversationState: ConversationState.unread,
       );
 
@@ -58,8 +66,8 @@ void main() {
         contactPeerId: 'peer1',
         contactUsername: 'Alice',
         messages: [
-          _msg('m1'),
-          _msg('m2', isIncoming: false),
+          buildMessage('m1'),
+          buildMessage('m2', isIncoming: false),
         ],
         conversationState: ConversationState.replied,
         lastRepliedAt: DateTime.now(),
@@ -75,7 +83,7 @@ void main() {
         timestamp: DateTime(2026, 2, 9),
         contactPeerId: 'peer1',
         contactUsername: 'Alice',
-        messages: [_msg('m1')],
+        messages: [buildMessage('m1')],
         conversationState: ConversationState.read,
       );
 

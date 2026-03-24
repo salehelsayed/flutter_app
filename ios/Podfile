@@ -57,9 +57,6 @@ SCRIPT
   if File.exist?(File.join(__dir__, 'Runner', 'GoMknoon.xcframework'))
     pod 'GoMknoon', :path => '.'
   end
-  target 'Share Extension' do
-    inherit! :search_paths
-  end
   target 'RunnerTests' do
     inherit! :search_paths
   end
@@ -68,28 +65,5 @@ end
 post_install do |installer|
   installer.pods_project.targets.each do |target|
     flutter_additional_ios_build_settings(target)
-  end
-
-  # The share extension imports the receive_sharing_intent framework, but it
-  # inherits search paths instead of owning the Flutter pod directly. Xcode's
-  # module verifier needs explicit access to the Flutter and plugin frameworks
-  # to resolve transitive module dependencies during extension compilation.
-  %w[debug release profile].each do |config|
-    xcconfig_path = File.join(
-      __dir__,
-      'Pods',
-      'Target Support Files',
-      'Pods-Share Extension',
-      "Pods-Share Extension.#{config}.xcconfig",
-    )
-    next unless File.exist?(xcconfig_path)
-
-    content = File.read(xcconfig_path)
-    verifier_flags = 'OTHER_MODULE_VERIFIER_FLAGS = $(inherited) "-F${PODS_CONFIGURATION_BUILD_DIR}/Flutter" "-F${PODS_CONFIGURATION_BUILD_DIR}/receive_sharing_intent"'
-    next if content.include?(verifier_flags)
-
-    File.open(xcconfig_path, 'a') do |file|
-      file.puts verifier_flags
-    end
   end
 end

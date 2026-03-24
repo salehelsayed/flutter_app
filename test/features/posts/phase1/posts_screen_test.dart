@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/presentation/screens/posts_screen.dart';
@@ -8,6 +9,9 @@ void main() {
   testWidgets('shows caught-up state when no posts exist', (tester) async {
     await tester.pumpWidget(
       MaterialApp(
+        locale: const Locale('en'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
         home: PostsScreen(
           username: 'Alice',
           posts: const <PostModel>[],
@@ -25,6 +29,9 @@ void main() {
   testWidgets('renders focused post card highlight state', (tester) async {
     await tester.pumpWidget(
       MaterialApp(
+        locale: const Locale('en'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
         home: PostsScreen(
           username: 'Alice',
           posts: <PostModel>[

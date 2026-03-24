@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_screen.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:just_audio_platform_interface/just_audio_platform_interface.dart';
 
 void main() {
@@ -108,6 +109,9 @@ void main() {
 
 Widget _buildScreen({required List<ConversationMessage> messages}) {
   return MaterialApp(
+    locale: const Locale('en'),
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
+    supportedLocales: AppLocalizations.supportedLocales,
     home: Scaffold(
       body: ConversationScreen(
         contactPeerId: 'peer-b',

@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/services/share_intent_model.dart';
 import 'package:flutter_app/core/services/share_intent_service.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
 import 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
@@ -138,6 +139,9 @@ void main() {
     ShareIntentService? shareIntentService,
   }) {
     return MaterialApp(
+      locale: const Locale('en'),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
       home: FirstTimeExperienceWired(
         repository: identityRepo,
         contactRepository: contactRepo,
@@ -440,6 +444,8 @@ void main() {
       expect(find.text('Share with...'), findsOneWidget);
       expect(find.text('from onboarding'), findsOneWidget);
 
+      await tester.pump(const Duration(seconds: 5));
+      await tester.pump();
       await requestController.close();
     });
 
@@ -551,6 +557,8 @@ void main() {
         expect(find.text('Feed'), findsOneWidget);
         expect(find.text('Share with...'), findsNothing);
 
+        await tester.pump(const Duration(seconds: 5));
+        await tester.pump();
         await requestController.close();
       },
     );
@@ -603,6 +611,8 @@ void main() {
       );
       expect(feedWired.nearbyLocationService, same(nearbyLocationService));
 
+      await tester.pump(const Duration(seconds: 5));
+      await tester.pump();
       await requestController.close();
     });
   });

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/posts/application/pending_post_delivery_retrier.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
@@ -26,6 +27,11 @@ ContactModel _contact(String peerId, String username) {
     mlKemPublicKey: 'mlkem-$peerId',
   );
 }
+
+const DiscoveredPeer _discoverablePeer = DiscoveredPeer(
+  id: 'discoverable-peer',
+  addresses: <String>['/dns4/example.invalid/tcp/443'],
+);
 
 PostModel _post({
   required String id,
@@ -56,7 +62,7 @@ void main() {
   late PassthroughCryptoBridge bridge;
 
   setUp(() {
-    p2pService = FakeP2PService();
+    p2pService = FakeP2PService(discoverPeerResult: _discoverablePeer);
     posts = InMemoryPostRepository();
     contacts = FakeContactRepository();
     bridge = PassthroughCryptoBridge();
@@ -378,6 +384,7 @@ class _RecordingFakeP2PService extends FakeP2PService {
 
   _RecordingFakeP2PService()
     : super(
+        discoverPeerResult: _discoverablePeer,
         sendMessageWithReplyResult: const SendMessageResult(
           sent: true,
           reply: 'ack',
@@ -407,7 +414,7 @@ class _ControlledRetryP2PService extends FakeP2PService {
   _ControlledRetryP2PService({
     super.initialState,
     this.policies = const <String, _RetryPeerPolicy>{},
-  });
+  }) : super(discoverPeerResult: _discoverablePeer);
 
   Future<void> waitForSendCount(int count) async {
     while (sendStartOrder.length < count) {

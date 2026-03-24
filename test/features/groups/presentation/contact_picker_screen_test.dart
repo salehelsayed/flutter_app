@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/groups/presentation/screens/contact_picker_screen.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/contact_picker_row.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 // --- Test contacts ---
 final contactAlice = ContactModel(
@@ -120,6 +121,9 @@ void main() {
       VoidCallback? onBack,
     }) {
       return MaterialApp(
+        locale: const Locale('en'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
         home: ContactPickerScreen(
           contacts: contacts,
           isInviting: isInviting,

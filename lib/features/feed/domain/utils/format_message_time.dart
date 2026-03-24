@@ -6,7 +6,12 @@ import 'package:intl/intl.dart' as intl;
 String formatMessageTime(String isoTimestamp, [String locale = 'en']) {
   try {
     final date = DateTime.parse(isoTimestamp).toLocal();
-    return intl.DateFormat.jm(locale).format(date);
+    try {
+      return intl.DateFormat.jm(locale).format(date);
+    } catch (_) {
+      // Some test/runtime environments do not have locale data initialized.
+      return intl.DateFormat('h:mm a').format(date);
+    }
   } catch (_) {
     return '';
   }

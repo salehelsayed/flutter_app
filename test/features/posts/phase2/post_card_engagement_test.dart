@@ -4,6 +4,7 @@ import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart'
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/post_card.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 void main() {
   testWidgets('renders post heart state, counts, and expiry footer', (
@@ -13,6 +14,9 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
+        locale: const Locale('en'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
         home: Scaffold(
           body: PostCard(
             post: PostModel(
@@ -72,28 +76,33 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
+        locale: const Locale('en'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
         home: Scaffold(
-          body: Column(
-            children: [
-              PostCard(
-                post: _post(deliveryStatus: 'sending'),
-                onToggleHeart: () {
-                  heartTaps += 1;
-                },
-                onOpenComments: () {
-                  commentTaps += 1;
-                },
-                onPassAlong: () {
-                  passTaps += 1;
-                },
-              ),
-              PostCard(
-                post: _post(id: 'post-2', deliveryStatus: 'partial'),
-              ),
-              PostCard(
-                post: _post(id: 'post-3', deliveryStatus: 'failed'),
-              ),
-            ],
+          body: SingleChildScrollView(
+            child: Column(
+              children: [
+                PostCard(
+                  post: _post(deliveryStatus: 'sending'),
+                  onToggleHeart: () {
+                    heartTaps += 1;
+                  },
+                  onOpenComments: () {
+                    commentTaps += 1;
+                  },
+                  onPassAlong: () {
+                    passTaps += 1;
+                  },
+                ),
+                PostCard(
+                  post: _post(id: 'post-2', deliveryStatus: 'partial'),
+                ),
+                PostCard(
+                  post: _post(id: 'post-3', deliveryStatus: 'failed'),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -118,6 +127,9 @@ void main() {
     (tester) async {
       await tester.pumpWidget(
         MaterialApp(
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
           home: Scaffold(
             body: PostCard(
               post: PostModel(

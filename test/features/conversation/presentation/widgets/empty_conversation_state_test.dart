@@ -1,10 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/empty_conversation_state.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 void main() {
   Widget buildTestWidget() {
     return MaterialApp(
+      locale: const Locale('en'),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
       home: Scaffold(
         body: EmptyConversationState(
           contactPeerId: '12D3KooWTestPeerId1234567890',

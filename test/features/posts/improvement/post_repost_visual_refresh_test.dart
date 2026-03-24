@@ -8,6 +8,7 @@ import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_origin_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_pass_model.dart';
 import 'package:flutter_app/features/posts/presentation/screens/posts_wired.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 import '../../../shared/fakes/fake_p2p_network.dart';
 import '../../../shared/fakes/fake_p2p_service_integration.dart';
@@ -41,6 +42,9 @@ void main() {
 
   Widget buildWidget() {
     return MaterialApp(
+      locale: const Locale('en'),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
       home: PostsWired(
         identityRepo: identityRepository,
         contactRepo: contactRepository,
@@ -154,7 +158,7 @@ void main() {
       );
       expect(find.text('4'), findsOneWidget);
       expect(
-        tester.widget<Icon>(find.byIcon(Icons.repeat)).color?.opacity,
+        tester.widget<Icon>(find.byIcon(Icons.repeat)).color?.a,
         closeTo(0.35, 0.01),
       );
 
@@ -180,7 +184,7 @@ void main() {
       );
       expect(find.text('6'), findsOneWidget);
       expect(
-        tester.widget<Icon>(find.byIcon(Icons.repeat)).color?.opacity,
+        tester.widget<Icon>(find.byIcon(Icons.repeat)).color?.a,
         closeTo(0.35, 0.01),
       );
     },
@@ -232,7 +236,7 @@ void main() {
       );
       expect(find.text('4'), findsOneWidget);
       expect(
-        tester.widget<Icon>(find.byIcon(Icons.repeat)).color?.opacity,
+        tester.widget<Icon>(find.byIcon(Icons.repeat)).color?.a,
         closeTo(0.35, 0.01),
       );
 
@@ -258,7 +262,7 @@ void main() {
       );
       expect(find.text('6'), findsOneWidget);
       expect(
-        tester.widget<Icon>(find.byIcon(Icons.repeat)).color?.opacity,
+        tester.widget<Icon>(find.byIcon(Icons.repeat)).color?.a,
         closeTo(0.35, 0.01),
       );
     },

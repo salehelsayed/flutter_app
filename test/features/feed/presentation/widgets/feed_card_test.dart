@@ -9,13 +9,17 @@ import 'package:flutter_app/features/feed/presentation/widgets/feed_card.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/open_mode_card_body.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/scrollable_message_preview.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 void main() {
   Widget wrap(Widget child) => MaterialApp(
+    locale: const Locale('en'),
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
+    supportedLocales: AppLocalizations.supportedLocales,
     home: Scaffold(body: SingleChildScrollView(child: child)),
   );
 
-  ThreadMessage _msg(
+  ThreadMessage msg(
     String id, {
     bool isUnread = false,
     bool isIncoming = true,
@@ -35,7 +39,7 @@ void main() {
         timestamp: DateTime(2026, 2, 9),
         contactPeerId: 'peer1',
         contactUsername: 'Alice',
-        messages: [_msg('m1', isUnread: true), _msg('m2', isUnread: true)],
+        messages: [msg('m1', isUnread: true), msg('m2', isUnread: true)],
         unreadCount: 2,
         conversationState: ConversationState.unread,
       );
@@ -51,7 +55,7 @@ void main() {
         timestamp: DateTime(2026, 2, 9),
         contactPeerId: 'peer1',
         contactUsername: 'Alice',
-        messages: [_msg('m1', isUnread: true), _msg('m2', isIncoming: false)],
+        messages: [msg('m1', isUnread: true), msg('m2', isIncoming: false)],
         conversationState: ConversationState.active,
       );
 
@@ -65,7 +69,7 @@ void main() {
         timestamp: DateTime(2026, 2, 9),
         contactPeerId: 'peer1',
         contactUsername: 'Alice',
-        messages: [_msg('m1')],
+        messages: [msg('m1')],
         conversationState: ConversationState.read,
       );
 
@@ -80,7 +84,7 @@ void main() {
         timestamp: DateTime(2026, 2, 9),
         contactPeerId: 'peer1',
         contactUsername: 'Alice',
-        messages: [_msg('m1'), _msg('m2', isIncoming: false)],
+        messages: [msg('m1'), msg('m2', isIncoming: false)],
         conversationState: ConversationState.replied,
         lastRepliedAt: DateTime.now(),
       );
@@ -95,7 +99,7 @@ void main() {
         timestamp: DateTime(2026, 2, 9),
         contactPeerId: 'peer1',
         contactUsername: 'Alice',
-        messages: [_msg('m1', isUnread: true)],
+        messages: [msg('m1', isUnread: true)],
         conversationState: ConversationState.unread,
       );
 
@@ -116,7 +120,7 @@ void main() {
         timestamp: DateTime(2026, 2, 9),
         contactPeerId: 'peer1',
         contactUsername: 'Alice',
-        messages: [_msg('m1')],
+        messages: [msg('m1')],
         conversationState: ConversationState.read,
       );
 
@@ -134,7 +138,7 @@ void main() {
         timestamp: DateTime(2026, 2, 9),
         contactPeerId: 'peer1',
         contactUsername: 'Alice',
-        messages: [_msg('m1')],
+        messages: [msg('m1')],
         conversationState: ConversationState.read,
         isBlocked: true,
       );
@@ -150,7 +154,7 @@ void main() {
         timestamp: DateTime(2026, 2, 9),
         contactPeerId: 'peer1',
         contactUsername: 'Alice',
-        messages: [_msg('m1'), _msg('m2'), _msg('m3')],
+        messages: [msg('m1'), msg('m2'), msg('m3')],
         conversationState: ConversationState.read,
       );
 
@@ -167,7 +171,7 @@ void main() {
         timestamp: DateTime(2026, 2, 9),
         contactPeerId: 'peer1',
         contactUsername: 'Alice',
-        messages: [_msg('m1')],
+        messages: [msg('m1')],
         conversationState: ConversationState.read,
       );
 
@@ -190,7 +194,7 @@ void main() {
         groupId: 'group-abc',
         groupName: 'Test Group',
         groupType: GroupType.chat,
-        messages: [_msg('gm1', isUnread: true)],
+        messages: [msg('gm1', isUnread: true)],
         unreadCount: 1,
         conversationState: ConversationState.unread,
       );
@@ -209,7 +213,7 @@ void main() {
         groupId: 'group-abc',
         groupName: 'Test Group',
         groupType: GroupType.chat,
-        messages: [_msg('gm1')],
+        messages: [msg('gm1')],
         conversationState: ConversationState.read,
       );
 
@@ -227,7 +231,7 @@ void main() {
           groupId: 'group-abc',
           groupName: 'Test Group',
           groupType: GroupType.chat,
-          messages: [_msg('gm1', isUnread: true)],
+          messages: [msg('gm1', isUnread: true)],
           unreadCount: 1,
           conversationState: ConversationState.unread,
         );
@@ -251,7 +255,7 @@ void main() {
         groupId: 'group-abc',
         groupName: 'Test Group',
         groupType: GroupType.chat,
-        messages: [_msg('gm1', isUnread: true), _msg('gm2', isIncoming: false)],
+        messages: [msg('gm1', isUnread: true), msg('gm2', isIncoming: false)],
         unreadCount: 1,
         conversationState: ConversationState.active,
       );
@@ -271,7 +275,7 @@ void main() {
         timestamp: DateTime(2026, 2, 9),
         contactPeerId: 'peer1',
         contactUsername: 'Alice',
-        messages: [_msg('m1'), _msg('m2'), _msg('m3')],
+        messages: [msg('m1'), msg('m2'), msg('m3')],
         conversationState: ConversationState.read,
       );
 
@@ -289,7 +293,7 @@ void main() {
           timestamp: DateTime(2026, 2, 9),
           contactPeerId: 'peer1',
           contactUsername: 'Alice',
-          messages: [_msg('m1'), _msg('m2'), _msg('m3')],
+          messages: [msg('m1'), msg('m2'), msg('m3')],
           conversationState: ConversationState.read,
         );
 
@@ -308,7 +312,7 @@ void main() {
         timestamp: DateTime(2026, 2, 9),
         contactPeerId: 'peer1',
         contactUsername: 'Alice',
-        messages: [_msg('m1', isUnread: true)],
+        messages: [msg('m1', isUnread: true)],
         conversationState: ConversationState.unread,
       );
 
@@ -327,7 +331,7 @@ void main() {
         timestamp: DateTime(2026, 2, 9),
         contactPeerId: 'peer1',
         contactUsername: 'Alice',
-        messages: [_msg('m1')],
+        messages: [msg('m1')],
         conversationState: ConversationState.read,
       );
 
@@ -352,7 +356,7 @@ void main() {
         timestamp: DateTime(2026, 2, 9),
         contactPeerId: 'peer1',
         contactUsername: 'Alice',
-        messages: [_msg('m1')],
+        messages: [msg('m1')],
         conversationState: ConversationState.read,
         isBlocked: true,
       );
@@ -372,7 +376,7 @@ void main() {
         timestamp: DateTime(2026, 2, 9),
         contactPeerId: 'peer1',
         contactUsername: 'Alice',
-        messages: [_msg('m1', isUnread: true)],
+        messages: [msg('m1', isUnread: true)],
         unreadCount: 1,
         conversationState: ConversationState.unread,
       );
@@ -410,7 +414,7 @@ void main() {
         timestamp: DateTime(2026, 2, 9),
         contactPeerId: 'peer1',
         contactUsername: 'Alice',
-        messages: [_msg('m1', isUnread: true)],
+        messages: [msg('m1', isUnread: true)],
         unreadCount: 1,
         conversationState: ConversationState.unread,
       );
@@ -439,7 +443,7 @@ void main() {
         timestamp: DateTime(2026, 2, 9),
         contactPeerId: 'peer1',
         contactUsername: 'Alice',
-        messages: [_msg('m1', isUnread: true)],
+        messages: [msg('m1', isUnread: true)],
         unreadCount: 1,
         conversationState: ConversationState.unread,
       );
@@ -484,7 +488,7 @@ void main() {
           timestamp: DateTime(2026, 2, 9),
           contactPeerId: 'peer1',
           contactUsername: 'Alice',
-          messages: [_msg('m1'), _msg('m2')],
+          messages: [msg('m1'), msg('m2')],
           conversationState: ConversationState.read,
         );
 

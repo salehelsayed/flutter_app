@@ -11,6 +11,7 @@ import 'package:flutter_app/features/identity/presentation/startup_router.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/posts/application/nearby_location_service.dart';
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../core/secure_storage/fake_secure_key_store.dart';
@@ -127,6 +128,9 @@ void main() {
 
   Widget buildRouterApp() {
     return MaterialApp(
+      locale: const Locale('en'),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
       home: StartupRouter(
         repository: identityRepository,
         contactRepository: contactRepository,

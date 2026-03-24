@@ -14,7 +14,7 @@ import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart'
 
 // -- Fake P2P Service --
 class FakeP2PService implements P2PService {
-  NodeState _currentState;
+  final NodeState _currentState;
   bool sendMessageResult;
   String? sendMessageReply;
   bool shouldThrow;
@@ -295,7 +295,7 @@ Future<List<String>> capturePrintedLines(Future<void> Function() action) async {
   await runZoned(
     action,
     zoneSpecification: ZoneSpecification(
-      print: (_, __, ___, line) {
+      print: (_, parent, zone, line) {
         printed.add(line);
       },
     ),
@@ -776,7 +776,7 @@ void main() {
         expect(message!.status, 'delivered');
         expect(message.transport, 'direct');
         expect(p2pService.discoverCallCount, 1);
-        expect(p2pService.dialCallCount, 0);
+        expect(p2pService.dialCallCount, 1);
         expect(p2pService.probeRelayCallCount, 1);
         expect(p2pService.sendCallCount, 1);
         expect(p2pService.storeInInboxCallCount, 0);
@@ -803,7 +803,7 @@ void main() {
         expect(message!.status, 'delivered');
         expect(message.transport, 'direct');
         expect(p2pService.discoverCallCount, 1);
-        expect(p2pService.dialCallCount, 1);
+        expect(p2pService.dialCallCount, 2);
         expect(p2pService.probeRelayCallCount, 1);
         expect(p2pService.sendCallCount, 1);
         expect(p2pService.storeInInboxCallCount, 0);

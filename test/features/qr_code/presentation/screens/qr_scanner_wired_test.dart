@@ -16,6 +16,7 @@ import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
 import 'package:flutter_app/features/qr_code/presentation/screens/qr_scanner_screen.dart';
 import 'package:flutter_app/features/qr_code/presentation/screens/qr_scanner_wired.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 import '../../../../core/bridge/fake_bridge.dart';
 import '../../../../core/secure_storage/fake_secure_key_store.dart';
@@ -111,6 +112,9 @@ void main() {
 
   Widget buildScanner({ShareIntentService? shareIntentService}) {
     return MaterialApp(
+      locale: const Locale('en'),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
       home: QRScannerWired(
         bridge: bridge,
         contactRepository: contactRepository,

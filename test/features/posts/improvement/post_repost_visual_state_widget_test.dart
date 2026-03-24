@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/post_card.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 void main() {
   testWidgets(
@@ -10,6 +11,9 @@ void main() {
     (tester) async {
       await tester.pumpWidget(
         MaterialApp(
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
           home: Scaffold(
             body: PostCard(
               post: _post(viewerHasPassed: true, viewerSharedToCount: 4),
@@ -35,6 +39,9 @@ void main() {
     (tester) async {
       await tester.pumpWidget(
         MaterialApp(
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
           home: Scaffold(
             body: PostCard(
               post: _post(totalSharedToCount: 6),
@@ -60,6 +67,9 @@ void main() {
     (tester) async {
       await tester.pumpWidget(
         MaterialApp(
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
           home: Scaffold(
             body: PostCard(
               post: _post(
@@ -83,7 +93,7 @@ void main() {
       expect(find.text('4'), findsOneWidget);
 
       final repeatIcon = tester.widget<Icon>(find.byIcon(Icons.repeat));
-      expect(repeatIcon.color?.opacity, closeTo(0.35, 0.01));
+      expect(repeatIcon.color?.a, closeTo(0.35, 0.01));
       expect(find.text('Bob'), findsOneWidget);
     },
   );
@@ -95,6 +105,9 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
           home: Scaffold(
             body: PostCard(
               post: _post(
@@ -130,6 +143,9 @@ void main() {
     (tester) async {
       await tester.pumpWidget(
         MaterialApp(
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
           home: Scaffold(
             body: Center(
               child: SizedBox(

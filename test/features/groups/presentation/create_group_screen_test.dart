@@ -3,14 +3,18 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/presentation/screens/create_group_screen.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 void main() {
   Widget buildTestWidget({
     void Function(String, GroupType, String?)? onCreate,
   }) {
     return MaterialApp(
+      locale: const Locale('en'),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
       home: CreateGroupScreen(
-        onCreate: onCreate ?? (_, __, ___) {},
+        onCreate: onCreate ?? (name, type, description) {},
         onBack: () {},
       ),
     );
@@ -72,8 +76,11 @@ void main() {
       GroupType? submittedType;
       await tester.pumpWidget(
         MaterialApp(
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
           home: CreateGroupScreen(
-            onCreate: (_, type, __) => submittedType = type,
+            onCreate: (name, type, description) => submittedType = type,
             onBack: () {},
           ),
         ),
@@ -97,9 +104,12 @@ void main() {
       GroupType? submittedType;
       await tester.pumpWidget(
         MaterialApp(
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
           home: CreateGroupScreen(
             initialType: GroupType.announcement,
-            onCreate: (_, type, __) => submittedType = type,
+            onCreate: (name, type, description) => submittedType = type,
             onBack: () {},
           ),
         ),

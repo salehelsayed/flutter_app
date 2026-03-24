@@ -116,6 +116,7 @@ void main() {
         throwOnSendPeerIds: const <String>{'peer-cara'},
       );
       final bobService = FakeP2PService(peerId: 'peer-bob', network: network);
+      FakeP2PService(peerId: 'peer-cara', network: network);
       final contacts = InMemoryContactRepository()
         ..addTestContact(_contact('peer-bob', 'Bob'))
         ..addTestContact(_contact('peer-cara', 'Cara'));

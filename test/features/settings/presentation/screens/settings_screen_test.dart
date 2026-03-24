@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/settings/presentation/screens/settings_screen.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/settings_peer_id_card.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/settings_profile_section.dart';
@@ -13,6 +14,9 @@ void main() {
     VoidCallback? onBack,
   }) {
     return MaterialApp(
+      locale: const Locale('en'),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
       home: SettingsScreen(
         username: 'Alice',
         peerId: peerId,

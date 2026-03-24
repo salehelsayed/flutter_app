@@ -7,6 +7,7 @@ import 'package:flutter_app/features/identity/domain/repositories/identity_repos
 import 'package:flutter_app/features/identity/presentation/navigation/startup_route_transition.dart';
 import 'package:flutter_app/features/identity/presentation/screens/identity_choice_wired.dart';
 import 'package:flutter_app/features/identity/presentation/screens/identity_progress_screen.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 class _FakeIdentityRepo implements IdentityRepository {
   IdentityModel? savedIdentity;
@@ -47,6 +48,9 @@ const _fakeMlKemResponse = {
 void main() {
   Widget wrap(Widget child, {List<NavigatorObserver>? navigatorObservers}) =>
       MaterialApp(
+        locale: const Locale('en'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
         home: child,
         navigatorObservers: navigatorObservers ?? const <NavigatorObserver>[],
       );

@@ -11,11 +11,11 @@ import 'package:flutter_app/features/groups/domain/repositories/group_message_re
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/groups/presentation/screens/create_group_picker_screen.dart';
 import 'package:flutter_app/features/groups/presentation/screens/create_group_picker_wired.dart';
-import 'package:flutter_app/features/groups/presentation/widgets/contact_picker_row.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_screen.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../core/services/fake_p2p_service.dart';
@@ -151,6 +151,9 @@ void main() {
 
     Widget buildWidget() {
       return MaterialApp(
+        locale: const Locale('en'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
         home: CreateGroupPickerWired(
           groupType: GroupType.chat,
           groupRepo: groupRepo,
@@ -297,30 +300,36 @@ void main() {
 
     testWidgets('back button pops screen', (tester) async {
       // Wrap in a navigator with a previous screen
-      await tester.pumpWidget(MaterialApp(
-        home: Builder(
-          builder: (context) => ElevatedButton(
-            onPressed: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => CreateGroupPickerWired(
-                    groupType: GroupType.chat,
-                    groupRepo: groupRepo,
-                    msgRepo: msgRepo,
-                    groupMessageListener: FakeGroupMessageListener(
-                        messageStreamController.stream),
-                    contactRepo: contactRepo,
-                    bridge: bridge,
-                    identityRepo: identityRepo,
-                    p2pService: p2pService,
+      await tester.pumpWidget(
+        MaterialApp(
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Builder(
+            builder: (context) => ElevatedButton(
+              onPressed: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => CreateGroupPickerWired(
+                      groupType: GroupType.chat,
+                      groupRepo: groupRepo,
+                      msgRepo: msgRepo,
+                      groupMessageListener: FakeGroupMessageListener(
+                        messageStreamController.stream,
+                      ),
+                      contactRepo: contactRepo,
+                      bridge: bridge,
+                      identityRepo: identityRepo,
+                      p2pService: p2pService,
+                    ),
                   ),
-                ),
-              );
-            },
-            child: const Text('Open Picker'),
+                );
+              },
+              child: const Text('Open Picker'),
+            ),
           ),
         ),
-      ));
+      );
 
       // Navigate to picker
       await tester.tap(find.text('Open Picker'));

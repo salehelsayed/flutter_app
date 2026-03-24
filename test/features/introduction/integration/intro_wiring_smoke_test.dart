@@ -1,14 +1,13 @@
-/// Smoke tests verifying the introduction feature DI wiring end-to-end.
-///
-/// These tests pump real ConversationWired with all introduction dependencies
-/// and verify that "Make introductions" actually opens the FriendPickerWired
-/// bottom sheet, and that the full send flow works.
+// Smoke tests verifying the introduction feature DI wiring end-to-end.
+//
+// These tests pump real ConversationWired with all introduction dependencies
+// and verify that "Make introductions" actually opens the FriendPickerWired
+// bottom sheet, and that the full send flow works.
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
-import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
@@ -27,6 +26,7 @@ import 'package:flutter_app/features/p2p/domain/models/connection_state.dart'
 import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 import '../../../shared/fakes/in_memory_contact_repository.dart';
 import '../../../shared/fakes/in_memory_introduction_repository.dart';
@@ -226,7 +226,6 @@ class _FakeBridge implements Bridge {
   bool get isInitialized => true;
   @override
   void Function(ChatMessage)? onMessageReceived;
-  @override
   void Function(String event)? onNodeEvent;
   @override
   void Function(List<String> listenAddresses, List<String> circuitAddresses)?
@@ -343,6 +342,9 @@ void main() {
     Future<void> pumpWired(WidgetTester tester) async {
       await tester.pumpWidget(
         MaterialApp(
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
           home: ConversationWired(
             contact: _contactB(),
             identityRepo: identityRepo,
@@ -428,6 +430,9 @@ void main() {
     ) async {
       await tester.pumpWidget(
         MaterialApp(
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
           home: ConversationWired(
             contact: _contactB(),
             identityRepo: identityRepo,
@@ -472,6 +477,9 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
           home: ConversationWired(
             contact: _contactB(),
             identityRepo: identityRepo,

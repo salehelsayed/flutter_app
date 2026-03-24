@@ -1,20 +1,26 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/post_card.dart';
 
 void main() {
+  Widget wrap(Widget child) => MaterialApp(
+    locale: const Locale('en'),
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
+    supportedLocales: AppLocalizations.supportedLocales,
+    home: Scaffold(body: child),
+  );
+
   testWidgets('shows a pass-along action for eligible direct posts', (
     tester,
   ) async {
     await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: PostCard(
-            post: _post(audience: PostAudience.allFriends()),
-            onPassAlong: () {},
-          ),
+      wrap(
+        PostCard(
+          post: _post(audience: PostAudience.allFriends()),
+          onPassAlong: () {},
         ),
       ),
     );
@@ -26,17 +32,15 @@ void main() {
     'shows an active repeat control and viewer-local count on a reposter card',
     (tester) async {
       await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: PostCard(
-              post: _post(
-                audience: PostAudience.allFriends(),
-                viewerHasPassed: true,
-                viewerSharedToCount: 3,
-              ),
-              viewerPeerId: 'peer-bob',
-              onPassAlong: () {},
+        wrap(
+          PostCard(
+            post: _post(
+              audience: PostAudience.allFriends(),
+              viewerHasPassed: true,
+              viewerSharedToCount: 3,
             ),
+            viewerPeerId: 'peer-bob',
+            onPassAlong: () {},
           ),
         ),
       );
@@ -55,23 +59,21 @@ void main() {
     'keeps the repeat control neutral and unlabeled on a passed-along card',
     (tester) async {
       await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: PostCard(
-              post: _post(
-                audience: PostAudience.allFriends(),
-                passedByPeerId: 'peer-james',
-                passedByUsername: 'James',
-                passedAt: '2026-03-15T11:15:00.000Z',
-              ),
-              onPassAlong: () {},
+        wrap(
+          PostCard(
+            post: _post(
+              audience: PostAudience.allFriends(),
+              passedByPeerId: 'peer-james',
+              passedByUsername: 'James',
+              passedAt: '2026-03-15T11:15:00.000Z',
             ),
+            onPassAlong: () {},
           ),
         ),
       );
 
       final repeatIcon = tester.widget<Icon>(find.byIcon(Icons.repeat));
-      expect(repeatIcon.color?.opacity, closeTo(0.35, 0.01));
+      expect(repeatIcon.color?.a, closeTo(0.35, 0.01));
       expect(find.text('James passed this along'), findsOneWidget);
       expect(
         find.byKey(const ValueKey<String>('post-share-count')),
@@ -84,17 +86,15 @@ void main() {
     tester,
   ) async {
     await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: Center(
-            child: SizedBox(
-              width: 320,
-              child: PostCard(
-                post: _post(audience: PostAudience.allFriends()),
-                onOpenComments: () {},
-                onPassAlong: () {},
-                onPinPost: () {},
-              ),
+      wrap(
+        Center(
+          child: SizedBox(
+            width: 320,
+            child: PostCard(
+              post: _post(audience: PostAudience.allFriends()),
+              onOpenComments: () {},
+              onPassAlong: () {},
+              onPinPost: () {},
             ),
           ),
         ),
@@ -112,14 +112,12 @@ void main() {
     tester,
   ) async {
     await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: PostCard(
-            post: _post(
-              audience: PostAudience.pickPeople(const <String>['peer-self']),
-            ),
-            onPassAlong: () {},
+      wrap(
+        PostCard(
+          post: _post(
+            audience: PostAudience.pickPeople(const <String>['peer-self']),
           ),
+          onPassAlong: () {},
         ),
       ),
     );

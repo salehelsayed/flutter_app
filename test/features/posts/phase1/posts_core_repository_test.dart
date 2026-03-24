@@ -5,6 +5,8 @@ import 'package:flutter_app/core/database/helpers/posts_db_helpers.dart';
 import 'package:flutter_app/core/database/migrations/027_posts_core.dart';
 import 'package:flutter_app/core/database/migrations/030_posts_pass_along.dart';
 import 'package:flutter_app/core/database/migrations/032_posts_retry_recipient_context.dart';
+import 'package:flutter_app/core/database/migrations/037_posts_repost_engagement_state.dart';
+import 'package:flutter_app/core/database/migrations/040_posts_repost_visual_metrics.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_recipient_delivery.dart';
@@ -25,6 +27,8 @@ void main() {
     await runPostsCoreMigration(db);
     await runPostsPassAlongMigration(db);
     await runPostsRetryRecipientContextMigration(db);
+    await runPostsRepostEngagementStateMigration(db);
+    await runPostsRepostVisualMetricsMigration(db);
     repository = PostRepositoryImpl(
       dbInsertPost: (row) => dbInsertPost(db, row),
       dbLoadPost: (postId) => dbLoadPost(db, postId),

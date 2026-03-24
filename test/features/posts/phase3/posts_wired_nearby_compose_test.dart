@@ -7,6 +7,7 @@ import 'package:flutter_app/features/posts/application/pending_post_target_store
 import 'package:flutter_app/features/posts/domain/models/posts_privacy_settings.dart';
 import 'package:flutter_app/features/posts/presentation/screens/posts_wired.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/compose_post_sheet.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../core/secure_storage/fake_secure_key_store.dart';
@@ -155,6 +156,9 @@ void main() {
 
   Widget buildWidget({NearbyLocationService? nearbyLocationService}) {
     return MaterialApp(
+      locale: const Locale('en'),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
       home: PostsWired(
         identityRepo: identityRepository,
         contactRepo: contactRepository,
