@@ -124,36 +124,54 @@ These surfaces should stay in the plan as reference implementations and regressi
 
 ## Baseline Constraints
 
-- `test/features/feed/presentation/widgets/collapsed_mode_card_body_test.dart` is already red on unrelated stale copy assertions.
-- `test/features/feed/presentation/widgets/message_bubble_test.dart` is green, but it currently locks in the fragile timestamp overlay by asserting the timestamp lives inside a `Stack`.
-- Several broad test files in the worktree are already modified. Avoid relying on or rewriting those files first if a new dedicated BiDi test file can isolate the work.
+- `test/features/feed/presentation/widgets/collapsed_mode_card_body_test.dart` is no longer a red/noisy baseline in the current checkout. It passed during this audit.
+- Dedicated `*_bidi_test.dart` files still do not exist in most areas of the tree. The current repo shape relies mainly on broad existing suites; add isolated BiDi files only where the current harness is missing or where a new API shape would otherwise destabilize a broad suite.
+- `test/features/feed/presentation/widgets/message_bubble_test.dart` is green, but it still locks in the fragile timestamp overlay by asserting the timestamp lives inside a `Stack`.
+- On this machine, `test/features/feed/integration/expanded_collapsed_card_test.dart` and `test/features/feed/integration/feed_card_flow_test.dart` currently fail before test execution because of a Flutter native-assets/Xcode `lipo` issue under `build/native_assets/macos`. Treat that as an environment caveat, not a product verdict.
+- The wider worktree is dirty, but the current feed/orbit/posts/share/contact-request/push suites are usable for targeted BiDi planning and regression locks.
 
 ## TDD Strategy
 
 ### Phase 0: Create stable BiDi-specific test surfaces
 
-Goal: avoid blocking on unrelated red tests and avoid entangling this work with stale copy assertions.
+Goal: lock a current-tree testing strategy that uses the stable existing suites first, while only adding dedicated BiDi files where isolation is genuinely missing.
 
-Add new focused files first:
+Use the existing broad files as the main entry points for the early phases:
 
-- `test/features/feed/presentation/widgets/collapsed_mode_card_body_bidi_test.dart`
-- `test/features/feed/presentation/widgets/message_bubble_bidi_test.dart`
-- `test/features/feed/presentation/widgets/scrollable_message_preview_bidi_test.dart`
-- `test/features/feed/integration/expanded_collapsed_card_bidi_test.dart`
-- `test/features/orbit/presentation/widgets/friend_row_bidi_test.dart`
-- `test/features/orbit/presentation/screens/orbit_wired_bidi_test.dart`
+- `test/features/feed/presentation/widgets/collapsed_mode_card_body_test.dart`
+- `test/features/feed/presentation/widgets/message_bubble_test.dart`
+- `test/features/feed/presentation/widgets/scrollable_message_preview_test.dart`
+- `test/features/feed/presentation/widgets/open_mode_card_body_test.dart`
+- `test/features/feed/presentation/widgets/inline_reply_input_test.dart`
+- `test/features/feed/presentation/screens/feed_wired_test.dart`
+- `test/features/orbit/presentation/widgets/friend_row_test.dart`
+- `test/features/orbit/presentation/screens/orbit_wired_test.dart`
+- `test/features/share/presentation/share_target_picker_screen_test.dart`
+- `test/features/posts/phase2/comments_sheet_test.dart`
+- `test/features/posts/phase2/comments_sheet_engagement_test.dart`
 
-Reason:
+Add focused BiDi-specific files only where the current tree still lacks a stable harness or where a new API shape is likely:
 
-- This keeps the new TDD loop reliable even while `collapsed_mode_card_body_test.dart` is noisy.
-- It also avoids starting by modifying dirty or overly broad test files.
-- It creates room for a cross-cutting contract:
-  - every user-entered `TextField` needs Arabic-only, Arabic-first mixed, English-first mixed, and hydrated-`initialText` direction tests;
-  - every user-visible `Text` or `LinkableText` showing user content must pass explicit direction or justify why not.
+- `test/features/orbit/presentation/widgets/group_row_bidi_test.dart`
+- `test/features/groups/presentation/group_card_bidi_test.dart`
+- `test/features/groups/presentation/group_list_screen_bidi_test.dart`
+- `test/features/posts/phase2/comments_sheet_bidi_test.dart`
+- Optional current-tree additions when isolation is still useful:
+  - `test/features/orbit/presentation/widgets/friend_row_bidi_test.dart`
+  - `test/features/posts/phase2/post_card_bidi_test.dart`
+  - `test/features/posts/phase5/edit_pinned_post_sheet_bidi_test.dart`
+  - `test/features/introduction/presentation/widgets/intro_group_header_test.dart`
+
+Cross-cutting contract for every later phase:
+
+- Every user-entered `TextField` needs Arabic-only, Arabic-first mixed, English-first mixed, and hydrated-`initialText` direction coverage.
+- Every user-visible `Text` or `LinkableText` showing user content must pass explicit direction or document why the surface is intentionally direction-agnostic.
 
 ### Phase 1: Lock collapsed Feed direction behavior
 
-Add failing tests in `collapsed_mode_card_body_bidi_test.dart`:
+Use the current green suite first instead of inventing a new harness.
+
+Add failing tests in `test/features/feed/presentation/widgets/collapsed_mode_card_body_test.dart`:
 
 - `session reply preview uses RTL for Arabic-first mixed text`
   - Example text: `مرحبا Hello 123`
@@ -162,11 +180,10 @@ Add failing tests in `collapsed_mode_card_body_bidi_test.dart`:
 - `collapsed preview stays LTR for English-first mixed text`
   - Example text: `Hello مرحبا 123`
 
-Assertions:
+Optional top-level regression extension:
 
-- Find the exact preview `Text` widget by string match.
-- Assert `textDirection` directly.
-- Do not assert localized copy like `"You replied"` or `"Tap to expand"`.
+- `test/features/feed/integration/expanded_collapsed_card_test.dart`
+  - one parity case proving expanded send -> collapsed session preview preserves RTL
 
 Expected implementation after tests fail:
 
@@ -175,19 +192,21 @@ Expected implementation after tests fail:
 
 ### Phase 2: Lock Orbit direction behavior
 
-Add failing tests in `friend_row_bidi_test.dart`:
+Current code already refreshes only the affected Orbit friend on incoming-message updates. This phase is now about adding direction assertions to the existing refresh path and proving the projection stays verbatim.
+
+Add failing tests in `test/features/orbit/presentation/widgets/friend_row_test.dart` or a new `friend_row_bidi_test.dart`:
 
 - `Arabic lastActivity drives RTL`
 - `Arabic-first mixed lastActivity drives RTL`
 - `English-first mixed lastActivity drives LTR`
 
-Add one refresh-path test in `orbit_wired_bidi_test.dart`:
+Extend the existing refresh-path test in `test/features/orbit/presentation/screens/orbit_wired_test.dart`:
 
 - `incoming mixed Arabic-first message refreshes the row and renders RTL`
 
-Optional low-level guard:
+Low-level preservation guard:
 
-- Extend `load_orbit_data_use_case_test.dart` with one case proving mixed-script text is preserved verbatim in `lastActivity`.
+- Extend `load_orbit_data_use_case_test.dart` with mixed-script preservation checks for both bulk load and snapshot load.
 
 Expected implementation after tests fail:
 
@@ -195,7 +214,9 @@ Expected implementation after tests fail:
 
 ### Phase 3: Replace the fragile expanded Feed timestamp layout
 
-Add failing tests in `message_bubble_bidi_test.dart`:
+Existing body-direction coverage already exists in `test/features/feed/presentation/widgets/message_bubble_test.dart`. The missing work is structural, not heuristic.
+
+Add failing tests in `test/features/feed/presentation/widgets/message_bubble_test.dart` first:
 
 - `outgoing Arabic-only message renders body direction correctly and keeps timestamp/status outside the body paragraph`
 - `outgoing Arabic-first mixed message keeps timestamp/status outside the body paragraph`
@@ -203,11 +224,12 @@ Add failing tests in `message_bubble_bidi_test.dart`:
 
 Assertions:
 
-- Keep the body direction assertions.
-- Assert the time/status are not descendants of the same `Stack` that owns the body text.
-- Prefer asserting a separate footer `Row` or equivalent semantic container.
+- Keep the existing Arabic/Arabic-first/English-first body-direction assertions green.
+- Remove or rewrite the existing tests that explicitly require timestamp overlay inside a `Stack`.
+- Assert that time/status live in a dedicated footer `Row` or equivalent footer container.
+- Assert that sender label and body are no longer one bidi paragraph via `prefixSpans`/`suffixSpans`.
 
-Add one integration-level propagation test in `scrollable_message_preview_bidi_test.dart`:
+Add propagation coverage in `test/features/feed/presentation/widgets/scrollable_message_preview_test.dart`:
 
 - `sender-side mixed Arabic/English message preserves body direction and footer time layout through ScrollableMessagePreview`
 
@@ -215,29 +237,40 @@ Expected implementation after tests fail:
 
 - Refactor `MessageBubble` toward the `LetterCard` structure.
 - Move timestamp/status out of the overlaid `Stack` and into a footer `Row`.
-- Keep the message body in its own `LinkableText`.
+- Keep the message body as its own bidi paragraph instead of one `LinkableText` with label prefix and trailing spacer spans.
 - Keep the sender label out of the same bidi paragraph when possible.
 
 ### Phase 4: Prove open/collapsed parity on Feed
 
-Add failing tests in `expanded_collapsed_card_bidi_test.dart`:
+Current draft rehydration, send-failure restore, and session-reply clear behavior are already implemented and covered functionally. This phase now adds direction coverage on top of those existing behaviors.
 
-- `expanded and collapsed feed views agree on RTL for Arabic-first mixed text`
-- `receiver sees correct direction in open view and keeps it after collapse`
-- `sender sees correct direction after sending and after session-reply collapse`
+Add failing tests in the current files first:
+
+- `test/features/feed/presentation/widgets/collapsed_mode_card_body_test.dart`
+  - collapsed preview direction matches the open surface for the same mixed-script message
+- `test/features/feed/presentation/widgets/open_mode_card_body_test.dart`
+  - mixed-script contact/group header names render directionally correctly
+- `test/features/feed/presentation/widgets/scrollable_message_preview_test.dart`
+  - mixed-script sender-label/body combinations stay correct for group bubbles
+- `test/features/feed/presentation/widgets/inline_reply_input_test.dart`
+  - hydrated `initialText` and restored drafts keep the right `TextField.textDirection`
+- `test/features/feed/presentation/screens/feed_wired_test.dart`
+  - send-failure restore preserves text, quote, and restored direction
+- `test/features/feed/integration/expanded_collapsed_card_test.dart` or a new `expanded_collapsed_card_bidi_test.dart`
+  - open/collapsed/session-reply parity for the same Arabic-first mixed message
 
 Assertions:
 
-- Render the same thread in expanded/open state first and assert direction.
-- Re-render in collapsed/read or collapsed/session-reply state and assert the same direction.
-- This phase directly covers symptom 1 and symptom 2 end-to-end.
-- Extend this phase with additional active Feed risks:
-  - `open_mode_card_body.dart`: mixed-script contact/group names in the open-mode header.
-  - `scrollable_message_preview.dart`: mixed-script `senderUsername` plus body text in group bubbles.
-  - `inline_reply_input.dart` and `feed_wired.dart`: draft rehydration, send-failure restore, and `initialText` direction after restore.
-  - Include one announcement-member Feed case where `canWrite == false` so read-only announcement state is covered alongside the writable paths.
+- Render the same content in open mode first and collapsed/session-reply mode second, and assert the same direction.
+- Cover mixed-script header names and group sender labels separately from message body direction.
+- Include one announcement-member Feed case where `canWrite == false` so read-only announcement state is covered alongside the already-tested admin path.
 
 ### Phase 5: Cover group and announcement summary previews
+
+Current nuance to preserve:
+
+- `group_list_wired.dart` and the groups-domain summary already keep structured `GroupMessage` data.
+- The remaining flattening bugs are in `group_list_screen.dart`, `GroupCard`'s single-string API, and the Orbit projection/model path (`load_orbit_groups_use_case.dart` -> `OrbitGroup` -> `GroupRow`).
 
 Add failing tests:
 
@@ -249,12 +282,16 @@ Add failing tests:
   - `group preview keeps English-first body LTR even with mixed sender name`
 - `test/features/groups/presentation/group_list_screen_bidi_test.dart`
   - `group list preview does not force a single LTR-biased sender-plus-body string`
+- Extend existing regression locks:
+  - `test/features/orbit/application/load_orbit_groups_use_case_test.dart`
+  - `test/features/orbit/presentation/screens/orbit_wired_test.dart`
 
 Expected implementation after tests fail:
 
-- Stop flattening preview content into one `sender: text` string too early.
-- Carry sender label and body text separately through projection when possible.
+- Stop flattening preview content into one `sender: text` string in `group_list_screen.dart` and in the Orbit projection/model path.
+- Update `GroupCard` and, if needed, `OrbitGroup` so sender and body stay separate until render.
 - Only after structural separation, apply `detectTextDirection(...)` to the actual body text surface.
+- Use both a normal group fixture and a `GroupType.announcement` fixture. Announcement is not a separate renderer in current code; it is a required fixture on the same shared surfaces.
 
 ### Phase 6: Cover posts main text input/render
 
@@ -275,6 +312,7 @@ Expected implementation after tests fail:
 
 - Drive post text-entry fields from `detectTextDirection(...)`.
 - Pass explicit `textDirection` into `LinkableText` for post bodies.
+- For `EditPinnedPostSheet`, also lock correct first-frame direction from hydrated `initialText`, not only after user typing.
 
 ### Phase 7: Cover post comments and sanitization parity
 
@@ -285,13 +323,18 @@ Add failing tests:
   - Post summary text in the sheet respects mixed-script direction.
   - Comment body text respects mixed-script direction.
 - Extend:
-  - `test/features/posts/phase1/send_post_comment_use_case_test.dart`
-  - `test/features/posts/phase1/handle_incoming_post_comment_use_case_test.dart`
+  - `test/features/posts/phase2/send_post_comment_use_case_test.dart`
+  - `test/features/posts/phase2/handle_incoming_post_comment_use_case_test.dart`
 
 New behavior to prove:
 
 - Dangerous BiDi controls are stripped from outbound and inbound comment text if posts/comments are meant to match chat/group policy.
 - Safe markers remain preserved.
+
+Current-tree note:
+
+- Post comments already have strong non-BiDi coverage for chronology, auto-scroll, engagement, staging, duplicate handling, and recipient fanout.
+- This phase is now about direction coverage plus the explicit decision to adopt or reject the existing sanitizer contract for comments.
 
 Scope note:
 
@@ -311,26 +354,35 @@ Add failing tests:
 Implementation target:
 
 - Outgoing 1:1 should match the sanitization contract already enforced for incoming 1:1 and for groups.
+- Sanitize before empty validation, before optimistic insert/save, and before payload/wire-envelope persistence.
 - Local-first optimistic rows must use the same sanitized text as the eventual saved/sent message.
+- Add one explicit edge case: text that becomes empty after sanitization is rejected unless attachments are present.
 
 ### Phase 9: Cover share preview and share-boundary policy
 
-Add failing tests:
+Current-tree reality:
 
-- `test/features/share/presentation/share_target_picker_screen_bidi_test.dart`
+- Warm-start and settled replay are already pass-through routing flows.
+- Share conversion already preserves content semantically, but it is not a pure passthrough: it trims some media-share messages, drops empties, and joins multiple text items with `\n`.
+- The current missing work is the picker preview direction and an explicit share-boundary policy test.
+
+Add failing tests by extending the existing screen harness:
+
+- `test/features/share/presentation/share_target_picker_screen_test.dart`
   - Shared Arabic text preview drives RTL
   - Shared Arabic-first mixed preview drives RTL
   - Shared English-first mixed preview stays LTR
-
-Policy-only tests to consider:
-
 - `test/core/services/share_intent_service_test.dart`
-- `test/features/push/application/show_notification_use_case_test.dart`
-- `test/features/push/application/background_push_notification_fallback_test.dart`
+  - lock the chosen boundary policy and current trim/join normalization
+- `test/core/services/share_intent_ios_test.dart`
+  - keep the iOS conversion contract aligned with the service-level policy
+- Optional end-to-end locks if wanted:
+  - `test/features/share/application/handle_share_intent_use_case_test.dart`
+  - `test/features/share/application/settle_share_intent_flow_test.dart`
 
 Decision to make explicitly:
 
-- Should external shared text be sanitized at the share boundary, or preserved verbatim and only rendered directionally?
+- Should external shared text be sanitized at the share boundary, or should the current preserve-plus-trim/join normalization remain the policy?
 
 ### Phase 10: Cover intro/contact-request renderers and notification passthrough
 
@@ -343,7 +395,7 @@ Add failing tests:
 - Extend `test/features/introduction/presentation/widgets/intro_row_test.dart`
   - `displayUsername` direction matches mixed-script content
   - introducer attribution line respects mixed-script username direction
-- Extend `test/features/introduction/presentation/widgets/intros_tab_test.dart` or add `intro_group_header_test.dart`
+- Prefer adding `intro_group_header_test.dart` over widening `intros_tab_test.dart` when the goal is the header renderer itself.
   - `From [username]` or `Introduced by [username]` stays directionally correct
 - Extend `test/features/contact_request/presentation/widgets/contact_request_dialog_test.dart`
   - Arabic username drives RTL
@@ -358,9 +410,17 @@ Add failing tests:
 Implementation target:
 
 - Intro/contact-request widgets become explicit render-direction surfaces.
-- Notification text generation is treated as a preservation surface: mixed-script title/body should survive forwarding unchanged unless the policy says otherwise.
+- Notification text generation is treated as a preservation surface, but current behavior already trims surrounding whitespace before forwarding/defaulting.
+- The push source reference for this phase is `lib/features/push/application/show_notification_use_case.dart`; there is no separate `notification_body_for_message.dart` production file.
+- For `From [username]`, `Introduced by [username]`, and similar English-prefix strings, do not rely on a whole-widget direction check alone. Assert the dynamic username segment behaves correctly inside the mixed static-plus-dynamic surface.
 
 ### Phase 11: Align helper and sanitization policy across domains
+
+Current-tree reality:
+
+- The helper layer already exists and is green: `text_direction_utils.dart`, `text_sanitizer.dart`, and `LinkableText.textDirection`.
+- Feed and conversation are already ahead on explicit render direction in `MessageBubble` and `LetterCard`.
+- The remaining work is policy alignment and eliminating reliance on ambient direction for the remaining user-content call sites.
 
 Decision to make explicitly:
 
@@ -377,11 +437,14 @@ If no:
 
 Also add a helper rule:
 
-- Raw `LinkableText(text: ...)` without explicit `textDirection` should be treated as invalid for user content unless a surface proves it is direction-agnostic.
+- Raw `LinkableText(text: ...)` without explicit `textDirection` should be treated as invalid for user content, even if library-level backward compatibility remains for non-user-content callers.
+- Current-tree note: `post_card.dart` is the remaining user-content `LinkableText` call site without explicit direction.
+- Keep Phase 11 focused on helper-policy alignment. Feed/orbit/group preview UI acceptance criteria belong to earlier phases, not this one.
 
 ## Existing Tests That Will Need Adjustment
 
 - `test/features/feed/presentation/widgets/message_bubble_test.dart`
+- `test/shared/widgets/linkable_text_test.dart` if Phase 11 chooses to tighten the user-content contract without removing library-level backward compatibility
 
 Current behavior to remove:
 
@@ -390,22 +453,51 @@ Current behavior to remove:
 Replacement behavior:
 
 - Tests should require stable body direction and stable footer placement, not the current overlay implementation.
+- `LinkableText` tests may keep ambient fallback as a library-level compatibility behavior, but they should not be used as evidence that ambient fallback is acceptable for user-content surfaces.
 
 ## Verification Commands
 
-Tight loop while implementing:
+Current-tree tight loop while implementing:
 
 ```bash
 flutter test test/core/utils/text_direction_utils_test.dart
-flutter test test/features/feed/presentation/widgets/collapsed_mode_card_body_bidi_test.dart
-flutter test test/features/orbit/presentation/widgets/friend_row_bidi_test.dart
-flutter test test/features/feed/presentation/widgets/message_bubble_bidi_test.dart
-flutter test test/features/feed/presentation/widgets/scrollable_message_preview_bidi_test.dart
-flutter test test/features/orbit/presentation/screens/orbit_wired_bidi_test.dart
-flutter test test/features/feed/integration/expanded_collapsed_card_bidi_test.dart
+flutter test test/core/utils/text_sanitizer_test.dart
+flutter test test/shared/widgets/linkable_text_test.dart
+flutter test test/features/feed/presentation/widgets/collapsed_mode_card_body_test.dart
+flutter test test/features/feed/presentation/widgets/message_bubble_test.dart
+flutter test test/features/feed/presentation/widgets/scrollable_message_preview_test.dart
+flutter test test/features/feed/presentation/widgets/open_mode_card_body_test.dart
+flutter test test/features/feed/presentation/widgets/inline_reply_input_test.dart
+flutter test test/features/feed/presentation/screens/feed_wired_test.dart
+flutter test test/features/orbit/presentation/widgets/friend_row_test.dart
+flutter test test/features/orbit/application/load_orbit_data_use_case_test.dart
+flutter test test/features/orbit/application/load_orbit_groups_use_case_test.dart
+flutter test test/features/orbit/presentation/screens/orbit_wired_test.dart
+flutter test test/features/groups/presentation/group_card_test.dart
+flutter test test/features/groups/presentation/group_list_screen_test.dart
+flutter test test/features/posts/phase1/compose_post_sheet_test.dart
+flutter test test/features/posts/phase2/comments_sheet_test.dart
+flutter test test/features/posts/phase2/comments_sheet_engagement_test.dart
+flutter test test/features/posts/phase2/send_post_comment_use_case_test.dart
+flutter test test/features/posts/phase2/handle_incoming_post_comment_use_case_test.dart
+flutter test test/features/conversation/application/handle_incoming_chat_message_use_case_test.dart
+flutter test test/features/conversation/application/send_chat_message_use_case_test.dart
+flutter test test/features/conversation/presentation/screens/conversation_wired_test.dart
+flutter test test/features/share/presentation/share_target_picker_screen_test.dart
+flutter test test/core/services/share_intent_service_test.dart
+flutter test test/core/services/share_intent_ios_test.dart
+flutter test test/features/share/application/handle_share_intent_use_case_test.dart
+flutter test test/features/share/application/settle_share_intent_flow_test.dart
+flutter test test/features/introduction/presentation/widgets/intro_system_message_test.dart
+flutter test test/features/introduction/presentation/widgets/intro_row_test.dart
+flutter test test/features/contact_request/presentation/widgets/contact_request_dialog_test.dart
+flutter test test/features/contact_request/application/handle_incoming_message_use_case_test.dart
+flutter test test/features/push/application/notification_body_for_message_test.dart
+flutter test test/features/push/application/show_notification_use_case_test.dart
+flutter test test/features/push/application/background_push_notification_fallback_test.dart
 ```
 
-Broader regression pass after green unit/widget tests:
+Broader regression pass after green targeted tests:
 
 ```bash
 flutter test test/features/feed
@@ -422,13 +514,14 @@ flutter test test/features/conversation/presentation/screens/conversation_wired_
 flutter test
 ```
 
-Known baseline note:
+Known current-machine caveat:
 
 ```bash
-flutter test test/features/feed/presentation/widgets/collapsed_mode_card_body_test.dart
+flutter test test/features/feed/integration/expanded_collapsed_card_test.dart
+flutter test test/features/feed/integration/feed_card_flow_test.dart
 ```
 
-This currently fails for unrelated stale assertions and should not be used as the entry point for the new BiDi work until those expectations are cleaned up.
+These commands currently fail before test execution on this machine because of a Flutter native-assets/Xcode `lipo` problem under `build/native_assets/macos`. Do not treat that as a Phase 4 product failure.
 
 ## Exit Criteria
 

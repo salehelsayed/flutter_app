@@ -60,6 +60,19 @@ void main() {
         expect(model.username, 'Unknown');
       });
 
+      test('sanitizes dangerous bidi controls in username payload', () {
+        final payload = {
+          'ns': testPeerId,
+          'pk': testPublicKey,
+          'rv': testRendezvous,
+          'un': 'A\u202Eli\u200Fce',
+          'sig': testSignature,
+        };
+
+        final model = ContactRequestModel.fromP2PPayload(payload);
+        expect(model.username, 'Ali\u200Fce');
+      });
+
       test('status defaults to pending', () {
         final payload = {
           'ns': testPeerId,

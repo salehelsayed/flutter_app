@@ -1,6 +1,7 @@
 import 'package:uuid/uuid.dart';
 
 import 'package:flutter_app/core/services/p2p_service.dart';
+import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/features/posts/application/post_follow_on_delivery.dart';
 import 'package:flutter_app/features/posts/application/post_pin_delivery_support.dart';
 import 'package:flutter_app/features/posts/domain/models/post_pin_envelope.dart';
@@ -54,7 +55,10 @@ Future<(EditPinnedPostResult, PostPinStateModel?)> editPinnedPost({
     return (EditPinnedPostResult.noRecipients, null);
   }
 
-  final updatedPost = post.copyWith(text: text.trim(), keepAvailable: true);
+  final updatedPost = post.copyWith(
+    text: sanitizeMessageText(text),
+    keepAvailable: true,
+  );
   final media = await loadRenderablePostPinMedia(
     postRepo: postRepo,
     post: updatedPost,

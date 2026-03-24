@@ -5,6 +5,7 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/constants/network_constants.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:uuid/uuid.dart';
 
@@ -89,7 +90,7 @@ Future<SendContactRequestResult> sendContactRequest({
     'pk': identity.publicKey,
     'rv': RENDEZVOUS_ADDRESS,
     'ts': timestamp,
-    'un': identity.username,
+    'un': sanitizeUsername(identity.username),
   });
   final dataToSign = jsonEncode(unsignedPayload);
 

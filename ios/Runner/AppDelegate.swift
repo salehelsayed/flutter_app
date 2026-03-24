@@ -17,6 +17,9 @@ import UserNotifications
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
+    if #available(iOS 10.0, *) {
+      UNUserNotificationCenter.current().delegate = self
+    }
     let didFinish = super.application(application, didFinishLaunchingWithOptions: launchOptions)
     NSLog("[PUSH_DIAG] didFinishLaunching super=%@", didFinish ? "true" : "false")
     NotificationCenter.default.addObserver(

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/features/feed/domain/utils/format_message_time.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/unread_count_badge.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_type_badge.dart';
@@ -24,6 +25,10 @@ class GroupRow extends StatelessWidget {
         ? formatRelativeTime(
             group.lastActivityTimestamp!.toUtc().toIso8601String())
         : '';
+    final senderUsername = group.latestMessageSenderUsername;
+    final senderDisplayName = senderUsername ?? 'Unknown';
+    final latestMessageText = group.latestMessageText ?? group.latestMessage;
+    final hasStructuredPreview = latestMessageText != null;
 
     return GestureDetector(
       onTap: onTap,
@@ -82,15 +87,60 @@ class GroupRow extends StatelessWidget {
                     ],
                   ),
                   const SizedBox(height: 2),
-                  Text(
-                    group.latestMessage ?? 'No messages yet',
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: Color(0x99FFFFFF),
+                  if (hasStructuredPreview)
+                    Row(
+                      children: [
+                        Flexible(
+                          fit: FlexFit.loose,
+                          child: Text(
+                            senderDisplayName,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: Color(0x99FFFFFF),
+                            ),
+                            textDirection: detectTextDirection(
+                              senderDisplayName,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        const Text(
+                          ': ',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Color(0x99FFFFFF),
+                          ),
+                        ),
+                        Expanded(
+                          child: Text(
+                            latestMessageText,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: Color(0x99FFFFFF),
+                            ),
+                            textDirection: detectTextDirection(
+                              latestMessageText,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    )
+                  else
+                    Text(
+                      latestMessageText ?? 'No messages yet',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: Color(0x99FFFFFF),
+                      ),
+                      textDirection: latestMessageText != null
+                          ? detectTextDirection(latestMessageText)
+                          : null,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
                 ],
               ),
             ),

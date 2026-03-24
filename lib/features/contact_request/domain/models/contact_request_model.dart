@@ -1,4 +1,5 @@
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/core/utils/text_sanitizer.dart';
 
 /// Status of a contact request.
 enum ContactRequestStatus {
@@ -59,7 +60,7 @@ class ContactRequestModel {
       peerId: payload['ns'] as String,
       publicKey: payload['pk'] as String,
       rendezvous: payload['rv'] as String,
-      username: payload['un'] as String? ?? 'Unknown',
+      username: sanitizeUsername(payload['un'] as String? ?? 'Unknown'),
       signature: payload['sig'] as String,
       receivedAt: DateTime.now().toUtc().toIso8601String(),
       status: ContactRequestStatus.pending,

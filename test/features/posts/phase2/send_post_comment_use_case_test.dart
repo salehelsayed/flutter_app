@@ -63,6 +63,56 @@ void main() {
   });
 
   test(
+    'comment text strips dangerous bidi controls but preserves safe markers',
+    () async {
+      await posts.savePost(_post('post-1'));
+      final (result, comment) = await sendPostComment(
+        p2pService: bobService,
+        postRepo: posts,
+        contactRepo: contacts,
+        postId: 'post-1',
+        senderPeerId: 'peer-bob',
+        senderUsername: 'Bob',
+        body: 'مرحبا\u202E Hello\u200E 123',
+      );
+
+      expect(result, SendPostCommentResult.success);
+      expect(comment, isNotNull);
+      expect(comment!.body, 'مرحبا Hello\u200E 123');
+
+      final savedComments = await posts.loadComments('post-1');
+      expect(savedComments, hasLength(1));
+      expect(savedComments.single.body, 'مرحبا Hello\u200E 123');
+
+      final inboxMessage =
+          network.retrieveInbox('peer-alice').single['message'] as String;
+      final payload = jsonDecode(inboxMessage) as Map<String, dynamic>;
+      expect(payload['payload']['body'], 'مرحبا Hello\u200E 123');
+    },
+  );
+
+  test(
+    'comment is rejected when sanitization removes all non-whitespace text',
+    () async {
+      await posts.savePost(_post('post-1'));
+
+      final (result, comment) = await sendPostComment(
+        p2pService: bobService,
+        postRepo: posts,
+        contactRepo: contacts,
+        postId: 'post-1',
+        senderPeerId: 'peer-bob',
+        senderUsername: 'Bob',
+        body: '\u202E   \u202C',
+      );
+
+      expect(result, SendPostCommentResult.invalidComment);
+      expect(comment, isNull);
+      expect(await posts.loadComments('post-1'), isEmpty);
+    },
+  );
+
+  test(
     'comment fanout reuses the persisted recipient set, includes the author, and extends expiry',
     () async {
       await posts.savePost(_post('post-1'));

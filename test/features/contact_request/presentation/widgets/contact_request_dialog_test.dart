@@ -67,5 +67,43 @@ void main() {
       await tester.tap(find.text('Decline'));
       expect(declined, isTrue);
     });
+
+    testWidgets('Arabic username drives RTL direction', (tester) async {
+      const username = 'ليلى';
+      await tester.pumpWidget(wrap(ContactRequestDialog(
+        request: makeRequest(username: username),
+        onAccept: () {},
+        onDecline: () {},
+      )));
+
+      final usernameText = tester.widget<Text>(find.text(username));
+      expect(usernameText.textDirection, TextDirection.rtl);
+    });
+
+    testWidgets('Arabic-first mixed username drives RTL direction',
+        (tester) async {
+      const username = 'ليلى Alpha';
+      await tester.pumpWidget(wrap(ContactRequestDialog(
+        request: makeRequest(username: username),
+        onAccept: () {},
+        onDecline: () {},
+      )));
+
+      final usernameText = tester.widget<Text>(find.text(username));
+      expect(usernameText.textDirection, TextDirection.rtl);
+    });
+
+    testWidgets('English-first mixed username stays LTR direction',
+        (tester) async {
+      const username = 'Alpha ليلى';
+      await tester.pumpWidget(wrap(ContactRequestDialog(
+        request: makeRequest(username: username),
+        onAccept: () {},
+        onDecline: () {},
+      )));
+
+      final usernameText = tester.widget<Text>(find.text(username));
+      expect(usernameText.textDirection, TextDirection.ltr);
+    });
   });
 }

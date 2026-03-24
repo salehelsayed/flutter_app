@@ -106,4 +106,24 @@ void main() {
       expect(network.inboxCount('peer-cara'), 1);
     },
   );
+
+  test(
+    'returns invalidPost when text-only payload becomes empty after sanitization',
+    () async {
+      contacts.addTestContact(_contact('peer-bob', 'Bob'));
+
+      final (result, post) = await sendPost(
+        p2pService: aliceService,
+        postRepo: posts,
+        contactRepo: contacts,
+        senderPeerId: 'peer-alice',
+        senderUsername: 'Alice',
+        text: '\u202E\u202D',
+        audience: PostAudience.allFriends(),
+      );
+
+      expect(result, SendPostResult.invalidPost);
+      expect(post, isNull);
+    },
+  );
 }

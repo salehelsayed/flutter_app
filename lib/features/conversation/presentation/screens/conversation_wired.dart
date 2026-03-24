@@ -17,6 +17,7 @@ import 'package:flutter_app/core/notifications/active_conversation_tracker.dart'
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/features/contacts/application/block_contact_use_case.dart';
 import 'package:flutter_app/features/contacts/application/delete_contact_use_case.dart';
 import 'package:flutter_app/features/contacts/application/unblock_contact_use_case.dart';
@@ -579,7 +580,8 @@ class _ConversationWiredState extends State<ConversationWired> {
     final messenger = ScaffoldMessenger.maybeOf(context);
 
     final hasAttachments = _pendingAttachments.isNotEmpty;
-    if (text.isEmpty && !hasAttachments) return;
+    final sanitizedText = sanitizeMessageText(text);
+    if (sanitizedText.isEmpty && !hasAttachments) return;
     if (_isSending) return;
     setState(() => _isSending = true);
 
@@ -588,12 +590,12 @@ class _ConversationWiredState extends State<ConversationWired> {
         layer: 'FL',
         event: 'CONV_FL_SEND_PRESSED',
         details: {
-          'textLength': text.length,
+          'textLength': sanitizedText.length,
           'attachments': _pendingAttachments.length,
         },
       );
 
-      final draftText = text;
+      final draftText = sanitizedText;
       final quotedMessageId = _activeQuoteMessageId;
       final composerSnapshot = _ComposerSnapshot(
         draftText: draftText,
@@ -640,7 +642,7 @@ class _ConversationWiredState extends State<ConversationWired> {
         id: _uuid.v4(),
         contactPeerId: _contact.peerId,
         senderPeerId: identity.peerId,
-        text: text,
+        text: sanitizedText,
         timestamp: now,
         status: 'sending',
         isIncoming: false,
@@ -758,7 +760,7 @@ class _ConversationWiredState extends State<ConversationWired> {
           p2pService: widget.p2pService,
           messageRepo: widget.messageRepo,
           targetPeerId: _contact.peerId,
-          text: text,
+          text: sanitizedText,
           senderPeerId: identity.peerId,
           senderUsername: identity.username,
           messageId: optimisticMessage.id,

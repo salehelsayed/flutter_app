@@ -257,6 +257,47 @@ void main() {
       expect(repo.getConversationThreadSummariesCallCount, 1);
     });
 
+    test('preserves mixed-script latest activity during bulk load', () async {
+      final contacts = [
+        _makeContact('peer-A'),
+        _makeContact('peer-B'),
+      ];
+
+      final msgA = ConversationMessage(
+        id: 'msg-a',
+        contactPeerId: 'peer-A',
+        senderPeerId: 'peer-A',
+        text: 'مرحبا Hello 123',
+        timestamp: '2026-03-01T00:00:00.000Z',
+        isIncoming: true,
+        status: 'delivered',
+        createdAt: '2026-03-01T00:00:00.000Z',
+      );
+      final msgB = ConversationMessage(
+        id: 'msg-b',
+        contactPeerId: 'peer-B',
+        senderPeerId: 'peer-B',
+        text: 'Hello مرحبا 123',
+        timestamp: '2026-03-02T00:00:00.000Z',
+        isIncoming: true,
+        status: 'delivered',
+        createdAt: '2026-03-02T00:00:00.000Z',
+      );
+
+      final repo = FakeMessageRepository(
+        latestMessages: {'peer-A': msgA, 'peer-B': msgB},
+      );
+      final result = await loadOrbitData(
+        contactRepo: FakeContactRepository(contacts: contacts),
+        messageRepo: repo,
+      );
+
+      expect(result[0].peerId, 'peer-B');
+      expect(result[0].lastActivity, 'Hello مرحبا 123');
+      expect(result[1].peerId, 'peer-A');
+      expect(result[1].lastActivity, 'مرحبا Hello 123');
+    });
+
     test('returns empty list when no contacts', () async {
       final repo = FakeMessageRepository();
       final result = await loadOrbitData(
@@ -295,6 +336,36 @@ void main() {
       expect(result!.peerId, 'peer-A');
       expect(result.messageCount, 3);
       expect(result.lastActivity, 'Most recent');
+      expect(result.unreadCount, 2);
+      expect(repo.getConversationThreadSummaryCallCount, 1);
+    });
+
+    test('preserves mixed-script latest activity in single snapshot', () async {
+      final msg = ConversationMessage(
+        id: 'msg-a',
+        contactPeerId: 'peer-A',
+        senderPeerId: 'peer-A',
+        text: 'مرحبا Hello 123',
+        timestamp: '2026-03-01T00:00:00.000Z',
+        isIncoming: true,
+        status: 'delivered',
+        createdAt: '2026-03-01T00:00:00.000Z',
+      );
+
+      final repo = FakeMessageRepository(
+        messageCounts: const {'peer-A': 3},
+        latestMessages: {'peer-A': msg},
+        unreadCounts: const {'peer-A': 2},
+      );
+      final result = await loadOrbitFriendSnapshot(
+        contactRepo: FakeContactRepository(contacts: [_makeContact('peer-A')]),
+        messageRepo: repo,
+        contactPeerId: 'peer-A',
+      );
+
+      expect(result, isNotNull);
+      expect(result!.peerId, 'peer-A');
+      expect(result.lastActivity, 'مرحبا Hello 123');
       expect(result.unreadCount, 2);
       expect(repo.getConversationThreadSummaryCallCount, 1);
     });

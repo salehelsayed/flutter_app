@@ -1,9 +1,11 @@
+import 'dart:convert';
 import 'dart:async';
 import 'dart:ui' show VoidCallback;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/connection_state.dart'
@@ -272,7 +274,9 @@ class FakeMessageRepository implements MessageRepository {
   }) async => [];
 
   @override
-  Future<int> recoverStuckSendingMessages({required Duration olderThan}) async => 0;
+  Future<int> recoverStuckSendingMessages({
+    required Duration olderThan,
+  }) async => 0;
 
   @override
   Future<List<ConversationMessage>> getStuckSendingOutgoingMessages({
@@ -313,6 +317,84 @@ void main() {
   });
 
   group('sendChatMessage', () {
+    test(
+      'sanitizes outgoing comment text while preserving safe markers',
+      () async {
+        const rawText = 'مرحبا\u202E Hello\u200E 123';
+        const sanitizedText = 'مرحبا Hello\u200E 123';
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: rawText,
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message, isNotNull);
+        expect(message!.text, sanitizedText);
+        expect(messageRepo.saved, hasLength(1));
+        expect(messageRepo.saved.single.text, sanitizedText);
+
+        final envelope =
+            jsonDecode(p2pService.lastSentMessage!) as Map<String, dynamic>;
+        final payload = envelope['payload'] as Map<String, dynamic>;
+        expect(payload['text'], sanitizedText);
+        expect(payload['text'], isNot(contains('\u202E')));
+      },
+    );
+
+    test(
+      'rejects text that becomes empty after sanitization unless attachments exist',
+      () async {
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: '\u202E   \u202C',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+
+        expect(result, SendChatMessageResult.invalidMessage);
+        expect(message, isNull);
+        expect(messageRepo.saved, isEmpty);
+
+        final attachment = MediaAttachment(
+          id: 'att-1',
+          messageId: '',
+          mime: 'image/png',
+          size: 0,
+          mediaType: 'image',
+          downloadStatus: 'done',
+          createdAt: '2026-03-15T11:00:00.000Z',
+        );
+
+        final (attachmentResult, attachmentMessage) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: '\u202E\u202C',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          mediaAttachments: [attachment],
+        );
+
+        expect(attachmentResult, SendChatMessageResult.success);
+        expect(attachmentMessage, isNotNull);
+        expect(attachmentMessage!.text, isEmpty);
+        expect(attachmentMessage.media, hasLength(1));
+
+        final envelope =
+            jsonDecode(p2pService.lastSentMessage!) as Map<String, dynamic>;
+        final payload = envelope['payload'] as Map<String, dynamic>;
+        expect(payload['text'], isEmpty);
+        expect(payload['media'], isNotEmpty);
+      },
+    );
+
     test('returns invalidMessage for empty text', () async {
       final (result, message) = await sendChatMessage(
         p2pService: p2pService,
@@ -1099,77 +1181,82 @@ void main() {
   });
 
   // ─── Section 4 — direct-first send with early wireEnvelope persistence ──
-  group('Section 4 — direct-first send with early wireEnvelope persistence',
-      () {
-    test(
-      'RED: wireEnvelope is persisted to DB before discover is called',
-      () async {
-        // Track cross-component ordering via a shared list
-        final callOrder = <String>[];
-        messageRepo.onUpdateWireEnvelope = () =>
-            callOrder.add('updateWireEnvelope');
-        p2pService.onDiscover = () => callOrder.add('discover');
-        p2pService.onSendMessage = () => callOrder.add('sendMessage');
+  group(
+    'Section 4 — direct-first send with early wireEnvelope persistence',
+    () {
+      test(
+        'RED: wireEnvelope is persisted to DB before discover is called',
+        () async {
+          // Track cross-component ordering via a shared list
+          final callOrder = <String>[];
+          messageRepo.onUpdateWireEnvelope = () =>
+              callOrder.add('updateWireEnvelope');
+          p2pService.onDiscover = () => callOrder.add('discover');
+          p2pService.onSendMessage = () => callOrder.add('sendMessage');
 
-        final (result, message) = await sendChatMessage(
-          p2pService: p2pService,
-          messageRepo: messageRepo,
-          targetPeerId: 'target-peer',
-          text: 'wireEnvelope persistence test',
-          senderPeerId: 'my-peer',
-          senderUsername: 'Me',
-          messageId: 'msg-wire-001',
-        );
+          final (result, message) = await sendChatMessage(
+            p2pService: p2pService,
+            messageRepo: messageRepo,
+            targetPeerId: 'target-peer',
+            text: 'wireEnvelope persistence test',
+            senderPeerId: 'my-peer',
+            senderUsername: 'Me',
+            messageId: 'msg-wire-001',
+          );
 
-        expect(result, SendChatMessageResult.success);
-        // wireEnvelope must be persisted
-        expect(messageRepo.wireEnvelopeUpdates, contains('msg-wire-001'));
-        // wireEnvelope persist must happen before any P2P operation
-        final wireIdx = callOrder.indexOf('updateWireEnvelope');
-        final discoverIdx = callOrder.indexOf('discover');
-        expect(wireIdx, isNot(-1),
-            reason: 'updateWireEnvelope must be called');
-        expect(wireIdx < discoverIdx, isTrue,
-            reason: 'wireEnvelope persist must precede discover');
-      },
-    );
+          expect(result, SendChatMessageResult.success);
+          // wireEnvelope must be persisted
+          expect(messageRepo.wireEnvelopeUpdates, contains('msg-wire-001'));
+          // wireEnvelope persist must happen before any P2P operation
+          final wireIdx = callOrder.indexOf('updateWireEnvelope');
+          final discoverIdx = callOrder.indexOf('discover');
+          expect(
+            wireIdx,
+            isNot(-1),
+            reason: 'updateWireEnvelope must be called',
+          );
+          expect(
+            wireIdx < discoverIdx,
+            isTrue,
+            reason: 'wireEnvelope persist must precede discover',
+          );
+        },
+      );
 
-    test(
-      'RED: wireEnvelope is persisted even on the connection-reuse fast path',
-      () async {
-        p2pService = FakeP2PService(
-          currentState: NodeState(
-            isStarted: true,
-            connections: [
-              const p2p.ConnectionState(
-                peerId: 'target-peer',
-                multiaddrs: ['/ip4/127.0.0.1/tcp/4001'],
-                direction: 'outbound',
-                status: 'connected',
-              ),
-            ],
-          ),
-        );
+      test(
+        'RED: wireEnvelope is persisted even on the connection-reuse fast path',
+        () async {
+          p2pService = FakeP2PService(
+            currentState: NodeState(
+              isStarted: true,
+              connections: [
+                const p2p.ConnectionState(
+                  peerId: 'target-peer',
+                  multiaddrs: ['/ip4/127.0.0.1/tcp/4001'],
+                  direction: 'outbound',
+                  status: 'connected',
+                ),
+              ],
+            ),
+          );
 
-        final (result, _) = await sendChatMessage(
-          p2pService: p2pService,
-          messageRepo: messageRepo,
-          targetPeerId: 'target-peer',
-          text: 'Connected peer wireEnvelope',
-          senderPeerId: 'my-peer',
-          senderUsername: 'Me',
-          messageId: 'msg-wire-002',
-        );
+          final (result, _) = await sendChatMessage(
+            p2pService: p2pService,
+            messageRepo: messageRepo,
+            targetPeerId: 'target-peer',
+            text: 'Connected peer wireEnvelope',
+            senderPeerId: 'my-peer',
+            senderUsername: 'Me',
+            messageId: 'msg-wire-002',
+          );
 
-        expect(result, SendChatMessageResult.success);
-        expect(messageRepo.wireEnvelopeUpdates, contains('msg-wire-002'));
-        expect(p2pService.discoverCallCount, 0); // reuse path skips discover
-      },
-    );
+          expect(result, SendChatMessageResult.success);
+          expect(messageRepo.wireEnvelopeUpdates, contains('msg-wire-002'));
+          expect(p2pService.discoverCallCount, 0); // reuse path skips discover
+        },
+      );
 
-    test(
-      'RED: wireEnvelope is persisted on local WiFi path',
-      () async {
+      test('RED: wireEnvelope is persisted on local WiFi path', () async {
         p2pService = FakeP2PService(useNullDiscover: true)
           ..localPeers.add('target-peer');
 
@@ -1185,59 +1272,63 @@ void main() {
 
         expect(result, SendChatMessageResult.success);
         expect(messageRepo.wireEnvelopeUpdates, contains('msg-wire-003'));
-      },
-    );
+      });
 
-    test(
-      'RED: wireEnvelope contains the same JSON as the P2P send payload',
-      () async {
-        final (result, _) = await sendChatMessage(
-          p2pService: p2pService,
-          messageRepo: messageRepo,
-          targetPeerId: 'target-peer',
-          text: 'Envelope parity',
-          senderPeerId: 'my-peer',
-          senderUsername: 'Me',
-          messageId: 'fixed-id-001',
-        );
+      test(
+        'RED: wireEnvelope contains the same JSON as the P2P send payload',
+        () async {
+          final (result, _) = await sendChatMessage(
+            p2pService: p2pService,
+            messageRepo: messageRepo,
+            targetPeerId: 'target-peer',
+            text: 'Envelope parity',
+            senderPeerId: 'my-peer',
+            senderUsername: 'Me',
+            messageId: 'fixed-id-001',
+          );
 
-        expect(result, SendChatMessageResult.success);
-        // Verify the persisted wireEnvelope matches what was sent over P2P
-        expect(messageRepo.lastWireEnvelopeValue, isNotNull);
-        expect(p2pService.lastSentPayload, isNotNull);
-        expect(messageRepo.lastWireEnvelopeValue,
-            equals(p2pService.lastSentPayload));
-        expect(messageRepo.lastWireEnvelopeValue,
-            contains('"id":"fixed-id-001"'));
-      },
-    );
+          expect(result, SendChatMessageResult.success);
+          // Verify the persisted wireEnvelope matches what was sent over P2P
+          expect(messageRepo.lastWireEnvelopeValue, isNotNull);
+          expect(p2pService.lastSentPayload, isNotNull);
+          expect(
+            messageRepo.lastWireEnvelopeValue,
+            equals(p2pService.lastSentPayload),
+          );
+          expect(
+            messageRepo.lastWireEnvelopeValue,
+            contains('"id":"fixed-id-001"'),
+          );
+        },
+      );
 
-    test(
-      'RED: wireEnvelope is persisted even when all P2P paths fail',
-      () async {
-        p2pService = FakeP2PService(
-          sendMessageResult: false,
-          useNullDiscover: true,
-          storeInInboxResult: false,
-        );
+      test(
+        'RED: wireEnvelope is persisted even when all P2P paths fail',
+        () async {
+          p2pService = FakeP2PService(
+            sendMessageResult: false,
+            useNullDiscover: true,
+            storeInInboxResult: false,
+          );
 
-        final (result, message) = await sendChatMessage(
-          p2pService: p2pService,
-          messageRepo: messageRepo,
-          targetPeerId: 'target-peer',
-          text: 'All fail but envelope persisted',
-          senderPeerId: 'my-peer',
-          senderUsername: 'Me',
-          messageId: 'msg-wire-fail',
-        );
+          final (result, message) = await sendChatMessage(
+            p2pService: p2pService,
+            messageRepo: messageRepo,
+            targetPeerId: 'target-peer',
+            text: 'All fail but envelope persisted',
+            senderPeerId: 'my-peer',
+            senderUsername: 'Me',
+            messageId: 'msg-wire-fail',
+          );
 
-        expect(result, SendChatMessageResult.peerNotFound);
-        expect(message!.status, 'failed');
-        // wireEnvelope was still persisted before the transport race
-        expect(messageRepo.wireEnvelopeUpdates, contains('msg-wire-fail'));
-      },
-    );
-  });
+          expect(result, SendChatMessageResult.peerNotFound);
+          expect(message!.status, 'failed');
+          // wireEnvelope was still persisted before the transport race
+          expect(messageRepo.wireEnvelopeUpdates, contains('msg-wire-fail'));
+        },
+      );
+    },
+  );
 
   // ─── Section 4 — inbox call-site regression guard ──────────────────────
   group('Section 4 — inbox call-site regression guard', () {
@@ -1342,29 +1433,26 @@ void main() {
 
   // ─── Section 4 — inbox fallback edge cases ─────────────────────────────
   group('Section 4 — inbox fallback edge cases', () {
-    test(
-      'storeInInbox throwing in the fallback path marks message as failed '
-      'and wireEnvelope is still persisted for retry',
-      () async {
-        final throwingInboxP2P = _ThrowOnInboxP2PService();
+    test('storeInInbox throwing in the fallback path marks message as failed '
+        'and wireEnvelope is still persisted for retry', () async {
+      final throwingInboxP2P = _ThrowOnInboxP2PService();
 
-        final (result, message) = await sendChatMessage(
-          p2pService: throwingInboxP2P,
-          messageRepo: messageRepo,
-          targetPeerId: 'target-peer',
-          text: 'Inbox throws after P2P fails',
-          senderPeerId: 'my-peer',
-          senderUsername: 'Me',
-          messageId: 'msg-edge-001',
-        );
+      final (result, message) = await sendChatMessage(
+        p2pService: throwingInboxP2P,
+        messageRepo: messageRepo,
+        targetPeerId: 'target-peer',
+        text: 'Inbox throws after P2P fails',
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me',
+        messageId: 'msg-edge-001',
+      );
 
-        // P2P failed, inbox threw — message should be marked failed
-        expect(result, SendChatMessageResult.peerNotFound);
-        expect(message!.status, 'failed');
-        // wireEnvelope was still persisted, so Section 1 retrier can recover
-        expect(messageRepo.wireEnvelopeUpdates, contains('msg-edge-001'));
-      },
-    );
+      // P2P failed, inbox threw — message should be marked failed
+      expect(result, SendChatMessageResult.peerNotFound);
+      expect(message!.status, 'failed');
+      // wireEnvelope was still persisted, so Section 1 retrier can recover
+      expect(messageRepo.wireEnvelopeUpdates, contains('msg-edge-001'));
+    });
 
     test(
       'storeInInbox throwing does not affect result when direct P2P succeeds',
@@ -1443,20 +1531,19 @@ class _ThrowOnInboxP2PService implements P2PService {
     String peerId,
     String message, {
     int? timeoutMs,
-  }) async =>
-      SendMessageResult(
-        sent: p2pSucceeds,
-        reply: p2pSucceeds ? 'received: ok' : null,
-      );
+  }) async => SendMessageResult(
+    sent: p2pSucceeds,
+    reply: p2pSucceeds ? 'received: ok' : null,
+  );
 
   @override
   Future<DiscoveredPeer?> discoverPeer(String peerId, {int? timeoutMs}) async =>
       p2pSucceeds
-          ? const DiscoveredPeer(
-              id: 'target-peer',
-              addresses: ['/ip4/127.0.0.1/tcp/4001'],
-            )
-          : null;
+      ? const DiscoveredPeer(
+          id: 'target-peer',
+          addresses: ['/ip4/127.0.0.1/tcp/4001'],
+        )
+      : null;
 
   @override
   Future<bool> dialPeer(

@@ -1,3 +1,5 @@
+import 'dart:ui' show TextDirection;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -61,6 +63,33 @@ void main() {
     await tester.pumpWidget(buildScreen(sharedText: 'Shared caption'));
 
     expect(find.text('Shared caption'), findsOneWidget);
+  });
+
+  testWidgets('shared Arabic text preview drives RTL', (tester) async {
+    const sharedText = 'مرحبا';
+
+    await tester.pumpWidget(buildScreen(sharedText: sharedText));
+
+    expect(find.text(sharedText), findsOneWidget);
+    expect(_previewText(tester, sharedText).textDirection, TextDirection.rtl);
+  });
+
+  testWidgets('shared Arabic-first mixed preview drives RTL', (tester) async {
+    const sharedText = 'مرحبا Hello 123';
+
+    await tester.pumpWidget(buildScreen(sharedText: sharedText));
+
+    expect(find.text(sharedText), findsOneWidget);
+    expect(_previewText(tester, sharedText).textDirection, TextDirection.rtl);
+  });
+
+  testWidgets('shared English-first mixed preview stays LTR', (tester) async {
+    const sharedText = 'Hello مرحبا 123';
+
+    await tester.pumpWidget(buildScreen(sharedText: sharedText));
+
+    expect(find.text(sharedText), findsOneWidget);
+    expect(_previewText(tester, sharedText).textDirection, TextDirection.ltr);
   });
 
   testWidgets('2b: renders shared image thumbnails', (tester) async {
@@ -187,4 +216,13 @@ void main() {
       expect(find.byType(CircularProgressIndicator), findsNothing);
     },
   );
+}
+
+Text _previewText(WidgetTester tester, String text) {
+  final finder = find.byWidgetPredicate(
+    (widget) => widget is Text && widget.data == text,
+    description: 'Text("$text")',
+  );
+  expect(finder, findsOneWidget);
+  return tester.widget<Text>(finder);
 }

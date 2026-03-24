@@ -145,6 +145,33 @@ void main() {
     expect(updatedPost?.lastEngagementAt, commentedAt.toIso8601String());
   });
 
+  test(
+    'sanitizes incoming comment text while preserving safe markers',
+    () async {
+      await posts.savePost(_post('post-1'));
+
+      final (result, comment) = await handleIncomingPostComment(
+        message: _commentMessage(
+          eventId: 'evt-comment-1',
+          commentId: 'comment-1',
+          postId: 'post-1',
+          transportSender: 'peer-bob',
+          body: 'مرحبا\u202E Hello\u200E 123',
+        ),
+        postRepo: posts,
+        contactRepo: contacts,
+      );
+
+      expect(result, HandleIncomingPostCommentResult.commentCreated);
+      expect(comment, isNotNull);
+      expect(comment!.body, 'مرحبا Hello\u200E 123');
+
+      final comments = await posts.loadComments('post-1');
+      expect(comments, hasLength(1));
+      expect(comments.single.body, 'مرحبا Hello\u200E 123');
+    },
+  );
+
   test('dedupes repeated post_comment deliveries by comment_id', () async {
     await posts.savePost(_post('post-1'));
     final message = _commentMessage(

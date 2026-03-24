@@ -45,6 +45,21 @@ void main() {
         expect(textField.textDirection, TextDirection.ltr);
       });
 
+      testWidgets('TextField uses RTL for hydrated mixed initialText', (
+        tester,
+      ) async {
+        const initialText = 'مرحبا Hello 123';
+
+        await tester.pumpWidget(
+          wrap(InlineReplyInput(onSend: (_) {}, initialText: initialText)),
+        );
+        await tester.pump();
+
+        final textField = tester.widget<TextField>(find.byType(TextField));
+        expect(textField.controller?.text, initialText);
+        expect(textField.textDirection, TextDirection.rtl);
+      });
+
       testWidgets('TextField switches to RTL when Arabic is typed', (
         tester,
       ) async {

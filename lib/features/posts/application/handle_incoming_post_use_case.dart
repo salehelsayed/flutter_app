@@ -1,5 +1,6 @@
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/posts/application/reconcile_pending_post_child_events_use_case.dart';
@@ -136,9 +137,11 @@ Future<(HandleIncomingPostResult, PostModel?)> handleIncomingPost({
     );
   }
 
-  final post = envelope.toPostModel(
-    isIncoming: true,
-    deliveryStatus: 'delivered',
+  final post = _sanitizeIncomingPost(
+    envelope.toPostModel(
+      isIncoming: true,
+      deliveryStatus: 'delivered',
+    ),
   );
   await postRepo.savePost(post);
   await _saveRecipientDeliveries(
@@ -184,9 +187,11 @@ PostModel _mergeExistingRepostedCopy({
   required PostModel existingPost,
   required PostCreateEnvelope envelope,
 }) {
-  final incomingPost = envelope.toPostModel(
-    isIncoming: true,
-    deliveryStatus: 'delivered',
+  final incomingPost = _sanitizeIncomingPost(
+    envelope.toPostModel(
+      isIncoming: true,
+      deliveryStatus: 'delivered',
+    ),
   );
   return existingPost.copyWith(
     eventId: incomingPost.eventId,
@@ -207,6 +212,13 @@ PostModel _mergeExistingRepostedCopy({
     nearbySenderAccuracyM: incomingPost.nearbySenderAccuracyM,
     isIncoming: true,
     deliveryStatus: 'delivered',
+  );
+}
+
+PostModel _sanitizeIncomingPost(PostModel post) {
+  return post.copyWith(
+    authorUsername: sanitizeUsername(post.authorUsername),
+    text: sanitizeMessageText(post.text),
   );
 }
 

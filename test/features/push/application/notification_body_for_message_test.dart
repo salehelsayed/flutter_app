@@ -6,19 +6,19 @@ import 'package:flutter_app/features/push/application/show_notification_use_case
 import '../../../shared/fakes/fake_notification_service.dart';
 
 MediaAttachment _attachment(String mediaType) => MediaAttachment(
-      id: 'attach-1',
-      messageId: 'msg-1',
-      mime: switch (mediaType) {
-        'image' => 'image/jpeg',
-        'video' => 'video/mp4',
-        'audio' => 'audio/aac',
-        _ => 'application/octet-stream',
-      },
-      size: 1024,
-      mediaType: mediaType,
-      downloadStatus: 'done',
-      createdAt: '2026-01-01T00:00:00.000Z',
-    );
+  id: 'attach-1',
+  messageId: 'msg-1',
+  mime: switch (mediaType) {
+    'image' => 'image/jpeg',
+    'video' => 'video/mp4',
+    'audio' => 'audio/aac',
+    _ => 'application/octet-stream',
+  },
+  size: 1024,
+  mediaType: mediaType,
+  downloadStatus: 'done',
+  createdAt: '2026-01-01T00:00:00.000Z',
+);
 
 void main() {
   group('notificationBodyForMessage', () {
@@ -37,6 +37,27 @@ void main() {
 
     test('trims whitespace before checking emptiness', () {
       expect(notificationBodyForMessage('  ', [_attachment('image')]), 'Photo');
+    });
+
+    test(
+      'preserves Arabic-first mixed content while trimming outer whitespace',
+      () {
+        const mixed = '\u0645\u0631\u062d\u0628\u0627 Alpha 123';
+        expect(notificationBodyForMessage('  $mixed  ', []), mixed);
+      },
+    );
+
+    test(
+      'preserves English-first mixed content while trimming outer whitespace',
+      () {
+        const mixed = 'Alpha 123 \u0645\u0631\u062d\u0628\u0627';
+        expect(notificationBodyForMessage('\n$mixed\t', []), mixed);
+      },
+    );
+
+    test('preserves bidi control marks inside trimmed mixed content', () {
+      const withBidi = '\u200f\u0645\u0631\u062d\u0628\u0627 Alpha\u200f';
+      expect(notificationBodyForMessage(' $withBidi ', []), withBidi);
     });
 
     // --- image-only ---
@@ -123,10 +144,9 @@ void main() {
     });
 
     test('group captioned image body is "Alice: Check this out"', () {
-      final body = notificationBodyForMessage(
-        'Check this out',
-        [_attachment('image')],
-      );
+      final body = notificationBodyForMessage('Check this out', [
+        _attachment('image'),
+      ]);
       expect('Alice: $body', 'Alice: Check this out');
     });
   });
@@ -135,25 +155,22 @@ void main() {
     // These tests verify that the correct body reaches NotificationService
     // when maybeShowNotification is called with a media-only message.
 
-    test(
-      'image-only 1:1 message shows "Photo" as notification body',
-      () async {
-        final notificationService = FakeNotificationService();
-        final tracker = ActiveConversationTracker();
+    test('image-only 1:1 message shows "Photo" as notification body', () async {
+      final notificationService = FakeNotificationService();
+      final tracker = ActiveConversationTracker();
 
-        await maybeShowNotification(
-          notificationService: notificationService,
-          conversationTracker: tracker,
-          getAppLifecycleState: () => AppLifecycleState.paused,
-          contactPeerId: 'peer-alice',
-          senderUsername: 'Alice',
-          messageText: notificationBodyForMessage('', [_attachment('image')]),
-        );
+      await maybeShowNotification(
+        notificationService: notificationService,
+        conversationTracker: tracker,
+        getAppLifecycleState: () => AppLifecycleState.paused,
+        contactPeerId: 'peer-alice',
+        senderUsername: 'Alice',
+        messageText: notificationBodyForMessage('', [_attachment('image')]),
+      );
 
-        expect(notificationService.shown, hasLength(1));
-        expect(notificationService.shown.first.messageText, 'Photo');
-      },
-    );
+      expect(notificationService.shown, hasLength(1));
+      expect(notificationService.shown.first.messageText, 'Photo');
+    });
 
     test(
       'voice-only 1:1 message shows "Voice message" as notification body',
@@ -175,46 +192,39 @@ void main() {
       },
     );
 
-    test(
-      'video-only 1:1 message shows "Video" as notification body',
-      () async {
-        final notificationService = FakeNotificationService();
-        final tracker = ActiveConversationTracker();
+    test('video-only 1:1 message shows "Video" as notification body', () async {
+      final notificationService = FakeNotificationService();
+      final tracker = ActiveConversationTracker();
 
-        await maybeShowNotification(
-          notificationService: notificationService,
-          conversationTracker: tracker,
-          getAppLifecycleState: () => AppLifecycleState.paused,
-          contactPeerId: 'peer-alice',
-          senderUsername: 'Alice',
-          messageText: notificationBodyForMessage('', [_attachment('video')]),
-        );
+      await maybeShowNotification(
+        notificationService: notificationService,
+        conversationTracker: tracker,
+        getAppLifecycleState: () => AppLifecycleState.paused,
+        contactPeerId: 'peer-alice',
+        senderUsername: 'Alice',
+        messageText: notificationBodyForMessage('', [_attachment('video')]),
+      );
 
-        expect(notificationService.shown, hasLength(1));
-        expect(notificationService.shown.first.messageText, 'Video');
-      },
-    );
+      expect(notificationService.shown, hasLength(1));
+      expect(notificationService.shown.first.messageText, 'Video');
+    });
 
-    test(
-      'captioned image shows caption text not "Photo"',
-      () async {
-        final notificationService = FakeNotificationService();
-        final tracker = ActiveConversationTracker();
+    test('captioned image shows caption text not "Photo"', () async {
+      final notificationService = FakeNotificationService();
+      final tracker = ActiveConversationTracker();
 
-        await maybeShowNotification(
-          notificationService: notificationService,
-          conversationTracker: tracker,
-          getAppLifecycleState: () => AppLifecycleState.paused,
-          contactPeerId: 'peer-alice',
-          senderUsername: 'Alice',
-          messageText: notificationBodyForMessage(
-            'Look at this!',
-            [_attachment('image')],
-          ),
-        );
+      await maybeShowNotification(
+        notificationService: notificationService,
+        conversationTracker: tracker,
+        getAppLifecycleState: () => AppLifecycleState.paused,
+        contactPeerId: 'peer-alice',
+        senderUsername: 'Alice',
+        messageText: notificationBodyForMessage('Look at this!', [
+          _attachment('image'),
+        ]),
+      );
 
-        expect(notificationService.shown.first.messageText, 'Look at this!');
-      },
-    );
+      expect(notificationService.shown.first.messageText, 'Look at this!');
+    });
   });
 }

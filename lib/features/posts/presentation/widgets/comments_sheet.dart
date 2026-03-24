@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
@@ -220,6 +221,9 @@ class _CommentsSheetState extends State<CommentsSheet> {
                                 widget.post.text,
                                 maxLines: 2,
                                 overflow: TextOverflow.ellipsis,
+                                textDirection: detectTextDirection(
+                                  widget.post.text,
+                                ),
                                 style: const TextStyle(
                                   color: Color.fromRGBO(255, 255, 255, 0.48),
                                   fontSize: 14,
@@ -321,9 +325,15 @@ class _CommentsSheetState extends State<CommentsSheet> {
                                 controller: _textController,
                                 minLines: 1,
                                 maxLines: 4,
+                                textDirection: detectTextDirection(
+                                  _textController.text,
+                                ),
+                                onChanged: (_) => setState(() {}),
                                 style: const TextStyle(color: Colors.white),
                                 decoration: InputDecoration(
-                                  hintText: AppLocalizations.of(context)!.comment_hint,
+                                  hintText: AppLocalizations.of(
+                                    context,
+                                  )!.comment_hint,
                                   hintStyle: const TextStyle(
                                     color: Color.fromRGBO(255, 255, 255, 0.42),
                                   ),
@@ -433,6 +443,7 @@ class _CommentTile extends StatelessWidget {
                 const SizedBox(height: 4),
                 Text(
                   comment.body,
+                  textDirection: detectTextDirection(comment.body),
                   style: const TextStyle(
                     color: Color.fromRGBO(255, 255, 255, 0.82),
                     fontSize: 15,

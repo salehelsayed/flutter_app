@@ -29,7 +29,7 @@ void main() {
   }
 
   group('LinkableText textDirection', () {
-    testWidgets('renders without textDirection (backward compat)', (
+    testWidgets('renders without textDirection for backward compat only', (
       tester,
     ) async {
       await tester.pumpWidget(wrap(const LinkableText(text: 'Hello')));

@@ -1,15 +1,41 @@
+import 'dart:ui' show TextDirection;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/message_bubble.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/scrollable_message_preview.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
+import 'package:flutter_app/shared/widgets/linkable_text.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid.dart';
 
 void main() {
   Widget wrap(Widget child) => MaterialApp(
     home: Scaffold(body: SingleChildScrollView(child: child)),
   );
+
+  bool _hasPositionedAncestor(Finder finder) {
+    final element = finder.evaluate().single;
+    var hasPositioned = false;
+    element.visitAncestorElements((ancestor) {
+      if (ancestor.widget is Positioned) {
+        hasPositioned = true;
+        return false;
+      }
+      return true;
+    });
+    return hasPositioned;
+  }
+
+  LinkableText _linkableTextWidget(WidgetTester tester, String text) {
+    final finder = find.byWidgetPredicate(
+      (widget) => widget is LinkableText && widget.text == text,
+      description: 'LinkableText("$text")',
+    );
+    expect(finder, findsOneWidget);
+    return tester.widget<LinkableText>(finder);
+  }
 
   ThreadMessage _msg(String id, {bool isUnread = true}) => ThreadMessage(
     id: id,
@@ -257,7 +283,107 @@ void main() {
         );
 
         // Should show "Sarah" as the sender label, not "FallbackName"
-        expect(find.textContaining('Sarah'), findsOneWidget);
+        expect(find.text('Sarah:'), findsOneWidget);
+        expect(find.text('Hello from Sarah'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'group bubble sender label and body preserve RTL for Arabic-first mixed script',
+      (tester) async {
+        const sender = 'ليلى Alpha';
+        const text = 'مرحبا Hello 123';
+
+        await tester.pumpWidget(
+          wrap(
+            ScrollableMessagePreview(
+              messages: [
+                ThreadMessage(
+                  id: 'm1',
+                  text: text,
+                  time: '3:00 PM',
+                  timestamp: DateTime(2026, 2, 9, 15, 0),
+                  isUnread: true,
+                  isIncoming: true,
+                  senderUsername: sender,
+                  senderPeerId: 'peer-layla',
+                ),
+              ],
+              contactPeerId: 'peer-fallback',
+              contactUsername: 'FallbackName',
+            ),
+          ),
+        );
+
+        final senderLabel = tester.widget<Text>(
+          find.byWidgetPredicate(
+            (widget) => widget is Text && widget.data == '$sender:',
+            description: 'Text("$sender:")',
+          ),
+        );
+        expect(senderLabel.textDirection, TextDirection.rtl);
+        expect(
+          _linkableTextWidget(tester, text).textDirection,
+          TextDirection.rtl,
+        );
+        expect(find.text('3:00 PM'), findsOneWidget);
+        expect(_hasPositionedAncestor(find.text('3:00 PM')), isFalse);
+      },
+    );
+
+    testWidgets(
+      'sender-side mixed Arabic/English message preserves body direction and footer time layout',
+      (tester) async {
+        const text = 'مرحبا Hello 123';
+
+        await tester.pumpWidget(
+          MaterialApp(
+            locale: const Locale('en'),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: Scaffold(
+              body: SingleChildScrollView(
+                child: ScrollableMessagePreview(
+                  messages: [
+                    ThreadMessage(
+                      id: 'out-1',
+                      text: text,
+                      time: '4:00 PM',
+                      timestamp: DateTime(2026, 2, 9, 16, 0),
+                      isUnread: false,
+                      isIncoming: false,
+                      status: 'delivered',
+                    ),
+                  ],
+                  contactPeerId: 'peer1',
+                  contactUsername: 'Alice',
+                ),
+              ),
+            ),
+          ),
+        );
+
+        final body = _linkableTextWidget(tester, text);
+        expect(body.prefixSpans, isNull);
+        expect(body.suffixSpans, isNull);
+        expect(
+          tester
+              .widget<RichText>(
+                find.descendant(
+                  of: find.byWidgetPredicate(
+                    (widget) => widget is LinkableText && widget.text == text,
+                    description: 'LinkableText("$text")',
+                  ),
+                  matching: find.byType(RichText),
+                ),
+              )
+              .textDirection,
+          TextDirection.rtl,
+        );
+        expect(find.text('You:'), findsOneWidget);
+        expect(find.text('4:00 PM'), findsOneWidget);
+        expect(find.byIcon(Icons.done_all_rounded), findsOneWidget);
+        expect(_hasPositionedAncestor(find.text('4:00 PM')), isFalse);
       },
     );
 

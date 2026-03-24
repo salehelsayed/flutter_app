@@ -174,6 +174,48 @@ void main() {
       failingPosts.dispose();
     },
   );
+
+  test('createLocalPost strips dangerous bidi controls from persisted text', () async {
+    contacts.addTestContact(_contact('peer-bob', 'Bob'));
+
+    final (result, created) = await createLocalPost(
+      postRepo: posts,
+      contactRepo: contacts,
+      senderPeerId: 'peer-alice',
+      senderUsername: 'A\u202Eli\u200Fce',
+      text: '  Hello\u202E world\u200F  ',
+      audience: PostAudience.allFriends(),
+    );
+
+    expect(result, SendPostResult.success);
+    expect(created, isNotNull);
+    expect(created!.post.authorUsername, 'Ali\u200Fce');
+    expect(created!.post.text, '  Hello world\u200F  ');
+
+    final storedPost = await posts.getPost(created.post.id);
+    expect(storedPost, isNotNull);
+    expect(storedPost!.authorUsername, 'Ali\u200Fce');
+    expect(storedPost!.text, '  Hello world\u200F  ');
+  });
+
+  test(
+    'createLocalPost rejects text-only payloads that become empty after sanitization',
+    () async {
+      contacts.addTestContact(_contact('peer-bob', 'Bob'));
+
+      final (result, created) = await createLocalPost(
+        postRepo: posts,
+        contactRepo: contacts,
+        senderPeerId: 'peer-alice',
+        senderUsername: 'Alice',
+        text: '\u202E\u202D',
+        audience: PostAudience.allFriends(),
+      );
+
+      expect(result, SendPostResult.invalidPost);
+      expect(created, isNull);
+    },
+  );
 }
 
 class _FailAfterPostSaveRepository extends InMemoryPostRepository {

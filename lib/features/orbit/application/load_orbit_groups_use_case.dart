@@ -115,9 +115,9 @@ OrbitGroup _buildOrbitGroup({
   final latestMessage = summary.latestMessage;
   return OrbitGroup(
     group: group,
-    latestMessage: latestMessage != null
-        ? '${latestMessage.senderUsername ?? 'Unknown'}: ${latestMessage.text}'
-        : null,
+    latestMessageSenderUsername: latestMessage?.senderUsername,
+    latestMessageText: latestMessage?.text,
+    latestMessage: latestMessage?.text,
     unreadCount: summary.unreadCount,
     lastActivityTimestamp: latestMessage?.timestamp ?? group.createdAt,
   );

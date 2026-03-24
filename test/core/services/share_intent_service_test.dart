@@ -219,6 +219,32 @@ void main() {
       },
     );
 
+    test(
+      '1f2: getInitialIntent preserves bidi markers and trims plugin captions while joining text items',
+      () async {
+        final service = ShareIntentService(
+          getCacheDirectory: () async => tempDir,
+          getInitialMedia: () async => [
+            SharedMediaFile(path: 'First line', type: SharedMediaType.text),
+            SharedMediaFile(
+              path: '/tmp/ios-photo.jpg',
+              type: SharedMediaType.image,
+              message: '  مرحبا\u202E Hello\u200E  ',
+            ),
+            SharedMediaFile(path: 'Second line', type: SharedMediaType.text),
+          ],
+          resetShareIntent: () {},
+        );
+
+        final intent = await service.getInitialIntent();
+
+        expect(intent, isNotNull);
+        expect(intent!.type, ShareIntentType.mixed);
+        expect(intent.text, 'First line\nمرحبا\u202E Hello\u200E\nSecond line');
+        expect(intent.filePaths, ['/tmp/ios-photo.jpg']);
+      },
+    );
+
     test('1g: ignores empty/null-like payloads from the plugin', () async {
       final controller = StreamController<List<SharedMediaFile>>();
       addTearDown(controller.close);

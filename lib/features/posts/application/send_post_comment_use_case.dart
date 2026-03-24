@@ -2,6 +2,7 @@ import 'package:uuid/uuid.dart';
 
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/posts/application/post_engagement_follow_on_support.dart';
 import 'package:flutter_app/features/posts/application/post_follow_on_delivery.dart';
@@ -85,8 +86,8 @@ createLocalPostComment({
   required String body,
   DateTime Function()? nowProvider,
 }) async {
-  final trimmedBody = body.trim();
-  if (trimmedBody.isEmpty) {
+  final sanitizedBody = sanitizeMessageText(body);
+  if (sanitizedBody.trim().isEmpty) {
     return (SendPostCommentResult.invalidComment, null);
   }
   if (!p2pService.currentState.isStarted) {
@@ -116,7 +117,7 @@ createLocalPostComment({
     postId: postId,
     senderPeerId: senderPeerId,
     authorUsername: senderUsername,
-    body: trimmedBody,
+    body: sanitizedBody,
     commentedAt: commentedAt,
     isIncoming: false,
   );
@@ -127,7 +128,7 @@ createLocalPostComment({
     senderPeerId: senderPeerId,
     commentId: comment.id,
     postId: postId,
-    body: trimmedBody,
+    body: sanitizedBody,
     commentedAt: commentedAt,
   ).toJson();
   await postRepo.saveComment(comment);

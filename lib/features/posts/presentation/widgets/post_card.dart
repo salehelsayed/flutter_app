@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
+import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/core/utils/ring_avatar_generator.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
@@ -208,6 +209,7 @@ class PostCard extends StatelessWidget {
                     fontSize: 15,
                     height: 1.55,
                   ),
+                  textDirection: detectTextDirection(post.text),
                 ),
               if (hasMediaSkeleton) ...[
                 const SizedBox(height: 14),

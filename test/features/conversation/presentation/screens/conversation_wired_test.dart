@@ -9,6 +9,7 @@ import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_picker.dart';
 import 'package:flutter_app/core/media/video_process_result.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
+import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
@@ -477,6 +478,89 @@ void main() {
       final textField = tester.widget<TextField>(find.byType(TextField));
       expect(textField.controller?.text, 'Shared hello');
     });
+
+    testWidgets(
+      'sanitized optimistic text stays consistent before and after persistence',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        final sendGate = Completer<void>();
+        String? capturedText;
+        String? capturedMessageId;
+
+        Future<(SendChatMessageResult, ConversationMessage?)> sendFn({
+          required P2PService p2pService,
+          required MessageRepository messageRepo,
+          required String targetPeerId,
+          required String text,
+          required String senderPeerId,
+          required String senderUsername,
+          String? messageId,
+          String? timestamp,
+          Bridge? bridge,
+          String? recipientMlKemPublicKey,
+          String? quotedMessageId,
+          List<MediaAttachment>? mediaAttachments,
+          MediaAttachmentRepository? mediaAttachmentRepo,
+        }) async {
+          capturedText = text;
+          capturedMessageId = messageId;
+          await sendGate.future;
+
+          final delivered = ConversationMessage(
+            id: messageId!,
+            contactPeerId: targetPeerId,
+            senderPeerId: senderPeerId,
+            text: text,
+            timestamp: timestamp!,
+            status: 'delivered',
+            isIncoming: false,
+            createdAt: timestamp,
+          );
+          await messageRepo.saveMessage(delivered);
+          return (SendChatMessageResult.success, delivered);
+        }
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: sendFn,
+        );
+
+        const rawText = 'مرحبا\u202E Hello\u200E 123';
+        final sanitizedText = sanitizeMessageText(rawText);
+
+        await tester.enterText(find.byType(TextField), rawText);
+        await tester.pump(const Duration(milliseconds: 300));
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await tester.pump();
+
+        expect(capturedText, sanitizedText);
+        expect(find.text(rawText), findsNothing);
+        expect(find.text(sanitizedText), findsOneWidget);
+        expect(messageRepo.store, hasLength(1));
+        expect(messageRepo.store.values.single.text, sanitizedText);
+        expect(messageRepo.store.values.single.status, 'sending');
+
+        sendGate.complete();
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 50));
+
+        expect(capturedMessageId, isNotNull);
+        expect(find.text(rawText), findsNothing);
+        expect(find.text(sanitizedText), findsOneWidget);
+        expect(messageRepo.store, hasLength(1));
+        expect(messageRepo.store.values.single.text, sanitizedText);
+        expect(messageRepo.store.values.single.status, 'delivered');
+      },
+    );
 
     testWidgets('shows both initialText and initialAttachments together', (
       tester,

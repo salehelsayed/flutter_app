@@ -25,6 +25,7 @@ import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/feed/presentation/screens/feed_wired.dart';
+import 'package:flutter_app/features/identity/application/recover_identity_from_secure_store_use_case.dart';
 import 'package:flutter_app/features/identity/application/startup_decision.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
@@ -207,10 +208,29 @@ class _StartupRouterState extends State<StartupRouter> {
     try {
       _setStartupStage(startupStageCheckingIdentity);
 
-      final decision = await decideStartupRoute(
+      var decision = await decideStartupRoute(
         identityRepo: widget.repository,
         contactRepo: widget.contactRepository,
       );
+
+      if (decision == StartupDecision.needsIdentity) {
+        final recoveryResult = await recoverIdentityFromSecureStore(
+          secureKeyStore: widget.secureKeyStore,
+          repo: widget.repository,
+          callRestore: (mnemonic) =>
+              callIdentityRestore(widget.bridge, mnemonic),
+          callMlKemKeygen: () => callMlKemKeygen(widget.bridge),
+        );
+
+        if (!mounted) return;
+
+        if (recoveryResult == SecureStoreIdentityRecoveryResult.restored) {
+          decision = await decideStartupRoute(
+            identityRepo: widget.repository,
+            contactRepo: widget.contactRepository,
+          );
+        }
+      }
 
       if (!mounted) return;
 

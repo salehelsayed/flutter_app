@@ -1,3 +1,4 @@
+import 'dart:ui' show TextDirection;
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -7,9 +8,11 @@ import 'package:flutter_app/features/conversation/domain/models/media_attachment
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
 import 'package:flutter_app/features/feed/domain/models/session_reply.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/collapsed_mode_card_body.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/open_mode_card_body.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/scrollable_message_preview.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
+import 'package:flutter_app/shared/widgets/linkable_text.dart';
 
 /// Minimal valid 1x1 red PNG (67 bytes).
 final Uint8List _tinyPng = Uint8List.fromList([
@@ -31,6 +34,50 @@ void main() {
     supportedLocales: AppLocalizations.supportedLocales,
     home: Scaffold(body: SingleChildScrollView(child: child)),
   );
+
+  ThreadFeedItem previewThread({
+    required String text,
+    required bool isIncoming,
+    ConversationState state = ConversationState.read,
+  }) {
+    return ThreadFeedItem(
+      id: 'thread_preview',
+      timestamp: DateTime(2026, 2, 9, 15, 0),
+      contactPeerId: 'peer1',
+      contactUsername: 'Alice',
+      messages: [
+        ThreadMessage(
+          id: 'm1',
+          text: text,
+          time: '3:00 PM',
+          timestamp: DateTime(2026, 2, 9, 15, 0),
+          isIncoming: isIncoming,
+        ),
+      ],
+      conversationState: state,
+      lastRepliedAt: state == ConversationState.replied
+          ? DateTime(2026, 2, 9, 15, 1)
+          : null,
+    );
+  }
+
+  Text previewTextWidget(WidgetTester tester, String text) {
+    final finder = find.byWidgetPredicate(
+      (widget) => widget is Text && widget.data == text,
+      description: 'Text("$text")',
+    );
+    expect(finder, findsOneWidget);
+    return tester.widget<Text>(finder);
+  }
+
+  LinkableText linkableTextWidget(WidgetTester tester, String text) {
+    final finder = find.byWidgetPredicate(
+      (widget) => widget is LinkableText && widget.text == text,
+      description: 'LinkableText("$text")',
+    );
+    expect(finder, findsOneWidget);
+    return tester.widget<LinkableText>(finder);
+  }
 
   group('CollapsedModeCardBody', () {
     testWidgets('replied state shows reply indicator', (tester) async {
@@ -253,6 +300,92 @@ void main() {
         ),
       );
       expect(find.text('Tap to expand'), findsOneWidget);
+    });
+
+    testWidgets('session reply preview uses RTL for Arabic-first mixed text', (
+      tester,
+    ) async {
+      const replyText = 'مرحبا Hello 123';
+
+      await tester.pumpWidget(
+        wrap(
+          CollapsedModeCardBody(
+            thread: previewThread(text: 'Earlier message', isIncoming: true),
+            sessionReply: SessionReply(
+              text: replyText,
+              time: DateTime(2026, 2, 9, 15, 2),
+            ),
+          ),
+        ),
+      );
+
+      expect(
+        previewTextWidget(tester, replyText).textDirection,
+        TextDirection.rtl,
+      );
+    });
+
+    testWidgets(
+      'replied collapsed preview uses RTL for latest outgoing Arabic-first mixed text',
+      (tester) async {
+        const previewText = 'مرحبا Hello 123';
+
+        await tester.pumpWidget(
+          wrap(
+            CollapsedModeCardBody(
+              thread: previewThread(
+                text: previewText,
+                isIncoming: false,
+                state: ConversationState.replied,
+              ),
+            ),
+          ),
+        );
+
+        expect(
+          previewTextWidget(tester, previewText).textDirection,
+          TextDirection.rtl,
+        );
+      },
+    );
+
+    testWidgets(
+      'read collapsed preview uses RTL for latest incoming Arabic-first mixed text',
+      (tester) async {
+        const previewText = 'مرحبا Hello 123';
+
+        await tester.pumpWidget(
+          wrap(
+            CollapsedModeCardBody(
+              thread: previewThread(text: previewText, isIncoming: true),
+            ),
+          ),
+        );
+
+        expect(
+          previewTextWidget(tester, previewText).textDirection,
+          TextDirection.rtl,
+        );
+      },
+    );
+
+    testWidgets('collapsed preview stays LTR for English-first mixed text', (
+      tester,
+    ) async {
+      const previewText = 'Hello مرحبا 123';
+
+      await tester.pumpWidget(
+        wrap(
+          CollapsedModeCardBody(
+            thread: previewThread(text: previewText, isIncoming: true),
+          ),
+        ),
+      );
+
+      expect(
+        previewTextWidget(tester, previewText).textDirection,
+        TextDirection.ltr,
+      );
     });
   });
 
@@ -835,5 +968,52 @@ void main() {
       // "Photo" label should show
       expect(find.text('Photo'), findsOneWidget);
     });
+
+    testWidgets(
+      'collapsed preview matches open preview direction for Arabic-first mixed text',
+      (tester) async {
+        const previewText = 'مرحبا Hello 123';
+
+        final collapsedThread = previewThread(
+          text: previewText,
+          isIncoming: true,
+        );
+        final openThread = ThreadFeedItem(
+          id: 'thread_open',
+          timestamp: DateTime(2026, 2, 9, 15, 0),
+          contactPeerId: 'peer1',
+          contactUsername: 'Alice',
+          messages: [
+            ThreadMessage(
+              id: 'm1',
+              text: previewText,
+              time: '3:00 PM',
+              timestamp: DateTime(2026, 2, 9, 15, 0),
+              isUnread: true,
+              isIncoming: true,
+            ),
+          ],
+          unreadCount: 1,
+          conversationState: ConversationState.unread,
+        );
+
+        await tester.pumpWidget(
+          wrap(CollapsedModeCardBody(thread: collapsedThread)),
+        );
+        final collapsedDirection = previewTextWidget(
+          tester,
+          previewText,
+        ).textDirection;
+
+        await tester.pumpWidget(wrap(OpenModeCardBody(thread: openThread)));
+        final openDirection = linkableTextWidget(
+          tester,
+          previewText,
+        ).textDirection;
+
+        expect(openDirection, collapsedDirection);
+        expect(openDirection, TextDirection.rtl);
+      },
+    );
   });
 }

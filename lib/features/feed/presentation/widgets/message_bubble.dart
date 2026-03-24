@@ -212,77 +212,64 @@ class MessageBubble extends StatelessWidget {
           : const Color.fromRGBO(255, 255, 255, 0.80),
       height: 1.5,
     );
-    const timeStyle = TextStyle(
-      fontSize: 11,
-      fontWeight: FontWeight.w400,
-      color: Color.fromRGBO(255, 255, 255, 0.35),
-    );
-
+    final hasBody = text.isNotEmpty;
+    final hasName = name.isNotEmpty;
     final hasStatus = !isIncoming && status != null;
-    // Reserve space for timestamp (+ optional ticks) at end of text
-    final trailingWidth = hasStatus ? 90.0 : 72.0;
-
-    final trailingSpacer = WidgetSpan(
-      child: SizedBox(width: trailingWidth, height: 1),
-    );
-
-    final trailingWidget = Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(time, style: timeStyle),
-        if (hasStatus) ...[
-          const SizedBox(width: 4),
-          Semantics(
-            label: 'Message status: ${_statusSemantic(status!)}',
-            child: Icon(
-              _statusIcon(status!),
-              size: 14,
-              color: _statusColor(status!),
-            ),
-          ),
-        ],
-      ],
-    );
 
     final hasReactions = reactions.isNotEmpty && ownPeerId != null;
-
-    Widget textWidget;
-    if (text.isNotEmpty) {
-      textWidget = LinkableText(
-        text: text,
-        textDirection: detectTextDirection(text),
-        style: bodyStyle,
-        prefixSpans: name.isNotEmpty
-            ? [TextSpan(text: '$name: ', style: nameStyle)]
-            : null,
-        suffixSpans: [trailingSpacer],
-      );
-    } else if (name.isNotEmpty) {
-      textWidget = Padding(
-        padding: EdgeInsets.only(right: trailingWidth),
-        child: Text(name, style: nameStyle),
-      );
-    } else {
-      textWidget = SizedBox(width: trailingWidth, height: 18);
-    }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Stack(
+        if (hasName)
+          Text(
+            '$name:',
+            textDirection: detectTextDirection(name),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: nameStyle,
+          ),
+        if (hasName && hasBody) const SizedBox(height: 2),
+        if (hasBody)
+          LinkableText(
+            text: text,
+            textDirection: detectTextDirection(text),
+            style: bodyStyle,
+          ),
+        if (hasName || hasBody) const SizedBox(height: 8),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
           children: [
-            textWidget,
-            Positioned(right: 0, bottom: 0, child: trailingWidget),
+            Expanded(
+              child: hasReactions
+                  ? Wrap(
+                      spacing: 6,
+                      runSpacing: 4,
+                      children: _buildReactionChipWidgets(),
+                    )
+                  : const SizedBox.shrink(),
+            ),
+            Text(
+              time,
+              style: const TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w400,
+                color: Color.fromRGBO(255, 255, 255, 0.35),
+              ),
+            ),
+            if (hasStatus) ...[
+              const SizedBox(width: 4),
+              Semantics(
+                label: 'Message status: ${_statusSemantic(status!)}',
+                child: Icon(
+                  _statusIcon(status!),
+                  size: 14,
+                  color: _statusColor(status!),
+                ),
+              ),
+            ],
           ],
         ),
-        if (hasReactions) ...[
-          const SizedBox(height: 4),
-          Wrap(
-            spacing: 6,
-            runSpacing: 4,
-            children: _buildReactionChipWidgets(),
-          ),
-        ],
       ],
     );
   }

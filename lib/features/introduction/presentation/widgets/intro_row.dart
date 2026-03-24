@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 
@@ -34,6 +35,12 @@ class IntroRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final introducerUsername = introduction.introducerUsername ?? 'someone';
+    const attributionStyle = TextStyle(
+      fontSize: 12,
+      color: Color(0x66FFFFFF),
+    );
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
@@ -54,6 +61,7 @@ class IntroRow extends StatelessWidget {
               children: [
                 Text(
                   displayUsername,
+                  textDirection: detectTextDirection(displayUsername),
                   style: const TextStyle(
                     fontSize: 15,
                     fontWeight: FontWeight.w600,
@@ -62,13 +70,22 @@ class IntroRow extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                 ),
                 const SizedBox(height: 2),
-                Text(
-                  'Introduced by ${introduction.introducerUsername ?? 'someone'}',
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: Color(0x66FFFFFF),
-                  ),
-                  overflow: TextOverflow.ellipsis,
+                Row(
+                  children: [
+                    const Text(
+                      'Introduced by',
+                      style: attributionStyle,
+                    ),
+                    const SizedBox(width: 4),
+                    Expanded(
+                      child: Text(
+                        introducerUsername,
+                        textDirection: detectTextDirection(introducerUsername),
+                        style: attributionStyle,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),

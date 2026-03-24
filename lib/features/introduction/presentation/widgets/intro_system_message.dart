@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/utils/text_direction_utils.dart';
 
 /// System message widget for introduction events in conversations.
 ///
@@ -27,6 +28,7 @@ class IntroSystemMessage extends StatelessWidget {
         ),
         child: Text(
           text,
+          textDirection: detectTextDirection(text),
           style: const TextStyle(
             fontSize: 12,
             fontWeight: FontWeight.w400,
