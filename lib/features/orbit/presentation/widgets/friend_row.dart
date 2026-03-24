@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/features/feed/domain/utils/format_message_time.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/unread_count_badge.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
@@ -24,6 +25,9 @@ class FriendRow extends StatelessWidget {
     final relativeTime = friend.lastMessageTimestamp != null
         ? formatRelativeTime(friend.lastMessageTimestamp!)
         : '';
+    final lastActivityDirection = friend.lastActivity != null
+        ? detectTextDirection(friend.lastActivity!)
+        : TextDirection.ltr;
 
     return GestureDetector(
       onTap: onTap,
@@ -88,6 +92,7 @@ class FriendRow extends StatelessWidget {
                     const SizedBox(height: 2),
                     Text(
                       friend.lastActivity!,
+                      textDirection: lastActivityDirection,
                       style: const TextStyle(
                         fontSize: 12,
                         color: Color(0x99FFFFFF), // rgba(255,255,255,0.6)

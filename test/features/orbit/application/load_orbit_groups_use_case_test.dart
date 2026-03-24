@@ -121,7 +121,9 @@ void main() {
       );
 
       expect(result.length, 1);
-      expect(result[0].latestMessage, 'Bob: Hello group');
+      expect(result[0].latestMessageSenderUsername, 'Bob');
+      expect(result[0].latestMessageText, 'Hello group');
+      expect(result[0].latestMessage, 'Hello group');
       expect(msgRepo.getGroupThreadSummariesCallCount, 1);
     });
 
@@ -255,7 +257,9 @@ void main() {
 
       expect(result, isNotNull);
       expect(result!.groupId, 'g-1');
-      expect(result.latestMessage, 'Bob: Hello group');
+      expect(result.latestMessageSenderUsername, 'Bob');
+      expect(result.latestMessageText, 'Hello group');
+      expect(result.latestMessage, 'Hello group');
       expect(result.unreadCount, 1);
       expect(msgRepo.getGroupThreadSummaryCallCount, 1);
     });

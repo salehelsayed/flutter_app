@@ -55,6 +55,46 @@ void main() {
     });
 
     test(
+      'preserves mixed-script sender and body when forwarding notification text',
+      () async {
+        const sender = '\u0644\u064a\u0644\u0649 Alpha';
+        const body = '\u0645\u0631\u062d\u0628\u0627 Team 42';
+
+        await maybeShowNotification(
+          notificationService: notificationService,
+          conversationTracker: tracker,
+          getAppLifecycleState: () => AppLifecycleState.paused,
+          contactPeerId: 'peer-123',
+          senderUsername: sender,
+          messageText: body,
+        );
+
+        expect(notificationService.shown, hasLength(1));
+        expect(notificationService.shown.first.senderUsername, sender);
+        expect(notificationService.shown.first.messageText, body);
+      },
+    );
+
+    test(
+      'preserves bidi control marks in mixed-script body passthrough',
+      () async {
+        const body = '\u200f\u0645\u0631\u062d\u0628\u0627 Alpha\u200f';
+
+        await maybeShowNotification(
+          notificationService: notificationService,
+          conversationTracker: tracker,
+          getAppLifecycleState: () => AppLifecycleState.paused,
+          contactPeerId: 'peer-123',
+          senderUsername: 'Alice',
+          messageText: body,
+        );
+
+        expect(notificationService.shown, hasLength(1));
+        expect(notificationService.shown.first.messageText, body);
+      },
+    );
+
+    test(
       'shows notification when app is resumed but on different screen',
       () async {
         // Not viewing any conversation

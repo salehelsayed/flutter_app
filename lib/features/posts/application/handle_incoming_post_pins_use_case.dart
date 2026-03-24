@@ -1,4 +1,5 @@
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
@@ -96,8 +97,8 @@ handleIncomingPostPinUpdate({
     snapshotMedia: envelope.snapshot.media,
   );
   final updatedPost = parent.copyWith(
-    authorUsername: envelope.snapshot.authorUsername,
-    text: envelope.snapshot.text,
+    authorUsername: sanitizeUsername(envelope.snapshot.authorUsername),
+    text: sanitizeMessageText(envelope.snapshot.text).trim(),
     audience: envelope.snapshot.audience,
     expiresAt: envelope.snapshot.expiresAt,
     keepAvailable: envelope.snapshot.keepAvailable,

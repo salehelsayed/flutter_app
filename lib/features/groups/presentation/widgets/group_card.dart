@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_type_badge.dart';
 
@@ -7,6 +8,8 @@ import 'package:flutter_app/features/groups/presentation/widgets/group_type_badg
 /// unread count, and timestamp.
 class GroupCard extends StatelessWidget {
   final GroupModel group;
+  final String? lastMessageSender;
+  final String? lastMessageBody;
   final String? lastMessagePreview;
   final String? lastMessageTime;
   final int unreadCount;
@@ -15,6 +18,8 @@ class GroupCard extends StatelessWidget {
   const GroupCard({
     super.key,
     required this.group,
+    this.lastMessageSender,
+    this.lastMessageBody,
     this.lastMessagePreview,
     this.lastMessageTime,
     this.unreadCount = 0,
@@ -105,17 +110,7 @@ class GroupCard extends StatelessWidget {
                   // Bottom row: preview + unread
                   Row(
                     children: [
-                      Expanded(
-                        child: Text(
-                          lastMessagePreview ?? 'No messages yet',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: Colors.white.withOpacity(0.45),
-                          ),
-                        ),
-                      ),
+                      Expanded(child: _buildPreviewText()),
                       if (unreadCount > 0) ...[
                         const SizedBox(width: 8),
                         Container(
@@ -145,6 +140,49 @@ class GroupCard extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildPreviewText() {
+    final sender = lastMessageSender;
+    final body = lastMessageBody;
+
+    if (sender != null || body != null) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (sender != null)
+            Text(
+              sender,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: Colors.white.withOpacity(0.6),
+              ),
+              textDirection: detectTextDirection(sender),
+            ),
+          if (body != null)
+            Text(
+              body,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 13,
+                color: Colors.white.withOpacity(0.45),
+              ),
+              textDirection: detectTextDirection(body),
+            ),
+        ],
+      );
+    }
+
+    return Text(
+      lastMessagePreview ?? 'No messages yet',
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: TextStyle(fontSize: 13, color: Colors.white.withOpacity(0.45)),
     );
   }
 

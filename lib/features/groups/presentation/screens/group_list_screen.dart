@@ -116,10 +116,13 @@ class GroupListScreen extends StatelessWidget {
 
         return GroupCard(
           group: group,
-          lastMessagePreview: lastMsg != null
-              ? '${lastMsg.senderUsername ?? 'Unknown'}: ${lastMsg.text}'
+          lastMessageSender: lastMsg != null
+              ? lastMsg.senderUsername ?? 'Unknown'
               : null,
-          lastMessageTime: lastMsg != null ? _formatTime(lastMsg.timestamp) : null,
+          lastMessageBody: lastMsg != null ? lastMsg.text : null,
+          lastMessageTime: lastMsg != null
+              ? _formatTime(lastMsg.timestamp)
+              : null,
           unreadCount: unread,
           onTap: () => onGroupTap(group),
         );

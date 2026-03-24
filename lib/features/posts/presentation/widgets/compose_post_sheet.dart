@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/media/amplitude_buffer.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
@@ -68,6 +69,7 @@ class ComposePostSheet extends StatefulWidget {
 
 class _ComposePostSheetState extends State<ComposePostSheet> {
   final TextEditingController _textController = TextEditingController();
+  TextDirection _inputDirection = TextDirection.ltr;
   PostAudienceKind _audienceKind = PostAudienceKind.allFriends;
   int _nearbyRadiusM = 1000;
   final Set<String> _selectedPeerIds = <String>{};
@@ -88,6 +90,7 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
   @override
   void initState() {
     super.initState();
+    _textController.addListener(_updateInputDirection);
     _nearbyAvailability = widget.nearbyAvailability;
   }
 
@@ -161,6 +164,7 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
 
   @override
   void dispose() {
+    _textController.removeListener(_updateInputDirection);
     _cancelRecorderSubscriptions();
     if (_recordingState.isActive) {
       unawaited(widget.audioRecorderService?.cancel());
@@ -367,6 +371,13 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
     setState(() => _mediaDrafts = const <PostMediaDraft>[]);
   }
 
+  void _updateInputDirection() {
+    final nextDirection = detectTextDirection(_textController.text);
+    if (nextDirection != _inputDirection) {
+      setState(() => _inputDirection = nextDirection);
+    }
+  }
+
   Future<void> _refreshNearby() async {
     if (widget.onRefreshNearby == null || _isRefreshingNearby) {
       return;
@@ -478,6 +489,7 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                   const SizedBox(height: 16),
                   TextField(
                     controller: _textController,
+                    textDirection: _inputDirection,
                     maxLines: 5,
                     minLines: 4,
                     onChanged: (_) => setState(() {}),

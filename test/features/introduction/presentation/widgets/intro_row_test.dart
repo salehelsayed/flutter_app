@@ -6,6 +6,10 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   final now = DateTime.now().toUtc().toIso8601String();
 
+  Text _textWidget(WidgetTester tester, String text) {
+    return tester.widget<Text>(find.text(text));
+  }
+
   IntroductionModel _makeIntro({
     IntroductionOverallStatus status = IntroductionOverallStatus.pending,
     String introducerUsername = 'Alice',
@@ -25,6 +29,7 @@ void main() {
   Widget buildWidget({
     required IntroductionModel introduction,
     required bool showActions,
+    String? displayUsername,
     VoidCallback? onAccept,
     VoidCallback? onPass,
   }) {
@@ -32,7 +37,9 @@ void main() {
       home: Scaffold(
         body: IntroRow(
           introduction: introduction,
-          displayUsername: introduction.introducedUsername ?? 'Unknown',
+          displayUsername: displayUsername ??
+              introduction.introducedUsername ??
+              'Unknown',
           displayPeerId: introduction.introducedId,
           showActions: showActions,
           onAccept: onAccept,
@@ -89,7 +96,72 @@ void main() {
         onPass: () {},
       ));
 
-      expect(find.text('Introduced by Alice'), findsOneWidget);
+      expect(find.text('Introduced by'), findsOneWidget);
+      expect(find.text('Alice'), findsOneWidget);
+    });
+
+    testWidgets('displayUsername uses RTL for Arabic-first mixed text',
+        (tester) async {
+      const username = 'ليلى Alpha';
+      await tester.pumpWidget(buildWidget(
+        introduction: _makeIntro(),
+        displayUsername: username,
+        showActions: true,
+        onAccept: () {},
+        onPass: () {},
+      ));
+
+      expect(_textWidget(tester, username).textDirection, TextDirection.rtl);
+    });
+
+    testWidgets('displayUsername uses LTR for English-first mixed text',
+        (tester) async {
+      const username = 'Alpha ليلى';
+      await tester.pumpWidget(buildWidget(
+        introduction: _makeIntro(),
+        displayUsername: username,
+        showActions: true,
+        onAccept: () {},
+        onPass: () {},
+      ));
+
+      expect(_textWidget(tester, username).textDirection, TextDirection.ltr);
+    });
+
+    testWidgets('introducer attribution keeps Arabic-first username explicit',
+        (tester) async {
+      const introducer = 'ليلى Alpha';
+
+      await tester.pumpWidget(buildWidget(
+        introduction: _makeIntro(introducerUsername: introducer),
+        showActions: true,
+        onAccept: () {},
+        onPass: () {},
+      ));
+
+      expect(_textWidget(tester, introducer).textDirection, TextDirection.rtl);
+      expect(
+        tester.getTopLeft(find.text('Introduced by')).dx,
+        lessThan(tester.getTopLeft(find.text(introducer)).dx),
+      );
+    });
+
+    testWidgets('introducer attribution keeps English-first username explicit',
+        (tester) async {
+      const introducer = 'Alpha ليلى';
+
+      await tester.pumpWidget(buildWidget(
+        introduction: _makeIntro(introducerUsername: introducer),
+        showActions: true,
+        onAccept: () {},
+        onPass: () {},
+      ));
+
+      expect(_textWidget(tester, introducer).textDirection, TextDirection.ltr);
+      expect(
+        tester.getTopLeft(find.text('Introduced by')).dx,
+        lessThan(tester.getTopLeft(find.text(introducer)).dx),
+      );
     });
   });
 }

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:ui' show TextDirection;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -26,6 +27,7 @@ import 'package:flutter_app/features/feed/presentation/screens/feed_wired.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/feed_card.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/inline_reply_input.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/message_bubble.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/quote_preview_bar.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bubble.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
@@ -2234,7 +2236,13 @@ void main() {
         await tester.pump();
 
         expect(find.text('Replying to'), findsOneWidget);
-        expect(find.text('Quote this one'), findsOneWidget);
+        expect(
+          find.descendant(
+            of: find.byType(QuotePreviewBar),
+            matching: find.text('Quote this one'),
+          ),
+          findsOneWidget,
+        );
 
         await tester.enterText(
           find.byType(TextField).first,
@@ -2490,7 +2498,8 @@ void main() {
       expect(find.text('Hey from Bob'), findsWidgets);
 
       // Type and send
-      await tester.enterText(find.byType(TextField).first, 'Fail reply');
+      const draftText = 'مرحبا Hello 123';
+      await tester.enterText(find.byType(TextField).first, draftText);
       await tester.pump();
       final sendButton = find.byIcon(Icons.arrow_upward_rounded).first;
       await tester.ensureVisible(sendButton);
@@ -2514,7 +2523,11 @@ void main() {
       expect(find.text('Hey from Bob'), findsWidgets);
       expect(
         tester.widget<TextField>(find.byType(TextField).first).controller?.text,
-        'Fail reply',
+        draftText,
+      );
+      expect(
+        tester.widget<TextField>(find.byType(TextField).first).textDirection,
+        TextDirection.rtl,
       );
     });
 

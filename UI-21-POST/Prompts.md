@@ -2000,7 +2000,7 @@ Use $libp2p-phase-orchestrator in auto-advance mode. If unavailable, follow the 
   =================================
 
 
-  Use `$libp2p-phase-orchestrator` in `auto-advance` mode. If unavailable, follow the same controller
+Use `$libp2p-phase-orchestrator` in `auto-advance` mode. If unavailable, follow the same controller
   workflow manually with fresh isolated implementer/reviewer/fixer agents per phase and parallel
   implementers only for disjoint within-phase slices.
 
@@ -2064,33 +2064,59 @@ Use $libp2p-phase-orchestrator in auto-advance mode. If unavailable, follow the 
   Parallelism guidance
   - Likely parallelizable when file ownership stays disjoint: `Phase 0`, `Phase 5`, `Phase 6`, `Phase
   7`, `Phase 8`, and `Phase 10`.
-  - Likely better as single-implementer phases because edits converge tightly: `Phase 3`, `Phase 4`, and
-  `Phase 11`.
-  - Do not force parallelism if the current phase depends on a shared helper refactor or the same test
-  fixture.
+  - Likely better as single-implementer phases because edits converge tightly: `Phase 3`, `Phase 4`,
+  `Phase 9`, and `Phase 11`.
+  - Do not force parallelism if the current phase depends on a shared helper refactor, the same test
+  fixture, or a model/API shape change that fans out widely.
 
   Implementation requirements
   - Follow strict `RED -> GREEN -> REFACTOR` for every production phase.
   - Record the exact failing tests or commands observed before production edits.
   - Implement only the current phase, plus the minimum compatibility changes required to compile.
   - Add or update only the tests required by the current phase.
-  - Use the plan’s dedicated BiDi test files as the main entry point instead of the known noisy baseline
-  in `test/features/feed/presentation/widgets/collapsed_mode_card_body_test.dart`.
+  - Respect the plan’s current-tree notes. Do not assume the repo still matches the older baseline.
+  - In Phase 0, use the current stable suites first. Do not create fresh `*_bidi_test.dart` files by
+  default if the existing file is already the stable harness.
+  - Do not treat `test/features/feed/presentation/widgets/collapsed_mode_card_body_test.dart` as a noisy
+  red baseline. In the current tree it is a valid Phase 1 entry point.
+  - In Phase 3, update the existing `message_bubble_test.dart` assertions that lock in timestamp-
+  in-`Stack`; do not try to bypass them only by adding a separate test file.
+  - In Phase 4, treat draft rehydration, send-failure restore, session-reply clear behavior, and admin
+  announcement flow as already implemented baselines; add direction/parity coverage on top of those
+  behaviors.
+  - In Phase 7, use the live post-comment test files under `test/features/posts/phase2/`, not the older
+  `phase1` paths.
+  - In Phase 9, extend `share_target_picker_screen_test.dart` and `share_intent_service_test.dart`
+  first; do not invent a new screen harness unless the existing one becomes too noisy.
+  - In Phase 10, use `lib/features/push/application/show_notification_use_case.dart` as the push source
+  of truth. Notification passthrough means preserving mixed-script content except the current trim-to-
+  null normalization already present in code.
+  - In Phase 11, keep scope on helper/policy alignment and the `LinkableText` user-content rule. Do not
+  re-own earlier UI phase acceptance work inside Phase 11.
   - Preserve the plan’s explicit policy decision points, especially share-boundary sanitization and
   cross-domain helper usage.
   - Do not rely on ambient text direction for user content unless the current phase explicitly proves
   that exception is intentional.
+
+  Environment caveat
+  - If `test/features/feed/integration/expanded_collapsed_card_test.dart` or `test/features/feed/
+  integration/feed_card_flow_test.dart` fail before executing tests because of a Flutter native-assets/
+  Xcode `lipo` issue under `build/native_assets/macos`, record that as a machine-specific environment
+  blocker, not as a product failure. Continue with the widget/unit acceptance evidence for the phase.
 
   Acceptance rules
   - Accept a phase only if the required behavior is implemented, the required tests are green, the
   reviewer returns `PASS`, and there is no later-phase scope leakage.
   - If the reviewer returns `NEEDS WORK` or `FAIL`, run a focused fixer agent only on the reviewer’s
   blocking gap ledger, then re-review before advancing.
+  - Require the reviewer to call out whether the phase used the correct current-tree test files and
+  whether any stale plan assumption was corrected during implementation.
 
   Deliverables per accepted phase
   - Acceptance note
   - Files changed
   - Tests added or updated
+  - Which existing suites were extended vs which new dedicated BiDi files were added
   - RED evidence
   - GREEN verification
   - Residual risks or deferrals

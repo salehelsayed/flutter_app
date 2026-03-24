@@ -122,6 +122,40 @@ void main() {
     },
   );
 
+  test(
+    'editPinnedPost strips dangerous bidi controls from updated text',
+    () async {
+      await seedSentPost(keepAvailable: true);
+      await pinPost(
+        p2pService: authorService,
+        postRepo: posts,
+        postId: 'post-1',
+        senderPeerId: 'peer-bob',
+      );
+      final received = receiverService.messageStream.first;
+
+      final (result, pinState) = await editPinnedPost(
+        p2pService: authorService,
+        postRepo: posts,
+        postId: 'post-1',
+        senderPeerId: 'peer-bob',
+        text: '  Fresh \u202Eblankets\u200F available  ',
+      );
+
+      expect(result, EditPinnedPostResult.success);
+      expect(pinState, isNotNull);
+
+      final message = await received.timeout(const Duration(seconds: 1));
+      final envelope = PostPinUpdateEnvelope.fromJson(message.content);
+      final updatedPost = await posts.getPost('post-1');
+
+      expect(envelope, isNotNull);
+      expect(envelope!.snapshot.text, '  Fresh blankets\u200F available  ');
+      expect(updatedPost, isNotNull);
+      expect(updatedPost!.text, '  Fresh blankets\u200F available  ');
+    },
+  );
+
   test('removes an active pin locally and sends post_pin_remove', () async {
     await seedSentPost(keepAvailable: true);
     await pinPost(

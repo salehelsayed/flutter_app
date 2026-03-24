@@ -1,4 +1,5 @@
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/posts/application/post_repost_engagement_support.dart';
@@ -83,13 +84,14 @@ handleIncomingPostComment({
     createdAt: envelope.commentedAt,
   );
   final authorUsername = sender?.username ?? envelope.senderPeerId;
+  final sanitizedBody = sanitizeMessageText(envelope.body);
   final comment = PostCommentModel(
     id: envelope.commentId,
     eventId: envelope.eventId,
     postId: envelope.postId,
     senderPeerId: envelope.senderPeerId,
     authorUsername: authorUsername,
-    body: envelope.body,
+    body: sanitizedBody,
     commentedAt: envelope.commentedAt,
   );
   await postRepo.saveComment(comment);

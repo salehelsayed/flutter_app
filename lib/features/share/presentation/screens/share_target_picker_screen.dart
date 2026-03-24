@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 
+import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -163,6 +164,7 @@ class _ShareTargetPickerScreenState extends State<ShareTargetPickerScreen> {
                 widget.sharedText!,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
+                textDirection: detectTextDirection(widget.sharedText!),
                 style: const TextStyle(color: Colors.white70, fontSize: 13),
               ),
             ),

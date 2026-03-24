@@ -6,12 +6,16 @@ import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 /// sorted by last activity.
 class OrbitGroup {
   final GroupModel group;
+  final String? latestMessageSenderUsername;
+  final String? latestMessageText;
   final String? latestMessage;
   final int unreadCount;
   final DateTime? lastActivityTimestamp;
 
   const OrbitGroup({
     required this.group,
+    this.latestMessageSenderUsername,
+    this.latestMessageText,
     this.latestMessage,
     this.unreadCount = 0,
     this.lastActivityTimestamp,

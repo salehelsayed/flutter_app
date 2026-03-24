@@ -6,6 +6,7 @@ import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/posts/application/attach_post_media_use_case.dart';
 import 'package:flutter_app/features/posts/application/nearby_eligibility_service.dart';
@@ -42,13 +43,15 @@ Future<(SendPostResult, PostModel?)> sendPost({
   ContactPresenceSnapshotRepository? contactPresenceSnapshotRepository,
   PostsPrivacySettingsRepository? postsPrivacySettingsRepository,
 }) async {
+  final normalizedText = _normalizePostText(text);
+
   emitFlowEvent(
     layer: 'FL',
     event: 'POST_SEND_START',
     details: {'audienceKind': audience.kind.toWireValue()},
   );
 
-  if (_isInvalidPostPayload(text: text, mediaDrafts: mediaDrafts)) {
+  if (_isInvalidPostPayload(text: normalizedText, mediaDrafts: mediaDrafts)) {
     return (SendPostResult.invalidPost, null);
   }
 
@@ -61,7 +64,7 @@ Future<(SendPostResult, PostModel?)> sendPost({
     contactRepo: contactRepo,
     senderPeerId: senderPeerId,
     senderUsername: senderUsername,
-    text: text,
+    text: normalizedText,
     audience: audience,
     mediaDrafts: mediaDrafts,
     secureKeyStore: secureKeyStore,
@@ -101,6 +104,10 @@ bool _isInvalidPostPayload({
   required List<PostMediaDraft> mediaDrafts,
 }) => text.trim().isEmpty && mediaDrafts.isEmpty;
 
+String _normalizePostText(String text) {
+  return sanitizeMessageText(text);
+}
+
 String _deriveDraftMediaKind(List<PostMediaDraft> mediaDrafts) {
   if (mediaDrafts.isEmpty) {
     return 'none';
@@ -128,6 +135,8 @@ Future<(SendPostResult, CreatedLocalPost?)> createLocalPost({
   ContactPresenceSnapshotRepository? contactPresenceSnapshotRepository,
   PostsPrivacySettingsRepository? postsPrivacySettingsRepository,
 }) async {
+  final normalizedText = _normalizePostText(text);
+  final normalizedSenderUsername = sanitizeUsername(senderUsername);
   final hasMedia = mediaDrafts.isNotEmpty;
   final createStopwatch = Stopwatch()..start();
   emitFlowEvent(
@@ -138,7 +147,7 @@ Future<(SendPostResult, CreatedLocalPost?)> createLocalPost({
       'hasMedia': hasMedia,
     },
   );
-  if (_isInvalidPostPayload(text: text, mediaDrafts: mediaDrafts)) {
+  if (_isInvalidPostPayload(text: normalizedText, mediaDrafts: mediaDrafts)) {
     emitFlowEvent(
       layer: 'FL',
       event: 'POST_CREATE_LOCAL_ABORT',
@@ -194,8 +203,8 @@ Future<(SendPostResult, CreatedLocalPost?)> createLocalPost({
     eventId: 'evt_${_uuid.v4()}',
     senderPeerId: senderPeerId,
     authorPeerId: senderPeerId,
-    authorUsername: senderUsername,
-    text: text.trim(),
+    authorUsername: normalizedSenderUsername,
+    text: normalizedText,
     audience: audience,
     createdAt: createdAt,
     visibleAt: createdAt,

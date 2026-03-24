@@ -28,11 +28,17 @@ import 'package:flutter_app/features/contact_request/application/contact_request
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository_impl.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository_impl.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
+import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
 import 'package:flutter_app/features/identity/presentation/startup_router.dart';
+import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
 import 'package:flutter_app/core/bridge/go_bridge_client.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'dart:io';
+
+import '../test/shared/fakes/in_memory_post_repository.dart';
+import '../test/shared/fakes/in_memory_posts_privacy_settings_repository.dart';
 
 class _FakeSecureKeyStore implements SecureKeyStore {
   final Map<String, String> _store = {};
@@ -49,6 +55,22 @@ class _FakeSecureKeyStore implements SecureKeyStore {
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
+  Future<void> pumpUntilFound(
+    WidgetTester tester,
+    Finder finder, {
+    int maxPumps = 80,
+    Duration step = const Duration(milliseconds: 100),
+  }) async {
+    for (var i = 0; i < maxPumps; i++) {
+      await tester.pump(step);
+      if (finder.evaluate().isNotEmpty) {
+        return;
+      }
+    }
+
+    expect(finder, findsOneWidget);
+  }
+
   // Desktop platforms need FFI; on mobile, sqflite_sqlcipher has native plugins.
   if (Platform.isLinux || Platform.isMacOS || Platform.isWindows) {
     sqfliteFfiInit();
@@ -63,11 +85,18 @@ void main() {
     print('========================================\n');
 
     final secureKeyStore = _FakeSecureKeyStore();
+    final dbName =
+        'smoke_test_${DateTime.now().millisecondsSinceEpoch}.db';
+    final postRepository = InMemoryPostRepository();
+    final postsPrivacySettingsRepository =
+        InMemoryPostsPrivacySettingsRepository();
+    final appShellController = AppShellController();
+    final pendingPostTargetStore = PendingPostTargetStore();
 
     print('[TEST] Step 1: Initialize database...');
     final db = await openEncryptedDatabase(
       secureKeyStore: secureKeyStore,
-      dbName: 'smoke_test.db',
+      dbName: dbName,
       version: 11,
       onCreate: (db, version) async {
         await runIdentityTableMigration(db);
@@ -159,6 +188,31 @@ void main() {
           dbLoadUnackedOutgoingMessages(db, olderThan: olderThan, limit: limit),
       dbLoadConversationThreadSummaries: (contactPeerIds) =>
           dbLoadConversationThreadSummaries(db, contactPeerIds),
+      dbRecoverStuckSendingMessages:
+          ({required DateTime olderThan, int limit = 50}) =>
+              dbRecoverStuckSendingMessages(
+                db,
+                olderThan: olderThan,
+                limit: limit,
+              ),
+      dbUpdateWireEnvelope: (id, wireEnvelope) =>
+          dbUpdateWireEnvelope(db, id, wireEnvelope),
+      dbLoadStuckSendingOutgoingMessages:
+          ({required DateTime olderThan, int limit = 50}) =>
+              dbLoadStuckSendingOutgoingMessages(
+                db,
+                olderThan: olderThan,
+                limit: limit,
+              ),
+      dbLoadSendingOutgoingMessages: () => dbLoadSendingOutgoingMessages(db),
+      dbConditionalTransitionStatus:
+          (id, {required fromStatus, required toStatus}) =>
+              dbConditionalTransitionStatus(
+                db,
+                id,
+                fromStatus: fromStatus,
+                toStatus: toStatus,
+              ),
     );
 
     final mediaAttachmentRepository = MediaAttachmentRepositoryImpl(
@@ -212,12 +266,16 @@ void main() {
     print('[TEST] Step 4: Build app widget...');
     await tester.pumpWidget(
       MaterialApp(
+        locale: const Locale('en'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
         home: StartupRouter(
           repository: repository,
           contactRepository: contactRepository,
           contactRequestRepository: contactRequestRepository,
           contactRequestListener: contactRequestListener,
           messageRepository: messageRepository,
+          postRepository: postRepository,
           mediaAttachmentRepository: mediaAttachmentRepository,
           chatMessageListener: chatMessageListener,
           bridge: bridge,
@@ -225,6 +283,9 @@ void main() {
           mediaFileManager: MediaFileManager(),
           secureKeyStore: secureKeyStore,
           imageProcessor: ImageProcessor(),
+          appShellController: appShellController,
+          pendingPostTargetStore: pendingPostTargetStore,
+          postsPrivacySettingsRepository: postsPrivacySettingsRepository,
         ),
       ),
     );
@@ -232,9 +293,8 @@ void main() {
     // Wait for initial load with a bounded loop (screen has ongoing animations).
     print('[TEST] Step 5: Wait for app to load...');
     final newUserButton = find.text("I'm new here");
-    for (var i = 0; i < 20 && newUserButton.evaluate().isEmpty; i++) {
-      await tester.pump(const Duration(milliseconds: 250));
-    }
+    await pumpUntilFound(tester, newUserButton);
+    await tester.pump(const Duration(milliseconds: 1300));
 
     // Look for "I'm new here" button
     print('[TEST] Step 6: Looking for "I\'m new here" button...');
@@ -310,6 +370,7 @@ void main() {
     chatMessageListener.dispose();
     p2pService.dispose();
     bridge.dispose();
+    postsPrivacySettingsRepository.dispose();
     await db.close();
   });
 }

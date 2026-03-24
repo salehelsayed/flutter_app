@@ -41,6 +41,15 @@ import '../../../contacts/domain/repositories/fake_contact_repository.dart';
 import '../../../contact_request/domain/repositories/fake_contact_request_repository.dart';
 import '../../../identity/domain/repositories/fake_identity_repository.dart';
 
+Text _textFor(WidgetTester tester, String text) {
+  final finder = find.byWidgetPredicate(
+    (widget) => widget is Text && widget.data == text,
+    description: 'Text("$text")',
+  );
+  expect(finder, findsOneWidget);
+  return tester.widget<Text>(finder);
+}
+
 void main() {
   late FakeIdentityRepository identityRepo;
   late FakeContactRepository contactRepo;
@@ -460,13 +469,13 @@ void main() {
       spyContactRepo.resetTracking();
       spyMessageRepo.resetTracking();
 
-      // Seed a message and emit an incoming chat event to trigger a
-      // single-friend refresh, not a full Orbit reload.
+      // Seed a mixed-script message and emit an incoming chat event to
+      // trigger a single-friend refresh, not a full Orbit reload.
       await spyMessageRepo.saveMessage(
         ConversationMessage(
           id: 'msg-refresh-1',
           contactPeerId: 'contact-peer-id',
-          text: 'New hello from Bob',
+          text: 'مرحبا Hello 123',
           senderPeerId: 'contact-peer-id',
           timestamp: DateTime.now().toUtc().toIso8601String(),
           isIncoming: true,
@@ -479,7 +488,7 @@ void main() {
         ConversationMessage(
           id: 'msg-refresh-1',
           contactPeerId: 'contact-peer-id',
-          text: 'New hello from Bob',
+          text: 'مرحبا Hello 123',
           senderPeerId: 'contact-peer-id',
           timestamp: DateTime.now().toUtc().toIso8601String(),
           isIncoming: true,
@@ -492,8 +501,9 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
       await tester.pump(const Duration(milliseconds: 100));
 
-      // After refresh, the FriendRow should show the last activity text
-      expect(find.text('New hello from Bob'), findsOneWidget);
+      // After refresh, the FriendRow should show the mixed-script text.
+      expect(find.text('مرحبا Hello 123'), findsOneWidget);
+      expect(_textFor(tester, 'مرحبا Hello 123').textDirection, TextDirection.rtl);
       expect(spyContactRepo.getActiveContactsCallCount, 0);
       expect(spyContactRepo.getArchivedContactsCallCount, 0);
       expect(spyContactRepo.getContactCallCountByPeerId, {
@@ -513,6 +523,77 @@ void main() {
       );
       expect(spyMessageRepo.getUnreadCountForContactCallCountByPeerId, isEmpty);
     });
+
+    testWidgets(
+      'incoming mixed Arabic-first message refreshes the row and renders RTL',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+        final spyContactRepo = _SpyContactRepository();
+        final spyMessageRepo = _SpyMessageRepository();
+        spyContactRepo.seed([testContact]);
+
+        final fakeChatListener = _FakeChatMessageListener(
+          messageRepo: spyMessageRepo,
+          contactRepo: spyContactRepo,
+        );
+
+        await tester.pumpWidget(
+          buildOrbitWired(
+            chatMessageListener: fakeChatListener,
+            contactRepository: spyContactRepo,
+            messageRepository: spyMessageRepo,
+          ),
+        );
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
+
+        spyContactRepo.resetTracking();
+        spyMessageRepo.resetTracking();
+
+        const mixedText = 'مرحبا Hello 123';
+        await spyMessageRepo.saveMessage(
+          ConversationMessage(
+            id: 'msg-refresh-mixed',
+            contactPeerId: 'contact-peer-id',
+            text: mixedText,
+            senderPeerId: 'contact-peer-id',
+            timestamp: DateTime.now().toUtc().toIso8601String(),
+            isIncoming: true,
+            status: 'delivered',
+            createdAt: DateTime.now().toUtc().toIso8601String(),
+          ),
+        );
+
+        fakeChatListener.emitIncomingMessage(
+          ConversationMessage(
+            id: 'msg-refresh-mixed',
+            contactPeerId: 'contact-peer-id',
+            text: mixedText,
+            senderPeerId: 'contact-peer-id',
+            timestamp: DateTime.now().toUtc().toIso8601String(),
+            isIncoming: true,
+            status: 'delivered',
+            createdAt: DateTime.now().toUtc().toIso8601String(),
+          ),
+        );
+
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
+
+        expect(find.text(mixedText), findsOneWidget);
+        expect(_textFor(tester, mixedText).textDirection, TextDirection.rtl);
+        expect(spyContactRepo.getContactCallCountByPeerId, {
+          'contact-peer-id': 1,
+        });
+        expect(spyMessageRepo.getConversationThreadSummaryCallCountByPeerId, {
+          'contact-peer-id': 1,
+        });
+      },
+    );
 
     testWidgets(
       'search context is preserved while unrelated friend updates arrive',
@@ -769,7 +850,7 @@ void main() {
       expect(find.text('Alpha Group'), findsOneWidget);
     });
 
-    testWidgets('displays group rows with latest message preview', (
+    testWidgets('displays structured group rows with latest message preview', (
       tester,
     ) async {
       setLargeTestSurface(tester);
@@ -794,7 +875,7 @@ void main() {
           groupId: 'g-1',
           senderPeerId: 'peer-alice',
           senderUsername: 'Alice',
-          text: 'Hello group!',
+          text: 'مرحبا Hello 123',
           timestamp: DateTime.utc(2026, 3, 1),
           isIncoming: true,
           createdAt: DateTime.utc(2026, 3, 1),
@@ -807,7 +888,10 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
 
       expect(find.text('Alpha Group'), findsOneWidget);
-      expect(find.text('Alice: Hello group!'), findsOneWidget);
+      expect(find.text('Alice'), findsOneWidget);
+      expect(find.text('مرحبا Hello 123'), findsOneWidget);
+      expect(_textFor(tester, 'مرحبا Hello 123').textDirection,
+          TextDirection.rtl);
     });
 
     testWidgets('refreshes only the affected group on incoming group message', (
@@ -847,7 +931,8 @@ void main() {
 
       // Initially group shows with no message preview
       expect(find.text('Alpha Group'), findsOneWidget);
-      expect(find.text('Bob: New group msg'), findsNothing);
+      expect(find.text('Bob'), findsNothing);
+      expect(find.text('New group msg'), findsNothing);
 
       spyContactRepo.resetTracking();
       spyMessageRepo.resetTracking();
@@ -872,7 +957,8 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
       await tester.pump(const Duration(milliseconds: 100));
 
-      expect(find.text('Bob: New group msg'), findsOneWidget);
+      expect(find.text('Bob'), findsOneWidget);
+      expect(find.text('New group msg'), findsOneWidget);
       expect(spyContactRepo.getActiveContactsCallCount, 0);
       expect(spyContactRepo.getArchivedContactsCallCount, 0);
       expect(spyGroupRepo.getActiveGroupsCallCount, 0);

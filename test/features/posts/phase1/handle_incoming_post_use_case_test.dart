@@ -248,4 +248,41 @@ void main() {
       expect(await posts.postExists('post-1'), isFalse);
     },
   );
+
+  test(
+    'sanitizes dangerous bidi controls in incoming post text and author username',
+    () async {
+      contacts.addTestContact(_contact('peer-bob', 'Bob'));
+      final sanitizedEnvelope = PostCreateEnvelope.fromPost(
+        PostModel(
+          id: 'post-2',
+          eventId: 'evt-2',
+          senderPeerId: 'peer-bob',
+          authorPeerId: 'peer-bob',
+          authorUsername: 'A\u202Eli\u200Fce',
+          text: '  Hi\u202E there\u200F  ',
+          audience: const PostAudience(kind: PostAudienceKind.allFriends),
+          createdAt: '2026-03-15T12:00:00.000Z',
+          visibleAt: '2026-03-15T12:00:00.000Z',
+          expiresAt: '2026-03-18T12:00:00.000Z',
+        ),
+      );
+
+      final (result, post) = await handleIncomingPost(
+        message: _messageFromEnvelope(sanitizedEnvelope),
+        postRepo: posts,
+        contactRepo: contacts,
+      );
+
+      expect(result, HandleIncomingPostResult.postCreated);
+      expect(post, isNotNull);
+      expect(post!.authorUsername, 'Ali\u200Fce');
+      expect(post.text, '  Hi there\u200F  ');
+
+      final stored = await posts.getPost('post-2');
+      expect(stored, isNotNull);
+      expect(stored!.authorUsername, 'Ali\u200Fce');
+      expect(stored.text, '  Hi there\u200F  ');
+    },
+  );
 }

@@ -145,5 +145,31 @@ void main() {
       expect(intent!.type, ShareIntentType.files);
       expect(intent.filePaths, ['/tmp/ios-1.jpg', '/tmp/ios-2.jpg']);
     });
+
+    test(
+      '4e: preserves bidi markers and trims captions while joining iOS share text',
+      () async {
+        final service = ShareIntentService(
+          getInitialMedia: () async => [
+            SharedMediaFile(path: 'First line', type: SharedMediaType.text),
+            SharedMediaFile(
+              path: '/tmp/ios-photo.jpg',
+              type: SharedMediaType.image,
+              message: '  مرحبا\u202E Hello\u200E  ',
+            ),
+            SharedMediaFile(path: 'Second line', type: SharedMediaType.text),
+          ],
+          resetShareIntent: () {},
+        );
+
+        final intent = await service.getInitialIntent();
+
+        expect(intent, isNotNull);
+        expect(intent!.type, ShareIntentType.mixed);
+        expect(intent.text, 'First line\nمرحبا\u202E Hello\u200E\nSecond line');
+        expect(intent.filePaths, ['/tmp/ios-photo.jpg']);
+      },
+    );
+
   });
 }

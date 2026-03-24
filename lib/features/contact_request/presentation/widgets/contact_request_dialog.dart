@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/core/theme/app_colors.dart';
 import 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
@@ -58,6 +59,7 @@ class _ContactRequestDialogState extends State<ContactRequestDialog> {
           // Username
           Text(
             widget.request.username,
+            textDirection: detectTextDirection(widget.request.username),
             style: const TextStyle(
               color: Colors.white,
               fontSize: 20,

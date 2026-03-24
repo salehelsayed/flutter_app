@@ -34,6 +34,38 @@ void main() {
     });
 
     test(
+      'preserves mixed-script title/body while trimming outer whitespace',
+      () {
+        const message = RemoteMessage(
+          data: {
+            'type': 'new_message',
+            'sender_id': '12D3KooWPeer',
+            'title': '  \u0644\u064a\u0644\u0649 Alpha  ',
+            'body': '\n\u0645\u0631\u062d\u0628\u0627 Team 42\t',
+          },
+        );
+
+        final fallback = buildBackgroundPushFallbackNotification(message);
+        expect(fallback.title, '\u0644\u064a\u0644\u0649 Alpha');
+        expect(fallback.body, '\u0645\u0631\u062d\u0628\u0627 Team 42');
+        expect(fallback.payload, '12D3KooWPeer');
+      },
+    );
+
+    test('preserves bidi control marks in fallback body passthrough', () {
+      const message = RemoteMessage(
+        data: {
+          'type': 'new_message',
+          'sender_id': '12D3KooWPeer',
+          'body': ' \u200f\u0645\u0631\u062d\u0628\u0627 Alpha\u200f ',
+        },
+      );
+
+      final fallback = buildBackgroundPushFallbackNotification(message);
+      expect(fallback.body, '\u200f\u0645\u0631\u062d\u0628\u0627 Alpha\u200f');
+    });
+
+    test(
       'skips the fallback when FCM already carries a visible notification',
       () {
         const message = RemoteMessage(

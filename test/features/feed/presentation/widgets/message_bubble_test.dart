@@ -15,6 +15,49 @@ void main() {
     home: Scaffold(body: SingleChildScrollView(child: child)),
   );
 
+  LinkableText _linkableTextWidget(WidgetTester tester, String text) {
+    final finder = find.byWidgetPredicate(
+      (widget) => widget is LinkableText && widget.text == text,
+      description: 'LinkableText("$text")',
+    );
+    expect(finder, findsOneWidget);
+    return tester.widget<LinkableText>(finder);
+  }
+
+  RichText _bodyRichTextWidget(WidgetTester tester, String text) {
+    return tester.widget<RichText>(
+      find.descendant(
+        of: find.byWidgetPredicate(
+          (widget) => widget is LinkableText && widget.text == text,
+          description: 'LinkableText("$text")',
+        ),
+        matching: find.byType(RichText),
+      ),
+    );
+  }
+
+  Text _textWidget(WidgetTester tester, String text) {
+    final finder = find.byWidgetPredicate(
+      (widget) => widget is Text && widget.data == text,
+      description: 'Text("$text")',
+    );
+    expect(finder, findsOneWidget);
+    return tester.widget<Text>(finder);
+  }
+
+  bool _hasPositionedAncestor(Finder finder) {
+    final element = finder.evaluate().single;
+    var hasPositioned = false;
+    element.visitAncestorElements((ancestor) {
+      if (ancestor.widget is Positioned) {
+        hasPositioned = true;
+        return false;
+      }
+      return true;
+    });
+    return hasPositioned;
+  }
+
   group('MessageBubble colors', () {
     testWidgets('received message has transparent background', (tester) async {
       await tester.pumpWidget(
@@ -267,7 +310,91 @@ void main() {
       expect(richText.textDirection, TextDirection.rtl);
     });
 
-    testWidgets('name prefix preserved with linkable body', (tester) async {
+    testWidgets(
+      'outgoing Arabic-only message renders body direction correctly and keeps timestamp/status outside the body paragraph',
+      (tester) async {
+        await tester.pumpWidget(
+          wrap(
+            const MessageBubble(
+              text: 'مرحبا',
+              time: '3:00 PM',
+              isIncoming: false,
+              senderLabel: 'You',
+              status: 'delivered',
+            ),
+          ),
+        );
+
+        final body = _linkableTextWidget(tester, 'مرحبا');
+        expect(_bodyRichTextWidget(tester, 'مرحبا').textDirection, TextDirection.rtl);
+        expect(body.prefixSpans, isNull);
+        expect(body.suffixSpans, isNull);
+        expect(find.text('You:'), findsOneWidget);
+        expect(find.text('3:00 PM'), findsOneWidget);
+        expect(find.byIcon(Icons.done_all_rounded), findsOneWidget);
+        expect(_hasPositionedAncestor(find.text('3:00 PM')), isFalse);
+      },
+    );
+
+    testWidgets(
+      'outgoing Arabic-first mixed message renders body direction correctly and keeps timestamp/status outside the body paragraph',
+      (tester) async {
+        const bodyText = 'مرحبا Hello 123';
+
+        await tester.pumpWidget(
+          wrap(
+            const MessageBubble(
+              text: bodyText,
+              time: '3:00 PM',
+              isIncoming: false,
+              senderLabel: 'You',
+              status: 'delivered',
+            ),
+          ),
+        );
+
+        final body = _linkableTextWidget(tester, bodyText);
+        expect(_bodyRichTextWidget(tester, bodyText).textDirection, TextDirection.rtl);
+        expect(body.prefixSpans, isNull);
+        expect(body.suffixSpans, isNull);
+        expect(find.text('You:'), findsOneWidget);
+        expect(find.text('3:00 PM'), findsOneWidget);
+        expect(find.byIcon(Icons.done_all_rounded), findsOneWidget);
+        expect(_hasPositionedAncestor(find.text('3:00 PM')), isFalse);
+      },
+    );
+
+    testWidgets(
+      'outgoing English-first mixed message stays LTR and still keeps timestamp/status outside the body paragraph',
+      (tester) async {
+        const bodyText = 'Hello مرحبا 123';
+
+        await tester.pumpWidget(
+          wrap(
+            const MessageBubble(
+              text: bodyText,
+              time: '3:00 PM',
+              isIncoming: false,
+              senderLabel: 'You',
+              status: 'delivered',
+            ),
+          ),
+        );
+
+        final body = _linkableTextWidget(tester, bodyText);
+        expect(_bodyRichTextWidget(tester, bodyText).textDirection, TextDirection.ltr);
+        expect(body.prefixSpans, isNull);
+        expect(body.suffixSpans, isNull);
+        expect(find.text('You:'), findsOneWidget);
+        expect(find.text('3:00 PM'), findsOneWidget);
+        expect(find.byIcon(Icons.done_all_rounded), findsOneWidget);
+        expect(_hasPositionedAncestor(find.text('3:00 PM')), isFalse);
+      },
+    );
+
+    testWidgets('sender label renders separately from linkable body', (
+      tester,
+    ) async {
       await tester.pumpWidget(
         wrap(
           const MessageBubble(
@@ -279,7 +406,10 @@ void main() {
         ),
       );
 
-      expect(find.textContaining('You: '), findsOneWidget);
+      final body = _linkableTextWidget(tester, 'Check https://example.com out');
+      expect(body.prefixSpans, isNull);
+      expect(body.suffixSpans, isNull);
+      expect(find.text('You:'), findsOneWidget);
       expect(find.textContaining('https://example.com'), findsOneWidget);
     });
 
@@ -297,13 +427,10 @@ void main() {
         ),
       );
 
-      final richText = tester.widget<RichText>(
-        find.descendant(
-          of: find.byType(LinkableText),
-          matching: find.byType(RichText),
-        ),
+      expect(
+        _bodyRichTextWidget(tester, 'مرحبا Hello').textDirection,
+        TextDirection.rtl,
       );
-      expect(richText.textDirection, TextDirection.rtl);
     });
 
     testWidgets('plain text without URLs still renders normally', (
@@ -522,7 +649,7 @@ void main() {
   });
 
   group('MessageBubble inline reactions', () {
-    testWidgets('inline reactions render below text, timestamp overlays text', (
+    testWidgets('inline reactions render below text, timestamp lives in footer', (
       tester,
     ) async {
       final reactions = [
@@ -551,26 +678,11 @@ void main() {
       // Reactions in a Wrap below text
       expect(find.text('👍'), findsOneWidget);
       expect(find.byType(Wrap), findsOneWidget);
-      // Timestamp overlaid on text via Stack
       expect(find.text('3:00 PM'), findsOneWidget);
-
-      final timeElement = find.text('3:00 PM').evaluate().first;
-      Stack? timeStack;
-      timeElement.visitAncestorElements((element) {
-        if (element.widget is Stack) {
-          timeStack = element.widget as Stack;
-          return false;
-        }
-        return true;
-      });
-      expect(
-        timeStack,
-        isNotNull,
-        reason: 'Timestamp should be inside a Stack',
-      );
+      expect(_hasPositionedAncestor(find.text('3:00 PM')), isFalse);
     });
 
-    testWidgets('no reactions still right-aligns timestamp in Stack', (
+    testWidgets('no reactions still keeps timestamp in footer', (
       tester,
     ) async {
       await tester.pumpWidget(
@@ -585,21 +697,8 @@ void main() {
         ),
       );
 
-      // Timestamp should be inside a Stack (overlaid on text)
-      final timeElement = find.text('3:00 PM').evaluate().first;
-      Stack? timeStack;
-      timeElement.visitAncestorElements((element) {
-        if (element.widget is Stack) {
-          timeStack = element.widget as Stack;
-          return false;
-        }
-        return true;
-      });
-      expect(
-        timeStack,
-        isNotNull,
-        reason: 'Timestamp should be inside a Stack',
-      );
+      expect(find.text('3:00 PM'), findsOneWidget);
+      expect(_hasPositionedAncestor(find.text('3:00 PM')), isFalse);
     });
 
     testWidgets('multiple reaction emojis render inline with counts', (

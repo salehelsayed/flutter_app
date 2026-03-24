@@ -106,5 +106,31 @@ void main() {
       expect(find.text('Message 3'), findsOneWidget);
       expect(find.byType(IntroSystemMessage), findsNWidgets(3));
     });
+
+    testWidgets('Arabic system text drives RTL direction', (tester) async {
+      const message = 'تم تقديمك إلى خالد بواسطة ليلى';
+      await tester.pumpWidget(buildWidget(message));
+
+      final textWidget = tester.widget<Text>(find.text(message));
+      expect(textWidget.textDirection, TextDirection.rtl);
+    });
+
+    testWidgets('Arabic-first mixed system text drives RTL direction',
+        (tester) async {
+      const message = 'ليلى introduced 2 people to you';
+      await tester.pumpWidget(buildWidget(message));
+
+      final textWidget = tester.widget<Text>(find.text(message));
+      expect(textWidget.textDirection, TextDirection.rtl);
+    });
+
+    testWidgets('English-first mixed system text stays LTR direction',
+        (tester) async {
+      const message = 'Alice قدمت 2 people to you';
+      await tester.pumpWidget(buildWidget(message));
+
+      final textWidget = tester.widget<Text>(find.text(message));
+      expect(textWidget.textDirection, TextDirection.ltr);
+    });
   });
 }

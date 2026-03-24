@@ -1,3 +1,5 @@
+import 'dart:ui' show TextDirection;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
@@ -19,6 +21,7 @@ void main() {
   ThreadFeedItem buildThread({
     List<ThreadMessage>? messages,
     int unreadCount = 2,
+    String contactUsername = 'Alice',
   }) {
     final msgs =
         messages ??
@@ -51,11 +54,20 @@ void main() {
       id: 'thread_1',
       timestamp: DateTime(2026, 2, 9, 15, 5),
       contactPeerId: 'peer1',
-      contactUsername: 'Alice',
+      contactUsername: contactUsername,
       messages: msgs,
       unreadCount: unreadCount,
       conversationState: ConversationState.unread,
     );
+  }
+
+  Text textWidget(WidgetTester tester, String text) {
+    final finder = find.byWidgetPredicate(
+      (widget) => widget is Text && widget.data == text,
+      description: 'Text("$text")',
+    );
+    expect(finder, findsOneWidget);
+    return tester.widget<Text>(finder);
   }
 
   group('OpenModeCardBody', () {
@@ -140,11 +152,57 @@ void main() {
       expect(find.text('Alice'), findsAtLeast(1));
     });
 
+    testWidgets('contact header uses RTL for Arabic-first mixed display name', (
+      tester,
+    ) async {
+      const contactName = 'مرحبا Alice 123';
+
+      await tester.pumpWidget(
+        wrap(
+          OpenModeCardBody(thread: buildThread(contactUsername: contactName)),
+        ),
+      );
+
+      expect(textWidget(tester, contactName).textDirection, TextDirection.rtl);
+    });
+
     testWidgets('shows UnreadCountBadge when count > 0', (tester) async {
       await tester.pumpWidget(
         wrap(OpenModeCardBody(thread: buildThread(unreadCount: 3))),
       );
       expect(find.text('3'), findsOneWidget);
+    });
+
+    testWidgets('group header uses RTL for Arabic-first mixed display name', (
+      tester,
+    ) async {
+      const groupName = 'مرحبا Group 123';
+
+      final groupThread = GroupThreadFeedItem(
+        id: 'g1',
+        timestamp: DateTime(2026, 2, 9, 15, 5),
+        groupId: 'group-abc',
+        groupName: groupName,
+        groupType: GroupType.chat,
+        messages: [
+          ThreadMessage(
+            id: 'gm1',
+            text: 'Group message',
+            time: '3:00 PM',
+            timestamp: DateTime(2026, 2, 9, 15, 0),
+            isUnread: true,
+            isIncoming: true,
+            senderUsername: 'Sarah',
+            senderPeerId: 'peer-sarah',
+          ),
+        ],
+        unreadCount: 1,
+        conversationState: ConversationState.unread,
+      );
+
+      await tester.pumpWidget(wrap(OpenModeCardBody(thread: groupThread)));
+
+      expect(textWidget(tester, groupName).textDirection, TextDirection.rtl);
     });
 
     testWidgets('renders group icon and group name for GroupThreadFeedItem', (

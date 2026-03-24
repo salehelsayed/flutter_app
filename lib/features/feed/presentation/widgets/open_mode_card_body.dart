@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
+import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/core/theme/feed_colors.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
@@ -92,6 +93,8 @@ class OpenModeCardBody extends StatelessWidget {
   }
 
   Widget _buildHeader() {
+    final displayNameDirection = detectTextDirection(thread.displayName);
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 18, 20, 12),
       child: Row(
@@ -119,6 +122,7 @@ class OpenModeCardBody extends StatelessWidget {
               children: [
                 Text(
                   thread.displayName,
+                  textDirection: displayNameDirection,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(

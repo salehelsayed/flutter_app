@@ -1,4 +1,7 @@
+import 'dart:ui' show TextDirection;
+
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
 class EditPinnedPostSheet extends StatefulWidget {
@@ -19,12 +22,34 @@ class _EditPinnedPostSheetState extends State<EditPinnedPostSheet> {
   late final TextEditingController _controller = TextEditingController(
     text: widget.initialText,
   );
+  late TextDirection _inputDirection;
   bool _isSaving = false;
 
   @override
+  void initState() {
+    super.initState();
+    _inputDirection = detectTextDirection(widget.initialText);
+    _controller.addListener(_updateInputDirection);
+  }
+
+  @override
   void dispose() {
+    _controller.removeListener(_updateInputDirection);
     _controller.dispose();
     super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(covariant EditPinnedPostSheet oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.initialText != widget.initialText &&
+        widget.initialText != _controller.text) {
+      _controller.value = TextEditingValue(
+        text: widget.initialText,
+        selection: TextSelection.collapsed(offset: widget.initialText.length),
+      );
+      _inputDirection = detectTextDirection(widget.initialText);
+    }
   }
 
   Future<void> _submit() async {
@@ -42,6 +67,13 @@ class _EditPinnedPostSheetState extends State<EditPinnedPostSheet> {
       if (mounted) {
         setState(() => _isSaving = false);
       }
+    }
+  }
+
+  void _updateInputDirection() {
+    final nextDirection = detectTextDirection(_controller.text);
+    if (nextDirection != _inputDirection) {
+      setState(() => _inputDirection = nextDirection);
     }
   }
 
@@ -75,6 +107,7 @@ class _EditPinnedPostSheetState extends State<EditPinnedPostSheet> {
                 const SizedBox(height: 16),
                 TextField(
                   controller: _controller,
+                  textDirection: _inputDirection,
                   maxLines: 5,
                   minLines: 4,
                   onChanged: (_) => setState(() {}),

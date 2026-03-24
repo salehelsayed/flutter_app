@@ -184,6 +184,37 @@ void main() {
   );
 
   test(
+    'sanitizes dangerous bidi controls in incoming pin update snapshots',
+    () async {
+      contacts.addTestContact(postPinContact('peer-bob', 'Bob'));
+      await posts.savePost(postPinBasePost(keepAvailable: true));
+
+      final (result, pinState) = await handleIncomingPostPinUpdate(
+        message: postPinUpdateMessage(
+          eventId: 'evt-pin-sanitized',
+          pinEventId: 'pin-sanitized',
+          createdAt: '2026-03-15T11:35:00.000Z',
+          effectiveAt: '2026-03-15T11:35:00.000Z',
+          pinnedAt: '2026-03-15T11:20:00.000Z',
+          authorUsername: 'A\u202Eli\u200Fce',
+          text: 'Fresh \u202Eblankets\u200F available',
+        ),
+        postRepo: posts,
+        contactRepo: contacts,
+      );
+
+      expect(result, HandleIncomingPostPinUpdateResult.pinApplied);
+      expect(pinState, isNotNull);
+
+      final updatedPost = await posts.getPost('post-1');
+      expect(updatedPost, isNotNull);
+      expect(updatedPost!.authorUsername, 'Ali\u200Fce');
+      expect(updatedPost.text, 'Fresh blankets\u200F available');
+      expect(updatedPost.keepAvailable, isTrue);
+    },
+  );
+
+  test(
     'clears a prior local dismissal when a fresh active pin update arrives',
     () async {
       contacts.addTestContact(postPinContact('peer-bob', 'Bob'));
