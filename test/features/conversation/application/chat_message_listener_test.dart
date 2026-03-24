@@ -88,6 +88,9 @@ class _FakeMessageRepository implements MessageRepository {
   }
 
   @override
+  Future<ConversationMessage?> getMessage(String id) async => null;
+
+  @override
   Future<bool> messageExists(String id) async =>
       existingIds.contains(id) || saved.any((m) => m.id == id);
 
@@ -136,6 +139,27 @@ class _FakeMessageRepository implements MessageRepository {
   Future<List<ConversationMessage>> getUnackedOutgoingMessages({
     required Duration olderThan,
   }) async => [];
+
+  @override
+  Future<int> recoverStuckSendingMessages({required Duration olderThan}) async => 0;
+
+  @override
+  Future<void> updateWireEnvelope(String id, String envelope) async {}
+
+  @override
+  Future<List<ConversationMessage>> getStuckSendingOutgoingMessages({
+    required Duration olderThan,
+  }) async => [];
+
+  @override
+  Future<List<ConversationMessage>> getSendingOutgoingMessages() async => [];
+
+  @override
+  Future<int> conditionalTransitionStatus(
+    String id, {
+    required String fromStatus,
+    required String toStatus,
+  }) async => 0;
 }
 
 class _FakeMediaAttachmentRepo implements MediaAttachmentRepository {
@@ -190,6 +214,9 @@ class _FakeMediaAttachmentRepo implements MediaAttachmentRepository {
 
   @override
   Future<List<MediaAttachment>> getPendingDownloads() async => [];
+
+  @override
+  Future<List<MediaAttachment>> getUploadPendingAttachments() async => [];
 }
 
 class _FakeBridge implements Bridge {
@@ -566,8 +593,9 @@ void main() {
         expect(emitted.length, 2);
         expect(
           emitted[0].media,
-          isEmpty,
-        ); // first emission has no hydrated media
+          hasLength(1),
+        ); // first emission now carries pending-status attachments from wire payload
+        expect(emitted[0].media[0].downloadStatus, 'pending');
         expect(
           emitted[1].media,
           hasLength(1),

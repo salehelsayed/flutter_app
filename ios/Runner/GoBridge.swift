@@ -38,7 +38,7 @@ class GoBridge: NSObject {
         }
     }
 
-    private func handleMethodCall(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+    func handleMethodCall(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
         let args = call.arguments as? String
 
         switch call.method {
@@ -153,6 +153,43 @@ class GoBridge: NSObject {
             runOnBackground({ BridgeGroupInboxRetrieveCursor(args ?? "") }, result: result)
         case "groupAcknowledgeRecovery":
             runOnBackground({ BridgeGroupAcknowledgeRecovery() }, result: result)
+
+        // Background task (Dart-initiated)
+        case "bgBegin":
+            // Called synchronously on main thread — do NOT use runOnBackground.
+            // UIApplication.beginBackgroundTask must run on main thread and return before
+            // the app finishes transitioning to background.
+            var taskId = UIBackgroundTaskIdentifier.invalid
+            taskId = UIApplication.shared.beginBackgroundTask(withName: "mknoon.sendMessage") {
+                // Expiration handler: iOS is about to force-suspend.
+                NSLog("[GoBridge] BG_TASK_EXPIRED — ending task before suspension")
+                if taskId != .invalid {
+                    UIApplication.shared.endBackgroundTask(taskId)
+                    taskId = .invalid
+                }
+            }
+            if taskId == .invalid {
+                NSLog("[GoBridge] BG_TASK_REFUSED — OS would not grant background time")
+                result("")  // empty string signals Dart that no task was granted
+            } else {
+                NSLog("[GoBridge] bgBegin: taskId=%@", String(taskId.rawValue))
+                result(String(taskId.rawValue))  // return raw handle as string
+            }
+
+        case "bgEnd":
+            // Called synchronously on main thread — do NOT use runOnBackground.
+            // args is a JSON string: {"taskId": "12345"} — because _CmdSpec('bgEnd', true)
+            // serializes the payload map via jsonEncode before passing to invokeMethod.
+            if let jsonStr = call.arguments as? String,
+               let data = jsonStr.data(using: .utf8),
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let taskIdStr = json["taskId"] as? String,
+               let rawVal = Int(taskIdStr),
+               rawVal != UIBackgroundTaskIdentifier.invalid.rawValue {
+                let taskId = UIBackgroundTaskIdentifier(rawValue: rawVal)
+                UIApplication.shared.endBackgroundTask(taskId)
+            }
+            result(nil)
 
         default:
             result(FlutterMethodNotImplemented)

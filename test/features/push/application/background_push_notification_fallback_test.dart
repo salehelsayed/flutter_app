@@ -6,7 +6,7 @@ void main() {
   group('background push fallback notifications', () {
     test('shows a fallback for Android-style data-only chat pushes', () {
       const message = RemoteMessage(
-        data: {'type': 'new_message', 'from': '12D3KooWPeer'},
+        data: {'type': 'new_message', 'sender_id': '12D3KooWPeer'},
       );
 
       expect(shouldShowBackgroundPushFallbackNotification(message), isTrue);
@@ -21,7 +21,7 @@ void main() {
       const message = RemoteMessage(
         data: {
           'type': 'new_message',
-          'from': '12D3KooWPeer',
+          'sender_id': '12D3KooWPeer',
           'title': 'Alice',
           'body': 'Hello',
         },
@@ -41,7 +41,7 @@ void main() {
             title: 'New Message',
             body: 'You have a new message',
           ),
-          data: {'type': 'new_message', 'from': '12D3KooWPeer'},
+          data: {'type': 'new_message', 'sender_id': '12D3KooWPeer'},
         );
 
         expect(shouldShowBackgroundPushFallbackNotification(message), isFalse);

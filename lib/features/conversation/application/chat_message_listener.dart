@@ -295,7 +295,10 @@ class ChatMessageListener {
             getAppLifecycleState: getAppLifecycleState!,
             contactPeerId: conversationMessage.contactPeerId,
             senderUsername: username,
-            messageText: conversationMessage.text,
+            messageText: notificationBodyForMessage(
+              conversationMessage.text,
+              conversationMessage.media,
+            ),
           );
         }
 

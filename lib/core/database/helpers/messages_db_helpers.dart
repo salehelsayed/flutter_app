@@ -586,6 +586,48 @@ Future<List<Map<String, Object?>>> dbLoadUnackedOutgoingMessages(
   }
 }
 
+/// Loads outgoing messages with status='sending' that are older than
+/// [olderThan]. These are candidates for immediate retry without waiting
+/// for the next app-resume event.
+///
+/// Returns at most [limit] rows ordered by timestamp ASC.
+Future<List<Map<String, Object?>>> dbLoadStuckSendingOutgoingMessages(
+  Database db, {
+  required DateTime olderThan,
+  int limit = 50,
+}) async {
+  emitFlowEvent(
+    layer: 'DB',
+    event: 'MESSAGES_DB_LOAD_STUCK_SENDING_START',
+    details: {'limit': limit},
+  );
+
+  try {
+    final results = await db.query(
+      'messages',
+      where: "status = ? AND is_incoming = 0 AND timestamp < ?",
+      whereArgs: ['sending', olderThan.toUtc().toIso8601String()],
+      orderBy: 'timestamp ASC',
+      limit: limit,
+    );
+
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'MESSAGES_DB_LOAD_STUCK_SENDING_SUCCESS',
+      details: {'count': results.length},
+    );
+
+    return results;
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'MESSAGES_DB_LOAD_STUCK_SENDING_ERROR',
+      details: {'error': e.toString()},
+    );
+    rethrow;
+  }
+}
+
 /// Loads a single message by ID.
 Future<Map<String, Object?>?> dbLoadMessage(Database db, String id) async {
   try {
@@ -598,5 +640,181 @@ Future<Map<String, Object?>?> dbLoadMessage(Database db, String id) async {
     return results.isNotEmpty ? results.first : null;
   } catch (e) {
     return null;
+  }
+}
+
+/// Loads all outgoing messages with status='sending'.
+///
+/// Used by [handleAppPaused] to find in-flight messages that need to be
+/// transitioned to 'failed' before the process is frozen by the OS.
+Future<List<Map<String, Object?>>> dbLoadSendingOutgoingMessages(
+  Database db,
+) async {
+  emitFlowEvent(
+    layer: 'DB',
+    event: 'MESSAGES_DB_LOAD_SENDING_START',
+    details: {},
+  );
+
+  try {
+    final rows = await db.query(
+      'messages',
+      where: 'status = ? AND is_incoming = 0',
+      whereArgs: ['sending'],
+      orderBy: 'timestamp ASC',
+    );
+
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'MESSAGES_DB_LOAD_SENDING_DONE',
+      details: {'count': rows.length},
+    );
+
+    return rows;
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'MESSAGES_DB_LOAD_SENDING_ERROR',
+      details: {'error': e.toString()},
+    );
+    rethrow;
+  }
+}
+
+/// Only transitions status if the current status matches [fromStatus].
+/// Returns the number of rows updated (0 if the row already advanced).
+///
+/// Used by [handleAppPaused] to safely transition 'sending' -> 'failed'
+/// without overwriting a concurrently completed 'delivered'/'sent' status.
+Future<int> dbConditionalTransitionStatus(
+  Database db,
+  String id, {
+  required String fromStatus,
+  required String toStatus,
+}) async {
+  emitFlowEvent(
+    layer: 'DB',
+    event: 'MESSAGES_DB_CONDITIONAL_TRANSITION_START',
+    details: {
+      'id': id.length > 8 ? id.substring(0, 8) : id,
+      'from': fromStatus,
+      'to': toStatus,
+    },
+  );
+
+  try {
+    final count = await db.rawUpdate(
+      'UPDATE messages SET status = ? WHERE id = ? AND status = ?',
+      [toStatus, id, fromStatus],
+    );
+
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'MESSAGES_DB_CONDITIONAL_TRANSITION_DONE',
+      details: {
+        'id': id.length > 8 ? id.substring(0, 8) : id,
+        'rowsUpdated': count,
+      },
+    );
+
+    return count;
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'MESSAGES_DB_CONDITIONAL_TRANSITION_ERROR',
+      details: {'error': e.toString()},
+    );
+    rethrow;
+  }
+}
+
+/// Transitions all outgoing messages stuck in status='sending' that are
+/// older than [olderThan] to status='failed'.
+///
+/// Safe to call on every resume — messages younger than the threshold
+/// are untouched. wire_envelope is preserved so retryFailedMessages can
+/// use the full re-encrypt path (wire_envelope will typically be null
+/// for stuck 'sending' rows — the envelope is only serialized inside
+/// sendChatMessage, which never completed).
+///
+/// [limit] is reserved for future use — SQLite UPDATE does not support LIMIT
+/// natively and the current query does not apply it.
+///
+/// The recovery query uses the `timestamp` column (ISO-8601 strings compare
+/// lexicographically correctly). No index on (status, is_incoming, timestamp)
+/// exists, but recovery runs at most once per resume and the message table
+/// is small, so a full scan is acceptable.
+///
+/// Returns the number of rows updated.
+Future<int> dbRecoverStuckSendingMessages(
+  Database db, {
+  required DateTime olderThan,
+  int limit = 50,
+}) async {
+  emitFlowEvent(
+    layer: 'DB',
+    event: 'MESSAGES_DB_RECOVER_STUCK_SENDING_START',
+    details: {'olderThan': olderThan.toIso8601String()},
+  );
+
+  try {
+    final count = await db.rawUpdate(
+      "UPDATE messages SET status = 'failed' "
+      "WHERE status = 'sending' AND is_incoming = 0 AND timestamp < ?",
+      [olderThan.toUtc().toIso8601String()],
+    );
+
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'MESSAGES_DB_RECOVER_STUCK_SENDING_SUCCESS',
+      details: {'count': count},
+    );
+
+    return count;
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'MESSAGES_DB_RECOVER_STUCK_SENDING_ERROR',
+      details: {'error': e.toString()},
+    );
+    rethrow;
+  }
+}
+
+/// Updates the wire_envelope column for a message by ID.
+///
+/// Used by sendChatMessage to persist the serialized envelope before the
+/// transport race, so a crash during the race leaves a retryable DB row.
+Future<void> dbUpdateWireEnvelope(
+  Database db,
+  String id,
+  String wireEnvelope,
+) async {
+  emitFlowEvent(
+    layer: 'DB',
+    event: 'MESSAGES_DB_UPDATE_WIRE_ENVELOPE_START',
+    details: {'id': id.length > 8 ? id.substring(0, 8) : id},
+  );
+
+  try {
+    await db.update(
+      'messages',
+      {'wire_envelope': wireEnvelope},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'MESSAGES_DB_UPDATE_WIRE_ENVELOPE_SUCCESS',
+      details: {'id': id.length > 8 ? id.substring(0, 8) : id},
+    );
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'MESSAGES_DB_UPDATE_WIRE_ENVELOPE_ERROR',
+      details: {'error': e.toString()},
+    );
+    rethrow;
   }
 }

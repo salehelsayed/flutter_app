@@ -28,4 +28,11 @@ abstract class MediaAttachmentRepository {
 
   /// Retrieves all attachments with pending download status.
   Future<List<MediaAttachment>> getPendingDownloads();
+
+  /// Returns all attachments with downloadStatus='upload_pending'.
+  ///
+  /// These are outgoing attachments persisted optimistically at send time
+  /// whose upload to the relay was interrupted by an app kill or lock event.
+  /// Used by [retryIncompleteUploads] on app resume to re-upload and re-send.
+  Future<List<MediaAttachment>> getUploadPendingAttachments();
 }

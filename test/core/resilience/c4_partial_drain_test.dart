@@ -39,6 +39,9 @@ class ThrowAfterNMessageRepo implements MessageRepository {
   }
 
   @override
+  Future<ConversationMessage?> getMessage(String id) => _inner.getMessage(id);
+
+  @override
   Future<bool> messageExists(String id) => _inner.messageExists(id);
 
   @override
@@ -93,6 +96,28 @@ class ThrowAfterNMessageRepo implements MessageRepository {
     String? beforeTimestamp,
   }) =>
       _inner.getMessagesPage(cid, limit: limit, beforeTimestamp: beforeTimestamp);
+
+  @override
+  Future<int> recoverStuckSendingMessages({required Duration olderThan}) =>
+      _inner.recoverStuckSendingMessages(olderThan: olderThan);
+
+  @override
+  Future<void> updateWireEnvelope(String id, String envelope) async {}
+
+  @override
+  Future<List<ConversationMessage>> getStuckSendingOutgoingMessages({
+    required Duration olderThan,
+  }) => _inner.getStuckSendingOutgoingMessages(olderThan: olderThan);
+
+  @override
+  Future<List<ConversationMessage>> getSendingOutgoingMessages() async => [];
+
+  @override
+  Future<int> conditionalTransitionStatus(
+    String id, {
+    required String fromStatus,
+    required String toStatus,
+  }) async => 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -119,6 +144,9 @@ class ThrowOnNthMessageRepo implements MessageRepository {
   }
 
   @override
+  Future<ConversationMessage?> getMessage(String id) => _inner.getMessage(id);
+
+  @override
   Future<bool> messageExists(String id) => _inner.messageExists(id);
 
   @override
@@ -173,6 +201,28 @@ class ThrowOnNthMessageRepo implements MessageRepository {
     String? beforeTimestamp,
   }) =>
       _inner.getMessagesPage(cid, limit: limit, beforeTimestamp: beforeTimestamp);
+
+  @override
+  Future<int> recoverStuckSendingMessages({required Duration olderThan}) =>
+      _inner.recoverStuckSendingMessages(olderThan: olderThan);
+
+  @override
+  Future<void> updateWireEnvelope(String id, String envelope) async {}
+
+  @override
+  Future<List<ConversationMessage>> getStuckSendingOutgoingMessages({
+    required Duration olderThan,
+  }) => _inner.getStuckSendingOutgoingMessages(olderThan: olderThan);
+
+  @override
+  Future<List<ConversationMessage>> getSendingOutgoingMessages() async => [];
+
+  @override
+  Future<int> conditionalTransitionStatus(
+    String id, {
+    required String fromStatus,
+    required String toStatus,
+  }) async => 0;
 }
 
 // ---------------------------------------------------------------------------

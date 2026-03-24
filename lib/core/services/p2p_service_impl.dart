@@ -15,11 +15,13 @@ import '../../features/p2p/domain/models/chat_message.dart';
 import '../../features/p2p/domain/models/discovered_peer.dart';
 import '../../features/p2p/domain/models/send_message_result.dart';
 import '../../features/p2p/domain/models/connection_state.dart';
+import '../../features/push/domain/push_token_store.dart';
 
 /// Implementation of P2PService backed by the Go native bridge.
 class P2PServiceImpl implements P2PService {
   final Bridge _bridge;
   final LocalP2PService? _localP2P;
+  final PushTokenStore? _pushTokenStore;
   StreamSubscription<LocalChatMessage>? _localMessageSub;
 
   final _stateController = StreamController<NodeState>.broadcast();
@@ -29,6 +31,7 @@ class P2PServiceImpl implements P2PService {
   Timer? _healthCheckTimer;
   String? _lastFcmToken;
   String? _lastFcmPlatform;
+  Future<void>? _restorePushTokenFuture;
   bool _isStarting = false;
   DateTime? _startNodeTime;
   bool _hasEverBeenOnline = false;
@@ -60,9 +63,13 @@ class P2PServiceImpl implements P2PService {
   /// Foreground budget for the first inbox page during startup and resume.
   static const foregroundInboxTimeout = Duration(seconds: 3);
 
-  P2PServiceImpl({required Bridge bridge, LocalP2PService? localP2PService})
-    : _bridge = bridge,
-      _localP2P = localP2PService {
+  P2PServiceImpl({
+    required Bridge bridge,
+    LocalP2PService? localP2PService,
+    PushTokenStore? pushTokenStore,
+  }) : _bridge = bridge,
+       _localP2P = localP2PService,
+       _pushTokenStore = pushTokenStore {
     // Register event handlers on the bridge
     _bridge.onMessageReceived = (msg) {
       final transport =
@@ -87,6 +94,8 @@ class P2PServiceImpl implements P2PService {
         ),
       );
     });
+
+    unawaited(_restorePersistedPushTokenIfNeeded());
   }
 
   @override
@@ -128,14 +137,16 @@ class P2PServiceImpl implements P2PService {
   @override
   Future<bool> startNodeCore(String privateKeyBase64, String peerId) async {
     if (_isStarting) {
-      if (kDebugMode)
+      if (kDebugMode) {
         debugPrint('[START] startNodeCore() skipped — already starting');
+      }
       return false;
     }
     _isStarting = true;
     _startNodeTime = DateTime.now();
-    if (kDebugMode)
+    if (kDebugMode) {
       debugPrint('[START] startNodeCore() beginning for peerId=$peerId');
+    }
 
     emitFlowEvent(
       layer: 'FL',
@@ -605,13 +616,14 @@ class P2PServiceImpl implements P2PService {
 
   @override
   Future<DiscoveredPeer?> discoverPeer(String peerId, {int? timeoutMs}) async {
+    final details = <String, dynamic>{'peerId': peerId};
+    if (timeoutMs != null) {
+      details['timeoutMs'] = timeoutMs;
+    }
     emitFlowEvent(
       layer: 'FL',
       event: 'P2P_SERVICE_DISCOVER_PEER_BEGIN',
-      details: {
-        'peerId': peerId,
-        if (timeoutMs != null) 'timeoutMs': timeoutMs,
-      },
+      details: details,
     );
 
     try {
@@ -662,14 +674,17 @@ class P2PServiceImpl implements P2PService {
     List<String>? addresses,
     int? timeoutMs,
   }) async {
+    final details = <String, dynamic>{
+      'peerId': peerId,
+      'hasAddresses': addresses != null,
+    };
+    if (timeoutMs != null) {
+      details['timeoutMs'] = timeoutMs;
+    }
     emitFlowEvent(
       layer: 'FL',
       event: 'P2P_SERVICE_DIAL_PEER_BEGIN',
-      details: {
-        'peerId': peerId,
-        'hasAddresses': addresses != null,
-        if (timeoutMs != null) 'timeoutMs': timeoutMs,
-      },
+      details: details,
     );
 
     try {
@@ -930,15 +945,16 @@ class P2PServiceImpl implements P2PService {
           if (_stateHasHealthyRelay(retryState) &&
               _lastFcmToken != null &&
               _lastFcmPlatform != null) {
-            registerPushToken(_lastFcmToken!, _lastFcmPlatform!);
+            unawaited(_reregisterStoredPushTokenIfAvailable());
           }
         }
 
         final totalMs = DateTime.now().difference(hcStart).inMilliseconds;
-        if (kDebugMode)
+        if (kDebugMode) {
           debugPrint(
             '[HEALTH] Recovery health check done (total ${totalMs}ms)',
           );
+        }
         return;
       } else if (freshState.isStarted &&
           !_stateHasHealthyRelay(freshState) &&
@@ -980,8 +996,9 @@ class P2PServiceImpl implements P2PService {
           },
         );
       } else {
-        if (kDebugMode)
+        if (kDebugMode) {
           debugPrint('[HEALTH] No state change (online, all good)');
+        }
       }
     } catch (e) {
       if (kDebugMode) debugPrint('[HEALTH] _performHealthCheck EXCEPTION: $e');
@@ -1040,8 +1057,9 @@ class P2PServiceImpl implements P2PService {
   /// Handle peer connected event from bridge.
   void _handlePeerConnected(ConnectionState conn) {
     if (_stopped) return;
-    if (kDebugMode)
+    if (kDebugMode) {
       debugPrint('[CONN] peer:connected → ${conn.peerId} (${conn.status})');
+    }
 
     // Update current state with new connection
     final updatedConnections = List<ConnectionState>.from(
@@ -1121,7 +1139,7 @@ class P2PServiceImpl implements P2PService {
         nowHealthy &&
         _lastFcmToken != null &&
         _lastFcmPlatform != null) {
-      registerPushToken(_lastFcmToken!, _lastFcmPlatform!);
+      unawaited(_reregisterStoredPushTokenIfAvailable());
     }
 
     // Keep the older addresses-based fallback only for legacy bridges that
@@ -1202,7 +1220,7 @@ class P2PServiceImpl implements P2PService {
         nowHealthy &&
         _lastFcmToken != null &&
         _lastFcmPlatform != null) {
-      registerPushToken(_lastFcmToken!, _lastFcmPlatform!);
+      unawaited(_reregisterStoredPushTokenIfAvailable());
     }
 
     if (wasHealthy && !nowHealthy && _hasEverBeenOnline) {
@@ -1221,6 +1239,70 @@ class P2PServiceImpl implements P2PService {
       );
       unawaited(performImmediateHealthCheck());
     }
+  }
+
+  Future<void> _restorePersistedPushTokenIfNeeded() {
+    if (_lastFcmToken != null && _lastFcmPlatform != null) {
+      return Future<void>.value();
+    }
+
+    final pushTokenStore = _pushTokenStore;
+    if (pushTokenStore == null) {
+      return Future<void>.value();
+    }
+
+    final inFlight = _restorePushTokenFuture;
+    if (inFlight != null) {
+      return inFlight;
+    }
+
+    final restore = () async {
+      try {
+        final stored = await pushTokenStore.readToken();
+        if (stored == null) {
+          return;
+        }
+        _lastFcmToken = stored.token;
+        _lastFcmPlatform = stored.platform;
+        logPushDiagnostic(
+          'persisted_push_token_restored',
+          details: {
+            'platform': stored.platform,
+            'token': summarizePushToken(stored.token),
+          },
+        );
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'P2P_SERVICE_PUSH_TOKEN_RESTORED',
+          details: {'platform': stored.platform},
+        );
+      } catch (e) {
+        logPushDiagnostic(
+          'persisted_push_token_restore_failed',
+          details: {'error': e.toString()},
+        );
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'P2P_SERVICE_PUSH_TOKEN_RESTORE_FAILED',
+          details: {'error': e.toString()},
+        );
+      }
+    }();
+
+    _restorePushTokenFuture = restore.whenComplete(() {
+      _restorePushTokenFuture = null;
+    });
+    return _restorePushTokenFuture!;
+  }
+
+  Future<void> _reregisterStoredPushTokenIfAvailable() async {
+    await _restorePersistedPushTokenIfNeeded();
+    final token = _lastFcmToken;
+    final platform = _lastFcmPlatform;
+    if (token == null || platform == null) {
+      return;
+    }
+    await registerPushToken(token, platform);
   }
 
   @override
@@ -1258,10 +1340,14 @@ class P2PServiceImpl implements P2PService {
 
   @override
   Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) async {
+    final details = <String, dynamic>{};
+    if (timeoutMs != null) {
+      details['timeoutMs'] = timeoutMs;
+    }
     emitFlowEvent(
       layer: 'FL',
       event: 'P2P_SERVICE_INBOX_RETRIEVE_BEGIN',
-      details: {if (timeoutMs != null) 'timeoutMs': timeoutMs},
+      details: details,
     );
 
     try {
@@ -1373,8 +1459,9 @@ class P2PServiceImpl implements P2PService {
     // Phase 5: Coalesce concurrent recovery attempts.
     // If a recovery is already running, just wait for it to complete.
     if (_recoveryInProgress != null) {
-      if (kDebugMode)
+      if (kDebugMode) {
         debugPrint('[HEALTH] Recovery already in progress — coalescing');
+      }
       emitFlowEvent(
         layer: 'FL',
         event: 'P2P_SERVICE_RECOVERY_COALESCED',
@@ -1392,8 +1479,9 @@ class P2PServiceImpl implements P2PService {
       try {
         await _localP2P?.restartAdvertising();
       } catch (e) {
-        if (kDebugMode)
+        if (kDebugMode) {
           debugPrint('[P2PService] Local P2P restart advertising failed: $e');
+        }
       }
     } finally {
       final completer = _recoveryInProgress;

@@ -2,6 +2,35 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+
+/// Returns the notification body text for a message.
+///
+/// If [text] is non-empty it is returned as-is (caption-first rule).
+/// If [text] is empty the body is derived from the first attachment's
+/// [MediaAttachment.mediaType]: image -> "Photo", video -> "Video",
+/// audio -> "Voice message", file -> "File", mixed/unknown -> "Media".
+/// Falls back to "Message" when text is empty and there are no attachments.
+String notificationBodyForMessage(
+  String text,
+  List<MediaAttachment> media,
+) {
+  final trimmed = text.trim();
+  if (trimmed.isNotEmpty) return trimmed;
+  if (media.isEmpty) return 'Message';
+
+  final firstType = media.first.mediaType;
+  final allSameType = media.every((a) => a.mediaType == firstType);
+  if (!allSameType) return 'Media';
+
+  return switch (firstType) {
+    'image' => 'Photo',
+    'video' => 'Video',
+    'audio' => 'Voice message',
+    'file' => 'File',
+    _ => 'Media',
+  };
+}
 
 /// Shows a local notification for an incoming message unless the user
 /// is currently viewing that conversation in the foreground.

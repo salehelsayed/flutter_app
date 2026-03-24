@@ -11,7 +11,7 @@ void main() {
         NotificationRouteTarget? routedTarget;
 
         await routeRemoteNotificationOpen(
-          data: const {'type': 'new_message', 'from': 'peer-123'},
+          data: const {'type': 'new_message', 'sender_id': 'peer-123'},
           onBeforeRouteTarget: (routeTarget) async {
             callOrder.add('prepare');
             expect(routeTarget.kind, NotificationRouteTargetKind.conversation);

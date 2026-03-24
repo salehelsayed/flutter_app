@@ -76,5 +76,12 @@ class InMemoryMediaAttachmentRepository implements MediaAttachmentRepository {
         .toList();
   }
 
+  @override
+  Future<List<MediaAttachment>> getUploadPendingAttachments() async {
+    return _attachments.values
+        .where((a) => a.downloadStatus == 'upload_pending')
+        .toList();
+  }
+
   int get count => _attachments.length;
 }

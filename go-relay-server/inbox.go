@@ -34,12 +34,8 @@ const (
 // --- Push service ---
 
 type PushService struct {
-	sender       pushMessageSender
+	client       *messaging.Client
 	tokenBackend PushTokenBackend
-}
-
-type pushMessageSender interface {
-	Send(ctx context.Context, msg *messaging.Message) (string, error)
 }
 
 type tokenEntry struct {
@@ -74,28 +70,20 @@ func newPushServiceWithTokenBackend(
 		return ps
 	}
 
-	ps.sender = client
+	ps.client = client
 	log.Println("[PUSH] Firebase Admin SDK initialized")
 	return ps
 }
 
 // NewPushServiceWithBackend creates a PushService with a custom token backend.
 func NewPushServiceWithBackend(tokenBackend PushTokenBackend) *PushService {
-	return newPushServiceWithSender(tokenBackend, nil)
-}
-
-func newPushServiceWithSender(
-	tokenBackend PushTokenBackend,
-	sender pushMessageSender,
-) *PushService {
 	return &PushService{
-		sender:       sender,
 		tokenBackend: tokenBackend,
 	}
 }
 
 func (ps *PushService) Status() string {
-	if ps.sender != nil {
+	if ps.client != nil {
 		return "enabled"
 	}
 	return "disabled (no service account)"
@@ -112,22 +100,18 @@ func (ps *PushService) UnregisterToken(peerId string) {
 }
 
 func (ps *PushService) SendNotification(ctx context.Context, toPeerId, fromPeerId string) {
-	if ps.sender == nil {
+	if ps.client == nil {
 		return
 	}
 
 	entry := ps.tokenBackend.LookupToken(toPeerId)
 	if entry == nil {
-		log.Printf("[PUSH] No token registered for %s; skipping push", toPeerId[:min(20, len(toPeerId))])
 		return
 	}
 
-	msg := buildChatPushMessage(chatPushRequest{
-		Token:      entry.Token,
-		FromPeerID: fromPeerId,
-	})
+	msg := buildPushMessage(entry.Token, fromPeerId)
 
-	_, err := ps.sender.Send(ctx, msg)
+	_, err := ps.client.Send(ctx, msg)
 	if err != nil {
 		log.Printf("[PUSH] Failed to send to %s: %v", toPeerId[:min(20, len(toPeerId))], err)
 		// Remove invalid tokens
@@ -144,46 +128,21 @@ func (ps *PushService) SendNotification(ctx context.Context, toPeerId, fromPeerI
 	log.Printf("[PUSH] Notification sent to %s", toPeerId[:min(20, len(toPeerId))])
 }
 
-type chatPushRequest struct {
-	Token      string
-	FromPeerID string
-	Title      string
-	Body       string
-	ChannelID  string
-}
-
-func buildChatPushMessage(req chatPushRequest) *messaging.Message {
-	title := req.Title
-	if title == "" {
-		title = pushNotificationTitle
-	}
-	body := req.Body
-	if body == "" {
-		body = pushNotificationBody
-	}
-	channelID := req.ChannelID
-	if channelID == "" {
-		channelID = pushNotificationChannelID
-	}
-
+func buildPushMessage(token, fromPeerId string) *messaging.Message {
 	return &messaging.Message{
-		Token: req.Token,
-		Notification: &messaging.Notification{
-			Title: title,
-			Body:  body,
-		},
+		Token: token,
 		Data: map[string]string{
 			"type":      "new_message",
-			"sender_id": req.FromPeerID,
-			"title":     title,
-			"body":      body,
+			"sender_id": fromPeerId,
+			"title":     pushNotificationTitle,
+			"body":      pushNotificationBody,
 		},
 		Android: &messaging.AndroidConfig{
 			Priority: "high",
 			Notification: &messaging.AndroidNotification{
-				Title:     title,
-				Body:      body,
-				ChannelID: channelID,
+				Title:     pushNotificationTitle,
+				Body:      pushNotificationBody,
+				ChannelID: pushNotificationChannelID,
 			},
 		},
 		APNS: &messaging.APNSConfig{
@@ -195,116 +154,12 @@ func buildChatPushMessage(req chatPushRequest) *messaging.Message {
 				Aps: &messaging.Aps{
 					ContentAvailable: true,
 					Alert: &messaging.ApsAlert{
-						Title: title,
-						Body:  body,
+						Title: pushNotificationTitle,
+						Body:  pushNotificationBody,
 					},
 				},
 			},
 		},
-	}
-}
-
-type groupPushRequest struct {
-	Token     string
-	GroupID   string
-	Title     string
-	Body      string
-	ChannelID string
-}
-
-func buildGroupPushMessage(req groupPushRequest) *messaging.Message {
-	title := req.Title
-	if title == "" {
-		title = pushNotificationTitle
-	}
-	body := req.Body
-	if body == "" {
-		body = pushNotificationBody
-	}
-	channelID := req.ChannelID
-	if channelID == "" {
-		channelID = pushNotificationChannelID
-	}
-
-	return &messaging.Message{
-		Token: req.Token,
-		Data: map[string]string{
-			"type":    "group_message",
-			"groupId": req.GroupID,
-			"title":   title,
-			"body":    body,
-		},
-		Android: &messaging.AndroidConfig{
-			Priority: "high",
-			Notification: &messaging.AndroidNotification{
-				Title:     title,
-				Body:      body,
-				ChannelID: channelID,
-			},
-		},
-		APNS: &messaging.APNSConfig{
-			Headers: map[string]string{
-				"apns-priority":  "10",
-				"apns-push-type": "alert",
-			},
-			Payload: &messaging.APNSPayload{
-				Aps: &messaging.Aps{
-					ContentAvailable: true,
-					Alert: &messaging.ApsAlert{
-						Title: title,
-						Body:  body,
-					},
-				},
-			},
-		},
-	}
-}
-
-func (ps *PushService) SendGroupNotifications(
-	ctx context.Context,
-	recipientPeerIds []string,
-	senderPeerId,
-	groupId,
-	title,
-	body string,
-) {
-	if ps.sender == nil {
-		return
-	}
-
-	for _, recipientPeerId := range recipientPeerIds {
-		if recipientPeerId == "" || recipientPeerId == senderPeerId {
-			continue
-		}
-
-		entry := ps.tokenBackend.LookupToken(recipientPeerId)
-		if entry == nil {
-			log.Printf("[PUSH] No token registered for %s; skipping group push", recipientPeerId[:min(20, len(recipientPeerId))])
-			continue
-		}
-
-		msg := buildGroupPushMessage(groupPushRequest{
-			Token:   entry.Token,
-			GroupID: groupId,
-			Title:   title,
-			Body:    body,
-		})
-
-		_, err := ps.sender.Send(ctx, msg)
-		if err != nil {
-			log.Printf("[PUSH] Failed to send group push to %s: %v", recipientPeerId[:min(20, len(recipientPeerId))], err)
-			if isInvalidTokenError(err) {
-				ps.tokenBackend.UnregisterToken(recipientPeerId)
-				pushSentCounter.WithLabelValues("invalid_token").Inc()
-				log.Printf("[PUSH] Removed invalid token for %s", recipientPeerId[:min(20, len(recipientPeerId))])
-			} else {
-				pushSentCounter.WithLabelValues("failed").Inc()
-			}
-			continue
-		}
-
-		pushSentCounter.WithLabelValues("success").Inc()
-		log.Printf("[PUSH] Group notification sent to %s", recipientPeerId[:min(20, len(recipientPeerId))])
 	}
 }
 
@@ -334,6 +189,30 @@ func containsImpl(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// extractMessageId attempts to extract a message ID from the JSON payload
+// for deduplication. Supports v1 (payload.id) and v2 (top-level id) envelopes.
+// Returns "" if the payload is malformed or has no extractable ID.
+func extractMessageId(message string) string {
+	var envelope map[string]interface{}
+	if err := json.Unmarshal([]byte(message), &envelope); err != nil {
+		return ""
+	}
+
+	// V2 encrypted: top-level "id" field
+	if id, ok := envelope["id"].(string); ok && id != "" {
+		return id
+	}
+
+	// V1 plaintext: payload.id
+	if payload, ok := envelope["payload"].(map[string]interface{}); ok {
+		if id, ok := payload["id"].(string); ok {
+			return id
+		}
+	}
+
+	return ""
 }
 
 // --- Inbox store ---
@@ -367,8 +246,16 @@ func NewInboxStoreWithBackend(backend InboxBackend, push *PushService) *InboxSto
 	}
 }
 
-func (is *InboxStore) Store(toPeerId string, entry inboxMessage) {
-	is.backend.Store(toPeerId, entry)
+func (is *InboxStore) Store(toPeerId string, entry inboxMessage) bool {
+	stored := is.backend.Store(toPeerId, entry)
+	if !stored {
+		// Duplicate — do not fire push notification.
+		log.Printf("[INBOX] Duplicate message for %s from %s — skipped",
+			toPeerId[:min(20, len(toPeerId))],
+			entry.From[:min(20, len(entry.From))])
+		inboxStoredCounter.Inc() // still count for metrics visibility
+		return false
+	}
 	inboxStoredCounter.Inc()
 	if biz != nil {
 		biz.RecordMessageStored()
@@ -377,6 +264,10 @@ func (is *InboxStore) Store(toPeerId string, entry inboxMessage) {
 	log.Printf("[INBOX] Stored message for %s from %s",
 		toPeerId[:min(20, len(toPeerId))],
 		entry.From[:min(20, len(entry.From))])
+
+	// Fire push notification only for genuinely new messages.
+	go is.push.SendNotification(context.Background(), toPeerId, entry.From)
+	return true
 }
 
 func (is *InboxStore) Retrieve(peerId string, limit int) []inboxMessage {
@@ -517,17 +408,14 @@ func writeFrame(w io.Writer, data []byte) error {
 // --- Inbox stream handler ---
 
 type inboxRequest struct {
-	Action           string                 `json:"action"`
-	To               string                 `json:"to,omitempty"`
-	From             string                 `json:"from,omitempty"`
-	Message          string                 `json:"message,omitempty"`
-	Metadata         map[string]interface{} `json:"metadata,omitempty"`
-	Limit            int                    `json:"limit,omitempty"`
-	Token            string                 `json:"token,omitempty"`
-	Platform         string                 `json:"platform,omitempty"`
-	RecipientPeerIds []string               `json:"recipientPeerIds,omitempty"`
-	PushTitle        string                 `json:"pushTitle,omitempty"`
-	PushBody         string                 `json:"pushBody,omitempty"`
+	Action   string                 `json:"action"`
+	To       string                 `json:"to,omitempty"`
+	From     string                 `json:"from,omitempty"`
+	Message  string                 `json:"message,omitempty"`
+	Metadata map[string]interface{} `json:"metadata,omitempty"`
+	Limit    int                    `json:"limit,omitempty"`
+	Token    string                 `json:"token,omitempty"`
+	Platform string                 `json:"platform,omitempty"`
 	// Group inbox fields.
 	GroupId        string `json:"groupId,omitempty"`
 	SinceTimestamp int64  `json:"sinceTimestamp,omitempty"`
@@ -593,9 +481,8 @@ func HandleInboxStream(s network.Stream, inbox *InboxStore, groupInbox *GroupInb
 			}
 			inbox.Store(req.To, entry)
 			resp = inboxResponse{Status: "OK"}
-
-			// Fire push notification (non-blocking)
-			go inbox.push.SendNotification(context.Background(), req.To, from)
+			// Push notification is now fired inside InboxStore.Store
+			// (only for genuinely new messages, skipped for duplicates).
 		}
 
 	case "retrieve":
@@ -634,14 +521,6 @@ func HandleInboxStream(s network.Stream, inbox *InboxStore, groupInbox *GroupInb
 				resp = inboxResponse{Status: "ERROR", Error: err.Error()}
 			} else {
 				resp = inboxResponse{Status: "OK"}
-				go inbox.push.SendGroupNotifications(
-					context.Background(),
-					req.RecipientPeerIds,
-					from,
-					req.GroupId,
-					req.PushTitle,
-					req.PushBody,
-				)
 			}
 		}
 

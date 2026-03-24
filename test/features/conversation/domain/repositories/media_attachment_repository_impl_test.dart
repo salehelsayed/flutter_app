@@ -61,6 +61,13 @@ void main() {
           ..sort((a, b) =>
               (a['created_at'] as String).compareTo(b['created_at'] as String));
       },
+      dbLoadUploadPendingAttachments: ({int limit = 50}) async {
+        return store.values
+            .where((row) => row['download_status'] == 'upload_pending')
+            .toList()
+          ..sort((a, b) =>
+              (a['created_at'] as String).compareTo(b['created_at'] as String));
+      },
     );
   });
 

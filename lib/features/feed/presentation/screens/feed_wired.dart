@@ -1050,6 +1050,9 @@ class _FeedWiredState extends State<FeedWired> {
     _sessionReplies.track(contactPeerId, SessionReply.justNow(text));
     if (mounted) setState(() {});
 
+    // Acquire background task before network send.
+    final bgTaskId = await callBgBegin(widget.bridge);
+
     try {
       final contact = await widget.contactRepository.getContact(contactPeerId);
       if (contact == null || !mounted) {
@@ -1132,6 +1135,8 @@ class _FeedWiredState extends State<FeedWired> {
           behavior: SnackBarBehavior.floating,
         ),
       );
+    } finally {
+      await callBgEnd(widget.bridge, bgTaskId);
     }
   }
 

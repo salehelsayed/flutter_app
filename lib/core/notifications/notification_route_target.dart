@@ -94,7 +94,9 @@ class NotificationRouteTarget {
     final type = _trimToNull(data['type']?.toString());
     switch (type) {
       case 'new_message':
-        final peerId = _trimToNull(data['from']?.toString());
+        // The relay sends "sender_id"; older relay versions sent "from".
+        final peerId = _trimToNull(data['sender_id']?.toString())
+            ?? _trimToNull(data['from']?.toString());
         return peerId == null
             ? null
             : NotificationRouteTarget.conversation(peerId);

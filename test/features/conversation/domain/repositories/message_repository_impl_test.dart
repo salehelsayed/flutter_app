@@ -156,6 +156,11 @@ void main() {
         }
         return summaries;
       },
+      dbRecoverStuckSendingMessages: ({required DateTime olderThan, int limit = 50}) async => 0,
+      dbUpdateWireEnvelope: (id, wireEnvelope) async {},
+      dbLoadStuckSendingOutgoingMessages: ({required DateTime olderThan, int limit = 50}) async => [],
+      dbLoadSendingOutgoingMessages: () async => [],
+      dbConditionalTransitionStatus: (id, {required fromStatus, required toStatus}) async => 0,
     );
   });
 

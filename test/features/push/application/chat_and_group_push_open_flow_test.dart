@@ -18,7 +18,7 @@ void main() {
         await routeRemoteNotificationOpen(
           data: const <String, dynamic>{
             'type': 'new_message',
-            'from': 'peer-123',
+            'sender_id': 'peer-123',
           },
           onBeforeRouteTarget: harness.prepare,
           onRouteTarget: harness.handleRouteTarget,
@@ -45,7 +45,10 @@ void main() {
       () async {
         await routeInitialRemoteNotificationOpen(
           getInitialMessage: () async => const RemoteMessage(
-            data: <String, dynamic>{'type': 'new_message', 'from': 'peer-123'},
+            data: <String, dynamic>{
+              'type': 'new_message',
+              'sender_id': 'peer-123',
+            },
           ),
           onBeforeRouteTarget: harness.prepare,
           onRouteTarget: harness.handleRouteTarget,

@@ -84,6 +84,9 @@ class _FakeMediaAttachmentRepo implements MediaAttachmentRepository {
 
   @override
   Future<List<MediaAttachment>> getPendingDownloads() async => [];
+
+  @override
+  Future<List<MediaAttachment>> getUploadPendingAttachments() async => [];
 }
 
 /// Fake media file manager that returns a temp-dir-based path.

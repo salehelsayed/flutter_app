@@ -54,6 +54,9 @@ class InMemoryMessageRepository
   }
 
   @override
+  Future<ConversationMessage?> getMessage(String id) async => _messages[id];
+
+  @override
   Future<bool> messageExists(String id) async => _messages.containsKey(id);
 
   @override
@@ -193,6 +196,65 @@ class InMemoryMessageRepository
     }
     return summaries;
   }
+
+  @override
+  Future<List<ConversationMessage>> getSendingOutgoingMessages() async {
+    return _messages.values
+        .where((m) => m.status == 'sending' && !m.isIncoming)
+        .toList()
+      ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+  }
+
+  @override
+  Future<int> conditionalTransitionStatus(
+    String id, {
+    required String fromStatus,
+    required String toStatus,
+  }) async {
+    final msg = _messages[id];
+    if (msg != null && msg.status == fromStatus) {
+      final updated = msg.copyWith(status: toStatus);
+      _messages[id] = updated;
+      _messageChangeController.add(updated);
+      return 1;
+    }
+    return 0;
+  }
+
+  @override
+  Future<List<ConversationMessage>> getStuckSendingOutgoingMessages({
+    required Duration olderThan,
+  }) async {
+    final cutoff = DateTime.now().toUtc().subtract(olderThan);
+    return _messages.values
+        .where((m) =>
+            m.status == 'sending' &&
+            !m.isIncoming &&
+            DateTime.parse(m.timestamp).toUtc().isBefore(cutoff))
+        .toList()
+      ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+  }
+
+  @override
+  Future<int> recoverStuckSendingMessages({
+    required Duration olderThan,
+  }) async {
+    final cutoff = DateTime.now().toUtc().subtract(olderThan);
+    int count = 0;
+    for (final entry in _messages.entries.toList()) {
+      final m = entry.value;
+      if (m.status == 'sending' &&
+          !m.isIncoming &&
+          DateTime.parse(m.timestamp).toUtc().isBefore(cutoff)) {
+        _messages[entry.key] = m.copyWith(status: 'failed');
+        count++;
+      }
+    }
+    return count;
+  }
+
+  @override
+  Future<void> updateWireEnvelope(String id, String envelope) async {}
 
   int get count => _messages.length;
 }

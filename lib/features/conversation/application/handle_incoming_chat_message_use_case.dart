@@ -182,14 +182,24 @@ handleIncomingChatMessage({
   );
   await messageRepo.saveMessage(conversationMessage);
 
-  // 6. Persist media attachment metadata
+  // 6. Persist media attachment metadata and collect parsed attachments
+  final parsedAttachments = <MediaAttachment>[];
   if (mediaAttachmentRepo != null && payload.media != null) {
     for (final mediaJson in payload.media!) {
       final attachment = MediaAttachment.fromJson(mediaJson)
           .copyWith(messageId: payload.id);
       await mediaAttachmentRepo.saveAttachment(attachment);
+      parsedAttachments.add(attachment);
     }
   }
+
+  // 7. Hydrate media on the returned message so downstream consumers
+  // (notably ChatMessageListener.maybeShowNotification) can derive the
+  // notification body from media metadata without a separate DB query.
+  // This mirrors the send-path pattern at send_chat_message_use_case.dart:695.
+  final hydratedMessage = parsedAttachments.isNotEmpty
+      ? conversationMessage.copyWith(media: parsedAttachments)
+      : conversationMessage;
 
   emitFlowEvent(
     layer: 'FL',
@@ -210,7 +220,7 @@ handleIncomingChatMessage({
   );
   return (
     HandleChatMessageResult.chatMessage,
-    conversationMessage,
+    hydratedMessage,
     updatedContact,
   );
 }

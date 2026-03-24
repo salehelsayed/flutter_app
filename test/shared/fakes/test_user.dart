@@ -1,4 +1,8 @@
+import 'dart:ui' show AppLifecycleState;
+
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/lifecycle/handle_app_paused.dart';
+import 'package:flutter_app/core/lifecycle/handle_app_resumed.dart';
 import 'package:flutter_app/core/services/incoming_message_router.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
@@ -17,6 +21,7 @@ import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 
 import '../../core/bridge/fake_bridge.dart';
 import '../../features/conversation/domain/repositories/fake_reaction_repository.dart';
+import '../helpers/lifecycle_helpers.dart' as lifecycle_helpers;
 import 'fake_p2p_network.dart';
 import 'fake_p2p_service_integration.dart';
 import 'in_memory_contact_repository.dart';
@@ -35,6 +40,7 @@ class TestUser {
   final IncomingMessageRouter? router;
   final ReactionListener? reactionListener;
   final FakeReactionRepository? reactionRepo;
+  AppLifecycleState lifecycleState = AppLifecycleState.resumed;
 
   TestUser._({
     required this.peerId,
@@ -58,6 +64,7 @@ class TestUser {
     Bridge? bridge,
     Future<String?> Function()? getOwnMlKemSecretKey,
     bool withReactions = false,
+    bool autoStartListener = false,
   }) {
     final effectiveBridge = bridge ?? PassthroughCryptoBridge();
     final p2p = FakeP2PService(peerId: peerId, network: network);
@@ -96,7 +103,7 @@ class TestUser {
           getOwnMlKemSecretKey ?? () async => 'test-own-mlkem-sk',
     );
 
-    return TestUser._(
+    final user = TestUser._(
       peerId: peerId,
       username: username,
       p2pService: p2p,
@@ -109,6 +116,10 @@ class TestUser {
       reactionListener: reactionListener,
       reactionRepo: reactionRepo,
     );
+    if (autoStartListener) {
+      user.start();
+    }
+    return user;
   }
 
   /// Adds another user as a contact (simulating QR scan exchange).
@@ -244,6 +255,52 @@ class TestUser {
     router?.start();
     chatListener.start();
     reactionListener?.start();
+  }
+
+  void startListener() => chatListener.start();
+
+  void stopListener() => chatListener.stop();
+
+  Future<void> simulatePause() async {
+    lifecycleState = AppLifecycleState.paused;
+    await handleAppPaused(messageRepo: messageRepo);
+  }
+
+  Future<bool?> simulateResume({
+    Future<int> Function()? recoverStuckSendingMessagesFn,
+    Future<int> Function()? retryIncompleteUploadsFn,
+    Future<int> Function()? retryFailedMessagesFn,
+    Future<int> Function()? retryUnackedMessagesFn,
+  }) async {
+    lifecycleState = AppLifecycleState.resumed;
+    return handleAppResumed(
+      bridge: bridge,
+      p2pService: p2pService,
+      recoverStuckSendingMessagesFn: recoverStuckSendingMessagesFn,
+      retryIncompleteUploadsFn: retryIncompleteUploadsFn,
+      retryFailedMessagesFn: retryFailedMessagesFn,
+      retryUnackedMessagesFn: retryUnackedMessagesFn,
+    );
+  }
+
+  Future<bool?> simulateBackgroundForegroundCycle({
+    Future<int> Function()? recoverStuckSendingMessagesFn,
+    Future<int> Function()? retryIncompleteUploadsFn,
+    Future<int> Function()? retryFailedMessagesFn,
+    Future<int> Function()? retryUnackedMessagesFn,
+  }) async {
+    lifecycleState = AppLifecycleState.paused;
+    final result = await lifecycle_helpers.simulateBackgroundForegroundCycle(
+      bridge: bridge,
+      p2pService: p2pService,
+      messageRepo: messageRepo,
+      recoverStuckSendingMessagesFn: recoverStuckSendingMessagesFn,
+      retryIncompleteUploadsFn: retryIncompleteUploadsFn,
+      retryFailedMessagesFn: retryFailedMessagesFn,
+      retryUnackedMessagesFn: retryUnackedMessagesFn,
+    );
+    lifecycleState = AppLifecycleState.resumed;
+    return result;
   }
 
   void setOnline(bool online) => p2pService.setOnline(online);

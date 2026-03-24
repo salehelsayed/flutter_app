@@ -41,6 +41,20 @@ class MessageRepositoryImpl
   dbLoadUnackedOutgoingMessages;
   final Future<List<Map<String, Object?>>> Function(List<String> contactPeerIds)
   dbLoadConversationThreadSummaries;
+  final Future<int> Function({required DateTime olderThan, int limit})
+  dbRecoverStuckSendingMessages;
+  final Future<void> Function(String id, String wireEnvelope)?
+  dbUpdateWireEnvelope;
+  final Future<List<Map<String, Object?>>> Function({
+    required DateTime olderThan,
+    int limit,
+  })
+  dbLoadStuckSendingOutgoingMessages;
+  final Future<List<Map<String, Object?>>> Function()
+  dbLoadSendingOutgoingMessages;
+  final Future<int> Function(String id,
+      {required String fromStatus, required String toStatus})
+  dbConditionalTransitionStatus;
   final StreamController<ConversationMessage> _messageChangeController =
       StreamController<ConversationMessage>.broadcast();
 
@@ -60,6 +74,11 @@ class MessageRepositoryImpl
     required this.dbLoadFailedOutgoingMessages,
     required this.dbLoadUnackedOutgoingMessages,
     required this.dbLoadConversationThreadSummaries,
+    required this.dbRecoverStuckSendingMessages,
+    this.dbUpdateWireEnvelope,
+    required this.dbLoadStuckSendingOutgoingMessages,
+    required this.dbLoadSendingOutgoingMessages,
+    required this.dbConditionalTransitionStatus,
   });
 
   @override
@@ -120,6 +139,25 @@ class MessageRepositoryImpl
     final row = await dbLoadMessage(id);
     if (row != null) {
       _messageChangeController.add(ConversationMessage.fromMap(row));
+    }
+  }
+
+  @override
+  Future<ConversationMessage?> getMessage(String id) async {
+    final row = await dbLoadMessage(id);
+    if (row == null) return null;
+    return ConversationMessage.fromMap(row);
+  }
+
+  @override
+  Future<void> updateWireEnvelope(String id, String envelope) async {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'MESSAGE_REPO_UPDATE_WIRE_ENVELOPE',
+      details: {'id': id.length > 8 ? id.substring(0, 8) : id},
+    );
+    if (dbUpdateWireEnvelope != null) {
+      await dbUpdateWireEnvelope!(id, envelope);
     }
   }
 
@@ -222,6 +260,49 @@ class MessageRepositoryImpl
     final cutoff = DateTime.now().toUtc().subtract(olderThan);
     final rows = await dbLoadUnackedOutgoingMessages(olderThan: cutoff);
     return rows.map((row) => ConversationMessage.fromMap(row)).toList();
+  }
+
+  @override
+  Future<int> recoverStuckSendingMessages({
+    required Duration olderThan,
+  }) async {
+    final cutoff = DateTime.now().toUtc().subtract(olderThan);
+    return dbRecoverStuckSendingMessages(olderThan: cutoff);
+  }
+
+  @override
+  Future<List<ConversationMessage>> getStuckSendingOutgoingMessages({
+    required Duration olderThan,
+  }) async {
+    final cutoff = DateTime.now().toUtc().subtract(olderThan);
+    final rows = await dbLoadStuckSendingOutgoingMessages(olderThan: cutoff);
+    return rows.map((row) => ConversationMessage.fromMap(row)).toList();
+  }
+
+  @override
+  Future<List<ConversationMessage>> getSendingOutgoingMessages() async {
+    final rows = await dbLoadSendingOutgoingMessages();
+    return rows.map((row) => ConversationMessage.fromMap(row)).toList();
+  }
+
+  @override
+  Future<int> conditionalTransitionStatus(
+    String id, {
+    required String fromStatus,
+    required String toStatus,
+  }) async {
+    final count = await dbConditionalTransitionStatus(
+      id,
+      fromStatus: fromStatus,
+      toStatus: toStatus,
+    );
+    if (count > 0) {
+      final row = await dbLoadMessage(id);
+      if (row != null) {
+        _messageChangeController.add(ConversationMessage.fromMap(row));
+      }
+    }
+    return count;
   }
 
   @override

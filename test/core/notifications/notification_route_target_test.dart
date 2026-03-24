@@ -6,7 +6,7 @@ void main() {
     test('fromRemoteMessageData maps new_message to conversation route', () {
       final routeTarget = NotificationRouteTarget.fromRemoteMessageData({
         'type': 'new_message',
-        'from': 'peer-123',
+        'sender_id': 'peer-123',
       });
 
       expect(routeTarget, isNotNull);
