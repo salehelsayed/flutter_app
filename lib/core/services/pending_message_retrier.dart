@@ -6,6 +6,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/retry_failed_messages_use_case.dart';
 import 'package:flutter_app/features/conversation/application/retry_unacked_messages_use_case.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 
@@ -21,6 +22,11 @@ class PendingMessageRetrier {
   final IdentityRepository identityRepo;
   final ContactRepository contactRepo;
   final Bridge bridge;
+  final MediaAttachmentRepository? mediaAttachmentRepo;
+
+  // Injectable recovery callbacks for correct ordering
+  final Future<int> Function()? recoverStuckSendingMessagesFn; // Part A
+  final Future<int> Function()? retryIncompleteUploadsFn; // Part G -- NEW
 
   StreamSubscription? _stateSubscription;
   Timer? _debounceTimer;
@@ -34,6 +40,9 @@ class PendingMessageRetrier {
     required this.identityRepo,
     required this.contactRepo,
     required this.bridge,
+    this.mediaAttachmentRepo,
+    this.recoverStuckSendingMessagesFn, // Part A
+    this.retryIncompleteUploadsFn, // Part G -- NEW
   });
 
   /// Starts listening for state transitions.
@@ -67,6 +76,18 @@ class PendingMessageRetrier {
 
       _wasOnline = nowOnline;
     });
+
+    // If already online when start() is called, schedule an initial sweep.
+    // Handles cold-start where the Go node reports already-running.
+    if (_wasOnline) {
+      _debounceTimer?.cancel();
+      _debounceTimer = Timer(const Duration(seconds: 5), _retryIfNeeded);
+      _periodicTimer?.cancel();
+      _periodicTimer = Timer.periodic(
+        const Duration(minutes: 5),
+        (_) => _retryIfNeeded(),
+      );
+    }
   }
 
   bool _isOnline(dynamic state) {
@@ -78,12 +99,61 @@ class PendingMessageRetrier {
     _isRetrying = true;
 
     try {
+      // ORDERING CONTRACT (matches handleAppResumed Step 8):
+      //   1. recoverStuckSendingMessages  -- 'sending' -> 'failed'
+      //   2. retryIncompleteUploads       -- re-upload 'upload_pending' attachments
+      //   3. retryFailedMessages          -- retry 'failed' messages
+      //   4. retryUnackedMessages         -- retry 'sent' but unacked
+
+      // Step 1: Recover stuck sending messages
+      if (recoverStuckSendingMessagesFn != null) {
+        try {
+          final count = await recoverStuckSendingMessagesFn!();
+          if (count > 0) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'PENDING_RETRIER_RECOVERED_STUCK',
+              details: {'count': count},
+            );
+          }
+        } catch (e) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'PENDING_RETRIER_RECOVER_STUCK_ERROR',
+            details: {'error': e.toString()},
+          );
+        }
+      }
+
+      // Step 2: Re-upload incomplete attachments (Part G)
+      if (retryIncompleteUploadsFn != null) {
+        try {
+          final count = await retryIncompleteUploadsFn!();
+          if (count > 0) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'PENDING_RETRIER_INCOMPLETE_UPLOADS_RETRIED',
+              details: {'count': count},
+            );
+          }
+        } catch (e) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'PENDING_RETRIER_INCOMPLETE_UPLOAD_ERROR',
+            details: {'error': e.toString()},
+          );
+          // Non-fatal: continue to retryFailedMessages
+        }
+      }
+
+      // Step 3: Retry failed messages
       final count = await retryFailedMessages(
         messageRepo: messageRepo,
         identityRepo: identityRepo,
         contactRepo: contactRepo,
         p2pService: p2pService,
         bridge: bridge,
+        mediaAttachmentRepo: mediaAttachmentRepo,
       );
 
       if (count > 0) {
@@ -94,6 +164,7 @@ class PendingMessageRetrier {
         );
       }
 
+      // Step 4: Retry unacked messages
       final unackedCount = await retryUnackedMessages(
         messageRepo: messageRepo,
         p2pService: p2pService,

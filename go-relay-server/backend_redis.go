@@ -259,12 +259,12 @@ func (b *redisInboxBackend) allPattern() string {
 	return b.prefix + "inbox:*"
 }
 
-func (b *redisInboxBackend) Store(toPeerId string, entry inboxMessage) {
+func (b *redisInboxBackend) Store(toPeerId string, entry inboxMessage) bool {
 	ctx := context.Background()
 	payload, err := json.Marshal(entry)
 	if err != nil {
 		log.Printf("[REDIS][INBOX] encode failed: %v", err)
-		return
+		return false
 	}
 
 	if _, err := b.client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
@@ -273,7 +273,9 @@ func (b *redisInboxBackend) Store(toPeerId string, entry inboxMessage) {
 		return nil
 	}); err != nil {
 		log.Printf("[REDIS][INBOX] store failed: %v", err)
+		return false
 	}
+	return true
 }
 
 func (b *redisInboxBackend) Retrieve(peerId string, limit int) ([]inboxMessage, bool) {

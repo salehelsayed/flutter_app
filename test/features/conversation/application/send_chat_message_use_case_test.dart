@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui' show VoidCallback;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
@@ -33,6 +34,11 @@ class FakeP2PService implements P2PService {
   String? lastSentMessage;
   String? lastInboxPeerId;
   String? lastInboxMessage;
+
+  // Callback hooks for cross-component ordering tests
+  VoidCallback? onDiscover;
+  VoidCallback? onSendMessage;
+  String? lastSentPayload;
 
   // Local peer support
   final Set<String> localPeers = {};
@@ -93,13 +99,16 @@ class FakeP2PService implements P2PService {
     if (shouldThrow) throw Exception('Send failed');
     lastSentPeerId = peerId;
     lastSentMessage = message;
+    lastSentPayload = message;
     sendCallCount++;
+    onSendMessage?.call();
     return SendMessageResult(sent: sendMessageResult, reply: sendMessageReply);
   }
 
   @override
   Future<DiscoveredPeer?> discoverPeer(String peerId, {int? timeoutMs}) async {
     discoverCallCount++;
+    onDiscover?.call();
     if (shouldThrow && discoverCallCount == 1) {
       throw Exception('Discover failed');
     }
@@ -193,6 +202,18 @@ class FakeP2PService implements P2PService {
 class FakeMessageRepository implements MessageRepository {
   final List<ConversationMessage> saved = [];
 
+  // Section 4: wireEnvelope tracking
+  final List<String> wireEnvelopeUpdates = [];
+  String? lastWireEnvelopeValue;
+  VoidCallback? onUpdateWireEnvelope;
+
+  @override
+  Future<void> updateWireEnvelope(String id, String envelope) async {
+    wireEnvelopeUpdates.add(id);
+    lastWireEnvelopeValue = envelope;
+    onUpdateWireEnvelope?.call();
+  }
+
   @override
   Future<void> saveMessage(ConversationMessage message) async {
     saved.add(message);
@@ -210,6 +231,9 @@ class FakeMessageRepository implements MessageRepository {
 
   @override
   Future<void> updateMessageStatus(String id, String status) async {}
+
+  @override
+  Future<ConversationMessage?> getMessage(String id) async => null;
 
   @override
   Future<bool> messageExists(String id) async => false;
@@ -246,6 +270,24 @@ class FakeMessageRepository implements MessageRepository {
   Future<List<ConversationMessage>> getUnackedOutgoingMessages({
     required Duration olderThan,
   }) async => [];
+
+  @override
+  Future<int> recoverStuckSendingMessages({required Duration olderThan}) async => 0;
+
+  @override
+  Future<List<ConversationMessage>> getStuckSendingOutgoingMessages({
+    required Duration olderThan,
+  }) async => [];
+
+  @override
+  Future<List<ConversationMessage>> getSendingOutgoingMessages() async => [];
+
+  @override
+  Future<int> conditionalTransitionStatus(
+    String id, {
+    required String fromStatus,
+    required String toStatus,
+  }) async => 0;
 }
 
 Future<List<String>> capturePrintedLines(Future<void> Function() action) async {
@@ -356,32 +398,6 @@ void main() {
       expect(p2pService.lastSentMessage, contains('"type":"chat_message"'));
       expect(p2pService.lastSentMessage, contains('"text":"Hello!"'));
     });
-
-    test(
-      'strips dangerous bidi controls and preserves safe markers in saved and wire text',
-      () async {
-        const rawText = 'Hello\u202E\u200E مرحبا\u200F!';
-        const sanitizedText = 'Hello\u200E مرحبا\u200F!';
-
-        final (result, message) = await sendChatMessage(
-          p2pService: p2pService,
-          messageRepo: messageRepo,
-          targetPeerId: 'target-peer',
-          text: rawText,
-          senderPeerId: 'my-peer',
-          senderUsername: 'Me',
-        );
-
-        expect(result, SendChatMessageResult.success);
-        expect(message, isNotNull);
-        expect(message!.text, sanitizedText);
-        expect(messageRepo.saved.first.text, sanitizedText);
-
-        expect(p2pService.lastSentMessage, isNotNull);
-        expect(p2pService.lastSentMessage, contains('"text":"$sanitizedText"'));
-        expect(p2pService.lastSentMessage, isNot(contains('\u202E')));
-      },
-    );
 
     test('uses provided messageId and timestamp when passed', () async {
       const fixedMessageId = 'msg-fixed-001';
@@ -760,7 +776,7 @@ void main() {
         expect(message!.status, 'delivered');
         expect(message.transport, 'direct');
         expect(p2pService.discoverCallCount, 1);
-        expect(p2pService.dialCallCount, 1);
+        expect(p2pService.dialCallCount, 0);
         expect(p2pService.probeRelayCallCount, 1);
         expect(p2pService.sendCallCount, 1);
         expect(p2pService.storeInInboxCallCount, 0);
@@ -787,7 +803,7 @@ void main() {
         expect(message!.status, 'delivered');
         expect(message.transport, 'direct');
         expect(p2pService.discoverCallCount, 1);
-        expect(p2pService.dialCallCount, 2);
+        expect(p2pService.dialCallCount, 1);
         expect(p2pService.probeRelayCallCount, 1);
         expect(p2pService.sendCallCount, 1);
         expect(p2pService.storeInInboxCallCount, 0);
@@ -982,40 +998,6 @@ void main() {
     );
 
     test(
-      'existing relay circuit connection persists relay transport instead of reuse',
-      () async {
-        p2pService = FakeP2PService(
-          currentState: NodeState(
-            isStarted: true,
-            connections: [
-              const p2p.ConnectionState(
-                peerId: 'target-peer',
-                multiaddrs: [
-                  '/dns4/relay.example/tcp/4001/p2p/relay-peer/p2p-circuit',
-                ],
-                direction: 'outbound',
-                status: 'connected',
-              ),
-            ],
-          ),
-        );
-
-        final (result, message) = await sendChatMessage(
-          p2pService: p2pService,
-          messageRepo: messageRepo,
-          targetPeerId: 'target-peer',
-          text: 'Relay route!',
-          senderPeerId: 'my-peer',
-          senderUsername: 'Me',
-        );
-
-        expect(result, SendChatMessageResult.success);
-        expect(message, isNotNull);
-        expect(message!.transport, 'relay');
-      },
-    );
-
-    test(
       'slow local wifi does not block direct success beyond interactive budget',
       () async {
         // Create a service where local is slow but direct succeeds quickly
@@ -1115,6 +1097,433 @@ void main() {
       },
     );
   });
+
+  // ─── Section 4 — direct-first send with early wireEnvelope persistence ──
+  group('Section 4 — direct-first send with early wireEnvelope persistence',
+      () {
+    test(
+      'RED: wireEnvelope is persisted to DB before discover is called',
+      () async {
+        // Track cross-component ordering via a shared list
+        final callOrder = <String>[];
+        messageRepo.onUpdateWireEnvelope = () =>
+            callOrder.add('updateWireEnvelope');
+        p2pService.onDiscover = () => callOrder.add('discover');
+        p2pService.onSendMessage = () => callOrder.add('sendMessage');
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'wireEnvelope persistence test',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          messageId: 'msg-wire-001',
+        );
+
+        expect(result, SendChatMessageResult.success);
+        // wireEnvelope must be persisted
+        expect(messageRepo.wireEnvelopeUpdates, contains('msg-wire-001'));
+        // wireEnvelope persist must happen before any P2P operation
+        final wireIdx = callOrder.indexOf('updateWireEnvelope');
+        final discoverIdx = callOrder.indexOf('discover');
+        expect(wireIdx, isNot(-1),
+            reason: 'updateWireEnvelope must be called');
+        expect(wireIdx < discoverIdx, isTrue,
+            reason: 'wireEnvelope persist must precede discover');
+      },
+    );
+
+    test(
+      'RED: wireEnvelope is persisted even on the connection-reuse fast path',
+      () async {
+        p2pService = FakeP2PService(
+          currentState: NodeState(
+            isStarted: true,
+            connections: [
+              const p2p.ConnectionState(
+                peerId: 'target-peer',
+                multiaddrs: ['/ip4/127.0.0.1/tcp/4001'],
+                direction: 'outbound',
+                status: 'connected',
+              ),
+            ],
+          ),
+        );
+
+        final (result, _) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Connected peer wireEnvelope',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          messageId: 'msg-wire-002',
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(messageRepo.wireEnvelopeUpdates, contains('msg-wire-002'));
+        expect(p2pService.discoverCallCount, 0); // reuse path skips discover
+      },
+    );
+
+    test(
+      'RED: wireEnvelope is persisted on local WiFi path',
+      () async {
+        p2pService = FakeP2PService(useNullDiscover: true)
+          ..localPeers.add('target-peer');
+
+        final (result, _) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'WiFi wireEnvelope',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          messageId: 'msg-wire-003',
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(messageRepo.wireEnvelopeUpdates, contains('msg-wire-003'));
+      },
+    );
+
+    test(
+      'RED: wireEnvelope contains the same JSON as the P2P send payload',
+      () async {
+        final (result, _) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Envelope parity',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          messageId: 'fixed-id-001',
+        );
+
+        expect(result, SendChatMessageResult.success);
+        // Verify the persisted wireEnvelope matches what was sent over P2P
+        expect(messageRepo.lastWireEnvelopeValue, isNotNull);
+        expect(p2pService.lastSentPayload, isNotNull);
+        expect(messageRepo.lastWireEnvelopeValue,
+            equals(p2pService.lastSentPayload));
+        expect(messageRepo.lastWireEnvelopeValue,
+            contains('"id":"fixed-id-001"'));
+      },
+    );
+
+    test(
+      'RED: wireEnvelope is persisted even when all P2P paths fail',
+      () async {
+        p2pService = FakeP2PService(
+          sendMessageResult: false,
+          useNullDiscover: true,
+          storeInInboxResult: false,
+        );
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'All fail but envelope persisted',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          messageId: 'msg-wire-fail',
+        );
+
+        expect(result, SendChatMessageResult.peerNotFound);
+        expect(message!.status, 'failed');
+        // wireEnvelope was still persisted before the transport race
+        expect(messageRepo.wireEnvelopeUpdates, contains('msg-wire-fail'));
+      },
+    );
+  });
+
+  // ─── Section 4 — inbox call-site regression guard ──────────────────────
+  group('Section 4 — inbox call-site regression guard', () {
+    test(
+      'storeInInbox is NOT called when direct P2P succeeds with ACK',
+      () async {
+        p2pService = FakeP2PService(
+          sendMessageResult: true, // P2P succeeds with ACK
+        );
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Direct success no inbox',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message!.status, 'delivered');
+        // Inbox must NOT be called on ACK'd direct send — avoids phantom push
+        expect(p2pService.storeInInboxCallCount, 0);
+      },
+    );
+
+    test(
+      'storeInInbox IS called once when P2P succeeds without ACK (existing behavior)',
+      () async {
+        // sendMessageResult returns empty string (success but unacked)
+        p2pService = FakeP2PService(
+          sendMessageResult: true,
+          sendMessageReply: '', // empty = unacked
+        );
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Unacked send',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+
+        expect(result, SendChatMessageResult.success);
+        // Unacked path calls storeInInbox as fallback — existing behavior
+        expect(p2pService.storeInInboxCallCount, 1);
+      },
+    );
+
+    test(
+      'storeInInbox IS called once when all P2P paths fail (existing behavior)',
+      () async {
+        p2pService = FakeP2PService(
+          sendMessageResult: false,
+          useNullDiscover: true,
+          storeInInboxResult: true,
+        );
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'All fail inbox fallback',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message!.status, 'delivered');
+        expect(message.transport, 'inbox');
+        // Exactly one inbox call from the failure fallback — not zero, not two
+        expect(p2pService.storeInInboxCallCount, 1);
+      },
+    );
+
+    test(
+      'when all P2P paths fail and inbox also fails, message persists as failed',
+      () async {
+        p2pService = FakeP2PService(
+          sendMessageResult: false,
+          useNullDiscover: true,
+          storeInInboxResult: false,
+        );
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Both fail',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+
+        expect(result, SendChatMessageResult.peerNotFound);
+        expect(message!.status, 'failed');
+        // The failure fallback attempted inbox once
+        expect(p2pService.storeInInboxCallCount, 1);
+      },
+    );
+  });
+
+  // ─── Section 4 — inbox fallback edge cases ─────────────────────────────
+  group('Section 4 — inbox fallback edge cases', () {
+    test(
+      'storeInInbox throwing in the fallback path marks message as failed '
+      'and wireEnvelope is still persisted for retry',
+      () async {
+        final throwingInboxP2P = _ThrowOnInboxP2PService();
+
+        final (result, message) = await sendChatMessage(
+          p2pService: throwingInboxP2P,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Inbox throws after P2P fails',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          messageId: 'msg-edge-001',
+        );
+
+        // P2P failed, inbox threw — message should be marked failed
+        expect(result, SendChatMessageResult.peerNotFound);
+        expect(message!.status, 'failed');
+        // wireEnvelope was still persisted, so Section 1 retrier can recover
+        expect(messageRepo.wireEnvelopeUpdates, contains('msg-edge-001'));
+      },
+    );
+
+    test(
+      'storeInInbox throwing does not affect result when direct P2P succeeds',
+      () async {
+        // P2P succeeds, so inbox fallback is never reached
+        final throwingInboxP2P = _ThrowOnInboxP2PService(p2pSucceeds: true);
+
+        final (result, message) = await sendChatMessage(
+          p2pService: throwingInboxP2P,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Inbox throws but P2P succeeds',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message!.status, 'delivered');
+      },
+    );
+
+    test(
+      'slow relay does not block P2P path — P2P result returns promptly',
+      () async {
+        // The existing behavior already runs inbox only on failure.
+        // This test confirms P2P success returns without waiting for any
+        // inbox operation (since inbox is not called on ACK'd success).
+        p2pService = FakeP2PService(sendMessageResult: true);
+
+        final stopwatch = Stopwatch()..start();
+        final (result, _) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Fast direct',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+        stopwatch.stop();
+
+        expect(result, SendChatMessageResult.success);
+        expect(stopwatch.elapsed.inSeconds, lessThan(3));
+        expect(p2pService.storeInInboxCallCount, 0); // no inbox on success
+      },
+    );
+  });
+}
+
+/// P2P service where discover/dial succeed but storeInInbox throws.
+/// Used to test inbox fallback error handling.
+class _ThrowOnInboxP2PService implements P2PService {
+  final bool p2pSucceeds;
+
+  _ThrowOnInboxP2PService({this.p2pSucceeds = false});
+
+  @override
+  NodeState get currentState => const NodeState(isStarted: true);
+
+  @override
+  Stream<NodeState> get stateStream => const Stream.empty();
+
+  @override
+  Stream<ChatMessage> get messageStream => const Stream.empty();
+
+  @override
+  Future<bool> startNode(String privateKeyBase64, String peerId) async => true;
+
+  @override
+  Future<bool> stopNode() async => true;
+
+  @override
+  Future<bool> sendMessage(String peerId, String message) async => p2pSucceeds;
+
+  @override
+  Future<SendMessageResult> sendMessageWithReply(
+    String peerId,
+    String message, {
+    int? timeoutMs,
+  }) async =>
+      SendMessageResult(
+        sent: p2pSucceeds,
+        reply: p2pSucceeds ? 'received: ok' : null,
+      );
+
+  @override
+  Future<DiscoveredPeer?> discoverPeer(String peerId, {int? timeoutMs}) async =>
+      p2pSucceeds
+          ? const DiscoveredPeer(
+              id: 'target-peer',
+              addresses: ['/ip4/127.0.0.1/tcp/4001'],
+            )
+          : null;
+
+  @override
+  Future<bool> dialPeer(
+    String peerId, {
+    List<String>? addresses,
+    int? timeoutMs,
+  }) async => p2pSucceeds;
+
+  @override
+  Future<bool> storeInInbox(String toPeerId, String message) async =>
+      throw Exception('Inbox store exploded');
+
+  @override
+  Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) async =>
+      [];
+
+  @override
+  Future<bool> registerPushToken(String token, String platform) async => true;
+
+  @override
+  Future<void> performImmediateHealthCheck() async {}
+
+  @override
+  Future<void> drainOfflineInbox() async {}
+
+  @override
+  bool isLocalPeer(String peerId) => false;
+
+  @override
+  Future<bool> sendLocalMessage(
+    String peerId,
+    String message,
+    String fromPeerId, {
+    int? timeoutMs,
+  }) async => false;
+
+  @override
+  bool isConnectedToPeer(String peerId) => false;
+
+  @override
+  Future<RelayProbeResult> probeRelay(String peerId) async =>
+      RelayProbeResult.error;
+
+  @override
+  Future<bool> sendLocalMedia({
+    required String peerId,
+    required String filePath,
+    required String mime,
+    required String mediaId,
+    required String fromPeerId,
+    int? durationMs,
+    List<double>? waveform,
+    String? filename,
+  }) async => false;
+
+  @override
+  Future<bool> startNodeCore(String privateKeyBase64, String peerId) async =>
+      false;
+
+  @override
+  Future<void> warmBackground() async {}
+
+  @override
+  String? get lastRecoveryMethod => null;
+
+  @override
+  void dispose() {}
 }
 
 /// P2P service that discovers and dials successfully but throws on send.

@@ -4,6 +4,7 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/push_diagnostics_logger.dart';
+import 'package:flutter_app/features/push/domain/push_token_store.dart';
 
 enum RegisterPushTokenResult { success, noToken, failed }
 
@@ -25,6 +26,7 @@ const _getTokenTimeout = Duration(seconds: 15);
 
 Future<RegisterPushTokenResult> registerPushToken({
   required P2PService p2pService,
+  PushTokenStore? pushTokenStore,
   Future<String?> Function()? getTokenFn,
   Future<String?> Function()? getApnsTokenFn,
   Future<String?> Function(
@@ -154,7 +156,37 @@ Future<RegisterPushTokenResult> registerPushToken({
     details: {'platform': registeredPlatform},
   );
 
-  return ok ? RegisterPushTokenResult.success : RegisterPushTokenResult.failed;
+  if (!ok) {
+    return RegisterPushTokenResult.failed;
+  }
+
+  if (pushTokenStore != null) {
+    try {
+      await pushTokenStore.writeToken(token, registeredPlatform);
+      logPushDiagnostic(
+        'push_token_persisted',
+        details: {'platform': registeredPlatform},
+      );
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'PUSH_REGISTER_TOKEN_PERSISTED',
+        details: {'platform': registeredPlatform},
+      );
+    } catch (e) {
+      logPushDiagnostic(
+        'push_token_persist_failed',
+        details: {'platform': registeredPlatform, 'error': e.toString()},
+      );
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'PUSH_REGISTER_TOKEN_PERSIST_FAILED',
+        details: {'platform': registeredPlatform, 'error': e.toString()},
+      );
+      return RegisterPushTokenResult.failed;
+    }
+  }
+
+  return RegisterPushTokenResult.success;
 }
 
 Future<String?> _waitForApnsToken({

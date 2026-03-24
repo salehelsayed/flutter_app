@@ -698,3 +698,26 @@ Future<String> callBlobDecrypt(
 
   return response['decryptedPath'] as String;
 }
+
+/// Requests an iOS background task. Returns the task ID string on success,
+/// or null if the OS refused or the bridge call failed.
+Future<String?> callBgBegin(Bridge bridge) async {
+  try {
+    final response = await bridge.send(jsonEncode({'cmd': 'bg:begin'}));
+    if (response.isNotEmpty && !response.startsWith('{')) {
+      return response;
+    }
+  } catch (_) {}
+  return null;
+}
+
+/// Releases an iOS background task. No-op if taskId is null.
+Future<void> callBgEnd(Bridge bridge, String? taskId) async {
+  if (taskId == null) return;
+  try {
+    await bridge.send(jsonEncode({
+      'cmd': 'bg:end',
+      'payload': {'taskId': taskId},
+    }));
+  } catch (_) {}
+}

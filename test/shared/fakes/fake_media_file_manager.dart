@@ -8,6 +8,30 @@ class FakeMediaFileManager extends MediaFileManager {
   final List<String> deletedPostIds = <String>[];
   final List<String> deletedFilePaths = <String>[];
 
+  /// Override the resolve result for testing.
+  String? resolveResult;
+
+  /// Override file existence for testing.
+  bool? fileExistsOverride;
+
+  /// Hook for deletePendingUploadDir.
+  void Function(String messageId)? onDeletePendingUploadDir;
+
+  @override
+  Future<String> copyToDurableStorage({
+    required String sourceFilePath,
+    required String messageId,
+    required String attachmentId,
+    required String mime,
+  }) async {
+    return 'pending_uploads/$messageId/$attachmentId';
+  }
+
+  @override
+  Future<void> deletePendingUploadDir(String messageId) async {
+    onDeletePendingUploadDir?.call(messageId);
+  }
+
   @override
   Future<String> localPathForAttachment({
     required String contactPeerId,
@@ -19,7 +43,10 @@ class FakeMediaFileManager extends MediaFileManager {
 
   @override
   Future<String> resolveStoredPath(String storedPath) async {
-    if (storedPath.startsWith('media/') ||
+    if (resolveResult != null) return resolveResult!;
+    if (storedPath.startsWith('pending_uploads/') ||
+        storedPath.startsWith('pending_uploads\\') ||
+        storedPath.startsWith('media/') ||
         storedPath.startsWith('media\\') ||
         storedPath.startsWith('post_media/') ||
         storedPath.startsWith('post_media\\')) {

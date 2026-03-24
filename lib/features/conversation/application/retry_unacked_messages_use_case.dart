@@ -5,7 +5,7 @@ import 'package:flutter_app/features/conversation/domain/repositories/message_re
 /// Retries outgoing messages stuck in 'sent' status by storing them
 /// in the relay inbox using the persisted wire_envelope.
 ///
-/// This is inbox-only — no direct send, no re-encrypt, no media rebuild.
+/// This is inbox-only -- no direct send, no re-encrypt, no media rebuild.
 /// Once successfully stored, status moves to 'delivered' and wire_envelope
 /// is cleared so the message is not retried again.
 ///
@@ -41,6 +41,33 @@ Future<int> retryUnackedMessages({
 
   var count = 0;
   for (final msg in unacked) {
+    // Defensive: skip messages with null or empty wireEnvelope.
+    // The SQL query should exclude these, but a corrupt row or future
+    // query change could let one through.
+    if (msg.wireEnvelope == null || msg.wireEnvelope!.isEmpty) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'RETRY_UNACKED_MESSAGE_SKIP_NULL_ENVELOPE',
+        details: {
+          'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id,
+        },
+      );
+      continue;
+    }
+
+    // Skip inbox if already delivered via inbox (crash recovery guard).
+    if (msg.transport == 'inbox') {
+      await messageRepo.saveMessage(
+        msg.copyWith(status: 'delivered', wireEnvelope: null),
+      );
+      count++;
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'RETRY_UNACKED_MESSAGE_ALREADY_INBOX',
+        details: {'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id},
+      );
+      continue;
+    }
     try {
       final stored = await p2pService.storeInInbox(
         msg.contactPeerId,
@@ -61,7 +88,7 @@ Future<int> retryUnackedMessages({
           details: {'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id},
         );
       }
-      // Not stored → leave as 'sent', retry on next online transition
+      // Not stored -> leave as 'sent', retry on next online transition
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',

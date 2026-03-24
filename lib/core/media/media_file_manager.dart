@@ -58,6 +58,38 @@ class MediaFileManager {
     return p.join('post_media', postId, '$blobId$ext');
   }
 
+  /// Copies a file to durable pending-upload storage.
+  ///
+  /// Returns the RELATIVE path (for DB storage) of the durable copy.
+  /// Format: `pending_uploads/<messageId>/<attachmentId>.<ext>`
+  Future<String> copyToDurableStorage({
+    required String sourceFilePath,
+    required String messageId,
+    required String attachmentId,
+    required String mime,
+  }) async {
+    final ext = _extensionFromMime(mime);
+    final appDir = await getApplicationDocumentsDirectory();
+    final destDir = Directory(
+        p.join(appDir.path, 'pending_uploads', messageId));
+    if (!await destDir.exists()) {
+      await destDir.create(recursive: true);
+    }
+    final destPath = p.join(destDir.path, '$attachmentId$ext');
+    await File(sourceFilePath).copy(destPath);
+    return p.join('pending_uploads', messageId, '$attachmentId$ext');
+  }
+
+  /// Deletes the pending-upload directory for a message after successful upload.
+  Future<void> deletePendingUploadDir(String messageId) async {
+    final appDir = await getApplicationDocumentsDirectory();
+    final dir = Directory(
+        p.join(appDir.path, 'pending_uploads', messageId));
+    if (await dir.exists()) {
+      await dir.delete(recursive: true);
+    }
+  }
+
   /// Resolves a stored path (relative or legacy absolute) to an absolute path.
   ///
   /// - Relative paths like `media/...` get prepended with the documents dir.
@@ -66,7 +98,9 @@ class MediaFileManager {
   /// - Other absolute paths are returned as-is.
   Future<String> resolveStoredPath(String storedPath) async {
     // New-style relative path
-    if (storedPath.startsWith('media/') ||
+    if (storedPath.startsWith('pending_uploads/') ||
+        storedPath.startsWith('pending_uploads\\') ||
+        storedPath.startsWith('media/') ||
         storedPath.startsWith('media\\') ||
         storedPath.startsWith('post_media/') ||
         storedPath.startsWith('post_media\\')) {

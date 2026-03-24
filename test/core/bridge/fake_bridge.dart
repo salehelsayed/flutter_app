@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/connection_state.dart';
 
@@ -120,6 +121,23 @@ class FakeBridge implements Bridge {
 
   @override
   void Function(Map<String, dynamic>)? onGroupReactionReceived;
+
+  // Upload media stubbing for smoke tests
+  MediaAttachment? uploadMediaResult;
+  List<MediaAttachment?> uploadMediaResultByCallIndex = [];
+  int _uploadCallIndex = 0;
+
+  /// Tracks total upload calls for multi-attachment assertions.
+  int get uploadCallCount => _uploadCallIndex;
+
+  MediaAttachment? consumeUploadMediaResult() {
+    if (uploadMediaResultByCallIndex.isNotEmpty &&
+        _uploadCallIndex < uploadMediaResultByCallIndex.length) {
+      return uploadMediaResultByCallIndex[_uploadCallIndex++];
+    }
+    _uploadCallIndex++;
+    return uploadMediaResult;
+  }
 }
 
 /// A [FakeBridge] that passes plaintext through encrypt/decrypt transparently.

@@ -7,6 +7,8 @@ import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
 import 'package:flutter_app/features/push/application/register_push_token_use_case.dart';
 
+import '../../../shared/fakes/fake_push_token_store.dart';
+
 // ---------------------------------------------------------------------------
 // Fake P2PService
 // ---------------------------------------------------------------------------
@@ -97,10 +99,12 @@ class _FakeP2PService implements P2PService {
 
 void main() {
   late _FakeP2PService p2pService;
+  late FakePushTokenStore pushTokenStore;
 
   setUp(() {
     flowEventLoggingEnabled = false;
     p2pService = _FakeP2PService();
+    pushTokenStore = FakePushTokenStore();
   });
 
   group('registerPushToken', () {
@@ -109,12 +113,17 @@ void main() {
       () async {
         final result = await registerPushToken(
           p2pService: p2pService,
+          pushTokenStore: pushTokenStore,
           isIOSFn: () => false,
           getTokenFn: () async => 'fcm_token_abc',
           getPlatformFn: () => 'ios',
         );
 
         expect(result, equals(RegisterPushTokenResult.success));
+        final stored = await pushTokenStore.readToken();
+        expect(stored, isNotNull);
+        expect(stored!.token, 'fcm_token_abc');
+        expect(stored.platform, 'ios');
       },
     );
 
@@ -148,6 +157,7 @@ void main() {
     test('sends correct token and platform to p2pService', () async {
       await registerPushToken(
         p2pService: p2pService,
+        pushTokenStore: pushTokenStore,
         isIOSFn: () => false,
         getTokenFn: () async => 'my_device_token_xyz',
         getPlatformFn: () => 'android',
@@ -156,6 +166,42 @@ void main() {
       expect(p2pService.lastToken, equals('my_device_token_xyz'));
       expect(p2pService.lastPlatform, equals('android'));
     });
+
+    test('does not persist token when relay registration fails', () async {
+      p2pService.registerResult = false;
+
+      final result = await registerPushToken(
+        p2pService: p2pService,
+        pushTokenStore: pushTokenStore,
+        isIOSFn: () => false,
+        getTokenFn: () async => 'fcm_token_abc',
+        getPlatformFn: () => 'android',
+      );
+
+      expect(result, equals(RegisterPushTokenResult.failed));
+      expect(await pushTokenStore.readToken(), isNull);
+      expect(pushTokenStore.writeCallCount, 0);
+    });
+
+    test(
+      'returns failed when token persistence throws after registration',
+      () async {
+        pushTokenStore.throwOnWrite = true;
+
+        final result = await registerPushToken(
+          p2pService: p2pService,
+          pushTokenStore: pushTokenStore,
+          isIOSFn: () => false,
+          getTokenFn: () async => 'fcm_token_abc',
+          getPlatformFn: () => 'android',
+        );
+
+        expect(result, equals(RegisterPushTokenResult.failed));
+        expect(pushTokenStore.writeCallCount, 1);
+        expect(await pushTokenStore.readToken(), isNull);
+        expect(p2pService.lastToken, equals('fcm_token_abc'));
+      },
+    );
 
     test('uses platform function to determine ios vs android', () async {
       await registerPushToken(

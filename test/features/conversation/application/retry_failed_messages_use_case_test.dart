@@ -509,6 +509,53 @@ void main() {
       expect(saved.wireEnvelope, isNull);
     });
 
+    test(
+      'retryFailedMessages skips storeInInbox when message transport '
+      'is already inbox',
+      () async {
+        identityRepo.seed(makeIdentity());
+        // Simulate the post-crash state: message was successfully stored
+        // in inbox but app crashed before DB was updated. On resume,
+        // a recovery path re-saved the row with transport='inbox'.
+        final msgWithInboxTransport = ConversationMessage(
+          id: 'msg-crash-001',
+          contactPeerId: 'peer-target',
+          senderPeerId: 'my-peer-id',
+          text: 'Crash test',
+          timestamp: '2026-01-01T00:00:00.000Z',
+          status: 'failed',
+          isIncoming: false,
+          createdAt: '2026-01-01T00:00:00.000Z',
+          transport: 'inbox', // already delivered via inbox before crash
+          wireEnvelope:
+              '{"type":"chat","version":"1","payload":{"id":"msg-crash-001"}}',
+        );
+        messageRepo.seed([msgWithInboxTransport]);
+
+        final p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+          storeInInboxResult: true,
+        );
+
+        final count = await retryFailedMessages(
+          messageRepo: messageRepo,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          p2pService: p2pService,
+          bridge: bridge,
+        );
+
+        // storeInInbox should NOT be called — message already has transport='inbox'
+        expect(p2pService.storeInInboxCallCount, 0);
+        // But the message should still be marked as delivered
+        expect(count, 1);
+        final saved = messageRepo.lastSavedMessage;
+        expect(saved, isNotNull);
+        expect(saved!.status, 'delivered');
+        expect(saved.wireEnvelope, isNull);
+      },
+    );
+
     test('calls getFailedOutgoingMessages on messageRepo', () async {
       identityRepo.seed(makeIdentity());
       final p2pService = FakeP2PService(

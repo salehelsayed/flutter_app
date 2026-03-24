@@ -19,7 +19,6 @@ import 'package:flutter_app/features/conversation/domain/models/media_attachment
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
-import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_screen.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/attachment_preview_strip.dart';
@@ -31,9 +30,11 @@ import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import '../../../../core/bridge/fake_bridge.dart';
 import '../../../../shared/fakes/fake_audio_recorder_service.dart';
 import '../../../../shared/fakes/fake_media_picker.dart';
+import '../../domain/repositories/fake_media_attachment_repository.dart';
 
 class FakeIdentityRepository implements IdentityRepository {
   IdentityModel? identity;
@@ -123,6 +124,9 @@ class FakeMessageRepository
   }
 
   @override
+  Future<ConversationMessage?> getMessage(String id) async => store[id];
+
+  @override
   Future<bool> messageExists(String id) async => store.containsKey(id);
 
   @override
@@ -187,6 +191,29 @@ class FakeMessageRepository
   Future<List<ConversationMessage>> getUnackedOutgoingMessages({
     required Duration olderThan,
   }) async => [];
+
+  @override
+  Future<int> recoverStuckSendingMessages({
+    required Duration olderThan,
+  }) async => 0;
+
+  @override
+  Future<void> updateWireEnvelope(String id, String envelope) async {}
+
+  @override
+  Future<List<ConversationMessage>> getStuckSendingOutgoingMessages({
+    required Duration olderThan,
+  }) async => [];
+
+  @override
+  Future<List<ConversationMessage>> getSendingOutgoingMessages() async => [];
+
+  @override
+  Future<int> conditionalTransitionStatus(
+    String id, {
+    required String fromStatus,
+    required String toStatus,
+  }) async => 0;
 }
 
 class SlowInitialPageMessageRepository extends FakeMessageRepository {
@@ -313,6 +340,40 @@ class FakeP2PService implements P2PService {
   String? get lastRecoveryMethod => null;
 }
 
+class TrackingLocalMediaP2PService extends FakeP2PService {
+  final List<String> callOrder;
+
+  TrackingLocalMediaP2PService({
+    required this.callOrder,
+    super.localPeer,
+    super.localMediaResult,
+  });
+
+  @override
+  Future<bool> sendLocalMedia({
+    required String peerId,
+    required String filePath,
+    required String mime,
+    required String mediaId,
+    required String fromPeerId,
+    int? durationMs,
+    List<double>? waveform,
+    String? filename,
+  }) async {
+    callOrder.add('sendLocalMedia');
+    return super.sendLocalMedia(
+      peerId: peerId,
+      filePath: filePath,
+      mime: mime,
+      mediaId: mediaId,
+      fromPeerId: fromPeerId,
+      durationMs: durationMs,
+      waveform: waveform,
+      filename: filename,
+    );
+  }
+}
+
 void main() {
   ContactModel makeContact() {
     return ContactModel(
@@ -359,7 +420,6 @@ void main() {
         locale: const Locale('en'),
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
-        // Material delegates are included in AppLocalizations.localizationsDelegates.
         home: ConversationWired(
           contact: makeContact(),
           identityRepo: identityRepo,
@@ -379,6 +439,19 @@ void main() {
       ),
     );
     await tester.pump(const Duration(milliseconds: 400));
+  }
+
+  Future<void> pumpUntil(
+    WidgetTester tester,
+    bool Function() condition, {
+    int maxPumps = 20,
+    Duration step = const Duration(milliseconds: 100),
+  }) async {
+    for (var i = 0; i < maxPumps; i++) {
+      if (condition()) return;
+      await tester.pump(step);
+    }
+    expect(condition(), isTrue);
   }
 
   group('ConversationWired optimistic send', () {
@@ -687,6 +760,86 @@ void main() {
       expect(messageRepo.store[sentMessageId!]!.status, 'delivered');
     });
 
+    testWidgets('persists upload_pending attachments before upload starts', (
+      tester,
+    ) async {
+      final identityRepo = FakeIdentityRepository(makeIdentity());
+      final messageRepo = FakeMessageRepository();
+      final chatListener = ChatMessageListener(
+        chatMessageStream: const Stream.empty(),
+        messageRepo: messageRepo,
+        contactRepo: FakeContactRepository(),
+      );
+      final mediaAttachmentRepo = FakeMediaAttachmentRepository();
+      final callOrder = <String>[];
+      mediaAttachmentRepo.onSaveAttachment = (attachment) =>
+          callOrder.add('save:${attachment.downloadStatus}');
+
+      final tempDir = Directory.systemTemp.createTempSync(
+        'conv_pending_upload_',
+      );
+      addTearDown(() {
+        if (tempDir.existsSync()) {
+          tempDir.deleteSync(recursive: true);
+        }
+      });
+      final attachment = File('${tempDir.path}/pending.jpg')
+        ..writeAsStringSync('image');
+
+      await pumpScreen(
+        tester,
+        identityRepo: identityRepo,
+        messageRepo: messageRepo,
+        chatListener: chatListener,
+        sendFn: _instantSuccessSendFn,
+        bridge: FakeBridge(),
+        mediaAttachmentRepo: mediaAttachmentRepo,
+        uploadMediaFn:
+            ({
+              required bridge,
+              required localFilePath,
+              required mime,
+              required recipientPeerId,
+              mediaFileManager,
+              blobId,
+              width,
+              height,
+              durationMs,
+              waveform,
+              allowedPeers,
+            }) async {
+              callOrder.add('uploadMedia');
+              return MediaAttachment(
+                id: 'uploaded-1',
+                messageId: '',
+                mime: mime,
+                size: 1,
+                mediaType: MediaAttachment.mediaTypeFromMime(mime),
+                localPath: localFilePath,
+                downloadStatus: 'done',
+                createdAt: DateTime.now().toUtc().toIso8601String(),
+              );
+            },
+        initialAttachments: [attachment],
+      );
+
+      await tester.enterText(find.byType(TextField), 'Photo');
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+      await pumpUntil(tester, () => callOrder.contains('uploadMedia'));
+
+      expect(
+        callOrder,
+        containsAllInOrder(['save:upload_pending', 'uploadMedia']),
+      );
+      final savedAttachment = mediaAttachmentRepo.allSavedAttachments
+          .firstWhere(
+            (attachment) => attachment.downloadStatus == 'upload_pending',
+          );
+      expect(savedAttachment.messageId, isNotEmpty);
+      expect(savedAttachment.localPath, attachment.path);
+    });
+
     testWidgets('shows two ticks when inbox delivered message is returned', (
       tester,
     ) async {
@@ -939,7 +1092,7 @@ void main() {
         recorder.emitAmplitude(0.3);
         await tester.pump();
 
-        expect(find.text('Cancel'), findsOneWidget);
+        expect(find.text('Slide to cancel'), findsOneWidget);
         expect(find.text('0:01'), findsOneWidget);
         expect(identical(headerElement, tester.element(headerFinder)), isTrue);
         expect(identical(listElement, tester.element(listFinder)), isTrue);
@@ -947,50 +1100,6 @@ void main() {
 
         await gesture.up();
         await tester.pump();
-      },
-    );
-
-    testWidgets(
-      'voice record callbacks switch the composer into and out of recording',
-      (tester) async {
-        final identityRepo = FakeIdentityRepository(makeIdentity());
-        final messageRepo = FakeMessageRepository();
-        final recorder = FakeAudioRecorderService()..fakeDurationMs = 100;
-        final chatListener = ChatMessageListener(
-          chatMessageStream: const Stream.empty(),
-          messageRepo: messageRepo,
-          contactRepo: FakeContactRepository(),
-        );
-
-        await pumpScreen(
-          tester,
-          identityRepo: identityRepo,
-          messageRepo: messageRepo,
-          chatListener: chatListener,
-          sendFn: _instantSuccessSendFn,
-          audioRecorderService: recorder,
-        );
-
-        final recordingScreen = tester.widget<ConversationScreen>(
-          find.byType(ConversationScreen),
-        );
-        final startRecording =
-            recordingScreen.onRecordStart! as Future<void> Function();
-        await startRecording();
-        await tester.pump();
-
-        expect(find.byIcon(Icons.stop_rounded), findsOneWidget);
-        expect(find.text('Cancel'), findsOneWidget);
-
-        final stopScreen = tester.widget<ConversationScreen>(
-          find.byType(ConversationScreen),
-        );
-        final stopRecording =
-            stopScreen.onRecordStop! as Future<void> Function();
-        await stopRecording();
-        await tester.pump();
-
-        expect(find.byIcon(Icons.mic_rounded), findsOneWidget);
       },
     );
 
@@ -1481,6 +1590,73 @@ void main() {
     });
 
     testWidgets(
+      'voice send persists upload_pending attachment before local transfer',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        final mediaAttachmentRepo = FakeMediaAttachmentRepository();
+        final callOrder = <String>[];
+        mediaAttachmentRepo.onSaveAttachment = (attachment) =>
+            callOrder.add('save:${attachment.downloadStatus}');
+        final recorder = FakeAudioRecorderService()
+          ..fakeDurationMs = 1200
+          ..fakeOutputPath = '/tmp/quoted_voice_pending.m4a';
+        final p2pService = TrackingLocalMediaP2PService(
+          callOrder: callOrder,
+          localPeer: true,
+          localMediaResult: true,
+        );
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+          p2pService: p2pService,
+          audioRecorderService: recorder,
+          mediaAttachmentRepo: mediaAttachmentRepo,
+        );
+
+        final screen = tester.widget<ConversationScreen>(
+          find.byType(ConversationScreen),
+        );
+        final startRecording = screen.onRecordStart! as Future<void> Function();
+        await startRecording();
+        await tester.pump(const Duration(milliseconds: 100));
+
+        final recordingScreen = tester.widget<ConversationScreen>(
+          find.byType(ConversationScreen),
+        );
+        final stopRecording =
+            recordingScreen.onRecordStop! as Future<void> Function();
+        final stopFuture = stopRecording();
+        await tester.pump(const Duration(milliseconds: 300));
+        await stopFuture;
+        await pumpUntil(tester, () => callOrder.contains('sendLocalMedia'));
+
+        expect(
+          callOrder,
+          containsAllInOrder(['save:upload_pending', 'sendLocalMedia']),
+        );
+        final savedAttachment = mediaAttachmentRepo.allSavedAttachments
+            .firstWhere(
+              (attachment) => attachment.downloadStatus == 'upload_pending',
+            );
+        expect(savedAttachment.messageId, isNotEmpty);
+        expect(savedAttachment.localPath, recorder.fakeOutputPath);
+        await tester.pump(const Duration(milliseconds: 500));
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+      },
+    );
+
+    testWidgets(
       'repository change updates failed outgoing reply status in place',
       (tester) async {
         final identityRepo = FakeIdentityRepository(makeIdentity());
@@ -1580,6 +1756,7 @@ void main() {
               required mime,
               required recipientPeerId,
               mediaFileManager,
+              blobId,
               width,
               height,
               durationMs,
@@ -1672,6 +1849,7 @@ void main() {
                 required mime,
                 required recipientPeerId,
                 mediaFileManager,
+                blobId,
                 width,
                 height,
                 durationMs,

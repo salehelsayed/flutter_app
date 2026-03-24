@@ -52,6 +52,9 @@ class _FakeMediaAttachmentRepository implements MediaAttachmentRepository {
   Future<List<MediaAttachment>> getPendingDownloads() async => const [];
 
   @override
+  Future<List<MediaAttachment>> getUploadPendingAttachments() async => [];
+
+  @override
   Future<void> updateDownloadStatus(String id, String downloadStatus) async {}
 
   @override

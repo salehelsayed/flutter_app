@@ -41,6 +41,7 @@ Future<(SendVoiceMessageResult, ConversationMessage?)> sendVoiceMessage({
   List<double>? waveform,
   String? messageId,
   String? timestamp,
+  String? blobId,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -82,6 +83,7 @@ Future<(SendVoiceMessageResult, ConversationMessage?)> sendVoiceMessage({
     mediaFileManager: mediaFileManager,
     durationMs: recording.durationMs,
     waveform: waveform,
+    blobId: blobId,
   );
 
   if (uploaded == null) {

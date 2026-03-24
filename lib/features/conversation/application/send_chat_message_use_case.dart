@@ -6,7 +6,6 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/chat_console_logger.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
-import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_payload.dart';
@@ -43,10 +42,15 @@ const _uuid = Uuid();
 /// 1. Validates text is non-empty
 /// 2. Checks P2P node is running
 /// 3. Builds MessagePayload with UUID
-/// 4. Serializes to JSON envelope
-/// 5. Reuses an existing connection, races local WiFi with direct relay send,
+/// 4. Serializes to JSON envelope (v2 encrypted if ML-KEM key available)
+/// 5. Persists wireEnvelope to DB row (Section 4: crash-safe retryability)
+/// 6. Reuses an existing connection, races local WiFi with direct relay send,
 ///    and probes the relay only when discoverability is stale
-/// 6. Persists via messageRepo.saveMessage()
+/// 7. Persists final status via messageRepo.saveMessage()
+///
+/// The wireEnvelope persist at step 5 ensures that if the app crashes during
+/// the transport race (step 6), Section 1's PendingMessageRetrier can replay
+/// the message without re-serializing or re-encrypting.
 ///
 /// Returns (result, ConversationMessage?) — message is non-null on success or failure (persisted).
 Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
@@ -67,10 +71,9 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   final targetPrefix = targetPeerId.length > 10
       ? targetPeerId.substring(0, 10)
       : targetPeerId;
+  final textPreview = buildTextPreview(text);
   final hasAttachments =
       mediaAttachments != null && mediaAttachments.isNotEmpty;
-  final sanitizedText = sanitizeMessageText(text);
-  final textPreview = buildTextPreview(sanitizedText);
 
   emitFlowEvent(
     layer: 'FL',
@@ -79,7 +82,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   );
 
   // 1. Validate
-  if (sanitizedText.trim().isEmpty && !hasAttachments) {
+  if (text.trim().isEmpty && !hasAttachments) {
     emitFlowEvent(
       layer: 'FL',
       event: 'CHAT_MSG_SEND_INVALID',
@@ -115,7 +118,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
 
   final payload = MessagePayload(
     id: resolvedMessageId,
-    text: sanitizedText,
+    text: text,
     senderPeerId: senderPeerId,
     senderUsername: senderUsername,
     timestamp: resolvedTimestamp,
@@ -128,7 +131,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     messageId: resolvedMessageId,
     toPeerId: targetPeerId,
     status: 'queued',
-    text: sanitizedText,
+    text: text,
   );
 
   // 4. Serialize (v2 encrypted envelope if ML-KEM key available, v1 plaintext otherwise)
@@ -176,6 +179,14 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     wireJson: jsonString,
   );
 
+  // SECTION 4 CONTRACT: wireEnvelope is persisted BEFORE the transport race.
+  // If the app crashes after this point, the DB row has wireEnvelope != null
+  // and Section 1's PendingMessageRetrier can replay the message without
+  // re-serializing or re-encrypting.
+  if (messageId != null) {
+    await messageRepo.updateWireEnvelope(messageId, jsonString);
+  }
+
   // 4.5. Check for existing connected peer first (connection reuse).
   // If the peer is already connected, try to send directly without
   // rediscovering — this is the fastest interactive path.
@@ -206,7 +217,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
           via: 'reuse',
           resolvedMessageId: resolvedMessageId,
           textPreview: textPreview,
-          text: sanitizedText,
+          text: text,
           mediaAttachmentRepo: mediaAttachmentRepo,
           attachments: normalizedAttachments,
         );
@@ -317,7 +328,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       via: raceResult.via!,
       resolvedMessageId: resolvedMessageId,
       textPreview: textPreview,
-      text: sanitizedText,
+      text: text,
       mediaAttachmentRepo: mediaAttachmentRepo,
       attachments: normalizedAttachments,
     );
@@ -342,7 +353,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
         via: relayProbeResult.via!,
         resolvedMessageId: resolvedMessageId,
         textPreview: textPreview,
-        text: sanitizedText,
+        text: text,
         mediaAttachmentRepo: mediaAttachmentRepo,
         attachments: normalizedAttachments,
       );
@@ -388,7 +399,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
         messageId: resolvedMessageId,
         toPeerId: targetPeerId,
         status: 'delivered',
-        text: sanitizedText,
+        text: text,
       );
       return (
         SendChatMessageResult.success,
@@ -429,7 +440,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     messageId: resolvedMessageId,
     toPeerId: targetPeerId,
     status: 'failed',
-    text: sanitizedText,
+    text: text,
   );
   return (
     _resultForFailureReason(failureReason),
@@ -712,18 +723,12 @@ Future<ConversationMessage> _persistOutgoingSendResult({
   required bool acknowledged,
   required String via,
 }) async {
-  final persistedTransport = _resolvePersistedTransport(
-    p2pService: p2pService,
-    targetPeerId: targetPeerId,
-    via: via,
-  );
-
   if (acknowledged) {
     return payload.toConversationMessage(
       contactPeerId: targetPeerId,
       isIncoming: false,
       status: 'delivered',
-      transport: persistedTransport,
+      transport: via,
     );
   }
 
@@ -762,36 +767,7 @@ Future<ConversationMessage> _persistOutgoingSendResult({
     contactPeerId: targetPeerId,
     isIncoming: false,
     status: 'sent',
-    transport: persistedTransport,
+    transport: via,
     wireEnvelope: jsonString,
   );
-}
-
-String _resolvePersistedTransport({
-  required P2PService p2pService,
-  required String targetPeerId,
-  required String via,
-}) {
-  if (via == 'local' || via == 'wifi' || via == 'inbox') {
-    return via;
-  }
-
-  var sawDirectConnection = false;
-  for (final connection in p2pService.currentState.connections) {
-    if (connection.peerId != targetPeerId) continue;
-    for (final multiaddr in connection.multiaddrs) {
-      if (multiaddr.contains('/p2p-circuit')) {
-        return 'relay';
-      }
-      if (multiaddr.isNotEmpty) {
-        sawDirectConnection = true;
-      }
-    }
-  }
-
-  if (sawDirectConnection) {
-    return 'direct';
-  }
-
-  return via;
 }

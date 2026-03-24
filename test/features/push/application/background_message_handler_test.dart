@@ -40,7 +40,7 @@ void main() {
         const message = RemoteMessage(
           data: {
             'type': 'new_message',
-            'from': '12D3KooWTestPeer',
+            'sender_id': '12D3KooWTestPeer',
           },
         );
 
@@ -78,7 +78,7 @@ void main() {
           ),
           data: {
             'type': 'new_message',
-            'from': '12D3KooWTestPeer',
+            'sender_id': '12D3KooWTestPeer',
           },
         );
 
@@ -146,7 +146,7 @@ void main() {
     );
 
     test(
-      'returns false for new_message without from field',
+      'returns false for new_message without sender_id or from field',
       () {
         const message = RemoteMessage(
           data: {'type': 'new_message'},
@@ -179,7 +179,7 @@ void main() {
       const message = RemoteMessage(
         data: {
           'type': 'new_message',
-          'from': '12D3KooWTestPeer',
+          'sender_id': '12D3KooWTestPeer',
         },
       );
 
@@ -193,7 +193,7 @@ void main() {
       const message = RemoteMessage(
         data: {
           'type': 'new_message',
-          'from': '12D3KooWTestPeer',
+          'sender_id': '12D3KooWTestPeer',
           'title': 'Custom Title',
           'body': 'Custom Body',
         },
@@ -209,7 +209,7 @@ void main() {
       const message = RemoteMessage(
         data: {
           'type': 'new_message',
-          'from': '12D3KooWTestPeer',
+          'sender_id': '12D3KooWTestPeer',
         },
       );
 
@@ -235,7 +235,7 @@ void main() {
       const message = RemoteMessage(
         data: {
           'type': 'new_message',
-          'from': '12D3KooWTestPeer',
+          'sender_id': '12D3KooWTestPeer',
           'title': '   ',
           'body': '  ',
         },

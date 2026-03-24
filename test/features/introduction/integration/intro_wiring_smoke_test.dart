@@ -72,6 +72,8 @@ class _FakeMessageRepository implements MessageRepository {
   }
 
   @override
+  Future<ConversationMessage?> getMessage(String id) async => store[id];
+  @override
   Future<bool> messageExists(String id) async => store.containsKey(id);
   @override
   Future<void> updateMessageStatus(String id, String status) async {}
@@ -112,6 +114,26 @@ class _FakeMessageRepository implements MessageRepository {
   Future<List<ConversationMessage>> getUnackedOutgoingMessages({
     required Duration olderThan,
   }) async => [];
+  @override
+  Future<int> recoverStuckSendingMessages({required Duration olderThan}) async => 0;
+
+  @override
+  Future<void> updateWireEnvelope(String id, String envelope) async {}
+
+  @override
+  Future<List<ConversationMessage>> getStuckSendingOutgoingMessages({
+    required Duration olderThan,
+  }) async => [];
+
+  @override
+  Future<List<ConversationMessage>> getSendingOutgoingMessages() async => [];
+
+  @override
+  Future<int> conditionalTransitionStatus(
+    String id, {
+    required String fromStatus,
+    required String toStatus,
+  }) async => 0;
 }
 
 class _FakeP2PService implements P2PService {

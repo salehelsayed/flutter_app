@@ -17,6 +17,8 @@ class MediaAttachmentRepositoryImpl implements MediaAttachmentRepository {
   final Future<int> Function(String messageId) dbDeleteMediaForMessage;
   final Future<int> Function(String contactPeerId) dbDeleteMediaForContact;
   final Future<List<Map<String, Object?>>> Function() dbLoadPendingMediaDownloads;
+  final Future<List<Map<String, Object?>>> Function({int limit})
+      dbLoadUploadPendingAttachments;
 
   MediaAttachmentRepositoryImpl({
     required this.dbInsertMediaAttachment,
@@ -27,6 +29,7 @@ class MediaAttachmentRepositoryImpl implements MediaAttachmentRepository {
     required this.dbDeleteMediaForMessage,
     required this.dbDeleteMediaForContact,
     required this.dbLoadPendingMediaDownloads,
+    required this.dbLoadUploadPendingAttachments,
   });
 
   @override
@@ -163,5 +166,11 @@ class MediaAttachmentRepositoryImpl implements MediaAttachmentRepository {
   Future<List<MediaAttachment>> getPendingDownloads() async {
     final rows = await dbLoadPendingMediaDownloads();
     return rows.map((row) => MediaAttachment.fromMap(row)).toList();
+  }
+
+  @override
+  Future<List<MediaAttachment>> getUploadPendingAttachments() async {
+    final rows = await dbLoadUploadPendingAttachments();
+    return rows.map((r) => MediaAttachment.fromMap(r)).toList();
   }
 }

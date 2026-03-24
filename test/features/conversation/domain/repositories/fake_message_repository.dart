@@ -73,6 +73,12 @@ class FakeMessageRepository implements MessageRepository {
   }
 
   @override
+  Future<ConversationMessage?> getMessage(String id) async {
+    final idx = _messages.indexWhere((m) => m.id == id);
+    return idx >= 0 ? _messages[idx] : null;
+  }
+
+  @override
   Future<bool> messageExists(String id) async {
     return _messages.any((m) => m.id == id);
   }
@@ -154,5 +160,94 @@ class FakeMessageRepository implements MessageRepository {
             m.wireEnvelope != null &&
             m.wireEnvelope!.isNotEmpty)
         .toList();
+  }
+
+  int getSendingOutgoingCallCount = 0;
+
+  @override
+  Future<List<ConversationMessage>> getSendingOutgoingMessages() async {
+    getSendingOutgoingCallCount++;
+    return _messages.where((m) => m.status == 'sending' && !m.isIncoming).toList();
+  }
+
+  int conditionalTransitionCallCount = 0;
+
+  @override
+  Future<int> conditionalTransitionStatus(
+    String id, {
+    required String fromStatus,
+    required String toStatus,
+  }) async {
+    conditionalTransitionCallCount++;
+    final idx = _messages.indexWhere((m) => m.id == id && m.status == fromStatus);
+    if (idx >= 0) {
+      _messages[idx] = _messages[idx].copyWith(status: toStatus);
+      return 1;
+    }
+    return 0;
+  }
+
+  // Stuck-sending query
+  List<ConversationMessage>? stuckSendingOutgoingOverride;
+
+  @override
+  Future<List<ConversationMessage>> getStuckSendingOutgoingMessages({
+    required Duration olderThan,
+  }) async {
+    if (stuckSendingOutgoingOverride != null) return stuckSendingOutgoingOverride!;
+    final cutoff = DateTime.now().toUtc().subtract(olderThan);
+    return _messages
+        .where((m) =>
+            m.status == 'sending' &&
+            !m.isIncoming &&
+            DateTime.parse(m.timestamp).toUtc().isBefore(cutoff))
+        .toList();
+  }
+
+  // Stuck-sending recovery
+  int recoverStuckSendingCallCount = 0;
+  Duration? lastRecoverStuckSendingThreshold;
+  bool throwOnRecoverStuckSending = false;
+  void Function()? onRecoverStuckSending;
+  int? recoverStuckSendingReturnValue;
+
+  @override
+  Future<int> recoverStuckSendingMessages({
+    required Duration olderThan,
+  }) async {
+    recoverStuckSendingCallCount++;
+    lastRecoverStuckSendingThreshold = olderThan;
+    onRecoverStuckSending?.call();
+    if (throwOnRecoverStuckSending) {
+      throw Exception('FakeMessageRepository: recoverStuckSendingMessages error');
+    }
+    if (recoverStuckSendingReturnValue != null) {
+      return recoverStuckSendingReturnValue!;
+    }
+    // Actually transition matching messages in _messages, mirroring real DB behavior.
+    final cutoff = DateTime.now().toUtc().subtract(olderThan);
+    int count = 0;
+    for (var i = 0; i < _messages.length; i++) {
+      final m = _messages[i];
+      if (m.status == 'sending' &&
+          !m.isIncoming &&
+          DateTime.parse(m.timestamp).toUtc().isBefore(cutoff)) {
+        _messages[i] = m.copyWith(status: 'failed');
+        count++;
+      }
+    }
+    return count;
+  }
+
+  // Wire envelope updates
+  List<({String id, String envelope})> wireEnvelopeUpdates = [];
+  String? lastWireEnvelopeValue;
+  void Function()? onUpdateWireEnvelope;
+
+  @override
+  Future<void> updateWireEnvelope(String id, String envelope) async {
+    wireEnvelopeUpdates.add((id: id, envelope: envelope));
+    lastWireEnvelopeValue = envelope;
+    onUpdateWireEnvelope?.call();
   }
 }

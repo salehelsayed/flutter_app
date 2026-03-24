@@ -22,6 +22,7 @@ typedef UploadMediaFn =
       int? durationMs,
       List<double>? waveform,
       List<String>? allowedPeers,
+      String? blobId,
     });
 
 /// Uploads a local file to the relay and returns a MediaAttachment on success.
@@ -42,14 +43,15 @@ Future<MediaAttachment?> uploadMedia({
   int? durationMs,
   List<double>? waveform,
   List<String>? allowedPeers,
+  String? blobId,
 }) async {
-  final blobId = _uuid.v4();
+  final effectiveBlobId = blobId ?? _uuid.v4();
 
   emitFlowEvent(
     layer: 'FL',
     event: 'MEDIA_UPLOAD_START',
     details: {
-      'blobId': blobId.substring(0, 8),
+      'blobId': effectiveBlobId.substring(0, 8),
       'mime': mime,
       'recipientPeerId': recipientPeerId.length > 10
           ? recipientPeerId.substring(0, 10)
@@ -63,7 +65,7 @@ Future<MediaAttachment?> uploadMedia({
 
     final result = await callP2PMediaUpload(
       bridge,
-      id: blobId,
+      id: effectiveBlobId,
       toPeerId: recipientPeerId,
       mime: mime,
       filePath: localFilePath,
@@ -75,7 +77,7 @@ Future<MediaAttachment?> uploadMedia({
         layer: 'FL',
         event: 'MEDIA_UPLOAD_FAILED',
         details: {
-          'blobId': blobId.substring(0, 8),
+          'blobId': effectiveBlobId.substring(0, 8),
           'error': result['errorMessage'],
         },
       );
@@ -92,13 +94,13 @@ Future<MediaAttachment?> uploadMedia({
     if (mediaFileManager != null) {
       final absolutePath = await mediaFileManager.localPathForAttachment(
         contactPeerId: recipientPeerId,
-        blobId: blobId,
+        blobId: effectiveBlobId,
         mime: mime,
       );
       await File(localFilePath).copy(absolutePath);
       storedPath = mediaFileManager.relativePathForAttachment(
         contactPeerId: recipientPeerId,
-        blobId: blobId,
+        blobId: effectiveBlobId,
         mime: mime,
       );
     }
@@ -106,11 +108,11 @@ Future<MediaAttachment?> uploadMedia({
     emitFlowEvent(
       layer: 'FL',
       event: 'MEDIA_UPLOAD_SUCCESS',
-      details: {'blobId': blobId.substring(0, 8), 'size': fileSize},
+      details: {'blobId': effectiveBlobId.substring(0, 8), 'size': fileSize},
     );
 
     return MediaAttachment(
-      id: blobId,
+      id: effectiveBlobId,
       messageId: '', // set by caller after message ID is known
       mime: mime,
       size: fileSize,
@@ -127,7 +129,7 @@ Future<MediaAttachment?> uploadMedia({
     emitFlowEvent(
       layer: 'FL',
       event: 'MEDIA_UPLOAD_ERROR',
-      details: {'blobId': blobId.substring(0, 8), 'error': e.toString()},
+      details: {'blobId': effectiveBlobId.substring(0, 8), 'error': e.toString()},
     );
     return null;
   }

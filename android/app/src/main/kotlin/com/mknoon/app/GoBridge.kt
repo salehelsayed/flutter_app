@@ -117,6 +117,10 @@ class GoBridge(flutterEngine: FlutterEngine) : MethodChannel.MethodCallHandler,
             "groupInboxRetrieveCursor" -> runOnBackground({ GoMknoon.groupInboxRetrieveCursor(args ?: "") }, result)
             "groupAcknowledgeRecovery" -> runOnBackground({ GoMknoon.groupAcknowledgeRecovery() }, result)
 
+            // Background task (no-op on Android)
+            "bgBegin" -> result.success("")  // no-op on Android
+            "bgEnd" -> result.success(null)  // no-op on Android
+
             else -> result.notImplemented()
         }
     }

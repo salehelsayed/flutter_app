@@ -99,31 +99,52 @@ func (b *memoryRendezvousBackend) Stats() (namespaces int, totalPeers int) {
 // --- In-memory InboxBackend ---
 
 type memoryInboxBackend struct {
-	mu    sync.Mutex
-	store map[string][]inboxMessage // peerId -> messages
+	mu         sync.Mutex
+	store      map[string][]inboxMessage  // peerId -> messages
+	messageIds map[string]map[string]bool // peerId -> set of messageIds
 }
 
 func newMemoryInboxBackend() *memoryInboxBackend {
 	return &memoryInboxBackend{
-		store: make(map[string][]inboxMessage),
+		store:      make(map[string][]inboxMessage),
+		messageIds: make(map[string]map[string]bool),
 	}
 }
 
-func (b *memoryInboxBackend) Store(toPeerId string, entry inboxMessage) {
+func (b *memoryInboxBackend) Store(toPeerId string, entry inboxMessage) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+
+	// Extract messageId for dedup.
+	msgId := extractMessageId(entry.Message)
+	if msgId != "" {
+		if ids, ok := b.messageIds[toPeerId]; ok && ids[msgId] {
+			// Duplicate — skip store and push.
+			return false
+		}
+	}
 
 	messages := b.pruneExpired(b.store[toPeerId])
 
 	// Cap at max
 	if len(messages) >= maxMessagesPerPeer {
-		overflow := len(messages) - maxMessagesPerPeer + 1
-		_ = overflow
 		messages = messages[len(messages)-maxMessagesPerPeer+1:]
+		// Also prune messageIds for evicted messages
+		b.rebuildMessageIds(toPeerId, messages)
 	}
 
 	messages = append(messages, entry)
 	b.store[toPeerId] = messages
+
+	// Track messageId
+	if msgId != "" {
+		if b.messageIds[toPeerId] == nil {
+			b.messageIds[toPeerId] = make(map[string]bool)
+		}
+		b.messageIds[toPeerId][msgId] = true
+	}
+
+	return true
 }
 
 func (b *memoryInboxBackend) Retrieve(peerId string, limit int) ([]inboxMessage, bool) {
@@ -135,6 +156,7 @@ func (b *memoryInboxBackend) Retrieve(peerId string, limit int) ([]inboxMessage,
 
 	if len(messages) == 0 {
 		delete(b.store, peerId)
+		delete(b.messageIds, peerId)
 		return nil, false
 	}
 
@@ -148,11 +170,27 @@ func (b *memoryInboxBackend) Retrieve(peerId string, limit int) ([]inboxMessage,
 	remaining := messages[limit:]
 	if len(remaining) > 0 {
 		b.store[peerId] = remaining
+		b.rebuildMessageIds(peerId, remaining)
 		return result, true
 	}
 
 	delete(b.store, peerId)
+	delete(b.messageIds, peerId)
 	return result, false
+}
+
+func (b *memoryInboxBackend) rebuildMessageIds(peerId string, messages []inboxMessage) {
+	ids := make(map[string]bool, len(messages))
+	for _, m := range messages {
+		if msgId := extractMessageId(m.Message); msgId != "" {
+			ids[msgId] = true
+		}
+	}
+	if len(ids) > 0 {
+		b.messageIds[peerId] = ids
+	} else {
+		delete(b.messageIds, peerId)
+	}
 }
 
 func (b *memoryInboxBackend) Count(peerId string) int {

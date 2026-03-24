@@ -283,6 +283,9 @@ class InMemoryMessageRepository implements MessageRepository {
   }
 
   @override
+  Future<ConversationMessage?> getMessage(String id) async => _messages[id];
+
+  @override
   Future<bool> messageExists(String id) async => _messages.containsKey(id);
 
   @override
@@ -347,6 +350,27 @@ class InMemoryMessageRepository implements MessageRepository {
   Future<List<ConversationMessage>> getUnackedOutgoingMessages({
     required Duration olderThan,
   }) async => [];
+
+  @override
+  Future<int> recoverStuckSendingMessages({required Duration olderThan}) async => 0;
+
+  @override
+  Future<void> updateWireEnvelope(String id, String envelope) async {}
+
+  @override
+  Future<List<ConversationMessage>> getStuckSendingOutgoingMessages({
+    required Duration olderThan,
+  }) async => [];
+
+  @override
+  Future<List<ConversationMessage>> getSendingOutgoingMessages() async => [];
+
+  @override
+  Future<int> conditionalTransitionStatus(
+    String id, {
+    required String fromStatus,
+    required String toStatus,
+  }) async => 0;
 
   int get count => _messages.length;
 }

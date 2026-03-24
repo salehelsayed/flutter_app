@@ -29,6 +29,7 @@ import 'package:flutter_app/features/conversation/application/upload_media_use_c
 import 'package:flutter_app/features/conversation/application/mark_conversation_read_use_case.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/application/send_voice_message_use_case.dart';
+import 'package:flutter_app/features/conversation/domain/models/audio_recording.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
@@ -66,6 +67,26 @@ typedef SendChatMessageFn =
       String? quotedMessageId,
       List<MediaAttachment>? mediaAttachments,
       MediaAttachmentRepository? mediaAttachmentRepo,
+    });
+
+typedef SendVoiceMessageFn =
+    Future<(SendVoiceMessageResult, ConversationMessage?)> Function({
+      required P2PService p2pService,
+      required MessageRepository messageRepo,
+      required String targetPeerId,
+      required String senderPeerId,
+      required String senderUsername,
+      required AudioRecording recording,
+      required Bridge bridge,
+      String? recipientMlKemPublicKey,
+      MediaAttachmentRepository? mediaAttachmentRepo,
+      MediaFileManager? mediaFileManager,
+      String? text,
+      String? quotedMessageId,
+      List<double>? waveform,
+      String? messageId,
+      String? timestamp,
+      String? blobId,
     });
 
 /// A pending media attachment with optional video metadata.
@@ -111,6 +132,7 @@ class ConversationWired extends StatefulWidget {
   final ReactionListener? reactionListener;
   final IntroductionRepository? introductionRepository;
   final UploadMediaFn uploadMediaFn;
+  final SendVoiceMessageFn sendVoiceMessageFn;
 
   const ConversationWired({
     super.key,
@@ -137,6 +159,7 @@ class ConversationWired extends StatefulWidget {
     this.reactionListener,
     this.introductionRepository,
     this.uploadMediaFn = uploadMedia,
+    this.sendVoiceMessageFn = sendVoiceMessage,
   });
 
   @override
@@ -489,7 +512,7 @@ class _ConversationWiredState extends State<ConversationWired> {
   }
 
   bool _shouldRefreshFromRepositoryChange(String status) =>
-      status == 'sent' || status == 'delivered';
+      status == 'sent' || status == 'delivered' || status == 'failed';
 
   void _onIncomingMessage(ConversationMessage message) {
     if (!mounted) return;
@@ -635,6 +658,11 @@ class _ConversationWiredState extends State<ConversationWired> {
 
       try {
         await widget.messageRepo.saveMessage(optimisticMessage);
+        await _persistOptimisticAttachments(
+          optimisticMessage.id,
+          optimisticMedia,
+          errorEvent: 'CONV_FL_OPTIMISTIC_ATTACHMENT_SAVE_ERROR',
+        );
       } catch (e) {
         emitFlowEvent(
           layer: 'FL',
@@ -642,6 +670,11 @@ class _ConversationWiredState extends State<ConversationWired> {
           details: {'error': e.toString()},
         );
       }
+
+      // Acquire background task BEFORE upload so iOS cannot suspend during upload.
+      final bgTaskId = widget.bridge != null
+          ? await callBgBegin(widget.bridge!)
+          : null;
 
       try {
         // Upload attachments if any
@@ -813,6 +846,10 @@ class _ConversationWiredState extends State<ConversationWired> {
           messenger: messenger,
           snackText: 'Failed to send message. Message saved.',
         );
+      } finally {
+        if (bgTaskId != null && widget.bridge != null) {
+          await callBgEnd(widget.bridge!, bgTaskId);
+        }
       }
     } finally {
       if (mounted) {
@@ -1258,6 +1295,11 @@ class _ConversationWiredState extends State<ConversationWired> {
 
     try {
       await widget.messageRepo.saveMessage(optimisticMessage);
+      await _persistOptimisticAttachments(
+        optimisticMessage.id,
+        optimisticMessage.media,
+        errorEvent: 'CONV_FL_VOICE_OPTIMISTIC_ATTACHMENT_SAVE_ERROR',
+      );
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -1274,154 +1316,165 @@ class _ConversationWiredState extends State<ConversationWired> {
       }
     }
 
-    // Try local WiFi first for voice messages.
-    if (widget.p2pService.isLocalPeer(_contact.peerId)) {
-      final mediaId = _uuid.v4();
-      final localSuccess = await widget.p2pService.sendLocalMedia(
-        peerId: _contact.peerId,
-        filePath: recording.filePath,
-        mime: recording.mime,
-        mediaId: mediaId,
-        fromPeerId: identity.peerId,
-        durationMs: recording.durationMs,
-        waveform: waveform,
-      );
+    // Acquire background task BEFORE local transfer / relay upload.
+    final bgTaskId = widget.bridge != null
+        ? await callBgBegin(widget.bridge!)
+        : null;
 
-      if (localSuccess) {
-        // Voice transferred locally — send text-only message via local WS.
-        final voiceAttachment = MediaAttachment(
-          id: mediaId,
-          messageId: optimisticMessage.id,
+    try {
+      // Try local WiFi first for voice messages.
+      if (widget.p2pService.isLocalPeer(_contact.peerId)) {
+        final mediaId = _uuid.v4();
+        final localSuccess = await widget.p2pService.sendLocalMedia(
+          peerId: _contact.peerId,
+          filePath: recording.filePath,
           mime: recording.mime,
-          size: recording.sizeBytes,
-          mediaType: 'audio',
+          mediaId: mediaId,
+          fromPeerId: identity.peerId,
           durationMs: recording.durationMs,
-          localPath: recording.filePath,
-          downloadStatus: 'done',
-          createdAt: optimisticMessage.timestamp,
           waveform: waveform,
         );
 
-        final (result, voiceMessage) = await widget.sendChatMessageFn(
-          p2pService: widget.p2pService,
-          messageRepo: widget.messageRepo,
-          targetPeerId: _contact.peerId,
-          text: '',
-          senderPeerId: identity.peerId,
-          senderUsername: identity.username,
-          messageId: optimisticMessage.id,
-          timestamp: optimisticMessage.timestamp,
-          bridge: widget.bridge,
-          recipientMlKemPublicKey: _contact.mlKemPublicKey,
-          quotedMessageId: quotedMessageId,
-          mediaAttachments: [voiceAttachment],
-          mediaAttachmentRepo: widget.mediaAttachmentRepo,
-        );
-
-        if (mounted) {
-          _updateComposerState(isUploading: false);
-        }
-
-        if (result == SendChatMessageResult.success && voiceMessage != null) {
-          final messageWithMedia = voiceMessage.copyWith(
-            media: optimisticMessage.media,
+        if (localSuccess) {
+          // Voice transferred locally — send text-only message via local WS.
+          final voiceAttachment = MediaAttachment(
+            id: mediaId,
+            messageId: optimisticMessage.id,
+            mime: recording.mime,
+            size: recording.sizeBytes,
+            mediaType: 'audio',
+            durationMs: recording.durationMs,
+            localPath: recording.filePath,
+            downloadStatus: 'done',
+            createdAt: optimisticMessage.timestamp,
+            waveform: waveform,
           );
+
+          final (result, voiceMessage) = await widget.sendChatMessageFn(
+            p2pService: widget.p2pService,
+            messageRepo: widget.messageRepo,
+            targetPeerId: _contact.peerId,
+            text: '',
+            senderPeerId: identity.peerId,
+            senderUsername: identity.username,
+            messageId: optimisticMessage.id,
+            timestamp: optimisticMessage.timestamp,
+            bridge: widget.bridge,
+            recipientMlKemPublicKey: _contact.mlKemPublicKey,
+            quotedMessageId: quotedMessageId,
+            mediaAttachments: [voiceAttachment],
+            mediaAttachmentRepo: widget.mediaAttachmentRepo,
+          );
+
           if (mounted) {
-            setState(() => _upsertMessageById(messageWithMedia));
+            _updateComposerState(isUploading: false);
           }
-        } else {
-          _updateLocalMessageStatus(optimisticMessage.id, 'failed');
-          await _persistMessageStatus(optimisticMessage.id, 'failed');
-          if (quotedMessageId != null && mounted) {
-            setState(() => _activeQuoteMessageId = quotedMessageId);
+
+          if (result == SendChatMessageResult.success && voiceMessage != null) {
+            final messageWithMedia = voiceMessage.copyWith(
+              media: optimisticMessage.media,
+            );
+            if (mounted) {
+              setState(() => _upsertMessageById(messageWithMedia));
+            }
+          } else {
+            _updateLocalMessageStatus(optimisticMessage.id, 'failed');
+            await _persistMessageStatus(optimisticMessage.id, 'failed');
+            if (quotedMessageId != null && mounted) {
+              setState(() => _activeQuoteMessageId = quotedMessageId);
+            }
           }
+          return;
+        }
+      }
+
+      final bridge = widget.bridge;
+      if (bridge == null) {
+        _updateLocalMessageStatus(optimisticMessage.id, 'failed');
+        await _persistMessageStatus(optimisticMessage.id, 'failed');
+        if (quotedMessageId != null && mounted) {
+          setState(() => _activeQuoteMessageId = quotedMessageId);
+        }
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'CONV_FL_VOICE_SEND_NO_BRIDGE',
+          details: {},
+        );
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                AppLocalizations.of(context)!.conversation_voice_fail,
+              ),
+              backgroundColor: Colors.red[700],
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
         }
         return;
       }
-    }
 
-    final bridge = widget.bridge;
-    if (bridge == null) {
-      _updateLocalMessageStatus(optimisticMessage.id, 'failed');
-      await _persistMessageStatus(optimisticMessage.id, 'failed');
-      if (quotedMessageId != null && mounted) {
-        setState(() => _activeQuoteMessageId = quotedMessageId);
-      }
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'CONV_FL_VOICE_SEND_NO_BRIDGE',
-        details: {},
+      // Upload + send (relay fallback)
+      final (result, voiceMessage) = await widget.sendVoiceMessageFn(
+        p2pService: widget.p2pService,
+        messageRepo: widget.messageRepo,
+        targetPeerId: _contact.peerId,
+        senderPeerId: identity.peerId,
+        senderUsername: identity.username,
+        recording: recording,
+        bridge: bridge,
+        recipientMlKemPublicKey: _contact.mlKemPublicKey,
+        mediaAttachmentRepo: widget.mediaAttachmentRepo,
+        mediaFileManager: widget.mediaFileManager,
+        waveform: waveform,
+        messageId: optimisticMessage.id,
+        timestamp: optimisticMessage.timestamp,
+        quotedMessageId: quotedMessageId,
       );
+
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              AppLocalizations.of(context)!.conversation_voice_fail,
+        _updateComposerState(isUploading: false);
+      }
+
+      if (result == SendVoiceMessageResult.success && voiceMessage != null) {
+        // Replace optimistic with real message, preserving local media for playback.
+        // DB already has correct data from sendChatMessage's saveMessage call.
+        final messageWithMedia = voiceMessage.copyWith(
+          media: optimisticMessage.media,
+        );
+        if (mounted) {
+          setState(() {
+            _upsertMessageById(messageWithMedia);
+          });
+        }
+      } else if (result == SendVoiceMessageResult.success) {
+        _updateLocalMessageStatus(optimisticMessage.id, 'sent');
+        await _persistMessageStatus(optimisticMessage.id, 'sent');
+      } else {
+        _updateLocalMessageStatus(optimisticMessage.id, 'failed');
+        await _persistMessageStatus(optimisticMessage.id, 'failed');
+        if (quotedMessageId != null && mounted) {
+          setState(() => _activeQuoteMessageId = quotedMessageId);
+        }
+
+        if (mounted) {
+          final snackText = switch (result) {
+            SendVoiceMessageResult.uploadFailed =>
+              'Failed to upload voice message. Try again.',
+            _ => AppLocalizations.of(context)!.conversation_voice_fail,
+          };
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(snackText),
+              backgroundColor: Colors.red[700],
+              behavior: SnackBarBehavior.floating,
             ),
-            backgroundColor: Colors.red[700],
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
+          );
+        }
       }
-      return;
-    }
-
-    // Upload + send (relay fallback)
-    final (result, voiceMessage) = await sendVoiceMessage(
-      p2pService: widget.p2pService,
-      messageRepo: widget.messageRepo,
-      targetPeerId: _contact.peerId,
-      senderPeerId: identity.peerId,
-      senderUsername: identity.username,
-      recording: recording,
-      bridge: bridge,
-      recipientMlKemPublicKey: _contact.mlKemPublicKey,
-      mediaAttachmentRepo: widget.mediaAttachmentRepo,
-      mediaFileManager: widget.mediaFileManager,
-      waveform: waveform,
-      messageId: optimisticMessage.id,
-      timestamp: optimisticMessage.timestamp,
-      quotedMessageId: quotedMessageId,
-    );
-
-    if (mounted) {
-      _updateComposerState(isUploading: false);
-    }
-
-    if (result == SendVoiceMessageResult.success && voiceMessage != null) {
-      // Replace optimistic with real message, preserving local media for playback.
-      // DB already has correct data from sendChatMessage's saveMessage call.
-      final messageWithMedia = voiceMessage.copyWith(
-        media: optimisticMessage.media,
-      );
-      if (mounted) {
-        setState(() {
-          _upsertMessageById(messageWithMedia);
-        });
-      }
-    } else if (result == SendVoiceMessageResult.success) {
-      _updateLocalMessageStatus(optimisticMessage.id, 'sent');
-      await _persistMessageStatus(optimisticMessage.id, 'sent');
-    } else {
-      _updateLocalMessageStatus(optimisticMessage.id, 'failed');
-      await _persistMessageStatus(optimisticMessage.id, 'failed');
-      if (quotedMessageId != null && mounted) {
-        setState(() => _activeQuoteMessageId = quotedMessageId);
-      }
-
-      if (mounted) {
-        final snackText = switch (result) {
-          SendVoiceMessageResult.uploadFailed =>
-            'Failed to upload voice message. Try again.',
-          _ => AppLocalizations.of(context)!.conversation_voice_fail,
-        };
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(snackText),
-            backgroundColor: Colors.red[700],
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
+    } finally {
+      if (bgTaskId != null && widget.bridge != null) {
+        await callBgEnd(widget.bridge!, bgTaskId);
       }
     }
   }
@@ -1706,6 +1759,36 @@ class _ConversationWiredState extends State<ConversationWired> {
         layer: 'FL',
         event: 'CONV_FL_STATUS_UPDATE_ERROR',
         details: {'error': e.toString(), 'status': status},
+      );
+    }
+  }
+
+  Future<void> _persistOptimisticAttachments(
+    String messageId,
+    List<MediaAttachment>? attachments, {
+    required String errorEvent,
+  }) async {
+    final mediaAttachmentRepo = widget.mediaAttachmentRepo;
+    if (mediaAttachmentRepo == null ||
+        attachments == null ||
+        attachments.isEmpty) {
+      return;
+    }
+
+    try {
+      for (final attachment in attachments) {
+        await mediaAttachmentRepo.saveAttachment(
+          attachment.copyWith(
+            messageId: messageId,
+            downloadStatus: 'upload_pending',
+          ),
+        );
+      }
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: errorEvent,
+        details: {'error': e.toString()},
       );
     }
   }

@@ -244,6 +244,48 @@ Future<int> dbDeleteMediaForContact(
   }
 }
 
+/// Returns all media_attachments rows with download_status='upload_pending',
+/// ordered by created_at ASC (oldest first).
+///
+/// These are outgoing attachments whose upload was interrupted before
+/// completing. They must be re-uploaded on the next retry cycle.
+///
+/// Returns at most [limit] rows.
+Future<List<Map<String, Object?>>> dbLoadUploadPendingAttachments(
+  Database db, {
+  int limit = 50,
+}) async {
+  emitFlowEvent(
+    layer: 'DB',
+    event: 'MEDIA_DB_LOAD_UPLOAD_PENDING_START',
+    details: {'limit': limit},
+  );
+
+  try {
+    final results = await db.query(
+      'media_attachments',
+      where: "download_status = 'upload_pending'",
+      orderBy: 'created_at ASC',
+      limit: limit,
+    );
+
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'MEDIA_DB_LOAD_UPLOAD_PENDING_SUCCESS',
+      details: {'count': results.length},
+    );
+
+    return results;
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'MEDIA_DB_LOAD_UPLOAD_PENDING_ERROR',
+      details: {'error': e.toString()},
+    );
+    rethrow;
+  }
+}
+
 /// Loads all media attachments with download_status = 'pending'.
 Future<List<Map<String, Object?>>> dbLoadPendingMediaDownloads(
     Database db) async {

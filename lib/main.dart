@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/services/share_intent_model.dart';
 import 'package:flutter_app/core/services/share_intent_service.dart';
@@ -89,6 +88,10 @@ import 'package:flutter_app/features/conversation/domain/repositories/media_atta
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository_impl.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/application/reaction_listener.dart';
+import 'package:flutter_app/features/conversation/application/recover_stuck_sending_messages_use_case.dart';
+import 'package:flutter_app/features/conversation/application/retry_failed_messages_use_case.dart';
+import 'package:flutter_app/features/conversation/application/retry_incomplete_uploads_use_case.dart';
+import 'package:flutter_app/features/conversation/application/retry_unacked_messages_use_case.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository_impl.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository_impl.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
@@ -112,6 +115,7 @@ import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/record_audio_recorder_service.dart';
+import 'package:flutter_app/core/lifecycle/handle_app_paused.dart';
 import 'package:flutter_app/core/lifecycle/handle_app_resumed.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/notifications/flutter_notification_service.dart';
@@ -123,6 +127,7 @@ import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/startup_timing.dart';
 import 'dart:io' show Platform;
+import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
 import 'package:path_provider/path_provider.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -134,10 +139,11 @@ import 'package:flutter_app/features/orbit/presentation/navigation/orbit_route_t
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
 import 'package:flutter_app/features/push/application/background_message_handler.dart';
-import 'package:flutter_app/features/push/application/prepare_notification_open_use_case.dart';
 import 'package:flutter_app/features/push/application/push_registration_coordinator.dart';
-import 'package:flutter_app/features/push/application/register_push_token_use_case.dart';
+import 'package:flutter_app/features/push/application/register_push_token_use_case.dart'
+    as push_registration;
 import 'package:flutter_app/features/push/application/request_push_permission_use_case.dart';
+import 'package:flutter_app/features/push/infrastructure/push_token_store_impl.dart';
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
 import 'package:flutter_app/features/posts/application/download_post_media_use_case.dart';
 import 'package:flutter_app/features/posts/application/nearby_location_service.dart';
@@ -150,7 +156,6 @@ import 'package:flutter_app/features/posts/application/post_pin_listener.dart';
 import 'package:flutter_app/features/posts/application/post_pass_listener.dart';
 import 'package:flutter_app/features/posts/application/post_reaction_listener.dart';
 import 'package:flutter_app/features/posts/application/sweep_expired_posts_use_case.dart';
-import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
 import 'package:flutter_app/features/posts/domain/repositories/contact_presence_snapshot_repository_impl.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository_impl.dart';
 import 'package:flutter_app/features/posts/domain/repositories/posts_privacy_settings_repository_impl.dart';
@@ -190,6 +195,7 @@ void main() async {
 
   // 1. Create secure key store
   final secureKeyStore = FlutterSecureKeyStore();
+  final pushTokenStore = PushTokenStoreImpl(secureKeyStore: secureKeyStore);
 
   // 2. Open encrypted database (handles plaintext→encrypted migration)
   final db = await openEncryptedDatabase(
@@ -433,8 +439,33 @@ void main() async {
     dbLoadFailedOutgoingMessages: () => dbLoadFailedOutgoingMessages(db),
     dbLoadUnackedOutgoingMessages: ({required olderThan, limit = 50}) =>
         dbLoadUnackedOutgoingMessages(db, olderThan: olderThan, limit: limit),
+    dbRecoverStuckSendingMessages:
+        ({required DateTime olderThan, int limit = 50}) =>
+            dbRecoverStuckSendingMessages(
+              db,
+              olderThan: olderThan,
+              limit: limit,
+            ),
+    dbUpdateWireEnvelope: (id, wireEnvelope) =>
+        dbUpdateWireEnvelope(db, id, wireEnvelope),
+    dbLoadStuckSendingOutgoingMessages:
+        ({required DateTime olderThan, int limit = 50}) =>
+            dbLoadStuckSendingOutgoingMessages(
+              db,
+              olderThan: olderThan,
+              limit: limit,
+            ),
     dbLoadConversationThreadSummaries: (contactPeerIds) =>
         dbLoadConversationThreadSummaries(db, contactPeerIds),
+    dbLoadSendingOutgoingMessages: () => dbLoadSendingOutgoingMessages(db),
+    dbConditionalTransitionStatus:
+        (id, {required fromStatus, required toStatus}) =>
+            dbConditionalTransitionStatus(
+              db,
+              id,
+              fromStatus: fromStatus,
+              toStatus: toStatus,
+            ),
   );
 
   final postRepository = PostRepositoryImpl(
@@ -568,6 +599,8 @@ void main() async {
     dbDeleteMediaForContact: (contactPeerId) =>
         dbDeleteMediaForContact(db, contactPeerId),
     dbLoadPendingMediaDownloads: () => dbLoadPendingMediaDownloads(db),
+    dbLoadUploadPendingAttachments: ({int limit = 50}) =>
+        dbLoadUploadPendingAttachments(db, limit: limit),
   );
 
   // Create reaction repository
@@ -696,6 +729,7 @@ void main() async {
   final p2pService = P2PServiceImpl(
     bridge: bridge,
     localP2PService: localP2PService,
+    pushTokenStore: pushTokenStore,
   );
   nearbyLocationService = NearbyLocationServiceImpl(
     settingsRepository: postsPrivacySettingsRepository,
@@ -740,6 +774,17 @@ void main() async {
   // Create notification service and conversation trackers
   final notificationService = FlutterNotificationService();
   await notificationService.initialize();
+  final PushRegistrationCoordinator? pushRegistrationCoordinator =
+      !isDesktop && Firebase.apps.isNotEmpty
+      ? PushRegistrationCoordinator(
+          requestPermission: requestPushPermission,
+          registerPushToken: () => push_registration.registerPushToken(
+            p2pService: p2pService,
+            pushTokenStore: pushTokenStore,
+          ),
+          tokenRefreshStream: FirebaseMessaging.instance.onTokenRefresh,
+        )
+      : null;
   final conversationTracker = ActiveConversationTracker();
   final groupConversationTracker = ActiveConversationTracker();
   final appShellController = AppShellController();
@@ -924,6 +969,17 @@ void main() async {
     identityRepo: repository,
     contactRepo: contactRepository,
     bridge: bridge,
+    mediaAttachmentRepo: mediaAttachmentRepository,
+    recoverStuckSendingMessagesFn: () =>
+        recoverStuckSendingMessages(messageRepo: messageRepository),
+    retryIncompleteUploadsFn: () => retryIncompleteUploads(
+      mediaAttachmentRepo: mediaAttachmentRepository,
+      messageRepo: messageRepository,
+      bridge: bridge,
+      p2pService: p2pService,
+      identityRepo: repository,
+      contactRepo: contactRepository,
+    ),
   );
 
   final pendingPostMediaUploadRetrier = PendingPostMediaUploadRetrier(
@@ -1002,15 +1058,6 @@ void main() async {
   await sweepExpiredPosts(
     postRepo: postRepository,
     mediaFileManager: mediaFileManager,
-  );
-
-  final pushRegistrationCoordinator = PushRegistrationCoordinator(
-    isEnabled: () => !isDesktop && Firebase.apps.isNotEmpty,
-    requestPermission: requestPushPermission,
-    registerPushToken: () => registerPushToken(p2pService: p2pService),
-    tokenRefreshStream: Firebase.apps.isNotEmpty
-        ? FirebaseMessaging.instance.onTokenRefresh
-        : const Stream<String>.empty(),
   );
 
   runApp(
@@ -1114,7 +1161,7 @@ class MyApp extends StatefulWidget {
   final IntroductionRepositoryImpl introductionRepository;
   final IntroductionListener introductionListener;
   final ShareIntentService shareIntentService;
-  final PushRegistrationCoordinator pushRegistrationCoordinator;
+  final PushRegistrationCoordinator? pushRegistrationCoordinator;
 
   static final navigatorKey = GlobalKey<NavigatorState>();
 
@@ -1166,7 +1213,7 @@ class MyApp extends StatefulWidget {
     required this.introductionRepository,
     required this.introductionListener,
     required this.shareIntentService,
-    required this.pushRegistrationCoordinator,
+    this.pushRegistrationCoordinator,
   });
 
   @override
@@ -1239,34 +1286,10 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     widget.notificationService.onNotificationTap = _onNotificationTap;
   }
 
-  Future<void> _prepareNotificationRouteTarget(
-    NotificationRouteTarget routeTarget,
-  ) async {
-    final result = await prepareNotificationOpen(
-      routeTarget: routeTarget,
-      drainOfflineInbox: widget.p2pService.drainOfflineInbox,
-      drainGroupOfflineInboxForGroup: (groupId) {
-        return drainGroupOfflineInboxForGroup(
-          bridge: widget.bridge,
-          groupRepo: widget.groupRepository,
-          msgRepo: widget.groupMessageRepository,
-          groupId: groupId,
-          mediaAttachmentRepo: widget.mediaAttachmentRepository,
-          reactionRepo: widget.reactionRepository,
-        );
-      },
-    );
-
-    if (!result.ok) {
-      throw StateError(result.error ?? 'notification open preparation failed');
-    }
-  }
-
   Future<void> _handleInitialLocalNotificationLaunch() async {
     try {
       await routeInitialLocalNotificationOpen(
         consumeInitialPayload: widget.notificationService.consumeInitialPayload,
-        onBeforeRouteTarget: _prepareNotificationRouteTarget,
         onRouteTarget: _handleNotificationRouteTarget,
       );
     } catch (e) {
@@ -1282,7 +1305,6 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     try {
       await routeNotificationPayload(
         payload: payload,
-        onBeforeRouteTarget: _prepareNotificationRouteTarget,
         onRouteTarget: _handleNotificationRouteTarget,
       );
     } catch (e) {
@@ -1463,8 +1485,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     widget.postPinListener.dispose();
     widget.chatMessageListener.dispose();
     widget.contactRequestListener.dispose();
-    widget.pushRegistrationCoordinator.dispose();
     _postNotificationOpenCoordinator.dispose();
+    widget.pushRegistrationCoordinator?.dispose();
     widget.contactPresenceSnapshotRepository.dispose();
     widget.postRepository.dispose();
     widget.messageRouter.dispose();
@@ -1490,19 +1512,55 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     if (state == AppLifecycleState.resumed) {
       _onResumed();
     }
+
+    // Commit any in-flight 'sending' messages to 'failed' before
+    // the OS may freeze or kill this process. Using 'paused' and 'hidden'
+    // because 'inactive' is a transient state visited during foreground
+    // app-switcher and does not reliably precede backgrounding.
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden) {
+      _onPaused();
+    }
+  }
+
+  void _onPaused() {
+    // Fire-and-forget: we have at most a few hundred milliseconds.
+    // handleAppPaused() is local DB only — no network calls, no p2pService.
+    unawaited(
+      handleAppPaused(messageRepo: widget.messageRepository)
+          .then((result) {
+            if (kDebugMode) {
+              debugPrint(
+                '[LIFECYCLE] _onPaused() complete: '
+                'transitioned=${result.transitionedCount}',
+              );
+            }
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'APP_LIFECYCLE_PAUSED_COMPLETE',
+              details: {'transitionedCount': result.transitionedCount},
+            );
+          })
+          .catchError((Object e) {
+            if (kDebugMode) {
+              debugPrint('[LIFECYCLE] _onPaused() error: $e');
+            }
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'APP_LIFECYCLE_PAUSED_ERROR',
+              details: {'error': e.toString()},
+            );
+          }),
+    );
   }
 
   Future<void> _onResumed() async {
     if (_isResuming) {
-      if (kDebugMode) {
-        debugPrint('[LIFECYCLE] _onResumed() skipped — already resuming');
-      }
+      debugPrint('[LIFECYCLE] _onResumed() skipped — already resuming');
       return;
     }
     _isResuming = true;
-    if (kDebugMode) {
-      debugPrint('[LIFECYCLE] _onResumed() starting handleAppResumed...');
-    }
+    debugPrint('[LIFECYCLE] _onResumed() starting handleAppResumed...');
 
     try {
       await handleAppResumed(
@@ -1518,15 +1576,36 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         retryPendingPostMediaUploads:
             widget.pendingPostMediaUploadRetrier.retryNow,
         retryPendingPostDeliveries: widget.pendingPostDeliveryRetrier.retryNow,
+        recoverStuckSendingMessagesFn: () =>
+            recoverStuckSendingMessages(messageRepo: widget.messageRepository),
+        retryIncompleteUploadsFn: () => retryIncompleteUploads(
+          mediaAttachmentRepo: widget.mediaAttachmentRepository,
+          messageRepo: widget.messageRepository,
+          bridge: widget.bridge,
+          p2pService: widget.p2pService,
+          identityRepo: widget.repository,
+          contactRepo: widget.contactRepository,
+        ),
+        retryFailedMessagesFn: () => retryFailedMessages(
+          messageRepo: widget.messageRepository,
+          identityRepo: widget.repository,
+          contactRepo: widget.contactRepository,
+          p2pService: widget.p2pService,
+          bridge: widget.bridge,
+          mediaAttachmentRepo: widget.mediaAttachmentRepository,
+        ),
+        retryUnackedMessagesFn: () => retryUnackedMessages(
+          messageRepo: widget.messageRepository,
+          p2pService: widget.p2pService,
+        ),
       );
-      await widget.pushRegistrationCoordinator.retryNow();
       await sweepExpiredPosts(
         postRepo: widget.postRepository,
         mediaFileManager: widget.mediaFileManager,
       );
     } finally {
       _isResuming = false;
-      if (kDebugMode) debugPrint('[LIFECYCLE] _onResumed() finished');
+      debugPrint('[LIFECYCLE] _onResumed() finished');
     }
   }
 
@@ -1555,7 +1634,6 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         unawaited(
           routeRemoteNotificationOpen(
             data: message.data,
-            onBeforeRouteTarget: _prepareNotificationRouteTarget,
             onRouteTarget: _handleNotificationRouteTarget,
             onMissingRouteTarget: widget.p2pService.drainOfflineInbox,
           ),

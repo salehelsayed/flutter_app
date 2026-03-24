@@ -176,6 +176,8 @@ void main() {
       dbDeleteMediaForContact: (contactPeerId) =>
           dbDeleteMediaForContact(db, contactPeerId),
       dbLoadPendingMediaDownloads: () => dbLoadPendingMediaDownloads(db),
+      dbLoadUploadPendingAttachments: ({int limit = 50}) =>
+          dbLoadUploadPendingAttachments(db, limit: limit),
     );
 
     print('[TEST] Step 3: Initialize Go bridge...');

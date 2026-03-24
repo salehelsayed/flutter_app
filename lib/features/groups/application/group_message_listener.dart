@@ -10,6 +10,7 @@ import 'package:flutter_app/core/notifications/active_conversation_tracker.dart'
 import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/application/download_media_use_case.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
@@ -190,13 +191,17 @@ class GroupMessageListener {
             _getAppLifecycleState != null) {
           final group = await _groupRepo.getGroup(groupId);
           final groupName = group?.name ?? 'Group';
+          final notifAttachments = media
+              ?.map((m) => MediaAttachment.fromJson(m))
+              .toList() ??
+              <MediaAttachment>[];
           maybeShowNotification(
             notificationService: _notificationService!,
             conversationTracker: _groupConversationTracker!,
             getAppLifecycleState: _getAppLifecycleState!,
             contactPeerId: 'group:$groupId',
             senderUsername: groupName,
-            messageText: '$senderUsername: $text',
+            messageText: '$senderUsername: ${notificationBodyForMessage(text, notifAttachments)}',
           );
         }
 

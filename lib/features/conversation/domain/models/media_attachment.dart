@@ -41,6 +41,10 @@ class MediaAttachment {
   /// Normalized waveform samples [0.0, 1.0] for audio visualization.
   final List<double>? waveform;
 
+  /// Number of upload retry attempts for outgoing attachments.
+  /// Incremented on each transient failure. Terminal after kMaxUploadRetries.
+  final int? uploadRetryCount;
+
   const MediaAttachment({
     required this.id,
     required this.messageId,
@@ -54,6 +58,7 @@ class MediaAttachment {
     required this.downloadStatus,
     required this.createdAt,
     this.waveform,
+    this.uploadRetryCount,
   });
 
   /// Infers the logical media type from a MIME string.
@@ -86,6 +91,7 @@ class MediaAttachment {
       downloadStatus: map['download_status'] as String? ?? 'pending',
       createdAt: map['created_at'] as String,
       waveform: waveform,
+      uploadRetryCount: map['upload_retry_count'] as int?,
     );
   }
 
@@ -104,6 +110,7 @@ class MediaAttachment {
       'download_status': downloadStatus,
       'created_at': createdAt,
       'waveform': waveform != null ? jsonEncode(waveform) : null,
+      'upload_retry_count': uploadRetryCount,
     };
   }
 
@@ -165,6 +172,7 @@ class MediaAttachment {
     String? createdAt,
     List<double>? waveform,
     bool clearWaveform = false,
+    int? uploadRetryCount,
   }) {
     return MediaAttachment(
       id: id ?? this.id,
@@ -179,6 +187,7 @@ class MediaAttachment {
       downloadStatus: downloadStatus ?? this.downloadStatus,
       createdAt: createdAt ?? this.createdAt,
       waveform: clearWaveform ? null : (waveform ?? this.waveform),
+      uploadRetryCount: uploadRetryCount ?? this.uploadRetryCount,
     );
   }
 

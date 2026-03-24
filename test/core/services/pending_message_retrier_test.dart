@@ -65,8 +65,8 @@ void main() {
       expect(identityRepo.loadIdentityCallCount, greaterThanOrEqualTo(1));
     }, timeout: const Timeout(Duration(seconds: 10)));
 
-    test('does not trigger retry when going offline', () async {
-      // Start in online state
+    test('going offline does not trigger an additional retry beyond cold-start sweep', () async {
+      // Start in online state — cold-start sweep will fire after 5s
       p2pService = FakeP2PService(
         initialState: const NodeState(
           isStarted: true,
@@ -87,8 +87,9 @@ void main() {
       p2pService.emitState(NodeState.stopped);
       await Future.delayed(const Duration(seconds: 6));
 
-      // No retry triggered (identity never loaded)
-      expect(identityRepo.loadIdentityCallCount, 0);
+      // Cold-start sweep fires once (initial online state), but going
+      // offline does not trigger an additional retry.
+      expect(identityRepo.loadIdentityCallCount, 1);
     }, timeout: const Timeout(Duration(seconds: 10)));
 
     test('online without circuitAddresses is not considered online', () async {
