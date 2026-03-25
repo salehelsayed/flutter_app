@@ -121,22 +121,24 @@ class CollapsedModeCardBody extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(20, 18, 20, 12),
       child: Row(
         children: [
-          if (thread.isGroup)
-            Container(
-              width: 42,
-              height: 42,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: FeedColors.accentPurple.withValues(alpha: 0.15),
-              ),
-              child: const Icon(
-                Icons.group_rounded,
-                size: 20,
-                color: FeedColors.accentPurple,
-              ),
-            )
-          else
-            UserAvatar(peerId: thread.displayId, size: 42),
+          GestureDetector(
+            onTap: onViewFullConversation,
+            child: thread.isGroup
+                ? Container(
+                    width: 42,
+                    height: 42,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: FeedColors.accentPurple.withValues(alpha: 0.15),
+                    ),
+                    child: const Icon(
+                      Icons.group_rounded,
+                      size: 20,
+                      color: FeedColors.accentPurple,
+                    ),
+                  )
+                : UserAvatar(peerId: thread.displayId, size: 42),
+          ),
           const SizedBox(width: 12),
           Expanded(
             child: Column(

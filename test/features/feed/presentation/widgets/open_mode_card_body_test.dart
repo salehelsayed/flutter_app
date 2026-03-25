@@ -8,6 +8,7 @@ import 'package:flutter_app/features/feed/presentation/widgets/message_bubble.da
 import 'package:flutter_app/features/feed/presentation/widgets/open_mode_card_body.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/scrollable_message_preview.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
 void main() {
@@ -285,5 +286,53 @@ void main() {
         expect(bubbles.first.media.first.id, 'att-1');
       },
     );
+
+    testWidgets('tapping avatar fires onViewEarlier', (tester) async {
+      var tapped = false;
+      final thread = buildThread(unreadCount: 2);
+
+      await tester.pumpWidget(wrap(OpenModeCardBody(
+        thread: thread,
+        onViewEarlier: () => tapped = true,
+      )));
+
+      await tester.tap(find.byType(UserAvatar));
+      expect(tapped, isTrue);
+    });
+
+    testWidgets('group thread: tapping group icon fires onViewEarlier', (
+      tester,
+    ) async {
+      var tapped = false;
+      final groupThread = GroupThreadFeedItem(
+        id: 'g1',
+        timestamp: DateTime(2026, 2, 9, 15, 5),
+        groupId: 'group-abc',
+        groupName: 'Test Group',
+        groupType: GroupType.chat,
+        messages: [
+          ThreadMessage(
+            id: 'gm1',
+            text: 'Group message',
+            time: '3:00 PM',
+            timestamp: DateTime(2026, 2, 9, 15, 0),
+            isUnread: true,
+            isIncoming: true,
+            senderUsername: 'Sarah',
+            senderPeerId: 'peer-sarah',
+          ),
+        ],
+        unreadCount: 1,
+        conversationState: ConversationState.unread,
+      );
+
+      await tester.pumpWidget(wrap(OpenModeCardBody(
+        thread: groupThread,
+        onViewEarlier: () => tapped = true,
+      )));
+
+      await tester.tap(find.byIcon(Icons.group_rounded));
+      expect(tapped, isTrue);
+    });
   });
 }

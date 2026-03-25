@@ -15,6 +15,7 @@ class ProfileUpdateListener {
   final ContactRepository contactRepo;
   final Bridge bridge;
   final DownloadProfilePictureFn downloadProfilePictureFn;
+  final Duration retryDelay;
 
   StreamSubscription<ChatMessage>? _subscription;
   final _contactUpdatedController = StreamController<ContactModel>.broadcast();
@@ -23,9 +24,10 @@ class ProfileUpdateListener {
     required this.profileUpdateStream,
     required this.contactRepo,
     required this.bridge,
+    this.retryDelay = const Duration(seconds: 5),
     DownloadProfilePictureFn? downloadProfilePictureFn,
-  }) : downloadProfilePictureFn = downloadProfilePictureFn ??
-            downloadProfilePicture;
+  }) : downloadProfilePictureFn =
+           downloadProfilePictureFn ?? downloadProfilePicture;
 
   /// Stream of contacts whose profile picture was updated.
   Stream<ContactModel> get contactUpdatedStream =>
@@ -109,11 +111,8 @@ class ProfileUpdateListener {
         return;
       }
 
-      // Download the updated profile picture
-      final updated = await downloadProfilePictureFn(
-        bridge: bridge,
-        contactRepo: contactRepo,
-        ownerPeerId: peerId,
+      final updated = await _downloadProfilePictureWithRetry(
+        peerId: peerId,
         avatarVersion: avatarVersion,
       );
 
@@ -125,6 +124,12 @@ class ProfileUpdateListener {
           event: 'PROFILE_UPDATE_LISTENER_DOWNLOADED',
           details: {'peerId': peerId, 'avatarVersion': avatarVersion},
         );
+      } else {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'PROFILE_UPDATE_LISTENER_DOWNLOAD_FAILED',
+          details: {'peerId': peerId, 'avatarVersion': avatarVersion},
+        );
       }
     } catch (e) {
       emitFlowEvent(
@@ -133,5 +138,35 @@ class ProfileUpdateListener {
         details: {'error': e.toString()},
       );
     }
+  }
+
+  Future<ContactModel?> _downloadProfilePictureWithRetry({
+    required String peerId,
+    required String avatarVersion,
+  }) async {
+    for (var attempt = 1; attempt <= 2; attempt++) {
+      final updated = await downloadProfilePictureFn(
+        bridge: bridge,
+        contactRepo: contactRepo,
+        ownerPeerId: peerId,
+        avatarVersion: avatarVersion,
+      );
+      if (updated != null) {
+        return updated;
+      }
+      if (attempt == 1) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'PROFILE_UPDATE_LISTENER_DOWNLOAD_RETRY',
+          details: {
+            'peerId': peerId,
+            'avatarVersion': avatarVersion,
+            'attempt': attempt + 1,
+          },
+        );
+        await Future<void>.delayed(retryDelay);
+      }
+    }
+    return null;
   }
 }

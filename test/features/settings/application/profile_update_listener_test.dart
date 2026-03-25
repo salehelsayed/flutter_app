@@ -229,41 +229,90 @@ void main() {
       expect(updates, isEmpty);
     });
 
-    test('emits updated contact when download succeeds with normalization',
-        () async {
-      final downloadedContacts = <String>[];
+    test(
+      'emits updated contact when download succeeds with normalization',
+      () async {
+        final downloadedContacts = <String>[];
+
+        listener.dispose();
+        listener = ProfileUpdateListener(
+          profileUpdateStream: profileUpdateController.stream,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          downloadProfilePictureFn:
+              ({
+                required Bridge bridge,
+                required ContactRepository contactRepo,
+                required String ownerPeerId,
+                required String avatarVersion,
+              }) async {
+                downloadedContacts.add(ownerPeerId);
+                final contact = _makeContact(ownerPeerId).copyWith(
+                  avatarVersion: avatarVersion,
+                  avatarPath: 'media/avatars/$ownerPeerId.jpg',
+                );
+                await contactRepo.addContact(contact);
+                return contact;
+              },
+        );
+        listener.start();
+        final updates = <ContactModel>[];
+        final sub = listener.contactUpdatedStream.listen(updates.add);
+
+        final peerId = 'peer-normalized';
+        contactRepo.seed(_makeContact(peerId));
+        profileUpdateController.add(_makeProfileUpdateMessage(peerId, 'v2'));
+
+        await Future.delayed(const Duration(milliseconds: 100));
+
+        expect(downloadedContacts, contains(peerId));
+        expect(updates, hasLength(1));
+        expect(updates.single.avatarVersion, 'v2');
+        expect(updates.single.avatarPath, 'media/avatars/$peerId.jpg');
+        await sub.cancel();
+      },
+    );
+
+    test('retries once when the first download attempt returns null', () async {
+      var attempts = 0;
 
       listener.dispose();
       listener = ProfileUpdateListener(
         profileUpdateStream: profileUpdateController.stream,
         contactRepo: contactRepo,
         bridge: bridge,
-        downloadProfilePictureFn: ({
-          required Bridge bridge,
-          required ContactRepository contactRepo,
-          required String ownerPeerId,
-          required String avatarVersion,
-        }) async {
-          downloadedContacts.add(ownerPeerId);
-          final contact = _makeContact(ownerPeerId).copyWith(
-            avatarVersion: avatarVersion,
-            avatarPath: 'media/avatars/$ownerPeerId.jpg',
-          );
-          await contactRepo.addContact(contact);
-          return contact;
-        },
+        retryDelay: const Duration(milliseconds: 1),
+        downloadProfilePictureFn:
+            ({
+              required Bridge bridge,
+              required ContactRepository contactRepo,
+              required String ownerPeerId,
+              required String avatarVersion,
+            }) async {
+              attempts++;
+              if (attempts == 1) {
+                return null;
+              }
+              final contact = _makeContact(ownerPeerId).copyWith(
+                avatarVersion: avatarVersion,
+                avatarPath: 'media/avatars/$ownerPeerId.jpg',
+              );
+              await contactRepo.addContact(contact);
+              return contact;
+            },
       );
       listener.start();
+
       final updates = <ContactModel>[];
       final sub = listener.contactUpdatedStream.listen(updates.add);
 
-      final peerId = 'peer-normalized';
+      const peerId = 'peer-retry';
       contactRepo.seed(_makeContact(peerId));
       profileUpdateController.add(_makeProfileUpdateMessage(peerId, 'v2'));
 
-      await Future.delayed(const Duration(milliseconds: 100));
+      await Future.delayed(const Duration(milliseconds: 50));
 
-      expect(downloadedContacts, contains(peerId));
+      expect(attempts, 2);
       expect(updates, hasLength(1));
       expect(updates.single.avatarVersion, 'v2');
       expect(updates.single.avatarPath, 'media/avatars/$peerId.jpg');

@@ -61,6 +61,9 @@ GoogleService-Info.plist
 google-services.json
 *-firebase-adminsdk-*.json
 
+# Local iOS export overrides
+ios/ExportOptions.plist
+
 # Flutter Version Manager
 .fvm/
 

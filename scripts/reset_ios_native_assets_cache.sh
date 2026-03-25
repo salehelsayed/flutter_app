@@ -2,27 +2,24 @@
 
 set -euo pipefail
 
-# Flutter currently reuses build/native_assets/ios across iOS simulator and
-# device builds. Clearing that cache before iphoneos builds prevents stale
-# simulator frameworks from being embedded into release archives.
-if [[ "${PLATFORM_NAME:-}" != "iphoneos" ]]; then
-  exit 0
-fi
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-flutter_build_dir="build"
-flutter_env="$repo_root/ios/Flutter/flutter_export_environment.sh"
+# Flutter's install_code_assets target only declares native_assets.json as its
+# output. If build/native_assets/ios is removed out-of-band, the target can be
+# skipped on the next archive and xcode_backend.dart later crashes while trying
+# to embed frameworks that no longer exist.
+#
+# Invalidate Flutter's incremental cache instead of deleting build/native_assets
+# directly. That forces install_code_assets to recreate both the manifest and
+# the bundled iOS frameworks during the current archive.
+find "${PROJECT_ROOT}/.dart_tool/flutter_build" \
+  -type f \
+  \( \
+    -name "install_code_assets.stamp" -o \
+    -name "install_code_assets.d" -o \
+    -name "native_assets.json" \
+  \) \
+  -delete 2>/dev/null || true
 
-if [[ -f "$flutter_env" ]]; then
-  # shellcheck disable=SC1090
-  . "$flutter_env"
-  if [[ -n "${FLUTTER_BUILD_DIR:-}" ]]; then
-    flutter_build_dir="$FLUTTER_BUILD_DIR"
-  fi
-fi
-
-native_assets_root="$repo_root/$flutter_build_dir/native_assets/ios"
-if [[ -d "$native_assets_root" ]]; then
-  echo "Removing stale iOS native asset cache at $native_assets_root"
-  rm -rf "$native_assets_root"
-fi
+rm -rf "${PROJECT_ROOT}/build/native_assets/ios"
