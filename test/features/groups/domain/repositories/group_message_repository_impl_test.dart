@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:flutter_app/core/database/migrations/018_group_messages_tables.dart';
 import 'package:flutter_app/core/database/migrations/026_group_quoted_message_id.dart';
+import 'package:flutter_app/core/database/migrations/041_group_message_reliability_columns.dart';
 import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository_impl.dart';
@@ -19,6 +20,7 @@ void main() {
     db = await openDatabase(inMemoryDatabasePath, version: 1);
     await runGroupMessagesTablesMigration(db);
     await runGroupQuotedMessageIdMigration(db);
+    await runGroupMessageReliabilityColumnsMigration(db);
 
     repo = GroupMessageRepositoryImpl(
       dbInsertGroupMessage: (row) => dbInsertGroupMessage(db, row),
@@ -49,6 +51,10 @@ void main() {
           dbDeleteGroupMessagesForGroup(db, groupId),
       dbLoadGroupThreadSummaries: (groupIds) =>
           dbLoadGroupThreadSummaries(db, groupIds),
+      dbLoadFailedOutgoingGroupMessagesFn: () =>
+          dbLoadFailedOutgoingGroupMessages(db),
+      dbRecoverStuckSendingGroupMessagesFn: ({DateTime? olderThan}) =>
+          dbTransitionGroupSendingToFailed(db, olderThan: olderThan),
     );
   });
 
@@ -113,6 +119,37 @@ void main() {
     test('returns null for non-existent', () async {
       final result = await repo.getMessage('non-existent');
       expect(result, isNull);
+    });
+  });
+
+  group('pause recovery', () {
+    test('transitionSendingToFailed transitions outgoing sending rows',
+        () async {
+      final ts = DateTime.utc(2026, 1, 1, 0, 0, 0);
+      await repo.saveMessage(
+        makeMessage(
+          id: 'sending-1',
+          status: 'sending',
+          isIncoming: false,
+          timestamp: ts,
+          createdAt: ts,
+        ),
+      );
+      await repo.saveMessage(
+        makeMessage(
+          id: 'sent-1',
+          status: 'sent',
+          isIncoming: false,
+          timestamp: ts,
+          createdAt: ts,
+        ),
+      );
+
+      final count = await repo.transitionSendingToFailed();
+
+      expect(count, 1);
+      expect((await repo.getMessage('sending-1'))!.status, 'failed');
+      expect((await repo.getMessage('sent-1'))!.status, 'sent');
     });
   });
 
@@ -230,6 +267,60 @@ void main() {
 
       final result = await repo.getMessage('msg-001');
       expect(result!.status, 'delivered');
+    });
+  });
+
+  group('Section 1 recovery methods', () {
+    test('loads failed outgoing group messages', () async {
+      await repo.saveMessage(
+        makeMessage(
+          id: 'failed-outgoing',
+          status: 'failed',
+          isIncoming: false,
+        ),
+      );
+      await repo.saveMessage(
+        makeMessage(
+          id: 'failed-incoming',
+          status: 'failed',
+          isIncoming: true,
+        ),
+      );
+
+      final failed = await repo.getFailedOutgoingMessages();
+
+      expect(failed, hasLength(1));
+      expect(failed.single.id, 'failed-outgoing');
+    });
+
+    test('recovers stuck sending messages older than threshold', () async {
+      final now = DateTime.now().toUtc();
+      final oldTs = now.subtract(const Duration(minutes: 5));
+      final recentTs = now.subtract(const Duration(seconds: 10));
+      await repo.saveMessage(
+        makeMessage(
+          id: 'old-sending',
+          status: 'sending',
+          isIncoming: false,
+          timestamp: oldTs,
+          createdAt: oldTs,
+        ),
+      );
+      await repo.saveMessage(
+        makeMessage(
+          id: 'recent-sending',
+          status: 'sending',
+          isIncoming: false,
+          timestamp: recentTs,
+          createdAt: recentTs,
+        ),
+      );
+
+      final recovered = await repo.recoverStuckSendingMessages(
+        olderThan: const Duration(seconds: 30),
+      );
+
+      expect(recovered, 1);
     });
   });
 

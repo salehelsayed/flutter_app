@@ -1,5 +1,7 @@
 package node
 
+import "time"
+
 // GroupType represents the type of a group, which determines write permissions.
 type GroupType string
 
@@ -39,6 +41,9 @@ type GroupConfig struct {
 
 // GroupKeyInfo holds the symmetric encryption key for a group.
 type GroupKeyInfo struct {
-	Key      string `json:"key"`      // base64 AES-256 key
-	KeyEpoch int    `json:"keyEpoch"` // key rotation epoch
+	Key           string    `json:"key"`           // base64 AES-256 key
+	KeyEpoch      int       `json:"keyEpoch"`      // key rotation epoch
+	PrevKey       string    `json:"prevKey"`       // previous key during grace period
+	PrevKeyEpoch  int       `json:"prevKeyEpoch"`  // previous key rotation epoch
+	GraceDeadline time.Time `json:"graceDeadline"` // zero when no grace period is active
 }

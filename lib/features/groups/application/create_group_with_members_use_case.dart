@@ -85,6 +85,7 @@ Future<CreateGroupWithMembersResult> createGroupWithMembers({
         groupId: group.id,
         newMember: newMember,
         selfPeerId: identity.peerId,
+        syncBridgeConfig: false,
       );
       addedMembers.add(newMember);
     } catch (e) {

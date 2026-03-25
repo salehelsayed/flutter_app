@@ -35,6 +35,18 @@ class GroupMessageRepositoryImpl
   final Future<int> Function(String groupId) dbDeleteGroupMessagesForGroup;
   final Future<List<Map<String, Object?>>> Function(List<String> groupIds)
   dbLoadGroupThreadSummaries;
+  final Future<List<Map<String, dynamic>>> Function()?
+  dbLoadFailedOutgoingGroupMessagesFn;
+  final Future<int> Function({DateTime? olderThan})?
+  dbRecoverStuckSendingGroupMessagesFn;
+  final Future<List<Map<String, dynamic>>> Function({int limit})?
+  dbLoadGroupMessagesWithFailedInboxStore;
+  final Future<void> Function(String id, {required bool stored})?
+  dbUpdateGroupMessageInboxStoredFn;
+  final Future<void> Function(String id, String? payload)?
+  dbUpdateGroupMessageInboxRetryPayloadFn;
+  final Future<void> Function(String id, String? envelope)?
+  dbUpdateGroupMessageWireEnvelopeFn;
 
   GroupMessageRepositoryImpl({
     required this.dbInsertGroupMessage,
@@ -50,12 +62,43 @@ class GroupMessageRepositoryImpl
     required this.dbExistsGroupMessageByContent,
     required this.dbDeleteGroupMessagesForGroup,
     required this.dbLoadGroupThreadSummaries,
+    this.dbLoadFailedOutgoingGroupMessagesFn,
+    this.dbRecoverStuckSendingGroupMessagesFn,
+    this.dbLoadGroupMessagesWithFailedInboxStore,
+    this.dbUpdateGroupMessageInboxStoredFn,
+    this.dbUpdateGroupMessageInboxRetryPayloadFn,
+    this.dbUpdateGroupMessageWireEnvelopeFn,
   });
 
   @override
   Future<bool> existsByMessageId(String messageId) async {
     final row = await dbLoadGroupMessage(messageId);
     return row != null;
+  }
+
+  @override
+  Future<List<GroupMessage>> getFailedOutgoingMessages() async {
+    final fn = dbLoadFailedOutgoingGroupMessagesFn;
+    if (fn == null) return const [];
+    final rows = await fn();
+    return rows.map((row) => GroupMessage.fromMap(row)).toList();
+  }
+
+  @override
+  Future<int> recoverStuckSendingMessages({
+    required Duration olderThan,
+  }) async {
+    final fn = dbRecoverStuckSendingGroupMessagesFn;
+    if (fn == null) return 0;
+    final cutoff = DateTime.now().toUtc().subtract(olderThan);
+    return fn(olderThan: cutoff);
+  }
+
+  @override
+  Future<int> transitionSendingToFailed() async {
+    final fn = dbRecoverStuckSendingGroupMessagesFn;
+    if (fn == null) return 0;
+    return fn();
   }
 
   @override
@@ -211,5 +254,36 @@ class GroupMessageRepositoryImpl
       );
     }
     return summaries;
+  }
+
+  @override
+  Future<List<GroupMessage>> getMessagesWithFailedInboxStore({
+    int limit = 20,
+  }) async {
+    final fn = dbLoadGroupMessagesWithFailedInboxStore;
+    if (fn == null) return const [];
+    final rows = await fn(limit: limit);
+    return rows.map((row) => GroupMessage.fromMap(row)).toList();
+  }
+
+  @override
+  Future<void> updateInboxStored(String id, {required bool stored}) async {
+    final fn = dbUpdateGroupMessageInboxStoredFn;
+    if (fn == null) return;
+    await fn(id, stored: stored);
+  }
+
+  @override
+  Future<void> updateInboxRetryPayload(String id, String? payload) async {
+    final fn = dbUpdateGroupMessageInboxRetryPayloadFn;
+    if (fn == null) return;
+    await fn(id, payload);
+  }
+
+  @override
+  Future<void> updateWireEnvelope(String id, String? envelope) async {
+    final fn = dbUpdateGroupMessageWireEnvelopeFn;
+    if (fn == null) return;
+    await fn(id, envelope);
   }
 }

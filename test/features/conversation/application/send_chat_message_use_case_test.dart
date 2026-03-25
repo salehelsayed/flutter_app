@@ -14,6 +14,8 @@ import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
 
+import '../domain/repositories/fake_media_attachment_repository.dart';
+
 // -- Fake P2P Service --
 class FakeP2PService implements P2PService {
   final NodeState _currentState;
@@ -464,6 +466,63 @@ void main() {
       expect(messageRepo.saved.length, 1);
       expect(messageRepo.saved.first.id, message.id);
     });
+
+    test(
+      'removes stale upload_pending placeholder rows before saving final attachments',
+      () async {
+        final mediaAttachmentRepo = FakeMediaAttachmentRepository();
+        const messageId = 'msg-stable-cleanup-001';
+
+        await mediaAttachmentRepo.saveAttachment(
+          const MediaAttachment(
+            id: 'placeholder-upload-pending',
+            messageId: messageId,
+            mime: 'image/jpeg',
+            size: 0,
+            mediaType: 'image',
+            localPath: '/tmp/pending.jpg',
+            downloadStatus: 'upload_pending',
+            createdAt: '2026-01-01T00:00:00.000Z',
+          ),
+        );
+
+        final (result, _) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Photo',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          messageId: messageId,
+          timestamp: '2026-01-01T00:00:00.000Z',
+          mediaAttachments: const [
+            MediaAttachment(
+              id: 'uploaded-final-id',
+              messageId: '',
+              mime: 'image/jpeg',
+              size: 2048,
+              mediaType: 'image',
+              localPath: '/tmp/final.jpg',
+              downloadStatus: 'done',
+              createdAt: '2026-01-01T00:00:00.000Z',
+            ),
+          ],
+          mediaAttachmentRepo: mediaAttachmentRepo,
+        );
+
+        expect(result, SendChatMessageResult.success);
+        final attachments = await mediaAttachmentRepo.getAttachmentsForMessage(
+          messageId,
+        );
+        expect(attachments.length, 1);
+        expect(attachments.single.id, 'uploaded-final-id');
+        expect(attachments.single.downloadStatus, 'done');
+        expect(
+          await mediaAttachmentRepo.getUploadPendingAttachments(),
+          isEmpty,
+        );
+      },
+    );
 
     test('sends correct JSON envelope via P2P', () async {
       await sendChatMessage(

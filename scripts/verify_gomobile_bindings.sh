@@ -34,8 +34,15 @@ extract_macos_bridge_calls() {
 }
 
 extract_kotlin_bridge_calls() {
+  local bridge_file
+  bridge_file="$(find "$repo_root/android/app/src/main/kotlin" -name 'GoBridge.kt' | head -n 1)"
+  if [[ -z "$bridge_file" ]]; then
+    echo "Android binding check failed: missing GoBridge.kt under android/app/src/main/kotlin" >&2
+    return 1
+  fi
+
   perl -ne 'while (/GoMknoon\.([A-Za-z0-9_]+)\s*\(/g) { print "$1\n" }' \
-    "$repo_root/android/app/src/main/kotlin/com/example/flutter_app/GoBridge.kt" | sort -u
+    "$bridge_file" | sort -u
 }
 
 extract_android_aar_exports() {

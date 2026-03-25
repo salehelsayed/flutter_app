@@ -15,6 +15,7 @@ import 'package:flutter_app/core/database/migrations/007_archive_columns.dart';
 import 'package:flutter_app/core/database/migrations/008_block_columns.dart';
 import 'package:flutter_app/core/database/migrations/009_quoted_message_id.dart';
 import 'package:flutter_app/core/database/migrations/010_media_attachments.dart';
+import 'package:flutter_app/core/database/migrations/042_media_attachment_reliability_columns.dart';
 import 'package:flutter_app/core/database/migrations/011_avatar_version.dart';
 import 'package:flutter_app/core/database/migrations/012_transport_column.dart';
 import 'package:flutter_app/core/database/migrations/013_waveform_column.dart';
@@ -56,6 +57,7 @@ import 'package:flutter_app/core/database/migrations/037_posts_repost_engagement
 import 'package:flutter_app/core/database/migrations/038_posts_repost_media_crypto.dart';
 import 'package:flutter_app/core/database/migrations/039_posts_pass_avatar_snapshots.dart';
 import 'package:flutter_app/core/database/migrations/040_posts_repost_visual_metrics.dart';
+import 'package:flutter_app/core/database/migrations/041_group_message_reliability_columns.dart';
 import 'package:flutter_app/core/database/helpers/introductions_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_comments_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_comment_reactions_db_helpers.dart';
@@ -92,11 +94,15 @@ import 'package:flutter_app/features/conversation/application/recover_stuck_send
 import 'package:flutter_app/features/conversation/application/retry_failed_messages_use_case.dart';
 import 'package:flutter_app/features/conversation/application/retry_incomplete_uploads_use_case.dart';
 import 'package:flutter_app/features/conversation/application/retry_unacked_messages_use_case.dart';
+import 'package:flutter_app/features/groups/application/recover_stuck_sending_group_messages_use_case.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository_impl.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository_impl.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
 import 'package:flutter_app/features/groups/application/group_key_update_listener.dart';
+import 'package:flutter_app/features/groups/application/retry_incomplete_group_uploads_use_case.dart';
+import 'package:flutter_app/features/groups/application/retry_failed_group_messages_use_case.dart';
+import 'package:flutter_app/features/groups/application/retry_failed_group_inbox_stores_use_case.dart';
 import 'package:flutter_app/features/settings/application/profile_update_listener.dart';
 import 'package:flutter_app/core/services/incoming_message_router.dart';
 import 'package:flutter_app/core/services/pending_message_retrier.dart';
@@ -201,7 +207,7 @@ void main() async {
   final db = await openEncryptedDatabase(
     secureKeyStore: secureKeyStore,
     dbName: 'identity.db',
-    version: 40,
+    version: 42,
     onCreate: (db, version) async {
       await runIdentityTableMigration(db);
       await runMessagesTableMigration(db);
@@ -213,6 +219,7 @@ void main() async {
       await runBlockColumnsMigration(db);
       await runQuotedMessageIdMigration(db);
       await runMediaAttachmentsMigration(db);
+      await runMediaAttachmentReliabilityColumnsMigration(db);
       await runAvatarVersionMigration(db);
       await runTransportColumnMigration(db);
       await runWaveformColumnMigration(db);
@@ -243,6 +250,7 @@ void main() async {
       await runPostsRepostMediaCryptoMigration(db);
       await runPostsPassAvatarSnapshotsMigration(db);
       await runPostsRepostVisualMetricsMigration(db);
+      await runGroupMessageReliabilityColumnsMigration(db);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) {
@@ -269,6 +277,9 @@ void main() async {
       }
       if (oldVersion < 10) {
         await runMediaAttachmentsMigration(db);
+      }
+      if (oldVersion < 42) {
+        await runMediaAttachmentReliabilityColumnsMigration(db);
       }
       if (oldVersion < 11) {
         await runAvatarVersionMigration(db);
@@ -359,6 +370,9 @@ void main() async {
       }
       if (oldVersion < 40) {
         await runPostsRepostVisualMetricsMigration(db);
+      }
+      if (oldVersion < 41) {
+        await runGroupMessageReliabilityColumnsMigration(db);
       }
     },
   );
@@ -673,6 +687,18 @@ void main() async {
         dbDeleteGroupMessagesForGroup(db, groupId),
     dbLoadGroupThreadSummaries: (groupIds) =>
         dbLoadGroupThreadSummaries(db, groupIds),
+    dbLoadFailedOutgoingGroupMessagesFn: () =>
+        dbLoadFailedOutgoingGroupMessages(db),
+    dbRecoverStuckSendingGroupMessagesFn: ({DateTime? olderThan}) =>
+        dbTransitionGroupSendingToFailed(db, olderThan: olderThan),
+    dbLoadGroupMessagesWithFailedInboxStore: ({int limit = 50}) =>
+        dbLoadGroupMessagesWithFailedInboxStore(db, limit: limit),
+    dbUpdateGroupMessageInboxStoredFn: (id, {required bool stored}) =>
+        dbUpdateGroupMessageInboxStored(db, id, stored: stored),
+    dbUpdateGroupMessageInboxRetryPayloadFn: (id, payload) =>
+        dbUpdateGroupMessageInboxRetryPayload(db, id, payload),
+    dbUpdateGroupMessageWireEnvelopeFn: (id, envelope) =>
+        dbUpdateGroupMessageWireEnvelope(db, id, envelope),
   );
 
   // Create introduction repository
@@ -1527,18 +1553,25 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     // Fire-and-forget: we have at most a few hundred milliseconds.
     // handleAppPaused() is local DB only — no network calls, no p2pService.
     unawaited(
-      handleAppPaused(messageRepo: widget.messageRepository)
+      handleAppPaused(
+            messageRepo: widget.messageRepository,
+            groupMsgRepo: widget.groupMessageRepository,
+          )
           .then((result) {
             if (kDebugMode) {
               debugPrint(
                 '[LIFECYCLE] _onPaused() complete: '
-                'transitioned=${result.transitionedCount}',
+                'transitioned=${result.transitionedCount} '
+                'groupTransitioned=${result.groupTransitionedCount}',
               );
             }
             emitFlowEvent(
               layer: 'FL',
               event: 'APP_LIFECYCLE_PAUSED_COMPLETE',
-              details: {'transitionedCount': result.transitionedCount},
+              details: {
+                'transitionedCount': result.transitionedCount,
+                'groupTransitionedCount': result.groupTransitionedCount,
+              },
             );
           })
           .catchError((Object e) {
@@ -1578,6 +1611,25 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         retryPendingPostDeliveries: widget.pendingPostDeliveryRetrier.retryNow,
         recoverStuckSendingMessagesFn: () =>
             recoverStuckSendingMessages(messageRepo: widget.messageRepository),
+        recoverStuckSendingGroupMessagesFn: () =>
+            recoverStuckSendingGroupMessages(
+              groupMsgRepo: widget.groupMessageRepository,
+            ),
+        retryIncompleteGroupUploadsFn: () => retryIncompleteGroupUploads(
+          groupRepo: widget.groupRepository,
+          groupMsgRepo: widget.groupMessageRepository,
+          mediaAttachmentRepo: widget.mediaAttachmentRepository,
+          bridge: widget.bridge,
+          p2pService: widget.p2pService,
+          identityRepo: widget.repository,
+          mediaFileManager: widget.mediaFileManager,
+        ),
+        retryFailedGroupMessagesFn: () => retryFailedGroupMessages(
+          groupMsgRepo: widget.groupMessageRepository,
+          groupRepo: widget.groupRepository,
+          identityRepo: widget.repository,
+          bridge: widget.bridge,
+        ),
         retryIncompleteUploadsFn: () => retryIncompleteUploads(
           mediaAttachmentRepo: widget.mediaAttachmentRepository,
           messageRepo: widget.messageRepository,
@@ -1597,6 +1649,10 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         retryUnackedMessagesFn: () => retryUnackedMessages(
           messageRepo: widget.messageRepository,
           p2pService: widget.p2pService,
+        ),
+        retryFailedGroupInboxStoresFn: () => retryFailedGroupInboxStores(
+          bridge: widget.bridge,
+          msgRepo: widget.groupMessageRepository,
         ),
       );
       await sweepExpiredPosts(

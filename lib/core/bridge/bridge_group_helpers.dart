@@ -477,6 +477,60 @@ Future<void> callGroupUpdateConfig(
 /// Returns a map with:
 /// - On success: `{ "ok": true, "groupKey": "base64...", "keyEpoch": N }`
 /// - On error: `{ "ok": false, "errorCode": "...", "errorMessage": "..." }`
+Future<Map<String, dynamic>> callGroupGenerateNextKey(
+  Bridge bridge,
+  String groupId, {
+  Duration timeout = const Duration(seconds: 10),
+}) async {
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'GROUP_FL_BRIDGE_GENERATE_NEXT_KEY_REQUEST',
+    details: {
+      'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+    },
+  );
+
+  final request = {
+    'cmd': 'group:generateNextKey',
+    'payload': {'groupId': groupId},
+  };
+
+  try {
+    final responseJson = await bridge
+        .send(jsonEncode(request))
+        .timeout(timeout);
+    final response = jsonDecode(responseJson) as Map<String, dynamic>;
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_FL_BRIDGE_GENERATE_NEXT_KEY_RESPONSE',
+      details: {'ok': response['ok']},
+    );
+
+    return response;
+  } on TimeoutException {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_FL_BRIDGE_GENERATE_NEXT_KEY_RESPONSE',
+      details: {'ok': false, 'errorCode': 'BRIDGE_TIMEOUT'},
+    );
+
+    return {
+      'ok': false,
+      'errorCode': 'BRIDGE_TIMEOUT',
+      'errorMessage': 'Bridge call timed out after ${timeout.inSeconds}s',
+    };
+  }
+}
+
+/// Calls the bridge to rotate the group encryption key.
+///
+/// Legacy helper retained for older flows. New Section 7 callers should use
+/// [callGroupGenerateNextKey] followed by [callGroupUpdateKey].
+///
+/// Returns a map with:
+/// - On success: `{ "ok": true, "groupKey": "base64...", "keyEpoch": N }`
+/// - On error: `{ "ok": false, "errorCode": "...", "errorMessage": "..." }`
 Future<Map<String, dynamic>> callGroupRotateKey(
   Bridge bridge,
   String groupId, {

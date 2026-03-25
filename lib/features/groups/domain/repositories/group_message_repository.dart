@@ -23,6 +23,9 @@ abstract class GroupMessageRepository {
   /// Updates the delivery status of a message.
   Future<void> updateMessageStatus(String id, String status);
 
+  /// Transitions all outgoing messages with status='sending' to status='failed'.
+  Future<int> transitionSendingToFailed();
+
   /// Returns the total number of messages in a group.
   Future<int> getMessageCount(String groupId);
 
@@ -47,4 +50,32 @@ abstract class GroupMessageRepository {
 
   /// Returns true if a message with the given ID already exists.
   Future<bool> existsByMessageId(String messageId);
+
+  /// Retrieves all outgoing messages with status='failed'.
+  ///
+  /// Used by the retry service to find messages that need re-sending.
+  Future<List<GroupMessage>> getFailedOutgoingMessages();
+
+  /// Transitions all outgoing messages with status='sending' that are older
+  /// than [olderThan] to status='failed', so the retry service picks them up.
+  ///
+  /// Returns the count of rows updated.
+  Future<int> recoverStuckSendingMessages({
+    required Duration olderThan,
+  });
+
+  /// Loads outgoing messages where inbox store failed and retry payload exists.
+  ///
+  /// Returns messages with `is_incoming = 0`, `inbox_stored = 0`,
+  /// `status IN ('sent', 'pending')`, and `inbox_retry_payload IS NOT NULL`.
+  Future<List<GroupMessage>> getMessagesWithFailedInboxStore({int limit = 20});
+
+  /// Updates the inbox_stored flag for a message.
+  Future<void> updateInboxStored(String id, {required bool stored});
+
+  /// Updates (or clears) the inbox_retry_payload for a message.
+  Future<void> updateInboxRetryPayload(String id, String? payload);
+
+  /// Updates (or clears) the wire_envelope for a message.
+  Future<void> updateWireEnvelope(String id, String? envelope);
 }

@@ -16,6 +16,7 @@ import 'package:flutter_app/core/media/media_picker.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/core/constants/retry_constants.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/download_media_use_case.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
@@ -54,6 +55,18 @@ class _PendingMedia {
     this.width,
     this.height,
     this.durationMs,
+  });
+}
+
+class _PreparedGroupMediaUpload {
+  final _PendingMedia source;
+  final MediaAttachment pendingAttachment;
+  final String absoluteDurablePath;
+
+  const _PreparedGroupMediaUpload({
+    required this.source,
+    required this.pendingAttachment,
+    required this.absoluteDurablePath,
   });
 }
 
@@ -286,7 +299,195 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
 
   static const _uuid = Uuid();
 
+  bool get _supportsDurableGroupMediaUploads =>
+      widget.mediaAttachmentRepo != null && widget.mediaFileManager != null;
+
+  Future<List<_PreparedGroupMediaUpload>> _prepareDurableGroupMediaUploads({
+    required String messageId,
+    required List<_PendingMedia> mediaToUpload,
+  }) async {
+    final mediaAttachmentRepo = widget.mediaAttachmentRepo;
+    final mediaFileManager = widget.mediaFileManager;
+    if (mediaAttachmentRepo == null || mediaFileManager == null) {
+      return const [];
+    }
+
+    final createdAt = DateTime.now().toUtc().toIso8601String();
+    final preparedUploads = <_PreparedGroupMediaUpload>[];
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_CONV_FL_MEDIA_DURABLE_PREP_START',
+      details: {
+        'messageId': messageId.length > 8
+            ? messageId.substring(0, 8)
+            : messageId,
+        'mediaCount': mediaToUpload.length,
+      },
+    );
+
+    for (final pending in mediaToUpload) {
+      final mime = _mimeFromPath(pending.file.path);
+      final blobId = _uuid.v4();
+      final durableRelativePath = await mediaFileManager.copyToDurableStorage(
+        sourceFilePath: pending.file.path,
+        messageId: messageId,
+        attachmentId: blobId,
+        mime: mime,
+      );
+      final absoluteDurablePath = await mediaFileManager.resolveStoredPath(
+        durableRelativePath,
+      );
+      final pendingAttachment = MediaAttachment(
+        id: blobId,
+        messageId: messageId,
+        mime: mime,
+        // Size is not required for the durable pre-upload contract.
+        size: 0,
+        mediaType: MediaAttachment.mediaTypeFromMime(mime),
+        width: pending.width,
+        height: pending.height,
+        durationMs: pending.durationMs,
+        localPath: durableRelativePath,
+        downloadStatus: 'upload_pending',
+        createdAt: createdAt,
+      );
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_CONV_FL_MEDIA_DURABLE_ROW_SAVE',
+        details: {
+          'messageId': messageId.length > 8
+              ? messageId.substring(0, 8)
+              : messageId,
+          'blobId': blobId.length > 8 ? blobId.substring(0, 8) : blobId,
+        },
+      );
+      await mediaAttachmentRepo.saveAttachment(pendingAttachment);
+      preparedUploads.add(
+        _PreparedGroupMediaUpload(
+          source: pending,
+          pendingAttachment: pendingAttachment,
+          absoluteDurablePath: absoluteDurablePath,
+        ),
+      );
+    }
+
+    final pendingRows = await mediaAttachmentRepo.getUploadPendingAttachments();
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_CONV_FL_MEDIA_DURABLE_PREP_DONE',
+      details: {'pendingCount': pendingRows.length},
+    );
+
+    // Let the persisted upload_pending rows settle before any upload callback
+    // observes them. This keeps the durable pre-persist contract deterministic
+    // in tests and on fast in-memory repositories.
+    await Future<void>.delayed(Duration.zero);
+
+    return preparedUploads;
+  }
+
+  Future<List<MediaAttachment>?> _uploadPreparedGroupMediaUploads({
+    required String messageId,
+    required List<_PreparedGroupMediaUpload> preparedUploads,
+    required List<String> allowedPeers,
+  }) async {
+    final mediaAttachmentRepo = widget.mediaAttachmentRepo;
+    final mediaFileManager = widget.mediaFileManager;
+    if (mediaAttachmentRepo == null || mediaFileManager == null) {
+      return null;
+    }
+
+    final uploadResults = await Future.wait(
+      preparedUploads.map((plan) async {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_CONV_FL_MEDIA_UPLOAD_START',
+          details: {
+            'messageId': messageId.length > 8
+                ? messageId.substring(0, 8)
+                : messageId,
+            'blobId': plan.pendingAttachment.id.length > 8
+                ? plan.pendingAttachment.id.substring(0, 8)
+                : plan.pendingAttachment.id,
+          },
+        );
+        await mediaAttachmentRepo.saveAttachment(plan.pendingAttachment);
+        try {
+          return await widget.uploadMediaFn(
+            bridge: widget.bridge,
+            localFilePath: plan.absoluteDurablePath,
+            mime: plan.pendingAttachment.mime,
+            recipientPeerId: widget.group.id,
+            mediaFileManager: mediaFileManager,
+            width: plan.source.width,
+            height: plan.source.height,
+            durationMs: plan.source.durationMs,
+            allowedPeers: allowedPeers,
+            blobId: plan.pendingAttachment.id,
+          );
+        } catch (e) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'GROUP_CONV_FL_MEDIA_UPLOAD_ERROR',
+            details: {'error': e.toString()},
+          );
+          return null;
+        }
+      }),
+    );
+
+    final completedAttachments = <MediaAttachment>[];
+    final failedPlans = <_PreparedGroupMediaUpload>[];
+
+    for (var index = 0; index < uploadResults.length; index++) {
+      final plan = preparedUploads[index];
+      final uploaded = uploadResults[index];
+
+      if (uploaded == null) {
+        failedPlans.add(plan);
+        continue;
+      }
+
+      final completed = uploaded.copyWith(
+        id: plan.pendingAttachment.id,
+        messageId: messageId,
+        downloadStatus: 'done',
+        uploadRetryCount: plan.pendingAttachment.uploadRetryCount,
+      );
+      await mediaAttachmentRepo.saveAttachment(completed);
+      completedAttachments.add(completed);
+    }
+
+    if (failedPlans.isNotEmpty) {
+      final failedIds = failedPlans
+          .map((plan) => plan.pendingAttachment.id)
+          .toSet();
+      for (final plan in preparedUploads) {
+        final isFailed = failedIds.contains(plan.pendingAttachment.id);
+        final nextRetryCount = isFailed
+            ? (plan.pendingAttachment.uploadRetryCount ?? 0) + 1
+            : plan.pendingAttachment.uploadRetryCount;
+        await mediaAttachmentRepo.saveAttachment(
+          plan.pendingAttachment.copyWith(
+            downloadStatus:
+                isFailed &&
+                    nextRetryCount != null &&
+                    nextRetryCount >= kMaxUploadRetries
+                ? 'upload_failed'
+                : 'upload_pending',
+            uploadRetryCount: nextRetryCount,
+          ),
+        );
+      }
+      return null;
+    }
+
+    return completedAttachments;
+  }
+
   Future<void> _onSend(String text) async {
+    if (!_canWrite) return;
     if (_ownPeerId == null) return;
 
     final hasAttachments = _pendingAttachments.isNotEmpty;
@@ -306,6 +507,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
     // 2. Capture and clear pending attachments
     final mediaToUpload = List<_PendingMedia>.from(_pendingAttachments);
     List<MediaAttachment>? optimisticMedia;
+    var optimisticDisplayed = false;
 
     if (mediaToUpload.isNotEmpty) {
       final createdAt = now.toIso8601String();
@@ -351,26 +553,20 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
       createdAt: now,
     );
 
-    if (mounted) {
+    void showOptimisticMessage() {
+      if (!mounted || optimisticDisplayed) return;
       setState(() {
         _upsertMessage(optimisticMessage);
-        if (optimisticMedia != null && optimisticMedia.isNotEmpty) {
-          _updateMediaForMessage(messageId, optimisticMedia);
+        final optimisticAttachments = optimisticMedia;
+        if (optimisticAttachments != null && optimisticAttachments.isNotEmpty) {
+          _updateMediaForMessage(messageId, optimisticAttachments);
         }
       });
+      optimisticDisplayed = true;
     }
 
-    // 4. Persist optimistic message to DB
-    try {
-      await widget.msgRepo.saveMessage(optimisticMessage);
-    } catch (e) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'GROUP_CONV_FL_OPTIMISTIC_SAVE_ERROR',
-        details: {'error': e.toString()},
-      );
-    }
-
+    // 4. sendGroupMessage() still owns the final message row save.
+    final bgTaskId = await callBgBegin(widget.bridge);
     try {
       // 5. Upload attachments (if any)
       List<MediaAttachment>? uploadedAttachments;
@@ -378,32 +574,93 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
         final members = await widget.groupRepo.getMembers(widget.group.id);
         final allowedPeers = members.map((m) => m.peerId).toList();
 
-        uploadedAttachments = [];
-        for (final pending in mediaToUpload) {
-          final mime = _mimeFromPath(pending.file.path);
-          final result = await widget.uploadMediaFn(
-            bridge: widget.bridge,
-            localFilePath: pending.file.path,
-            mime: mime,
-            recipientPeerId: widget.group.id,
-            mediaFileManager: widget.mediaFileManager,
-            width: pending.width,
-            height: pending.height,
-            durationMs: pending.durationMs,
+        if (_supportsDurableGroupMediaUploads) {
+          final preparedUploads = await _prepareDurableGroupMediaUploads(
+            messageId: messageId,
+            mediaToUpload: mediaToUpload,
+          );
+          optimisticMedia = preparedUploads
+              .map(
+                (plan) => plan.pendingAttachment.copyWith(
+                  localPath: plan.absoluteDurablePath,
+                  downloadStatus: 'done',
+                ),
+              )
+              .toList(growable: false);
+          showOptimisticMessage();
+          await Future<void>.delayed(Duration.zero);
+          uploadedAttachments = await _uploadPreparedGroupMediaUploads(
+            messageId: messageId,
+            preparedUploads: preparedUploads,
             allowedPeers: allowedPeers,
           );
-          if (result != null) {
-            uploadedAttachments.add(result);
-          } else {
+          if (uploadedAttachments == null) {
             if (mounted) {
+              _updateComposerState(isUploading: false);
               await _restoreComposerSnapshot(composerSnapshot, messageId);
             }
             return;
           }
+        } else {
+          optimisticMedia = mediaToUpload
+              .map((m) {
+                final mime = _mimeFromPath(m.file.path);
+                return MediaAttachment(
+                  id: _uuid.v4(),
+                  messageId: messageId,
+                  mime: mime,
+                  size: 0,
+                  mediaType: MediaAttachment.mediaTypeFromMime(mime),
+                  width: m.width,
+                  height: m.height,
+                  durationMs: m.durationMs,
+                  localPath: m.file.path,
+                  downloadStatus: 'done',
+                  createdAt: now.toIso8601String(),
+                );
+              })
+              .toList(growable: false);
+          showOptimisticMessage();
+
+          uploadedAttachments = [];
+          for (var index = 0; index < mediaToUpload.length; index++) {
+            final pending = mediaToUpload[index];
+            final mime = _mimeFromPath(pending.file.path);
+            final attachmentId = optimisticMedia[index].id;
+            final result = await widget.uploadMediaFn(
+              bridge: widget.bridge,
+              localFilePath: pending.file.path,
+              mime: mime,
+              recipientPeerId: widget.group.id,
+              mediaFileManager: widget.mediaFileManager,
+              width: pending.width,
+              height: pending.height,
+              durationMs: pending.durationMs,
+              allowedPeers: allowedPeers,
+              blobId: attachmentId,
+            );
+            if (result != null) {
+              uploadedAttachments.add(
+                result.copyWith(
+                  id: attachmentId,
+                  messageId: messageId,
+                  downloadStatus: 'done',
+                ),
+              );
+            } else {
+              if (mounted) {
+                _updateComposerState(isUploading: false);
+                await _restoreComposerSnapshot(composerSnapshot, messageId);
+              }
+              return;
+            }
+          }
+          if (mounted) {
+            _updateComposerState(isUploading: false);
+          }
         }
-        if (mounted) {
-          _updateComposerState(isUploading: false);
-        }
+      } else {
+        showOptimisticMessage();
       }
 
       final (result, message) = await sendGroupMessage(
@@ -425,7 +682,9 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
 
       if (!mounted) return;
 
-      if (result == SendGroupMessageResult.success && message != null) {
+      if ((result == SendGroupMessageResult.success ||
+              result == SendGroupMessageResult.successNoPeers) &&
+          message != null) {
         // Resolve uploaded media paths for display
         List<MediaAttachment>? displayMedia;
         if (uploadedAttachments != null && widget.mediaFileManager != null) {
@@ -449,6 +708,11 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
             }
           });
         }
+        if (_supportsDurableGroupMediaUploads && mediaToUpload.isNotEmpty) {
+          try {
+            await widget.mediaFileManager?.deletePendingUploadDir(messageId);
+          } catch (_) {}
+        }
       } else {
         await _restoreComposerSnapshot(composerSnapshot, messageId);
       }
@@ -460,6 +724,8 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
       );
       if (!mounted) return;
       await _restoreComposerSnapshot(composerSnapshot, messageId);
+    } finally {
+      await callBgEnd(widget.bridge, bgTaskId);
     }
   }
 
@@ -472,17 +738,27 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
     _GroupComposerSnapshot snapshot,
     String messageId,
   ) async {
-    _draftText = snapshot.draftText;
-    _pendingAttachments = List<_PendingMedia>.from(snapshot.pendingAttachments);
+    if (mounted) {
+      setState(() {
+        _draftText = snapshot.draftText;
+        _pendingAttachments = List<_PendingMedia>.from(
+          snapshot.pendingAttachments,
+        );
+        _activeQuoteMessageId = snapshot.quotedMessageId;
+      });
+    } else {
+      _draftText = snapshot.draftText;
+      _pendingAttachments = List<_PendingMedia>.from(
+        snapshot.pendingAttachments,
+      );
+      _activeQuoteMessageId = snapshot.quotedMessageId;
+    }
     _updateComposerState(
       pendingAttachments: _pendingAttachmentFiles(),
       isUploading: false,
     );
     _updateLocalMessageStatus(messageId, 'failed');
     await _persistMessageStatus(messageId, 'failed');
-    if (mounted) {
-      setState(() => _activeQuoteMessageId = snapshot.quotedMessageId);
-    }
   }
 
   Future<Map<String, List<MediaAttachment>>> _loadResolvedMediaMap(
@@ -568,6 +844,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
   // -------------------------------------------------------------------------
 
   void _onAttach() {
+    if (!_canWrite) return;
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: Colors.grey[900],
@@ -768,6 +1045,17 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
     });
   }
 
+  void _removeLocalMessage(String messageId) {
+    setState(() {
+      _messages = _messages
+          .where((message) => message.id != messageId)
+          .toList();
+      final nextMedia = Map<String, List<MediaAttachment>>.from(_mediaMap);
+      nextMedia.remove(messageId);
+      _mediaMap = nextMedia;
+    });
+  }
+
   Future<void> _persistMessageStatus(String messageId, String status) async {
     try {
       await widget.msgRepo.updateMessageStatus(messageId, status);
@@ -855,6 +1143,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
   // -------------------------------------------------------------------------
 
   Future<void> _onRecordStart() async {
+    if (!_canWrite) return;
     final recorder = widget.audioRecorderService;
     if (recorder == null || _composerViewState.recordingState.isActive) {
       return;
@@ -964,8 +1253,14 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
   }
 
   Future<void> _onRecordStop() async {
+    if (!_canWrite) return;
     final recorder = widget.audioRecorderService;
-    if (recorder == null || !_composerViewState.recordingState.isActive) {
+    final mediaAttachmentRepo = widget.mediaAttachmentRepo;
+    final mediaFileManager = widget.mediaFileManager;
+    if (recorder == null ||
+        mediaAttachmentRepo == null ||
+        mediaFileManager == null ||
+        !_composerViewState.recordingState.isActive) {
       return;
     }
 
@@ -1010,26 +1305,9 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
       setState(() => _activeQuoteMessageId = null);
     }
 
-    // 1. Generate IDs upfront for optimistic display
     final messageId = _uuid.v4();
+    final attachmentId = _uuid.v4();
     final now = DateTime.now().toUtc();
-
-    // 2. Create optimistic message and media
-    final optimisticMedia = [
-      MediaAttachment(
-        id: _uuid.v4(),
-        messageId: messageId,
-        mime: recording.mime,
-        size: recording.sizeBytes,
-        mediaType: 'audio',
-        durationMs: recording.durationMs,
-        localPath: recording.filePath,
-        waveform: waveform,
-        downloadStatus: 'done',
-        createdAt: now.toIso8601String(),
-      ),
-    ];
-
     final optimisticMessage = GroupMessage(
       id: messageId,
       groupId: widget.group.id,
@@ -1043,7 +1321,59 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
       createdAt: now,
     );
 
-    // 3. Display optimistic message immediately
+    String? durableRelativePath;
+    String? absoluteDurablePath;
+    MediaAttachment? pendingAttachment;
+
+    try {
+      durableRelativePath = await mediaFileManager.copyToDurableStorage(
+        sourceFilePath: recording.filePath,
+        messageId: messageId,
+        attachmentId: attachmentId,
+        mime: recording.mime,
+      );
+      absoluteDurablePath = await mediaFileManager.resolveStoredPath(
+        durableRelativePath,
+      );
+      try {
+        await File(recording.filePath).delete();
+      } catch (_) {}
+
+      pendingAttachment = MediaAttachment(
+        id: attachmentId,
+        messageId: messageId,
+        mime: recording.mime,
+        size: recording.sizeBytes,
+        mediaType: 'audio',
+        durationMs: recording.durationMs,
+        localPath: durableRelativePath,
+        waveform: waveform,
+        downloadStatus: 'upload_pending',
+        createdAt: now.toIso8601String(),
+      );
+      await mediaAttachmentRepo.saveAttachment(pendingAttachment);
+      await widget.msgRepo.saveMessage(optimisticMessage);
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_CONV_FL_VOICE_DURABLE_PREP_ERROR',
+        details: {'error': e.toString()},
+      );
+      if (mounted) {
+        _updateComposerState(isUploading: false);
+      }
+      _updateLocalMessageStatus(messageId, 'failed');
+      await _persistMessageStatus(messageId, 'failed');
+      _restoreActiveQuoteIfNeeded(quotedMessageId);
+      return;
+    }
+
+    final durablePendingAttachment = pendingAttachment;
+    final durableAbsolutePath = absoluteDurablePath;
+    final optimisticMedia = [
+      durablePendingAttachment.copyWith(localPath: durableAbsolutePath),
+    ];
+
     if (mounted) {
       setState(() {
         _upsertMessage(optimisticMessage);
@@ -1051,96 +1381,111 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
       });
     }
 
-    // 4. Persist optimistic message to DB
+    final bgTaskId = await callBgBegin(widget.bridge);
     try {
-      await widget.msgRepo.saveMessage(optimisticMessage);
-    } catch (e) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'GROUP_CONV_FL_OPTIMISTIC_SAVE_ERROR',
-        details: {'error': e.toString()},
+      final members = await widget.groupRepo.getMembers(widget.group.id);
+      final allowedPeers = members.map((m) => m.peerId).toList();
+
+      _updateComposerState(isUploading: true);
+
+      final voiceAttachment = await widget.uploadMediaFn(
+        bridge: widget.bridge,
+        localFilePath: durableAbsolutePath,
+        mime: recording.mime,
+        recipientPeerId: widget.group.id,
+        mediaFileManager: mediaFileManager,
+        durationMs: recording.durationMs,
+        waveform: waveform,
+        allowedPeers: allowedPeers,
+        blobId: attachmentId,
       );
-    }
 
-    // 5. Upload the voice recording
-    _updateComposerState(isUploading: true);
+      if (voiceAttachment == null) {
+        if (mounted) {
+          _updateComposerState(isUploading: false);
+          _updateLocalMessageStatus(messageId, 'failed');
+        }
+        await _persistMessageStatus(messageId, 'failed');
+        _restoreActiveQuoteIfNeeded(quotedMessageId);
+        return;
+      }
 
-    final members = await widget.groupRepo.getMembers(widget.group.id);
-    final allowedPeers = members.map((m) => m.peerId).toList();
+      final stableVoiceAttachment = voiceAttachment.copyWith(
+        id: attachmentId,
+        messageId: messageId,
+        downloadStatus: 'done',
+        uploadRetryCount: durablePendingAttachment.uploadRetryCount,
+      );
 
-    final voiceAttachment = await widget.uploadMediaFn(
-      bridge: widget.bridge,
-      localFilePath: recording.filePath,
-      mime: recording.mime,
-      recipientPeerId: widget.group.id,
-      mediaFileManager: widget.mediaFileManager,
-      durationMs: recording.durationMs,
-      waveform: waveform,
-      allowedPeers: allowedPeers,
-    );
-
-    if (voiceAttachment == null) {
       if (mounted) {
         _updateComposerState(isUploading: false);
-        _updateLocalMessageStatus(messageId, 'failed');
       }
-      await _persistMessageStatus(messageId, 'failed');
-      _restoreActiveQuoteIfNeeded(quotedMessageId);
-      return;
-    }
 
-    if (mounted) {
-      _updateComposerState(isUploading: false);
-    }
+      final (result, message) = await sendGroupMessage(
+        bridge: widget.bridge,
+        groupRepo: widget.groupRepo,
+        msgRepo: widget.msgRepo,
+        groupId: widget.group.id,
+        text: '',
+        senderPeerId: _ownPeerId!,
+        senderPublicKey: _senderPublicKey,
+        senderPrivateKey: _senderPrivateKey,
+        senderUsername: _senderUsername,
+        messageId: messageId,
+        timestamp: now,
+        quotedMessageId: quotedMessageId,
+        mediaAttachments: [stableVoiceAttachment],
+        mediaAttachmentRepo: mediaAttachmentRepo,
+      );
 
-    // 6. Publish via use case
-    final (result, message) = await sendGroupMessage(
-      bridge: widget.bridge,
-      groupRepo: widget.groupRepo,
-      msgRepo: widget.msgRepo,
-      groupId: widget.group.id,
-      text: '',
-      senderPeerId: _ownPeerId!,
-      senderPublicKey: _senderPublicKey,
-      senderPrivateKey: _senderPrivateKey,
-      senderUsername: _senderUsername,
-      messageId: messageId,
-      timestamp: now,
-      quotedMessageId: quotedMessageId,
-      mediaAttachments: [voiceAttachment],
-      mediaAttachmentRepo: widget.mediaAttachmentRepo,
-    );
-
-    if (!mounted) return;
-
-    // 7. Update status based on result
-    if (result == SendGroupMessageResult.success && message != null) {
-      List<MediaAttachment>? displayMedia;
-      if (widget.mediaFileManager != null) {
-        displayMedia = [];
-        for (final a in [voiceAttachment]) {
-          if (a.localPath != null) {
-            final absPath = await widget.mediaFileManager!.resolveStoredPath(
-              a.localPath!,
-            );
-            displayMedia.add(a.copyWith(localPath: absPath));
-          } else {
-            displayMedia.add(a);
+      if ((result == SendGroupMessageResult.success ||
+              result == SendGroupMessageResult.successNoPeers) &&
+          message != null) {
+        List<MediaAttachment>? displayMedia;
+        if (mounted) {
+          displayMedia = [];
+          for (final a in [stableVoiceAttachment]) {
+            if (a.localPath != null) {
+              final absPath = await mediaFileManager.resolveStoredPath(
+                a.localPath!,
+              );
+              displayMedia.add(a.copyWith(localPath: absPath));
+            } else {
+              displayMedia.add(a);
+            }
           }
         }
+        if (mounted) {
+          setState(() {
+            _upsertMessage(message);
+            if (displayMedia != null && displayMedia.isNotEmpty) {
+              _updateMediaForMessage(messageId, displayMedia);
+            }
+          });
+        }
+        try {
+          await mediaFileManager.deletePendingUploadDir(messageId);
+        } catch (_) {}
+      } else if (result == SendGroupMessageResult.groupNotFound ||
+          result == SendGroupMessageResult.unauthorized) {
+        if (mounted) {
+          _removeLocalMessage(messageId);
+        }
+        try {
+          await mediaAttachmentRepo.deleteAttachmentsForMessage(messageId);
+        } catch (_) {}
+        try {
+          await mediaFileManager.deletePendingUploadDir(messageId);
+        } catch (_) {}
+        await widget.msgRepo.deleteMessage(messageId);
+        _restoreActiveQuoteIfNeeded(quotedMessageId);
+      } else {
+        _updateLocalMessageStatus(messageId, 'failed');
+        await _persistMessageStatus(messageId, 'failed');
+        _restoreActiveQuoteIfNeeded(quotedMessageId);
       }
-      if (mounted) {
-        setState(() {
-          _upsertMessage(message);
-          if (displayMedia != null && displayMedia.isNotEmpty) {
-            _updateMediaForMessage(messageId, displayMedia);
-          }
-        });
-      }
-    } else {
-      _updateLocalMessageStatus(messageId, 'failed');
-      await _persistMessageStatus(messageId, 'failed');
-      _restoreActiveQuoteIfNeeded(quotedMessageId);
+    } finally {
+      await callBgEnd(widget.bridge, bgTaskId);
     }
   }
 
@@ -1190,6 +1535,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
   }
 
   Future<void> _onRecordCancel() async {
+    if (!_canWrite) return;
     final recorder = widget.audioRecorderService;
     if (recorder == null || !_composerViewState.recordingState.isActive) {
       return;
@@ -1465,11 +1811,13 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
       composerStateListenable: _composerState,
       onRemoveAttachment: _removeAttachment,
       onAttach: _canWrite ? _onAttach : null,
-      onRecordStart: _canWrite && widget.audioRecorderService != null
+      onRecordStart: _canWrite && _supportsDurableGroupMediaUploads
           ? _onRecordStart
           : null,
-      onRecordStop: widget.audioRecorderService != null ? _onRecordStop : null,
-      onRecordCancel: widget.audioRecorderService != null
+      onRecordStop: _canWrite && _supportsDurableGroupMediaUploads
+          ? _onRecordStop
+          : null,
+      onRecordCancel: _canWrite && _supportsDurableGroupMediaUploads
           ? _onRecordCancel
           : null,
       recordingState: _composerViewState.recordingState,

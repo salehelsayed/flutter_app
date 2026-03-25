@@ -1,9 +1,7 @@
 import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/conversation/application/send_voice_message_use_case.dart';
-import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/audio_recording.dart';
-import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 
@@ -222,6 +220,31 @@ void main() {
         // sendChatMessage persists the message
         expect(messageRepo.saved, isNotEmpty);
       });
+
+      test(
+        'forwards blobId to uploadMedia and persists stable attachment id',
+        () async {
+          final recording = createRecording();
+          const stableBlobId = 'voice-stable-blob-001';
+
+          final (result, _) = await sendVoiceMessage(
+            p2pService: p2pService,
+            messageRepo: messageRepo,
+            targetPeerId: 'target-peer',
+            senderPeerId: 'my-peer',
+            senderUsername: 'Me',
+            recording: recording,
+            bridge: bridge,
+            recipientMlKemPublicKey: mlKemKey,
+            mediaAttachmentRepo: mediaAttachmentRepo,
+            blobId: stableBlobId,
+          );
+
+          expect(result, SendVoiceMessageResult.success);
+          expect(mediaAttachmentRepo.saved, isNotEmpty);
+          expect(mediaAttachmentRepo.saved.first.id, stableBlobId);
+        },
+      );
 
       test('allows empty text (voice-only message)', () async {
         final recording = createRecording();

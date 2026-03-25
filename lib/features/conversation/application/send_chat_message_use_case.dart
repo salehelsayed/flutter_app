@@ -655,6 +655,26 @@ Future<void> _persistOutgoingMedia({
     return;
   }
 
+  final messageIds = attachments
+      .map((attachment) => attachment.messageId)
+      .where((messageId) => messageId.isNotEmpty)
+      .toSet();
+  if (messageIds.length == 1) {
+    final messageId = messageIds.first;
+    final expectedIds = attachments.map((attachment) => attachment.id).toSet();
+    final existing = await mediaAttachmentRepo.getAttachmentsForMessage(
+      messageId,
+    );
+    final hasStaleUploadPending = existing.any(
+      (attachment) =>
+          attachment.downloadStatus == 'upload_pending' &&
+          !expectedIds.contains(attachment.id),
+    );
+    if (hasStaleUploadPending) {
+      await mediaAttachmentRepo.deleteAttachmentsForMessage(messageId);
+    }
+  }
+
   for (final attachment in attachments) {
     await mediaAttachmentRepo.saveAttachment(attachment);
   }

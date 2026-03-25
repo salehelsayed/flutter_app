@@ -103,6 +103,46 @@ class InMemoryGroupMessageRepository
   }
 
   @override
+  Future<List<GroupMessage>> getFailedOutgoingMessages() async {
+    final failed = _messages.values
+        .where((m) => !m.isIncoming && m.status == 'failed')
+        .toList();
+    failed.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+    return failed;
+  }
+
+  @override
+  Future<int> recoverStuckSendingMessages({
+    required Duration olderThan,
+  }) async {
+    final cutoff = DateTime.now().toUtc().subtract(olderThan);
+    var count = 0;
+    for (final entry in _messages.entries.toList()) {
+      final msg = entry.value;
+      if (!msg.isIncoming &&
+          msg.status == 'sending' &&
+          msg.timestamp.isBefore(cutoff)) {
+        _messages[entry.key] = msg.copyWith(status: 'failed');
+        count++;
+      }
+    }
+    return count;
+  }
+
+  @override
+  Future<int> transitionSendingToFailed() async {
+    var count = 0;
+    for (final entry in _messages.entries.toList()) {
+      final msg = entry.value;
+      if (!msg.isIncoming && msg.status == 'sending') {
+        _messages[entry.key] = msg.copyWith(status: 'failed');
+        count++;
+      }
+    }
+    return count;
+  }
+
+  @override
   Future<int> deleteMessagesForGroup(String groupId) async {
     final toRemove =
         _messages.entries.where((e) => e.value.groupId == groupId).toList();
@@ -146,6 +186,45 @@ class InMemoryGroupMessageRepository
       );
     }
     return summaries;
+  }
+
+  @override
+  Future<List<GroupMessage>> getMessagesWithFailedInboxStore({
+    int limit = 20,
+  }) async {
+    final eligible = _messages.values
+        .where((m) =>
+            !m.isIncoming &&
+            !m.inboxStored &&
+            (m.status == 'sent' || m.status == 'pending') &&
+            m.inboxRetryPayload != null)
+        .toList();
+    eligible.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+    return eligible.take(limit).toList();
+  }
+
+  @override
+  Future<void> updateInboxStored(String id, {required bool stored}) async {
+    final msg = _messages[id];
+    if (msg != null) {
+      _messages[id] = msg.copyWith(inboxStored: stored);
+    }
+  }
+
+  @override
+  Future<void> updateInboxRetryPayload(String id, String? payload) async {
+    final msg = _messages[id];
+    if (msg != null) {
+      _messages[id] = msg.copyWith(inboxRetryPayload: payload);
+    }
+  }
+
+  @override
+  Future<void> updateWireEnvelope(String id, String? envelope) async {
+    final msg = _messages[id];
+    if (msg != null) {
+      _messages[id] = msg.copyWith(wireEnvelope: envelope);
+    }
   }
 
   int get count => _messages.length;

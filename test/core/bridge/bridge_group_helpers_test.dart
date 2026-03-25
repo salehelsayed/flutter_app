@@ -776,9 +776,45 @@ void main() {
   });
 
   // ---------------------------------------------------------------------------
+  // callGroupGenerateNextKey
+  // ---------------------------------------------------------------------------
+  group('callGroupGenerateNextKey', () {
+    test('sends group:generateNextKey and returns key info', () async {
+      bridge.responses['group:generateNextKey'] = {
+        'ok': true,
+        'groupKey': 'nextKeyBase64==',
+        'keyEpoch': 2,
+      };
+
+      final result = await callGroupGenerateNextKey(bridge, 'grp-generate-001');
+
+      expect(result['ok'], isTrue);
+      expect(result['keyEpoch'], equals(2));
+      expect(result['groupKey'], equals('nextKeyBase64=='));
+
+      final sent = jsonDecode(bridge.lastSentMessage!) as Map<String, dynamic>;
+      expect(sent['cmd'], equals('group:generateNextKey'));
+      expect(sent['payload']['groupId'], equals('grp-generate-001'));
+    });
+
+    test('returns timeout error on timeout', () async {
+      final slowBridge = _SlowBridge();
+
+      final result = await callGroupGenerateNextKey(
+        slowBridge,
+        'grp-slow',
+        timeout: const Duration(milliseconds: 1),
+      );
+
+      expect(result['ok'], isFalse);
+      expect(result['errorCode'], equals('BRIDGE_TIMEOUT'));
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // callGroupRotateKey
   // ---------------------------------------------------------------------------
-  group('callGroupRotateKey', () {
+  group('callGroupRotateKey legacy helper', () {
     test('sends group:rotateKey and returns key info', () async {
       bridge.responses['group:rotateKey'] = {
         'ok': true,

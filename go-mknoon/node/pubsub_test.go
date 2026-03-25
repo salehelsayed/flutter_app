@@ -593,7 +593,7 @@ func validateGroupEnvelope(data string, groupId string, config *GroupConfig, key
 		return "reject:non_member"
 	}
 
-	if !isAllowedWriter(config, env.SenderId) {
+	if env.Type == "group_message" && !isAllowedWriter(config, env.SenderId) {
 		return "reject:unauthorized"
 	}
 
@@ -601,9 +601,7 @@ func validateGroupEnvelope(data string, groupId string, config *GroupConfig, key
 		return "reject:no_key"
 	}
 
-	sigData := mcrypto.BuildGroupSignatureData(groupId, keyInfo.KeyEpoch, env.Encrypted.Ciphertext)
-	valid, err := mcrypto.VerifyPayload(member.PublicKey, sigData, env.Signature)
-	if err != nil || !valid {
+	if !verifyGroupEnvelopeSignature(groupId, member.PublicKey, env, keyInfo, time.Now()) {
 		return "reject:bad_signature"
 	}
 

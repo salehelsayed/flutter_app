@@ -124,6 +124,28 @@ void main() {
         expect(find.byIcon(Icons.error_outline_rounded), findsOneWidget);
       });
 
+      testWidgets(
+        'shows pending icon, color, and semantics when status is pending',
+        (tester) async {
+          await tester.pumpWidget(
+            buildTestWidget(isIncoming: false, status: 'pending'),
+          );
+
+          final iconFinder = find.byIcon(Icons.schedule_rounded);
+          expect(iconFinder, findsOneWidget);
+
+          final icon = tester.widget<Icon>(iconFinder);
+          expect(
+            icon.color,
+            const Color.fromRGBO(255, 200, 100, 0.50),
+          );
+          expect(
+            find.bySemanticsLabel('Message status: pending delivery via inbox'),
+            findsOneWidget,
+          );
+        },
+      );
+
       testWidgets('no delivery note when status is null', (tester) async {
         await tester.pumpWidget(
           buildTestWidget(isIncoming: false, status: null),

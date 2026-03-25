@@ -458,3 +458,108 @@ Future<void> dbDeleteGroupMessage(Database db, String id) async {
     rethrow;
   }
 }
+
+/// Loads outgoing group messages stuck in 'sending' status older than [olderThan].
+///
+/// Returns raw row maps ordered by timestamp ASC, limited to [limit].
+Future<List<Map<String, dynamic>>> dbLoadStuckSendingGroupMessages(
+  Database db, {
+  required DateTime olderThan,
+  int limit = 50,
+}) async {
+  final threshold = olderThan.toUtc().toIso8601String();
+  return db.rawQuery(
+    "SELECT * FROM group_messages WHERE status = 'sending' AND is_incoming = 0 AND timestamp < ? ORDER BY timestamp ASC LIMIT ?",
+    [threshold, limit],
+  );
+}
+
+/// Loads outgoing group messages with 'failed' status.
+///
+/// Returns raw row maps ordered by timestamp ASC.
+Future<List<Map<String, dynamic>>> dbLoadFailedOutgoingGroupMessages(
+  Database db, {
+  int? limit,
+}) async {
+  final sql = StringBuffer(
+    "SELECT * FROM group_messages WHERE status = 'failed' AND is_incoming = 0 ORDER BY timestamp ASC",
+  );
+  if (limit != null) {
+    sql.write(' LIMIT ?');
+    return db.rawQuery(sql.toString(), [limit]);
+  }
+  return db.rawQuery(sql.toString());
+}
+
+/// Loads outgoing group messages where inbox store failed (inbox_stored = 0)
+/// and an inbox retry payload is available.
+///
+/// Returns raw row maps ordered by timestamp ASC, limited to [limit].
+Future<List<Map<String, dynamic>>> dbLoadGroupMessagesWithFailedInboxStore(
+  Database db, {
+  int limit = 50,
+}) async {
+  return db.rawQuery(
+    "SELECT * FROM group_messages WHERE is_incoming = 0 AND inbox_stored = 0 AND status IN ('sent', 'pending') AND inbox_retry_payload IS NOT NULL ORDER BY timestamp ASC LIMIT ?",
+    [limit],
+  );
+}
+
+/// Transitions outgoing 'sending' messages to 'failed'.
+///
+/// When [olderThan] is provided, only messages older than the cutoff are
+/// transitioned. When omitted, all outgoing sending rows are transitioned.
+///
+/// Returns the number of rows affected.
+Future<int> dbTransitionGroupSendingToFailed(
+  Database db, {
+  DateTime? olderThan,
+}) async {
+  if (olderThan == null) {
+    return db.rawUpdate(
+      "UPDATE group_messages SET status = 'failed' WHERE status = 'sending' AND is_incoming = 0",
+    );
+  }
+
+  final threshold = olderThan.toUtc().toIso8601String();
+  return db.rawUpdate(
+    "UPDATE group_messages SET status = 'failed' WHERE status = 'sending' AND is_incoming = 0 AND timestamp < ?",
+    [threshold],
+  );
+}
+
+/// Updates the inbox_stored flag for a group message.
+Future<void> dbUpdateGroupMessageInboxStored(
+  Database db,
+  String id, {
+  required bool stored,
+}) async {
+  await db.rawUpdate(
+    'UPDATE group_messages SET inbox_stored = ? WHERE id = ?',
+    [stored ? 1 : 0, id],
+  );
+}
+
+/// Updates (or clears) the inbox_retry_payload for a group message.
+Future<void> dbUpdateGroupMessageInboxRetryPayload(
+  Database db,
+  String id,
+  String? inboxRetryPayload,
+) async {
+  await db.rawUpdate(
+    'UPDATE group_messages SET inbox_retry_payload = ? WHERE id = ?',
+    [inboxRetryPayload, id],
+  );
+}
+
+/// Updates (or clears) the wire_envelope for a group message.
+Future<void> dbUpdateGroupMessageWireEnvelope(
+  Database db,
+  String id,
+  String? wireEnvelope,
+) async {
+  await db.rawUpdate(
+    'UPDATE group_messages SET wire_envelope = ? WHERE id = ?',
+    [wireEnvelope, id],
+  );
+}

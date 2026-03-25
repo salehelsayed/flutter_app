@@ -41,6 +41,8 @@ Future<void> removeGroupMember({
     throw StateError('Only admins can remove members');
   }
 
+  final removedMember = await groupRepo.getMember(groupId, memberPeerId);
+
   // 2. Remove member from local DB
   await groupRepo.removeMember(groupId, memberPeerId);
 
@@ -63,11 +65,28 @@ Future<void> removeGroupMember({
     'createdAt': group.createdAt.toUtc().toIso8601String(),
   };
 
-  await callGroupUpdateConfig(
-    bridge,
-    groupId: groupId,
-    groupConfig: groupConfig,
-  );
+  try {
+    await callGroupUpdateConfig(
+      bridge,
+      groupId: groupId,
+      groupConfig: groupConfig,
+    );
+  } catch (e) {
+    if (removedMember != null) {
+      await groupRepo.saveMember(removedMember);
+    }
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_REMOVE_MEMBER_USE_CASE_REVERTED',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        'memberPeerId': memberPeerId.length > 8
+            ? memberPeerId.substring(0, 8)
+            : memberPeerId,
+      },
+    );
+    rethrow;
+  }
 
   emitFlowEvent(
     layer: 'FL',

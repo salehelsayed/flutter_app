@@ -176,4 +176,60 @@ void main() {
     expect(saved!.username, 'SavedUser');
     expect(saved.role, MemberRole.reader);
   });
+
+  test('rolls back DB when group:updateConfig fails', () async {
+    bridge.responses['group:updateConfig'] = {
+      'ok': false,
+      'errorCode': 'CONFIG_SYNC_FAILED',
+      'errorMessage': 'bridge rejected config',
+    };
+
+    final newMember = GroupMember(
+      groupId: 'group-1',
+      peerId: 'peer-rollback',
+      username: 'RollbackUser',
+      role: MemberRole.writer,
+      joinedAt: DateTime.now().toUtc(),
+    );
+
+    await expectLater(
+      addGroupMember(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: 'group-1',
+        newMember: newMember,
+        selfPeerId: 'peer-admin',
+      ),
+      throwsA(isA<Exception>()),
+    );
+
+    final saved = await groupRepo.getMember('group-1', 'peer-rollback');
+    expect(saved, isNull);
+  });
+
+  test('syncBridgeConfig false skips bridge config sync', () async {
+    final newMember = GroupMember(
+      groupId: 'group-1',
+      peerId: 'peer-no-sync',
+      username: 'NoSyncUser',
+      role: MemberRole.writer,
+      joinedAt: DateTime.now().toUtc(),
+    );
+
+    await addGroupMember(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      groupId: 'group-1',
+      newMember: newMember,
+      selfPeerId: 'peer-admin',
+      syncBridgeConfig: false,
+    );
+
+    final saved = await groupRepo.getMember('group-1', 'peer-no-sync');
+    expect(saved, isNotNull);
+    expect(
+      bridge.commandLog.where((command) => command == 'group:updateConfig'),
+      isEmpty,
+    );
+  });
 }

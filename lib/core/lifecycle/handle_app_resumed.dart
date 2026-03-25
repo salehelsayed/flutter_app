@@ -38,9 +38,13 @@ Future<bool?> handleAppResumed({
   Future<int> Function()? retryPendingPostMediaUploads,
   Future<int> Function()? retryPendingPostDeliveries,
   Future<int> Function()? recoverStuckSendingMessagesFn, // Part A
+  Future<int> Function()? recoverStuckSendingGroupMessagesFn, // Section 1
+  Future<int> Function()? retryIncompleteGroupUploadsFn, // Section 5
+  Future<int> Function()? retryFailedGroupMessagesFn, // Section 1
   Future<int> Function()? retryIncompleteUploadsFn, // Part G -- NEW
   Future<int> Function()? retryFailedMessagesFn, // Parts B/C
   Future<int> Function()? retryUnackedMessagesFn, // existing
+  Future<int> Function()? retryFailedGroupInboxStoresFn, // Section 4
 }) async {
   final resumeStart = DateTime.now();
   debugPrint(
@@ -172,6 +176,73 @@ Future<bool?> handleAppResumed({
       );
     }
 
+    if (groupRepo != null &&
+        groupMsgRepo != null &&
+        resumeGroupRecoveryEnabled) {
+      // 3d. Recover stuck group 'sending' messages -> 'failed'
+      if (recoverStuckSendingGroupMessagesFn != null) {
+        try {
+          final count = await recoverStuckSendingGroupMessagesFn();
+          if (kDebugMode) {
+            debugPrint(
+              '[RESUME] Step 3d: recoverStuckSendingGroupMessages=$count',
+            );
+          }
+        } catch (e) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'RECOVER_STUCK_SENDING_GROUP_RESUME_ERROR',
+            details: {'error': e.toString()},
+          );
+          if (kDebugMode) {
+            debugPrint(
+              '[RESUME] Step 3d: recoverStuckSendingGroupMessages ERROR: $e',
+            );
+          }
+        }
+      }
+
+      // 3e. Retry incomplete group media uploads from durable pending copies.
+      if (retryIncompleteGroupUploadsFn != null) {
+        try {
+          final count = await retryIncompleteGroupUploadsFn();
+          if (kDebugMode) {
+            debugPrint('[RESUME] Step 3e: retryIncompleteGroupUploads=$count');
+          }
+        } catch (e) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'RETRY_INCOMPLETE_GROUP_UPLOADS_RESUME_ERROR',
+            details: {'error': e.toString()},
+          );
+          if (kDebugMode) {
+            debugPrint(
+              '[RESUME] Step 3e: retryIncompleteGroupUploads ERROR: $e',
+            );
+          }
+        }
+      }
+
+      // 3f. Retry failed group messages (text-only in this phase)
+      if (retryFailedGroupMessagesFn != null) {
+        try {
+          final count = await retryFailedGroupMessagesFn();
+          if (kDebugMode) {
+            debugPrint('[RESUME] Step 3f: retryFailedGroupMessages=$count');
+          }
+        } catch (e) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'RETRY_FAILED_GROUP_MESSAGES_RESUME_ERROR',
+            details: {'error': e.toString()},
+          );
+          if (kDebugMode) {
+            debugPrint('[RESUME] Step 3f: retryFailedGroupMessages ERROR: $e');
+          }
+        }
+      }
+    }
+
     // 4. Retry incomplete key exchanges (contacts without ML-KEM key)
     if (contactRepo != null && identityRepo != null) {
       final retryStart = DateTime.now();
@@ -248,14 +319,16 @@ Future<bool?> handleAppResumed({
     if (recoverStuckSendingMessagesFn != null) {
       try {
         final count = await recoverStuckSendingMessagesFn();
-        if (kDebugMode) debugPrint('[RESUME] Step 8a: recoverStuckSendingMessages=$count');
+        if (kDebugMode)
+          debugPrint('[RESUME] Step 8a: recoverStuckSendingMessages=$count');
       } catch (e) {
         emitFlowEvent(
           layer: 'FL',
           event: 'RECOVER_STUCK_SENDING_RESUME_ERROR',
           details: {'error': e.toString()},
         );
-        if (kDebugMode) debugPrint('[RESUME] Step 8a: recoverStuckSendingMessages ERROR: $e');
+        if (kDebugMode)
+          debugPrint('[RESUME] Step 8a: recoverStuckSendingMessages ERROR: $e');
       }
     }
 
@@ -265,14 +338,16 @@ Future<bool?> handleAppResumed({
     if (retryIncompleteUploadsFn != null) {
       try {
         final count = await retryIncompleteUploadsFn();
-        if (kDebugMode) debugPrint('[RESUME] Step 8b: retryIncompleteUploads=$count');
+        if (kDebugMode)
+          debugPrint('[RESUME] Step 8b: retryIncompleteUploads=$count');
       } catch (e) {
         emitFlowEvent(
           layer: 'FL',
           event: 'RETRY_INCOMPLETE_UPLOADS_RESUME_ERROR',
           details: {'error': e.toString()},
         );
-        if (kDebugMode) debugPrint('[RESUME] Step 8b: retryIncompleteUploads ERROR: $e');
+        if (kDebugMode)
+          debugPrint('[RESUME] Step 8b: retryIncompleteUploads ERROR: $e');
         // Non-fatal: continue to retryFailedMessages -- messages without
         // completed uploads will be retried as text-only or skipped by
         // Part F's decision tree, which is still better than not retrying at all.
@@ -283,14 +358,16 @@ Future<bool?> handleAppResumed({
     if (retryFailedMessagesFn != null) {
       try {
         final count = await retryFailedMessagesFn();
-        if (kDebugMode) debugPrint('[RESUME] Step 8c: retryFailedMessages=$count');
+        if (kDebugMode)
+          debugPrint('[RESUME] Step 8c: retryFailedMessages=$count');
       } catch (e) {
         emitFlowEvent(
           layer: 'FL',
           event: 'RETRY_FAILED_MESSAGES_RESUME_ERROR',
           details: {'error': e.toString()},
         );
-        if (kDebugMode) debugPrint('[RESUME] Step 8c: retryFailedMessages ERROR: $e');
+        if (kDebugMode)
+          debugPrint('[RESUME] Step 8c: retryFailedMessages ERROR: $e');
       }
     }
 
@@ -298,14 +375,33 @@ Future<bool?> handleAppResumed({
     if (retryUnackedMessagesFn != null) {
       try {
         final count = await retryUnackedMessagesFn();
-        if (kDebugMode) debugPrint('[RESUME] Step 8d: retryUnackedMessages=$count');
+        if (kDebugMode)
+          debugPrint('[RESUME] Step 8d: retryUnackedMessages=$count');
       } catch (e) {
         emitFlowEvent(
           layer: 'FL',
           event: 'RETRY_UNACKED_MESSAGES_RESUME_ERROR',
           details: {'error': e.toString()},
         );
-        if (kDebugMode) debugPrint('[RESUME] Step 8d: retryUnackedMessages ERROR: $e');
+        if (kDebugMode)
+          debugPrint('[RESUME] Step 8d: retryUnackedMessages ERROR: $e');
+      }
+    }
+
+    // Step 8e: Retry failed group inbox stores (Section 4)
+    if (retryFailedGroupInboxStoresFn != null) {
+      try {
+        final count = await retryFailedGroupInboxStoresFn();
+        if (kDebugMode)
+          debugPrint('[RESUME] Step 8e: retryFailedGroupInboxStores=$count');
+      } catch (e) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'RETRY_FAILED_GROUP_INBOX_STORES_RESUME_ERROR',
+          details: {'error': e.toString()},
+        );
+        if (kDebugMode)
+          debugPrint('[RESUME] Step 8e: retryFailedGroupInboxStores ERROR: $e');
       }
     }
 

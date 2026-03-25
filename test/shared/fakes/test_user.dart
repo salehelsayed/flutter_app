@@ -269,6 +269,7 @@ class TestUser {
   Future<bool?> simulateResume({
     Future<int> Function()? recoverStuckSendingMessagesFn,
     Future<int> Function()? retryIncompleteUploadsFn,
+    Future<int> Function()? retryIncompleteGroupUploadsFn,
     Future<int> Function()? retryFailedMessagesFn,
     Future<int> Function()? retryUnackedMessagesFn,
   }) async {
@@ -277,6 +278,7 @@ class TestUser {
       bridge: bridge,
       p2pService: p2pService,
       recoverStuckSendingMessagesFn: recoverStuckSendingMessagesFn,
+      retryIncompleteGroupUploadsFn: retryIncompleteGroupUploadsFn,
       retryIncompleteUploadsFn: retryIncompleteUploadsFn,
       retryFailedMessagesFn: retryFailedMessagesFn,
       retryUnackedMessagesFn: retryUnackedMessagesFn,
@@ -286,6 +288,7 @@ class TestUser {
   Future<bool?> simulateBackgroundForegroundCycle({
     Future<int> Function()? recoverStuckSendingMessagesFn,
     Future<int> Function()? retryIncompleteUploadsFn,
+    Future<int> Function()? retryIncompleteGroupUploadsFn,
     Future<int> Function()? retryFailedMessagesFn,
     Future<int> Function()? retryUnackedMessagesFn,
   }) async {
@@ -295,6 +298,7 @@ class TestUser {
       p2pService: p2pService,
       messageRepo: messageRepo,
       recoverStuckSendingMessagesFn: recoverStuckSendingMessagesFn,
+      retryIncompleteGroupUploadsFn: retryIncompleteGroupUploadsFn,
       retryIncompleteUploadsFn: retryIncompleteUploadsFn,
       retryFailedMessagesFn: retryFailedMessagesFn,
       retryUnackedMessagesFn: retryUnackedMessagesFn,

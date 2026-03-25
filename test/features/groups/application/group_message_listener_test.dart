@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart' show DebugPrintCallback, debugPrint;
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -18,12 +19,38 @@ import '../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../shared/fakes/in_memory_media_attachment_repository.dart';
 import '../../conversation/domain/repositories/fake_reaction_repository.dart';
 
+class SequencedUpdateConfigBridge extends FakeBridge {
+  SequencedUpdateConfigBridge(this._behaviors);
+
+  final List<Future<String> Function(String message)> _behaviors;
+  int _updateConfigCallIndex = 0;
+
+  @override
+  Future<String> send(String message) async {
+    final parsed = jsonDecode(message) as Map<String, dynamic>;
+    final cmd = parsed['cmd'] as String?;
+    if (cmd == 'group:updateConfig' &&
+        _updateConfigCallIndex < _behaviors.length) {
+      sendCallCount++;
+      lastSentMessage = message;
+      sentMessages.add(message);
+      lastCommand = cmd;
+      commandLog.add(cmd!);
+      return _behaviors[_updateConfigCallIndex++](message);
+    }
+
+    return super.send(message);
+  }
+}
+
 void main() {
   late InMemoryGroupRepository groupRepo;
   late InMemoryGroupMessageRepository msgRepo;
   late FakeBridge bridge;
   late GroupMessageListener listener;
   late StreamController<Map<String, dynamic>> sourceController;
+  late DebugPrintCallback originalDebugPrint;
+  late List<String> debugLogs;
 
   final testGroup = GroupModel(
     id: 'group-1',
@@ -40,6 +67,13 @@ void main() {
     msgRepo = InMemoryGroupMessageRepository();
     bridge = FakeBridge();
     sourceController = StreamController<Map<String, dynamic>>.broadcast();
+    debugLogs = <String>[];
+    originalDebugPrint = debugPrint;
+    debugPrint = (String? message, {int? wrapWidth}) {
+      if (message != null) {
+        debugLogs.add(message);
+      }
+    };
 
     await groupRepo.saveGroup(testGroup);
     await groupRepo.saveMember(
@@ -60,6 +94,7 @@ void main() {
   });
 
   tearDown(() {
+    debugPrint = originalDebugPrint;
     listener.dispose();
     sourceController.close();
   });
@@ -233,6 +268,87 @@ void main() {
       expect(bridge.commandLog, contains('group:updateConfig'));
     });
 
+    test(
+      'member_added retries once using incoming groupConfig snapshot and then succeeds',
+      () async {
+        bridge = SequencedUpdateConfigBridge([
+          (_) async => throw Exception('first update failed'),
+          (_) async => jsonEncode({'ok': true}),
+        ]);
+        listener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+        );
+        listener.start(sourceController.stream);
+
+        final sysText = jsonEncode({
+          '__sys': 'member_added',
+          'member': {
+            'peerId': 'peer-charlie',
+            'username': 'Charlie Local',
+            'role': 'writer',
+            'publicKey': 'pk-charlie',
+          },
+          'groupConfig': {
+            'name': 'Test Group',
+            'groupType': 'chat',
+            'members': [
+              {'peerId': 'peer-admin', 'role': 'admin', 'publicKey': 'pk-admin'},
+              {
+                'peerId': 'peer-sender',
+                'role': 'writer',
+                'publicKey': 'pk-sender',
+              },
+              {
+                'peerId': 'peer-charlie',
+                'username': 'Charlie Snapshot',
+                'role': 'writer',
+                'publicKey': 'pk-charlie',
+              },
+            ],
+            'createdBy': 'peer-admin',
+            'createdAt': DateTime.now().toUtc().toIso8601String(),
+          },
+        });
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'text': sysText,
+          'timestamp': DateTime.now().toUtc().toIso8601String(),
+        });
+
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        final charlie = await groupRepo.getMember('group-1', 'peer-charlie');
+        expect(charlie, isNotNull);
+        expect(charlie!.username, 'Charlie Local');
+
+        final updateConfigCalls = bridge.commandLog
+            .where((command) => command == 'group:updateConfig')
+            .length;
+        expect(updateConfigCalls, 2);
+
+        final secondUpdate = jsonDecode(
+              bridge.sentMessages.where((message) {
+                final parsed = jsonDecode(message) as Map<String, dynamic>;
+                return parsed['cmd'] == 'group:updateConfig';
+              }).last,
+            )
+            as Map<String, dynamic>;
+        final groupConfig =
+            secondUpdate['payload']['groupConfig'] as Map<String, dynamic>;
+        final members = groupConfig['members'] as List<dynamic>;
+        final charlieConfig = members
+            .cast<Map<String, dynamic>>()
+            .firstWhere((member) => member['peerId'] == 'peer-charlie');
+        expect(charlieConfig['username'], 'Charlie Snapshot');
+      },
+    );
+
     test('members_added saves all members and calls updateConfig', () async {
       listener.start(sourceController.stream);
 
@@ -297,6 +413,227 @@ void main() {
 
       // Not saved as regular message
       expect(msgRepo.count, 0);
+    });
+
+    test(
+      'members_added retries once using incoming groupConfig snapshot and then succeeds',
+      () async {
+        bridge = SequencedUpdateConfigBridge([
+          (_) async => throw Exception('first update failed'),
+          (_) async => jsonEncode({'ok': true}),
+        ]);
+        listener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+        );
+        listener.start(sourceController.stream);
+
+        final sysText = jsonEncode({
+          '__sys': 'members_added',
+          'members': [
+            {
+              'peerId': 'peer-dave',
+              'username': 'Dave Local',
+              'role': 'writer',
+              'publicKey': 'pk-dave',
+            },
+            {
+              'peerId': 'peer-eve',
+              'username': 'Eve Local',
+              'role': 'writer',
+              'publicKey': 'pk-eve',
+            },
+          ],
+          'groupConfig': {
+            'name': 'Test Group',
+            'groupType': 'chat',
+            'members': [
+              {'peerId': 'peer-admin', 'role': 'admin', 'publicKey': 'pk-admin'},
+              {
+                'peerId': 'peer-sender',
+                'role': 'writer',
+                'publicKey': 'pk-sender',
+              },
+              {
+                'peerId': 'peer-dave',
+                'username': 'Dave Snapshot',
+                'role': 'writer',
+                'publicKey': 'pk-dave',
+              },
+              {
+                'peerId': 'peer-eve',
+                'username': 'Eve Snapshot',
+                'role': 'writer',
+                'publicKey': 'pk-eve',
+              },
+            ],
+            'createdBy': 'peer-admin',
+            'createdAt': DateTime.now().toUtc().toIso8601String(),
+          },
+        });
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'text': sysText,
+          'timestamp': DateTime.now().toUtc().toIso8601String(),
+        });
+
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        final dave = await groupRepo.getMember('group-1', 'peer-dave');
+        final eve = await groupRepo.getMember('group-1', 'peer-eve');
+        expect(dave, isNotNull);
+        expect(eve, isNotNull);
+        expect(dave!.username, 'Dave Local');
+        expect(eve!.username, 'Eve Local');
+
+        final updateConfigCalls = bridge.commandLog
+            .where((command) => command == 'group:updateConfig')
+            .length;
+        expect(updateConfigCalls, 2);
+
+        final secondUpdate = jsonDecode(
+              bridge.sentMessages.where((message) {
+                final parsed = jsonDecode(message) as Map<String, dynamic>;
+                return parsed['cmd'] == 'group:updateConfig';
+              }).last,
+            )
+            as Map<String, dynamic>;
+        final groupConfig =
+            secondUpdate['payload']['groupConfig'] as Map<String, dynamic>;
+        final members = groupConfig['members'] as List<dynamic>;
+        final daveConfig = members
+            .cast<Map<String, dynamic>>()
+            .firstWhere((member) => member['peerId'] == 'peer-dave');
+        final eveConfig = members
+            .cast<Map<String, dynamic>>()
+            .firstWhere((member) => member['peerId'] == 'peer-eve');
+        expect(daveConfig['username'], 'Dave Snapshot');
+        expect(eveConfig['username'], 'Eve Snapshot');
+      },
+    );
+
+    test('concurrent system messages execute sequentially across full pipeline',
+        () async {
+      final firstUpdate = Completer<String>();
+      final secondUpdateStarted = Completer<void>();
+
+      bridge = SequencedUpdateConfigBridge([
+        (_) => firstUpdate.future,
+        (_) async {
+          secondUpdateStarted.complete();
+          return jsonEncode({'ok': true});
+        },
+      ]);
+      listener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+      );
+      listener.start(sourceController.stream);
+
+      final firstMessage = jsonEncode({
+        '__sys': 'member_added',
+        'member': {
+          'peerId': 'peer-alice',
+          'username': 'Alice',
+          'role': 'writer',
+          'publicKey': 'pk-alice',
+        },
+        'groupConfig': {
+          'name': 'Test Group',
+          'groupType': 'chat',
+          'members': [
+            {'peerId': 'peer-admin', 'role': 'admin', 'publicKey': 'pk-admin'},
+            {
+              'peerId': 'peer-sender',
+              'role': 'writer',
+              'publicKey': 'pk-sender',
+            },
+            {
+              'peerId': 'peer-alice',
+              'role': 'writer',
+              'publicKey': 'pk-alice',
+            },
+          ],
+          'createdBy': 'peer-admin',
+          'createdAt': DateTime.now().toUtc().toIso8601String(),
+        },
+      });
+      final secondMessage = jsonEncode({
+        '__sys': 'member_added',
+        'member': {
+          'peerId': 'peer-bob',
+          'username': 'Bob',
+          'role': 'writer',
+          'publicKey': 'pk-bob',
+        },
+        'groupConfig': {
+          'name': 'Test Group',
+          'groupType': 'chat',
+          'members': [
+            {'peerId': 'peer-admin', 'role': 'admin', 'publicKey': 'pk-admin'},
+            {
+              'peerId': 'peer-sender',
+              'role': 'writer',
+              'publicKey': 'pk-sender',
+            },
+            {
+              'peerId': 'peer-alice',
+              'role': 'writer',
+              'publicKey': 'pk-alice',
+            },
+            {
+              'peerId': 'peer-bob',
+              'role': 'writer',
+              'publicKey': 'pk-bob',
+            },
+          ],
+          'createdBy': 'peer-admin',
+          'createdAt': DateTime.now().toUtc().toIso8601String(),
+        },
+      });
+
+      sourceController.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-admin',
+        'senderUsername': 'Admin',
+        'keyEpoch': 0,
+        'text': firstMessage,
+        'timestamp': DateTime.now().toUtc().toIso8601String(),
+      });
+      sourceController.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-admin',
+        'senderUsername': 'Admin',
+        'keyEpoch': 0,
+        'text': secondMessage,
+        'timestamp': DateTime.now().toUtc().toIso8601String(),
+      });
+
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      expect(
+        bridge.commandLog.where((command) => command == 'group:updateConfig'),
+        hasLength(1),
+      );
+      expect(await groupRepo.getMember('group-1', 'peer-alice'), isNotNull);
+      expect(await groupRepo.getMember('group-1', 'peer-bob'), isNull);
+      expect(secondUpdateStarted.isCompleted, isFalse);
+
+      firstUpdate.complete(jsonEncode({'ok': true}));
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      expect(
+        bridge.commandLog.where((command) => command == 'group:updateConfig'),
+        hasLength(2),
+      );
+      expect(await groupRepo.getMember('group-1', 'peer-bob'), isNotNull);
+      expect(secondUpdateStarted.isCompleted, isTrue);
     });
 
     test('member_added is not emitted on groupMessageStream', () async {
@@ -421,6 +758,63 @@ void main() {
 
         // Bridge should have received group:updateConfig
         expect(bridge.commandLog, contains('group:updateConfig'));
+      },
+    );
+
+    test(
+      'member_removed emits CONFIG_SYNC_FAILED when both update attempts fail',
+      () async {
+        bridge = SequencedUpdateConfigBridge([
+          (_) async => throw Exception('first update failed'),
+          (_) async => throw Exception('second update failed'),
+        ]);
+        listener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+        );
+        listener.start(sourceController.stream);
+
+        final sysText = jsonEncode({
+          '__sys': 'member_removed',
+          'member': {'peerId': 'peer-sender', 'username': 'Sender'},
+          'groupConfig': {
+            'name': 'Test Group',
+            'groupType': 'chat',
+            'members': [
+              {
+                'peerId': 'peer-admin',
+                'role': 'admin',
+                'publicKey': 'pk-admin',
+              },
+            ],
+            'createdBy': 'peer-admin',
+            'createdAt': DateTime.now().toUtc().toIso8601String(),
+          },
+        });
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'text': sysText,
+          'timestamp': DateTime.now().toUtc().toIso8601String(),
+        });
+
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        expect(await groupRepo.getMember('group-1', 'peer-sender'), isNull);
+        expect(
+          bridge.commandLog.where((command) => command == 'group:updateConfig'),
+          hasLength(2),
+        );
+        expect(
+          debugLogs.any(
+            (line) => line.contains('"event":"CONFIG_SYNC_FAILED"'),
+          ),
+          isTrue,
+        );
       },
     );
 

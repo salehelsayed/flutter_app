@@ -186,3 +186,29 @@ class PassthroughCryptoBridge extends FakeBridge {
     return super.send(message);
   }
 }
+
+/// A [FakeBridge] that reports `topicPeers: 0` for `group:publish`.
+class ZeroPeerPublishBridge extends FakeBridge {
+  @override
+  Future<String> send(String message) async {
+    final parsed = jsonDecode(message) as Map<String, dynamic>;
+    final cmd = parsed['cmd'] as String?;
+
+    if (cmd == 'group:publish') {
+      sendCallCount++;
+      lastSentMessage = message;
+      sentMessages.add(message);
+      lastCommand = cmd;
+      commandLog.add(cmd!);
+
+      final payload = parsed['payload'] as Map<String, dynamic>;
+      return jsonEncode({
+        'ok': true,
+        'messageId': payload['messageId'] ?? '',
+        'topicPeers': 0,
+      });
+    }
+
+    return super.send(message);
+  }
+}

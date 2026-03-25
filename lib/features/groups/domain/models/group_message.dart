@@ -28,7 +28,7 @@ class GroupMessage {
   /// The key generation used to encrypt this message.
   final int keyGeneration;
 
-  /// Delivery status: 'sending', 'sent', 'delivered', 'failed'.
+  /// Delivery status: 'sending', 'pending', 'sent', 'delivered', 'failed'.
   final String status;
 
   /// Whether this message was received from another group member.
@@ -42,6 +42,19 @@ class GroupMessage {
 
   /// Media attachments (loaded from media_attachments table, not from this row).
   final List<MediaAttachment> media;
+
+  /// Cached plaintext publish parameters (JSON) for retry.
+  /// Not the encrypted v3 envelope — stores the inputs needed to reconstruct
+  /// a `callGroupPublish` call. Does NOT contain `senderPrivateKey`.
+  final String? wireEnvelope;
+
+  /// Whether the message was stored in the inbox relay for offline members.
+  /// Maps to `inbox_stored` INTEGER (0/1) in the database.
+  final bool inboxStored;
+
+  /// Cached plaintext inbox-store parameters (JSON) for retrying
+  /// `callGroupInboxStore` without guessing push recipients or payload structure.
+  final String? inboxRetryPayload;
 
   const GroupMessage({
     required this.id,
@@ -57,6 +70,9 @@ class GroupMessage {
     this.readAt,
     required this.createdAt,
     this.media = const [],
+    this.wireEnvelope,
+    this.inboxStored = false,
+    this.inboxRetryPayload,
   });
 
   /// Creates a GroupMessage from a database row map.
@@ -76,6 +92,9 @@ class GroupMessage {
           ? DateTime.parse(map['read_at'] as String)
           : null,
       createdAt: DateTime.parse(map['created_at'] as String),
+      wireEnvelope: map['wire_envelope'] as String?,
+      inboxStored: (map['inbox_stored'] as int? ?? 0) == 1,
+      inboxRetryPayload: map['inbox_retry_payload'] as String?,
     );
   }
 
@@ -94,6 +113,9 @@ class GroupMessage {
       'is_incoming': isIncoming ? 1 : 0,
       'read_at': readAt?.toUtc().toIso8601String(),
       'created_at': createdAt.toUtc().toIso8601String(),
+      'wire_envelope': wireEnvelope,
+      'inbox_stored': inboxStored ? 1 : 0,
+      'inbox_retry_payload': inboxRetryPayload,
     };
   }
 
@@ -112,6 +134,9 @@ class GroupMessage {
     Object? readAt = _sentinel,
     DateTime? createdAt,
     List<MediaAttachment>? media,
+    Object? wireEnvelope = _sentinel,
+    bool? inboxStored,
+    Object? inboxRetryPayload = _sentinel,
   }) {
     return GroupMessage(
       id: id ?? this.id,
@@ -129,6 +154,13 @@ class GroupMessage {
       readAt: readAt == _sentinel ? this.readAt : readAt as DateTime?,
       createdAt: createdAt ?? this.createdAt,
       media: media ?? this.media,
+      wireEnvelope: wireEnvelope == _sentinel
+          ? this.wireEnvelope
+          : wireEnvelope as String?,
+      inboxStored: inboxStored ?? this.inboxStored,
+      inboxRetryPayload: inboxRetryPayload == _sentinel
+          ? this.inboxRetryPayload
+          : inboxRetryPayload as String?,
     );
   }
 

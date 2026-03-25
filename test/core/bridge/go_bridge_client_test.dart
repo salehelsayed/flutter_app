@@ -104,6 +104,7 @@ void main() {
       'group:publish': 'groupPublish',
       'group:publishReaction': 'groupPublishReaction',
       'group:updateConfig': 'groupUpdateConfig',
+      'group:generateNextKey': 'groupGenerateNextKey',
       'group:rotateKey': 'groupRotateKey',
       'group:updateKey': 'groupUpdateKey',
       'group:inboxStore': 'groupInboxStore',
@@ -244,31 +245,34 @@ void main() {
       expect(decoded['errorMessage'], equals('Platform channel error'));
     });
 
-    test('MissingPluginException returns MISSING_PLUGIN with rebuild guidance', () async {
-      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-          .setMockMethodCallHandler(
-            const MethodChannel('com.mknoon/go_bridge'),
-            (MethodCall call) async {
-              lastCall = call;
-              throw MissingPluginException('No implementation found');
-            },
-          );
+    test(
+      'MissingPluginException returns MISSING_PLUGIN with rebuild guidance',
+      () async {
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(
+              const MethodChannel('com.mknoon/go_bridge'),
+              (MethodCall call) async {
+                lastCall = call;
+                throw MissingPluginException('No implementation found');
+              },
+            );
 
-      final request = jsonEncode({
-        'cmd': 'blob:keygen',
-        'payload': <String, dynamic>{},
-      });
+        final request = jsonEncode({
+          'cmd': 'blob:keygen',
+          'payload': <String, dynamic>{},
+        });
 
-      final response = await client.send(request);
-      final decoded = jsonDecode(response) as Map<String, dynamic>;
+        final response = await client.send(request);
+        final decoded = jsonDecode(response) as Map<String, dynamic>;
 
-      expect(decoded['ok'], isFalse);
-      expect(decoded['errorCode'], equals('MISSING_PLUGIN'));
-      expect(decoded['errorMessage'], contains('blobKeygen'));
-      expect(decoded['errorMessage'], contains('Rebuild the app'));
-      expect(lastCall, isNotNull);
-      expect(lastCall!.method, equals('blobKeygen'));
-    });
+        expect(decoded['ok'], isFalse);
+        expect(decoded['errorCode'], equals('MISSING_PLUGIN'));
+        expect(decoded['errorMessage'], contains('blobKeygen'));
+        expect(decoded['errorMessage'], contains('Rebuild the app'));
+        expect(lastCall, isNotNull);
+        expect(lastCall!.method, equals('blobKeygen'));
+      },
+    );
   });
 
   group('push event routing', () {
@@ -301,7 +305,7 @@ void main() {
   // ---------------------------------------------------------------------------
   // Total command coverage sanity check
   // ---------------------------------------------------------------------------
-  test('all 46 commands are covered', () async {
+  test('all 47 commands are covered', () async {
     // Exhaustive list of every command in _cmdMap.
     final allCmds = [
       // Identity
@@ -352,6 +356,7 @@ void main() {
       'group:publish',
       'group:publishReaction',
       'group:updateConfig',
+      'group:generateNextKey',
       'group:rotateKey',
       'group:updateKey',
       'group:inboxStore',
@@ -363,7 +368,7 @@ void main() {
       'group.decrypt',
     ];
 
-    expect(allCmds, hasLength(46));
+    expect(allCmds, hasLength(47));
 
     for (final cmd in allCmds) {
       final request = jsonEncode({

@@ -6,9 +6,11 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:path/path.dart' as p;
 import 'package:flutter_app/l10n/app_localizations.dart';
 
 import 'package:flutter_app/core/media/image_processor.dart';
+import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_picker.dart';
 import 'package:flutter_app/core/media/video_process_result.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
@@ -20,6 +22,7 @@ import 'package:flutter_app/features/conversation/domain/models/reaction_change.
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
+import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_screen.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
@@ -33,6 +36,7 @@ import 'package:flutter_app/features/identity/domain/repositories/identity_repos
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../core/services/fake_p2p_service.dart';
 import '../../../shared/fakes/fake_audio_recorder_service.dart';
+import '../../../shared/fakes/fake_media_file_manager.dart';
 import '../../../shared/fakes/fake_media_picker.dart';
 import '../../../shared/fakes/in_memory_contact_repository.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
@@ -84,6 +88,9 @@ class _NoOpGroupRepo implements GroupRepository {
 
 class _NoOpMsgRepo implements GroupMessageRepository {
   @override
+  Future<int> transitionSendingToFailed() async => 0;
+
+  @override
   dynamic noSuchMethod(Invocation invocation) => null;
 }
 
@@ -106,6 +113,66 @@ class _GatedPublishBridge extends FakeBridge {
     }
 
     return super.send(message);
+  }
+}
+
+class TrackingDurableMediaFileManager extends FakeMediaFileManager {
+  TrackingDurableMediaFileManager(this.rootDir);
+
+  final Directory rootDir;
+  int copyCalls = 0;
+  final List<String> deletedPendingUploadDirs = <String>[];
+
+  @override
+  Future<String> copyToDurableStorage({
+    required String sourceFilePath,
+    required String messageId,
+    required String attachmentId,
+    required String mime,
+  }) async {
+    copyCalls++;
+    final ext = p.extension(sourceFilePath);
+    final dir = Directory(p.join(rootDir.path, 'pending_uploads', messageId));
+    if (!dir.existsSync()) {
+      dir.createSync(recursive: true);
+    }
+    final destinationPath = p.join(dir.path, '$attachmentId$ext');
+    await File(sourceFilePath).copy(destinationPath);
+    return p.join('pending_uploads', messageId, '$attachmentId$ext');
+  }
+
+  @override
+  Future<String> resolveStoredPath(String storedPath) async {
+    if (storedPath.startsWith('pending_uploads/') ||
+        storedPath.startsWith('pending_uploads\\') ||
+        storedPath.startsWith('media/') ||
+        storedPath.startsWith('media\\') ||
+        storedPath.startsWith('post_media/') ||
+        storedPath.startsWith('post_media\\')) {
+      return p.join(rootDir.path, storedPath);
+    }
+    return storedPath;
+  }
+
+  @override
+  Future<void> deletePendingUploadDir(String messageId) async {
+    deletedPendingUploadDirs.add(messageId);
+    final dir = Directory(p.join(rootDir.path, 'pending_uploads', messageId));
+    if (dir.existsSync()) {
+      dir.deleteSync(recursive: true);
+    }
+  }
+}
+
+class _DelayedNotFoundGroupRepository extends InMemoryGroupRepository {
+  _DelayedNotFoundGroupRepository(this.delay);
+
+  final Duration delay;
+
+  @override
+  Future<GroupModel?> getGroup(String id) async {
+    await Future<void>.delayed(delay);
+    return null;
   }
 }
 
@@ -234,6 +301,18 @@ Future<void> pumpFrames(WidgetTester tester, {int count = 10}) async {
   }
 }
 
+Future<void> pumpUntil(
+  WidgetTester tester,
+  bool Function() condition, {
+  int maxPumps = 40,
+}) async {
+  var pumps = 0;
+  while (!condition() && pumps < maxPumps) {
+    await tester.pump(const Duration(milliseconds: 50));
+    pumps++;
+  }
+}
+
 void main() {
   group('GroupConversationWired', () {
     late InMemoryGroupRepository groupRepo;
@@ -270,6 +349,7 @@ void main() {
       ImageProcessor? imageProcessor,
       FakeAudioRecorderService? audioRecorderService,
       MediaPicker? mediaPicker,
+      MediaFileManager? mediaFileManager,
       UploadMediaFn? uploadMediaFn,
       List<File>? initialAttachments,
       String? initialText,
@@ -294,6 +374,7 @@ void main() {
           contactRepo: contactRepo,
           p2pService: p2pService,
           mediaAttachmentRepo: mediaRepo,
+          mediaFileManager: mediaFileManager,
           imageProcessor: imageProcessor,
           audioRecorderService: audioRecorderService,
           mediaPicker: mediaPicker,
@@ -361,6 +442,313 @@ void main() {
       // The sent message should appear in the list
       expect(find.text('Test message'), findsOneWidget);
     });
+
+    testWidgets(
+      'media uploads persist upload_pending rows before upload and run in parallel from durable copies',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+
+        final tempDir = Directory.systemTemp.createTempSync('group-media-');
+        addTearDown(() {
+          if (tempDir.existsSync()) {
+            tempDir.deleteSync(recursive: true);
+          }
+        });
+        final files = [
+          File('${tempDir.path}/one.jpg')..writeAsStringSync('one'),
+          File('${tempDir.path}/two.jpg')..writeAsStringSync('two'),
+          File('${tempDir.path}/three.jpg')..writeAsStringSync('three'),
+        ];
+
+        final mediaFileManager = FakeMediaFileManager();
+        final uploadStarts = <DateTime>[];
+        final seenBlobIds = <String>[];
+        final pendingSeenBeforeUpload = <bool>[];
+        final deletedDirs = <String>[];
+        mediaFileManager.onDeletePendingUploadDir = deletedDirs.add;
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: mediaFileManager,
+            initialAttachments: files,
+            uploadMediaFn:
+                ({
+                  required bridge,
+                  required localFilePath,
+                  required mime,
+                  required recipientPeerId,
+                  String? blobId,
+                  mediaFileManager,
+                  width,
+                  height,
+                  durationMs,
+                  waveform,
+                  allowedPeers,
+                }) async {
+                  uploadStarts.add(DateTime.now().toUtc());
+                  seenBlobIds.add(blobId!);
+                  final pending = await mediaAttachmentRepo
+                      .getUploadPendingAttachments();
+                  pendingSeenBeforeUpload.add(pending.isNotEmpty);
+                  expect(
+                    pending.every(
+                      (att) =>
+                          att.downloadStatus == 'upload_pending' &&
+                          (att.localPath?.startsWith('pending_uploads/') ??
+                              false),
+                    ),
+                    isTrue,
+                  );
+                  await Future<void>.delayed(const Duration(milliseconds: 100));
+                  return MediaAttachment(
+                    id: 'server-assigned-${seenBlobIds.length}',
+                    messageId: '',
+                    mime: mime,
+                    size: 1,
+                    mediaType: MediaAttachment.mediaTypeFromMime(mime),
+                    localPath: mediaFileManager?.relativePathForAttachment(
+                      contactPeerId: group.id,
+                      blobId: blobId,
+                      mime: mime,
+                    ),
+                    downloadStatus: 'done',
+                    createdAt: DateTime.now().toUtc().toIso8601String(),
+                  );
+                },
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        await tester.enterText(find.byType(TextField), 'Durable media');
+        await pumpFrames(tester);
+        final stopwatch = Stopwatch()..start();
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await pumpFrames(tester, count: 25);
+        stopwatch.stop();
+
+        expect(uploadStarts, hasLength(3));
+        expect(
+          uploadStarts.last.difference(uploadStarts.first).inMilliseconds,
+          lessThan(80),
+        );
+        expect(pendingSeenBeforeUpload.every((seen) => seen), isTrue);
+
+        final savedMessage = await msgRepo.getLatestMessage(group.id);
+        expect(savedMessage, isNotNull);
+        final savedAttachments = await mediaAttachmentRepo
+            .getAttachmentsForMessage(savedMessage!.id);
+        expect(savedAttachments, hasLength(3));
+        expect(
+          savedAttachments.every((att) => att.downloadStatus == 'done'),
+          isTrue,
+        );
+        expect(
+          savedAttachments.map((att) => att.id).toSet(),
+          equals(seenBlobIds.toSet()),
+        );
+        expect(
+          await mediaAttachmentRepo.getUploadPendingAttachments(),
+          isEmpty,
+        );
+        expect(deletedDirs, contains(savedMessage.id));
+        expect(stopwatch.elapsedMilliseconds, lessThan(250));
+      },
+    );
+
+    testWidgets(
+      'failed media upload restores composer and leaves durable pending rows retryable',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+
+        final tempDir = Directory.systemTemp.createTempSync(
+          'group-media-fail-',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) {
+            tempDir.deleteSync(recursive: true);
+          }
+        });
+        final files = [
+          File('${tempDir.path}/one.jpg')..writeAsStringSync('one'),
+          File('${tempDir.path}/two.jpg')..writeAsStringSync('two'),
+          File('${tempDir.path}/three.jpg')..writeAsStringSync('three'),
+        ];
+
+        final mediaFileManager = FakeMediaFileManager();
+        var uploadCount = 0;
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: mediaFileManager,
+            initialAttachments: files,
+            uploadMediaFn:
+                ({
+                  required bridge,
+                  required localFilePath,
+                  required mime,
+                  required recipientPeerId,
+                  String? blobId,
+                  mediaFileManager,
+                  width,
+                  height,
+                  durationMs,
+                  waveform,
+                  allowedPeers,
+                }) async {
+                  uploadCount++;
+                  if (uploadCount == 2) return null;
+                  return MediaAttachment(
+                    id: blobId!,
+                    messageId: '',
+                    mime: mime,
+                    size: 1,
+                    mediaType: MediaAttachment.mediaTypeFromMime(mime),
+                    localPath: mediaFileManager?.relativePathForAttachment(
+                      contactPeerId: group.id,
+                      blobId: blobId,
+                      mime: mime,
+                    ),
+                    downloadStatus: 'done',
+                    createdAt: DateTime.now().toUtc().toIso8601String(),
+                  );
+                },
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        await tester.enterText(find.byType(TextField), 'Fail media');
+        await pumpFrames(tester);
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await pumpFrames(tester, count: 25);
+
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).controller?.text,
+          'Fail media',
+        );
+        expect(find.byType(AttachmentPreviewStrip), findsOneWidget);
+        expect(bridge.commandLog, isNot(contains('group:publish')));
+
+        final pending = await mediaAttachmentRepo.getUploadPendingAttachments();
+        expect(pending, hasLength(3));
+        expect(
+          pending.every((att) => att.downloadStatus == 'upload_pending'),
+          isTrue,
+        );
+      },
+    );
+
+    testWidgets(
+      'non-durable media send reuses optimistic attachment IDs when uploader returns different IDs',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+
+        final tempDir = Directory.systemTemp.createTempSync(
+          'group-media-non-durable-',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) {
+            tempDir.deleteSync(recursive: true);
+          }
+        });
+        final file = File('${tempDir.path}/one.jpg')..writeAsStringSync('one');
+
+        String? receivedBlobId;
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            initialAttachments: [file],
+            uploadMediaFn:
+                ({
+                  required bridge,
+                  required localFilePath,
+                  required mime,
+                  required recipientPeerId,
+                  String? blobId,
+                  mediaFileManager,
+                  width,
+                  height,
+                  durationMs,
+                  waveform,
+                  allowedPeers,
+                }) async {
+                  receivedBlobId = blobId;
+                  return MediaAttachment(
+                    id: 'server-non-durable-image',
+                    messageId: '',
+                    mime: mime,
+                    size: 1,
+                    mediaType: MediaAttachment.mediaTypeFromMime(mime),
+                    localPath: localFilePath,
+                    downloadStatus: 'done',
+                    createdAt: DateTime.now().toUtc().toIso8601String(),
+                  );
+                },
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        await tester.enterText(find.byType(TextField), 'Fallback media');
+        await pumpFrames(tester);
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await pumpFrames(tester, count: 20);
+
+        expect(receivedBlobId, isNotNull);
+
+        final savedMessage = await msgRepo.getLatestMessage(group.id);
+        expect(savedMessage, isNotNull);
+        final savedAttachments = await mediaAttachmentRepo
+            .getAttachmentsForMessage(savedMessage!.id);
+        expect(savedAttachments, hasLength(1));
+        expect(savedAttachments.single.id, receivedBlobId);
+        expect(savedAttachments.single.downloadStatus, 'done');
+      },
+    );
+
+    testWidgets(
+      'sending a message with zero topic peers keeps the row pending and does not restore the draft',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+
+        bridge = FakeBridge(
+          initialResponses: {
+            'group:publish': {
+              'ok': true,
+              'messageId': 'msg-zero-peers',
+              'topicPeers': 0,
+            },
+          },
+        );
+
+        await tester.pumpWidget(buildWidget(group: group));
+        await pumpFrames(tester);
+
+        await tester.enterText(find.byType(TextField), 'No peers online');
+        await pumpFrames(tester);
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await pumpFrames(tester, count: 20);
+
+        expect(find.text('No peers online'), findsOneWidget);
+        expect(find.byIcon(Icons.schedule_rounded), findsOneWidget);
+        expect(find.byIcon(Icons.error_outline_rounded), findsNothing);
+
+        final messages = await msgRepo.getMessagesPage(group.id);
+        final saved = messages.firstWhere(
+          (message) => message.text == 'No peers online',
+        );
+        expect(saved.status, 'pending');
+        expect(saved.inboxStored, isTrue);
+      },
+    );
 
     testWidgets('swipe-to-reply sends quotedMessageId and clears preview', (
       tester,
@@ -549,6 +937,7 @@ void main() {
           buildWidget(
             group: group,
             mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: FakeMediaFileManager(),
             audioRecorderService: recorder,
           ),
         );
@@ -598,6 +987,7 @@ void main() {
           buildWidget(
             group: group,
             mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: FakeMediaFileManager(),
             audioRecorderService: recorder,
           ),
         );
@@ -815,7 +1205,44 @@ void main() {
 
       // TextField should not be present (canWrite=false hides it)
       expect(find.byType(TextField), findsNothing);
+      expect(find.byIcon(Icons.add_rounded), findsNothing);
+      expect(find.byIcon(Icons.mic_rounded), findsNothing);
+      expect(find.byIcon(Icons.arrow_upward_rounded), findsNothing);
+
+      final screen = tester.widget<GroupConversationScreen>(
+        find.byType(GroupConversationScreen),
+      );
+      expect(screen.onAttach, isNull);
+      expect(screen.onRecordStart, isNull);
+      expect(screen.onRecordStop, isNull);
+      expect(screen.onRecordCancel, isNull);
+      expect(screen.onQuoteReply, isNull);
     });
+
+    testWidgets(
+      'non-admin in announcement group still has no voice stop/cancel callbacks when durable voice deps are enabled',
+      (tester) async {
+        final group = makeAnnouncementGroup(role: GroupRole.member);
+        await groupRepo.saveGroup(group);
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: FakeMediaFileManager(),
+            audioRecorderService: FakeAudioRecorderService(),
+          ),
+        );
+        await pumpFrames(tester);
+
+        final screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(screen.onRecordStart, isNull);
+        expect(screen.onRecordStop, isNull);
+        expect(screen.onRecordCancel, isNull);
+      },
+    );
 
     testWidgets(
       'read-only announcement members cannot keep hidden quote state',
@@ -861,6 +1288,78 @@ void main() {
 
         expect(find.text('Incoming announcement'), findsOneWidget);
         expect(find.text('Replying to'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'stale writer callbacks cannot bypass read-only announcement mode',
+      (tester) async {
+        final writableGroup = makeAnnouncementGroup(role: GroupRole.admin);
+        await groupRepo.saveGroup(writableGroup);
+
+        final recorder = FakeAudioRecorderService()..fakeDurationMs = 200;
+        final mediaFileManager = FakeMediaFileManager();
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: writableGroup,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: mediaFileManager,
+            audioRecorderService: recorder,
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        final writableScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        final staleOnSend =
+            writableScreen.onSend as Future<void> Function(String);
+        final staleOnAttach = writableScreen.onAttach!;
+        final staleOnRecordStart =
+            writableScreen.onRecordStart! as Future<void> Function();
+        final staleOnRecordStop =
+            writableScreen.onRecordStop! as Future<void> Function();
+
+        await staleOnRecordStart();
+        await pumpUntil(
+          tester,
+          () => find.byIcon(Icons.stop_rounded).evaluate().isNotEmpty,
+        );
+
+        final readOnlyGroup = makeAnnouncementGroup(role: GroupRole.member);
+        await groupRepo.saveGroup(readOnlyGroup);
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: readOnlyGroup,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: mediaFileManager,
+            audioRecorderService: recorder,
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        staleOnAttach();
+        await tester.pump(const Duration(milliseconds: 300));
+        await staleOnRecordStop();
+        await pumpFrames(tester, count: 5);
+        await staleOnSend('should-never-send');
+        await pumpFrames(tester, count: 20);
+
+        expect(find.text('Media Library'), findsNothing);
+        expect(find.byIcon(Icons.stop_rounded), findsNothing);
+        expect(recorder.startCallCount, 1);
+        expect(recorder.stopCallCount, 0);
+        expect(bridge.commandLog, isNot(contains('bg:begin')));
+        expect(bridge.commandLog, isNot(contains('group:publish')));
+        expect(bridge.commandLog, isNot(contains('group:inboxStore')));
+
+        final savedMessages = await msgRepo.getMessagesPage(readOnlyGroup.id);
+        expect(
+          savedMessages.where((message) => message.text == 'should-never-send'),
+          isEmpty,
+        );
       },
     );
 
@@ -1212,22 +1711,86 @@ void main() {
     // -----------------------------------------------------------------------
 
     testWidgets(
-      'voice record stop creates optimistic message with sending status',
+      'voice send path stays hidden unless both durable media dependencies exist',
       (tester) async {
         final group = makeChatGroup();
         await groupRepo.saveGroup(group);
-        final recorder = FakeAudioRecorderService()
-          ..fakeDurationMs = 3000
-          ..fakeSizeBytes = 48000;
-        final uploadGate = Completer<void>();
 
-        final gatedBridge = _GatedPublishBridge();
-        bridge = gatedBridge;
+        final recorder = FakeAudioRecorderService();
+        final uiGateDir = Directory.systemTemp.createTempSync(
+          'group-voice-ui-gate-',
+        );
+        addTearDown(() {
+          if (uiGateDir.existsSync()) {
+            uiGateDir.deleteSync(recursive: true);
+          }
+        });
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            audioRecorderService: recorder,
+            mediaRepo: mediaAttachmentRepo,
+          ),
+        );
+        await pumpFrames(tester, count: 10);
+
+        final screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(screen.onRecordStart, isNull);
+        expect(screen.onRecordStop, isNull);
+        expect(find.byIcon(Icons.mic_rounded), findsNothing);
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            audioRecorderService: recorder,
+            mediaFileManager: TrackingDurableMediaFileManager(uiGateDir),
+          ),
+        );
+        await pumpFrames(tester, count: 10);
+
+        final screenWithoutRepo = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(screenWithoutRepo.onRecordStart, isNull);
+        expect(screenWithoutRepo.onRecordStop, isNull);
+        expect(find.byIcon(Icons.mic_rounded), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'voice stop pre-persists a durable pending attachment and threads a stable blob ID',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        final tempDir = Directory.systemTemp.createTempSync(
+          'group-voice-durable-',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) {
+            tempDir.deleteSync(recursive: true);
+          }
+        });
+        final tempVoice = File(p.join(tempDir.path, 'voice.m4a'))
+          ..writeAsStringSync('voice');
+
+        final mediaFileManager = TrackingDurableMediaFileManager(tempDir);
+        final recorder = FakeAudioRecorderService()
+          ..fakeDurationMs = 3200
+          ..fakeSizeBytes = 48000
+          ..fakeOutputPath = tempVoice.path;
+        final uploadGate = Completer<void>();
+        final uploadStarted = Completer<void>();
+        String? receivedBlobId;
+        String? receivedLocalPath;
 
         await tester.pumpWidget(
           buildWidget(
             group: group,
             mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: mediaFileManager,
             audioRecorderService: recorder,
             uploadMediaFn:
                 ({
@@ -1243,6 +1806,441 @@ void main() {
                   waveform,
                   allowedPeers,
                 }) async {
+                  receivedBlobId = blobId;
+                  receivedLocalPath = localFilePath;
+                  if (!uploadStarted.isCompleted) {
+                    uploadStarted.complete();
+                  }
+                  await uploadGate.future;
+                  return MediaAttachment(
+                    id: 'server-voice-success',
+                    messageId: '',
+                    mime: mime,
+                    size: 1,
+                    mediaType: MediaAttachment.mediaTypeFromMime(mime),
+                    localPath: mediaFileManager?.relativePathForAttachment(
+                      contactPeerId: group.id,
+                      blobId: blobId!,
+                      mime: mime,
+                    ),
+                    downloadStatus: 'done',
+                    durationMs: durationMs,
+                    waveform: waveform,
+                    createdAt: DateTime.now().toUtc().toIso8601String(),
+                  );
+                },
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        final screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        await (screen.onRecordStart! as Future<void> Function())();
+        await pumpUntil(
+          tester,
+          () => find.byIcon(Icons.stop_rounded).evaluate().isNotEmpty,
+        );
+
+        recorder.emitAmplitude(0.15);
+        recorder.emitAmplitude(0.55);
+        recorder.emitAmplitude(0.25);
+
+        final recordingScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        final stopRecording =
+            recordingScreen.onRecordStop! as Future<void> Function();
+        late Future<void> stopFuture;
+        await tester.runAsync(() async {
+          stopFuture = stopRecording();
+          await Future<void>.delayed(const Duration(milliseconds: 200));
+        });
+        await pumpFrames(tester, count: 5);
+
+        expect(mediaFileManager.copyCalls, 1);
+        expect(receivedBlobId, isNotNull);
+        expect(
+          receivedLocalPath,
+          startsWith(p.join(tempDir.path, 'pending_uploads')),
+        );
+
+        final pending = await mediaAttachmentRepo.getUploadPendingAttachments();
+        expect(pending, hasLength(1));
+        expect(pending.single.id, receivedBlobId);
+        expect(pending.single.downloadStatus, 'upload_pending');
+        expect(pending.single.localPath, isNotNull);
+        expect(pending.single.localPath, startsWith('pending_uploads/'));
+
+        final refreshedScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        final optimisticMessage = refreshedScreen.messages.singleWhere(
+          (message) => message.status == 'sending' && message.text.isEmpty,
+        );
+        final optimisticAttachment =
+            refreshedScreen.mediaMap[optimisticMessage.id]!.single;
+        expect(optimisticAttachment.id, receivedBlobId);
+        expect(optimisticAttachment.localPath, isNotNull);
+        expect(
+          optimisticAttachment.localPath,
+          startsWith(p.join(tempDir.path, 'pending_uploads')),
+        );
+
+        uploadGate.complete();
+        await tester.runAsync(() async {
+          await stopFuture;
+        });
+        await pumpFrames(tester, count: 20);
+      },
+    );
+
+    testWidgets(
+      'voice upload failure keeps upload_pending retry data and restores the quote',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await msgRepo.saveMessage(
+          makeMessage(
+            id: 'msg-parent-voice-upload',
+            text: 'Voice upload parent',
+            groupId: group.id,
+            isIncoming: true,
+          ),
+        );
+        final tempDir = Directory.systemTemp.createTempSync(
+          'group-voice-upload-fail-',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) {
+            tempDir.deleteSync(recursive: true);
+          }
+        });
+        final tempVoice = File(p.join(tempDir.path, 'voice.m4a'))
+          ..writeAsStringSync('voice');
+
+        final mediaFileManager = TrackingDurableMediaFileManager(tempDir);
+        final recorder = FakeAudioRecorderService()
+          ..fakeDurationMs = 2800
+          ..fakeSizeBytes = 44100
+          ..fakeOutputPath = tempVoice.path;
+        final uploadGate = Completer<void>();
+        final uploadStarted = Completer<void>();
+        String? receivedBlobId;
+        String? receivedLocalPath;
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: mediaFileManager,
+            audioRecorderService: recorder,
+            uploadMediaFn:
+                ({
+                  required bridge,
+                  required localFilePath,
+                  required mime,
+                  required recipientPeerId,
+                  String? blobId,
+                  mediaFileManager,
+                  width,
+                  height,
+                  durationMs,
+                  waveform,
+                  allowedPeers,
+                }) async {
+                  receivedBlobId = blobId;
+                  receivedLocalPath = localFilePath;
+                  if (!uploadStarted.isCompleted) {
+                    uploadStarted.complete();
+                  }
+                  await uploadGate.future;
+                  return null;
+                },
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        final screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        screen.onQuoteReply!.call('msg-parent-voice-upload');
+        await tester.pump();
+        expect(find.text('Replying to'), findsOneWidget);
+
+        await (screen.onRecordStart! as Future<void> Function())();
+        await pumpUntil(
+          tester,
+          () => find.byIcon(Icons.stop_rounded).evaluate().isNotEmpty,
+        );
+        recorder.emitAmplitude(0.15);
+        recorder.emitAmplitude(0.55);
+
+        final recordingScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        final stopRecording =
+            recordingScreen.onRecordStop! as Future<void> Function();
+        late Future<void> stopFuture;
+        await tester.runAsync(() async {
+          stopFuture = stopRecording();
+          await Future<void>.delayed(const Duration(milliseconds: 200));
+        });
+        await pumpFrames(tester, count: 5);
+
+        expect(mediaFileManager.copyCalls, 1);
+        expect(receivedBlobId, isNotNull);
+        expect(
+          receivedLocalPath,
+          startsWith(p.join(tempDir.path, 'pending_uploads')),
+        );
+
+        final pendingBeforeFail = await mediaAttachmentRepo
+            .getUploadPendingAttachments();
+        expect(pendingBeforeFail, hasLength(1));
+        expect(pendingBeforeFail.single.id, receivedBlobId);
+        expect(pendingBeforeFail.single.downloadStatus, 'upload_pending');
+        expect(pendingBeforeFail.single.durationMs, 2800);
+        expect(pendingBeforeFail.single.waveform, isNotNull);
+        expect(pendingBeforeFail.single.waveform, isNotEmpty);
+
+        final refreshedScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        final optimisticMessage = refreshedScreen.messages.singleWhere(
+          (message) => message.status == 'sending' && message.text.isEmpty,
+        );
+        final optimisticAttachment =
+            refreshedScreen.mediaMap[optimisticMessage.id]!.single;
+        expect(optimisticAttachment.id, receivedBlobId);
+        expect(
+          optimisticAttachment.localPath,
+          startsWith(p.join(tempDir.path, 'pending_uploads')),
+        );
+
+        uploadGate.complete();
+        await tester.runAsync(() async {
+          await stopFuture;
+        });
+        await pumpFrames(tester, count: 20);
+
+        final failedScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        final failedMessage = failedScreen.messages.singleWhere(
+          (message) => message.status == 'failed' && message.text.isEmpty,
+        );
+        expect(failedMessage.quotedMessageId, 'msg-parent-voice-upload');
+        expect(find.text('Replying to'), findsOneWidget);
+
+        final pendingAfterFail = await mediaAttachmentRepo
+            .getUploadPendingAttachments();
+        expect(pendingAfterFail, hasLength(1));
+        expect(pendingAfterFail.single.id, receivedBlobId);
+        expect(pendingAfterFail.single.downloadStatus, 'upload_pending');
+      },
+    );
+
+    testWidgets(
+      'successful voice send uses the durable copy, cleans pending uploads, and survives temp deletion',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        final tempDir = Directory.systemTemp.createTempSync(
+          'group-voice-success-',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) {
+            tempDir.deleteSync(recursive: true);
+          }
+        });
+        final tempVoice = File(p.join(tempDir.path, 'voice.m4a'))
+          ..writeAsStringSync('voice');
+
+        final mediaFileManager = TrackingDurableMediaFileManager(tempDir);
+        final recorder = FakeAudioRecorderService()
+          ..fakeDurationMs = 3100
+          ..fakeSizeBytes = 46000
+          ..fakeOutputPath = tempVoice.path;
+        final uploadGate = Completer<void>();
+        final uploadStarted = Completer<void>();
+        String? receivedBlobId;
+        String? receivedLocalPath;
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: mediaFileManager,
+            audioRecorderService: recorder,
+            uploadMediaFn:
+                ({
+                  required bridge,
+                  required localFilePath,
+                  required mime,
+                  required recipientPeerId,
+                  String? blobId,
+                  mediaFileManager,
+                  width,
+                  height,
+                  durationMs,
+                  waveform,
+                  allowedPeers,
+                }) async {
+                  receivedBlobId = blobId;
+                  receivedLocalPath = localFilePath;
+                  if (!uploadStarted.isCompleted) {
+                    uploadStarted.complete();
+                  }
+                  expect(
+                    File(tempVoice.path).existsSync(),
+                    isFalse,
+                    reason:
+                        'temp source file should no longer matter after durable copy',
+                  );
+                  await uploadGate.future;
+                  return MediaAttachment(
+                    id: blobId!,
+                    messageId: '',
+                    mime: mime,
+                    size: 1,
+                    mediaType: MediaAttachment.mediaTypeFromMime(mime),
+                    localPath: mediaFileManager?.relativePathForAttachment(
+                      contactPeerId: group.id,
+                      blobId: blobId,
+                      mime: mime,
+                    ),
+                    downloadStatus: 'done',
+                    durationMs: durationMs,
+                    waveform: waveform,
+                    createdAt: DateTime.now().toUtc().toIso8601String(),
+                  );
+                },
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        final screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        await (screen.onRecordStart! as Future<void> Function())();
+        await pumpUntil(
+          tester,
+          () => find.byIcon(Icons.stop_rounded).evaluate().isNotEmpty,
+        );
+        recorder.emitAmplitude(0.1);
+        recorder.emitAmplitude(0.4);
+        recorder.emitAmplitude(0.2);
+
+        final recordingScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        final stopRecording =
+            recordingScreen.onRecordStop! as Future<void> Function();
+        late Future<void> stopFuture;
+        await tester.runAsync(() async {
+          stopFuture = stopRecording();
+          await Future<void>.delayed(const Duration(milliseconds: 200));
+        });
+        await pumpFrames(tester, count: 5);
+
+        expect(mediaFileManager.copyCalls, 1);
+        expect(receivedBlobId, isNotNull);
+        expect(
+          receivedLocalPath,
+          startsWith(p.join(tempDir.path, 'pending_uploads')),
+        );
+
+        final pending = await mediaAttachmentRepo.getUploadPendingAttachments();
+        expect(pending, hasLength(1));
+        expect(pending.single.id, receivedBlobId);
+        expect(pending.single.localPath, startsWith('pending_uploads/'));
+
+        final optimisticScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        final optimisticMessage = optimisticScreen.messages.singleWhere(
+          (message) => message.status == 'sending' && message.text.isEmpty,
+        );
+        final optimisticAttachment =
+            optimisticScreen.mediaMap[optimisticMessage.id]!.single;
+        expect(optimisticAttachment.id, receivedBlobId);
+        expect(
+          optimisticAttachment.localPath,
+          startsWith(p.join(tempDir.path, 'pending_uploads')),
+        );
+
+        uploadGate.complete();
+        await tester.runAsync(() async {
+          await stopFuture;
+        });
+        await pumpFrames(tester, count: 20);
+
+        final savedMessage = await msgRepo.getLatestMessage(group.id);
+        expect(savedMessage, isNotNull);
+        expect(
+          mediaFileManager.deletedPendingUploadDirs,
+          contains(savedMessage!.id),
+        );
+        final savedAttachments = await mediaAttachmentRepo
+            .getAttachmentsForMessage(savedMessage.id);
+        expect(savedAttachments, hasLength(1));
+        expect(savedAttachments.single.id, receivedBlobId);
+        expect(savedAttachments.single.downloadStatus, 'done');
+        expect(savedAttachments.single.localPath, startsWith('media/'));
+        expect(
+          await mediaAttachmentRepo.getUploadPendingAttachments(),
+          isEmpty,
+        );
+      },
+    );
+
+    testWidgets(
+      'voice record stop keeps the optimistic voice row caller-local until upload completes',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        final tempDir = Directory.systemTemp.createTempSync(
+          'group-voice-caller-local-',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) {
+            tempDir.deleteSync(recursive: true);
+          }
+        });
+        final tempVoice = File(p.join(tempDir.path, 'voice.m4a'))
+          ..writeAsStringSync('voice');
+        final mediaFileManager = TrackingDurableMediaFileManager(tempDir);
+        final recorder = FakeAudioRecorderService()
+          ..fakeDurationMs = 3000
+          ..fakeSizeBytes = 48000
+          ..fakeOutputPath = tempVoice.path;
+        final uploadGate = Completer<void>();
+        final uploadStarted = Completer<void>();
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: mediaFileManager,
+            audioRecorderService: recorder,
+            uploadMediaFn:
+                ({
+                  required bridge,
+                  required localFilePath,
+                  required mime,
+                  required recipientPeerId,
+                  String? blobId,
+                  mediaFileManager,
+                  width,
+                  height,
+                  durationMs,
+                  waveform,
+                  allowedPeers,
+                }) async {
+                  if (!uploadStarted.isCompleted) {
+                    uploadStarted.complete();
+                  }
                   await uploadGate.future;
                   return MediaAttachment(
                     id: 'uploaded-voice-gated',
@@ -1266,26 +2264,345 @@ void main() {
 
         expect(find.byIcon(Icons.stop_rounded), findsOneWidget);
 
-        await tester.tap(find.byIcon(Icons.stop_rounded));
-        // _onRecordStop has several awaits (cancel subs, recorder.stop) that
-        // need the real event loop to resolve. Use runAsync to let them settle.
+        final recordingScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        final stopRecording =
+            recordingScreen.onRecordStop! as Future<void> Function();
+        late Future<void> stopFuture;
         await tester.runAsync(() async {
-          await Future<void>.delayed(const Duration(milliseconds: 100));
+          stopFuture = stopRecording();
+          await Future<void>.delayed(const Duration(milliseconds: 200));
         });
         await pumpFrames(tester, count: 10);
 
-        // Optimistic message should be persisted to DB with 'sending' status
-        // and empty text (voice-only message).
+        // The durable parent message row is now persisted before upload so
+        // resume-time recovery can resolve it from the attachment row.
+        final inFlightMessages = await msgRepo.getMessagesPage(group.id);
+        expect(inFlightMessages, hasLength(1));
+        expect(inFlightMessages.single.status, 'sending');
+
+        await tester.runAsync(() async {
+          uploadGate.complete();
+          await stopFuture;
+        });
+        await pumpFrames(tester, count: 20);
+
         final messages = await msgRepo.getMessagesPage(group.id);
         expect(messages.length, 1);
-        expect(messages.first.status, 'sending');
+        expect(messages.first.status, 'sent');
         expect(messages.first.text, '');
         expect(messages.first.isIncoming, false);
         expect(messages.first.senderPeerId, testIdentity.peerId);
+      },
+    );
 
-        uploadGate.complete();
-        gatedBridge.publishGate.complete();
+    testWidgets(
+      'voice send with zero topic peers leaves the final row pending',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        final tempDir = Directory.systemTemp.createTempSync(
+          'group-voice-zero-peers-',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) {
+            tempDir.deleteSync(recursive: true);
+          }
+        });
+        final tempVoice = File(p.join(tempDir.path, 'voice.m4a'))
+          ..writeAsStringSync('voice');
+        final mediaFileManager = TrackingDurableMediaFileManager(tempDir);
+
+        final recorder = FakeAudioRecorderService()
+          ..fakeDurationMs = 3000
+          ..fakeSizeBytes = 48000
+          ..fakeOutputPath = tempVoice.path;
+
+        bridge = FakeBridge(
+          initialResponses: {
+            'group:publish': {
+              'ok': true,
+              'messageId': 'msg-voice-zero-peers',
+              'topicPeers': 0,
+            },
+          },
+        );
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: mediaFileManager,
+            audioRecorderService: recorder,
+            uploadMediaFn:
+                ({
+                  required bridge,
+                  required localFilePath,
+                  required mime,
+                  required recipientPeerId,
+                  String? blobId,
+                  mediaFileManager,
+                  width,
+                  height,
+                  durationMs,
+                  waveform,
+                  allowedPeers,
+                }) async => MediaAttachment(
+                  id: 'uploaded-voice-zero-peers',
+                  messageId: '',
+                  mime: mime,
+                  size: 1,
+                  mediaType: MediaAttachment.mediaTypeFromMime(mime),
+                  localPath: localFilePath,
+                  downloadStatus: 'done',
+                  durationMs: durationMs,
+                  waveform: waveform,
+                  createdAt: DateTime.now().toUtc().toIso8601String(),
+                ),
+          ),
+        );
         await pumpFrames(tester, count: 20);
+
+        final beforeCount = (await msgRepo.getMessagesPage(group.id)).length;
+
+        final screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        final startRecording = screen.onRecordStart! as Future<void> Function();
+        await startRecording();
+        await pumpUntil(
+          tester,
+          () => find.byIcon(Icons.stop_rounded).evaluate().isNotEmpty,
+        );
+
+        final recordingScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        final stopRecording =
+            recordingScreen.onRecordStop! as Future<void> Function();
+        late Future<void> stopFuture;
+        await tester.runAsync(() async {
+          stopFuture = stopRecording();
+          await Future<void>.delayed(const Duration(milliseconds: 200));
+        });
+        await tester.runAsync(() async {
+          await stopFuture;
+        });
+        await pumpFrames(tester, count: 20);
+
+        final messages = await msgRepo.getMessagesPage(group.id);
+        expect(messages, hasLength(beforeCount + 1));
+        final saved = await msgRepo.getLatestMessage(group.id);
+        expect(saved, isNotNull);
+        expect(saved!.isIncoming, isFalse);
+        expect(saved.text, '');
+        expect(saved.status, 'pending');
+        expect(saved.quotedMessageId, isNull);
+        expect(saved.inboxStored, isTrue);
+        expect(find.byIcon(Icons.schedule_rounded), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'voice group-not-found rejection does not leave a persisted outgoing row',
+      (tester) async {
+        final missingGroup = makeChatGroup();
+        final tempDir = Directory.systemTemp.createTempSync(
+          'group-voice-missing-group-',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) {
+            tempDir.deleteSync(recursive: true);
+          }
+        });
+        final tempVoice = File(p.join(tempDir.path, 'voice.m4a'))
+          ..writeAsStringSync('voice');
+        final mediaFileManager = TrackingDurableMediaFileManager(tempDir);
+        final recorder = FakeAudioRecorderService()
+          ..fakeDurationMs = 3000
+          ..fakeSizeBytes = 48000
+          ..fakeOutputPath = tempVoice.path;
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: missingGroup,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: mediaFileManager,
+            audioRecorderService: recorder,
+            uploadMediaFn:
+                ({
+                  required bridge,
+                  required localFilePath,
+                  required mime,
+                  required recipientPeerId,
+                  String? blobId,
+                  mediaFileManager,
+                  width,
+                  height,
+                  durationMs,
+                  waveform,
+                  allowedPeers,
+                }) async => MediaAttachment(
+                  id: 'uploaded-voice-missing-group',
+                  messageId: '',
+                  mime: mime,
+                  size: 1,
+                  mediaType: MediaAttachment.mediaTypeFromMime(mime),
+                  localPath: localFilePath,
+                  downloadStatus: 'done',
+                  durationMs: durationMs,
+                  waveform: waveform,
+                  createdAt: DateTime.now().toUtc().toIso8601String(),
+                ),
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        final screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        final startRecording = screen.onRecordStart! as Future<void> Function();
+        await startRecording();
+        await pumpUntil(
+          tester,
+          () => find.byIcon(Icons.stop_rounded).evaluate().isNotEmpty,
+        );
+
+        final recordingScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        final stopRecording =
+            recordingScreen.onRecordStop! as Future<void> Function();
+        late Future<void> stopFuture;
+        await tester.runAsync(() async {
+          stopFuture = stopRecording();
+          await Future<void>.delayed(const Duration(milliseconds: 200));
+        });
+        await tester.runAsync(() async {
+          await stopFuture;
+        });
+        await pumpFrames(tester, count: 10);
+
+        expect(await msgRepo.getMessagesPage(missingGroup.id), isEmpty);
+        expect(bridge.commandLog, isNot(contains('group:publish')));
+      },
+    );
+
+    testWidgets(
+      'voice stop cleanup still runs after unmount when group lookup resolves to not found',
+      (tester) async {
+        final group = makeChatGroup();
+        final delayedGroupRepo = _DelayedNotFoundGroupRepository(
+          const Duration(milliseconds: 500),
+        );
+        groupRepo = delayedGroupRepo;
+        await delayedGroupRepo.saveGroup(group);
+        await delayedGroupRepo.saveMember(
+          GroupMember(
+            groupId: group.id,
+            peerId: 'peer-ally',
+            username: 'Ally',
+            role: MemberRole.writer,
+            joinedAt: DateTime.now().toUtc(),
+          ),
+        );
+
+        final tempDir = Directory.systemTemp.createTempSync(
+          'group-voice-unmounted-cleanup-',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) {
+            tempDir.deleteSync(recursive: true);
+          }
+        });
+        final tempVoice = File(p.join(tempDir.path, 'voice.m4a'))
+          ..writeAsStringSync('voice');
+        final mediaFileManager = TrackingDurableMediaFileManager(tempDir);
+        final recorder = FakeAudioRecorderService()
+          ..fakeDurationMs = 3000
+          ..fakeSizeBytes = 48000
+          ..fakeOutputPath = tempVoice.path;
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: mediaFileManager,
+            audioRecorderService: recorder,
+            uploadMediaFn:
+                ({
+                  required bridge,
+                  required localFilePath,
+                  required mime,
+                  required recipientPeerId,
+                  String? blobId,
+                  mediaFileManager,
+                  width,
+                  height,
+                  durationMs,
+                  waveform,
+                  allowedPeers,
+                }) async => MediaAttachment(
+                  id: blobId!,
+                  messageId: '',
+                  mime: mime,
+                  size: 1,
+                  mediaType: MediaAttachment.mediaTypeFromMime(mime),
+                  localPath: mediaFileManager?.relativePathForAttachment(
+                    contactPeerId: group.id,
+                    blobId: blobId,
+                    mime: mime,
+                  ),
+                  downloadStatus: 'done',
+                  durationMs: durationMs,
+                  waveform: waveform,
+                  createdAt: DateTime.now().toUtc().toIso8601String(),
+                ),
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        final screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        await (screen.onRecordStart! as Future<void> Function())();
+        await pumpUntil(
+          tester,
+          () => find.byIcon(Icons.stop_rounded).evaluate().isNotEmpty,
+        );
+
+        final recordingScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        final stopRecording =
+            recordingScreen.onRecordStop! as Future<void> Function();
+        late Future<void> stopFuture;
+        await tester.runAsync(() async {
+          stopFuture = stopRecording();
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+        });
+
+        await pumpFrames(tester, count: 5);
+
+        final inFlightMessage = await msgRepo.getLatestMessage(group.id);
+        expect(inFlightMessage, isNotNull);
+        final messageId = inFlightMessage!.id;
+
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+
+        await tester.runAsync(() async {
+          await stopFuture;
+        });
+        await pumpFrames(tester, count: 10);
+
+        expect(mediaFileManager.deletedPendingUploadDirs, contains(messageId));
+        expect(
+          await mediaAttachmentRepo.getAttachmentsForMessage(messageId),
+          isEmpty,
+        );
+        expect(await msgRepo.getMessage(messageId), isNull);
       },
     );
 
@@ -1302,14 +2619,27 @@ void main() {
           isIncoming: true,
         ),
       );
+      final tempDir = Directory.systemTemp.createTempSync(
+        'group-voice-upload-reply-',
+      );
+      addTearDown(() {
+        if (tempDir.existsSync()) {
+          tempDir.deleteSync(recursive: true);
+        }
+      });
+      final tempVoice = File(p.join(tempDir.path, 'voice.m4a'))
+        ..writeAsStringSync('voice');
+      final mediaFileManager = TrackingDurableMediaFileManager(tempDir);
       final recorder = FakeAudioRecorderService()
         ..fakeDurationMs = 3000
         ..fakeSizeBytes = 48000
-        ..fakeOutputPath = '/tmp/group_voice_upload_reply.m4a';
+        ..fakeOutputPath = tempVoice.path;
 
       await tester.pumpWidget(
         buildWidget(
           group: group,
+          mediaRepo: mediaAttachmentRepo,
+          mediaFileManager: mediaFileManager,
           audioRecorderService: recorder,
           uploadMediaFn:
               ({
@@ -1339,23 +2669,30 @@ void main() {
 
       final startRecording = screen.onRecordStart! as Future<void> Function();
       await startRecording();
-      await tester.pump(const Duration(milliseconds: 100));
+      await pumpUntil(
+        tester,
+        () => find.byIcon(Icons.stop_rounded).evaluate().isNotEmpty,
+      );
 
       final recordingScreen = tester.widget<GroupConversationScreen>(
         find.byType(GroupConversationScreen),
       );
       final stopRecording =
           recordingScreen.onRecordStop! as Future<void> Function();
-      final stopFuture = stopRecording();
-      await tester.pump(const Duration(milliseconds: 300));
-      await stopFuture;
+      late Future<void> stopFuture;
+      await tester.runAsync(() async {
+        stopFuture = stopRecording();
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+      });
+      await tester.runAsync(() async {
+        await stopFuture;
+      });
       await pumpFrames(tester, count: 10);
 
       final messages = await msgRepo.getMessagesPage(group.id);
       final failed = messages.firstWhere(
         (message) => message.id != 'msg-parent-voice-upload',
       );
-
       expect(failed.status, 'failed');
       expect(failed.quotedMessageId, 'msg-parent-voice-upload');
       expect(find.text('Replying to'), findsOneWidget);
@@ -1376,10 +2713,21 @@ void main() {
           isIncoming: true,
         ),
       );
+      final tempDir = Directory.systemTemp.createTempSync(
+        'group-voice-publish-reply-',
+      );
+      addTearDown(() {
+        if (tempDir.existsSync()) {
+          tempDir.deleteSync(recursive: true);
+        }
+      });
+      final tempVoice = File(p.join(tempDir.path, 'voice.m4a'))
+        ..writeAsStringSync('voice');
+      final mediaFileManager = TrackingDurableMediaFileManager(tempDir);
       final recorder = FakeAudioRecorderService()
         ..fakeDurationMs = 3000
         ..fakeSizeBytes = 48000
-        ..fakeOutputPath = '/tmp/group_voice_publish_reply.m4a';
+        ..fakeOutputPath = tempVoice.path;
       bridge = FakeBridge(
         initialResponses: {
           'group:publish': {'ok': false, 'errorCode': 'PUBLISH_FAILED'},
@@ -1389,6 +2737,8 @@ void main() {
       await tester.pumpWidget(
         buildWidget(
           group: group,
+          mediaRepo: mediaAttachmentRepo,
+          mediaFileManager: mediaFileManager,
           audioRecorderService: recorder,
           uploadMediaFn:
               ({
@@ -1429,16 +2779,24 @@ void main() {
 
       final startRecording = screen.onRecordStart! as Future<void> Function();
       await startRecording();
-      await tester.pump(const Duration(milliseconds: 100));
+      await pumpUntil(
+        tester,
+        () => find.byIcon(Icons.stop_rounded).evaluate().isNotEmpty,
+      );
 
       final recordingScreen = tester.widget<GroupConversationScreen>(
         find.byType(GroupConversationScreen),
       );
       final stopRecording =
           recordingScreen.onRecordStop! as Future<void> Function();
-      final stopFuture = stopRecording();
-      await tester.pump(const Duration(milliseconds: 300));
-      await stopFuture;
+      late Future<void> stopFuture;
+      await tester.runAsync(() async {
+        stopFuture = stopRecording();
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+      });
+      await tester.runAsync(() async {
+        await stopFuture;
+      });
       await pumpFrames(tester, count: 10);
 
       final messages = await msgRepo.getMessagesPage(group.id);
@@ -1472,6 +2830,7 @@ void main() {
         buildWidget(
           group: group,
           mediaRepo: mediaAttachmentRepo,
+          mediaFileManager: FakeMediaFileManager(),
           audioRecorderService: recorder,
         ),
       );
@@ -1486,18 +2845,6 @@ void main() {
       // Recording overlay should appear
       expect(find.text('Cancel'), findsOneWidget);
       expect(find.byIcon(Icons.stop_rounded), findsOneWidget);
-
-      await tester.tap(find.byIcon(Icons.stop_rounded));
-      await tester.runAsync(() async {
-        await Future<void>.delayed(const Duration(milliseconds: 100));
-      });
-      await pumpFrames(tester, count: 10);
-
-      // Optimistic message saved to DB
-      final messages = await msgRepo.getMessagesPage(group.id);
-      expect(messages.length, 1);
-      expect(messages.first.text, '');
-      expect(messages.first.senderPeerId, testIdentity.peerId);
     });
 
     // -----------------------------------------------------------------------

@@ -919,7 +919,7 @@ func cmdGroupPublish(params map[string]interface{}) map[string]interface{} {
 
 	messageId, _ := params["messageId"].(string)
 
-	msgId, err := state.node.PublishGroupMessage(
+	msgId, topicPeers, err := state.node.PublishGroupMessage(
 		groupId,
 		state.identity.PrivateKey,
 		state.identity.PeerId,
@@ -934,7 +934,8 @@ func cmdGroupPublish(params map[string]interface{}) map[string]interface{} {
 	}
 
 	return okResult(map[string]interface{}{
-		"messageId": msgId,
+		"messageId":  msgId,
+		"topicPeers": topicPeers,
 	})
 }
 

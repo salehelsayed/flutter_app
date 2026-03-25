@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/conversation/application/recover_stuck_sending_messages_use_case.dart';
 import 'package:flutter_app/features/conversation/application/retry_failed_messages_use_case.dart';
+import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
@@ -59,7 +60,12 @@ class _FakeMediaAttachmentRepository implements MediaAttachmentRepository {
   @override
   Future<int> deleteAttachmentsForContact(String contactPeerId) async => 0;
   @override
-  Future<int> deleteAttachmentsForMessage(String messageId) async => 0;
+  Future<int> deleteAttachmentsForMessage(String messageId) async {
+    final before = _attachments.length;
+    _attachments.removeWhere((attachment) => attachment.messageId == messageId);
+    return before - _attachments.length;
+  }
+
   @override
   Future<List<MediaAttachment>> getPendingDownloads() async => const [];
   @override
@@ -74,6 +80,75 @@ const _testTs = '2026-01-01T00:00:00.000Z';
 
 void main() {
   group('Media retry smoke test -- end-to-end', () {
+    test(
+      'successful outgoing media send clears stale upload_pending placeholders',
+      () async {
+        final messageRepo = FakeMessageRepository();
+        final mediaAttachmentRepo = _FakeMediaAttachmentRepository()
+          ..seedAttachments(
+            messageId: 'msg-smoke-stable-001',
+            attachments: [
+              MediaAttachment(
+                id: 'placeholder-upload-pending',
+                messageId: 'msg-smoke-stable-001',
+                mime: 'image/jpeg',
+                size: 0,
+                mediaType: 'image',
+                localPath: '/tmp/pending.jpg',
+                downloadStatus: 'upload_pending',
+                createdAt: _testTs,
+              ),
+            ],
+          );
+        final p2pService = FakeP2PService(
+          initialState: const NodeState(
+            isStarted: true,
+            peerId: 'peer-alice',
+            circuitAddresses: ['/p2p-circuit/addr1'],
+          ),
+          storeInInboxResult: true,
+        );
+
+        final (result, _) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'peer-bob',
+          text: 'Photo',
+          senderPeerId: 'peer-alice',
+          senderUsername: 'Alice',
+          messageId: 'msg-smoke-stable-001',
+          timestamp: _testTs,
+          mediaAttachments: const [
+            MediaAttachment(
+              id: 'uploaded-final-id',
+              messageId: '',
+              mime: 'image/jpeg',
+              size: 2048,
+              mediaType: 'image',
+              localPath: '/tmp/final.jpg',
+              downloadStatus: 'done',
+              createdAt: _testTs,
+            ),
+          ],
+          mediaAttachmentRepo: mediaAttachmentRepo,
+        );
+
+        expect(result, SendChatMessageResult.success);
+        final attachments = await mediaAttachmentRepo.getAttachmentsForMessage(
+          'msg-smoke-stable-001',
+        );
+        expect(attachments.length, 1);
+        expect(attachments.single.id, 'uploaded-final-id');
+        expect(attachments.single.downloadStatus, 'done');
+        expect(
+          await mediaAttachmentRepo.getUploadPendingAttachments(),
+          isEmpty,
+        );
+
+        p2pService.dispose();
+      },
+    );
+
     test(
       'photo message stuck in sending is recovered and retried with media intact',
       () async {
@@ -119,14 +194,17 @@ void main() {
             attachments: [uploadedAttachment],
           );
         final identityRepo = FakeIdentityRepository()
-          ..seed(IdentityModel(
-            peerId: 'peer-alice',
-            publicKey: 'pk-alice',
-            privateKey: 'sk-alice',
-            mnemonic12: 'word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12',
-            createdAt: _testTs,
-            updatedAt: _testTs,
-          ));
+          ..seed(
+            IdentityModel(
+              peerId: 'peer-alice',
+              publicKey: 'pk-alice',
+              privateKey: 'sk-alice',
+              mnemonic12:
+                  'word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12',
+              createdAt: _testTs,
+              updatedAt: _testTs,
+            ),
+          );
         final contactRepo = FakeContactRepository()
           ..seed([
             ContactModel(
@@ -177,10 +255,7 @@ void main() {
           p2pService.lastStoreInInboxMessage!,
           contains('blob-uploaded-photo'),
         );
-        expect(
-          p2pService.lastStoreInInboxMessage!,
-          contains('image/jpeg'),
-        );
+        expect(p2pService.lastStoreInInboxMessage!, contains('image/jpeg'));
 
         // The saved message must be delivered
         final saved = messageRepo.lastSavedMessage;
@@ -232,14 +307,17 @@ void main() {
             attachments: [voiceAttachment],
           );
         final identityRepo = FakeIdentityRepository()
-          ..seed(IdentityModel(
-            peerId: 'peer-alice',
-            publicKey: 'pk-alice',
-            privateKey: 'sk-alice',
-            mnemonic12: 'word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12',
-            createdAt: _testTs,
-            updatedAt: _testTs,
-          ));
+          ..seed(
+            IdentityModel(
+              peerId: 'peer-alice',
+              publicKey: 'pk-alice',
+              privateKey: 'sk-alice',
+              mnemonic12:
+                  'word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12',
+              createdAt: _testTs,
+              updatedAt: _testTs,
+            ),
+          );
         final contactRepo = FakeContactRepository()
           ..seed([
             ContactModel(
@@ -284,10 +362,7 @@ void main() {
           p2pService.lastStoreInInboxMessage!,
           contains('blob-voice-uploaded'),
         );
-        expect(
-          p2pService.lastStoreInInboxMessage!,
-          contains('audio/m4a'),
-        );
+        expect(p2pService.lastStoreInInboxMessage!, contains('audio/m4a'));
 
         p2pService.dispose();
       },
@@ -331,14 +406,17 @@ void main() {
             attachments: [pendingAttachment],
           );
         final identityRepo = FakeIdentityRepository()
-          ..seed(IdentityModel(
-            peerId: 'peer-alice',
-            publicKey: 'pk-alice',
-            privateKey: 'sk-alice',
-            mnemonic12: 'word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12',
-            createdAt: _testTs,
-            updatedAt: _testTs,
-          ));
+          ..seed(
+            IdentityModel(
+              peerId: 'peer-alice',
+              publicKey: 'pk-alice',
+              privateKey: 'sk-alice',
+              mnemonic12:
+                  'word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12',
+              createdAt: _testTs,
+              updatedAt: _testTs,
+            ),
+          );
         final contactRepo = FakeContactRepository()
           ..seed([
             ContactModel(

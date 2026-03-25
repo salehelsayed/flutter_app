@@ -251,6 +251,33 @@ void main() {
 
       expect(find.text('Message unavailable'), findsOneWidget);
     });
+
+    testWidgets(
+      'shows pending icon, color, and semantics when status is pending',
+      (tester) async {
+        await tester.pumpWidget(
+          wrap(
+            const MessageBubble(
+              text: 'Pending inbox fallback',
+              time: '3:00 PM',
+              isIncoming: false,
+              senderLabel: 'You',
+              status: 'pending',
+            ),
+          ),
+        );
+
+        final iconFinder = find.byIcon(Icons.schedule_rounded);
+        expect(iconFinder, findsOneWidget);
+
+        final icon = tester.widget<Icon>(iconFinder);
+        expect(icon.color, const Color.fromRGBO(255, 200, 100, 0.50));
+        expect(
+          find.bySemanticsLabel('Message status: pending delivery via inbox'),
+          findsOneWidget,
+        );
+      },
+    );
   });
 
   group('URL links', () {
