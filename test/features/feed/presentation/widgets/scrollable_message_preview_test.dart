@@ -441,5 +441,47 @@ void main() {
 
       expect(find.text('Message unavailable'), findsOneWidget);
     });
+
+    testWidgets(
+      'renders pending delivery distinctly in preview surfaces',
+      (tester) async {
+        await tester.pumpWidget(
+          MaterialApp(
+            locale: const Locale('en'),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: Scaffold(
+              body: SingleChildScrollView(
+                child: ScrollableMessagePreview(
+                  messages: [
+                    ThreadMessage(
+                      id: 'pending-outgoing',
+                      text: 'Pending inbox fallback',
+                      time: '3:00 PM',
+                      timestamp: DateTime(2026, 2, 9, 15, 0),
+                      isUnread: false,
+                      isIncoming: false,
+                      status: 'pending',
+                    ),
+                  ],
+                  contactPeerId: 'peer1',
+                  contactUsername: 'Alice',
+                ),
+              ),
+            ),
+          ),
+        );
+
+        final iconFinder = find.byIcon(Icons.schedule_rounded);
+        expect(iconFinder, findsOneWidget);
+
+        final icon = tester.widget<Icon>(iconFinder);
+        expect(icon.color, const Color.fromRGBO(255, 200, 100, 0.50));
+        expect(
+          find.bySemanticsLabel('Message status: pending delivery via inbox'),
+          findsOneWidget,
+        );
+      },
+    );
   });
 }

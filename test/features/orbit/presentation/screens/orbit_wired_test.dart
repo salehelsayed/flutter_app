@@ -1653,5 +1653,8 @@ class _NoOpGroupRepo implements GroupRepository {
 
 class _NoOpMsgRepo implements GroupMessageRepository {
   @override
+  Future<int> transitionSendingToFailed() async => 0;
+
+  @override
   dynamic noSuchMethod(Invocation invocation) => null;
 }

@@ -1398,7 +1398,7 @@ func GroupLeaveTopic(paramsJSON string) (result string) {
 
 // GroupPublish encrypts, signs, and publishes a message to a group topic.
 // Input JSON: { "groupId": "...", "text": "...", "senderPeerId": "...", "senderPublicKey": "...", "senderPrivateKey": "...", "senderUsername": "..." }
-// Returns JSON: { "ok": true, "messageId": "..." }
+// Returns JSON: { "ok": true, "messageId": "...", "topicPeers": N }
 func GroupPublish(paramsJSON string) (result string) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -1439,7 +1439,7 @@ func GroupPublish(paramsJSON string) (result string) {
 
 	opts := buildGroupPublishOpts(params.Media, params.QuotedMessageId)
 
-	msgId, err := n.PublishGroupMessage(
+	msgId, topicPeers, err := n.PublishGroupMessage(
 		params.GroupId,
 		params.SenderPrivateKey,
 		params.SenderPeerId,
@@ -1454,8 +1454,9 @@ func GroupPublish(paramsJSON string) (result string) {
 	}
 
 	return okJSON(map[string]interface{}{
-		"ok":        true,
-		"messageId": msgId,
+		"ok":         true,
+		"messageId":  msgId,
+		"topicPeers": topicPeers,
 	})
 }
 
@@ -1611,6 +1612,54 @@ func GroupRotateKey(paramsJSON string) (result string) {
 	}
 
 	n.UpdateGroupKey(params.GroupId, newKeyInfo)
+
+	return okJSON(map[string]interface{}{
+		"ok":       true,
+		"groupKey": newKey,
+		"keyEpoch": newEpoch,
+	})
+}
+
+// GroupGenerateNextKey generates the next key and epoch without mutating
+// the stored validator state.
+// Input JSON: { "groupId": "..." }
+// Returns JSON: { "ok": true, "groupKey": "...", "keyEpoch": N }
+func GroupGenerateNextKey(paramsJSON string) (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+		}
+	}()
+
+	nodeMu.Lock()
+	n := singletonNode
+	nodeMu.Unlock()
+
+	if n == nil {
+		return errJSON("NOT_INITIALIZED", "call Initialize first")
+	}
+
+	var params struct {
+		GroupId string `json:"groupId"`
+	}
+	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
+		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
+	}
+
+	if params.GroupId == "" {
+		return errJSON("INVALID_INPUT", "missing groupId")
+	}
+
+	newKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		return errJSON("INTERNAL_ERROR", err.Error())
+	}
+
+	currentKeyInfo := n.GetGroupKeyInfo(params.GroupId)
+	newEpoch := 2
+	if currentKeyInfo != nil {
+		newEpoch = currentKeyInfo.KeyEpoch + 1
+	}
 
 	return okJSON(map[string]interface{}{
 		"ok":       true,

@@ -1643,7 +1643,8 @@ class _FeedWiredState extends State<FeedWired> {
 
       if (!mounted) return;
 
-      if (result == SendGroupMessageResult.success) {
+      if (result == SendGroupMessageResult.success ||
+          result == SendGroupMessageResult.successNoPeers) {
         await widget.groupMessageRepository?.markAsRead(groupId);
         await _refreshGroupFeedItem(groupId);
         await _loadTotalUnreadCount();

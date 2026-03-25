@@ -54,6 +54,7 @@ class GroupMessageListener {
   final _removedController = StreamController<String>.broadcast();
   final _reactionChangeController =
       StreamController<ReactionChange>.broadcast();
+  final Map<String, Future<void>> _groupConfigWorkQueue = {};
 
   GroupMessageListener({
     required GroupRepository groupRepo,
@@ -285,11 +286,20 @@ class GroupMessageListener {
       final sysType = parsed['__sys'] as String?;
 
       if (sysType == 'member_added') {
-        await _handleMemberAdded(groupId, parsed);
+        await _enqueueGroupConfigWork(
+          groupId,
+          () => _handleMemberAdded(groupId, parsed),
+        );
       } else if (sysType == 'members_added') {
-        await _handleMembersAdded(groupId, parsed);
+        await _enqueueGroupConfigWork(
+          groupId,
+          () => _handleMembersAdded(groupId, parsed),
+        );
       } else if (sysType == 'member_removed') {
-        await _handleMemberRemoved(groupId, parsed);
+        await _enqueueGroupConfigWork(
+          groupId,
+          () => _handleMemberRemoved(groupId, parsed),
+        );
       } else if (sysType == 'key_rotated') {
         emitFlowEvent(
           layer: 'FL',
@@ -340,12 +350,8 @@ class GroupMessageListener {
 
     // Update Go topic validator config
     final groupConfig = parsed['groupConfig'] as Map<String, dynamic>?;
-    if (groupConfig != null && _bridge != null) {
-      await callGroupUpdateConfig(
-        _bridge!,
-        groupId: groupId,
-        groupConfig: groupConfig,
-      );
+    if (groupConfig != null) {
+      await _syncGroupConfig(groupId, groupConfig);
     }
 
     emitFlowEvent(
@@ -383,14 +389,9 @@ class GroupMessageListener {
       }
     }
 
-    // Update Go topic validator config
     final groupConfig = parsed['groupConfig'] as Map<String, dynamic>?;
-    if (groupConfig != null && _bridge != null) {
-      await callGroupUpdateConfig(
-        _bridge!,
-        groupId: groupId,
-        groupConfig: groupConfig,
-      );
+    if (groupConfig != null) {
+      await _syncGroupConfig(groupId, groupConfig);
     }
 
     emitFlowEvent(
@@ -450,12 +451,21 @@ class GroupMessageListener {
 
     // Update Go topic validator config
     final groupConfig = parsed['groupConfig'] as Map<String, dynamic>?;
-    if (groupConfig != null && _bridge != null) {
-      await callGroupUpdateConfig(
-        _bridge!,
-        groupId: groupId,
-        groupConfig: groupConfig,
+    if (groupConfig != null) {
+      final synced = await _syncGroupConfig(
+        groupId,
+        groupConfig,
+        emitFailureEvent: true,
       );
+      if (!synced) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'CONFIG_SYNC_FAILED',
+          details: {
+            'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+          },
+        );
+      }
     }
 
     emitFlowEvent(
@@ -503,6 +513,65 @@ class GroupMessageListener {
         event: 'GROUP_REACTION_LISTENER_ERROR',
         details: {'error': e.toString()},
       );
+    }
+  }
+
+  Future<void> _enqueueGroupConfigWork(
+    String groupId,
+    Future<void> Function() work,
+  ) async {
+    final previousWork = _groupConfigWorkQueue[groupId] ?? Future.value();
+    final nextWork = previousWork
+        .catchError((_) {})
+        .then((_) => work());
+
+    _groupConfigWorkQueue[groupId] = nextWork.whenComplete(() {
+      if (_groupConfigWorkQueue[groupId] == nextWork) {
+        _groupConfigWorkQueue.remove(groupId);
+      }
+    });
+    await _groupConfigWorkQueue[groupId];
+  }
+
+  Future<bool> _syncGroupConfig(
+    String groupId,
+    Map<String, dynamic> groupConfig, {
+    bool emitFailureEvent = false,
+  }) async {
+    if (_bridge == null) {
+      return true;
+    }
+
+    try {
+      await callGroupUpdateConfig(
+        _bridge!,
+        groupId: groupId,
+        groupConfig: groupConfig,
+      );
+      return true;
+    } catch (_) {
+      try {
+        await callGroupUpdateConfig(
+          _bridge!,
+          groupId: groupId,
+          groupConfig: groupConfig,
+        );
+        return true;
+      } catch (e) {
+        if (emitFailureEvent) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'GROUP_MESSAGE_LISTENER_CONFIG_UPDATE_RETRY_FAILED',
+            details: {
+              'groupId': groupId.length > 8
+                  ? groupId.substring(0, 8)
+                  : groupId,
+              'error': e.toString(),
+            },
+          );
+        }
+        return false;
+      }
     }
   }
 

@@ -24,92 +24,99 @@ void main() {
     bridge = PassthroughCryptoBridge();
     groupRepo = InMemoryGroupRepository();
 
-    await groupRepo.saveGroup(GroupModel(
-      id: groupId,
-      name: 'Test Group',
-      type: GroupType.chat,
-      topicName: '/mknoon/group/$groupId',
-      createdAt: DateTime.now().toUtc(),
-      createdBy: adminPeerId,
-      myRole: GroupRole.admin,
-    ));
+    await groupRepo.saveGroup(
+      GroupModel(
+        id: groupId,
+        name: 'Test Group',
+        type: GroupType.chat,
+        topicName: '/mknoon/group/$groupId',
+        createdAt: DateTime.now().toUtc(),
+        createdBy: adminPeerId,
+        myRole: GroupRole.admin,
+      ),
+    );
 
-    await groupRepo.saveMember(GroupMember(
-      groupId: groupId,
-      peerId: adminPeerId,
-      username: 'Admin',
-      role: MemberRole.admin,
-      publicKey: 'pk-admin',
-      mlKemPublicKey: 'mlkem-pk-admin',
-      joinedAt: DateTime.now().toUtc(),
-    ));
+    await groupRepo.saveMember(
+      GroupMember(
+        groupId: groupId,
+        peerId: adminPeerId,
+        username: 'Admin',
+        role: MemberRole.admin,
+        publicKey: 'pk-admin',
+        mlKemPublicKey: 'mlkem-pk-admin',
+        joinedAt: DateTime.now().toUtc(),
+      ),
+    );
 
-    await groupRepo.saveMember(GroupMember(
-      groupId: groupId,
-      peerId: 'peer-alice',
-      username: 'Alice',
-      role: MemberRole.writer,
-      publicKey: 'pk-alice',
-      mlKemPublicKey: 'mlkem-pk-alice',
-      joinedAt: DateTime.now().toUtc(),
-    ));
+    await groupRepo.saveMember(
+      GroupMember(
+        groupId: groupId,
+        peerId: 'peer-alice',
+        username: 'Alice',
+        role: MemberRole.writer,
+        publicKey: 'pk-alice',
+        mlKemPublicKey: 'mlkem-pk-alice',
+        joinedAt: DateTime.now().toUtc(),
+      ),
+    );
 
-    await groupRepo.saveMember(GroupMember(
-      groupId: groupId,
-      peerId: 'peer-bob',
-      username: 'Bob',
-      role: MemberRole.writer,
-      publicKey: 'pk-bob',
-      mlKemPublicKey: 'mlkem-pk-bob',
-      joinedAt: DateTime.now().toUtc(),
-    ));
+    await groupRepo.saveMember(
+      GroupMember(
+        groupId: groupId,
+        peerId: 'peer-bob',
+        username: 'Bob',
+        role: MemberRole.writer,
+        publicKey: 'pk-bob',
+        mlKemPublicKey: 'mlkem-pk-bob',
+        joinedAt: DateTime.now().toUtc(),
+      ),
+    );
 
-    bridge.responses['group:rotateKey'] = {
+    bridge.responses['group:generateNextKey'] = {
       'ok': true,
       'groupKey': 'rotated-key-abc',
       'keyEpoch': 2,
     };
-    bridge.responses['group:publish'] = {
-      'ok': true,
-      'messageId': 'sys-msg-id',
-    };
+    bridge.responses['group:publish'] = {'ok': true, 'messageId': 'sys-msg-id'};
   });
 
-  test('complete admin removal flow produces correct bridge command sequence',
-      () async {
-    // Step 1: Remove member (DB + updateConfig)
-    await removeGroupMember(
-      bridge: bridge,
-      groupRepo: groupRepo,
-      groupId: groupId,
-      memberPeerId: 'peer-alice',
-    );
+  test(
+    'complete admin removal flow produces correct bridge command sequence',
+    () async {
+      // Step 1: Remove member (DB + updateConfig)
+      await removeGroupMember(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: groupId,
+        memberPeerId: 'peer-alice',
+      );
 
-    // Step 2: Rotate and distribute key
-    await rotateAndDistributeGroupKey(
-      bridge: bridge,
-      groupRepo: groupRepo,
-      groupId: groupId,
-      selfPeerId: adminPeerId,
-      senderPublicKey: 'pk-admin',
-      senderPrivateKey: 'sk-admin',
-      senderUsername: 'Admin',
-    );
+      // Step 2: Rotate and distribute key
+      await rotateAndDistributeGroupKey(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: groupId,
+        selfPeerId: adminPeerId,
+        senderPublicKey: 'pk-admin',
+        senderPrivateKey: 'sk-admin',
+        senderUsername: 'Admin',
+      );
 
-    // Verify the sequence: updateConfig first, then rotateKey, then
-    // encrypt calls for distribution, then publish for key_rotated broadcast.
-    final updateConfigIdx =
-        bridge.commandLog.indexOf('group:updateConfig');
-    final rotateKeyIdx = bridge.commandLog.indexOf('group:rotateKey');
-    final firstEncryptIdx =
-        bridge.commandLog.indexOf('message.encrypt');
-    final publishIdx = bridge.commandLog.indexOf('group:publish');
+      // Verify the sequence: updateConfig first, then generate the next key,
+      // then encrypt/distribute, then updateKey, then publish key_rotated.
+      final updateConfigIdx = bridge.commandLog.indexOf('group:updateConfig');
+      final generateIdx = bridge.commandLog.indexOf('group:generateNextKey');
+      final firstEncryptIdx = bridge.commandLog.indexOf('message.encrypt');
+      final updateKeyIdx = bridge.commandLog.indexOf('group:updateKey');
+      final publishIdx = bridge.commandLog.indexOf('group:publish');
 
-    expect(updateConfigIdx, greaterThanOrEqualTo(0));
-    expect(rotateKeyIdx, greaterThan(updateConfigIdx));
-    expect(firstEncryptIdx, greaterThan(rotateKeyIdx));
-    expect(publishIdx, greaterThan(firstEncryptIdx));
-  });
+      expect(updateConfigIdx, greaterThanOrEqualTo(0));
+      expect(generateIdx, greaterThan(updateConfigIdx));
+      expect(firstEncryptIdx, greaterThan(generateIdx));
+      expect(updateKeyIdx, greaterThan(firstEncryptIdx));
+      expect(publishIdx, greaterThan(updateKeyIdx));
+    },
+  );
 
   test('rotated key is NOT distributed to removed member', () async {
     // Remove Alice
@@ -142,30 +149,31 @@ void main() {
     expect(sentMessages.first.$1, 'peer-bob');
 
     // Verify it's a proper group_key_update envelope
-    final envelope =
-        jsonDecode(sentMessages.first.$2) as Map<String, dynamic>;
+    final envelope = jsonDecode(sentMessages.first.$2) as Map<String, dynamic>;
     expect(envelope['type'], 'group_key_update');
     expect(envelope['version'], '2');
   });
 
   test('receiver processes key update and syncs Go validator', () async {
     // Simulate: admin rotates key and sends encrypted envelope to Bob
-    // Bob's listener receives it and should: decrypt → saveKey → updateKey
+    // Bob's listener receives it and should: decrypt → updateKey → saveKey
 
     final receiverBridge = PassthroughCryptoBridge();
     final receiverGroupRepo = InMemoryGroupRepository();
     final controller = StreamController<ChatMessage>.broadcast();
 
     // Bob needs to have the group in his repo
-    await receiverGroupRepo.saveGroup(GroupModel(
-      id: groupId,
-      name: 'Test Group',
-      type: GroupType.chat,
-      topicName: '/mknoon/group/$groupId',
-      createdAt: DateTime.now().toUtc(),
-      createdBy: adminPeerId,
-      myRole: GroupRole.member,
-    ));
+    await receiverGroupRepo.saveGroup(
+      GroupModel(
+        id: groupId,
+        name: 'Test Group',
+        type: GroupType.chat,
+        topicName: '/mknoon/group/$groupId',
+        createdAt: DateTime.now().toUtc(),
+        createdBy: adminPeerId,
+        myRole: GroupRole.member,
+      ),
+    );
 
     final listener = GroupKeyUpdateListener(
       groupKeyUpdateStream: controller.stream,
@@ -190,13 +198,15 @@ void main() {
       },
     });
 
-    controller.add(ChatMessage(
-      from: adminPeerId,
-      to: 'peer-bob',
-      content: envelope,
-      timestamp: DateTime.now().toUtc().toIso8601String(),
-      isIncoming: true,
-    ));
+    controller.add(
+      ChatMessage(
+        from: adminPeerId,
+        to: 'peer-bob',
+        content: envelope,
+        timestamp: DateTime.now().toUtc().toIso8601String(),
+        isIncoming: true,
+      ),
+    );
 
     await Future<void>.delayed(Duration.zero);
 

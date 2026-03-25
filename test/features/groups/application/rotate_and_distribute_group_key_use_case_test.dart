@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -21,66 +22,120 @@ void main() {
     bridge = PassthroughCryptoBridge();
     groupRepo = InMemoryGroupRepository();
 
-    await groupRepo.saveGroup(GroupModel(
-      id: groupId,
-      name: 'Test Group',
-      type: GroupType.chat,
-      topicName: '/mknoon/group/$groupId',
-      createdAt: DateTime.now().toUtc(),
-      createdBy: selfPeerId,
-      myRole: GroupRole.admin,
-    ));
+    await groupRepo.saveGroup(
+      GroupModel(
+        id: groupId,
+        name: 'Test Group',
+        type: GroupType.chat,
+        topicName: '/mknoon/group/$groupId',
+        createdAt: DateTime.now().toUtc(),
+        createdBy: selfPeerId,
+        myRole: GroupRole.admin,
+      ),
+    );
 
-    await groupRepo.saveMember(GroupMember(
-      groupId: groupId,
-      peerId: selfPeerId,
-      username: 'Self',
-      role: MemberRole.admin,
-      publicKey: 'selfPubKey',
-      mlKemPublicKey: 'selfMlKem',
-      joinedAt: DateTime.now().toUtc(),
-    ));
+    await groupRepo.saveMember(
+      GroupMember(
+        groupId: groupId,
+        peerId: selfPeerId,
+        username: 'Self',
+        role: MemberRole.admin,
+        publicKey: 'selfPubKey',
+        mlKemPublicKey: 'selfMlKem',
+        joinedAt: DateTime.now().toUtc(),
+      ),
+    );
 
-    await groupRepo.saveMember(GroupMember(
-      groupId: groupId,
-      peerId: 'peer-bob',
-      username: 'Bob',
-      role: MemberRole.writer,
-      publicKey: 'bobPubKey',
-      mlKemPublicKey: 'bobMlKem',
-      joinedAt: DateTime.now().toUtc(),
-    ));
+    await groupRepo.saveMember(
+      GroupMember(
+        groupId: groupId,
+        peerId: 'peer-bob',
+        username: 'Bob',
+        role: MemberRole.writer,
+        publicKey: 'bobPubKey',
+        mlKemPublicKey: 'bobMlKem',
+        joinedAt: DateTime.now().toUtc(),
+      ),
+    );
 
-    await groupRepo.saveMember(GroupMember(
-      groupId: groupId,
-      peerId: 'peer-carol',
-      username: 'Carol',
-      role: MemberRole.writer,
-      publicKey: 'carolPubKey',
-      mlKemPublicKey: 'carolMlKem',
-      joinedAt: DateTime.now().toUtc(),
-    ));
+    await groupRepo.saveMember(
+      GroupMember(
+        groupId: groupId,
+        peerId: 'peer-carol',
+        username: 'Carol',
+        role: MemberRole.writer,
+        publicKey: 'carolPubKey',
+        mlKemPublicKey: 'carolMlKem',
+        joinedAt: DateTime.now().toUtc(),
+      ),
+    );
 
-    await groupRepo.saveKey(GroupKeyInfo(
-      groupId: groupId,
-      keyGeneration: 1,
-      encryptedKey: 'oldKey==',
-      createdAt: DateTime.now().toUtc(),
-    ));
+    await groupRepo.saveKey(
+      GroupKeyInfo(
+        groupId: groupId,
+        keyGeneration: 1,
+        encryptedKey: 'oldKey==',
+        createdAt: DateTime.now().toUtc(),
+      ),
+    );
 
-    bridge.responses['group:rotateKey'] = {
+    bridge.responses['group:generateNextKey'] = {
       'ok': true,
       'groupKey': 'newKey==',
       'keyEpoch': 2,
     };
 
-    bridge.responses['group:publish'] = {
-      'ok': true,
-      'messageId': 'sys-msg-id',
-    };
+    bridge.responses['group:publish'] = {'ok': true, 'messageId': 'sys-msg-id'};
   });
 
-  test('rotates key and saves locally', () async {
+  test('promotes generated key only after distribution completes', () async {
+    final bobSend = Completer<bool>();
+    final carolSend = Completer<bool>();
+
+    final pending = rotateAndDistributeGroupKey(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      groupId: groupId,
+      selfPeerId: selfPeerId,
+      senderPublicKey: 'selfPubKey',
+      senderPrivateKey: 'selfPrivKey',
+      senderUsername: 'Self',
+      perRecipientTimeout: const Duration(milliseconds: 200),
+      distributionTimeout: const Duration(milliseconds: 200),
+      sendP2PMessage: (peerId, message) {
+        if (peerId == 'peer-bob') return bobSend.future;
+        if (peerId == 'peer-carol') return carolSend.future;
+        return Future.value(true);
+      },
+    );
+
+    await Future<void>.delayed(Duration.zero);
+
+    final latestBeforePromotion = await groupRepo.getLatestKey(groupId);
+    expect(latestBeforePromotion, isNotNull);
+    expect(latestBeforePromotion!.keyGeneration, 1);
+    expect(await groupRepo.getKeyByGeneration(groupId, 2), isNull);
+
+    expect(bridge.commandLog, contains('group:generateNextKey'));
+    expect(bridge.commandLog.where((c) => c == 'message.encrypt').length, 2);
+    expect(bridge.commandLog, isNot(contains('group:updateKey')));
+    expect(bridge.commandLog, isNot(contains('group:publish')));
+
+    bobSend.complete(true);
+    carolSend.complete(true);
+
+    final result = await pending;
+
+    expect(result, isNotNull);
+    expect(result!.keyGeneration, 2);
+    expect(result.encryptedKey, 'newKey==');
+
+    final latestKey = await groupRepo.getLatestKey(groupId);
+    expect(latestKey, isNotNull);
+    expect(latestKey!.keyGeneration, 2);
+  });
+
+  test('distribution completes before admin update and broadcast', () async {
     final result = await rotateAndDistributeGroupKey(
       bridge: bridge,
       groupRepo: groupRepo,
@@ -92,12 +147,16 @@ void main() {
     );
 
     expect(result, isNotNull);
-    expect(result!.keyGeneration, 2);
-    expect(result.encryptedKey, 'newKey==');
 
-    final latestKey = await groupRepo.getLatestKey(groupId);
-    expect(latestKey, isNotNull);
-    expect(latestKey!.keyGeneration, 2);
+    final generateIdx = bridge.commandLog.indexOf('group:generateNextKey');
+    final encryptIdx = bridge.commandLog.indexOf('message.encrypt');
+    final updateIdx = bridge.commandLog.indexOf('group:updateKey');
+    final publishIdx = bridge.commandLog.lastIndexOf('group:publish');
+
+    expect(generateIdx, greaterThanOrEqualTo(0));
+    expect(encryptIdx, greaterThan(generateIdx));
+    expect(updateIdx, greaterThan(encryptIdx));
+    expect(publishIdx, greaterThan(updateIdx));
   });
 
   test('calls bridge to encrypt key for each non-self member', () async {
@@ -112,8 +171,9 @@ void main() {
     );
 
     // message.encrypt should be called twice (Bob + Carol, not self)
-    final encryptCount =
-        bridge.commandLog.where((c) => c == 'message.encrypt').length;
+    final encryptCount = bridge.commandLog
+        .where((c) => c == 'message.encrypt')
+        .length;
     expect(encryptCount, 2);
   });
 
@@ -139,8 +199,8 @@ void main() {
     final publishPayload =
         (jsonDecode(publishMsg) as Map<String, dynamic>)['payload']
             as Map<String, dynamic>;
-    final sysText = jsonDecode(publishPayload['text'] as String)
-        as Map<String, dynamic>;
+    final sysText =
+        jsonDecode(publishPayload['text'] as String) as Map<String, dynamic>;
     expect(sysText['__sys'], 'key_rotated');
     expect(sysText['newKeyEpoch'], 2);
   });
@@ -177,10 +237,10 @@ void main() {
     }
   });
 
-  test('returns null when rotate fails (ok: false)', () async {
-    bridge.responses['group:rotateKey'] = {
+  test('returns null when generate-next-key fails (ok: false)', () async {
+    bridge.responses['group:generateNextKey'] = {
       'ok': false,
-      'errorCode': 'ROTATE_FAILED',
+      'errorCode': 'GENERATE_FAILED',
     };
 
     final result = await rotateAndDistributeGroupKey(
@@ -203,15 +263,17 @@ void main() {
 
   test('skips members without mlKemPublicKey', () async {
     // Add Dave without an ML-KEM public key
-    await groupRepo.saveMember(GroupMember(
-      groupId: groupId,
-      peerId: 'peer-dave',
-      username: 'Dave',
-      role: MemberRole.writer,
-      publicKey: 'davePubKey',
-      mlKemPublicKey: null,
-      joinedAt: DateTime.now().toUtc(),
-    ));
+    await groupRepo.saveMember(
+      GroupMember(
+        groupId: groupId,
+        peerId: 'peer-dave',
+        username: 'Dave',
+        role: MemberRole.writer,
+        publicKey: 'davePubKey',
+        mlKemPublicKey: null,
+        joinedAt: DateTime.now().toUtc(),
+      ),
+    );
 
     final sentMessages = <(String, String)>[];
 
@@ -237,15 +299,16 @@ void main() {
     expect(peerIds, isNot(contains('peer-dave')));
 
     // message.encrypt should be called only twice (not three times)
-    final encryptCount =
-        bridge.commandLog.where((c) => c == 'message.encrypt').length;
+    final encryptCount = bridge.commandLog
+        .where((c) => c == 'message.encrypt')
+        .length;
     expect(encryptCount, 2);
   });
 
   test('continues distribution when per-member encrypt fails', () async {
     // Use a custom bridge that fails encrypt for Bob but succeeds for Carol
     final selectiveBridge = _SelectiveEncryptFailBridge();
-    selectiveBridge.responses['group:rotateKey'] = {
+    selectiveBridge.responses['group:generateNextKey'] = {
       'ok': true,
       'groupKey': 'newKey==',
       'keyEpoch': 2,
@@ -304,6 +367,75 @@ void main() {
 
     // The second member's message should still have been sent
     expect(sentMessages.length, 1);
+  });
+
+  test('distribution timeout does not block later recipients', () async {
+    final blockedSend = Completer<bool>();
+    var bobStarted = false;
+    var carolStarted = false;
+
+    final pending = rotateAndDistributeGroupKey(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      groupId: groupId,
+      selfPeerId: selfPeerId,
+      senderPublicKey: 'selfPubKey',
+      senderPrivateKey: 'selfPrivKey',
+      senderUsername: 'Self',
+      perRecipientTimeout: const Duration(seconds: 1),
+      distributionTimeout: const Duration(milliseconds: 40),
+      sendP2PMessage: (peerId, message) {
+        if (peerId == 'peer-bob') {
+          bobStarted = true;
+          return blockedSend.future;
+        }
+        if (peerId == 'peer-carol') {
+          carolStarted = true;
+        }
+        return Future.value(true);
+      },
+    );
+
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+
+    expect(bobStarted, isTrue);
+    expect(carolStarted, isTrue);
+    expect(bridge.commandLog, isNot(contains('group:updateKey')));
+
+    final result = await pending;
+
+    expect(result, isNotNull);
+    expect(bridge.commandLog, contains('group:updateKey'));
+    expect(bridge.commandLog.last, 'group:publish');
+  });
+
+  test('updates admin key after distribution timeout', () async {
+    final result = await rotateAndDistributeGroupKey(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      groupId: groupId,
+      selfPeerId: selfPeerId,
+      senderPublicKey: 'selfPubKey',
+      senderPrivateKey: 'selfPrivKey',
+      senderUsername: 'Self',
+      perRecipientTimeout: const Duration(seconds: 1),
+      distributionTimeout: const Duration(milliseconds: 40),
+      sendP2PMessage: (_, __) => Completer<bool>().future,
+    );
+
+    expect(result, isNotNull);
+
+    final updateIdx = bridge.commandLog.indexOf('group:updateKey');
+    final publishIdx = bridge.commandLog.lastIndexOf('group:publish');
+    expect(
+      updateIdx,
+      greaterThan(bridge.commandLog.indexOf('message.encrypt')),
+    );
+    expect(publishIdx, greaterThan(updateIdx));
+
+    final latestKey = await groupRepo.getLatestKey(groupId);
+    expect(latestKey, isNotNull);
+    expect(latestKey!.keyGeneration, 2);
   });
 }
 

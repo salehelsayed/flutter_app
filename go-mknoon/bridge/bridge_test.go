@@ -1423,6 +1423,75 @@ func TestGroupPublish_MediaOnly_AcceptsEmptyText(t *testing.T) {
 	}
 }
 
+// TestGroupPublish_ResponseIncludesTopicPeers verifies that a successful
+// GroupPublish response includes the "topicPeers" field with a numeric value.
+func TestGroupPublish_ResponseIncludesTopicPeers(t *testing.T) {
+	withFreshSingletonNode(t)
+
+	// 1. Generate identity to get valid Ed25519 keys.
+	genResult := GenerateIdentity()
+	genMap := parseJSON(t, genResult)
+	assertOk(t, genMap)
+	identity := genMap["identity"].(map[string]interface{})
+	peerId := identity["peerId"].(string)
+	publicKey := identity["publicKey"].(string)
+	privateKey := identity["privateKey"].(string)
+
+	// 2. Start the node.
+	keyHex := generateTestKeyHex(t)
+	startInput, _ := json.Marshal(map[string]interface{}{
+		"privateKeyHex":  keyHex,
+		"relayAddresses": []string{},
+		"autoRegister":   false,
+	})
+	startResult := StartNode(string(startInput))
+	assertOk(t, parseJSON(t, startResult))
+
+	// 3. Create a group (this joins the topic and generates a group key).
+	createInput, _ := json.Marshal(map[string]interface{}{
+		"name":             "Peer Count Test Group",
+		"groupType":        "chat",
+		"creatorPeerId":    peerId,
+		"creatorPublicKey": publicKey,
+	})
+	createResult := GroupCreate(string(createInput))
+	createMap := parseJSON(t, createResult)
+	assertOk(t, createMap)
+	groupId := createMap["groupId"].(string)
+
+	// 4. Publish a message to the group.
+	publishInput, _ := json.Marshal(map[string]interface{}{
+		"groupId":          groupId,
+		"text":             "hello from bridge test",
+		"senderPeerId":     peerId,
+		"senderPublicKey":  publicKey,
+		"senderPrivateKey": privateKey,
+		"senderUsername":   "TestUser",
+	})
+	publishResult := GroupPublish(string(publishInput))
+	m := parseJSON(t, publishResult)
+	assertOk(t, m)
+
+	// 5. Verify the response includes "topicPeers" as a number.
+	topicPeersRaw, exists := m["topicPeers"]
+	if !exists {
+		t.Fatal("response missing 'topicPeers' field")
+	}
+	topicPeers, ok := topicPeersRaw.(float64) // JSON numbers are float64
+	if !ok {
+		t.Fatalf("topicPeers should be a number, got %T: %v", topicPeersRaw, topicPeersRaw)
+	}
+	// Single node, no other peers connected — expect 0.
+	if topicPeers != 0 {
+		t.Errorf("expected topicPeers == 0 (single node, no other peers), got %v", topicPeers)
+	}
+
+	// 6. Verify "messageId" is still present.
+	if _, ok := m["messageId"].(string); !ok {
+		t.Fatal("response missing 'messageId' string field")
+	}
+}
+
 func TestBuildGroupPublishOpts_IncludesQuotedMessageId(t *testing.T) {
 	media := []map[string]interface{}{
 		{"id": "m1", "mime": "image/jpeg"},

@@ -18,6 +18,7 @@ import 'package:flutter_app/core/database/migrations/007_archive_columns.dart';
 import 'package:flutter_app/core/database/migrations/008_block_columns.dart';
 import 'package:flutter_app/core/database/migrations/009_quoted_message_id.dart';
 import 'package:flutter_app/core/database/migrations/010_media_attachments.dart';
+import 'package:flutter_app/core/database/migrations/042_media_attachment_reliability_columns.dart';
 import 'package:flutter_app/core/database/migrations/011_avatar_version.dart';
 import 'package:flutter_app/core/database/migrations/012_transport_column.dart';
 import 'package:flutter_app/core/database/migrations/013_waveform_column.dart';
@@ -74,6 +75,7 @@ void main() {
     await runBlockColumnsMigration(db);
     await runQuotedMessageIdMigration(db);
     await runMediaAttachmentsMigration(db);
+    await runMediaAttachmentReliabilityColumnsMigration(db);
     await runAvatarVersionMigration(db);
     await runTransportColumnMigration(db);
     await runWaveformColumnMigration(db);
@@ -170,6 +172,7 @@ void main() {
           'local_path',
           'download_status',
           'created_at',
+          'upload_retry_count',
         ]),
       );
 

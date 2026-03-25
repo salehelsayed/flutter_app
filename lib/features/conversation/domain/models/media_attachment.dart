@@ -110,7 +110,7 @@ class MediaAttachment {
       'download_status': downloadStatus,
       'created_at': createdAt,
       'waveform': waveform != null ? jsonEncode(waveform) : null,
-      'upload_retry_count': uploadRetryCount,
+      if (uploadRetryCount != null) 'upload_retry_count': uploadRetryCount,
     };
   }
 
@@ -135,7 +135,8 @@ class MediaAttachment {
       durationMs: json['durationMs'] as int?,
       localPath: null,
       downloadStatus: 'pending',
-      createdAt: json['createdAt'] as String? ??
+      createdAt:
+          json['createdAt'] as String? ??
           DateTime.now().toUtc().toIso8601String(),
       waveform: waveform,
     );

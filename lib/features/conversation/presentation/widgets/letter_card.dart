@@ -376,6 +376,7 @@ class LetterCard extends StatelessWidget {
       return Icons.done_all_rounded;
     }
     if (status == 'failed') return Icons.error_outline_rounded;
+    if (status == 'pending') return Icons.schedule_rounded;
     return Icons.done_rounded; // 'sent', 'sending'
   }
 
@@ -384,6 +385,7 @@ class LetterCard extends StatelessWidget {
       return const Color.fromRGBO(255, 255, 255, 0.45);
     }
     if (status == 'failed') return const Color.fromRGBO(255, 100, 100, 0.60);
+    if (status == 'pending') return const Color.fromRGBO(255, 200, 100, 0.50);
     return const Color.fromRGBO(255, 255, 255, 0.25);
   }
 
@@ -394,6 +396,7 @@ class LetterCard extends StatelessWidget {
     if (status == 'failed') return 'failed';
     if (status == 'sending') return 'sending';
     if (status == 'sent') return 'sent';
+    if (status == 'pending') return 'pending delivery via inbox';
     return status;
   }
 }

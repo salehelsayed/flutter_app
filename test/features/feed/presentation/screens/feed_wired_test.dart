@@ -2629,6 +2629,93 @@ void main() {
     );
 
     testWidgets(
+      'group inline send becomes retry-discoverable before publish resolves',
+      (tester) async {
+        final originalOnError = FlutterError.onError;
+        FlutterError.onError = (details) {
+          if (details.toString().contains('overflowed')) return;
+          originalOnError?.call(details);
+        };
+        addTearDown(() => FlutterError.onError = originalOnError);
+
+        identityRepo.seed(testIdentity);
+
+        final groupRepo = InMemoryGroupRepository();
+        final groupMsgRepo = InMemoryGroupMessageRepository();
+
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: 'g-retryable',
+            name: 'Retryable Group',
+            type: GroupType.chat,
+            topicName: '/mknoon/group/g-retryable',
+            createdAt: DateTime(2026, 2, 1),
+            createdBy: 'admin',
+            myRole: GroupRole.member,
+          ),
+        );
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: 'gm-read-retryable-1',
+            groupId: 'g-retryable',
+            senderPeerId: 'other-peer',
+            senderUsername: 'OtherUser',
+            text: 'Existing thread seed',
+            timestamp: DateTime.now()
+                .subtract(const Duration(hours: 1))
+                .toUtc(),
+            createdAt: DateTime.now()
+                .subtract(const Duration(hours: 1))
+                .toUtc(),
+            readAt: DateTime.now().subtract(const Duration(hours: 1)).toUtc(),
+          ),
+        );
+
+        final fakeGroupListener = _FakeGroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: groupMsgRepo,
+        );
+
+        final gatedBridge = _GatedBridge();
+        bridge = gatedBridge;
+
+        await tester.pumpWidget(
+          buildFeedWired(
+            groupRepository: groupRepo,
+            groupMessageRepository: groupMsgRepo,
+            groupMessageListener: fakeGroupListener,
+          ),
+        );
+        await pumpFeedFrames(tester);
+
+        await tester.enterText(
+          find.byType(TextField).first,
+          'Retry-discoverable inline send',
+        );
+        await tester.pump();
+        final sendButton = find.byIcon(Icons.arrow_upward_rounded).first;
+        await tester.ensureVisible(sendButton);
+        await tester.pump();
+        await tester.tap(sendButton);
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
+
+        final persisted = await groupMsgRepo.getMessagesPage('g-retryable');
+        final outgoing = persisted.firstWhere(
+          (message) =>
+              !message.isIncoming &&
+              message.text == 'Retry-discoverable inline send',
+        );
+        expect(outgoing.status, 'sending');
+        expect(outgoing.wireEnvelope, isNotNull);
+        expect(outgoing.inboxRetryPayload, isNotNull);
+
+        gatedBridge.sendGate.complete();
+        await pumpFeedFrames(tester);
+      },
+    );
+
+    testWidgets(
       'group inline reply shows session reply immediately before network completes',
       (tester) async {
         final originalOnError = FlutterError.onError;
@@ -2911,6 +2998,98 @@ void main() {
         );
         // Card should remain collapsed
         expect(find.byType(CollapsedModeCardBody), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'group inline reply treats zero-peer publish as success and keeps the message pending',
+      (tester) async {
+        final originalOnError = FlutterError.onError;
+        FlutterError.onError = (details) {
+          if (details.toString().contains('overflowed')) return;
+          originalOnError?.call(details);
+        };
+        addTearDown(() => FlutterError.onError = originalOnError);
+
+        identityRepo.seed(testIdentity);
+
+        final groupRepo = InMemoryGroupRepository();
+        final groupMsgRepo = InMemoryGroupMessageRepository();
+
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: 'g-zero-peers',
+            name: 'Zero Peer Group',
+            type: GroupType.chat,
+            topicName: '/mknoon/group/g-zero-peers',
+            createdAt: DateTime(2026, 2, 1),
+            createdBy: 'admin',
+            myRole: GroupRole.member,
+          ),
+        );
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: 'gm-read-zero-peers-1',
+            groupId: 'g-zero-peers',
+            senderPeerId: 'other-peer',
+            senderUsername: 'OtherUser',
+            text: 'Old group message',
+            timestamp: DateTime.now()
+                .subtract(const Duration(hours: 1))
+                .toUtc(),
+            createdAt: DateTime.now()
+                .subtract(const Duration(hours: 1))
+                .toUtc(),
+            readAt: DateTime.now().subtract(const Duration(hours: 1)).toUtc(),
+          ),
+        );
+
+        final fakeGroupListener = _FakeGroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: groupMsgRepo,
+        );
+
+        bridge = FakeBridge(
+          initialResponses: {
+            'group:publish': {
+              'ok': true,
+              'messageId': 'msg-zero-peers',
+              'topicPeers': 0,
+            },
+          },
+        );
+
+        await tester.pumpWidget(
+          buildFeedWired(
+            groupRepository: groupRepo,
+            groupMessageRepository: groupMsgRepo,
+            groupMessageListener: fakeGroupListener,
+          ),
+        );
+        await pumpFeedFrames(tester);
+
+        await tester.enterText(find.byType(TextField).first, 'Zero peers');
+        await tester.pump();
+        final sendButton = find.byIcon(Icons.arrow_upward_rounded).first;
+        await tester.ensureVisible(sendButton);
+        await tester.pump();
+        await tester.tap(sendButton);
+        await pumpFeedFrames(tester);
+
+        expect(
+          find.textContaining('You replied'),
+          findsOneWidget,
+          reason:
+              'Zero-peer publish still counts as a successful group send in the feed composer',
+        );
+        expect(find.textContaining('failed to send'), findsNothing);
+
+        final savedMessages = await groupMsgRepo.getMessagesPage('g-zero-peers');
+        final saved = savedMessages.firstWhere(
+          (message) => message.text == 'Zero peers' && !message.isIncoming,
+        );
+        expect(saved.status, 'pending');
+        expect(saved.inboxStored, isTrue);
       },
     );
 

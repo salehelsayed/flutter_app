@@ -115,6 +115,7 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
             groupId: widget.groupId,
             newMember: newMember,
             selfPeerId: identity.peerId,
+            syncBridgeConfig: false,
           );
           addedMembers.add(newMember);
         } catch (e) {

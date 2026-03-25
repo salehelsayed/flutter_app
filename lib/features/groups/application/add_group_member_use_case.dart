@@ -1,4 +1,5 @@
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -15,6 +16,7 @@ Future<void> addGroupMember({
   required String groupId,
   required GroupMember newMember,
   required String selfPeerId,
+  bool syncBridgeConfig = true,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -45,13 +47,75 @@ Future<void> addGroupMember({
   // 2. Save member to repo
   await groupRepo.saveMember(newMember);
 
-  emitFlowEvent(
-    layer: 'FL',
-    event: 'GROUP_ADD_MEMBER_USE_CASE_SUCCESS',
-    details: {
-      'peerId': newMember.peerId.length > 8
-          ? newMember.peerId.substring(0, 8)
-          : newMember.peerId,
-    },
-  );
+  if (!syncBridgeConfig) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_ADD_MEMBER_USE_CASE_SKIPPED_SYNC',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+      },
+    );
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_ADD_MEMBER_USE_CASE_SUCCESS',
+      details: {
+        'peerId': newMember.peerId.length > 8
+            ? newMember.peerId.substring(0, 8)
+            : newMember.peerId,
+      },
+    );
+    return;
+  }
+
+  final allMembers = await groupRepo.getMembers(groupId);
+
+  final groupConfig = {
+    'name': group.name,
+    'groupType': group.type.toValue(),
+    if (group.description != null) 'description': group.description,
+    'members': allMembers
+        .map(
+          (m) => {
+            'peerId': m.peerId,
+            'username': m.username,
+            'role': m.role.toValue(),
+            'publicKey': m.publicKey,
+            if (m.mlKemPublicKey != null) 'mlKemPublicKey': m.mlKemPublicKey,
+          },
+        )
+        .toList(),
+    'createdBy': group.createdBy,
+    'createdAt': group.createdAt.toUtc().toIso8601String(),
+  };
+
+  try {
+    await callGroupUpdateConfig(
+      bridge,
+      groupId: groupId,
+      groupConfig: groupConfig,
+    );
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_ADD_MEMBER_USE_CASE_SUCCESS',
+      details: {
+        'peerId': newMember.peerId.length > 8
+            ? newMember.peerId.substring(0, 8)
+            : newMember.peerId,
+      },
+    );
+  } catch (e) {
+    await groupRepo.removeMember(groupId, newMember.peerId);
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_ADD_MEMBER_USE_CASE_REVERTED',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        'peerId': newMember.peerId.length > 8
+            ? newMember.peerId.substring(0, 8)
+            : newMember.peerId,
+      },
+    );
+    rethrow;
+  }
 }

@@ -683,9 +683,10 @@ class _ConversationWiredState extends State<ConversationWired> {
         List<MediaAttachment>? uploadedAttachments;
         if (mediaToUpload.isNotEmpty && widget.bridge != null) {
           uploadedAttachments = [];
-          for (final media in mediaToUpload) {
+          for (var index = 0; index < mediaToUpload.length; index++) {
+            final media = mediaToUpload[index];
             final mime = _mimeFromPath(media.file.path);
-            final mediaId = _uuid.v4();
+            final mediaId = optimisticMedia?[index].id ?? _uuid.v4();
 
             // Try local WiFi first.
             bool localSuccess = false;
@@ -723,6 +724,7 @@ class _ConversationWiredState extends State<ConversationWired> {
                 mime: mime,
                 recipientPeerId: _contact.peerId,
                 mediaFileManager: widget.mediaFileManager,
+                blobId: mediaId,
                 width: media.width,
                 height: media.height,
                 durationMs: media.durationMs,
@@ -1261,6 +1263,7 @@ class _ConversationWiredState extends State<ConversationWired> {
     }
 
     final now = DateTime.now().toUtc().toIso8601String();
+    final voiceAttachmentId = _uuid.v4();
     final optimisticMessage = ConversationMessage(
       id: _uuid.v4(),
       contactPeerId: _contact.peerId,
@@ -1273,7 +1276,7 @@ class _ConversationWiredState extends State<ConversationWired> {
       quotedMessageId: quotedMessageId,
       media: [
         MediaAttachment(
-          id: _uuid.v4(),
+          id: voiceAttachmentId,
           messageId: '',
           mime: recording.mime,
           size: recording.sizeBytes,
@@ -1326,12 +1329,11 @@ class _ConversationWiredState extends State<ConversationWired> {
     try {
       // Try local WiFi first for voice messages.
       if (widget.p2pService.isLocalPeer(_contact.peerId)) {
-        final mediaId = _uuid.v4();
         final localSuccess = await widget.p2pService.sendLocalMedia(
           peerId: _contact.peerId,
           filePath: recording.filePath,
           mime: recording.mime,
-          mediaId: mediaId,
+          mediaId: voiceAttachmentId,
           fromPeerId: identity.peerId,
           durationMs: recording.durationMs,
           waveform: waveform,
@@ -1340,7 +1342,7 @@ class _ConversationWiredState extends State<ConversationWired> {
         if (localSuccess) {
           // Voice transferred locally — send text-only message via local WS.
           final voiceAttachment = MediaAttachment(
-            id: mediaId,
+            id: voiceAttachmentId,
             messageId: optimisticMessage.id,
             mime: recording.mime,
             size: recording.sizeBytes,
@@ -1432,6 +1434,7 @@ class _ConversationWiredState extends State<ConversationWired> {
         messageId: optimisticMessage.id,
         timestamp: optimisticMessage.timestamp,
         quotedMessageId: quotedMessageId,
+        blobId: voiceAttachmentId,
       );
 
       if (mounted) {

@@ -14,7 +14,17 @@ import 'package:flutter_app/features/groups/domain/repositories/group_message_re
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 
 /// Result of sending a group message.
-enum SendGroupMessageResult { success, groupNotFound, unauthorized, error }
+enum SendGroupMessageResult {
+  success,
+  groupNotFound,
+  unauthorized,
+  error,
+
+  /// Publish succeeded but 0 peers were connected to the topic.
+  /// The message was stored in the relay inbox as a fallback.
+  /// The returned [GroupMessage] has status `'pending'`.
+  successNoPeers,
+}
 
 String _buildGroupPushTitle(GroupModel group) => group.name;
 
@@ -54,10 +64,80 @@ Future<List<String>> _loadGroupPushRecipients({
       .toList();
 }
 
+/// Wraps [callGroupInboxStore] in try/catch — returns true on success.
+///
+/// Never throws. The caller observes the outcome via the return value.
+Future<bool> _tryInboxStore({
+  required Bridge bridge,
+  required String groupId,
+  required String inboxPayload,
+  List<String>? recipientPeerIds,
+  String? pushTitle,
+  String? pushBody,
+}) async {
+  try {
+    await callGroupInboxStore(
+      bridge,
+      groupId,
+      inboxPayload,
+      recipientPeerIds: recipientPeerIds,
+      pushTitle: pushTitle,
+      pushBody: pushBody,
+    );
+    return true;
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_SEND_MSG_INBOX_STORE_FAILED',
+      details: {'error': e.toString()},
+    );
+    return false;
+  }
+}
+
+Future<void> _persistOutgoingMedia({
+  required MediaAttachmentRepository? mediaAttachmentRepo,
+  required List<MediaAttachment>? attachments,
+}) async {
+  if (mediaAttachmentRepo == null ||
+      attachments == null ||
+      attachments.isEmpty) {
+    return;
+  }
+
+  final messageIds = attachments
+      .map((attachment) => attachment.messageId)
+      .where((messageId) => messageId.isNotEmpty)
+      .toSet();
+  if (messageIds.length == 1) {
+    final messageId = messageIds.first;
+    final expectedIds = attachments.map((attachment) => attachment.id).toSet();
+    final existing = await mediaAttachmentRepo.getAttachmentsForMessage(
+      messageId,
+    );
+    final hasStaleUploadPending = existing.any(
+      (attachment) =>
+          attachment.downloadStatus == 'upload_pending' &&
+          !expectedIds.contains(attachment.id),
+    );
+    if (hasStaleUploadPending) {
+      await mediaAttachmentRepo.deleteAttachmentsForMessage(messageId);
+    }
+  }
+
+  for (final attachment in attachments) {
+    await mediaAttachmentRepo.saveAttachment(attachment);
+  }
+}
+
 /// Sends a message to a group.
 ///
-/// Verifies the group exists and the sender has write permission.
-/// Publishes via the bridge and saves locally.
+/// Owns optimistic persistence for ALL production callers:
+/// 1. Validates group exists + sender authorized
+/// 2. Pre-persists row with status `'sending'` + wireEnvelope + inboxRetryPayload
+/// 3. Kicks off publish + inbox store concurrently
+/// 4. Reads topicPeers from publish result
+/// 5. Applies 4-way result matrix to determine final status
 ///
 /// Go's GroupPublish handles encryption and signing internally,
 /// so it needs the sender's public and private keys.
@@ -119,17 +199,20 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     return (SendGroupMessageResult.error, null);
   }
 
-  // 3. Publish + inbox store run concurrently (independent operations)
+  // 3. Prepare all parameters
   final now = timestamp ?? DateTime.now().toUtc();
-  final latestKey = await groupRepo.getLatestKey(groupId);
-  final resolvedMessageId = messageId ?? const Uuid().v4();
-
-  final mediaJson = mediaAttachments?.map((a) => a.toJson()).toList();
-  final recipientPeerIds = await _loadGroupPushRecipients(
+  final latestKeyFuture = groupRepo.getLatestKey(groupId);
+  final recipientPeerIdsFuture = _loadGroupPushRecipients(
     groupRepo: groupRepo,
     groupId: groupId,
     senderPeerId: senderPeerId,
   );
+  final latestKey = await latestKeyFuture;
+  final resolvedMessageId = messageId ?? const Uuid().v4();
+  final keyEpoch = latestKey?.keyGeneration ?? 0;
+
+  final mediaJson = mediaAttachments?.map((a) => a.toJson()).toList();
+  final recipientPeerIds = await recipientPeerIdsFuture;
   final pushTitle = _buildGroupPushTitle(group);
   final pushBody = _buildGroupPushBody(
     senderUsername: senderUsername,
@@ -137,7 +220,61 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     mediaAttachments: mediaAttachments,
   );
 
-  // Start both operations concurrently
+  // 3b. Build wireEnvelope (plaintext publish params for retry — NO senderPrivateKey)
+  final wireEnvelope = jsonEncode({
+    'groupId': groupId,
+    'text': sanitizedText,
+    'senderPeerId': senderPeerId,
+    'senderPublicKey': senderPublicKey,
+    'senderUsername': senderUsername,
+    'messageId': resolvedMessageId,
+    if (quotedMessageId != null && quotedMessageId.isNotEmpty)
+      'quotedMessageId': quotedMessageId,
+    if (mediaJson != null && mediaJson.isNotEmpty) 'media': mediaJson,
+  });
+
+  // 3c. Build inboxRetryPayload (exact inputs for callGroupInboxStore)
+  final inboxPayload = jsonEncode({
+    'groupId': groupId,
+    'senderId': senderPeerId,
+    'senderUsername': senderUsername,
+    'keyEpoch': keyEpoch,
+    'text': sanitizedText,
+    'timestamp': now.toIso8601String(),
+    'messageId': resolvedMessageId,
+    if (quotedMessageId != null && quotedMessageId.isNotEmpty)
+      'quotedMessageId': quotedMessageId,
+    if (mediaJson != null && mediaJson.isNotEmpty) 'media': mediaJson,
+  });
+  final inboxRetryPayload = jsonEncode({
+    'groupId': groupId,
+    'message': inboxPayload,
+    if (recipientPeerIds.isNotEmpty) 'recipientPeerIds': recipientPeerIds,
+    if (pushTitle.isNotEmpty) 'pushTitle': pushTitle,
+    if (pushBody.isNotEmpty) 'pushBody': pushBody,
+  });
+
+  // 4. Pre-persist outgoing row with status 'sending' BEFORE bridge call
+  final prePersistMessage = GroupMessage(
+    id: resolvedMessageId,
+    groupId: groupId,
+    senderPeerId: senderPeerId,
+    senderUsername: senderUsername,
+    text: sanitizedText,
+    timestamp: now,
+    quotedMessageId: quotedMessageId,
+    keyGeneration: keyEpoch,
+    status: 'sending',
+    isIncoming: false,
+    createdAt: now,
+    wireEnvelope: wireEnvelope,
+    inboxStored: false,
+    inboxRetryPayload: inboxRetryPayload,
+  );
+
+  await msgRepo.saveMessage(prePersistMessage);
+
+  // 5. Start publish + inbox store concurrently
   final publishFuture = callGroupPublish(
     bridge,
     groupId: groupId,
@@ -150,34 +287,29 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     quotedMessageId: quotedMessageId,
     media: mediaJson,
   );
-  final inboxFuture = _safeInboxStore(
+  final inboxFuture = _tryInboxStore(
     bridge: bridge,
     groupId: groupId,
-    senderPeerId: senderPeerId,
-    senderUsername: senderUsername,
-    keyEpoch: latestKey?.keyGeneration ?? 0,
-    text: sanitizedText,
-    timestamp: now,
-    messageId: resolvedMessageId,
-    quotedMessageId: quotedMessageId,
-    media: mediaJson,
-    recipientPeerIds: recipientPeerIds,
+    inboxPayload: inboxPayload,
+    recipientPeerIds: recipientPeerIds.isNotEmpty ? recipientPeerIds : null,
     pushTitle: pushTitle,
     pushBody: pushBody,
   );
 
-  // Await publish — determines success/failure
-  try {
-    final result = await publishFuture;
+  // 6. Await publish — determines success/failure
+  Map<String, dynamic>? publishResult;
+  bool publishOk = false;
 
-    if (result['ok'] != true) {
+  try {
+    publishResult = await publishFuture;
+    publishOk = publishResult['ok'] == true;
+
+    if (!publishOk) {
       emitFlowEvent(
         layer: 'FL',
         event: 'GROUP_SEND_MSG_USE_CASE_PUBLISH_ERROR',
-        details: {'errorCode': result['errorCode']},
+        details: {'errorCode': publishResult['errorCode']},
       );
-      await inboxFuture;
-      return (SendGroupMessageResult.error, null);
     }
   } catch (e) {
     emitFlowEvent(
@@ -185,95 +317,152 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
       event: 'GROUP_SEND_MSG_USE_CASE_ERROR',
       details: {'error': e.toString()},
     );
-    await inboxFuture;
-    return (SendGroupMessageResult.error, null);
   }
 
-  // Await inbox store (already completed or nearly done)
-  await inboxFuture;
+  // 7. Await inbox result
+  final inboxOk = await inboxFuture;
 
-  // 5. Create GroupMessage (isIncoming: false, status: 'sent')
-  final message = GroupMessage(
-    id: resolvedMessageId,
-    groupId: groupId,
-    senderPeerId: senderPeerId,
-    senderUsername: senderUsername,
-    text: sanitizedText,
-    timestamp: now,
-    quotedMessageId: quotedMessageId,
-    keyGeneration: latestKey?.keyGeneration ?? 0,
-    status: 'sent',
-    isIncoming: false,
-    createdAt: now,
-  );
-
-  // 6. Save to repo
-  await msgRepo.saveMessage(message);
-
-  // 7. Save media attachments with resolved messageId
-  if (mediaAttachments != null && mediaAttachmentRepo != null) {
-    for (final a in mediaAttachments) {
-      await mediaAttachmentRepo.saveAttachment(
-        a.copyWith(messageId: resolvedMessageId),
-      );
-    }
-  }
-
-  emitFlowEvent(
-    layer: 'FL',
-    event: 'GROUP_SEND_MSG_USE_CASE_SUCCESS',
-    details: {
-      'messageId': resolvedMessageId.length > 8
-          ? resolvedMessageId.substring(0, 8)
-          : resolvedMessageId,
-    },
-  );
-
-  return (SendGroupMessageResult.success, message);
-}
-
-/// Wraps [callGroupInboxStore] in try/catch so failures don't propagate.
-Future<void> _safeInboxStore({
-  required Bridge bridge,
-  required String groupId,
-  required String senderPeerId,
-  required String senderUsername,
-  required int keyEpoch,
-  required String text,
-  required DateTime timestamp,
-  required String messageId,
-  String? quotedMessageId,
-  List<Map<String, dynamic>>? media,
-  List<String>? recipientPeerIds,
-  String? pushTitle,
-  String? pushBody,
-}) async {
-  try {
-    final inboxPayload = jsonEncode({
-      'groupId': groupId,
-      'senderId': senderPeerId,
-      'senderUsername': senderUsername,
-      'keyEpoch': keyEpoch,
-      'text': text,
-      'timestamp': timestamp.toIso8601String(),
-      'messageId': messageId,
-      if (quotedMessageId != null && quotedMessageId.isNotEmpty)
-        'quotedMessageId': quotedMessageId,
-      if (media != null && media.isNotEmpty) 'media': media,
-    });
-    await callGroupInboxStore(
-      bridge,
-      groupId,
-      inboxPayload,
-      recipientPeerIds: recipientPeerIds,
-      pushTitle: pushTitle,
-      pushBody: pushBody,
+  // 8. Apply 4-way result matrix
+  if (!publishOk) {
+    // Publish failed — preserve publish retry inputs while persisting the
+    // observed inbox outcome from the same in-flight inbox future.
+    final failedMessage = prePersistMessage.copyWith(
+      status: 'failed',
+      inboxStored: inboxOk,
+      inboxRetryPayload: inboxOk ? null : prePersistMessage.inboxRetryPayload,
     );
-  } catch (e) {
+    await msgRepo.updateMessageStatus(resolvedMessageId, 'failed');
+    await msgRepo.updateInboxStored(resolvedMessageId, stored: inboxOk);
+    if (inboxOk) {
+      await msgRepo.updateInboxRetryPayload(resolvedMessageId, null);
+    }
     emitFlowEvent(
       layer: 'FL',
-      event: 'GROUP_SEND_MSG_INBOX_STORE_FAILED',
-      details: {'error': e.toString()},
+      event: 'GROUP_SEND_MSG_USE_CASE_PUBLISH_FAILED',
+      details: {
+        'messageId': resolvedMessageId.length > 8
+            ? resolvedMessageId.substring(0, 8)
+            : resolvedMessageId,
+        'inboxOk': inboxOk,
+      },
     );
+    return (SendGroupMessageResult.error, failedMessage);
+  }
+
+  // Publish succeeded — read topicPeers
+  final topicPeers = publishResult?.containsKey('topicPeers') == true
+      ? publishResult!['topicPeers'] as int?
+      : null;
+
+  if (topicPeers == null) {
+    // Missing topicPeers key — legacy success (backward compat, assume peers > 0)
+    final finalMessage = prePersistMessage.copyWith(
+      status: 'sent',
+      wireEnvelope: null,
+      inboxStored: inboxOk,
+      inboxRetryPayload: inboxOk ? null : prePersistMessage.inboxRetryPayload,
+    );
+    await msgRepo.saveMessage(finalMessage);
+
+    await _persistOutgoingMedia(
+      mediaAttachmentRepo: mediaAttachmentRepo,
+      attachments: mediaAttachments
+          ?.map(
+            (attachment) => attachment.copyWith(messageId: resolvedMessageId),
+          )
+          .toList(growable: false),
+    );
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_SEND_MSG_USE_CASE_SUCCESS',
+      details: {
+        'messageId': resolvedMessageId.length > 8
+            ? resolvedMessageId.substring(0, 8)
+            : resolvedMessageId,
+        'legacy': true,
+      },
+    );
+    return (SendGroupMessageResult.success, finalMessage);
+  }
+
+  if (topicPeers > 0) {
+    // Normal success: peers > 0
+    final finalMessage = prePersistMessage.copyWith(
+      status: 'sent',
+      wireEnvelope: null,
+      inboxStored: inboxOk,
+      inboxRetryPayload: inboxOk ? null : prePersistMessage.inboxRetryPayload,
+    );
+    await msgRepo.saveMessage(finalMessage);
+
+    await _persistOutgoingMedia(
+      mediaAttachmentRepo: mediaAttachmentRepo,
+      attachments: mediaAttachments
+          ?.map(
+            (attachment) => attachment.copyWith(messageId: resolvedMessageId),
+          )
+          .toList(growable: false),
+    );
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_SEND_MSG_USE_CASE_SUCCESS',
+      details: {
+        'messageId': resolvedMessageId.length > 8
+            ? resolvedMessageId.substring(0, 8)
+            : resolvedMessageId,
+        'topicPeers': topicPeers,
+        'inboxOk': inboxOk,
+      },
+    );
+    return (SendGroupMessageResult.success, finalMessage);
+  }
+
+  // topicPeers == 0
+  if (inboxOk) {
+    // 0-peer + inbox OK → successNoPeers, status 'pending'
+    final pendingMessage = prePersistMessage.copyWith(
+      status: 'pending',
+      wireEnvelope: null,
+      inboxStored: true,
+      inboxRetryPayload: null,
+    );
+    await msgRepo.saveMessage(pendingMessage);
+
+    // Save media attachments
+    if (mediaAttachments != null && mediaAttachmentRepo != null) {
+      for (final a in mediaAttachments) {
+        await mediaAttachmentRepo.saveAttachment(
+          a.copyWith(messageId: resolvedMessageId),
+        );
+      }
+    }
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_SEND_MSG_USE_CASE_SUCCESS_NO_PEERS',
+      details: {
+        'messageId': resolvedMessageId.length > 8
+            ? resolvedMessageId.substring(0, 8)
+            : resolvedMessageId,
+      },
+    );
+    return (SendGroupMessageResult.successNoPeers, pendingMessage);
+  } else {
+    // 0-peer + inbox fail → error
+    await msgRepo.updateMessageStatus(resolvedMessageId, 'failed');
+    final failedMessage = prePersistMessage.copyWith(status: 'failed');
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_SEND_MSG_USE_CASE_ZERO_PEERS_INBOX_FAILED',
+      details: {
+        'messageId': resolvedMessageId.length > 8
+            ? resolvedMessageId.substring(0, 8)
+            : resolvedMessageId,
+      },
+    );
+    return (SendGroupMessageResult.error, failedMessage);
   }
 }

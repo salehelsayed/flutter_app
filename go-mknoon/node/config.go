@@ -35,6 +35,7 @@ const (
 	// PubSub.
 	GroupTopicPrefix           = "/mknoon/group/"
 	PubSubTimeout              = 30 * time.Second
+	KeyRotationGracePeriod     = 30 * time.Second
 	GroupDiscoveryInterval     = 30 * time.Second // periodic rendezvous re-discovery for group peers
 	MaxGroupDiscoveryBackoff   = 5 * time.Minute  // max backoff for group peer discovery
 	GroupDiscoveryConcurrency  = 5                // max concurrent discovery goroutines

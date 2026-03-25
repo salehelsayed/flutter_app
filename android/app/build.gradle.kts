@@ -105,30 +105,19 @@ fun isValidAar(f: File): Boolean = f.exists() && f.length() > 1024
 
 tasks.register("buildGoAar") {
     val aar = file("libs/GoMknoon.aar")
-    val goMknoonDir = file("${rootProject.projectDir}/../go-mknoon")
+    val ensureBindingsScript = rootProject.file("../scripts/ensure_go_android_bindings.sh")
     outputs.file(aar)
-    onlyIf { !isValidAar(aar) }
+    outputs.upToDateWhen { false }
     doLast {
-        // Remove any stale/invalid artifact before building.
-        if (aar.exists()) {
-            logger.lifecycle("Removing invalid GoMknoon.aar (${aar.length()} bytes)...")
-            aar.delete()
-        }
-        logger.lifecycle("GoMknoon.aar not found — building via 'make android'...")
-        val goPath = providers.exec {
-            commandLine("go", "env", "GOPATH")
-        }.standardOutput.asText.get().trim()
         @Suppress("DEPRECATION")
         exec {
-            workingDir = goMknoonDir
-            environment("PATH", System.getenv("PATH") + ":" + goPath + "/bin")
-            environment("ANDROID_HOME", android.sdkDirectory.absolutePath)
-            commandLine("make", "android")
+            workingDir = rootProject.projectDir
+            commandLine("bash", ensureBindingsScript.absolutePath)
         }
         if (!isValidAar(aar)) {
             aar.delete()
             throw GradleException(
-                "GoMknoon.aar missing or invalid after 'make android'.\n" +
+                "GoMknoon.aar missing or invalid after ensuring Android gomobile bindings.\n" +
                 "Ensure Go and gomobile are installed:\n" +
                 "  go install golang.org/x/mobile/cmd/gomobile@latest\n" +
                 "  gomobile init"

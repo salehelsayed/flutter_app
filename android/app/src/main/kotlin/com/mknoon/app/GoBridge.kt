@@ -108,6 +108,7 @@ class GoBridge(flutterEngine: FlutterEngine) : MethodChannel.MethodCallHandler,
             "groupPublish" -> runOnBackground({ GoMknoon.groupPublish(args ?: "") }, result)
             "groupPublishReaction" -> runOnBackground({ GoMknoon.groupPublishReaction(args ?: "") }, result)
             "groupUpdateConfig" -> runOnBackground({ GoMknoon.groupUpdateConfig(args ?: "") }, result)
+            "groupGenerateNextKey" -> runOnBackground({ GoMknoon.groupGenerateNextKey(args ?: "") }, result)
             "groupRotateKey" -> runOnBackground({ GoMknoon.groupRotateKey(args ?: "") }, result)
             "groupUpdateKey" -> runOnBackground({ GoMknoon.groupUpdateKey(args ?: "") }, result)
             "groupEncryptMessage" -> runOnBackground({ GoMknoon.groupEncryptMessage(args ?: "") }, result)

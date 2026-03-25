@@ -27,10 +27,10 @@ class GroupKeyUpdateListener {
     required GroupRepository groupRepo,
     required Bridge bridge,
     required Future<String?> Function() getOwnMlKemSecretKey,
-  })  : _stream = groupKeyUpdateStream,
-        _groupRepo = groupRepo,
-        _bridge = bridge,
-        _getOwnMlKemSecretKey = getOwnMlKemSecretKey;
+  }) : _stream = groupKeyUpdateStream,
+       _groupRepo = groupRepo,
+       _bridge = bridge,
+       _getOwnMlKemSecretKey = getOwnMlKemSecretKey;
 
   void start() {
     if (_subscription != null) return;
@@ -96,6 +96,26 @@ class GroupKeyUpdateListener {
       final keyGeneration = keyData['keyGeneration'] as int;
       final encryptedKey = keyData['encryptedKey'] as String;
 
+      try {
+        await callGroupUpdateKey(
+          _bridge,
+          groupId: groupId,
+          groupKey: encryptedKey,
+          keyEpoch: keyGeneration,
+        );
+      } catch (e) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_KEY_UPDATE_LISTENER_UPDATE_KEY_FAILED',
+          details: {
+            'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+            'keyGeneration': keyGeneration,
+            'error': e.toString(),
+          },
+        );
+        return;
+      }
+
       final keyInfo = GroupKeyInfo(
         groupId: groupId,
         keyGeneration: keyGeneration,
@@ -104,21 +124,11 @@ class GroupKeyUpdateListener {
       );
       await _groupRepo.saveKey(keyInfo);
 
-      // Update Go's stored key so the topic validator accepts messages
-      // signed with the new epoch.
-      await callGroupUpdateKey(
-        _bridge,
-        groupId: groupId,
-        groupKey: encryptedKey,
-        keyEpoch: keyGeneration,
-      );
-
       emitFlowEvent(
         layer: 'FL',
         event: 'GROUP_KEY_UPDATE_LISTENER_SAVED',
         details: {
-          'groupId':
-              groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
           'keyGeneration': keyGeneration,
         },
       );

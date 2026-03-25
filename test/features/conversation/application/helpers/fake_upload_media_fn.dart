@@ -13,12 +13,14 @@ class FakeUploadMediaFn {
   String? _lastMime;
   int? _lastDurationMs;
   String? _lastBlobId;
+  List<String>? _lastAllowedPeers;
 
   int get callCount => _callCount;
   String? get lastLocalPath => _lastLocalPath;
   String? get lastMime => _lastMime;
   int? get lastDurationMs => _lastDurationMs;
   String? get lastBlobId => _lastBlobId;
+  List<String>? get lastAllowedPeers => _lastAllowedPeers;
 
   /// Set the default return value.
   void willReturn(MediaAttachment? result) {
@@ -49,6 +51,9 @@ class FakeUploadMediaFn {
     _lastMime = mime;
     _lastDurationMs = durationMs;
     _lastBlobId = blobId;
+    _lastAllowedPeers = allowedPeers == null
+        ? null
+        : List<String>.from(allowedPeers);
 
     if (_resultsByPath.containsKey(localFilePath)) {
       return _resultsByPath[localFilePath];

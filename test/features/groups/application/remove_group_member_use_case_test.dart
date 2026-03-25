@@ -207,4 +207,31 @@ void main() {
       expect(member['publicKey'], isNotNull);
     }
   });
+
+  test('restores removed member when group:updateConfig fails', () async {
+    bridge.responses['group:updateConfig'] = {
+      'ok': false,
+      'errorCode': 'CONFIG_SYNC_FAILED',
+      'errorMessage': 'bridge rejected config',
+    };
+
+    await expectLater(
+      removeGroupMember(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: 'group-1',
+        memberPeerId: 'peer-to-remove',
+      ),
+      throwsA(isA<Exception>()),
+    );
+
+    final restored = await groupRepo.getMember('group-1', 'peer-to-remove');
+    expect(restored, isNotNull);
+    expect(restored!.username, 'RemoveMe');
+
+    final admin = await groupRepo.getMember('group-1', 'peer-admin');
+    final bystander = await groupRepo.getMember('group-1', 'peer-bystander');
+    expect(admin, isNotNull);
+    expect(bystander, isNotNull);
+  });
 }

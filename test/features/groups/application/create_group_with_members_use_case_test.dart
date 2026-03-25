@@ -111,8 +111,9 @@ void main() {
       expect(bob.role, MemberRole.writer);
     });
 
-    test('calls callGroupUpdateConfig with full member list including self',
-        () async {
+    test(
+      'calls callGroupUpdateConfig once with full member list including self',
+      () async {
       await createGroupWithMembers(
         bridge: bridge,
         groupRepo: groupRepo,
@@ -122,6 +123,11 @@ void main() {
         type: GroupType.chat,
         name: 'My Group',
       );
+
+      final updateConfigCalls = bridge.commandLog
+          .where((command) => command == 'group:updateConfig')
+          .length;
+      expect(updateConfigCalls, 1);
 
       // Find the group:updateConfig command
       final updateConfigMsg = bridge.sentMessages.firstWhere(

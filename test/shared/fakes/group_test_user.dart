@@ -1,6 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart'
+    as group_send;
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
@@ -8,6 +11,7 @@ import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 
 import '../../core/bridge/fake_bridge.dart';
 import 'fake_group_pubsub_network.dart';
+import 'in_memory_media_attachment_repository.dart';
 import 'in_memory_group_message_repository.dart';
 import 'in_memory_group_repository.dart';
 
@@ -20,6 +24,7 @@ class GroupTestUser {
   final FakeBridge bridge;
   final InMemoryGroupRepository groupRepo;
   final InMemoryGroupMessageRepository msgRepo;
+  final InMemoryMediaAttachmentRepository mediaAttachmentRepo;
   final GroupMessageListener groupMessageListener;
   final FakeGroupPubSubNetwork _network;
   final StreamController<Map<String, dynamic>> _incomingController;
@@ -32,6 +37,7 @@ class GroupTestUser {
     required this.bridge,
     required this.groupRepo,
     required this.msgRepo,
+    required this.mediaAttachmentRepo,
     required this.groupMessageListener,
     required FakeGroupPubSubNetwork network,
     required StreamController<Map<String, dynamic>> incomingController,
@@ -47,6 +53,7 @@ class GroupTestUser {
     final effectiveBridge = bridge ?? FakeBridge();
     final groupRepo = InMemoryGroupRepository();
     final msgRepo = InMemoryGroupMessageRepository();
+    final mediaAttachmentRepo = InMemoryMediaAttachmentRepository();
     final controller = network.registerPeer(peerId);
 
     final listener = GroupMessageListener(
@@ -54,6 +61,7 @@ class GroupTestUser {
       msgRepo: msgRepo,
       bridge: effectiveBridge,
       getSelfPeerId: () async => peerId,
+      mediaAttachmentRepo: mediaAttachmentRepo,
     );
 
     return GroupTestUser._(
@@ -64,6 +72,7 @@ class GroupTestUser {
       bridge: effectiveBridge,
       groupRepo: groupRepo,
       msgRepo: msgRepo,
+      mediaAttachmentRepo: mediaAttachmentRepo,
       groupMessageListener: listener,
       network: network,
       incomingController: controller,
@@ -159,6 +168,8 @@ class GroupTestUser {
     String? quotedMessageId,
   }) async {
     final now = DateTime.now().toUtc();
+    final latestKey = await groupRepo.getLatestKey(groupId);
+    final keyEpoch = latestKey?.keyGeneration ?? 0;
     final messageId = '${peerId}_${now.millisecondsSinceEpoch}';
 
     final message = GroupMessage(
@@ -169,7 +180,7 @@ class GroupTestUser {
       text: text,
       timestamp: now,
       quotedMessageId: quotedMessageId,
-      keyGeneration: 0,
+      keyGeneration: keyEpoch,
       status: 'sent',
       isIncoming: false,
       createdAt: now,
@@ -180,7 +191,7 @@ class GroupTestUser {
       'groupId': groupId,
       'senderId': peerId,
       'senderUsername': username,
-      'keyEpoch': 0,
+      'keyEpoch': keyEpoch,
       'text': text,
       'timestamp': now.toIso8601String(),
       if (quotedMessageId != null) 'quotedMessageId': quotedMessageId,
@@ -188,6 +199,86 @@ class GroupTestUser {
     await _network.publish(groupId, peerId, envelope);
 
     return message;
+  }
+
+  /// Sends through the real bridge-backed use case and mirrors successful
+  /// live publish delivery into the fake pubsub network.
+  Future<(group_send.SendGroupMessageResult, GroupMessage?)>
+  sendGroupMessageViaBridge({
+    required String groupId,
+    required String text,
+    String? quotedMessageId,
+    List<MediaAttachment>? mediaAttachments,
+    int? publishTopicPeersOverride,
+  }) async {
+    final now = DateTime.now().toUtc();
+    final messageId = '${peerId}_${now.millisecondsSinceEpoch}';
+    final topicPeers =
+        publishTopicPeersOverride ??
+        _network
+            .getSubscribers(groupId)
+            .where((subscriber) => subscriber != peerId)
+            .length;
+
+    final previousPublishResponse = bridge.responses['group:publish'];
+    bridge.responses['group:publish'] = {
+      'ok': true,
+      'messageId': messageId,
+      'topicPeers': topicPeers,
+    };
+    try {
+      final (result, message) = await group_send.sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: groupId,
+        text: text,
+        senderPeerId: peerId,
+        senderPublicKey: publicKey,
+        senderPrivateKey: privateKey,
+        senderUsername: username,
+        messageId: messageId,
+        timestamp: now,
+        quotedMessageId: quotedMessageId,
+        mediaAttachments: mediaAttachments,
+        mediaAttachmentRepo: mediaAttachmentRepo,
+      );
+
+      if (result == group_send.SendGroupMessageResult.success &&
+          message != null) {
+        final publishRaw = bridge.sentMessages.lastWhere(
+          (raw) =>
+              (jsonDecode(raw) as Map<String, dynamic>)['cmd'] ==
+              'group:publish',
+        );
+        final publishPayload =
+            (jsonDecode(publishRaw) as Map<String, dynamic>)['payload']
+                as Map<String, dynamic>;
+
+        final envelope = <String, dynamic>{
+          'groupId': groupId,
+          'senderId': peerId,
+          'senderUsername': username,
+          'keyEpoch': message.keyGeneration,
+          'text': publishPayload['text'] as String? ?? text,
+          'timestamp': message.timestamp.toUtc().toIso8601String(),
+          'messageId': publishPayload['messageId'] as String? ?? message.id,
+          if (quotedMessageId != null && quotedMessageId.isNotEmpty)
+            'quotedMessageId': quotedMessageId,
+          if (publishPayload['media'] is List<dynamic>)
+            'media': publishPayload['media'] as List<dynamic>,
+        };
+        await _network.publish(groupId, peerId, envelope);
+      }
+
+      return (result, message);
+    } finally {
+      if (previousPublishResponse == null) {
+        bridge.responses.remove('group:publish');
+      } else {
+        bridge.responses['group:publish'] = previousPublishResponse;
+      }
+    }
   }
 
   /// Removes a member from a group (admin action).

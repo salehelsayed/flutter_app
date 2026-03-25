@@ -79,7 +79,7 @@ func (n *Node) JoinGroupTopic(groupId string, config *GroupConfig, keyInfo *Grou
 	n.groupTopics[groupId] = topic
 	n.groupSubs[groupId] = sub
 	n.groupConfigs[groupId] = config
-	n.groupKeys[groupId] = keyInfo
+	n.groupKeys[groupId] = joinedGroupKeyInfo(keyInfo)
 
 	// Start subscription handler in a cancellable goroutine.
 	ctx, cancel := context.WithCancel(n.ctx)
@@ -138,9 +138,10 @@ func (n *Node) LeaveGroupTopic(groupId string) error {
 }
 
 // PublishGroupMessage encrypts, signs, and publishes a message to a group topic.
-// Returns the message ID (UUID). If messageId is non-empty, it is used instead
-// of generating a new one — this allows the sender to reference the same ID locally.
-func (n *Node) PublishGroupMessage(groupId, privateKeyB64, senderPeerId, senderPublicKeyB64, senderUsername, text, messageId string, opts map[string]interface{}) (string, error) {
+// Returns the message ID (UUID) and the number of peers subscribed to the topic
+// at publish time. If messageId is non-empty, it is used instead of generating
+// a new one — this allows the sender to reference the same ID locally.
+func (n *Node) PublishGroupMessage(groupId, privateKeyB64, senderPeerId, senderPublicKeyB64, senderUsername, text, messageId string, opts map[string]interface{}) (msgID string, topicPeerCount int, err error) {
 	n.mu.RLock()
 	topic, topicOk := n.groupTopics[groupId]
 	config, configOk := n.groupConfigs[groupId]
@@ -148,12 +149,12 @@ func (n *Node) PublishGroupMessage(groupId, privateKeyB64, senderPeerId, senderP
 	n.mu.RUnlock()
 
 	if !topicOk || !configOk || !keyOk {
-		return "", fmt.Errorf("group not joined: %s", groupId)
+		return "", 0, fmt.Errorf("group not joined: %s", groupId)
 	}
 
 	// Check write permission.
 	if !isAllowedWriter(config, senderPeerId) {
-		return "", fmt.Errorf("sender %s not allowed to write in group %s", senderPeerId, groupId)
+		return "", 0, fmt.Errorf("sender %s not allowed to write in group %s", senderPeerId, groupId)
 	}
 
 	// 1. Build GroupMessagePayload.
@@ -172,20 +173,20 @@ func (n *Node) PublishGroupMessage(groupId, privateKeyB64, senderPeerId, senderP
 
 	payloadJSON, err := internal.MarshalGroupPayload(payload)
 	if err != nil {
-		return "", fmt.Errorf("marshal payload: %w", err)
+		return "", 0, fmt.Errorf("marshal payload: %w", err)
 	}
 
 	// 2. Encrypt payload with group key.
 	ctB64, nonceB64, err := mcrypto.EncryptGroupMessage(keyInfo.Key, payloadJSON)
 	if err != nil {
-		return "", fmt.Errorf("encrypt group message: %w", err)
+		return "", 0, fmt.Errorf("encrypt group message: %w", err)
 	}
 
 	// 3. Build signature data and sign.
 	sigData := mcrypto.BuildGroupSignatureData(groupId, keyInfo.KeyEpoch, ctB64)
 	signature, err := mcrypto.SignPayload(privateKeyB64, sigData)
 	if err != nil {
-		return "", fmt.Errorf("sign group message: %w", err)
+		return "", 0, fmt.Errorf("sign group message: %w", err)
 	}
 
 	// 4. Build GroupEnvelope (v3).
@@ -205,28 +206,29 @@ func (n *Node) PublishGroupMessage(groupId, privateKeyB64, senderPeerId, senderP
 
 	envelopeJSON, err := internal.MarshalGroupEnvelope(envelope)
 	if err != nil {
-		return "", fmt.Errorf("marshal envelope: %w", err)
+		return "", 0, fmt.Errorf("marshal envelope: %w", err)
 	}
 
 	// 5. Publish to topic.
 	ctx, cancel := context.WithTimeout(n.ctx, PubSubTimeout)
 	defer cancel()
 
-	// Log peer count for diagnostics — if 0, no peers will receive the message.
+	// Capture peer count at publish time for caller visibility.
 	topicPeers := topic.ListPeers()
-	log.Printf("[PUBSUB] Publishing message %s to group %s (peers in topic: %d)", msgId, groupId, len(topicPeers))
+	peerCount := len(topicPeers)
+	log.Printf("[PUBSUB] Publishing message %s to group %s (peers in topic: %d)", msgId, groupId, peerCount)
 
 	if err := topic.Publish(ctx, []byte(envelopeJSON)); err != nil {
-		return "", fmt.Errorf("publish to topic: %w", err)
+		return "", 0, fmt.Errorf("publish to topic: %w", err)
 	}
 
 	n.emitEvent("group:publish_debug", map[string]interface{}{
 		"groupId":    groupId,
 		"messageId":  msgId,
-		"topicPeers": len(topicPeers),
+		"topicPeers": peerCount,
 	})
 
-	return msgId, nil
+	return msgId, peerCount, nil
 }
 
 // PublishGroupReaction encrypts, signs, and publishes a reaction to a group topic.
@@ -304,14 +306,95 @@ func (n *Node) UpdateGroupConfig(groupId string, config *GroupConfig) {
 func (n *Node) UpdateGroupKey(groupId string, keyInfo *GroupKeyInfo) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	n.groupKeys[groupId] = keyInfo
+
+	if keyInfo == nil {
+		delete(n.groupKeys, groupId)
+		return
+	}
+
+	current := n.groupKeys[groupId]
+	switch {
+	case current == nil:
+		n.groupKeys[groupId] = joinedGroupKeyInfo(keyInfo)
+	case keyInfo.KeyEpoch <= current.KeyEpoch:
+		return
+	default:
+		n.groupKeys[groupId] = &GroupKeyInfo{
+			Key:           keyInfo.Key,
+			KeyEpoch:      keyInfo.KeyEpoch,
+			PrevKey:       current.Key,
+			PrevKeyEpoch:  current.KeyEpoch,
+			GraceDeadline: time.Now().Add(KeyRotationGracePeriod),
+		}
+	}
 }
 
 // GetGroupKeyInfo returns the current key info for a group, or nil if not found.
 func (n *Node) GetGroupKeyInfo(groupId string) *GroupKeyInfo {
 	n.mu.RLock()
 	defer n.mu.RUnlock()
-	return n.groupKeys[groupId]
+	return cloneGroupKeyInfo(n.groupKeys[groupId])
+}
+
+func cloneGroupKeyInfo(keyInfo *GroupKeyInfo) *GroupKeyInfo {
+	if keyInfo == nil {
+		return nil
+	}
+	cloned := *keyInfo
+	return &cloned
+}
+
+func joinedGroupKeyInfo(keyInfo *GroupKeyInfo) *GroupKeyInfo {
+	if keyInfo == nil {
+		return nil
+	}
+	return &GroupKeyInfo{
+		Key:      keyInfo.Key,
+		KeyEpoch: keyInfo.KeyEpoch,
+	}
+}
+
+func hasKeyRotationGrace(keyInfo *GroupKeyInfo, now time.Time) bool {
+	return keyInfo != nil &&
+		keyInfo.PrevKey != "" &&
+		keyInfo.PrevKeyEpoch > 0 &&
+		!keyInfo.GraceDeadline.IsZero() &&
+		now.Before(keyInfo.GraceDeadline)
+}
+
+func verifyGroupEnvelopeSignature(groupId string, memberPublicKey string, env *internal.GroupEnvelope, keyInfo *GroupKeyInfo, now time.Time) bool {
+	if keyInfo == nil || env == nil {
+		return false
+	}
+
+	if env.KeyEpoch == keyInfo.KeyEpoch {
+		sigData := mcrypto.BuildGroupSignatureData(groupId, keyInfo.KeyEpoch, env.Encrypted.Ciphertext)
+		valid, err := mcrypto.VerifyPayload(memberPublicKey, sigData, env.Signature)
+		return err == nil && valid
+	}
+
+	if env.KeyEpoch == keyInfo.PrevKeyEpoch && hasKeyRotationGrace(keyInfo, now) {
+		sigData := mcrypto.BuildGroupSignatureData(groupId, keyInfo.PrevKeyEpoch, env.Encrypted.Ciphertext)
+		valid, err := mcrypto.VerifyPayload(memberPublicKey, sigData, env.Signature)
+		return err == nil && valid
+	}
+
+	return false
+}
+
+func decryptGroupEnvelopePayload(env *internal.GroupEnvelope, keyInfo *GroupKeyInfo, now time.Time) (string, error) {
+	if keyInfo == nil || env == nil {
+		return "", fmt.Errorf("missing group key info")
+	}
+
+	switch {
+	case env.KeyEpoch == keyInfo.KeyEpoch:
+		return mcrypto.DecryptGroupMessage(keyInfo.Key, env.Encrypted.Ciphertext, env.Encrypted.Nonce)
+	case env.KeyEpoch == keyInfo.PrevKeyEpoch && hasKeyRotationGrace(keyInfo, now):
+		return mcrypto.DecryptGroupMessage(keyInfo.PrevKey, env.Encrypted.Ciphertext, env.Encrypted.Nonce)
+	default:
+		return "", fmt.Errorf("no group key available for epoch %d", env.KeyEpoch)
+	}
 }
 
 // groupTopicValidator returns a topic validator function for a group topic.
@@ -377,10 +460,14 @@ func (n *Node) groupTopicValidator(groupId string) func(context.Context, peer.ID
 			return pubsub.ValidationReject
 		}
 
-		sigData := mcrypto.BuildGroupSignatureData(groupId, keyInfo.KeyEpoch, env.Encrypted.Ciphertext)
-		valid, err := mcrypto.VerifyPayload(member.PublicKey, sigData, env.Signature)
-		if err != nil || !valid {
-			log.Printf("[PUBSUB] Validator: invalid signature from %s in group %s: %v", env.SenderId, groupId, err)
+		if !verifyGroupEnvelopeSignature(groupId, member.PublicKey, env, keyInfo, time.Now()) {
+			log.Printf(
+				"[PUBSUB] Validator: invalid signature or epoch from %s in group %s (envelope epoch=%d, current epoch=%d)",
+				env.SenderId,
+				groupId,
+				env.KeyEpoch,
+				keyInfo.KeyEpoch,
+			)
 			return pubsub.ValidationReject
 		}
 
@@ -427,9 +514,16 @@ func (n *Node) handleGroupSubscription(ctx context.Context, groupId string, sub 
 		}
 
 		// Decrypt the payload.
-		plaintext, err := mcrypto.DecryptGroupMessage(keyInfo.Key, env.Encrypted.Ciphertext, env.Encrypted.Nonce)
+		plaintext, err := decryptGroupEnvelopePayload(env, keyInfo, time.Now())
 		if err != nil {
 			log.Printf("[PUBSUB] Failed to decrypt message in group %s: %v", groupId, err)
+			n.emitEvent("group:decryption_failed", map[string]interface{}{
+				"groupId":       groupId,
+				"senderId":      env.SenderId,
+				"keyEpoch":      env.KeyEpoch,
+				"localKeyEpoch": keyInfo.KeyEpoch,
+				"error":         err.Error(),
+			})
 			continue
 		}
 
@@ -449,6 +543,11 @@ func (n *Node) handleGroupSubscription(ctx context.Context, groupId string, sub 
 		payload, err := internal.ParseGroupPayload(plaintext)
 		if err != nil {
 			log.Printf("[PUBSUB] Failed to parse payload in group %s: %v", groupId, err)
+			n.emitEvent("group:payload_parse_failed", map[string]interface{}{
+				"groupId":      groupId,
+				"senderId":     env.SenderId,
+				"envelopeType": env.Type,
+			})
 			continue
 		}
 
