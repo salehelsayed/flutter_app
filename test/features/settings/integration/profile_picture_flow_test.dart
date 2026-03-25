@@ -3,6 +3,7 @@
 /// Tests the wire format, routing, and detection logic for profile updates.
 /// Actual file I/O is not tested (path_provider unavailable in unit tests).
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -13,11 +14,14 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/services/incoming_message_router.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
+import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/connection_state.dart';
 import 'package:flutter_app/features/settings/application/download_profile_picture_use_case.dart';
 import 'package:flutter_app/features/settings/application/helpers/avatar_normalization_helper.dart';
 import 'package:flutter_app/features/settings/application/profile_update_listener.dart';
+import 'package:flutter_app/features/settings/application/upload_profile_picture_use_case.dart';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 
@@ -82,6 +86,18 @@ class _MockBridge extends Bridge {
   void Function(Map<String, dynamic>)? onGroupReactionReceived;
 }
 
+class _FakeIdentityRepository implements IdentityRepository {
+  IdentityModel? identity;
+
+  @override
+  Future<IdentityModel?> loadIdentity() async => identity;
+
+  @override
+  Future<void> saveIdentity(IdentityModel identity) async {
+    this.identity = identity;
+  }
+}
+
 Future<XFile?> _compressToBytes({
   required String path,
   required Uint8List bytes,
@@ -94,15 +110,16 @@ Future<XFile?> _compressToBytes({
 AvatarNormalizationHelper _makeAvatarNormalizer(Uint8List bytes) {
   return AvatarNormalizationHelper(
     imageProcessor: ImageProcessor(
-      compressFile: ({
-        required String path,
-        required int quality,
-        required bool keepExif,
-        int minWidth = 1920,
-        int minHeight = 1080,
-      }) async {
-        return _compressToBytes(path: path, bytes: bytes);
-      },
+      compressFile:
+          ({
+            required String path,
+            required int quality,
+            required bool keepExif,
+            int minWidth = 1920,
+            int minHeight = 1080,
+          }) async {
+            return _compressToBytes(path: path, bytes: bytes);
+          },
     ),
   );
 }
@@ -114,10 +131,7 @@ ChatMessage buildProfileUpdateMessage({
   final envelope = jsonEncode({
     'type': 'profile_update',
     'version': '1',
-    'payload': {
-      'peerId': fromPeerId,
-      'avatarVersion': avatarVersion,
-    },
+    'payload': {'peerId': fromPeerId, 'avatarVersion': avatarVersion},
   });
 
   return ChatMessage(
@@ -126,6 +140,40 @@ ChatMessage buildProfileUpdateMessage({
     content: envelope,
     timestamp: DateTime.now().toUtc().toIso8601String(),
     isIncoming: true,
+  );
+}
+
+ContactModel _makeContact({
+  required String peerId,
+  required String username,
+  String? introducedBy,
+  String? introducedByPeerId,
+}) {
+  return ContactModel(
+    peerId: peerId,
+    publicKey: 'pk-$peerId',
+    rendezvous: '/rv',
+    username: username,
+    signature: 'sig-$peerId',
+    scannedAt: '2026-01-01T00:00:00Z',
+    introducedBy: introducedBy,
+    introducedByPeerId: introducedByPeerId,
+  );
+}
+
+IdentityModel _makeIdentity({
+  required String peerId,
+  required String username,
+}) {
+  return IdentityModel(
+    peerId: peerId,
+    publicKey: 'pk-$peerId',
+    privateKey: 'sk-$peerId',
+    mnemonic12:
+        'word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12',
+    username: username,
+    createdAt: '2026-01-01T00:00:00Z',
+    updatedAt: '2026-01-01T00:00:00Z',
   );
 }
 
@@ -152,10 +200,7 @@ void main() {
       final envelope = jsonEncode({
         'type': 'profile_update',
         'version': '1',
-        'payload': {
-          'peerId': bobPeerId,
-          'avatarVersion': 'v2',
-        },
+        'payload': {'peerId': bobPeerId, 'avatarVersion': 'v2'},
       });
 
       final parsed = jsonDecode(envelope) as Map<String, dynamic>;
@@ -167,93 +212,92 @@ void main() {
       expect(payload['avatarVersion'], 'v2');
     });
 
-    test('4b. IncomingMessageRouter routes profile_update to correct stream',
-        () async {
-      final network = FakeP2PNetwork();
-      final p2pService = FakeP2PService(peerId: ownPeerId, network: network);
-      final router = IncomingMessageRouter(p2pService: p2pService);
-      router.start();
+    test(
+      '4b. IncomingMessageRouter routes profile_update to correct stream',
+      () async {
+        final network = FakeP2PNetwork();
+        final p2pService = FakeP2PService(peerId: ownPeerId, network: network);
+        final router = IncomingMessageRouter(p2pService: p2pService);
+        router.start();
 
-      final profileFuture = router.profileUpdateStream.first;
-      final chatMessages = <ChatMessage>[];
-      final chatSub = router.chatMessageStream.listen(
-        (msg) => chatMessages.add(msg),
-      );
+        final profileFuture = router.profileUpdateStream.first;
+        final chatMessages = <ChatMessage>[];
+        final chatSub = router.chatMessageStream.listen(
+          (msg) => chatMessages.add(msg),
+        );
 
-      // Inject profile_update
-      p2pService.injectIncomingMessage(
-        buildProfileUpdateMessage(
-          fromPeerId: bobPeerId,
-          avatarVersion: 'v1',
-        ),
-      );
+        // Inject profile_update
+        p2pService.injectIncomingMessage(
+          buildProfileUpdateMessage(fromPeerId: bobPeerId, avatarVersion: 'v1'),
+        );
 
-      final profileMsg = await profileFuture.timeout(
-        const Duration(seconds: 2),
-        onTimeout: () => throw StateError('profileUpdateStream never emitted'),
-      );
+        final profileMsg = await profileFuture.timeout(
+          const Duration(seconds: 2),
+          onTimeout: () =>
+              throw StateError('profileUpdateStream never emitted'),
+        );
 
-      expect(profileMsg.from, bobPeerId);
-      await Future.delayed(const Duration(milliseconds: 50));
-      expect(chatMessages, isEmpty);
+        expect(profileMsg.from, bobPeerId);
+        await Future.delayed(const Duration(milliseconds: 50));
+        expect(chatMessages, isEmpty);
 
-      await chatSub.cancel();
-      router.dispose();
-      p2pService.dispose();
-    });
+        await chatSub.cancel();
+        router.dispose();
+        p2pService.dispose();
+      },
+    );
 
-    test('4c. ProfileUpdateListener skips when avatarVersion already matches',
-        () async {
-      final network = FakeP2PNetwork();
-      final p2pService = FakeP2PService(peerId: ownPeerId, network: network);
-      final router = IncomingMessageRouter(p2pService: p2pService);
-      router.start();
+    test(
+      '4c. ProfileUpdateListener skips when avatarVersion already matches',
+      () async {
+        final network = FakeP2PNetwork();
+        final p2pService = FakeP2PService(peerId: ownPeerId, network: network);
+        final router = IncomingMessageRouter(p2pService: p2pService);
+        router.start();
 
-      final contactRepo = InMemoryContactRepository();
-      contactRepo.addTestContact(
-        ContactModel(
-          peerId: bobPeerId,
-          publicKey: 'pk',
-          rendezvous: '/rv',
-          username: 'Bob',
-          signature: 'sig',
-          scannedAt: '2026-01-01T00:00:00Z',
-          avatarVersion: 'v1', // already matches
-        ),
-      );
+        final contactRepo = InMemoryContactRepository();
+        contactRepo.addTestContact(
+          ContactModel(
+            peerId: bobPeerId,
+            publicKey: 'pk',
+            rendezvous: '/rv',
+            username: 'Bob',
+            signature: 'sig',
+            scannedAt: '2026-01-01T00:00:00Z',
+            avatarVersion: 'v1', // already matches
+          ),
+        );
 
-      final bridge = FakeBridge();
-      final listener = ProfileUpdateListener(
-        profileUpdateStream: router.profileUpdateStream,
-        contactRepo: contactRepo,
-        bridge: bridge,
-      );
-      listener.start();
+        final bridge = FakeBridge();
+        final listener = ProfileUpdateListener(
+          profileUpdateStream: router.profileUpdateStream,
+          contactRepo: contactRepo,
+          bridge: bridge,
+        );
+        listener.start();
 
-      final contactUpdates = <ContactModel>[];
-      final sub = listener.contactUpdatedStream.listen(
-        (c) => contactUpdates.add(c),
-      );
+        final contactUpdates = <ContactModel>[];
+        final sub = listener.contactUpdatedStream.listen(
+          (c) => contactUpdates.add(c),
+        );
 
-      // Inject profile_update with same version
-      p2pService.injectIncomingMessage(
-        buildProfileUpdateMessage(
-          fromPeerId: bobPeerId,
-          avatarVersion: 'v1',
-        ),
-      );
+        // Inject profile_update with same version
+        p2pService.injectIncomingMessage(
+          buildProfileUpdateMessage(fromPeerId: bobPeerId, avatarVersion: 'v1'),
+        );
 
-      await Future.delayed(const Duration(milliseconds: 200));
+        await Future.delayed(const Duration(milliseconds: 200));
 
-      // Should NOT have emitted or attempted download
-      expect(contactUpdates, isEmpty);
-      expect(bridge.sendCallCount, 0);
+        // Should NOT have emitted or attempted download
+        expect(contactUpdates, isEmpty);
+        expect(bridge.sendCallCount, 0);
 
-      await sub.cancel();
-      listener.dispose();
-      router.dispose();
-      p2pService.dispose();
-    });
+        await sub.cancel();
+        listener.dispose();
+        router.dispose();
+        p2pService.dispose();
+      },
+    );
 
     test('4d. ProfileUpdateListener skips unknown sender', () async {
       final network = FakeP2PNetwork();
@@ -298,79 +342,81 @@ void main() {
     test(
       '4e. ProfileUpdateListener detects new avatarVersion and downloads a normalized avatar',
       () async {
-      final network = FakeP2PNetwork();
-      final p2pService = FakeP2PService(peerId: ownPeerId, network: network);
-      final router = IncomingMessageRouter(p2pService: p2pService);
-      router.start();
+        final network = FakeP2PNetwork();
+        final p2pService = FakeP2PService(peerId: ownPeerId, network: network);
+        final router = IncomingMessageRouter(p2pService: p2pService);
+        router.start();
 
-      final contactRepo = InMemoryContactRepository();
-      contactRepo.addTestContact(
-        ContactModel(
-          peerId: bobPeerId,
-          publicKey: 'pk',
-          rendezvous: '/rv',
-          username: 'Bob',
-          signature: 'sig',
-          scannedAt: '2026-01-01T00:00:00Z',
-          avatarVersion: null, // no avatar yet
-        ),
-      );
+        final contactRepo = InMemoryContactRepository();
+        contactRepo.addTestContact(
+          ContactModel(
+            peerId: bobPeerId,
+            publicKey: 'pk',
+            rendezvous: '/rv',
+            username: 'Bob',
+            signature: 'sig',
+            scannedAt: '2026-01-01T00:00:00Z',
+            avatarVersion: null, // no avatar yet
+          ),
+        );
 
-      final bridge = _MockBridge();
-      bridge.profileDownloadBytes = Uint8List.fromList(
-        List<int>.generate(96, (index) => index % 256),
-      );
-      final processedBytes = Uint8List.fromList([0xCA, 0xFE, 0xBA, 0xBE]);
-      final avatarNormalizer = _makeAvatarNormalizer(processedBytes);
+        final bridge = _MockBridge();
+        bridge.profileDownloadBytes = Uint8List.fromList(
+          List<int>.generate(96, (index) => index % 256),
+        );
+        final processedBytes = Uint8List.fromList([0xCA, 0xFE, 0xBA, 0xBE]);
+        final avatarNormalizer = _makeAvatarNormalizer(processedBytes);
 
-      final listener = ProfileUpdateListener(
-        profileUpdateStream: router.profileUpdateStream,
-        contactRepo: contactRepo,
-        bridge: bridge,
-        downloadProfilePictureFn: ({
-          required Bridge bridge,
-          required contactRepo,
-          required ownerPeerId,
-          required avatarVersion,
-        }) {
-          return downloadProfilePicture(
-            bridge: bridge,
-            contactRepo: contactRepo,
-            ownerPeerId: ownerPeerId,
-            avatarVersion: avatarVersion,
-            avatarNormalizer: avatarNormalizer,
-          );
-        },
-      );
-      listener.start();
+        final listener = ProfileUpdateListener(
+          profileUpdateStream: router.profileUpdateStream,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          downloadProfilePictureFn:
+              ({
+                required Bridge bridge,
+                required contactRepo,
+                required ownerPeerId,
+                required avatarVersion,
+              }) {
+                return downloadProfilePicture(
+                  bridge: bridge,
+                  contactRepo: contactRepo,
+                  ownerPeerId: ownerPeerId,
+                  avatarVersion: avatarVersion,
+                  avatarNormalizer: avatarNormalizer,
+                );
+              },
+        );
+        listener.start();
 
-      p2pService.injectIncomingMessage(
-        buildProfileUpdateMessage(
-          fromPeerId: bobPeerId,
-          avatarVersion: 'v2',
-        ),
-      );
+        p2pService.injectIncomingMessage(
+          buildProfileUpdateMessage(fromPeerId: bobPeerId, avatarVersion: 'v2'),
+        );
 
-      await Future.delayed(const Duration(milliseconds: 500));
+        await Future.delayed(const Duration(milliseconds: 500));
 
-      final contact = await contactRepo.getContact(bobPeerId);
-      expect(contact, isNotNull);
-      expect(contact!.avatarVersion, 'v2');
+        final contact = await contactRepo.getContact(bobPeerId);
+        expect(contact, isNotNull);
+        expect(contact!.avatarVersion, 'v2');
 
-      final canonicalFile = File(
-        '${tempDir.path}/media/avatars/$bobPeerId.jpg',
-      );
-      expect(await canonicalFile.exists(), isTrue);
-      expect(await canonicalFile.readAsBytes(), orderedEquals(processedBytes));
-      expect(
-        bridge.lastParsedRequest?['payload']?['outputPath'],
-        isNot(equals(canonicalFile.path)),
-      );
+        final canonicalFile = File(
+          '${tempDir.path}/media/avatars/$bobPeerId.jpg',
+        );
+        expect(await canonicalFile.exists(), isTrue);
+        expect(
+          await canonicalFile.readAsBytes(),
+          orderedEquals(processedBytes),
+        );
+        expect(
+          bridge.lastParsedRequest?['payload']?['outputPath'],
+          isNot(equals(canonicalFile.path)),
+        );
 
-      listener.dispose();
-      router.dispose();
-      p2pService.dispose();
-    });
+        listener.dispose();
+        router.dispose();
+        p2pService.dispose();
+      },
+    );
 
     test('4f. Broadcast goes to all active contacts (not archived)', () async {
       final contactRepo = InMemoryContactRepository();
@@ -420,5 +466,190 @@ void main() {
       expect(broadcastTargets, containsAll(['contact-1', 'contact-2']));
       expect(broadcastTargets, isNot(contains('contact-3')));
     });
+
+    test(
+      '4g. profile updates reach both direct and intro-created contacts when one recipient needs a retry',
+      () async {
+        const userAPeerId = '12D3KooWUserA000000000000001';
+        const userBPeerId = '12D3KooWUserB000000000000002';
+        const userCPeerId = '12D3KooWUserC000000000000003';
+
+        final network = FakeP2PNetwork();
+        final userAService = FakeP2PService(
+          peerId: userAPeerId,
+          network: network,
+        );
+        final userBService = FakeP2PService(
+          peerId: userBPeerId,
+          network: network,
+        );
+        final userCService = FakeP2PService(
+          peerId: userCPeerId,
+          network: network,
+        );
+
+        final userARouter = IncomingMessageRouter(p2pService: userAService);
+        final userCRouter = IncomingMessageRouter(p2pService: userCService);
+        userARouter.start();
+        userCRouter.start();
+
+        final userAContacts = InMemoryContactRepository();
+        final userBContacts = InMemoryContactRepository();
+        final userCContacts = InMemoryContactRepository();
+
+        userAContacts.addTestContact(
+          _makeContact(peerId: userBPeerId, username: 'User-B'),
+        );
+        userBContacts.addTestContact(
+          _makeContact(peerId: userAPeerId, username: 'User-A'),
+        );
+        userBContacts.addTestContact(
+          _makeContact(peerId: userCPeerId, username: 'User-C'),
+        );
+        userCContacts.addTestContact(
+          _makeContact(
+            peerId: userBPeerId,
+            username: 'User-B',
+            introducedBy: 'User-A',
+            introducedByPeerId: userAPeerId,
+          ),
+        );
+
+        final uploadedAvatarBytes = Uint8List.fromList(
+          List<int>.generate(128, (index) => (index * 7) % 256),
+        );
+        final normalizedAvatarBytes = Uint8List.fromList(
+          List<int>.generate(16, (index) => index + 1),
+        );
+        final avatarNormalizer = _makeAvatarNormalizer(normalizedAvatarBytes);
+
+        final userABridge = _MockBridge()
+          ..profileDownloadBytes = uploadedAvatarBytes;
+        final userBBridge = _MockBridge()..nextResponse = {'ok': true};
+        final userCBridge = _MockBridge()
+          ..profileDownloadBytes = uploadedAvatarBytes;
+
+        var userADownloadAttempts = 0;
+        var userCDownloadAttempts = 0;
+
+        final userAListener = ProfileUpdateListener(
+          profileUpdateStream: userARouter.profileUpdateStream,
+          contactRepo: userAContacts,
+          bridge: userABridge,
+          retryDelay: const Duration(milliseconds: 10),
+          downloadProfilePictureFn:
+              ({
+                required Bridge bridge,
+                required contactRepo,
+                required ownerPeerId,
+                required avatarVersion,
+              }) async {
+                userADownloadAttempts++;
+                if (userADownloadAttempts == 1) {
+                  return null;
+                }
+                return downloadProfilePicture(
+                  bridge: bridge,
+                  contactRepo: contactRepo,
+                  ownerPeerId: ownerPeerId,
+                  avatarVersion: avatarVersion,
+                  avatarNormalizer: avatarNormalizer,
+                );
+              },
+        );
+        final userCListener = ProfileUpdateListener(
+          profileUpdateStream: userCRouter.profileUpdateStream,
+          contactRepo: userCContacts,
+          bridge: userCBridge,
+          retryDelay: const Duration(milliseconds: 10),
+          downloadProfilePictureFn:
+              ({
+                required Bridge bridge,
+                required contactRepo,
+                required ownerPeerId,
+                required avatarVersion,
+              }) async {
+                userCDownloadAttempts++;
+                return downloadProfilePicture(
+                  bridge: bridge,
+                  contactRepo: contactRepo,
+                  ownerPeerId: ownerPeerId,
+                  avatarVersion: avatarVersion,
+                  avatarNormalizer: avatarNormalizer,
+                );
+              },
+        );
+
+        userAListener.start();
+        userCListener.start();
+
+        final userAUpdate = Completer<ContactModel>();
+        final userCUpdate = Completer<ContactModel>();
+        final userASub = userAListener.contactUpdatedStream.listen((contact) {
+          if (!userAUpdate.isCompleted) {
+            userAUpdate.complete(contact);
+          }
+        });
+        final userCSub = userCListener.contactUpdatedStream.listen((contact) {
+          if (!userCUpdate.isCompleted) {
+            userCUpdate.complete(contact);
+          }
+        });
+
+        final userBIdentityRepo = _FakeIdentityRepository()
+          ..identity = _makeIdentity(peerId: userBPeerId, username: 'User-B');
+        final sourceFile = File('${tempDir.path}/user_b_avatar.jpg');
+        await sourceFile.writeAsBytes(uploadedAvatarBytes, flush: true);
+
+        final uploadOk = await uploadProfilePicture(
+          bridge: userBBridge,
+          identityRepo: userBIdentityRepo,
+          contactRepo: userBContacts,
+          p2pService: userBService,
+          filePath: sourceFile.path,
+          mime: 'image/jpeg',
+          avatarNormalizer: avatarNormalizer,
+        );
+
+        expect(uploadOk, isTrue);
+
+        final updatedContacts = await Future.wait([
+          userAUpdate.future.timeout(const Duration(seconds: 2)),
+          userCUpdate.future.timeout(const Duration(seconds: 2)),
+        ]);
+
+        expect(updatedContacts, hasLength(2));
+        expect(userADownloadAttempts, 2);
+        expect(userCDownloadAttempts, 1);
+
+        final userAContact = await userAContacts.getContact(userBPeerId);
+        final userCContact = await userCContacts.getContact(userBPeerId);
+        expect(userAContact, isNotNull);
+        expect(userCContact, isNotNull);
+        expect(userAContact!.avatarVersion, isNotNull);
+        expect(userCContact!.avatarVersion, userAContact.avatarVersion);
+        expect(userCContact.introducedBy, 'User-A');
+        expect(userCContact.introducedByPeerId, userAPeerId);
+
+        final avatarFile = File(
+          '${tempDir.path}/media/avatars/$userBPeerId.jpg',
+        );
+        expect(await avatarFile.exists(), isTrue);
+        expect(
+          await avatarFile.readAsBytes(),
+          orderedEquals(normalizedAvatarBytes),
+        );
+
+        await userASub.cancel();
+        await userCSub.cancel();
+        userAListener.dispose();
+        userCListener.dispose();
+        userARouter.dispose();
+        userCRouter.dispose();
+        userAService.dispose();
+        userBService.dispose();
+        userCService.dispose();
+      },
+    );
   });
 }

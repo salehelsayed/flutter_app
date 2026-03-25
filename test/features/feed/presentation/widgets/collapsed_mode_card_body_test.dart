@@ -11,6 +11,7 @@ import 'package:flutter_app/features/feed/presentation/widgets/collapsed_mode_ca
 import 'package:flutter_app/features/feed/presentation/widgets/open_mode_card_body.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/scrollable_message_preview.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/linkable_text.dart';
 
@@ -1015,5 +1016,202 @@ void main() {
         expect(openDirection, TextDirection.rtl);
       },
     );
+  });
+
+  group('CollapsedModeCardBody avatar tap navigation', () {
+    testWidgets('tapping avatar fires onViewFullConversation, not onTapExpand',
+        (tester) async {
+      var navigated = false;
+      var expandTapped = false;
+      final thread = ThreadFeedItem(
+        id: 'thread_nav',
+        timestamp: DateTime(2026, 2, 9, 15, 0),
+        contactPeerId: 'peer1',
+        contactUsername: 'Alice',
+        messages: [
+          ThreadMessage(
+            id: 'm1',
+            text: 'Hello',
+            time: '3:00 PM',
+            timestamp: DateTime(2026, 2, 9, 15, 0),
+            isIncoming: true,
+          ),
+        ],
+        conversationState: ConversationState.read,
+      );
+
+      await tester.pumpWidget(wrap(CollapsedModeCardBody(
+        thread: thread,
+        onViewFullConversation: () => navigated = true,
+        onTapExpand: () => expandTapped = true,
+      )));
+
+      await tester.tap(find.byType(UserAvatar));
+      expect(navigated, isTrue);
+      expect(expandTapped, isFalse);
+    });
+
+    testWidgets('tapping display name still fires onTapExpand', (tester) async {
+      var navigated = false;
+      var expandTapped = false;
+      final thread = ThreadFeedItem(
+        id: 'thread_nav',
+        timestamp: DateTime(2026, 2, 9, 15, 0),
+        contactPeerId: 'peer1',
+        contactUsername: 'Alice',
+        messages: [
+          ThreadMessage(
+            id: 'm1',
+            text: 'Hello',
+            time: '3:00 PM',
+            timestamp: DateTime(2026, 2, 9, 15, 0),
+            isIncoming: true,
+          ),
+        ],
+        conversationState: ConversationState.read,
+      );
+
+      await tester.pumpWidget(wrap(CollapsedModeCardBody(
+        thread: thread,
+        onViewFullConversation: () => navigated = true,
+        onTapExpand: () => expandTapped = true,
+      )));
+
+      await tester.tap(find.text('Alice'));
+      expect(expandTapped, isTrue);
+      expect(navigated, isFalse);
+    });
+
+    testWidgets('tapping timestamp still fires onTapExpand', (tester) async {
+      var expandTapped = false;
+      final thread = ThreadFeedItem(
+        id: 'thread_nav',
+        timestamp: DateTime(2026, 2, 9, 15, 0),
+        contactPeerId: 'peer1',
+        contactUsername: 'Alice',
+        messages: [
+          ThreadMessage(
+            id: 'm1',
+            text: 'Hello',
+            time: '3:00 PM',
+            timestamp: DateTime(2026, 2, 9, 15, 0),
+            isIncoming: true,
+          ),
+        ],
+        conversationState: ConversationState.read,
+      );
+
+      await tester.pumpWidget(wrap(CollapsedModeCardBody(
+        thread: thread,
+        onTapExpand: () => expandTapped = true,
+      )));
+
+      await tester.tap(find.text('3:00 PM'));
+      expect(expandTapped, isTrue);
+    });
+
+    testWidgets('group thread collapsed: tapping icon navigates',
+        (tester) async {
+      var navigated = false;
+      var expandTapped = false;
+      final groupThread = GroupThreadFeedItem(
+        id: 'g1',
+        timestamp: DateTime(2026, 2, 9, 15, 0),
+        groupId: 'group-abc',
+        groupName: 'Test Group',
+        groupType: GroupType.chat,
+        messages: [
+          ThreadMessage(
+            id: 'gm1',
+            text: 'Group message',
+            time: '3:00 PM',
+            timestamp: DateTime(2026, 2, 9, 15, 0),
+            isIncoming: true,
+            senderUsername: 'Sarah',
+            senderPeerId: 'peer-sarah',
+          ),
+        ],
+        conversationState: ConversationState.read,
+      );
+
+      await tester.pumpWidget(wrap(CollapsedModeCardBody(
+        thread: groupThread,
+        onViewFullConversation: () => navigated = true,
+        onTapExpand: () => expandTapped = true,
+      )));
+
+      await tester.tap(find.byIcon(Icons.group_rounded));
+      expect(navigated, isTrue);
+      expect(expandTapped, isFalse);
+    });
+
+    testWidgets('expanded card: tapping avatar navigates', (tester) async {
+      var navigated = false;
+      final thread = ThreadFeedItem(
+        id: 'thread_nav',
+        timestamp: DateTime(2026, 2, 9, 15, 0),
+        contactPeerId: 'peer1',
+        contactUsername: 'Alice',
+        messages: [
+          ThreadMessage(
+            id: 'm1',
+            text: 'Hello',
+            time: '3:00 PM',
+            timestamp: DateTime(2026, 2, 9, 15, 0),
+            isIncoming: true,
+          ),
+        ],
+        conversationState: ConversationState.read,
+      );
+
+      await tester.pumpWidget(wrap(CollapsedModeCardBody(
+        thread: thread,
+        isExpanded: true,
+        onViewFullConversation: () => navigated = true,
+      )));
+
+      await tester.tap(find.byType(UserAvatar));
+      expect(navigated, isTrue);
+    });
+
+    testWidgets('tapping replied checkmark still fires onTapExpand',
+        (tester) async {
+      var expandTapped = false;
+      var navigated = false;
+      final thread = ThreadFeedItem(
+        id: 'thread_nav',
+        timestamp: DateTime(2026, 2, 9, 15, 0),
+        contactPeerId: 'peer1',
+        contactUsername: 'Alice',
+        messages: [
+          ThreadMessage(
+            id: 'm1',
+            text: 'Hey',
+            time: '2:00 PM',
+            timestamp: DateTime(2026, 2, 9, 14, 0),
+            isIncoming: true,
+          ),
+          ThreadMessage(
+            id: 'm2',
+            text: 'My reply',
+            time: '2:05 PM',
+            timestamp: DateTime(2026, 2, 9, 14, 5),
+            isIncoming: false,
+          ),
+        ],
+        conversationState: ConversationState.replied,
+        lastRepliedAt: DateTime(2026, 2, 9, 14, 5),
+      );
+
+      await tester.pumpWidget(wrap(CollapsedModeCardBody(
+        thread: thread,
+        onViewFullConversation: () => navigated = true,
+        onTapExpand: () => expandTapped = true,
+      )));
+
+      await tester.tap(find.byIcon(Icons.check_rounded));
+      expect(expandTapped, isTrue);
+      expect(navigated, isFalse);
+    });
   });
 }
