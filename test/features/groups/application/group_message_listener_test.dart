@@ -6,6 +6,8 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
+import 'package:flutter_app/features/conversation/application/download_media_use_case.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
@@ -14,6 +16,7 @@ import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/fake_notification_service.dart';
+import '../../../shared/fakes/fake_media_file_manager.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../shared/fakes/in_memory_media_attachment_repository.dart';
@@ -37,6 +40,46 @@ class SequencedUpdateConfigBridge extends FakeBridge {
       lastCommand = cmd;
       commandLog.add(cmd!);
       return _behaviors[_updateConfigCallIndex++](message);
+    }
+
+    return super.send(message);
+  }
+}
+
+class GateableMediaAttachmentRepository
+    extends InMemoryMediaAttachmentRepository {
+  final Completer<void> firstDownloadingGate = Completer<void>();
+  int downloadingUpdateCalls = 0;
+  bool _gatedFirstDownloadingUpdate = false;
+
+  @override
+  Future<void> updateDownloadStatus(String id, String downloadStatus) async {
+    if (downloadStatus == 'downloading') {
+      downloadingUpdateCalls++;
+      if (!_gatedFirstDownloadingUpdate) {
+        _gatedFirstDownloadingUpdate = true;
+        await firstDownloadingGate.future;
+      }
+    }
+    await super.updateDownloadStatus(id, downloadStatus);
+  }
+}
+
+class _DelayedMediaDownloadBridge extends FakeBridge {
+  final Completer<void> downloadGate = Completer<void>();
+
+  @override
+  Future<String> send(String message) async {
+    final parsed = jsonDecode(message) as Map<String, dynamic>;
+    final cmd = parsed['cmd'] as String?;
+    if (cmd == 'media:download') {
+      sendCallCount++;
+      lastSentMessage = message;
+      sentMessages.add(message);
+      lastCommand = cmd;
+      commandLog.add(cmd!);
+      await downloadGate.future;
+      return jsonEncode({'ok': true});
     }
 
     return super.send(message);
@@ -1076,6 +1119,94 @@ void main() {
       mediaListener.dispose();
       await mediaSource.close();
     });
+
+    test(
+      'joins an in-flight shared media download for the same incoming attachment',
+      () async {
+        final mediaRepo = GateableMediaAttachmentRepository();
+        final delayedBridge = _DelayedMediaDownloadBridge();
+        final mediaListener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: delayedBridge,
+          mediaAttachmentRepo: mediaRepo,
+          mediaFileManager: FakeMediaFileManager(),
+        );
+        final mediaSource = StreamController<Map<String, dynamic>>.broadcast();
+
+        final firstDownloadFuture = downloadMedia(
+          bridge: delayedBridge,
+          mediaAttachmentRepo: mediaRepo,
+          mediaFileManager: FakeMediaFileManager(),
+          attachment: const MediaAttachment(
+            id: 'blob-event-1',
+            messageId: 'msg-group-1',
+            mime: 'image/jpeg',
+            size: 12345,
+            mediaType: 'image',
+            downloadStatus: 'pending',
+            createdAt: '2026-03-26T10:00:00.000Z',
+          ),
+          contactPeerId: 'group-1',
+        );
+        await Future<void>.delayed(Duration.zero);
+
+        mediaListener.start(mediaSource.stream);
+
+        mediaSource.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Sender',
+          'keyEpoch': 0,
+          'messageId': 'msg-group-1',
+          'text': 'Photo message',
+          'timestamp': DateTime.now().toUtc().toIso8601String(),
+          'media': [
+            {
+              'id': 'blob-event-1',
+              'mime': 'image/jpeg',
+              'size': 12345,
+              'mediaType': 'image',
+              'downloadStatus': 'pending',
+              'createdAt': DateTime.now().toUtc().toIso8601String(),
+            },
+          ],
+        });
+
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        expect(mediaRepo.count, 1);
+        expect(mediaRepo.downloadingUpdateCalls, 1);
+        expect(
+          delayedBridge.commandLog.where((cmd) => cmd == 'media:download'),
+          isEmpty,
+        );
+
+        mediaRepo.firstDownloadingGate.complete();
+        await Future<void>.delayed(Duration.zero);
+        expect(
+          delayedBridge.commandLog.where((cmd) => cmd == 'media:download'),
+          hasLength(1),
+        );
+
+        delayedBridge.downloadGate.complete();
+        await firstDownloadFuture;
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+
+        final savedAttachments = await mediaRepo.getAttachmentsForMessage(
+          'msg-group-1',
+        );
+        expect(savedAttachments.single.downloadStatus, 'done');
+        expect(savedAttachments.single.localPath, startsWith('media/'));
+        expect(mediaRepo.downloadingUpdateCalls, 1);
+        expect(
+          delayedBridge.commandLog.where((cmd) => cmd == 'media:download'),
+          hasLength(1),
+        );
+
+        mediaListener.dispose();
+        await mediaSource.close();
+      },
+    );
   });
 
   // ---------------------------------------------------------------------------

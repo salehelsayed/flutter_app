@@ -32,6 +32,7 @@ void main() {
     repository = PostRepositoryImpl(
       dbInsertPost: (row) => dbInsertPost(db, row),
       dbLoadPost: (postId) => dbLoadPost(db, postId),
+      dbLoadPostsByIds: (postIds) => dbLoadPostsByIds(db, postIds),
       dbLoadPostsFeed: () => dbLoadPostsFeed(db),
       dbUpsertRecipientDelivery: (row) =>
           dbUpsertPostRecipientDelivery(db, row),
@@ -98,6 +99,58 @@ void main() {
       expect(deliveries, hasLength(1));
       expect(deliveries.single.deliveryStatus, 'delivered');
       expect(deliveries.single.nearbyDistanceM, 87);
+    },
+  );
+
+  test(
+    'loadPostsByIds returns matching posts and skips missing rows',
+    () async {
+      const firstPost = PostModel(
+        id: 'post-1',
+        eventId: 'evt-1',
+        senderPeerId: 'peer-a',
+        authorPeerId: 'peer-a',
+        authorUsername: 'Alice',
+        text: 'Hello posts',
+        audience: PostAudience(kind: PostAudienceKind.allFriends),
+        createdAt: '2026-03-15T10:15:30.000Z',
+        visibleAt: '2026-03-15T10:15:30.000Z',
+        expiresAt: '2026-03-18T10:15:30.000Z',
+        isIncoming: true,
+        deliveryStatus: 'delivered',
+      );
+      const secondPost = PostModel(
+        id: 'post-2',
+        eventId: 'evt-2',
+        senderPeerId: 'peer-b',
+        authorPeerId: 'peer-b',
+        authorUsername: 'Bob',
+        text: 'Need a ladder',
+        audience: PostAudience(kind: PostAudienceKind.allFriends),
+        createdAt: '2026-03-15T11:15:30.000Z',
+        visibleAt: '2026-03-15T11:15:30.000Z',
+        expiresAt: '2026-03-18T11:15:30.000Z',
+        isIncoming: true,
+        deliveryStatus: 'delivered',
+      );
+
+      await repository.savePost(firstPost);
+      await repository.savePost(secondPost);
+
+      final loaded = await repository.loadPostsByIds(<String>[
+        secondPost.id,
+        'missing-post',
+        firstPost.id,
+      ]);
+
+      expect(loaded.map((post) => post.id).toSet(), <String>{
+        firstPost.id,
+        secondPost.id,
+      });
+      expect(loaded.map((post) => post.text).toSet(), <String>{
+        firstPost.text,
+        secondPost.text,
+      });
     },
   );
 }

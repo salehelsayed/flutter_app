@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -42,10 +43,7 @@ class FakeGroupMessageListener extends GroupMessageListener {
   final Stream<GroupMessage> _externalStream;
 
   FakeGroupMessageListener(this._externalStream)
-      : super(
-          groupRepo: _NoOpGroupRepo(),
-          msgRepo: _NoOpMsgRepo(),
-        );
+    : super(groupRepo: _NoOpGroupRepo(), msgRepo: _NoOpMsgRepo());
 
   @override
   Stream<GroupMessage> get groupMessageStream => _externalStream;
@@ -152,17 +150,18 @@ void main() {
       messageStreamController.close();
     });
 
-    Widget buildWidget() {
+    Widget buildWidget({GroupType groupType = GroupType.chat}) {
       return MaterialApp(
         locale: const Locale('en'),
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
         home: CreateGroupPickerWired(
-          groupType: GroupType.chat,
+          groupType: groupType,
           groupRepo: groupRepo,
           msgRepo: msgRepo,
-          groupMessageListener:
-              FakeGroupMessageListener(messageStreamController.stream),
+          groupMessageListener: FakeGroupMessageListener(
+            messageStreamController.stream,
+          ),
           contactRepo: contactRepo,
           bridge: bridge,
           identityRepo: identityRepo,
@@ -253,26 +252,60 @@ void main() {
     });
 
     testWidgets(
-        'tapping Start group chat creates group and navigates to conversation',
-        (tester) async {
-      contactRepo.addTestContact(contactAlice);
+      'tapping Start group chat creates group and navigates to conversation',
+      (tester) async {
+        contactRepo.addTestContact(contactAlice);
 
-      await tester.pumpWidget(buildWidget());
-      await pumpFrames(tester);
+        await tester.pumpWidget(buildWidget());
+        await pumpFrames(tester);
 
-      // Select Alice
-      await tester.tap(find.text('Alice'));
-      await pumpFrames(tester);
+        // Select Alice
+        await tester.tap(find.text('Alice'));
+        await pumpFrames(tester);
 
-      // Tap "Start group chat"
-      await tester.tap(find.text('Start group chat'));
-      await pumpFrames(tester, count: 30);
+        // Tap "Start group chat"
+        await tester.tap(find.text('Start group chat'));
+        await pumpFrames(tester, count: 30);
 
-      // Should navigate to GroupConversationScreen (via pushReplacement)
-      expect(find.byType(GroupConversationScreen), findsOneWidget);
-      // CreateGroupPickerScreen should be gone
-      expect(find.byType(CreateGroupPickerScreen), findsNothing);
-    });
+        // Should navigate to GroupConversationScreen (via pushReplacement)
+        expect(find.byType(GroupConversationScreen), findsOneWidget);
+        // CreateGroupPickerScreen should be gone
+        expect(find.byType(CreateGroupPickerScreen), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'announcement picker route creates announcement group and sends announcement payload',
+      (tester) async {
+        contactRepo.addTestContact(contactAlice);
+
+        await tester.pumpWidget(buildWidget(groupType: GroupType.announcement));
+        await pumpFrames(tester);
+
+        await tester.tap(find.text('Alice'));
+        await pumpFrames(tester);
+
+        await tester.tap(find.text('Start group chat'));
+        await pumpFrames(tester, count: 30);
+
+        final savedGroup = await groupRepo.getGroup('new-group-id');
+        expect(savedGroup, isNotNull);
+        expect(savedGroup!.type, GroupType.announcement);
+        expect(savedGroup.myRole, GroupRole.admin);
+
+        final createMessage = bridge.sentMessages.firstWhere(
+          (message) =>
+              (jsonDecode(message) as Map<String, dynamic>)['cmd'] ==
+              'group:create',
+        );
+        final createPayload =
+            (jsonDecode(createMessage) as Map<String, dynamic>)['payload']
+                as Map<String, dynamic>;
+        expect(createPayload['groupType'], 'announcement');
+
+        expect(find.byType(GroupConversationScreen), findsOneWidget);
+      },
+    );
 
     testWidgets('shows error snackbar on failure', (tester) async {
       contactRepo.addTestContact(contactAlice);

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -14,9 +15,11 @@ import 'package:flutter_app/features/p2p/domain/models/connection_state.dart';
 class _FakeBridge implements Bridge {
   Map<String, dynamic> downloadResponse = {'ok': true};
   Map<String, dynamic>? lastRequest;
+  int sendCallCount = 0;
 
   @override
   Future<String> send(String message) async {
+    sendCallCount++;
     lastRequest = jsonDecode(message) as Map<String, dynamic>;
     return jsonEncode(downloadResponse);
   }
@@ -46,6 +49,18 @@ class _FakeBridge implements Bridge {
   void Function(Map<String, dynamic>)? onGroupMessageReceived;
   @override
   void Function(Map<String, dynamic>)? onGroupReactionReceived;
+}
+
+class _DelayedBridge extends _FakeBridge {
+  final Completer<void> gate = Completer<void>();
+
+  @override
+  Future<String> send(String message) async {
+    sendCallCount++;
+    lastRequest = jsonDecode(message) as Map<String, dynamic>;
+    await gate.future;
+    return jsonEncode(downloadResponse);
+  }
 }
 
 /// Fake media attachment repository that tracks calls.
@@ -308,6 +323,90 @@ void main() {
       expect(result.width, 1920);
       expect(result.height, 1080);
     });
+
+    test(
+      'overlapping callers for the same attachment trigger only one real download',
+      () async {
+        final delayedBridge = _DelayedBridge();
+
+        final firstFuture = downloadMedia(
+          bridge: delayedBridge,
+          mediaAttachmentRepo: mediaRepo,
+          mediaFileManager: fileManager,
+          attachment: testAttachment,
+          contactPeerId: 'contact-A',
+        );
+        await Future<void>.delayed(Duration.zero);
+
+        final secondFuture = downloadMedia(
+          bridge: delayedBridge,
+          mediaAttachmentRepo: mediaRepo,
+          mediaFileManager: fileManager,
+          attachment: testAttachment,
+          contactPeerId: 'contact-A',
+        );
+        await Future<void>.delayed(Duration.zero);
+
+        delayedBridge.gate.complete();
+        final results = await Future.wait([firstFuture, secondFuture]);
+
+        expect(delayedBridge.sendCallCount, 1);
+        expect(
+          mediaRepo.downloadStatusUpdates,
+          equals([('blob-download-001', 'downloading')]),
+        );
+        expect(mediaRepo.localPathUpdates, hasLength(1));
+        expect(results[0], isNotNull);
+        expect(results[1], isNotNull);
+        expect(results[0]!.localPath, results[1]!.localPath);
+        expect(results[0]!.downloadStatus, 'done');
+        expect(results[1]!.downloadStatus, 'done');
+      },
+    );
+
+    test(
+      'overlapping callers share failed outcome without leaving download state oscillating',
+      () async {
+        final delayedBridge = _DelayedBridge()
+          ..downloadResponse = {
+            'ok': false,
+            'errorCode': 'DOWNLOAD_FAILED',
+            'errorMessage': 'Blob not found',
+          };
+
+        final firstFuture = downloadMedia(
+          bridge: delayedBridge,
+          mediaAttachmentRepo: mediaRepo,
+          mediaFileManager: fileManager,
+          attachment: testAttachment,
+          contactPeerId: 'contact-A',
+        );
+        await Future<void>.delayed(Duration.zero);
+
+        final secondFuture = downloadMedia(
+          bridge: delayedBridge,
+          mediaAttachmentRepo: mediaRepo,
+          mediaFileManager: fileManager,
+          attachment: testAttachment,
+          contactPeerId: 'contact-A',
+        );
+        await Future<void>.delayed(Duration.zero);
+
+        delayedBridge.gate.complete();
+        final results = await Future.wait([firstFuture, secondFuture]);
+
+        expect(delayedBridge.sendCallCount, 1);
+        expect(results, equals([null, null]));
+        expect(
+          mediaRepo.downloadStatusUpdates,
+          equals([
+            ('blob-download-001', 'downloading'),
+            ('blob-download-001', 'failed'),
+          ]),
+        );
+        expect(mediaRepo.localPathUpdates, isEmpty);
+      },
+    );
   });
 }
 

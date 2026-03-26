@@ -5,10 +5,12 @@ import 'package:flutter_app/features/conversation/domain/repositories/message_re
 void main() {
   // In-memory store for testing
   late Map<String, Map<String, Object?>> store;
+  late int dbLoadMessageCallCount;
   late MessageRepositoryImpl repo;
 
   setUp(() {
     store = {};
+    dbLoadMessageCallCount = 0;
 
     repo = MessageRepositoryImpl(
       dbInsertMessage: (row) async {
@@ -30,11 +32,14 @@ void main() {
         return rows.isNotEmpty ? rows.first : null;
       },
       dbUpdateMessageStatus: (id, status) async {
-        if (store.containsKey(id)) {
-          store[id]!['status'] = status;
+        if (!store.containsKey(id)) {
+          return 0;
         }
+        store[id]!['status'] = status;
+        return 1;
       },
       dbLoadMessage: (id) async {
+        dbLoadMessageCallCount++;
         return store[id];
       },
       dbCountMessagesForContact: (contactPeerId) async {
@@ -160,7 +165,18 @@ void main() {
       dbUpdateWireEnvelope: (id, wireEnvelope) async {},
       dbLoadStuckSendingOutgoingMessages: ({required DateTime olderThan, int limit = 50}) async => [],
       dbLoadSendingOutgoingMessages: () async => [],
-      dbConditionalTransitionStatus: (id, {required fromStatus, required toStatus}) async => 0,
+      dbConditionalTransitionStatus: (
+        id, {
+        required fromStatus,
+        required toStatus,
+      }) async {
+        final row = store[id];
+        if (row == null || row['status'] != fromStatus) {
+          return 0;
+        }
+        row['status'] = toStatus;
+        return 1;
+      },
     );
   });
 
@@ -172,6 +188,11 @@ void main() {
     String timestamp = '2026-02-09T10:00:00.000Z',
     String status = 'sent',
     bool isIncoming = false,
+    String createdAt = '2026-02-09T10:00:01.000Z',
+    String? readAt,
+    String? quotedMessageId,
+    String? transport,
+    String? wireEnvelope,
   }) {
     return ConversationMessage(
       id: id,
@@ -181,8 +202,30 @@ void main() {
       timestamp: timestamp,
       status: status,
       isIncoming: isIncoming,
-      createdAt: '2026-02-09T10:00:01.000Z',
+      createdAt: createdAt,
+      readAt: readAt,
+      quotedMessageId: quotedMessageId,
+      transport: transport,
+      wireEnvelope: wireEnvelope,
     );
+  }
+
+  void expectMessageShape(
+    ConversationMessage actual,
+    ConversationMessage expected,
+  ) {
+    expect(actual.id, expected.id);
+    expect(actual.contactPeerId, expected.contactPeerId);
+    expect(actual.senderPeerId, expected.senderPeerId);
+    expect(actual.text, expected.text);
+    expect(actual.timestamp, expected.timestamp);
+    expect(actual.status, expected.status);
+    expect(actual.isIncoming, expected.isIncoming);
+    expect(actual.createdAt, expected.createdAt);
+    expect(actual.readAt, expected.readAt);
+    expect(actual.quotedMessageId, expected.quotedMessageId);
+    expect(actual.transport, expected.transport);
+    expect(actual.wireEnvelope, expected.wireEnvelope);
   }
 
   group('MessageRepositoryImpl', () {
@@ -287,6 +330,98 @@ void main() {
 
       expect(store['msg-1']!['status'], 'delivered');
     });
+
+    test(
+      'updateMessageStatus emits updated message exactly once without reloading cached row',
+      () async {
+        final original = makeMessage(
+          id: 'msg-update-stream',
+          text: 'Needs ACK',
+          timestamp: '2026-02-09T10:02:00.000Z',
+          status: 'sent',
+          createdAt: '2026-02-09T10:02:01.000Z',
+          quotedMessageId: 'quoted-123',
+          transport: 'relay',
+          wireEnvelope: '{"type":"chat_message"}',
+        );
+        await repo.saveMessage(original);
+        dbLoadMessageCallCount = 0;
+
+        final emitted = <ConversationMessage>[];
+        final sub = repo.messageChanges.listen(emitted.add);
+        addTearDown(sub.cancel);
+
+        await repo.updateMessageStatus(original.id, 'delivered');
+        await Future<void>.delayed(Duration.zero);
+
+        expect(dbLoadMessageCallCount, 0);
+        expect(emitted, hasLength(1));
+        expectMessageShape(
+          emitted.single,
+          original.copyWith(status: 'delivered'),
+        );
+        expect(store[original.id]!['status'], 'delivered');
+      },
+    );
+
+    test(
+      'updateMessageStatus does not emit stale cached message when the row no longer exists',
+      () async {
+        final original = makeMessage(
+          id: 'msg-update-missing-row',
+          text: 'Missing row',
+          status: 'sending',
+        );
+        await repo.saveMessage(original);
+        store.remove(original.id);
+        dbLoadMessageCallCount = 0;
+
+        final emitted = <ConversationMessage>[];
+        final sub = repo.messageChanges.listen(emitted.add);
+        addTearDown(sub.cancel);
+
+        await repo.updateMessageStatus(original.id, 'failed');
+        await Future<void>.delayed(Duration.zero);
+
+        expect(dbLoadMessageCallCount, 0);
+        expect(emitted, isEmpty);
+      },
+    );
+
+    test(
+      'conditionalTransitionStatus emits updated message exactly once without reloading cached row',
+      () async {
+        final original = makeMessage(
+          id: 'msg-conditional-stream',
+          text: 'Pause me',
+          timestamp: '2026-02-09T10:03:00.000Z',
+          status: 'sending',
+          createdAt: '2026-02-09T10:03:01.000Z',
+          transport: 'direct',
+        );
+        await repo.saveMessage(original);
+        dbLoadMessageCallCount = 0;
+
+        final emitted = <ConversationMessage>[];
+        final sub = repo.messageChanges.listen(emitted.add);
+        addTearDown(sub.cancel);
+
+        final updated = await repo.conditionalTransitionStatus(
+          original.id,
+          fromStatus: 'sending',
+          toStatus: 'failed',
+        );
+        await Future<void>.delayed(Duration.zero);
+
+        expect(updated, 1);
+        expect(dbLoadMessageCallCount, 0);
+        expect(emitted, hasLength(1));
+        expectMessageShape(
+          emitted.single,
+          original.copyWith(status: 'failed'),
+        );
+      },
+    );
 
     test('messageExists returns true for existing message', () async {
       await repo.saveMessage(makeMessage(id: 'msg-1'));

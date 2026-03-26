@@ -41,6 +41,26 @@ Future<int> retryIncompleteGroupUploads({
   UploadMediaFn uploadMediaFn = uploadMedia,
   MediaFileManager? mediaFileManager,
 }) async {
+  final retryStopwatch = Stopwatch()..start();
+  void emitRetryTiming({
+    required String outcome,
+    required int attachmentCount,
+    required int messageCount,
+    required int succeeded,
+  }) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'RETRY_INCOMPLETE_GROUP_UPLOADS_TIMING',
+      details: {
+        'elapsedMs': retryStopwatch.elapsedMilliseconds,
+        'outcome': outcome,
+        'attachmentCount': attachmentCount,
+        'messageCount': messageCount,
+        'succeeded': succeeded,
+      },
+    );
+  }
+
   emitFlowEvent(
     layer: 'FL',
     event: 'RETRY_INCOMPLETE_GROUP_UPLOADS_START',
@@ -55,6 +75,12 @@ Future<int> retryIncompleteGroupUploads({
       event: 'RETRY_INCOMPLETE_GROUP_UPLOADS_NONE',
       details: {},
     );
+    emitRetryTiming(
+      outcome: 'none',
+      attachmentCount: 0,
+      messageCount: 0,
+      succeeded: 0,
+    );
     return 0;
   }
 
@@ -64,6 +90,12 @@ Future<int> retryIncompleteGroupUploads({
       layer: 'FL',
       event: 'RETRY_INCOMPLETE_GROUP_UPLOADS_NO_IDENTITY',
       details: {},
+    );
+    emitRetryTiming(
+      outcome: 'no_identity',
+      attachmentCount: pendingAttachments.length,
+      messageCount: 0,
+      succeeded: 0,
     );
     return 0;
   }
@@ -297,6 +329,7 @@ Future<int> retryIncompleteGroupUploads({
         quotedMessageId: parentMessage.quotedMessageId,
         mediaAttachments: fullAttachmentList,
         mediaAttachmentRepo: mediaAttachmentRepo,
+        emitTimingEvent: false,
       );
 
       if (result == SendGroupMessageResult.success ||
@@ -343,6 +376,12 @@ Future<int> retryIncompleteGroupUploads({
       'totalMessages': byMessageId.length,
       'succeeded': successCount,
     },
+  );
+  emitRetryTiming(
+    outcome: 'complete',
+    attachmentCount: pendingAttachments.length,
+    messageCount: byMessageId.length,
+    succeeded: successCount,
   );
 
   return successCount;

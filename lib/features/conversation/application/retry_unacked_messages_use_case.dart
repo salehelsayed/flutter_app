@@ -14,6 +14,24 @@ Future<int> retryUnackedMessages({
   required MessageRepository messageRepo,
   required P2PService p2pService,
 }) async {
+  final retryStopwatch = Stopwatch()..start();
+  void emitRetryTiming({
+    required String outcome,
+    required int total,
+    required int delivered,
+  }) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'RETRY_UNACKED_MESSAGES_TIMING',
+      details: {
+        'elapsedMs': retryStopwatch.elapsedMilliseconds,
+        'outcome': outcome,
+        'total': total,
+        'delivered': delivered,
+      },
+    );
+  }
+
   emitFlowEvent(
     layer: 'FL',
     event: 'RETRY_UNACKED_MESSAGES_START',
@@ -30,6 +48,7 @@ Future<int> retryUnackedMessages({
       event: 'RETRY_UNACKED_MESSAGES_NONE',
       details: {},
     );
+    emitRetryTiming(outcome: 'none', total: 0, delivered: 0);
     return 0;
   }
 
@@ -48,9 +67,7 @@ Future<int> retryUnackedMessages({
       emitFlowEvent(
         layer: 'FL',
         event: 'RETRY_UNACKED_MESSAGE_SKIP_NULL_ENVELOPE',
-        details: {
-          'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id,
-        },
+        details: {'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id},
       );
       continue;
     }
@@ -106,6 +123,7 @@ Future<int> retryUnackedMessages({
     event: 'RETRY_UNACKED_MESSAGES_COMPLETE',
     details: {'total': unacked.length, 'delivered': count},
   );
+  emitRetryTiming(outcome: 'complete', total: unacked.length, delivered: count);
 
   return count;
 }

@@ -20,6 +20,8 @@ abstract class PostRepository {
 
   Future<PostModel?> getPost(String postId);
 
+  Future<List<PostModel>> loadPostsByIds(List<String> postIds);
+
   Future<bool> postExists(String postId);
 
   Future<List<PostModel>> loadFeed();

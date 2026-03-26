@@ -72,6 +72,26 @@ Future<int> retryFailedGroupMessages({
   required IdentityRepository identityRepo,
   required Bridge bridge,
 }) async {
+  final retryStopwatch = Stopwatch()..start();
+  void emitRetryTiming({
+    required String outcome,
+    required int total,
+    required int succeeded,
+    required int skippedUnsupported,
+  }) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'RETRY_FAILED_GROUP_MESSAGES_TIMING',
+      details: {
+        'elapsedMs': retryStopwatch.elapsedMilliseconds,
+        'outcome': outcome,
+        'total': total,
+        'succeeded': succeeded,
+        'skippedUnsupported': skippedUnsupported,
+      },
+    );
+  }
+
   emitFlowEvent(
     layer: 'FL',
     event: 'RETRY_FAILED_GROUP_MESSAGES_START',
@@ -84,6 +104,12 @@ Future<int> retryFailedGroupMessages({
       layer: 'FL',
       event: 'RETRY_FAILED_GROUP_MESSAGES_COMPLETE',
       details: {'total': 0, 'succeeded': 0, 'skippedUnsupported': 0},
+    );
+    emitRetryTiming(
+      outcome: 'no_identity',
+      total: 0,
+      succeeded: 0,
+      skippedUnsupported: 0,
     );
     return 0;
   }
@@ -101,6 +127,12 @@ Future<int> retryFailedGroupMessages({
       event: 'RETRY_FAILED_GROUP_MESSAGES_COMPLETE',
       details: {'total': 0, 'succeeded': 0, 'skippedUnsupported': 0},
     );
+    emitRetryTiming(
+      outcome: 'none',
+      total: 0,
+      succeeded: 0,
+      skippedUnsupported: 0,
+    );
     return 0;
   }
 
@@ -115,7 +147,9 @@ Future<int> retryFailedGroupMessages({
         event: 'RETRY_FAILED_GROUP_MESSAGES_MESSAGE_SKIPPED_UNSUPPORTED',
         details: {
           'messageId': _shortId(msg.id),
-          'reason': msg.inboxRetryPayload == null ? 'missing_retry_payload' : 'has_media_or_invalid_payload',
+          'reason': msg.inboxRetryPayload == null
+              ? 'missing_retry_payload'
+              : 'has_media_or_invalid_payload',
         },
       );
       continue;
@@ -135,6 +169,7 @@ Future<int> retryFailedGroupMessages({
         messageId: msg.id,
         timestamp: msg.timestamp,
         quotedMessageId: msg.quotedMessageId,
+        emitTimingEvent: false,
       );
 
       if (result == SendGroupMessageResult.success ||
@@ -143,19 +178,13 @@ Future<int> retryFailedGroupMessages({
         emitFlowEvent(
           layer: 'FL',
           event: 'RETRY_FAILED_GROUP_MESSAGES_MESSAGE_SUCCESS',
-          details: {
-            'messageId': _shortId(msg.id),
-            'result': result.name,
-          },
+          details: {'messageId': _shortId(msg.id), 'result': result.name},
         );
       } else {
         emitFlowEvent(
           layer: 'FL',
           event: 'RETRY_FAILED_GROUP_MESSAGES_MESSAGE_STILL_FAILED',
-          details: {
-            'messageId': _shortId(msg.id),
-            'result': result.name,
-          },
+          details: {'messageId': _shortId(msg.id), 'result': result.name},
         );
       }
     } catch (e) {
@@ -175,6 +204,12 @@ Future<int> retryFailedGroupMessages({
       'succeeded': successCount,
       'skippedUnsupported': skippedCount,
     },
+  );
+  emitRetryTiming(
+    outcome: 'complete',
+    total: failedMessages.length,
+    succeeded: successCount,
+    skippedUnsupported: skippedCount,
   );
 
   return successCount;

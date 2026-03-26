@@ -227,18 +227,18 @@ class InMemoryMessageRepository
   }) async {
     final cutoff = DateTime.now().toUtc().subtract(olderThan);
     return _messages.values
-        .where((m) =>
-            m.status == 'sending' &&
-            !m.isIncoming &&
-            DateTime.parse(m.timestamp).toUtc().isBefore(cutoff))
+        .where(
+          (m) =>
+              m.status == 'sending' &&
+              !m.isIncoming &&
+              DateTime.parse(m.timestamp).toUtc().isBefore(cutoff),
+        )
         .toList()
       ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
   }
 
   @override
-  Future<int> recoverStuckSendingMessages({
-    required Duration olderThan,
-  }) async {
+  Future<int> recoverStuckSendingMessages({required Duration olderThan}) async {
     final cutoff = DateTime.now().toUtc().subtract(olderThan);
     int count = 0;
     for (final entry in _messages.entries.toList()) {
@@ -254,7 +254,12 @@ class InMemoryMessageRepository
   }
 
   @override
-  Future<void> updateWireEnvelope(String id, String envelope) async {}
+  Future<void> updateWireEnvelope(String id, String envelope) async {
+    final msg = _messages[id];
+    if (msg != null) {
+      _messages[id] = msg.copyWith(wireEnvelope: envelope);
+    }
+  }
 
   int get count => _messages.length;
 }

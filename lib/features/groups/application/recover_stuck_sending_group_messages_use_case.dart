@@ -14,6 +14,7 @@ Future<int> recoverStuckSendingGroupMessages({
   required GroupMessageRepository groupMsgRepo,
   Duration threshold = kStuckSendingGroupThreshold,
 }) async {
+  final recoverStopwatch = Stopwatch()..start();
   emitFlowEvent(
     layer: 'FL',
     event: 'RECOVER_STUCK_SENDING_GROUP_START',
@@ -30,6 +31,16 @@ Future<int> recoverStuckSendingGroupMessages({
         ? 'RECOVER_STUCK_SENDING_GROUP_RECOVERED'
         : 'RECOVER_STUCK_SENDING_GROUP_NONE',
     details: {'count': count},
+  );
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'RECOVER_STUCK_SENDING_GROUP_TIMING',
+    details: {
+      'elapsedMs': recoverStopwatch.elapsedMilliseconds,
+      'outcome': count > 0 ? 'recovered' : 'none',
+      'count': count,
+      'thresholdSeconds': threshold.inSeconds,
+    },
   );
 
   return count;

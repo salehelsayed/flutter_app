@@ -156,8 +156,29 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
   String? quotedMessageId,
   List<MediaAttachment>? mediaAttachments,
   MediaAttachmentRepository? mediaAttachmentRepo,
+  bool emitTimingEvent = true,
 }) async {
+  final sendStopwatch = Stopwatch()..start();
   final sanitizedText = sanitizeMessageText(text);
+  final hasMedia = mediaAttachments != null && mediaAttachments.isNotEmpty;
+  void emitGroupSendTiming({
+    required String outcome,
+    Map<String, dynamic> details = const {},
+  }) {
+    if (!emitTimingEvent) return;
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_SEND_MSG_TIMING',
+      details: {
+        'elapsedMs': sendStopwatch.elapsedMilliseconds,
+        'outcome': outcome,
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        'hasMedia': hasMedia,
+        ...details,
+      },
+    );
+  }
+
   emitFlowEvent(
     layer: 'FL',
     event: 'GROUP_SEND_MSG_USE_CASE_BEGIN',
@@ -175,6 +196,7 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
       event: 'GROUP_SEND_MSG_USE_CASE_NOT_FOUND',
       details: {},
     );
+    emitGroupSendTiming(outcome: 'group_not_found');
     return (SendGroupMessageResult.groupNotFound, null);
   }
 
@@ -185,17 +207,24 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
       event: 'GROUP_SEND_MSG_USE_CASE_UNAUTHORIZED',
       details: {'type': group.type.toValue(), 'role': group.myRole.toValue()},
     );
+    emitGroupSendTiming(
+      outcome: 'unauthorized',
+      details: {
+        'groupType': group.type.toValue(),
+        'role': group.myRole.toValue(),
+      },
+    );
     return (SendGroupMessageResult.unauthorized, null);
   }
 
   // 2b. Reject empty messages (no text and no media)
-  final hasMedia = mediaAttachments != null && mediaAttachments.isNotEmpty;
   if (sanitizedText.trim().isEmpty && !hasMedia) {
     emitFlowEvent(
       layer: 'FL',
       event: 'GROUP_SEND_MSG_USE_CASE_EMPTY',
       details: {},
     );
+    emitGroupSendTiming(outcome: 'empty');
     return (SendGroupMessageResult.error, null);
   }
 
@@ -346,6 +375,10 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
         'inboxOk': inboxOk,
       },
     );
+    emitGroupSendTiming(
+      outcome: 'publish_failed',
+      details: {'inboxStored': inboxOk},
+    );
     return (SendGroupMessageResult.error, failedMessage);
   }
 
@@ -383,6 +416,10 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
         'legacy': true,
       },
     );
+    emitGroupSendTiming(
+      outcome: 'success',
+      details: {'status': finalMessage.status, 'legacy': true},
+    );
     return (SendGroupMessageResult.success, finalMessage);
   }
 
@@ -414,6 +451,14 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
             : resolvedMessageId,
         'topicPeers': topicPeers,
         'inboxOk': inboxOk,
+      },
+    );
+    emitGroupSendTiming(
+      outcome: 'success',
+      details: {
+        'status': finalMessage.status,
+        'topicPeers': topicPeers,
+        'inboxStored': inboxOk,
       },
     );
     return (SendGroupMessageResult.success, finalMessage);
@@ -448,6 +493,10 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
             : resolvedMessageId,
       },
     );
+    emitGroupSendTiming(
+      outcome: 'success_no_peers',
+      details: {'status': pendingMessage.status, 'topicPeers': 0},
+    );
     return (SendGroupMessageResult.successNoPeers, pendingMessage);
   } else {
     // 0-peer + inbox fail → error
@@ -462,6 +511,10 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
             ? resolvedMessageId.substring(0, 8)
             : resolvedMessageId,
       },
+    );
+    emitGroupSendTiming(
+      outcome: 'zero_peers_inbox_failed',
+      details: {'topicPeers': 0},
     );
     return (SendGroupMessageResult.error, failedMessage);
   }

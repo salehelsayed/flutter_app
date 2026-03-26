@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/handle_incoming_chat_message_use_case.dart';
@@ -267,6 +269,18 @@ class FakeDecryptBridge implements Bridge {
   void Function(Map<String, dynamic>)? onGroupReactionReceived;
 }
 
+class ThrowingDecryptBridge extends FakeDecryptBridge {
+  @override
+  Future<String> send(String message) async {
+    final req = jsonDecode(message) as Map<String, dynamic>;
+    if (req['cmd'] == 'message.decrypt') {
+      decryptCallCount++;
+      throw Exception('decrypt exploded');
+    }
+    return jsonEncode({'ok': true});
+  }
+}
+
 Future<List<String>> capturePrintedLines(Future<void> Function() action) async {
   final printed = <String>[];
   await runZoned(
@@ -277,6 +291,28 @@ Future<List<String>> capturePrintedLines(Future<void> Function() action) async {
       },
     ),
   );
+  return printed;
+}
+
+Future<List<String>> captureDebugPrintedLines(
+  Future<void> Function() action,
+) async {
+  final printed = <String>[];
+  final previousLogging = flowEventLoggingEnabled;
+  flowEventLoggingEnabled = true;
+  debugPrint = (String? message, {int? wrapWidth}) {
+    if (message != null) {
+      printed.add(message);
+    }
+  };
+
+  try {
+    await action();
+  } finally {
+    debugPrint = debugPrintThrottled;
+    flowEventLoggingEnabled = previousLogging;
+  }
+
   return printed;
 }
 
@@ -410,7 +446,7 @@ void main() {
       );
 
       test(
-        'returns notChatMessage when bridge decrypt reports failure',
+        'returns decryptionFailed when bridge decrypt reports failure',
         () async {
           final bridge = FakeDecryptBridge()
             ..decryptResponse = {
@@ -420,6 +456,37 @@ void main() {
             };
           final message = buildP2PMessage(buildV2EncryptedEnvelopeJson());
 
+          final lines = await captureDebugPrintedLines(() async {
+            final (result, msg, _) = await handleIncomingChatMessage(
+              message: message,
+              messageRepo: messageRepo,
+              contactRepo: contactRepo,
+              bridge: bridge,
+              ownMlKemSecretKey: 'own-secret-key',
+            );
+
+            expect(result, HandleChatMessageResult.decryptionFailed);
+            expect(msg, isNull);
+          });
+
+          expect(messageRepo.saved, isEmpty);
+          expect(bridge.decryptCallCount, 1);
+          expect(
+            lines.any((line) => line.contains('CHAT_MSG_RECEIVE_DECRYPT_FAILED')),
+            isTrue,
+          );
+          expect(
+            lines.any((line) => line.contains('CHAT_MSG_RECEIVE_NOT_CHAT')),
+            isFalse,
+          );
+        },
+      );
+
+      test('returns decryptionFailed when bridge decrypt throws', () async {
+        final bridge = ThrowingDecryptBridge();
+        final message = buildP2PMessage(buildV2EncryptedEnvelopeJson());
+
+        final lines = await captureDebugPrintedLines(() async {
           final (result, msg, _) = await handleIncomingChatMessage(
             message: message,
             messageRepo: messageRepo,
@@ -428,12 +495,21 @@ void main() {
             ownMlKemSecretKey: 'own-secret-key',
           );
 
-          expect(result, HandleChatMessageResult.notChatMessage);
+          expect(result, HandleChatMessageResult.decryptionFailed);
           expect(msg, isNull);
-          expect(messageRepo.saved, isEmpty);
-          expect(bridge.decryptCallCount, 1);
-        },
-      );
+        });
+
+        expect(messageRepo.saved, isEmpty);
+        expect(bridge.decryptCallCount, 1);
+        expect(
+          lines.any((line) => line.contains('CHAT_MSG_RECEIVE_DECRYPT_ERROR')),
+          isTrue,
+        );
+        expect(
+          lines.any((line) => line.contains('CHAT_MSG_RECEIVE_NOT_CHAT')),
+          isFalse,
+        );
+      });
 
       test(
         'decrypts v2 envelope and persists message for known contact',

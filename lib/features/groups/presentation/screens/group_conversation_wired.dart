@@ -567,6 +567,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
 
     // 4. sendGroupMessage() still owns the final message row save.
     final bgTaskId = await callBgBegin(widget.bridge);
+    var prePersistedOrdinaryMediaRow = false;
     try {
       // 5. Upload attachments (if any)
       List<MediaAttachment>? uploadedAttachments;
@@ -579,6 +580,8 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
             messageId: messageId,
             mediaToUpload: mediaToUpload,
           );
+          await widget.msgRepo.saveMessage(optimisticMessage);
+          prePersistedOrdinaryMediaRow = true;
           optimisticMedia = preparedUploads
               .map(
                 (plan) => plan.pendingAttachment.copyWith(
@@ -595,10 +598,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
             allowedPeers: allowedPeers,
           );
           if (uploadedAttachments == null) {
-            if (mounted) {
-              _updateComposerState(isUploading: false);
-              await _restoreComposerSnapshot(composerSnapshot, messageId);
-            }
+            await _restoreComposerSnapshot(composerSnapshot, messageId);
             return;
           }
         } else {
@@ -648,10 +648,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
                 ),
               );
             } else {
-              if (mounted) {
-                _updateComposerState(isUploading: false);
-                await _restoreComposerSnapshot(composerSnapshot, messageId);
-              }
+              await _restoreComposerSnapshot(composerSnapshot, messageId);
               return;
             }
           }
@@ -679,8 +676,6 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
         mediaAttachments: uploadedAttachments,
         mediaAttachmentRepo: widget.mediaAttachmentRepo,
       );
-
-      if (!mounted) return;
 
       if ((result == SendGroupMessageResult.success ||
               result == SendGroupMessageResult.successNoPeers) &&
@@ -713,6 +708,23 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
             await widget.mediaFileManager?.deletePendingUploadDir(messageId);
           } catch (_) {}
         }
+      } else if (prePersistedOrdinaryMediaRow &&
+          (result == SendGroupMessageResult.groupNotFound ||
+              result == SendGroupMessageResult.unauthorized)) {
+        if (mounted) {
+          _removeLocalMessage(messageId);
+        }
+        try {
+          await widget.mediaAttachmentRepo?.deleteAttachmentsForMessage(
+            messageId,
+          );
+        } catch (_) {}
+        try {
+          await widget.mediaFileManager?.deletePendingUploadDir(messageId);
+        } catch (_) {}
+        try {
+          await widget.msgRepo.deleteMessage(messageId);
+        } catch (_) {}
       } else {
         await _restoreComposerSnapshot(composerSnapshot, messageId);
       }
@@ -722,7 +734,6 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
         event: 'GROUP_CONV_FL_SEND_ERROR',
         details: {'error': e.toString()},
       );
-      if (!mounted) return;
       await _restoreComposerSnapshot(composerSnapshot, messageId);
     } finally {
       await callBgEnd(widget.bridge, bgTaskId);
@@ -746,18 +757,12 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
         );
         _activeQuoteMessageId = snapshot.quotedMessageId;
       });
-    } else {
-      _draftText = snapshot.draftText;
-      _pendingAttachments = List<_PendingMedia>.from(
-        snapshot.pendingAttachments,
+      _updateComposerState(
+        pendingAttachments: _pendingAttachmentFiles(),
+        isUploading: false,
       );
-      _activeQuoteMessageId = snapshot.quotedMessageId;
+      _updateLocalMessageStatus(messageId, 'failed');
     }
-    _updateComposerState(
-      pendingAttachments: _pendingAttachmentFiles(),
-      isUploading: false,
-    );
-    _updateLocalMessageStatus(messageId, 'failed');
     await _persistMessageStatus(messageId, 'failed');
   }
 

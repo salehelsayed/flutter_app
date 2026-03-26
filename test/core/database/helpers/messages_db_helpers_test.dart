@@ -267,12 +267,13 @@ void main() {
   });
 
   group('dbUpdateMessageStatus', () {
-    test('updates status field', () async {
+    test('updates status field and returns affected row count', () async {
       await dbInsertMessage(db, makeMessageRow(status: 'sent'));
 
-      await dbUpdateMessageStatus(db, 'msg-001', 'delivered');
+      final updated = await dbUpdateMessageStatus(db, 'msg-001', 'delivered');
 
       final row = await dbLoadMessage(db, 'msg-001');
+      expect(updated, 1);
       expect(row, isNotNull);
       expect(row!['status'], 'delivered');
     });
@@ -280,10 +281,21 @@ void main() {
     test('can update from sent to delivered', () async {
       await dbInsertMessage(db, makeMessageRow(status: 'sent'));
 
-      await dbUpdateMessageStatus(db, 'msg-001', 'delivered');
+      final updated = await dbUpdateMessageStatus(db, 'msg-001', 'delivered');
 
       final row = await dbLoadMessage(db, 'msg-001');
+      expect(updated, 1);
       expect(row!['status'], 'delivered');
+    });
+
+    test('returns 0 when the row does not exist', () async {
+      final updated = await dbUpdateMessageStatus(
+        db,
+        'missing-row',
+        'delivered',
+      );
+
+      expect(updated, 0);
     });
   });
 

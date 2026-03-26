@@ -244,6 +244,19 @@ class ChatMessageListener {
         _contactUpdatedController.add(updatedContact);
       }
 
+      if (result == HandleChatMessageResult.decryptionFailed) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'CHAT_LISTENER_DECRYPT_FAILED',
+          details: {
+            'from': senderPeerId.length > 10
+                ? senderPeerId.substring(0, 10)
+                : senderPeerId,
+          },
+        );
+        return;
+      }
+
       if (result == HandleChatMessageResult.chatMessage &&
           conversationMessage != null) {
         // Check if sender is archived — suppress UI notification but message is already persisted

@@ -2,6 +2,21 @@ import 'package:sqflite_sqlcipher/sqflite.dart';
 
 import '../../utils/flow_event_emitter.dart';
 
+void _emitPostsDbTiming({
+  required String event,
+  required Stopwatch stopwatch,
+  required Map<String, dynamic> details,
+}) {
+  emitFlowEvent(
+    layer: 'DB',
+    event: event,
+    details: <String, dynamic>{
+      'elapsedMs': stopwatch.elapsedMilliseconds,
+      ...details,
+    },
+  );
+}
+
 Future<String> _localSharedToCountSubquery(Database db) async {
   final sharedToExpression = await _sharedToCountExpression(db);
   return '''
@@ -16,9 +31,7 @@ Future<String> _sharedToCountExpression(Database db) async {
   final hasRecipientCount = columns.any(
     (column) => column['name'] == 'recipient_count',
   );
-  return hasRecipientCount
-      ? 'SUM(COALESCE(recipient_count, 1))'
-      : 'COUNT(*)';
+  return hasRecipientCount ? 'SUM(COALESCE(recipient_count, 1))' : 'COUNT(*)';
 }
 
 Future<String> _sharedToBaselineExpression(Database db) async {
@@ -116,10 +129,141 @@ Future<void> dbInsertPost(Database db, Map<String, Object?> row) async {
 }
 
 Future<Map<String, Object?>?> dbLoadPost(Database db, String postId) async {
-  final localSharedToCountSubquery = await _localSharedToCountSubquery(db);
-  final sharedToBaselineExpression = await _sharedToBaselineExpression(db);
-  final rows = await db.rawQuery(
-    '''
+  final stopwatch = Stopwatch()..start();
+  try {
+    final localSharedToCountSubquery = await _localSharedToCountSubquery(db);
+    final sharedToBaselineExpression = await _sharedToBaselineExpression(db);
+    final rows = await db.rawQuery(
+      '''
+        SELECT
+          p.*,
+          po.origin_kind,
+          po.pass_id,
+          po.passer_peer_id,
+          po.passer_username,
+          po.pass_created_at,
+          COALESCE(pc.local_share_count, 0) +
+              COALESCE(prs.repost_total_baseline, 0) AS share_count,
+          COALESCE(psc.local_shared_to_count, 0) +
+              $sharedToBaselineExpression AS total_shared_to_count,
+          COALESCE(fs.is_hidden, 0) AS is_hidden,
+          COALESCE(fs.is_read, 0) AS is_read,
+          COALESCE(fs.last_focused_at, '') AS last_focused_at
+        FROM posts p
+        LEFT JOIN post_feed_state fs ON fs.post_id = p.post_id
+        LEFT JOIN post_origin po ON po.post_id = p.post_id
+        LEFT JOIN post_repost_projection_state prs ON prs.post_id = p.post_id
+        LEFT JOIN (
+          SELECT post_id, COUNT(*) AS local_share_count
+          FROM post_passes
+          GROUP BY post_id
+        ) pc ON pc.post_id = p.post_id
+        LEFT JOIN (
+          $localSharedToCountSubquery
+        ) psc ON psc.post_id = p.post_id
+        WHERE p.post_id = ?
+        LIMIT 1
+      ''',
+      <Object?>[postId],
+    );
+    final row = rows.isEmpty ? null : rows.first;
+    _emitPostsDbTiming(
+      event: 'POSTS_DB_LOAD_POST_TIMING',
+      stopwatch: stopwatch,
+      details: <String, dynamic>{
+        'postId': postId,
+        'outcome': row == null ? 'miss' : 'hit',
+      },
+    );
+    return row;
+  } catch (e) {
+    _emitPostsDbTiming(
+      event: 'POSTS_DB_LOAD_POST_TIMING',
+      stopwatch: stopwatch,
+      details: <String, dynamic>{
+        'postId': postId,
+        'outcome': 'error',
+        'error': e.toString(),
+      },
+    );
+    rethrow;
+  }
+}
+
+Future<List<Map<String, Object?>>> dbLoadPostsByIds(
+  Database db,
+  List<String> postIds,
+) async {
+  final uniquePostIds = postIds.toSet().toList(growable: false);
+  if (uniquePostIds.isEmpty) {
+    return const <Map<String, Object?>>[];
+  }
+  final stopwatch = Stopwatch()..start();
+  try {
+    final localSharedToCountSubquery = await _localSharedToCountSubquery(db);
+    final sharedToBaselineExpression = await _sharedToBaselineExpression(db);
+    final placeholders = List<String>.filled(
+      uniquePostIds.length,
+      '?',
+    ).join(', ');
+    final rows = await db.rawQuery('''
+        SELECT
+          p.*,
+          po.origin_kind,
+          po.pass_id,
+          po.passer_peer_id,
+          po.passer_username,
+          po.pass_created_at,
+          COALESCE(pc.local_share_count, 0) +
+              COALESCE(prs.repost_total_baseline, 0) AS share_count,
+          COALESCE(psc.local_shared_to_count, 0) +
+              $sharedToBaselineExpression AS total_shared_to_count,
+          COALESCE(fs.is_hidden, 0) AS is_hidden,
+          COALESCE(fs.is_read, 0) AS is_read,
+          COALESCE(fs.last_focused_at, '') AS last_focused_at
+        FROM posts p
+        LEFT JOIN post_feed_state fs ON fs.post_id = p.post_id
+        LEFT JOIN post_origin po ON po.post_id = p.post_id
+        LEFT JOIN post_repost_projection_state prs ON prs.post_id = p.post_id
+        LEFT JOIN (
+          SELECT post_id, COUNT(*) AS local_share_count
+          FROM post_passes
+          GROUP BY post_id
+        ) pc ON pc.post_id = p.post_id
+        LEFT JOIN (
+          $localSharedToCountSubquery
+        ) psc ON psc.post_id = p.post_id
+        WHERE p.post_id IN ($placeholders)
+      ''', uniquePostIds);
+    _emitPostsDbTiming(
+      event: 'POSTS_DB_LOAD_BY_IDS_TIMING',
+      stopwatch: stopwatch,
+      details: <String, dynamic>{
+        'requestedCount': uniquePostIds.length,
+        'loadedCount': rows.length,
+      },
+    );
+    return rows;
+  } catch (e) {
+    _emitPostsDbTiming(
+      event: 'POSTS_DB_LOAD_BY_IDS_TIMING',
+      stopwatch: stopwatch,
+      details: <String, dynamic>{
+        'requestedCount': uniquePostIds.length,
+        'outcome': 'error',
+        'error': e.toString(),
+      },
+    );
+    rethrow;
+  }
+}
+
+Future<List<Map<String, Object?>>> dbLoadPostsFeed(Database db) async {
+  final stopwatch = Stopwatch()..start();
+  try {
+    final localSharedToCountSubquery = await _localSharedToCountSubquery(db);
+    final sharedToBaselineExpression = await _sharedToBaselineExpression(db);
+    final rows = await db.rawQuery('''
       SELECT
         p.*,
         po.origin_kind,
@@ -146,50 +290,23 @@ Future<Map<String, Object?>?> dbLoadPost(Database db, String postId) async {
       LEFT JOIN (
         $localSharedToCountSubquery
       ) psc ON psc.post_id = p.post_id
-      WHERE p.post_id = ?
-      LIMIT 1
-    ''',
-    <Object?>[postId],
-  );
-  if (rows.isEmpty) {
-    return null;
+      WHERE COALESCE(fs.is_hidden, 0) = 0
+      ORDER BY p.visible_at DESC, p.post_created_at DESC, p.post_id DESC
+    ''');
+    _emitPostsDbTiming(
+      event: 'POSTS_DB_LOAD_FEED_TIMING',
+      stopwatch: stopwatch,
+      details: <String, dynamic>{'loadedCount': rows.length},
+    );
+    return rows;
+  } catch (e) {
+    _emitPostsDbTiming(
+      event: 'POSTS_DB_LOAD_FEED_TIMING',
+      stopwatch: stopwatch,
+      details: <String, dynamic>{'outcome': 'error', 'error': e.toString()},
+    );
+    rethrow;
   }
-  return rows.first;
-}
-
-Future<List<Map<String, Object?>>> dbLoadPostsFeed(Database db) async {
-  final localSharedToCountSubquery = await _localSharedToCountSubquery(db);
-  final sharedToBaselineExpression = await _sharedToBaselineExpression(db);
-  return db.rawQuery('''
-    SELECT
-      p.*,
-      po.origin_kind,
-      po.pass_id,
-      po.passer_peer_id,
-      po.passer_username,
-      po.pass_created_at,
-      COALESCE(pc.local_share_count, 0) +
-          COALESCE(prs.repost_total_baseline, 0) AS share_count,
-      COALESCE(psc.local_shared_to_count, 0) +
-          $sharedToBaselineExpression AS total_shared_to_count,
-      COALESCE(fs.is_hidden, 0) AS is_hidden,
-      COALESCE(fs.is_read, 0) AS is_read,
-      COALESCE(fs.last_focused_at, '') AS last_focused_at
-    FROM posts p
-    LEFT JOIN post_feed_state fs ON fs.post_id = p.post_id
-    LEFT JOIN post_origin po ON po.post_id = p.post_id
-    LEFT JOIN post_repost_projection_state prs ON prs.post_id = p.post_id
-    LEFT JOIN (
-      SELECT post_id, COUNT(*) AS local_share_count
-      FROM post_passes
-      GROUP BY post_id
-    ) pc ON pc.post_id = p.post_id
-    LEFT JOIN (
-      $localSharedToCountSubquery
-    ) psc ON psc.post_id = p.post_id
-    WHERE COALESCE(fs.is_hidden, 0) = 0
-    ORDER BY p.visible_at DESC, p.post_created_at DESC, p.post_id DESC
-  ''');
 }
 
 Future<Map<String, int>> dbLoadViewerSharedToCountsForPosts(

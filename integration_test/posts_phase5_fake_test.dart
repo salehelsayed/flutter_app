@@ -30,7 +30,7 @@ ContactModel _contact(String peerId, String username) {
 
 void main() {
   testWidgets(
-    'receiver dismiss stays local while sender edits update the feed snapshot',
+    'fresh sender edit clears the receiver dismissal and updates the feed snapshot',
     (tester) async {
       final network = FakeP2PNetwork();
       final bobService = FakeP2PService(peerId: 'peer-bob', network: network);
@@ -118,8 +118,10 @@ void main() {
       expect(editResult, EditPinnedPostResult.success);
       await tester.pump(const Duration(milliseconds: 50));
 
+      final caraPinned = await loadPinnedPosts(postRepo: caraPosts);
       final caraFeed = await loadPostsFeed(postRepo: caraPosts);
-      expect(await loadPinnedPosts(postRepo: caraPosts), isEmpty);
+      expect(caraPinned.map((post) => post.id), <String>[postId]);
+      expect(caraPinned.single.text, 'Fresh blankets and hot tea available.');
       expect(caraFeed.single.text, 'Fresh blankets and hot tea available.');
     },
   );

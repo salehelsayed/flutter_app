@@ -15,6 +15,7 @@ Future<int> recoverStuckSendingMessages({
   required MessageRepository messageRepo,
   Duration threshold = kStuckSendingThreshold,
 }) async {
+  final recoverStopwatch = Stopwatch()..start();
   emitFlowEvent(
     layer: 'FL',
     event: 'RECOVER_STUCK_SENDING_START',
@@ -31,6 +32,16 @@ Future<int> recoverStuckSendingMessages({
         ? 'RECOVER_STUCK_SENDING_RECOVERED'
         : 'RECOVER_STUCK_SENDING_NONE',
     details: {'count': count},
+  );
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'RECOVER_STUCK_SENDING_TIMING',
+    details: {
+      'elapsedMs': recoverStopwatch.elapsedMilliseconds,
+      'outcome': count > 0 ? 'recovered' : 'none',
+      'count': count,
+      'thresholdSeconds': threshold.inSeconds,
+    },
   );
 
   return count;

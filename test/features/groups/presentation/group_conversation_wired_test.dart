@@ -559,6 +559,109 @@ void main() {
     );
 
     testWidgets(
+      'ordinary media pre-persists the parent row before upload completes and finalizes after sendGroupMessage',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+
+        final tempDir = Directory.systemTemp.createTempSync(
+          'group-media-parent-row-',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) {
+            tempDir.deleteSync(recursive: true);
+          }
+        });
+        final file = File('${tempDir.path}/one.jpg')..writeAsStringSync('one');
+        final mediaFileManager = FakeMediaFileManager();
+        final deletedDirs = <String>[];
+        mediaFileManager.onDeletePendingUploadDir = deletedDirs.add;
+        final uploadStarted = Completer<void>();
+        final uploadGate = Completer<void>();
+        String? receivedBlobId;
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: mediaFileManager,
+            initialAttachments: [file],
+            uploadMediaFn:
+                ({
+                  required bridge,
+                  required localFilePath,
+                  required mime,
+                  required recipientPeerId,
+                  String? blobId,
+                  mediaFileManager,
+                  width,
+                  height,
+                  durationMs,
+                  waveform,
+                  allowedPeers,
+                }) async {
+                  receivedBlobId = blobId;
+                  if (!uploadStarted.isCompleted) {
+                    uploadStarted.complete();
+                  }
+                  await uploadGate.future;
+                  return MediaAttachment(
+                    id: 'server-media-parent-row',
+                    messageId: '',
+                    mime: mime,
+                    size: 1,
+                    mediaType: MediaAttachment.mediaTypeFromMime(mime),
+                    localPath: mediaFileManager?.relativePathForAttachment(
+                      contactPeerId: group.id,
+                      blobId: blobId!,
+                      mime: mime,
+                    ),
+                    downloadStatus: 'done',
+                    createdAt: DateTime.now().toUtc().toIso8601String(),
+                  );
+                },
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        await tester.enterText(find.byType(TextField), 'Durable parent row');
+        await pumpFrames(tester);
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await pumpUntil(tester, () => uploadStarted.isCompleted);
+        await pumpFrames(tester, count: 5);
+
+        final pending = await mediaAttachmentRepo.getUploadPendingAttachments();
+        expect(pending, hasLength(1));
+        final messageId = pending.single.messageId;
+        expect(pending.single.id, receivedBlobId);
+        expect(pending.single.downloadStatus, 'upload_pending');
+        expect(pending.single.localPath, startsWith('pending_uploads/'));
+
+        final persistedBeforeUpload = await msgRepo.getMessage(messageId);
+        expect(persistedBeforeUpload, isNotNull);
+        expect(persistedBeforeUpload!.text, 'Durable parent row');
+        expect(persistedBeforeUpload.status, 'sending');
+
+        uploadGate.complete();
+        await pumpFrames(tester, count: 20);
+
+        final persistedAfterSend = await msgRepo.getMessage(messageId);
+        expect(persistedAfterSend, isNotNull);
+        expect(persistedAfterSend!.status, 'sent');
+        expect(
+          await mediaAttachmentRepo.getUploadPendingAttachments(),
+          isEmpty,
+        );
+        final savedAttachments = await mediaAttachmentRepo
+            .getAttachmentsForMessage(messageId);
+        expect(savedAttachments, hasLength(1));
+        expect(savedAttachments.single.id, receivedBlobId);
+        expect(savedAttachments.single.downloadStatus, 'done');
+        expect(deletedDirs, contains(messageId));
+      },
+    );
+
+    testWidgets(
       'failed media upload restores composer and leaves durable pending rows retryable',
       (tester) async {
         final group = makeChatGroup();
@@ -640,6 +743,256 @@ void main() {
           pending.every((att) => att.downloadStatus == 'upload_pending'),
           isTrue,
         );
+      },
+    );
+
+    testWidgets(
+      'ordinary media upload failure persists failed parent state and restores composer and quote',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await msgRepo.saveMessage(
+          makeMessage(
+            id: 'msg-parent-media-upload',
+            text: 'Media upload parent',
+            groupId: group.id,
+            isIncoming: true,
+          ),
+        );
+
+        final tempDir = Directory.systemTemp.createTempSync(
+          'group-media-upload-parent-fail-',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) {
+            tempDir.deleteSync(recursive: true);
+          }
+        });
+        final file = File('${tempDir.path}/one.jpg')..writeAsStringSync('one');
+        final mediaFileManager = FakeMediaFileManager();
+        final uploadStarted = Completer<void>();
+        final uploadGate = Completer<void>();
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: mediaFileManager,
+            initialAttachments: [file],
+            uploadMediaFn:
+                ({
+                  required bridge,
+                  required localFilePath,
+                  required mime,
+                  required recipientPeerId,
+                  String? blobId,
+                  mediaFileManager,
+                  width,
+                  height,
+                  durationMs,
+                  waveform,
+                  allowedPeers,
+                }) async {
+                  if (!uploadStarted.isCompleted) {
+                    uploadStarted.complete();
+                  }
+                  await uploadGate.future;
+                  return null;
+                },
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        final screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        screen.onQuoteReply!.call('msg-parent-media-upload');
+        await tester.pump();
+        expect(find.text('Replying to'), findsOneWidget);
+
+        await tester.enterText(find.byType(TextField), 'Fail media parent row');
+        await pumpFrames(tester);
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await pumpUntil(tester, () => uploadStarted.isCompleted);
+        await pumpFrames(tester, count: 5);
+
+        final pendingBeforeFail = await mediaAttachmentRepo
+            .getUploadPendingAttachments();
+        expect(pendingBeforeFail, hasLength(1));
+        final messageId = pendingBeforeFail.single.messageId;
+        final persistedBeforeFail = await msgRepo.getMessage(messageId);
+        expect(persistedBeforeFail, isNotNull);
+        expect(persistedBeforeFail!.status, 'sending');
+        expect(persistedBeforeFail.quotedMessageId, 'msg-parent-media-upload');
+
+        uploadGate.complete();
+        await pumpFrames(tester, count: 20);
+
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).controller?.text,
+          'Fail media parent row',
+        );
+        expect(find.byType(AttachmentPreviewStrip), findsOneWidget);
+        expect(find.text('Replying to'), findsOneWidget);
+        expect(bridge.commandLog, isNot(contains('group:publish')));
+
+        final persistedAfterFail = await msgRepo.getMessage(messageId);
+        expect(persistedAfterFail, isNotNull);
+        expect(persistedAfterFail!.status, 'failed');
+        expect(persistedAfterFail.quotedMessageId, 'msg-parent-media-upload');
+
+        final pendingAfterFail = await mediaAttachmentRepo
+            .getUploadPendingAttachments();
+        expect(pendingAfterFail, hasLength(1));
+        expect(pendingAfterFail.single.id, pendingBeforeFail.single.id);
+        expect(pendingAfterFail.single.downloadStatus, 'upload_pending');
+
+        final failedScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        final failedMessage = failedScreen.messages.singleWhere(
+          (message) => message.id == messageId,
+        );
+        expect(failedMessage.status, 'failed');
+        expect(failedMessage.quotedMessageId, 'msg-parent-media-upload');
+      },
+    );
+
+    testWidgets(
+      'ordinary media group-not-found rejection removes the row and cleans durable media state',
+      (tester) async {
+        final missingGroup = makeChatGroup();
+        final tempDir = Directory.systemTemp.createTempSync(
+          'group-media-missing-group-',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) {
+            tempDir.deleteSync(recursive: true);
+          }
+        });
+        final file = File('${tempDir.path}/one.jpg')..writeAsStringSync('one');
+        final mediaFileManager = FakeMediaFileManager();
+        final deletedDirs = <String>[];
+        mediaFileManager.onDeletePendingUploadDir = deletedDirs.add;
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: missingGroup,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: mediaFileManager,
+            initialAttachments: [file],
+            uploadMediaFn:
+                ({
+                  required bridge,
+                  required localFilePath,
+                  required mime,
+                  required recipientPeerId,
+                  String? blobId,
+                  mediaFileManager,
+                  width,
+                  height,
+                  durationMs,
+                  waveform,
+                  allowedPeers,
+                }) async => MediaAttachment(
+                  id: 'server-missing-group-media',
+                  messageId: '',
+                  mime: mime,
+                  size: 1,
+                  mediaType: MediaAttachment.mediaTypeFromMime(mime),
+                  localPath: mediaFileManager?.relativePathForAttachment(
+                    contactPeerId: missingGroup.id,
+                    blobId: blobId!,
+                    mime: mime,
+                  ),
+                  downloadStatus: 'done',
+                  createdAt: DateTime.now().toUtc().toIso8601String(),
+                ),
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        await tester.enterText(find.byType(TextField), 'Missing group media');
+        await pumpFrames(tester);
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await pumpFrames(tester, count: 20);
+
+        expect(await msgRepo.getMessagesPage(missingGroup.id), isEmpty);
+        expect(await mediaAttachmentRepo.getUploadPendingAttachments(), isEmpty);
+        expect(mediaAttachmentRepo.count, 0);
+        expect(deletedDirs, hasLength(1));
+        expect(bridge.commandLog, isNot(contains('group:publish')));
+      },
+    );
+
+    testWidgets(
+      'ordinary media unauthorized rejection removes the row and cleans durable media state',
+      (tester) async {
+        final widgetGroup = makeAnnouncementGroup(role: GroupRole.admin);
+        await groupRepo.saveGroup(
+          widgetGroup.copyWith(myRole: GroupRole.member),
+        );
+
+        final tempDir = Directory.systemTemp.createTempSync(
+          'group-media-unauthorized-',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) {
+            tempDir.deleteSync(recursive: true);
+          }
+        });
+        final file = File('${tempDir.path}/one.jpg')..writeAsStringSync('one');
+        final mediaFileManager = FakeMediaFileManager();
+        final deletedDirs = <String>[];
+        mediaFileManager.onDeletePendingUploadDir = deletedDirs.add;
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: widgetGroup,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: mediaFileManager,
+            initialAttachments: [file],
+            uploadMediaFn:
+                ({
+                  required bridge,
+                  required localFilePath,
+                  required mime,
+                  required recipientPeerId,
+                  String? blobId,
+                  mediaFileManager,
+                  width,
+                  height,
+                  durationMs,
+                  waveform,
+                  allowedPeers,
+                }) async => MediaAttachment(
+                  id: 'server-unauthorized-media',
+                  messageId: '',
+                  mime: mime,
+                  size: 1,
+                  mediaType: MediaAttachment.mediaTypeFromMime(mime),
+                  localPath: mediaFileManager?.relativePathForAttachment(
+                    contactPeerId: widgetGroup.id,
+                    blobId: blobId!,
+                    mime: mime,
+                  ),
+                  downloadStatus: 'done',
+                  createdAt: DateTime.now().toUtc().toIso8601String(),
+                ),
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        await tester.enterText(find.byType(TextField), 'Unauthorized media');
+        await pumpFrames(tester);
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await pumpFrames(tester, count: 20);
+
+        expect(await msgRepo.getMessagesPage(widgetGroup.id), isEmpty);
+        expect(await mediaAttachmentRepo.getUploadPendingAttachments(), isEmpty);
+        expect(mediaAttachmentRepo.count, 0);
+        expect(deletedDirs, hasLength(1));
+        expect(bridge.commandLog, isNot(contains('group:publish')));
       },
     );
 

@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:uuid/uuid.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
@@ -11,6 +12,7 @@ import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
+import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/features/settings/application/image_quality_preference_use_cases.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -78,6 +80,8 @@ import 'package:flutter_app/features/posts/domain/repositories/posts_privacy_set
 import 'feed_screen.dart';
 
 enum _MediaSource { gallery, camera, videoCamera }
+
+const _uuid = Uuid();
 
 /// Wired widget that connects FeedScreen to business logic.
 ///
@@ -1045,13 +1049,13 @@ class _FeedWiredState extends State<FeedWired> {
     // Optimistic: show session reply immediately before network send.
     final quotedMsgId = _activeQuoteMessageIds[contactPeerId];
     final draftText = text;
+    final sanitizedText = sanitizeMessageText(text);
     _draftTexts.remove(contactPeerId);
     _activeQuoteMessageIds.remove(contactPeerId);
     _sessionReplies.track(contactPeerId, SessionReply.justNow(text));
     if (mounted) setState(() {});
-
-    // Acquire background task before network send.
-    final bgTaskId = await callBgBegin(widget.bridge);
+    String? bgTaskId;
+    ConversationMessage? optimisticMessage;
 
     try {
       final contact = await widget.contactRepository.getContact(contactPeerId);
@@ -1065,13 +1069,41 @@ class _FeedWiredState extends State<FeedWired> {
         return;
       }
 
+      final timestamp = DateTime.now().toUtc().toIso8601String();
+      optimisticMessage = ConversationMessage(
+        id: _uuid.v4(),
+        contactPeerId: contactPeerId,
+        senderPeerId: identity.peerId,
+        text: sanitizedText,
+        timestamp: timestamp,
+        status: 'sending',
+        isIncoming: false,
+        createdAt: timestamp,
+        quotedMessageId: quotedMsgId,
+      );
+
+      try {
+        await widget.messageRepository.saveMessage(optimisticMessage);
+      } catch (e) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'FEED_FL_OPTIMISTIC_SAVE_ERROR',
+          details: {'error': e.toString(), 'contactPeerId': contactPeerId},
+        );
+      }
+
+      // Acquire background task before network send.
+      bgTaskId = await callBgBegin(widget.bridge);
+
       final (result, message) = await sendChatMessage(
         p2pService: widget.p2pService,
         messageRepo: widget.messageRepository,
         targetPeerId: contactPeerId,
-        text: text,
+        text: sanitizedText,
         senderPeerId: identity.peerId,
         senderUsername: identity.username,
+        messageId: optimisticMessage.id,
+        timestamp: optimisticMessage.timestamp,
         bridge: widget.bridge,
         recipientMlKemPublicKey: contact.mlKemPublicKey,
         quotedMessageId: quotedMsgId,
@@ -1098,6 +1130,12 @@ class _FeedWiredState extends State<FeedWired> {
         }
         await _loadTotalUnreadCount();
       } else {
+        if (message == null && optimisticMessage != null) {
+          await widget.messageRepository.updateMessageStatus(
+            optimisticMessage.id,
+            'failed',
+          );
+        }
         _restoreFeedComposerState(
           draftKey: contactPeerId,
           quotedMessageId: quotedMsgId,
@@ -1116,6 +1154,12 @@ class _FeedWiredState extends State<FeedWired> {
         );
       }
     } catch (e) {
+      if (optimisticMessage != null) {
+        await widget.messageRepository.updateMessageStatus(
+          optimisticMessage.id,
+          'failed',
+        );
+      }
       _restoreFeedComposerState(
         draftKey: contactPeerId,
         quotedMessageId: quotedMsgId,
@@ -2146,40 +2190,40 @@ class _FeedWiredState extends State<FeedWired> {
     final activeTab = _activeTab;
     final activeFocusPeerId = _visibleActiveFocusPeerId;
     final body = FeedScreen(
-            username: _username,
-            userAvatarBytes: _avatarBytes,
-            userPeerId: _peerId,
-            feedItems: _feedItems,
-            feedItemsListenable: _feedStore.itemsListenable,
-            feedLoaded: _feedLoaded,
-            onUsernameChanged: _onUsernameChanged,
-            p2pService: widget.p2pService,
-            onSwitchView: _onSwitchView,
-            activeTab: activeTab,
-            onSendMessage: _onSendMessage,
-            onReplyToMessage: _onReplyToMessage,
-            totalUnreadCountListenable: _totalUnreadCountNotifier,
-            expandedCardId: _expandedCardId,
-            onToggleExpand: _onToggleExpand,
-            onInlineSend: _onInlineSend,
-            onViewFullConversation: _onViewFullConversation,
-            draftTexts: _draftTexts,
-            activeFocusPeerId: activeFocusPeerId,
-            onDraftChanged: _onDraftChanged,
-            onInputFocusChanged: _onInputFocusChanged,
-            activeQuoteMessageIds: _activeQuoteMessageIds,
-            onQuoteReply: _onQuoteReply,
-            onClearQuote: _onClearQuote,
-            onAttach: _onAttach,
-            onAvatarTap: _onAvatarTap,
-            sessionReplies: _sessionReplies,
-            reactionListenableForMessage: _reactionStore.listenableForMessage,
-            onReactionSelected: _onReactionSelected,
-            onGroupTap: _onGroupTap,
-            onGroupInlineSend: _onGroupInlineSend,
-            onGroupAttach: _onGroupAttach,
-            onGroupReactionSelected: _onGroupReactionSelected,
-          );
+      username: _username,
+      userAvatarBytes: _avatarBytes,
+      userPeerId: _peerId,
+      feedItems: _feedItems,
+      feedItemsListenable: _feedStore.itemsListenable,
+      feedLoaded: _feedLoaded,
+      onUsernameChanged: _onUsernameChanged,
+      p2pService: widget.p2pService,
+      onSwitchView: _onSwitchView,
+      activeTab: activeTab,
+      onSendMessage: _onSendMessage,
+      onReplyToMessage: _onReplyToMessage,
+      totalUnreadCountListenable: _totalUnreadCountNotifier,
+      expandedCardId: _expandedCardId,
+      onToggleExpand: _onToggleExpand,
+      onInlineSend: _onInlineSend,
+      onViewFullConversation: _onViewFullConversation,
+      draftTexts: _draftTexts,
+      activeFocusPeerId: activeFocusPeerId,
+      onDraftChanged: _onDraftChanged,
+      onInputFocusChanged: _onInputFocusChanged,
+      activeQuoteMessageIds: _activeQuoteMessageIds,
+      onQuoteReply: _onQuoteReply,
+      onClearQuote: _onClearQuote,
+      onAttach: _onAttach,
+      onAvatarTap: _onAvatarTap,
+      sessionReplies: _sessionReplies,
+      reactionListenableForMessage: _reactionStore.listenableForMessage,
+      onReactionSelected: _onReactionSelected,
+      onGroupTap: _onGroupTap,
+      onGroupInlineSend: _onGroupInlineSend,
+      onGroupAttach: _onGroupAttach,
+      onGroupReactionSelected: _onGroupReactionSelected,
+    );
 
     return Scaffold(resizeToAvoidBottomInset: false, body: body);
   }
