@@ -19,6 +19,9 @@ enum HandleChatMessageResult {
   /// Not a chat_message type — ignore.
   notChatMessage,
 
+  /// V2 chat message decryption failed.
+  decryptionFailed,
+
   /// Sender is not a known contact.
   unknownSender,
 
@@ -92,7 +95,7 @@ handleIncomingChatMessage({
             'errorCode': decryptResult['errorCode'],
           },
         );
-        return (HandleChatMessageResult.notChatMessage, null, null);
+        return (HandleChatMessageResult.decryptionFailed, null, null);
       }
 
       payload = MessagePayload.fromDecryptedJson(
@@ -104,7 +107,7 @@ handleIncomingChatMessage({
         event: 'CHAT_MSG_RECEIVE_DECRYPT_ERROR',
         details: {'error': e.toString()},
       );
-      return (HandleChatMessageResult.notChatMessage, null, null);
+      return (HandleChatMessageResult.decryptionFailed, null, null);
     }
   } else {
     // v1 plaintext envelope

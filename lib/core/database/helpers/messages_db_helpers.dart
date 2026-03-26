@@ -246,7 +246,7 @@ Future<List<Map<String, Object?>>> dbLoadConversationThreadSummaries(
 }
 
 /// Updates the status of a message by ID.
-Future<void> dbUpdateMessageStatus(
+Future<int> dbUpdateMessageStatus(
   Database db,
   String id,
   String status,
@@ -258,7 +258,7 @@ Future<void> dbUpdateMessageStatus(
   );
 
   try {
-    await db.update(
+    final updated = await db.update(
       'messages',
       {'status': status},
       where: 'id = ?',
@@ -268,8 +268,12 @@ Future<void> dbUpdateMessageStatus(
     emitFlowEvent(
       layer: 'DB',
       event: 'MESSAGES_DB_UPDATE_STATUS_SUCCESS',
-      details: {'id': id.length > 8 ? id.substring(0, 8) : id},
+      details: {
+        'id': id.length > 8 ? id.substring(0, 8) : id,
+        'rowsUpdated': updated,
+      },
     );
+    return updated;
   } catch (e) {
     emitFlowEvent(
       layer: 'DB',

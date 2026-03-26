@@ -45,7 +45,26 @@ Future<MediaAttachment?> uploadMedia({
   List<String>? allowedPeers,
   String? blobId,
 }) async {
+  final uploadStopwatch = Stopwatch()..start();
   final effectiveBlobId = blobId ?? _uuid.v4();
+  int? fileSize;
+  void emitUploadTiming({
+    required String outcome,
+    Map<String, dynamic> details = const {},
+  }) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'MEDIA_UPLOAD_TIMING',
+      details: {
+        'elapsedMs': uploadStopwatch.elapsedMilliseconds,
+        'outcome': outcome,
+        'blobId': effectiveBlobId.substring(0, 8),
+        'mime': mime,
+        if (fileSize != null) 'sizeBytes': fileSize,
+        ...details,
+      },
+    );
+  }
 
   emitFlowEvent(
     layer: 'FL',
@@ -61,7 +80,7 @@ Future<MediaAttachment?> uploadMedia({
 
   try {
     final file = File(localFilePath);
-    final fileSize = await file.length();
+    fileSize = await file.length();
 
     final result = await callP2PMediaUpload(
       bridge,
@@ -80,6 +99,10 @@ Future<MediaAttachment?> uploadMedia({
           'blobId': effectiveBlobId.substring(0, 8),
           'error': result['errorMessage'],
         },
+      );
+      emitUploadTiming(
+        outcome: 'failed',
+        details: {'error': result['errorMessage']},
       );
       return null;
     }
@@ -110,6 +133,13 @@ Future<MediaAttachment?> uploadMedia({
       event: 'MEDIA_UPLOAD_SUCCESS',
       details: {'blobId': effectiveBlobId.substring(0, 8), 'size': fileSize},
     );
+    emitUploadTiming(
+      outcome: 'success',
+      details: {
+        'storedPersistently': mediaFileManager != null,
+        'recipientClass': allowedPeers == null ? 'direct' : 'group',
+      },
+    );
 
     return MediaAttachment(
       id: effectiveBlobId,
@@ -129,8 +159,12 @@ Future<MediaAttachment?> uploadMedia({
     emitFlowEvent(
       layer: 'FL',
       event: 'MEDIA_UPLOAD_ERROR',
-      details: {'blobId': effectiveBlobId.substring(0, 8), 'error': e.toString()},
+      details: {
+        'blobId': effectiveBlobId.substring(0, 8),
+        'error': e.toString(),
+      },
     );
+    emitUploadTiming(outcome: 'error');
     return null;
   }
 }

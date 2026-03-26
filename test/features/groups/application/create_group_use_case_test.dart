@@ -1,6 +1,9 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/features/groups/application/create_group_use_case.dart';
+import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
@@ -109,4 +112,44 @@ void main() {
     expect(key!.encryptedKey, 'test-group-key-base64');
     expect(key.keyGeneration, 1);
   });
+
+  test(
+    'creates announcement group with announcement bridge payload and admin metadata',
+    () async {
+      final result = await createGroup(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        name: 'Announcements',
+        type: GroupType.announcement,
+        creatorPeerId: 'peer-123',
+        creatorPublicKey: 'pk-123',
+        creatorMlKemPublicKey: 'mlkem-pk-123',
+      );
+
+      final createMessage = bridge.sentMessages.firstWhere(
+        (message) =>
+            (jsonDecode(message) as Map<String, dynamic>)['cmd'] ==
+            'group:create',
+      );
+      final createPayload =
+          (jsonDecode(createMessage) as Map<String, dynamic>)['payload']
+              as Map<String, dynamic>;
+
+      expect(createPayload['groupType'], 'announcement');
+      expect(result.type, GroupType.announcement);
+      expect(result.createdBy, 'peer-123');
+      expect(result.myRole, GroupRole.admin);
+
+      final savedGroup = await groupRepo.getGroup('test-group-id');
+      expect(savedGroup, isNotNull);
+      expect(savedGroup!.type, GroupType.announcement);
+      expect(savedGroup.createdBy, 'peer-123');
+      expect(savedGroup.myRole, GroupRole.admin);
+
+      final members = await groupRepo.getMembers('test-group-id');
+      expect(members.length, 1);
+      expect(members.first.peerId, 'peer-123');
+      expect(members.first.role, MemberRole.admin);
+    },
+  );
 }

@@ -84,6 +84,18 @@ class InMemoryPostRepository implements PostRepository {
   }
 
   @override
+  Future<List<PostModel>> loadPostsByIds(List<String> postIds) async {
+    final posts = <PostModel>[];
+    for (final postId in postIds) {
+      final post = _posts[postId];
+      if (post != null) {
+        posts.add(_decoratePost(post));
+      }
+    }
+    return posts;
+  }
+
+  @override
   Future<bool> postExists(String postId) async => _posts.containsKey(postId);
 
   @override

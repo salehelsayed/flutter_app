@@ -1,5 +1,7 @@
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
+import 'post_schema_capabilities.dart';
+
 Future<void> dbUpsertPostRepostEngagementParticipant(
   Database db,
   Map<String, Object?> row,
@@ -67,13 +69,8 @@ Future<void> dbInsertPostRepostProjectionState(
   Map<String, Object?> row,
 ) async {
   final insertRow = Map<String, Object?>.from(row);
-  final columns = await db.rawQuery(
-    'PRAGMA table_info(post_repost_projection_state)',
-  );
-  final hasSharedToCountBaseline = columns.any(
-    (column) => column['name'] == 'shared_to_count_baseline',
-  );
-  if (!hasSharedToCountBaseline) {
+  final capabilities = await loadPostSchemaCapabilities(db);
+  if (!capabilities.hasRepostSharedToCountBaseline) {
     insertRow.remove('shared_to_count_baseline');
   }
   await db.insert(

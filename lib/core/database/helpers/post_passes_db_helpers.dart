@@ -1,24 +1,17 @@
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
+import 'post_schema_capabilities.dart';
+
 Future<void> dbUpsertPostPass(Database db, Map<String, Object?> row) async {
   final insertRow = Map<String, Object?>.from(row);
-  final columns = await db.rawQuery("PRAGMA table_info(post_passes)");
-  final hasDeliveryStatus = columns.any(
-    (column) => column['name'] == 'delivery_status',
-  );
-  final hasInnerPayloadJson = columns.any(
-    (column) => column['name'] == 'inner_payload_json',
-  );
-  final hasRecipientCount = columns.any(
-    (column) => column['name'] == 'recipient_count',
-  );
-  if (!hasDeliveryStatus) {
+  final capabilities = await loadPostSchemaCapabilities(db);
+  if (!capabilities.hasPassDeliveryStatus) {
     insertRow.remove('delivery_status');
   }
-  if (!hasInnerPayloadJson) {
+  if (!capabilities.hasPassInnerPayloadJson) {
     insertRow.remove('inner_payload_json');
   }
-  if (!hasRecipientCount) {
+  if (!capabilities.hasPassRecipientCount) {
     insertRow.remove('recipient_count');
   }
   await db.insert(
@@ -78,11 +71,8 @@ Future<List<Map<String, Object?>>> dbLoadPostPassCounts(
 Future<List<Map<String, Object?>>> dbLoadRetryableOutgoingPostPasses(
   Database db,
 ) async {
-  final columns = await db.rawQuery("PRAGMA table_info(post_passes)");
-  final hasDeliveryStatus = columns.any(
-    (column) => column['name'] == 'delivery_status',
-  );
-  if (!hasDeliveryStatus) {
+  final capabilities = await loadPostSchemaCapabilities(db);
+  if (!capabilities.hasPassDeliveryStatus) {
     return db.query(
       'post_passes',
       where: 'is_incoming = ?',

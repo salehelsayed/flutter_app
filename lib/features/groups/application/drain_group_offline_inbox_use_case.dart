@@ -30,6 +30,7 @@ Future<void> drainGroupOfflineInbox({
   bool drainAllPages = true,
   int pageSize = 50,
 }) async {
+  final drainStopwatch = Stopwatch()..start();
   emitFlowEvent(
     layer: 'FL',
     event: 'GROUP_DRAIN_OFFLINE_INBOX_BEGIN',
@@ -39,6 +40,7 @@ Future<void> drainGroupOfflineInbox({
   final groups = await groupRepo.getAllGroups();
 
   for (final group in groups) {
+    final groupStopwatch = Stopwatch()..start();
     try {
       await _drainGroupInbox(
         bridge: bridge,
@@ -59,6 +61,16 @@ Future<void> drainGroupOfflineInbox({
           'error': e.toString(),
         },
       );
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_DRAIN_OFFLINE_INBOX_TIMING',
+        details: {
+          'scope': 'group',
+          'elapsedMs': groupStopwatch.elapsedMilliseconds,
+          'outcome': 'error',
+          'groupId': group.id.length > 8 ? group.id.substring(0, 8) : group.id,
+        },
+      );
     }
   }
 
@@ -66,6 +78,18 @@ Future<void> drainGroupOfflineInbox({
     layer: 'FL',
     event: 'GROUP_DRAIN_OFFLINE_INBOX_DONE',
     details: {'groupCount': groups.length},
+  );
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'GROUP_DRAIN_OFFLINE_INBOX_TIMING',
+    details: {
+      'scope': 'batch',
+      'elapsedMs': drainStopwatch.elapsedMilliseconds,
+      'outcome': 'complete',
+      'groupCount': groups.length,
+      'drainAllPages': drainAllPages,
+      'pageSize': pageSize,
+    },
   );
 }
 
@@ -79,6 +103,7 @@ Future<void> drainGroupOfflineInboxForGroup({
   bool drainAllPages = true,
   int pageSize = 50,
 }) async {
+  final drainStopwatch = Stopwatch()..start();
   emitFlowEvent(
     layer: 'FL',
     event: 'GROUP_DRAIN_OFFLINE_INBOX_SINGLE_BEGIN',
@@ -87,24 +112,50 @@ Future<void> drainGroupOfflineInboxForGroup({
     },
   );
 
-  await _drainGroupInbox(
-    bridge: bridge,
-    groupRepo: groupRepo,
-    msgRepo: msgRepo,
-    groupId: groupId,
-    mediaAttachmentRepo: mediaAttachmentRepo,
-    reactionRepo: reactionRepo,
-    drainAllPages: drainAllPages,
-    pageSize: pageSize,
-  );
+  try {
+    await _drainGroupInbox(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      groupId: groupId,
+      mediaAttachmentRepo: mediaAttachmentRepo,
+      reactionRepo: reactionRepo,
+      drainAllPages: drainAllPages,
+      pageSize: pageSize,
+    );
 
-  emitFlowEvent(
-    layer: 'FL',
-    event: 'GROUP_DRAIN_OFFLINE_INBOX_SINGLE_DONE',
-    details: {
-      'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
-    },
-  );
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_DRAIN_OFFLINE_INBOX_SINGLE_DONE',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+      },
+    );
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_DRAIN_OFFLINE_INBOX_TIMING',
+      details: {
+        'scope': 'single',
+        'elapsedMs': drainStopwatch.elapsedMilliseconds,
+        'outcome': 'complete',
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        'drainAllPages': drainAllPages,
+        'pageSize': pageSize,
+      },
+    );
+  } catch (_) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_DRAIN_OFFLINE_INBOX_TIMING',
+      details: {
+        'scope': 'single',
+        'elapsedMs': drainStopwatch.elapsedMilliseconds,
+        'outcome': 'error',
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+      },
+    );
+    rethrow;
+  }
 }
 
 /// Drains a single group's offline inbox using cursor-based pagination.
@@ -122,8 +173,10 @@ Future<void> _drainGroupInbox({
   bool drainAllPages = true,
   int pageSize = 50,
 }) async {
+  final drainStopwatch = Stopwatch()..start();
   String cursor = '';
   int totalMessages = 0;
+  var pageCount = 0;
 
   do {
     final result = await callGroupInboxRetrieveWithCursor(
@@ -178,6 +231,7 @@ Future<void> _drainGroupInbox({
     }
 
     totalMessages += messages.length;
+    pageCount++;
     cursor = nextCursor;
 
     // If caller only wants the first page, stop here.
@@ -192,6 +246,19 @@ Future<void> _drainGroupInbox({
           'nextCursor': cursor.length > 8 ? cursor.substring(0, 8) : cursor,
         },
       );
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_DRAIN_OFFLINE_INBOX_TIMING',
+        details: {
+          'scope': 'group',
+          'elapsedMs': drainStopwatch.elapsedMilliseconds,
+          'outcome': 'first_page_complete',
+          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+          'messageCount': totalMessages,
+          'pageCount': pageCount,
+          'drainAllPages': false,
+        },
+      );
       return;
     }
   } while (cursor.isNotEmpty);
@@ -202,6 +269,19 @@ Future<void> _drainGroupInbox({
     details: {
       'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
       'messageCount': totalMessages,
+    },
+  );
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'GROUP_DRAIN_OFFLINE_INBOX_TIMING',
+    details: {
+      'scope': 'group',
+      'elapsedMs': drainStopwatch.elapsedMilliseconds,
+      'outcome': 'complete',
+      'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+      'messageCount': totalMessages,
+      'pageCount': pageCount,
+      'drainAllPages': drainAllPages,
     },
   );
 }

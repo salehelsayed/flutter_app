@@ -43,6 +43,24 @@ Future<(SendVoiceMessageResult, ConversationMessage?)> sendVoiceMessage({
   String? timestamp,
   String? blobId,
 }) async {
+  final sendStopwatch = Stopwatch()..start();
+  void emitVoiceTiming({
+    required String outcome,
+    Map<String, dynamic> details = const {},
+  }) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'VOICE_SEND_TIMING',
+      details: {
+        'elapsedMs': sendStopwatch.elapsedMilliseconds,
+        'outcome': outcome,
+        'durationMs': recording.durationMs,
+        'sizeBytes': recording.sizeBytes,
+        ...details,
+      },
+    );
+  }
+
   emitFlowEvent(
     layer: 'FL',
     event: 'VOICE_SEND_START',
@@ -59,6 +77,7 @@ Future<(SendVoiceMessageResult, ConversationMessage?)> sendVoiceMessage({
       event: 'VOICE_SEND_INVALID',
       details: {'sizeBytes': recording.sizeBytes},
     );
+    emitVoiceTiming(outcome: 'invalid_recording');
     return (SendVoiceMessageResult.invalidRecording, null);
   }
 
@@ -69,6 +88,7 @@ Future<(SendVoiceMessageResult, ConversationMessage?)> sendVoiceMessage({
       event: 'VOICE_SEND_FILE_NOT_FOUND',
       details: {'filePath': recording.filePath},
     );
+    emitVoiceTiming(outcome: 'file_not_found');
     return (SendVoiceMessageResult.invalidRecording, null);
   }
 
@@ -88,6 +108,7 @@ Future<(SendVoiceMessageResult, ConversationMessage?)> sendVoiceMessage({
 
   if (uploaded == null) {
     emitFlowEvent(layer: 'FL', event: 'VOICE_UPLOAD_FAILED', details: {});
+    emitVoiceTiming(outcome: 'upload_failed');
     return (SendVoiceMessageResult.uploadFailed, null);
   }
 
@@ -108,10 +129,12 @@ Future<(SendVoiceMessageResult, ConversationMessage?)> sendVoiceMessage({
     mediaAttachmentRepo: mediaAttachmentRepo,
     messageId: messageId,
     timestamp: timestamp,
+    emitTimingEvent: false,
   );
 
   if (result == SendChatMessageResult.success) {
     emitFlowEvent(layer: 'FL', event: 'VOICE_SEND_SUCCESS', details: {});
+    emitVoiceTiming(outcome: 'success');
     return (SendVoiceMessageResult.success, message);
   }
 
@@ -120,5 +143,6 @@ Future<(SendVoiceMessageResult, ConversationMessage?)> sendVoiceMessage({
     event: 'VOICE_SEND_FAILED',
     details: {'result': result.name},
   );
+  emitVoiceTiming(outcome: 'send_failed', details: {'result': result.name});
   return (SendVoiceMessageResult.sendFailed, null);
 }

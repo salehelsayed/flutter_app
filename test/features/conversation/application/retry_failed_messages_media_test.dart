@@ -225,8 +225,9 @@ void main() {
           mediaAttachmentRepo: mediaAttachmentRepo,
         );
 
-        // Must have queried attachments for the failed message
-        expect(mediaAttachmentRepo.getAttachmentsForMessageCallCount, 1);
+        // One query resolves retry attachments, and the successful resend
+        // re-queries once more before clearing stale upload_pending rows.
+        expect(mediaAttachmentRepo.getAttachmentsForMessageCallCount, 2);
         expect(mediaAttachmentRepo.lastQueriedMessageId, msg.id);
       },
     );
@@ -469,8 +470,9 @@ void main() {
         // msg1 (done attachments) → sent, msg2 (text-only) → sent,
         // msg3 (only pending) → skipped (re-upload branch, no local files)
         expect(count, 2);
-        // All three messages queried for attachments
-        expect(mediaAttachmentRepo.getAttachmentsForMessageCallCount, 3);
+        // msg1 is queried twice (retry resolution + resend persistence),
+        // msg2 once, and msg3 once before the skip path.
+        expect(mediaAttachmentRepo.getAttachmentsForMessageCallCount, 4);
       },
     );
   });

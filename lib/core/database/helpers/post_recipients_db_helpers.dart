@@ -1,27 +1,20 @@
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
+import 'post_schema_capabilities.dart';
+
 Future<void> dbUpsertPostRecipientDelivery(
   Database db,
   Map<String, Object?> row,
 ) async {
   final insertRow = Map<String, Object?>.from(row);
-  final columns = await db.rawQuery("PRAGMA table_info(post_recipients)");
-  final hasNearbyDistanceM = columns.any(
-    (column) => column['name'] == 'nearby_distance_m',
-  );
-  final hasDeliveryOwnerKind = columns.any(
-    (column) => column['name'] == 'delivery_owner_kind',
-  );
-  final hasDeliveryOwnerId = columns.any(
-    (column) => column['name'] == 'delivery_owner_id',
-  );
-  if (!hasNearbyDistanceM) {
+  final capabilities = await loadPostSchemaCapabilities(db);
+  if (!capabilities.hasRecipientNearbyDistanceM) {
     insertRow.remove('nearby_distance_m');
   }
-  if (!hasDeliveryOwnerKind) {
+  if (!capabilities.hasRecipientDeliveryOwnerKind) {
     insertRow.remove('delivery_owner_kind');
   }
-  if (!hasDeliveryOwnerId) {
+  if (!capabilities.hasRecipientDeliveryOwnerId) {
     insertRow.remove('delivery_owner_id');
   }
   await db.insert(
@@ -35,11 +28,8 @@ Future<List<Map<String, Object?>>> dbLoadPostRecipientDeliveries(
   Database db,
   String postId,
 ) async {
-  final columns = await db.rawQuery("PRAGMA table_info(post_recipients)");
-  final hasDeliveryOwnerColumns =
-      columns.any((column) => column['name'] == 'delivery_owner_kind') &&
-      columns.any((column) => column['name'] == 'delivery_owner_id');
-  if (!hasDeliveryOwnerColumns) {
+  final capabilities = await loadPostSchemaCapabilities(db);
+  if (!capabilities.hasRecipientDeliveryOwnerColumns) {
     return db.query(
       'post_recipients',
       where: 'post_id = ?',
@@ -59,11 +49,8 @@ Future<List<Map<String, Object?>>> dbLoadPostPassRecipientDeliveries(
   Database db,
   String passId,
 ) async {
-  final columns = await db.rawQuery("PRAGMA table_info(post_recipients)");
-  final hasDeliveryOwnerColumns =
-      columns.any((column) => column['name'] == 'delivery_owner_kind') &&
-      columns.any((column) => column['name'] == 'delivery_owner_id');
-  if (!hasDeliveryOwnerColumns) {
+  final capabilities = await loadPostSchemaCapabilities(db);
+  if (!capabilities.hasRecipientDeliveryOwnerColumns) {
     return const <Map<String, Object?>>[];
   }
   return db.query(

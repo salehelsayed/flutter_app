@@ -68,7 +68,9 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   String? quotedMessageId,
   List<MediaAttachment>? mediaAttachments,
   MediaAttachmentRepository? mediaAttachmentRepo,
+  bool emitTimingEvent = true,
 }) async {
+  final sendStopwatch = Stopwatch()..start();
   final targetPrefix = targetPeerId.length > 10
       ? targetPeerId.substring(0, 10)
       : targetPeerId;
@@ -76,6 +78,22 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   final textPreview = buildTextPreview(sanitizedText);
   final hasAttachments =
       mediaAttachments != null && mediaAttachments.isNotEmpty;
+  void emitSendTiming({
+    required String outcome,
+    Map<String, dynamic> details = const {},
+  }) {
+    if (!emitTimingEvent) return;
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_SEND_TIMING',
+      details: {
+        'elapsedMs': sendStopwatch.elapsedMilliseconds,
+        'outcome': outcome,
+        'hasAttachments': hasAttachments,
+        ...details,
+      },
+    );
+  }
 
   emitFlowEvent(
     layer: 'FL',
@@ -90,6 +108,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       event: 'CHAT_MSG_SEND_INVALID',
       details: {'reason': 'empty_text'},
     );
+    emitSendTiming(outcome: 'invalid_message');
     return (SendChatMessageResult.invalidMessage, null);
   }
 
@@ -100,6 +119,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       event: 'CHAT_MSG_SEND_NODE_NOT_RUNNING',
       details: {},
     );
+    emitSendTiming(outcome: 'node_not_running');
     return (SendChatMessageResult.nodeNotRunning, null);
   }
 
@@ -155,6 +175,10 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
             'errorMessage': encryptResult['errorMessage'],
           },
         );
+        emitSendTiming(
+          outcome: 'encrypt_failed',
+          details: {'errorCode': encryptResult['errorCode']},
+        );
         return (SendChatMessageResult.sendFailed, null);
       }
       jsonString = MessagePayload.buildEncryptedEnvelope(
@@ -169,6 +193,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
         event: 'CHAT_MSG_SEND_ENCRYPT_ERROR',
         details: {'error': e.toString()},
       );
+      emitSendTiming(outcome: 'encrypt_error');
       return (SendChatMessageResult.sendFailed, null);
     }
   } else {
@@ -222,6 +247,8 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
           text: sanitizedText,
           mediaAttachmentRepo: mediaAttachmentRepo,
           attachments: normalizedAttachments,
+          sendStopwatch: sendStopwatch,
+          emitTimingEvent: emitTimingEvent,
         );
       }
     } catch (_) {
@@ -333,6 +360,8 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       text: sanitizedText,
       mediaAttachmentRepo: mediaAttachmentRepo,
       attachments: normalizedAttachments,
+      sendStopwatch: sendStopwatch,
+      emitTimingEvent: emitTimingEvent,
     );
   }
 
@@ -358,6 +387,8 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
         text: sanitizedText,
         mediaAttachmentRepo: mediaAttachmentRepo,
         attachments: normalizedAttachments,
+        sendStopwatch: sendStopwatch,
+        emitTimingEvent: emitTimingEvent,
       );
     }
     failureReason = relayProbeResult.reason ?? failureReason;
@@ -396,6 +427,10 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
           'via': 'inbox',
           'textPreview': textPreview,
         },
+      );
+      emitSendTiming(
+        outcome: 'success',
+        details: {'status': 'delivered', 'via': 'inbox'},
       );
       logChatOutgoing(
         messageId: resolvedMessageId,
@@ -436,6 +471,13 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       'id': resolvedMessageId.substring(0, 8),
       'reason': failureReason,
       'textPreview': textPreview,
+    },
+  );
+  emitSendTiming(
+    outcome: 'failed',
+    details: {
+      'reason': failureReason,
+      'result': _resultForFailureReason(failureReason).name,
     },
   );
   logChatOutgoing(
@@ -693,6 +735,8 @@ Future<(SendChatMessageResult, ConversationMessage)> _completeSuccessfulSend({
   required String text,
   required MediaAttachmentRepository? mediaAttachmentRepo,
   required List<MediaAttachment>? attachments,
+  required Stopwatch sendStopwatch,
+  required bool emitTimingEvent,
 }) async {
   final message = await _persistOutgoingSendResult(
     p2pService: p2pService,
@@ -717,6 +761,19 @@ Future<(SendChatMessageResult, ConversationMessage)> _completeSuccessfulSend({
       'textPreview': textPreview,
     },
   );
+  if (emitTimingEvent) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_SEND_TIMING',
+      details: {
+        'elapsedMs': sendStopwatch.elapsedMilliseconds,
+        'outcome': 'success',
+        'hasAttachments': attachments != null && attachments.isNotEmpty,
+        'status': message.status,
+        'via': message.transport,
+      },
+    );
+  }
   logChatOutgoing(
     messageId: resolvedMessageId,
     toPeerId: targetPeerId,

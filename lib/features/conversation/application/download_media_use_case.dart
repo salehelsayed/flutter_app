@@ -10,6 +10,9 @@ import 'package:flutter_app/features/conversation/domain/repositories/media_atta
 /// Downloads a media blob from the relay and saves it locally.
 ///
 /// Called lazily when the UI needs to display a media item.
+final Map<String, Future<MediaAttachment?>> _inFlightMediaDownloads =
+    <String, Future<MediaAttachment?>>{};
+
 Future<MediaAttachment?> downloadMedia({
   required Bridge bridge,
   required MediaAttachmentRepository mediaAttachmentRepo,
@@ -17,8 +20,36 @@ Future<MediaAttachment?> downloadMedia({
   required MediaAttachment attachment,
   required String contactPeerId,
 }) async {
-  final idPrefix =
-      attachment.id.length > 8 ? attachment.id.substring(0, 8) : attachment.id;
+  final inFlightKey = '$contactPeerId|${attachment.id}|${attachment.mime}';
+  final inFlight = _inFlightMediaDownloads[inFlightKey];
+  if (inFlight != null) {
+    return inFlight;
+  }
+
+  late final Future<MediaAttachment?> downloadFuture;
+  downloadFuture =
+      (() async {
+  final downloadStopwatch = Stopwatch()..start();
+  final idPrefix = attachment.id.length > 8
+      ? attachment.id.substring(0, 8)
+      : attachment.id;
+  void emitDownloadTiming({
+    required String outcome,
+    Map<String, dynamic> details = const {},
+  }) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'MEDIA_DOWNLOAD_TIMING',
+      details: {
+        'elapsedMs': downloadStopwatch.elapsedMilliseconds,
+        'outcome': outcome,
+        'blobId': idPrefix,
+        'mime': attachment.mime,
+        'sizeBytes': attachment.size,
+        ...details,
+      },
+    );
+  }
 
   emitFlowEvent(
     layer: 'FL',
@@ -36,7 +67,9 @@ Future<MediaAttachment?> downloadMedia({
 
     // 2. Mark as downloading
     await mediaAttachmentRepo.updateDownloadStatus(
-        attachment.id, 'downloading');
+      attachment.id,
+      'downloading',
+    );
 
     // 3. Download from relay
     final result = await callP2PMediaDownload(
@@ -46,13 +79,16 @@ Future<MediaAttachment?> downloadMedia({
     );
 
     if (result['ok'] != true) {
-      await mediaAttachmentRepo.updateDownloadStatus(
-          attachment.id, 'failed');
+      await mediaAttachmentRepo.updateDownloadStatus(attachment.id, 'failed');
 
       emitFlowEvent(
         layer: 'FL',
         event: 'MEDIA_DOWNLOAD_FAILED',
         details: {'blobId': idPrefix, 'error': result['errorMessage']},
+      );
+      emitDownloadTiming(
+        outcome: 'failed',
+        details: {'error': result['errorMessage']},
       );
       return null;
     }
@@ -70,12 +106,10 @@ Future<MediaAttachment?> downloadMedia({
       event: 'MEDIA_DOWNLOAD_SUCCESS',
       details: {'blobId': idPrefix},
     );
+    emitDownloadTiming(outcome: 'success');
 
     // Return absolute path for immediate UI display
-    return attachment.copyWith(
-      localPath: absolutePath,
-      downloadStatus: 'done',
-    );
+    return attachment.copyWith(localPath: absolutePath, downloadStatus: 'done');
   } catch (e) {
     // Clean up partial file
     try {
@@ -91,8 +125,7 @@ Future<MediaAttachment?> downloadMedia({
     } catch (_) {}
 
     try {
-      await mediaAttachmentRepo.updateDownloadStatus(
-          attachment.id, 'failed');
+      await mediaAttachmentRepo.updateDownloadStatus(attachment.id, 'failed');
     } catch (_) {}
 
     emitFlowEvent(
@@ -100,6 +133,15 @@ Future<MediaAttachment?> downloadMedia({
       event: 'MEDIA_DOWNLOAD_ERROR',
       details: {'blobId': idPrefix, 'error': e.toString()},
     );
+    emitDownloadTiming(outcome: 'error');
     return null;
   }
+      })().whenComplete(() {
+        if (identical(_inFlightMediaDownloads[inFlightKey], downloadFuture)) {
+          _inFlightMediaDownloads.remove(inFlightKey);
+        }
+      });
+
+  _inFlightMediaDownloads[inFlightKey] = downloadFuture;
+  return downloadFuture;
 }

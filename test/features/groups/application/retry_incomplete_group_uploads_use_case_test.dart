@@ -281,5 +281,36 @@ void main() {
         );
       },
     );
+
+    test(
+      'skips retry work when upload_pending attachments have no parent group message row',
+      () async {
+        await mediaRepo.saveAttachment(
+          _pendingAttachment(id: 'pending-missing-parent', messageId: 'msg-404'),
+        );
+
+        final count = await retryIncompleteGroupUploads(
+          groupRepo: groupRepo,
+          groupMsgRepo: groupMsgRepo,
+          mediaAttachmentRepo: mediaRepo,
+          bridge: bridge,
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          uploadMediaFn: uploadFn.call,
+          mediaFileManager: mediaFileManager,
+        );
+
+        expect(count, 0);
+        expect(uploadFn.callCount, 0);
+        expect(bridge.commandLog, isNot(contains('group:publish')));
+        expect(bridge.commandLog, isNot(contains('group:inboxStore')));
+
+        final pending = await mediaRepo.getUploadPendingAttachments();
+        expect(pending, hasLength(1));
+        expect(pending.single.id, 'pending-missing-parent');
+        expect(pending.single.messageId, 'msg-404');
+        expect(pending.single.downloadStatus, 'upload_pending');
+      },
+    );
   });
 }

@@ -1,11 +1,13 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart' show AppLifecycleState;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
@@ -256,6 +258,56 @@ class _FakeBridge implements Bridge {
   void Function(Map<String, dynamic>)? onGroupReactionReceived;
 }
 
+class _FakeDecryptBridge implements Bridge {
+  Map<String, dynamic> decryptResponse;
+  bool throwOnDecrypt;
+  int decryptCallCount = 0;
+
+  _FakeDecryptBridge({
+    Map<String, dynamic>? decryptResponse,
+    this.throwOnDecrypt = false,
+  }) : decryptResponse = decryptResponse ?? {'ok': true, 'plaintext': '{}'};
+
+  @override
+  Future<String> send(String message) async {
+    final req = jsonDecode(message) as Map<String, dynamic>;
+    if (req['cmd'] == 'message.decrypt') {
+      decryptCallCount++;
+      if (throwOnDecrypt) {
+        throw Exception('decrypt exploded');
+      }
+      return jsonEncode(decryptResponse);
+    }
+    return jsonEncode({'ok': true});
+  }
+
+  @override
+  Future<void> initialize() async {}
+  @override
+  Future<bool> checkHealth() async => true;
+  @override
+  Future<void> reinitialize() async {}
+  @override
+  void dispose() {}
+  @override
+  bool get isInitialized => true;
+  @override
+  void Function(ChatMessage)? onMessageReceived;
+  @override
+  void Function(ConnectionState)? onPeerConnected;
+  @override
+  void Function(ConnectionState)? onPeerDisconnected;
+  @override
+  void Function(List<String> listenAddresses, List<String> circuitAddresses)?
+  onAddressesUpdated;
+  @override
+  void Function(Map<String, dynamic>)? onRelayStateChanged;
+  @override
+  void Function(Map<String, dynamic>)? onGroupMessageReceived;
+  @override
+  void Function(Map<String, dynamic>)? onGroupReactionReceived;
+}
+
 class _FakeMediaFileManager extends MediaFileManager {
   @override
   Future<String> localPathForAttachment({
@@ -356,6 +408,51 @@ ChatMessage _makeChatMessage({
     timestamp: DateTime.now().toUtc().toIso8601String(),
     isIncoming: true,
   );
+}
+
+ChatMessage _makeV2EncryptedChatMessage({
+  required String from,
+}) {
+  final json = jsonEncode({
+    'type': 'chat_message',
+    'version': '2',
+    'senderPeerId': from,
+    'encrypted': {
+      'kem': 'kem-blob',
+      'ciphertext': 'cipher-blob',
+      'nonce': 'nonce-blob',
+    },
+  });
+
+  return ChatMessage(
+    from: from,
+    to: '',
+    content: json,
+    timestamp: DateTime.now().toUtc().toIso8601String(),
+    isIncoming: true,
+  );
+}
+
+Future<List<String>> _captureDebugPrintedLines(
+  Future<void> Function() action,
+) async {
+  final lines = <String>[];
+  final previousLogging = flowEventLoggingEnabled;
+  flowEventLoggingEnabled = true;
+  debugPrint = (String? message, {int? wrapWidth}) {
+    if (message != null) {
+      lines.add(message);
+    }
+  };
+
+  try {
+    await action();
+  } finally {
+    debugPrint = debugPrintThrottled;
+    flowEventLoggingEnabled = previousLogging;
+  }
+
+  return lines;
 }
 
 const _testMediaJson = [
@@ -927,11 +1024,15 @@ void main() {
 
     ChatMessageListener createListenerWithNotifications({
       AppLifecycleState lifecycleState = AppLifecycleState.paused,
+      Bridge? bridge,
+      Future<String?> Function()? getOwnMlKemSecretKey,
     }) {
       return ChatMessageListener(
         chatMessageStream: chatStreamController.stream,
         messageRepo: messageRepo,
         contactRepo: contactRepo,
+        bridge: bridge,
+        getOwnMlKemSecretKey: getOwnMlKemSecretKey,
         notificationService: notificationService,
         conversationTracker: tracker,
         getAppLifecycleState: () => lifecycleState,
@@ -1153,5 +1254,46 @@ void main() {
 
       listener.dispose();
     });
+
+    test(
+      'decrypt failure is intentionally ignored without persist emit or notification',
+      () async {
+        final senderPeerId = 'sender-notif-decrypt-fail';
+        contactRepo.seedContact(_makeContact(senderPeerId, username: 'Frank'));
+        final bridge = _FakeDecryptBridge(
+          decryptResponse: {
+            'ok': false,
+            'errorCode': 'DECRYPT_FAILED',
+            'errorMessage': 'cannot decrypt',
+          },
+        );
+
+        final listener = createListenerWithNotifications(
+          bridge: bridge,
+          getOwnMlKemSecretKey: () async => 'own-secret-key',
+        );
+        final emitted = <ConversationMessage>[];
+        listener.incomingMessageStream.listen(emitted.add);
+        listener.start();
+
+        final lines = await _captureDebugPrintedLines(() async {
+          chatStreamController.add(
+            _makeV2EncryptedChatMessage(from: senderPeerId),
+          );
+          await Future.delayed(const Duration(milliseconds: 200));
+        });
+
+        expect(messageRepo.saved, isEmpty);
+        expect(emitted, isEmpty);
+        expect(notificationService.shown, isEmpty);
+        expect(bridge.decryptCallCount, 1);
+        expect(
+          lines.any((line) => line.contains('CHAT_LISTENER_DECRYPT_FAILED')),
+          isTrue,
+        );
+
+        listener.dispose();
+      },
+    );
   });
 }

@@ -36,26 +36,62 @@ Future<int> retryIncompleteUploads({
   UploadMediaFn uploadMediaFn = uploadMedia,
   MediaFileManager? mediaFileManager,
 }) async {
+  final retryStopwatch = Stopwatch()..start();
+  void emitRetryTiming({
+    required String outcome,
+    required int attachmentCount,
+    required int messageCount,
+    required int succeeded,
+  }) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'RETRY_INCOMPLETE_UPLOADS_TIMING',
+      details: {
+        'elapsedMs': retryStopwatch.elapsedMilliseconds,
+        'outcome': outcome,
+        'attachmentCount': attachmentCount,
+        'messageCount': messageCount,
+        'succeeded': succeeded,
+      },
+    );
+  }
+
   emitFlowEvent(
     layer: 'FL',
     event: 'RETRY_INCOMPLETE_UPLOADS_START',
     details: {},
   );
 
-  final pendingAttachments =
-      await mediaAttachmentRepo.getUploadPendingAttachments();
+  final pendingAttachments = await mediaAttachmentRepo
+      .getUploadPendingAttachments();
   if (pendingAttachments.isEmpty) {
     emitFlowEvent(
-        layer: 'FL', event: 'RETRY_INCOMPLETE_UPLOADS_NONE', details: {});
+      layer: 'FL',
+      event: 'RETRY_INCOMPLETE_UPLOADS_NONE',
+      details: {},
+    );
+    emitRetryTiming(
+      outcome: 'none',
+      attachmentCount: 0,
+      messageCount: 0,
+      succeeded: 0,
+    );
     return 0;
   }
 
   final identity = await identityRepo.loadIdentity();
   if (identity == null) {
     emitFlowEvent(
-        layer: 'FL',
-        event: 'RETRY_INCOMPLETE_UPLOADS_NO_IDENTITY',
-        details: {});
+      layer: 'FL',
+      event: 'RETRY_INCOMPLETE_UPLOADS_NO_IDENTITY',
+      details: {},
+    );
+    emitRetryTiming(
+      outcome: 'no_identity',
+      attachmentCount: pendingAttachments.length,
+      messageCount: 0,
+      succeeded: 0,
+    );
     return 0;
   }
 
@@ -89,8 +125,9 @@ Future<int> retryIncompleteUploads({
           layer: 'FL',
           event: 'RETRY_INCOMPLETE_UPLOAD_SKIP_NO_MSG',
           details: {
-            'messageId':
-                messageId.length > 8 ? messageId.substring(0, 8) : messageId,
+            'messageId': messageId.length > 8
+                ? messageId.substring(0, 8)
+                : messageId,
           },
         );
         continue;
@@ -107,8 +144,9 @@ Future<int> retryIncompleteUploads({
 
       // Load ALL attachments for this message (including already-done ones)
       // so we can combine them with newly-uploaded ones for the send call.
-      final allAttachments =
-          await mediaAttachmentRepo.getAttachmentsForMessage(messageId);
+      final allAttachments = await mediaAttachmentRepo.getAttachmentsForMessage(
+        messageId,
+      );
       final doneAttachments = allAttachments
           .where((a) => a.downloadStatus == 'done')
           .toList();
@@ -211,10 +249,12 @@ Future<int> retryIncompleteUploads({
               ? 'RETRY_INCOMPLETE_UPLOAD_MSG_SKIPPED'
               : 'RETRY_INCOMPLETE_UPLOAD_MSG_DEFERRED',
           details: {
-            'messageId':
-                messageId.length > 8 ? messageId.substring(0, 8) : messageId,
-            'reason':
-                isNonRetryable ? 'non_retryable_failure' : 'transient_failure',
+            'messageId': messageId.length > 8
+                ? messageId.substring(0, 8)
+                : messageId,
+            'reason': isNonRetryable
+                ? 'non_retryable_failure'
+                : 'transient_failure',
             'totalAttachments': pendingAttsForMessage.length,
           },
         );
@@ -223,10 +263,7 @@ Future<int> retryIncompleteUploads({
 
       // 3. All uploads succeeded — send the message ONCE with the full list.
       // Combine previously-done attachments with newly-uploaded ones.
-      final fullAttachmentList = [
-        ...doneAttachments,
-        ...uploadedAttachments,
-      ];
+      final fullAttachmentList = [...doneAttachments, ...uploadedAttachments];
 
       final contact = await contactRepo.getContact(msg.contactPeerId);
       final (result, _) = await sendChatMessage(
@@ -243,6 +280,7 @@ Future<int> retryIncompleteUploads({
         quotedMessageId: msg.quotedMessageId,
         mediaAttachments: fullAttachmentList,
         mediaAttachmentRepo: mediaAttachmentRepo,
+        emitTimingEvent: false,
       );
 
       if (result == SendChatMessageResult.success) {
@@ -251,8 +289,9 @@ Future<int> retryIncompleteUploads({
           layer: 'FL',
           event: 'RETRY_INCOMPLETE_UPLOAD_SUCCESS',
           details: {
-            'messageId':
-                messageId.length > 8 ? messageId.substring(0, 8) : messageId,
+            'messageId': messageId.length > 8
+                ? messageId.substring(0, 8)
+                : messageId,
             'attachmentCount': fullAttachmentList.length,
           },
         );
@@ -287,6 +326,12 @@ Future<int> retryIncompleteUploads({
       'totalMessages': byMessageId.length,
       'succeeded': successCount,
     },
+  );
+  emitRetryTiming(
+    outcome: 'complete',
+    attachmentCount: pendingAttachments.length,
+    messageCount: byMessageId.length,
+    succeeded: successCount,
   );
 
   return successCount;

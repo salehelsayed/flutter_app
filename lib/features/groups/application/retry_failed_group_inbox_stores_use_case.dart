@@ -23,6 +23,25 @@ Future<int> retryFailedGroupInboxStores({
   required GroupMessageRepository msgRepo,
   int limit = 20,
 }) async {
+  final retryStopwatch = Stopwatch()..start();
+  void emitRetryTiming({
+    required String outcome,
+    required int total,
+    required int retried,
+  }) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'RETRY_FAILED_GROUP_INBOX_STORES_TIMING',
+      details: {
+        'elapsedMs': retryStopwatch.elapsedMilliseconds,
+        'outcome': outcome,
+        'total': total,
+        'retried': retried,
+        'limit': limit,
+      },
+    );
+  }
+
   emitFlowEvent(
     layer: 'FL',
     event: 'RETRY_FAILED_GROUP_INBOX_STORES_BEGIN',
@@ -36,6 +55,7 @@ Future<int> retryFailedGroupInboxStores({
       event: 'RETRY_FAILED_GROUP_INBOX_STORES_NONE',
       details: {},
     );
+    emitRetryTiming(outcome: 'none', total: 0, retried: 0);
     return 0;
   }
 
@@ -48,8 +68,7 @@ Future<int> retryFailedGroupInboxStores({
       final groupId = retryPayload['groupId'] as String;
       final inboxMessage = retryPayload['message'] as String;
       final recipientPeerIds =
-          (retryPayload['recipientPeerIds'] as List<dynamic>?)
-              ?.cast<String>();
+          (retryPayload['recipientPeerIds'] as List<dynamic>?)?.cast<String>();
       final pushTitle = retryPayload['pushTitle'] as String?;
       final pushBody = retryPayload['pushBody'] as String?;
 
@@ -69,8 +88,7 @@ Future<int> retryFailedGroupInboxStores({
         layer: 'FL',
         event: 'RETRY_FAILED_GROUP_INBOX_STORE_OK',
         details: {
-          'messageId':
-              msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id,
+          'messageId': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id,
         },
       );
     } catch (e) {
@@ -78,8 +96,7 @@ Future<int> retryFailedGroupInboxStores({
         layer: 'FL',
         event: 'RETRY_FAILED_GROUP_INBOX_STORE_ERROR',
         details: {
-          'messageId':
-              msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id,
+          'messageId': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id,
           'error': e.toString(),
         },
       );
@@ -91,6 +108,11 @@ Future<int> retryFailedGroupInboxStores({
     layer: 'FL',
     event: 'RETRY_FAILED_GROUP_INBOX_STORES_DONE',
     details: {'retried': retriedCount, 'total': messages.length},
+  );
+  emitRetryTiming(
+    outcome: 'complete',
+    total: messages.length,
+    retried: retriedCount,
   );
 
   return retriedCount;

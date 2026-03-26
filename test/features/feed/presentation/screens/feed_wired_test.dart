@@ -2362,6 +2362,129 @@ void main() {
       },
     );
 
+    testWidgets('updateWireEnvelope writes through for an existing row', (
+      tester,
+    ) async {
+      identityRepo.seed(testIdentity);
+
+      final saved = ConversationMessage(
+        id: 'msg-wire-1',
+        contactPeerId: testContact.peerId,
+        text: 'Wire envelope seed',
+        senderPeerId: testIdentity.peerId,
+        timestamp: DateTime.now().toUtc().toIso8601String(),
+        isIncoming: false,
+        status: 'sending',
+        createdAt: DateTime.now().toUtc().toIso8601String(),
+      );
+
+      await messageRepo.saveMessage(saved);
+      await messageRepo.updateWireEnvelope('msg-wire-1', '{"wire":"ok"}');
+      await messageRepo.updateWireEnvelope(
+        'missing-message',
+        '{"wire":"nope"}',
+      );
+
+      final updated = await messageRepo.getMessage('msg-wire-1');
+      expect(updated, isNotNull);
+      expect(updated!.wireEnvelope, '{"wire":"ok"}');
+      expect(
+        await messageRepo.getMessage('missing-message'),
+        isNull,
+        reason: 'Missing rows should remain untouched',
+      );
+    });
+
+    testWidgets(
+      'feed inline 1:1 reply becomes retry-discoverable before network completes',
+      (tester) async {
+        final originalOnError = FlutterError.onError;
+        FlutterError.onError = (details) {
+          if (details.toString().contains('overflowed')) return;
+          originalOnError?.call(details);
+        };
+        addTearDown(() => FlutterError.onError = originalOnError);
+
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+
+        // Seed a read incoming message so the card starts in collapsed mode
+        // with an inline reply input.
+        await messageRepo.saveMessage(
+          ConversationMessage(
+            id: 'msg-opt-2',
+            contactPeerId: 'contact-peer-id',
+            text: 'Hey from Bob',
+            senderPeerId: 'contact-peer-id',
+            timestamp: DateTime.now()
+                .subtract(const Duration(hours: 1))
+                .toUtc()
+                .toIso8601String(),
+            isIncoming: true,
+            status: 'read',
+            readAt: DateTime.now()
+                .subtract(const Duration(hours: 1))
+                .toUtc()
+                .toIso8601String(),
+            createdAt: DateTime.now()
+                .subtract(const Duration(hours: 1))
+                .toUtc()
+                .toIso8601String(),
+          ),
+        );
+
+        // Keep the send gate closed so the test can inspect repository state
+        // before the transport call finishes.
+        final gatedP2P = _GatedP2PService();
+        p2pService = gatedP2P;
+
+        await tester.pumpWidget(buildFeedWired());
+        await pumpFeedFrames(tester);
+
+        expect(find.byType(CollapsedModeCardBody), findsOneWidget);
+        expect(find.text('Continue...'), findsOneWidget);
+
+        await tester.enterText(find.byType(TextField).first, 'Quick reply');
+        await tester.pump();
+        final sendButton = find.byIcon(Icons.arrow_upward_rounded).first;
+        await tester.ensureVisible(sendButton);
+        await tester.pump();
+        await tester.tap(sendButton);
+
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
+
+        try {
+          final persisted = await messageRepo.getMessagesForContact(
+            testContact.peerId,
+          );
+          final outgoing = persisted
+              .where(
+                (message) =>
+                    !message.isIncoming && message.text == 'Quick reply',
+              )
+              .toList();
+
+          expect(
+            outgoing,
+            isNotEmpty,
+            reason:
+                'Feed inline 1:1 send should pre-persist a retryable row before the send gate completes',
+          );
+
+          final sent = outgoing.single;
+          expect(sent.status, 'sending');
+          expect(sent.wireEnvelope, isNotNull);
+        } finally {
+          if (!gatedP2P.sendGate.isCompleted) {
+            gatedP2P.sendGate.complete();
+          }
+          await tester.pump(const Duration(milliseconds: 100));
+          await tester.pump(const Duration(milliseconds: 100));
+        }
+      },
+    );
+
     testWidgets(
       'inline reply shows session reply immediately before network completes',
       (tester) async {
@@ -3084,7 +3207,9 @@ void main() {
         );
         expect(find.textContaining('failed to send'), findsNothing);
 
-        final savedMessages = await groupMsgRepo.getMessagesPage('g-zero-peers');
+        final savedMessages = await groupMsgRepo.getMessagesPage(
+          'g-zero-peers',
+        );
         final saved = savedMessages.firstWhere(
           (message) => message.text == 'Zero peers' && !message.isIncoming,
         );
@@ -3141,6 +3266,63 @@ void main() {
 
         await messageRepo.saveMessage(
           failedReply.copyWith(status: 'delivered'),
+        );
+        await pumpFeedFrames(tester, count: 2);
+
+        expect(find.byIcon(Icons.error_outline_rounded), findsNothing);
+        expect(find.byIcon(Icons.done_all_rounded), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'updateMessageStatus retry success updates the open feed card without reload',
+      (tester) async {
+        final originalOnError = FlutterError.onError;
+        FlutterError.onError = (details) {
+          if (details.toString().contains('overflowed')) return;
+          originalOnError?.call(details);
+        };
+        addTearDown(() => FlutterError.onError = originalOnError);
+
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+
+        final parent = ConversationMessage(
+          id: 'parent-update-status',
+          contactPeerId: testContact.peerId,
+          text: 'Retry parent',
+          senderPeerId: testContact.peerId,
+          timestamp: '2026-02-01T10:00:00.000Z',
+          isIncoming: true,
+          status: 'read',
+          readAt: '2026-02-01T10:05:00.000Z',
+          createdAt: '2026-02-01T10:00:00.000Z',
+        );
+        final failedReply = ConversationMessage(
+          id: 'failed-update-status',
+          contactPeerId: testContact.peerId,
+          text: 'Retry reply',
+          senderPeerId: testIdentity.peerId,
+          timestamp: '2026-02-01T10:06:00.000Z',
+          isIncoming: false,
+          status: 'failed',
+          quotedMessageId: 'parent-update-status',
+          createdAt: '2026-02-01T10:06:00.000Z',
+        );
+        await messageRepo.saveMessage(parent);
+        await messageRepo.saveMessage(failedReply);
+
+        await tester.pumpWidget(buildFeedWired());
+        await pumpFeedFrames(tester);
+
+        await tester.tap(find.text('Tap to expand'));
+        await pumpFeedFrames(tester, count: 4);
+
+        expect(find.byIcon(Icons.error_outline_rounded), findsOneWidget);
+
+        await messageRepo.updateMessageStatus(
+          failedReply.id,
+          'delivered',
         );
         await pumpFeedFrames(tester, count: 2);
 

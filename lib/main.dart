@@ -485,6 +485,7 @@ void main() async {
   final postRepository = PostRepositoryImpl(
     dbInsertPost: (row) => dbInsertPost(db, row),
     dbLoadPost: (postId) => dbLoadPost(db, postId),
+    dbLoadPostsByIds: (postIds) => dbLoadPostsByIds(db, postIds),
     dbLoadPostsFeed: () => dbLoadPostsFeed(db),
     dbLoadRetryableOutgoingPosts: () => dbLoadRetryableOutgoingPosts(db),
     dbLoadExpiredPosts: (nowIso) => dbLoadExpiredPosts(db, nowIso),

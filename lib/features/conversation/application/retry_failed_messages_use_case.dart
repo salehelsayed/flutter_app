@@ -35,7 +35,26 @@ Future<int> retryFailedMessages({
   MediaAttachmentRepository? mediaAttachmentRepo,
   UploadMediaFn? uploadMediaFn,
 }) async {
+  final retryStopwatch = Stopwatch()..start();
   final effectiveUploadFn = uploadMediaFn ?? uploadMedia;
+  void emitRetryTiming({
+    required String outcome,
+    required int total,
+    required int succeeded,
+    Map<String, dynamic> details = const {},
+  }) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'RETRY_FAILED_MESSAGES_TIMING',
+      details: {
+        'elapsedMs': retryStopwatch.elapsedMilliseconds,
+        'outcome': outcome,
+        'total': total,
+        'succeeded': succeeded,
+        ...details,
+      },
+    );
+  }
 
   emitFlowEvent(layer: 'FL', event: 'RETRY_FAILED_MESSAGES_START', details: {});
 
@@ -46,6 +65,7 @@ Future<int> retryFailedMessages({
       event: 'RETRY_FAILED_MESSAGES_NO_IDENTITY',
       details: {},
     );
+    emitRetryTiming(outcome: 'no_identity', total: 0, succeeded: 0);
     return 0;
   }
 
@@ -56,6 +76,7 @@ Future<int> retryFailedMessages({
       event: 'RETRY_FAILED_MESSAGES_NONE',
       details: {},
     );
+    emitRetryTiming(outcome: 'none', total: 0, succeeded: 0);
     return 0;
   }
 
@@ -149,6 +170,7 @@ Future<int> retryFailedMessages({
         recipientMlKemPublicKey: mlKemPk,
         mediaAttachments: attachments,
         mediaAttachmentRepo: mediaAttachmentRepo,
+        emitTimingEvent: false,
       );
 
       if (result == SendChatMessageResult.success) {
@@ -184,6 +206,11 @@ Future<int> retryFailedMessages({
     layer: 'FL',
     event: 'RETRY_FAILED_MESSAGES_COMPLETE',
     details: {'total': failedMessages.length, 'succeeded': successCount},
+  );
+  emitRetryTiming(
+    outcome: 'complete',
+    total: failedMessages.length,
+    succeeded: successCount,
   );
 
   return successCount;

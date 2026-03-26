@@ -52,12 +52,23 @@ Future<RejoinGroupTopicsResult> rejoinGroupTopics({
   required GroupRepository groupRepo,
   RejoinReason reason = RejoinReason.startup,
 }) async {
+  final rejoinStopwatch = Stopwatch()..start();
   // Skip rejoin when in-place recovery succeeded — topics are still active.
   if (reason == RejoinReason.inPlaceRecovery) {
     emitFlowEvent(
       layer: 'FL',
       event: 'GROUP_REJOIN_TOPICS_SKIPPED',
       details: {'reason': 'inPlaceRecovery'},
+    );
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_REJOIN_TOPICS_TIMING',
+      details: {
+        'scope': 'batch',
+        'elapsedMs': rejoinStopwatch.elapsedMilliseconds,
+        'outcome': 'skipped',
+        'reason': reason.name,
+      },
     );
     return const RejoinGroupTopicsResult(
       joinedGroupCount: 0,
@@ -79,6 +90,7 @@ Future<RejoinGroupTopicsResult> rejoinGroupTopics({
   var errorCount = 0;
 
   for (final group in groups) {
+    final groupStopwatch = Stopwatch()..start();
     try {
       final keyInfo = await groupRepo.getLatestKey(group.id);
       if (keyInfo == null) {
@@ -87,6 +99,18 @@ Future<RejoinGroupTopicsResult> rejoinGroupTopics({
           layer: 'FL',
           event: 'GROUP_REJOIN_TOPICS_SKIP_NO_KEY',
           details: {
+            'groupId': group.id.length > 8
+                ? group.id.substring(0, 8)
+                : group.id,
+          },
+        );
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_REJOIN_TOPICS_TIMING',
+          details: {
+            'scope': 'group',
+            'elapsedMs': groupStopwatch.elapsedMilliseconds,
+            'outcome': 'skip_no_key',
             'groupId': group.id.length > 8
                 ? group.id.substring(0, 8)
                 : group.id,
@@ -135,6 +159,17 @@ Future<RejoinGroupTopicsResult> rejoinGroupTopics({
           'memberCount': members.length,
         },
       );
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_REJOIN_TOPICS_TIMING',
+        details: {
+          'scope': 'group',
+          'elapsedMs': groupStopwatch.elapsedMilliseconds,
+          'outcome': 'joined',
+          'groupId': group.id.length > 8 ? group.id.substring(0, 8) : group.id,
+          'memberCount': members.length,
+        },
+      );
     } catch (e) {
       errorCount++;
       emitFlowEvent(
@@ -145,6 +180,16 @@ Future<RejoinGroupTopicsResult> rejoinGroupTopics({
           'error': e.toString(),
         },
       );
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_REJOIN_TOPICS_TIMING',
+        details: {
+          'scope': 'group',
+          'elapsedMs': groupStopwatch.elapsedMilliseconds,
+          'outcome': 'error',
+          'groupId': group.id.length > 8 ? group.id.substring(0, 8) : group.id,
+        },
+      );
     }
   }
 
@@ -152,6 +197,20 @@ Future<RejoinGroupTopicsResult> rejoinGroupTopics({
     layer: 'FL',
     event: 'GROUP_REJOIN_TOPICS_DONE',
     details: {
+      'groupCount': groups.length,
+      'joinedGroupCount': joinedGroupCount,
+      'skippedNoKeyCount': skippedNoKeyCount,
+      'errorCount': errorCount,
+    },
+  );
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'GROUP_REJOIN_TOPICS_TIMING',
+    details: {
+      'scope': 'batch',
+      'elapsedMs': rejoinStopwatch.elapsedMilliseconds,
+      'outcome': 'complete',
+      'reason': reason.name,
       'groupCount': groups.length,
       'joinedGroupCount': joinedGroupCount,
       'skippedNoKeyCount': skippedNoKeyCount,

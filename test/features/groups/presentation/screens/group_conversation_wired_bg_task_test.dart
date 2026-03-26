@@ -500,6 +500,79 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
+    testWidgets(
+      'ordinary media upload failure after unmount still persists failed parent status',
+      (tester) async {
+        final uploadGate = Completer<void>();
+        final uploadStarted = Completer<void>();
+        final bridge = _OrderRecordingBridge();
+        final msgRepo = InMemoryGroupMessageRepository();
+        final mediaRepo = InMemoryMediaAttachmentRepository();
+        final mediaFileManager = FakeMediaFileManager();
+        final tempDir = Directory.systemTemp.createTempSync(
+          'group-bg-unmount-media-fail-',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) {
+            tempDir.deleteSync(recursive: true);
+          }
+        });
+        final attachment = File(p.join(tempDir.path, 'photo.jpg'))
+          ..writeAsStringSync('image');
+
+        await _pumpGroupConversationWired(
+          tester,
+          bridge: bridge,
+          msgRepo: msgRepo,
+          mediaAttachmentRepo: mediaRepo,
+          mediaFileManager: mediaFileManager,
+          initialAttachments: [attachment],
+          uploadMediaFn: ({
+            required Bridge bridge,
+            required String localFilePath,
+            required String mime,
+            required String recipientPeerId,
+            MediaFileManager? mediaFileManager,
+            int? width,
+            int? height,
+            int? durationMs,
+            List<double>? waveform,
+            List<String>? allowedPeers,
+            String? blobId,
+          }) async {
+            if (!uploadStarted.isCompleted) {
+              uploadStarted.complete();
+            }
+            await uploadGate.future;
+            return null;
+          },
+        );
+
+        await _sendText(tester, 'unmount media fail');
+        await pumpUntil(tester, () => uploadStarted.isCompleted);
+        await pumpFrames(tester, count: 5);
+
+        final messageId =
+            (await mediaRepo.getUploadPendingAttachments()).single.messageId;
+        final persistedBeforeUnmount = await msgRepo.getMessage(messageId);
+        expect(persistedBeforeUnmount, isNotNull);
+        expect(persistedBeforeUnmount!.status, 'sending');
+
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+
+        uploadGate.complete();
+        await pumpFrames(tester, count: 20);
+
+        final persistedAfterFail = await msgRepo.getMessage(messageId);
+        expect(persistedAfterFail, isNotNull);
+        expect(persistedAfterFail!.status, 'failed');
+        expect(bridge.commandLog, contains('bg:end'));
+        expect(bridge.commandLog, isNot(contains('group:publish')));
+        expect(tester.takeException(), isNull);
+      },
+    );
+
     testWidgets('text-only send acquires background task before publish', (
       tester,
     ) async {
@@ -833,6 +906,7 @@ void main() {
       'announcement media send preserves messageId, key epoch, and media metadata through wired path',
       (tester) async {
         final operationLog = <String>[];
+        String? uploadedBlobId;
         final bridge = _OrderRecordingBridge(
           operationLog: operationLog,
           publishMessageId: 'msg-announce-media',
@@ -882,8 +956,9 @@ void main() {
             String? blobId,
           }) async {
             operationLog.add('uploadMediaFn');
+            uploadedBlobId = blobId;
             return _uploadedMedia(
-              id: 'att-announce-media',
+              id: blobId ?? 'att-announce-media',
               messageId: '',
               mime: mime,
               localPath: localFilePath,
@@ -910,7 +985,8 @@ void main() {
         expect(sentMessageId, isNotEmpty);
         final publishMedia =
             (publishPayload['media'] as List).single as Map<String, dynamic>;
-        expect(publishMedia['id'], 'att-announce-media');
+        expect(uploadedBlobId, isNotNull);
+        expect(publishMedia['id'], uploadedBlobId);
         expect(publishMedia['width'], 1080);
         expect(publishMedia['height'], 720);
 
@@ -926,7 +1002,7 @@ void main() {
         expect(inboxEnvelope['keyEpoch'], 7);
         final inboxMedia =
             (inboxEnvelope['media'] as List).single as Map<String, dynamic>;
-        expect(inboxMedia['id'], 'att-announce-media');
+        expect(inboxMedia['id'], uploadedBlobId);
         expect(inboxMedia['width'], 1080);
         expect(inboxMedia['height'], 720);
 
@@ -939,7 +1015,7 @@ void main() {
           sentMessageId,
         );
         expect(
-          savedAttachments.any((attachment) => attachment.id == 'att-announce-media'),
+          savedAttachments.any((attachment) => attachment.id == uploadedBlobId),
           isTrue,
         );
       },

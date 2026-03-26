@@ -13,16 +13,26 @@ Future<List<PostModel>> loadPinnedPosts({
     return const <PostModel>[];
   }
   final dismissedPostIds = await postRepo.loadDismissedPinPostIds();
-  final posts = <PostModel>[];
+  final orderedPostIds = <String>[];
   for (final pinState in activePins) {
-    if (dismissedPostIds.contains(pinState.postId)) {
-      continue;
+    if (!dismissedPostIds.contains(pinState.postId)) {
+      orderedPostIds.add(pinState.postId);
     }
-    final post = await postRepo.getPost(pinState.postId);
-    if (post == null) {
-      continue;
+  }
+  if (orderedPostIds.isEmpty) {
+    return const <PostModel>[];
+  }
+
+  final postsById = <String, PostModel>{
+    for (final post in await postRepo.loadPostsByIds(orderedPostIds))
+      post.id: post,
+  };
+  final posts = <PostModel>[];
+  for (final postId in orderedPostIds) {
+    final post = postsById[postId];
+    if (post != null) {
+      posts.add(post);
     }
-    posts.add(post);
   }
   return hydratePostSurfaceItems(
     postRepo: postRepo,

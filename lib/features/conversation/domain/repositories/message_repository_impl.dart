@@ -18,7 +18,7 @@ class MessageRepositoryImpl
   dbLoadMessagesForContact;
   final Future<Map<String, Object?>?> Function(String contactPeerId)
   dbLoadLatestMessageForContact;
-  final Future<void> Function(String id, String status) dbUpdateMessageStatus;
+  final Future<int> Function(String id, String status) dbUpdateMessageStatus;
   final Future<Map<String, Object?>?> Function(String id) dbLoadMessage;
   final Future<int> Function(String contactPeerId) dbCountMessagesForContact;
   final Future<int> Function(String contactPeerId) dbMarkConversationAsRead;
@@ -57,6 +57,7 @@ class MessageRepositoryImpl
   dbConditionalTransitionStatus;
   final StreamController<ConversationMessage> _messageChangeController =
       StreamController<ConversationMessage>.broadcast();
+  final Map<String, ConversationMessage> _messageSnapshots = {};
 
   MessageRepositoryImpl({
     required this.dbInsertMessage,
@@ -105,7 +106,8 @@ class MessageRepositoryImpl
           'id': message.id.length > 8 ? message.id.substring(0, 8) : message.id,
         },
       );
-      _messageChangeController.add(message);
+      final saved = _rememberMessage(message);
+      _messageChangeController.add(saved);
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -121,7 +123,9 @@ class MessageRepositoryImpl
     String contactPeerId,
   ) async {
     final rows = await dbLoadMessagesForContact(contactPeerId);
-    return rows.map((row) => ConversationMessage.fromMap(row)).toList();
+    return _rememberMessages(
+      rows.map((row) => ConversationMessage.fromMap(row)),
+    );
   }
 
   @override
@@ -130,15 +134,17 @@ class MessageRepositoryImpl
   ) async {
     final row = await dbLoadLatestMessageForContact(contactPeerId);
     if (row == null) return null;
-    return ConversationMessage.fromMap(row);
+    return _rememberMessage(ConversationMessage.fromMap(row));
   }
 
   @override
   Future<void> updateMessageStatus(String id, String status) async {
-    await dbUpdateMessageStatus(id, status);
-    final row = await dbLoadMessage(id);
-    if (row != null) {
-      _messageChangeController.add(ConversationMessage.fromMap(row));
+    final updatedCount = await dbUpdateMessageStatus(id, status);
+    if (updatedCount <= 0) return;
+    final updated = _updatedMessageSnapshot(id, status) ??
+        await _loadAndRememberMessage(id);
+    if (updated != null) {
+      _messageChangeController.add(updated);
     }
   }
 
@@ -146,7 +152,7 @@ class MessageRepositoryImpl
   Future<ConversationMessage?> getMessage(String id) async {
     final row = await dbLoadMessage(id);
     if (row == null) return null;
-    return ConversationMessage.fromMap(row);
+    return _rememberMessage(ConversationMessage.fromMap(row));
   }
 
   @override
@@ -158,12 +164,19 @@ class MessageRepositoryImpl
     );
     if (dbUpdateWireEnvelope != null) {
       await dbUpdateWireEnvelope!(id, envelope);
+      final cached = _messageSnapshots[id];
+      if (cached != null) {
+        _rememberMessage(cached.copyWith(wireEnvelope: envelope));
+      }
     }
   }
 
   @override
   Future<bool> messageExists(String id) async {
     final row = await dbLoadMessage(id);
+    if (row != null) {
+      _rememberMessage(ConversationMessage.fromMap(row));
+    }
     return row != null;
   }
 
@@ -212,7 +225,9 @@ class MessageRepositoryImpl
       limit: limit,
       beforeTimestamp: beforeTimestamp,
     );
-    return rows.map((row) => ConversationMessage.fromMap(row)).toList();
+    return _rememberMessages(
+      rows.map((row) => ConversationMessage.fromMap(row)),
+    );
   }
 
   @override
@@ -250,7 +265,9 @@ class MessageRepositoryImpl
   @override
   Future<List<ConversationMessage>> getFailedOutgoingMessages() async {
     final rows = await dbLoadFailedOutgoingMessages();
-    return rows.map((row) => ConversationMessage.fromMap(row)).toList();
+    return _rememberMessages(
+      rows.map((row) => ConversationMessage.fromMap(row)),
+    );
   }
 
   @override
@@ -259,7 +276,9 @@ class MessageRepositoryImpl
   }) async {
     final cutoff = DateTime.now().toUtc().subtract(olderThan);
     final rows = await dbLoadUnackedOutgoingMessages(olderThan: cutoff);
-    return rows.map((row) => ConversationMessage.fromMap(row)).toList();
+    return _rememberMessages(
+      rows.map((row) => ConversationMessage.fromMap(row)),
+    );
   }
 
   @override
@@ -276,13 +295,17 @@ class MessageRepositoryImpl
   }) async {
     final cutoff = DateTime.now().toUtc().subtract(olderThan);
     final rows = await dbLoadStuckSendingOutgoingMessages(olderThan: cutoff);
-    return rows.map((row) => ConversationMessage.fromMap(row)).toList();
+    return _rememberMessages(
+      rows.map((row) => ConversationMessage.fromMap(row)),
+    );
   }
 
   @override
   Future<List<ConversationMessage>> getSendingOutgoingMessages() async {
     final rows = await dbLoadSendingOutgoingMessages();
-    return rows.map((row) => ConversationMessage.fromMap(row)).toList();
+    return _rememberMessages(
+      rows.map((row) => ConversationMessage.fromMap(row)),
+    );
   }
 
   @override
@@ -297,9 +320,10 @@ class MessageRepositoryImpl
       toStatus: toStatus,
     );
     if (count > 0) {
-      final row = await dbLoadMessage(id);
-      if (row != null) {
-        _messageChangeController.add(ConversationMessage.fromMap(row));
+      final updated = _updatedMessageSnapshot(id, toStatus) ??
+          await _loadAndRememberMessage(id);
+      if (updated != null) {
+        _messageChangeController.add(updated);
       }
     }
     return count;
@@ -331,20 +355,22 @@ class MessageRepositoryImpl
         unreadCount: row['unread_count'] as int? ?? 0,
         latestMessage: row['latest_id'] == null
             ? null
-            : ConversationMessage.fromMap({
-                'id': row['latest_id'],
-                'contact_peer_id': row['latest_contact_peer_id'],
-                'sender_peer_id': row['latest_sender_peer_id'],
-                'text': row['latest_text'],
-                'timestamp': row['latest_timestamp'],
-                'status': row['latest_status'],
-                'is_incoming': row['latest_is_incoming'],
-                'created_at': row['latest_created_at'],
-                'read_at': row['latest_read_at'],
-                'quoted_message_id': row['latest_quoted_message_id'],
-                'transport': row['latest_transport'],
-                'wire_envelope': row['latest_wire_envelope'],
-              }),
+            : _rememberMessage(
+                ConversationMessage.fromMap({
+                  'id': row['latest_id'],
+                  'contact_peer_id': row['latest_contact_peer_id'],
+                  'sender_peer_id': row['latest_sender_peer_id'],
+                  'text': row['latest_text'],
+                  'timestamp': row['latest_timestamp'],
+                  'status': row['latest_status'],
+                  'is_incoming': row['latest_is_incoming'],
+                  'created_at': row['latest_created_at'],
+                  'read_at': row['latest_read_at'],
+                  'quoted_message_id': row['latest_quoted_message_id'],
+                  'transport': row['latest_transport'],
+                  'wire_envelope': row['latest_wire_envelope'],
+                }),
+              ),
       );
     }
     for (final contactPeerId in ids) {
@@ -354,5 +380,28 @@ class MessageRepositoryImpl
       );
     }
     return summaries;
+  }
+
+  ConversationMessage _rememberMessage(ConversationMessage message) {
+    _messageSnapshots[message.id] = message;
+    return message;
+  }
+
+  List<ConversationMessage> _rememberMessages(
+    Iterable<ConversationMessage> messages,
+  ) {
+    return messages.map(_rememberMessage).toList();
+  }
+
+  ConversationMessage? _updatedMessageSnapshot(String id, String status) {
+    final cached = _messageSnapshots[id];
+    if (cached == null) return null;
+    return _rememberMessage(cached.copyWith(status: status));
+  }
+
+  Future<ConversationMessage?> _loadAndRememberMessage(String id) async {
+    final row = await dbLoadMessage(id);
+    if (row == null) return null;
+    return _rememberMessage(ConversationMessage.fromMap(row));
   }
 }

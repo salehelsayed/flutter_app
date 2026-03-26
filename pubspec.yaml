@@ -36,9 +36,6 @@ dependencies:
   sqflite_sqlcipher: ^3.1.0+1
   sqlcipher_flutter_libs: ^0.6.4
   flutter_secure_storage: ^9.2.4
-  # The following adds the Cupertino Icons font to your application.
-  # Use with the CupertinoIcons class for iOS style icons.
-  cupertino_icons: ^1.0.8
   bonsoir: ^5.1.0
   geolocator: ^14.0.2
   qr_flutter: ^4.1.0

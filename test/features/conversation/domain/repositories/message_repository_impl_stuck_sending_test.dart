@@ -15,7 +15,7 @@ MessageRepositoryImpl _buildRepo({
     dbLoadMessagesForContact: (cp) async =>
         store.values.where((r) => r['contact_peer_id'] == cp).toList(),
     dbLoadLatestMessageForContact: (cp) async => null,
-    dbUpdateMessageStatus: (id, s) async {},
+    dbUpdateMessageStatus: (id, s) async => 0,
     dbLoadMessage: (id) async => store[id],
     dbCountMessagesForContact: (cp) async => 0,
     dbMarkConversationAsRead: (cp) async => 0,

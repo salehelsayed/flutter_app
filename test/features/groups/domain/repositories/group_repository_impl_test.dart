@@ -62,11 +62,12 @@ void main() {
   GroupModel makeGroup({
     String id = 'group-1',
     String topicName = '/mknoon/groups/group-1',
+    GroupType type = GroupType.chat,
   }) {
     return GroupModel(
       id: id,
       name: 'Test Group',
-      type: GroupType.chat,
+      type: type,
       topicName: topicName,
       description: 'A test group',
       createdAt: now,
@@ -91,10 +92,7 @@ void main() {
     );
   }
 
-  GroupKeyInfo makeKey({
-    String groupId = 'group-1',
-    int keyGeneration = 1,
-  }) {
+  GroupKeyInfo makeKey({String groupId = 'group-1', int keyGeneration = 1}) {
     return GroupKeyInfo(
       groupId: groupId,
       keyGeneration: keyGeneration,
@@ -123,6 +121,25 @@ void main() {
       final all = await repo.getAllGroups();
       expect(all.length, 2);
     });
+
+    test(
+      'saveGroup and getGroup preserve announcement type through DB mapping',
+      () async {
+        await repo.saveGroup(
+          makeGroup(
+            id: 'announcement-group',
+            topicName: '/mknoon/groups/announcement-group',
+            type: GroupType.announcement,
+          ),
+        );
+
+        final result = await repo.getGroup('announcement-group');
+        expect(result, isNotNull);
+        expect(result!.type, GroupType.announcement);
+        expect(result.createdBy, 'peer-creator');
+        expect(result.myRole, GroupRole.admin);
+      },
+    );
 
     test('updateGroup changes fields', () async {
       await repo.saveGroup(makeGroup());

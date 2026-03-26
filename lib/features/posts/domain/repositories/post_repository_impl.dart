@@ -20,6 +20,8 @@ import 'package:flutter_app/features/posts/domain/repositories/post_repository.d
 class PostRepositoryImpl implements PostRepository {
   final Future<void> Function(Map<String, Object?> row) dbInsertPost;
   final Future<Map<String, Object?>?> Function(String postId) dbLoadPost;
+  final Future<List<Map<String, Object?>>> Function(List<String> postIds)?
+  dbLoadPostsByIds;
   final Future<List<Map<String, Object?>>> Function() dbLoadPostsFeed;
   final Future<List<Map<String, Object?>>> Function()?
   dbLoadRetryableOutgoingPosts;
@@ -140,6 +142,7 @@ class PostRepositoryImpl implements PostRepository {
   PostRepositoryImpl({
     required this.dbInsertPost,
     required this.dbLoadPost,
+    this.dbLoadPostsByIds,
     required this.dbLoadPostsFeed,
     this.dbLoadRetryableOutgoingPosts,
     this.dbLoadExpiredPosts,
@@ -226,6 +229,26 @@ class PostRepositoryImpl implements PostRepository {
   Future<PostModel?> getPost(String postId) async {
     final row = await dbLoadPost(postId);
     return row == null ? null : PostModel.fromMap(row);
+  }
+
+  @override
+  Future<List<PostModel>> loadPostsByIds(List<String> postIds) async {
+    if (postIds.isEmpty) {
+      return const <PostModel>[];
+    }
+    final dbLoad = dbLoadPostsByIds;
+    if (dbLoad == null) {
+      final posts = <PostModel>[];
+      for (final postId in postIds) {
+        final post = await getPost(postId);
+        if (post != null) {
+          posts.add(post);
+        }
+      }
+      return posts;
+    }
+    final rows = await dbLoad(postIds);
+    return rows.map(PostModel.fromMap).toList(growable: false);
   }
 
   @override

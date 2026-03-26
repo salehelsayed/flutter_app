@@ -27,10 +27,7 @@ final testIdentity = IdentityModel(
   updatedAt: DateTime.now().toUtc().toIso8601String(),
 );
 
-ContactModel makeContact({
-  required String peerId,
-  required String username,
-}) =>
+ContactModel makeContact({required String peerId, required String username}) =>
     ContactModel(
       peerId: peerId,
       publicKey: 'pk-$peerId',
@@ -114,61 +111,63 @@ void main() {
     test(
       'calls callGroupUpdateConfig once with full member list including self',
       () async {
-      await createGroupWithMembers(
-        bridge: bridge,
-        groupRepo: groupRepo,
-        p2pService: p2pService,
-        identity: testIdentity,
-        selectedContacts: [contactAlice],
-        type: GroupType.chat,
-        name: 'My Group',
-      );
+        await createGroupWithMembers(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          p2pService: p2pService,
+          identity: testIdentity,
+          selectedContacts: [contactAlice],
+          type: GroupType.chat,
+          name: 'My Group',
+        );
 
-      final updateConfigCalls = bridge.commandLog
-          .where((command) => command == 'group:updateConfig')
-          .length;
-      expect(updateConfigCalls, 1);
+        final updateConfigCalls = bridge.commandLog
+            .where((command) => command == 'group:updateConfig')
+            .length;
+        expect(updateConfigCalls, 1);
 
-      // Find the group:updateConfig command
-      final updateConfigMsg = bridge.sentMessages.firstWhere(
-        (m) => (jsonDecode(m) as Map)['cmd'] == 'group:updateConfig',
-      );
-      final parsed = jsonDecode(updateConfigMsg) as Map<String, dynamic>;
-      final config =
-          parsed['payload']['groupConfig'] as Map<String, dynamic>;
-      final members = config['members'] as List;
+        // Find the group:updateConfig command
+        final updateConfigMsg = bridge.sentMessages.firstWhere(
+          (m) => (jsonDecode(m) as Map)['cmd'] == 'group:updateConfig',
+        );
+        final parsed = jsonDecode(updateConfigMsg) as Map<String, dynamic>;
+        final config = parsed['payload']['groupConfig'] as Map<String, dynamic>;
+        final members = config['members'] as List;
 
-      // Should include self (admin) + Alice
-      expect(members.length, 2);
-      final peerIds = members.map((m) => m['peerId']).toSet();
-      expect(peerIds, contains('peer-admin'));
-      expect(peerIds, contains('peer-alice'));
-    });
+        // Should include self (admin) + Alice
+        expect(members.length, 2);
+        final peerIds = members.map((m) => m['peerId']).toSet();
+        expect(peerIds, contains('peer-admin'));
+        expect(peerIds, contains('peer-alice'));
+      },
+    );
 
-    test('broadcasts members_added system message via callGroupPublish',
-        () async {
-      await createGroupWithMembers(
-        bridge: bridge,
-        groupRepo: groupRepo,
-        p2pService: p2pService,
-        identity: testIdentity,
-        selectedContacts: [contactAlice, contactBob],
-        type: GroupType.chat,
-        name: 'My Group',
-      );
+    test(
+      'broadcasts members_added system message via callGroupPublish',
+      () async {
+        await createGroupWithMembers(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          p2pService: p2pService,
+          identity: testIdentity,
+          selectedContacts: [contactAlice, contactBob],
+          type: GroupType.chat,
+          name: 'My Group',
+        );
 
-      // Find the group:publish command
-      final publishMsg = bridge.sentMessages.firstWhere(
-        (m) => (jsonDecode(m) as Map)['cmd'] == 'group:publish',
-      );
-      final parsed = jsonDecode(publishMsg) as Map<String, dynamic>;
-      final text = parsed['payload']['text'] as String;
-      final sysMsg = jsonDecode(text) as Map<String, dynamic>;
+        // Find the group:publish command
+        final publishMsg = bridge.sentMessages.firstWhere(
+          (m) => (jsonDecode(m) as Map)['cmd'] == 'group:publish',
+        );
+        final parsed = jsonDecode(publishMsg) as Map<String, dynamic>;
+        final text = parsed['payload']['text'] as String;
+        final sysMsg = jsonDecode(text) as Map<String, dynamic>;
 
-      expect(sysMsg['__sys'], 'members_added');
-      final members = sysMsg['members'] as List;
-      expect(members.length, 2);
-    });
+        expect(sysMsg['__sys'], 'members_added');
+        final members = sysMsg['members'] as List;
+        expect(members.length, 2);
+      },
+    );
 
     test('sends individual encrypted P2P invites to each contact', () async {
       await createGroupWithMembers(
@@ -183,8 +182,9 @@ void main() {
 
       // Should have sent 2 P2P messages (one per contact)
       expect(p2pService.sentMessageLog.length, 2);
-      final recipientPeerIds =
-          p2pService.sentMessageLog.map((r) => r.peerId).toSet();
+      final recipientPeerIds = p2pService.sentMessageLog
+          .map((r) => r.peerId)
+          .toSet();
       expect(recipientPeerIds, contains('peer-alice'));
       expect(recipientPeerIds, contains('peer-bob'));
 
@@ -216,7 +216,12 @@ void main() {
         groupRepo: groupRepo,
         p2pService: p2pService,
         identity: testIdentity,
-        selectedContacts: [contactAlice, contactBob, contactCharlie, contactDave],
+        selectedContacts: [
+          contactAlice,
+          contactBob,
+          contactCharlie,
+          contactDave,
+        ],
         type: GroupType.chat,
         name: null,
       );
@@ -259,5 +264,41 @@ void main() {
       // Invite attempted but failed
       expect(result.invitesSent, 0);
     });
+
+    test(
+      'propagates announcement type into created group, saved group, and updateConfig',
+      () async {
+        final result = await createGroupWithMembers(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          p2pService: p2pService,
+          identity: testIdentity,
+          selectedContacts: [contactAlice],
+          type: GroupType.announcement,
+          name: 'Announcements',
+        );
+
+        expect(result.group.type, GroupType.announcement);
+        expect(result.group.myRole, GroupRole.admin);
+
+        final savedGroup = await groupRepo.getGroup('test-group-id');
+        expect(savedGroup, isNotNull);
+        expect(savedGroup!.type, GroupType.announcement);
+        expect(savedGroup.myRole, GroupRole.admin);
+
+        final updateConfigMsg = bridge.sentMessages.firstWhere(
+          (message) =>
+              (jsonDecode(message) as Map<String, dynamic>)['cmd'] ==
+              'group:updateConfig',
+        );
+        final config =
+            ((jsonDecode(updateConfigMsg) as Map<String, dynamic>)['payload']
+                    as Map<String, dynamic>)['groupConfig']
+                as Map<String, dynamic>;
+
+        expect(config['groupType'], 'announcement');
+        expect(config['createdBy'], testIdentity.peerId);
+      },
+    );
   });
 }

@@ -14,6 +14,8 @@ class IdentityRepositoryImpl implements IdentityRepository {
   final Future<Map<String, Object?>?> Function() _dbLoadIdentityRow;
   final Future<void> Function(Map<String, Object?> row) _dbUpsertIdentityRow;
   final SecureKeyStore _secureKeyStore;
+  IdentityModel? _cachedIdentity;
+  bool _hasCachedIdentity = false;
 
   IdentityRepositoryImpl({
     required Future<Map<String, Object?>?> Function() dbLoadIdentityRow,
@@ -31,9 +33,23 @@ class IdentityRepositoryImpl implements IdentityRepository {
       details: {},
     );
 
+    if (_hasCachedIdentity) {
+      final cachedIdentity = _cachedIdentity;
+      emitFlowEvent(
+        layer: 'FL',
+        event: cachedIdentity == null
+            ? 'ID_REPO_LOAD_IDENTITY_NOT_FOUND'
+            : 'ID_REPO_LOAD_IDENTITY_FOUND',
+        details: cachedIdentity == null ? {} : {'peerId': cachedIdentity.peerId},
+      );
+      return cachedIdentity;
+    }
+
     final row = await _dbLoadIdentityRow();
 
     if (row == null) {
+      _cachedIdentity = null;
+      _hasCachedIdentity = true;
       emitFlowEvent(
         layer: 'FL',
         event: 'ID_REPO_LOAD_IDENTITY_NOT_FOUND',
@@ -57,6 +73,8 @@ class IdentityRepositoryImpl implements IdentityRepository {
     final mlKemSecretKey = ssMlKemSecretKey ?? row['ml_kem_secret_key'] as String?;
 
     if (privateKey == null || mnemonic12 == null) {
+      _cachedIdentity = null;
+      _hasCachedIdentity = true;
       emitFlowEvent(
         layer: 'FL',
         event: 'ID_REPO_LOAD_IDENTITY_MISSING_SECRETS',
@@ -78,6 +96,8 @@ class IdentityRepositoryImpl implements IdentityRepository {
       createdAt: row['created_at'] as String,
       updatedAt: row['updated_at'] as String,
     );
+    _cachedIdentity = identity;
+    _hasCachedIdentity = true;
 
     emitFlowEvent(
       layer: 'FL',
@@ -120,6 +140,8 @@ class IdentityRepositoryImpl implements IdentityRepository {
     };
 
     await _dbUpsertIdentityRow(row);
+    _cachedIdentity = identity;
+    _hasCachedIdentity = true;
 
     emitFlowEvent(
       layer: 'FL',
