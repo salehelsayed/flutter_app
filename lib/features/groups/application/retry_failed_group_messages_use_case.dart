@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
@@ -59,10 +61,15 @@ String _shortId(String id) => id.length > 8 ? id.substring(0, 8) : id;
 
 /// Retries failed outgoing group messages.
 ///
-/// Loads identity, queries failed rows, then re-sends each text-only row via
+/// Loads identity, queries failed rows, then re-sends each eligible row via
 /// [sendGroupMessage] with the original messageId + timestamp so the DB row
-/// is updated in-place. Rows that still carry media/voice retry metadata are
-/// skipped until the durable media/voice phases land.
+/// is updated in-place.
+///
+/// Text-only failed rows retry directly.
+/// Media/voice failed rows retry only when persisted attachments for that
+/// message are already complete (`downloadStatus == 'done'`).
+/// Rows whose persisted attachments are still `upload_pending` remain owned by
+/// `retryIncompleteGroupUploads(...)` and are skipped here.
 ///
 /// Returns the count of successfully retried messages.
 /// Non-fatal: catches errors per-message and continues with the next.
@@ -71,6 +78,7 @@ Future<int> retryFailedGroupMessages({
   required GroupRepository groupRepo,
   required IdentityRepository identityRepo,
   required Bridge bridge,
+  required MediaAttachmentRepository mediaAttachmentRepo,
 }) async {
   final retryStopwatch = Stopwatch()..start();
   void emitRetryTiming({
@@ -140,16 +148,41 @@ Future<int> retryFailedGroupMessages({
   var skippedCount = 0;
 
   for (final msg in failedMessages) {
-    if (!_isTextOnlyRetryPayload(msg)) {
+    final retryPayloadAvailable =
+        (msg.inboxRetryPayload?.isNotEmpty ?? false) ||
+        (msg.wireEnvelope?.isNotEmpty ?? false);
+    final textOnlyRetry = _isTextOnlyRetryPayload(msg);
+    final attachments = await mediaAttachmentRepo.getAttachmentsForMessage(
+      msg.id,
+    );
+    final hasPendingUploadAttachments = attachments.any(
+      (attachment) => attachment.downloadStatus == 'upload_pending',
+    );
+    final canRetryWithPersistedAttachments =
+        attachments.isNotEmpty &&
+        attachments.every((attachment) => attachment.downloadStatus == 'done');
+
+    List<MediaAttachment>? retryAttachments;
+    if (textOnlyRetry) {
+      retryAttachments = null;
+    } else if (canRetryWithPersistedAttachments) {
+      retryAttachments = attachments;
+    } else {
       skippedCount++;
+      var reason = 'has_media_or_invalid_payload';
+      if (!retryPayloadAvailable) {
+        reason = 'missing_retry_payload';
+      } else if (hasPendingUploadAttachments) {
+        reason = 'incomplete_media_attachments';
+      } else if (attachments.isEmpty) {
+        reason = 'missing_media_attachments';
+      }
       emitFlowEvent(
         layer: 'FL',
         event: 'RETRY_FAILED_GROUP_MESSAGES_MESSAGE_SKIPPED_UNSUPPORTED',
         details: {
           'messageId': _shortId(msg.id),
-          'reason': msg.inboxRetryPayload == null
-              ? 'missing_retry_payload'
-              : 'has_media_or_invalid_payload',
+          'reason': reason,
         },
       );
       continue;
@@ -169,6 +202,8 @@ Future<int> retryFailedGroupMessages({
         messageId: msg.id,
         timestamp: msg.timestamp,
         quotedMessageId: msg.quotedMessageId,
+        mediaAttachments: retryAttachments,
+        mediaAttachmentRepo: mediaAttachmentRepo,
         emitTimingEvent: false,
       );
 

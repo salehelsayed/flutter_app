@@ -10,10 +10,11 @@ Announcement-specific acceptance contract:
 - admin-only sending still holds at UI and use-case boundaries
 - admin text/media/voice announcement sends still behave correctly on the shared group pipeline
 - reader/member announcement receive + react behavior still works
-- announcement resume/recovery behavior still works for text/media
+- announcement resume/recovery behavior still works for text/media, and voice where the repo already carries direct proof
 - announcement lock/unmount / background-task behavior still works
 
 In scope:
+- first prove the shared group reliability baseline is still landed enough to audit announcements safely
 - inspect the landed shared group reliability changes as they affect announcements
 - run the announcement-focused direct suites and relevant shared group safety nets
 - run the named gates required by the regression strategy
@@ -39,6 +40,7 @@ Why:
 - the preferred outcome is proof that announcements remain solid after the shared group changes
 - a valid completion is “announcement behavior remains accepted; no further implementation session is needed”
 - production changes should happen only if this audit proves a real announcement-specific gap
+- a valid blocked completion is “the shared group reliability baseline is not currently coherent enough to use as announcement acceptance evidence”
 
 ## 3. files and repos to inspect next
 
@@ -54,7 +56,13 @@ Primary Flutter code likely relevant:
 - `lib/features/groups/presentation/screens/group_conversation_wired.dart`
 - `lib/features/groups/presentation/screens/group_conversation_screen.dart`
 - `lib/features/groups/application/drain_group_offline_inbox_use_case.dart`
-- any shared group retry/recovery files changed by Sessions 24 through 26
+- `lib/features/groups/application/retry_failed_group_messages_use_case.dart`
+- `lib/features/groups/application/retry_incomplete_group_uploads_use_case.dart`
+- `lib/features/groups/application/rejoin_group_topics_use_case.dart`
+- `lib/features/groups/application/retry_failed_group_inbox_stores_use_case.dart` if inbox-store recovery is part of the shared scope under audit
+- `lib/core/lifecycle/handle_app_resumed.dart`
+- `lib/main.dart`
+- any shared group retry/recovery files changed by Sessions 24 through 27
 
 Primary Go/bridge code only if the shared work touched auth or publish-boundary behavior:
 - `go-mknoon/node/pubsub.go`
@@ -63,10 +71,17 @@ Primary Go/bridge code only if the shared work touched auth or publish-boundary 
 Primary tests:
 - `test/features/groups/integration/announcement_happy_path_test.dart`
 - `test/features/groups/application/send_group_message_use_case_test.dart`
+- `test/features/groups/application/send_group_reaction_use_case_test.dart`
+- `test/features/groups/application/drain_group_offline_inbox_use_case_test.dart`
+- `test/features/groups/application/rejoin_group_topics_use_case_test.dart`
+- `test/features/groups/application/retry_failed_group_messages_use_case_test.dart`
+- `test/features/groups/application/retry_incomplete_group_uploads_use_case_test.dart`
 - `test/features/groups/integration/group_resume_recovery_test.dart`
 - `test/features/groups/presentation/screens/group_conversation_wired_bg_task_test.dart`
 - `test/features/groups/presentation/group_conversation_wired_test.dart`
 - `test/features/groups/presentation/group_conversation_screen_test.dart`
+- `test/core/lifecycle/handle_app_resumed_group_recovery_test.dart`
+- `test/core/lifecycle/main_resume_group_upload_wiring_test.dart`
 
 Gate / regression references:
 - `./scripts/run_test_gates.sh groups`
@@ -93,6 +108,7 @@ Already present and relevant:
 - `test/features/groups/integration/group_resume_recovery_test.dart`
   - announcement reader resume behavior
   - announcement media recovery with zero topic peers
+  - announcement voice sender-path / push-body / resume proof already exists in repo-local acceptance coverage
   - announcement delivery after key rotation
 - `test/features/groups/presentation/screens/group_conversation_wired_bg_task_test.dart`
   - announcement text/voice/media send path behavior through lock / unmount / background-task conditions
@@ -102,8 +118,19 @@ Already present and relevant:
   - announcement admin voice UI availability
 - `test/features/groups/presentation/group_conversation_screen_test.dart`
   - read-only compose behavior for announcement readers
+- `test/features/groups/application/send_group_reaction_use_case_test.dart`
+  - explicit reader/member reaction proof at the use-case boundary
+- `test/features/groups/application/drain_group_offline_inbox_use_case_test.dart`
+  - exact-once announcement reader inbox drain proof
+- `test/features/groups/application/rejoin_group_topics_use_case_test.dart`
+  - announcement groups rejoin on recovery/startup like normal groups
+- `test/core/lifecycle/handle_app_resumed_group_recovery_test.dart`
+  - resume ordering proof for rejoin -> drain -> recover -> retry chain
+- `test/core/lifecycle/main_resume_group_upload_wiring_test.dart`
+  - repo-local proof that resume wiring still passes the needed group upload dependencies
 
 What this session must prove:
+- the shared group reliability baseline is actually coherent enough to use as acceptance evidence for announcements
 - shared group reliability fixes did not break announcement-specific send/retry/recovery behavior
 - admin-only enforcement still holds
 - announcement readers still stay read-only while receiving and reacting correctly
@@ -125,55 +152,85 @@ Add a new regression only if the audit proves a real announcement-specific uncov
 Required.
 
 Before deciding the session is accepted, gather:
+- a prerequisite preflight verdict on whether the shared group reliability seams are currently landed, compiling, and usable as acceptance evidence
 - final direct test results for announcement happy-path, send auth, resume/media recovery, and background-task protection
+- final direct test results for the announcement-relevant shared recovery seams:
+  - inbox drain
+  - rejoin
+  - retry-incomplete-group-uploads
+  - retry-failed-group-messages
+  - resume ordering / main wiring
 - the final `groups` gate result
 - the final `baseline` gate result
 - the `transport` gate result only if the changed shared scope actually touched that layer
 - the Go-side `go test ./node && go test ./bridge` result only if the changed scope actually touched the Go/bridge auth boundary
 - a short comparison of those results against the acceptance contract in `13-announcement-use-case-audit.md`
+- explicit revalidation of any known-failure-ledger note used to downgrade a red named-gate result
 
 ## 7. step-by-step implementation or evidence-collection plan
 
 1. Re-open `13-announcement-use-case-audit.md` and restate the narrow acceptance contract for announcements.
+   - treat its gap list as historical context only
+   - do not assume every listed “gap” is still current without repo verification
 2. Re-open the shared group changes from Sessions 24 through 27 and identify whether any of them touched announcement-relevant seams.
    - do not start by editing code
    - first confirm whether the shared changes actually touch announcement behavior
-3. Run the announcement-focused direct suites:
+3. Run a prerequisite preflight before any acceptance decision:
+   - confirm the shared group reliability seams that announcements rely on are still landed, compiling, and coherent in the current repo
+   - include the retry, upload-recovery, inbox-drain, rejoin, and resume-wiring seams
+   - if that preflight fails, record Session 28 as `blocked` and stop rather than treating announcement-only suites as sufficient proof
+4. Run the announcement-focused direct suites:
    - happy path
    - send auth / pending / key-rotation cases
+   - react behavior at the direct use-case boundary
    - resume/media recovery cases
+   - announcement-relevant lifecycle / resume-ordering proofs
+   - announcement-relevant inbox-drain / rejoin / lifecycle ordering cases
    - background-task / lock-unmount cases
    - read-only UI enforcement checks
-4. Run the Group Messaging Gate.
-5. Run the Baseline Gate.
-6. Run the Startup / Transport Gate only if the changed shared scope actually touched lifecycle / startup / recovery wiring.
-7. Run `go test ./node && go test ./bridge` only if the changed scope touched Go/bridge auth or publish-boundary behavior.
-8. Interpret all red results against the known-failure ledger in `Test-Flight-Improv/test-gate-definitions.md`.
+5. Run the Group Messaging Gate.
+6. Run the Baseline Gate.
+7. Run the Startup / Transport Gate only if the changed shared scope actually touched lifecycle / startup / recovery wiring.
+   - do not treat the transport gate as a substitute for the repo-local lifecycle direct suites above
+8. Run `go test ./node && go test ./bridge` only if the changed scope touched Go/bridge auth or publish-boundary behavior.
+9. Interpret all red results against the known-failure ledger in `Test-Flight-Improv/test-gate-definitions.md`.
    - do not treat an already-documented unrelated red gate item as a new announcement failure
-9. Decide the outcome:
+   - do not rely on an old ledger note without checking that the cited failure still matches the current repo state
+10. Decide the outcome:
    - `accepted` if announcement behavior is still solid and only unrelated known failures remain
    - `accepted_with_explicit_follow_up` if the announcement surface is effectively complete but one unrelated pre-existing issue still clouds the gate surface
+   - `blocked` if the shared group reliability prerequisite preflight is not currently coherent enough to support announcement acceptance
    - `blocked` only if a real announcement-specific gap remains in the changed scope
-10. If accepted, update docs only if the closure wording should be tightened.
-11. If blocked, record the smallest remaining announcement-specific gap and stop. Do not create a broad new announcement roadmap in this session.
+11. If accepted, update docs only if the closure wording should be tightened.
+12. If blocked, record the smallest remaining announcement-specific gap or prerequisite shared-gap and stop. Do not create a broad new announcement roadmap in this session.
 
 ## 8. risks and edge cases
 
 - Do not turn this acceptance pass into another implementation roadmap unless a real announcement-specific blocker is proven.
 - Do not misclassify pre-existing known-red gate items as announcement failures.
+- Do not treat the shared group pipeline as a black box; announcement resume/recovery evidence must include the actual lifecycle and wiring seams currently used by the app.
 - Do not reopen product-scope items such as scheduling, receipts, analytics, or pinning just because this is an announcement session.
 - Do not require Go-side tests unless the changed scope actually touched the Go/bridge auth boundary.
 - Do not hide a real announcement-specific regression behind “shared known failure” language if the changed scope clearly caused or widened it.
 - Do not create duplicate proof for node/bridge enforcement unless the current proof is actually no longer sufficient.
+- Do not accept announcement closure if the prerequisite shared group retry/recovery surface is not currently compiling or coherent in the repo.
+- Do not assume the `13-announcement-use-case-audit.md` gap list is still current; some entries may now be stale.
 
-## 9. exact tests to run after implementation, if code changes occur
+## 9. exact tests to run for this evidence-gated acceptance audit
 
 Primary direct suites:
 - `flutter test test/features/groups/integration/announcement_happy_path_test.dart`
 - `flutter test test/features/groups/application/send_group_message_use_case_test.dart`
+- `flutter test test/features/groups/application/send_group_reaction_use_case_test.dart`
 - `flutter test test/features/groups/integration/group_resume_recovery_test.dart`
 
 Direct companion suites:
+- `flutter test test/features/groups/application/drain_group_offline_inbox_use_case_test.dart`
+- `flutter test test/features/groups/application/rejoin_group_topics_use_case_test.dart`
+- `flutter test test/features/groups/application/retry_failed_group_messages_use_case_test.dart`
+- `flutter test test/features/groups/application/retry_incomplete_group_uploads_use_case_test.dart`
+- `flutter test test/core/lifecycle/handle_app_resumed_group_recovery_test.dart`
+- `flutter test test/core/lifecycle/main_resume_group_upload_wiring_test.dart`
 - `flutter test test/features/groups/presentation/screens/group_conversation_wired_bg_task_test.dart`
 - `flutter test test/features/groups/presentation/group_conversation_wired_test.dart`
 - `flutter test test/features/groups/presentation/group_conversation_screen_test.dart`
@@ -190,6 +247,7 @@ Required:
 Conditionally required:
 - Startup / Transport Gate
   - only if the changed shared scope crossed into lifecycle, lock-unlock, startup, or recovery orchestration
+  - this gate does not replace the direct `test/core/lifecycle/*.dart` suites required for the actual touched resume/wiring code
 
 ## 11. whether Baseline Gate is required
 
@@ -204,6 +262,7 @@ Interpretation note:
 - evaluate any red result against the known-failure ledger in `Test-Flight-Improv/test-gate-definitions.md`
 - only treat it as an announcement blocker if the changed scope clearly introduced or widened the failure
 - do not require unconditional green while unrelated documented known failures remain unchanged
+- do not downgrade a red baseline result without revalidating that the cited known-failure note still matches the current repo
 
 ## 12. whether Startup / Transport Gate is required
 
@@ -219,11 +278,14 @@ Command when needed:
 Interpretation note:
 - if `transport` is run, use the same known-failure rule from `Test-Flight-Improv/test-gate-definitions.md`
 - do not reopen unrelated existing transport-gate failures as part of Session 28 unless the changed announcement-related scope clearly affects them
+- do not use `transport` as the only proof for resume/recovery when repo-local lifecycle direct suites cover the touched seams more directly
 
 ## 13. done criteria
 
 Session 28 is done when all of the following are true:
+- the prerequisite shared-group preflight has been run and is coherent enough to support announcement acceptance
 - the final announcement-focused direct suites have been run
+- the final announcement-relevant shared recovery direct suites have been run
 - the Group Messaging Gate has been run
 - the Baseline Gate has been run
 - the Startup / Transport Gate has been run only if the changed scope actually requires it
@@ -239,6 +301,7 @@ Session 28 is done when all of the following are true:
 ## 14. dependency impact on later sessions if this session blocks
 
 If Session 28 blocks:
+- the shared group reliability baseline may still need closure before announcement acceptance can be trusted
 - announcement behavior is not actually finished after the shared group reliability work
 - future closure work should pause until the smallest remaining announcement-specific blocker is explicitly defined
 - do not create a broad announcement program; create only the smallest follow-up session needed to close the proven remaining gap

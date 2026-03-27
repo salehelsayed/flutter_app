@@ -605,7 +605,120 @@ func TestPushService_SendNotification_LogsWhenTokenMissing(t *testing.T) {
 }
 
 func TestHandleInboxStream_GroupStoreFansOutPushToRecipientsWithTokens(t *testing.T) {
-	t.Skip("group push fanout coverage belongs to later notification work, not Section 4")
+	tokenStore := newMemoryPushTokenStore()
+	push := NewPushServiceWithBackend(tokenStore)
+	recorder := newRecordingPushSender()
+	push.sender = recorder.Send
+
+	groupInbox := NewGroupInboxStore(500, 7*24*time.Hour)
+	groupInbox.SetPush(push)
+	inbox := NewInboxStore(push)
+	env := setupInboxStreamEnv(t, inbox, groupInbox)
+
+	senderPeer := env.sender.ID().String()
+	recipientWithToken := env.recipient.ID().String()
+	recipientTwo := "peer-2"
+
+	tokenStore.RegisterToken(senderPeer, "sender-token", "ios")
+	tokenStore.RegisterToken(recipientWithToken, "recipient-token", "ios")
+	tokenStore.RegisterToken(recipientTwo, "recipient-two-token", "ios")
+
+	recorder.onSend = func(ctx context.Context, msg *messaging.Message) (string, error) {
+		stored := groupInbox.Retrieve("group-push", 0)
+		if len(stored) == 0 {
+			t.Fatal("group push fanout ran before durable store")
+		}
+		return "mock-message-id", nil
+	}
+
+	sendGroupStore := func() inboxResponse {
+		t.Helper()
+
+		stream, err := env.sender.NewStream(context.Background(), env.server.ID(), InboxProtocol)
+		if err != nil {
+			t.Fatalf("open stream: %v", err)
+		}
+		defer stream.Close()
+
+		req := map[string]interface{}{
+			"action":           "group_store",
+			"groupId":          "group-push",
+			"from":             senderPeer,
+			"message":          `{"messageId":"group-msg-1","text":"hello"}`,
+			"recipientPeerIds": []string{senderPeer, recipientWithToken, recipientTwo},
+			"pushTitle":        "Team Chat",
+			"pushBody":         "Alice: hello",
+		}
+
+		data, err := json.Marshal(req)
+		if err != nil {
+			t.Fatalf("marshal group request: %v", err)
+		}
+		if err := writeFrame(stream, data); err != nil {
+			t.Fatalf("write group frame: %v", err)
+		}
+
+		return recvInboxResp(t, stream)
+	}
+
+	resp := sendGroupStore()
+	if resp.Status != "OK" {
+		t.Fatalf("first group_store status = %q, want OK", resp.Status)
+	}
+
+	for i := 0; i < 2; i++ {
+		select {
+		case <-recorder.sentSignal:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("timed out waiting for push send %d", i+1)
+		}
+	}
+
+	select {
+	case <-recorder.sentSignal:
+		t.Fatal("unexpected extra push send")
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	messages := recorder.Messages()
+	if len(messages) != 2 {
+		t.Fatalf("push sends = %d, want 2", len(messages))
+	}
+
+	seenTokens := map[string]bool{}
+	for _, msg := range messages {
+		seenTokens[msg.Token] = true
+		if msg.Data["type"] != "group_message" {
+			t.Fatalf("push type = %q, want group_message", msg.Data["type"])
+		}
+		if msg.Data["groupId"] != "group-push" {
+			t.Fatalf("groupId = %q, want group-push", msg.Data["groupId"])
+		}
+		if msg.Data["title"] != "Team Chat" {
+			t.Fatalf("title = %q, want Team Chat", msg.Data["title"])
+		}
+		if msg.Data["body"] != "Alice: hello" {
+			t.Fatalf("body = %q, want Alice: hello", msg.Data["body"])
+		}
+	}
+
+	if !seenTokens["recipient-token"] || !seenTokens["recipient-two-token"] {
+		t.Fatalf("missing recipient tokens in push sends: %#v", seenTokens)
+	}
+	if seenTokens["sender-token"] {
+		t.Fatal("sender should not receive a group push")
+	}
+
+	resp = sendGroupStore()
+	if resp.Status != "OK" {
+		t.Fatalf("duplicate group_store status = %q, want OK", resp.Status)
+	}
+
+	select {
+	case <-recorder.sentSignal:
+		t.Fatal("duplicate store re-fanned out push sends")
+	case <-time.After(300 * time.Millisecond):
+	}
 }
 
 // --- Phase B: Top-level Notification field tests ---

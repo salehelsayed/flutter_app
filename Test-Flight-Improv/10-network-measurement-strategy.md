@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-The project already has more instrumentation than the first pass credited: structured flow events, startup timing, bridge diagnostics, relay health state, and dedicated frame/performance tests exist today. The real current gap is **not** “no observability”; it is the lack of a small production-safe layer for correlating send/retry/discovery/media timing without building a large metrics/export/dashboard stack too early.
+The project already has more instrumentation than the first pass credited: structured flow events, startup timing, bridge diagnostics, relay health state, and dedicated frame/performance tests exist today. The highest-value lean follow-up from this report is now also landed in the current Flutter tree: local flow-event-based timing/counter coverage for message send, media throughput, retry effectiveness, and connection/recovery timing was added without building a large metrics/export/dashboard stack too early.
 
 ---
 
@@ -29,15 +29,15 @@ The project already has more instrumentation than the first pass credited: struc
 
 ---
 
-## Critical Measurement Gaps
+## Historical Critical Measurement Gaps
 
 | Gap | What's Missing | Impact |
 |-----|---------------|--------|
-| **E2E Message Latency** | Correlated send → transport → receive timing | Hard to compare paths quickly |
-| **Media Throughput** | Simple upload/download duration + size counters | Hard to diagnose media slowness |
-| **Retry Effectiveness** | Failed/unacked → recovered counters | Hard to quantify recovery quality |
-| **Connection / Discovery Timing** | Per-step discovery/rejoin timing | Hard to tune group/network flows |
-| **Decrypt / Error Visibility** | Clear counters for decrypt failures | Hard to see crypto-path pain points |
+| **E2E Message Latency** | Correlated send/receive timing slices | Narrow representative local timing/correlation is now landed; full-path rollout remains intentionally deferred |
+| **Media Throughput** | Simple upload/download duration + size counters | Landed locally via the flow-event layer |
+| **Retry Effectiveness** | Failed/unacked → recovered counters | Landed locally via the flow-event layer |
+| **Connection / Discovery Timing** | Per-step discovery/rejoin timing | Landed locally for the targeted messaging/recovery seams |
+| **Decrypt / Error Visibility** | Clear counters for decrypt failures | Already landed through the decrypt-failure visibility work before Session 29 |
 | **DB Helper Hotspots** | Small timing probes around heavy helpers | Hard to rank DB cleanup work |
 
 ---
@@ -51,10 +51,10 @@ The project already has more instrumentation than the first pass credited: struc
 └───────────────────────────────────────────────┘
                     ↓
 ┌───────────────────────────────────────────────┐
-│ Layer 2: LIGHTWEIGHT SESSION METRICS          │
-│ Small timers/counters, ring-buffer snapshots  │
+│ Layer 2: LIGHTWEIGHT LOCAL TIMING / COUNTERS  │
+│ Small flow-event-based timings and counters   │
 │ Local inspection first                        │
-│ RECOMMENDED NEXT STEP                         │
+│ LANDED LEAN NEXT STEP                         │
 └───────────────────────────────────────────────┘
                     ↓
 ┌───────────────────────────────────────────────┐
@@ -90,9 +90,9 @@ SessionMetrics
 └── reset()
 ```
 
-- Small in-memory buffer
-- Local debug/support output first
-- No exporter required to get value
+- Historical proposal only
+- Session 29 intentionally did **not** build this
+- The current repo instead uses the existing `emitFlowEvent(...)` layer for the lean local timing/counter step
 
 ### 3. AnalyticsExporter (`lib/core/observability/analytics_exporter.dart`)
 
@@ -165,24 +165,23 @@ Defer. There is no need to build experiment-tagged metrics infrastructure before
 
 ---
 
-## Implementation Roadmap
+## Implementation Roadmap (Historical / Remaining)
 
-### Phase 1: Foundation (Week 1)
-- [ ] Add `TimingProbe`
-- [ ] Add a tiny `SessionMetrics` buffer
-- [ ] Start with send/retry/discovery/media timings
+### Landed Lean Local Layer
+- [x] Add or normalize local flow-event timing/counter coverage for the highest-value messaging gaps
+- [x] Start with send/retry/discovery/media timings
+- [x] Keep the implementation local and production-safe without creating a second observability subsystem
 
-### Phase 2: Targeted Instrumentation (Week 1-2)
-- [ ] Instrument 1:1 send flow
-- [ ] Instrument group publish/rejoin/discovery
-- [ ] Instrument upload/download durations
-- [ ] Instrument decrypt failures and retry outcomes
+### Remaining Optional Local Follow-Up
+- [ ] Add small DB-helper hotspot timing probes only if DB cleanup work is reopened with fresh evidence
+- [ ] Tighten local event correlation further only if a real debugging blind spot remains after the landed Session 29 layer
 
-### Phase 3: Developer Output (Week 2)
-- [ ] Add human-readable snapshot dump for local debugging
-- [ ] Keep it local/offline first
+### Deferred By Design
+- [ ] `TimingProbe` infrastructure
+- [ ] `SessionMetrics` buffer
+- [ ] exporter/dashboard/analytics work
 
-### Phase 4: Export / Dashboards (Later, only if needed)
+### Export / Dashboards (Later, only if needed)
 - [ ] Revisit opt-in export
 - [ ] Revisit privacy/sampling
 - [ ] Revisit dashboards/alerts

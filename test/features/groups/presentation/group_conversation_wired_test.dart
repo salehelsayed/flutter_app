@@ -444,6 +444,177 @@ void main() {
     });
 
     testWidgets(
+      'blocks a second text send while the first local send is in flight and releases after success',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        final gatedBridge = _GatedPublishBridge();
+        bridge = gatedBridge;
+
+        await tester.pumpWidget(buildWidget(group: group));
+        await pumpFrames(tester, count: 20);
+
+        await tester.enterText(find.byType(TextField), 'First send');
+        await pumpFrames(tester);
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await pumpUntil(
+          tester,
+          () => tester
+              .widget<GroupConversationScreen>(find.byType(GroupConversationScreen))
+              .isSending,
+        );
+        await pumpFrames(tester, count: 5);
+
+        expect(find.text('First send'), findsOneWidget);
+
+        await tester.enterText(find.byType(TextField), 'Second send');
+        await pumpFrames(tester);
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await pumpFrames(tester, count: 5);
+
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).controller?.text,
+          'Second send',
+        );
+        expect(find.text('Second send'), findsOneWidget);
+        expect(
+          bridge.commandLog.where((cmd) => cmd == 'group:publish').length,
+          0,
+        );
+
+        gatedBridge.publishGate.complete();
+        await pumpFrames(tester, count: 20);
+
+        expect(
+          bridge.commandLog.where((cmd) => cmd == 'group:publish').length,
+          1,
+        );
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await pumpFrames(tester, count: 20);
+
+        expect(
+          bridge.commandLog.where((cmd) => cmd == 'group:publish').length,
+          2,
+        );
+      },
+    );
+
+    testWidgets(
+      'voice send blocks text send while the voice pipeline is active and releases after failure',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+
+        final tempDir = Directory.systemTemp.createTempSync(
+          'group-voice-send-guard-',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) {
+            tempDir.deleteSync(recursive: true);
+          }
+        });
+        final recorder = FakeAudioRecorderService()..fakeDurationMs = 1500;
+        final voiceFile = File(p.join(tempDir.path, 'voice.m4a'))
+          ..writeAsStringSync('voice');
+        recorder.fakeOutputPath = voiceFile.path;
+        final mediaFileManager = TrackingDurableMediaFileManager(tempDir);
+        final uploadStarted = Completer<void>();
+        final uploadGate = Completer<void>();
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: mediaFileManager,
+            audioRecorderService: recorder,
+            uploadMediaFn:
+                ({
+                  required bridge,
+                  required localFilePath,
+                  required mime,
+                  required recipientPeerId,
+                  String? blobId,
+                  mediaFileManager,
+                  width,
+                  height,
+                  durationMs,
+                  waveform,
+                  allowedPeers,
+                }) async {
+                  if (!uploadStarted.isCompleted) {
+                    uploadStarted.complete();
+                  }
+                  await uploadGate.future;
+                  return null;
+                },
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        final screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        final startRecording = screen.onRecordStart! as Future<void> Function();
+        await startRecording();
+        await tester.pump();
+
+        final recordingScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        final stopRecording =
+            recordingScreen.onRecordStop! as Future<void> Function();
+        late Future<void> stopFuture;
+        await tester.runAsync(() async {
+          stopFuture = stopRecording();
+          await Future<void>.delayed(const Duration(milliseconds: 200));
+        });
+        await pumpUntil(tester, () => uploadStarted.isCompleted);
+        await pumpUntil(
+          tester,
+          () => tester
+              .widget<GroupConversationScreen>(find.byType(GroupConversationScreen))
+              .isSending,
+        );
+        expect(uploadStarted.isCompleted, isTrue);
+        expect(
+          tester
+              .widget<GroupConversationScreen>(find.byType(GroupConversationScreen))
+              .isSending,
+          isTrue,
+        );
+        await pumpFrames(tester, count: 5);
+
+        await tester.enterText(find.byType(TextField), 'Blocked text send');
+        await pumpFrames(tester);
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await pumpFrames(tester, count: 5);
+
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).controller?.text,
+          'Blocked text send',
+        );
+        expect(
+          bridge.commandLog.where((cmd) => cmd == 'group:publish'),
+          isEmpty,
+        );
+
+        uploadGate.complete();
+        await tester.runAsync(() async {
+          await stopFuture;
+        });
+        await pumpFrames(tester, count: 20);
+
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await pumpFrames(tester, count: 20);
+
+        expect(
+          bridge.commandLog.where((cmd) => cmd == 'group:publish').length,
+          1,
+        );
+      },
+    );
+
+    testWidgets(
       'media uploads persist upload_pending rows before upload and run in parallel from durable copies',
       (tester) async {
         final group = makeChatGroup();

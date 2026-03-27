@@ -16,7 +16,7 @@
 | 4 | Send with quoted message | Embedded in `send_chat_message` | YES | Partial |
 | 5 | Send with media attachments | Embedded in `send_chat_message` | YES | Partial |
 
-**Important nuance:** the durable pre-persist send path is strong in the conversation screen flow, but feed inline replies do not yet appear to use that exact same contract.
+**Important nuance:** the earlier feed-inline durable-send mismatch is now closed; conversation and feed-originated inline reply use the same durable pre-persist contract in the current Flutter tree.
 
 ---
 
@@ -128,4 +128,4 @@
 
 ## Verdict
 
-**The 1:1 system is strong for core messaging, retry/recovery, encryption, contact management, and media handling.** The most important correctness follow-up is not a giant new feature set; it is making durable send behavior consistent across entry points. Beyond that, the remaining gaps are mostly product features such as deletion, editing, search, typing, and read receipts.
+**The 1:1 system is strong for core messaging, retry/recovery, encryption, contact management, and media handling.** The earlier feed-inline durable-send gap is now closed, and the medium-priority operability follow-ups from report `08` around decrypt-failure visibility and media-download dedup are also landed in the current Flutter tree. The remaining gaps are mostly product features such as deletion, editing, search, typing, and read receipts, plus smaller residual edge cases like local-file-missing retry behavior.

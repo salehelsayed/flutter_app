@@ -69,10 +69,12 @@ func newControlPlaneStores(
 			limits.MaxGroupInboxMessages,
 			groupMessageTTL,
 		)
+		groupInbox := NewGroupInboxStoreWithBackend(groupInboxBackend)
+		groupInbox.SetPush(push)
 		return &controlPlaneStores{
 			Rendezvous:        NewRendezvousStoreWithBackend(rzBackend),
 			Inbox:             NewInboxStoreWithBackend(inboxBackend, push),
-			GroupInbox:        NewGroupInboxStoreWithBackend(groupInboxBackend),
+			GroupInbox:        groupInbox,
 			Push:              push,
 			RendezvousBackend: rzBackend,
 			InboxBackend:      inboxBackend,
@@ -103,11 +105,13 @@ func newControlPlaneStores(
 			limits.MaxGroupInboxMessages,
 			groupMessageTTL,
 		)
+		groupInbox := NewGroupInboxStoreWithBackend(groupInboxBackend)
+		groupInbox.SetPush(push)
 
 		return &controlPlaneStores{
 			Rendezvous:        NewRendezvousStoreWithBackend(rzBackend),
 			Inbox:             NewInboxStoreWithBackend(inboxBackend, push),
-			GroupInbox:        NewGroupInboxStoreWithBackend(groupInboxBackend),
+			GroupInbox:        groupInbox,
 			Push:              push,
 			RendezvousBackend: rzBackend,
 			InboxBackend:      inboxBackend,

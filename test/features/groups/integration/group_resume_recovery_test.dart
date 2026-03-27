@@ -2405,6 +2405,7 @@ void main() {
           groupRepo: admin.groupRepo,
           identityRepo: _Section10IdentityRepository(_identityForUser(admin)),
           bridge: admin.bridge,
+          mediaAttachmentRepo: admin.mediaAttachmentRepo,
         );
 
         expect(retried, 1);

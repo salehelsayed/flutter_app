@@ -645,6 +645,68 @@ void main() {
     },
   );
 
+  test('emits GROUP_DRAIN_OFFLINE_INBOX_TIMING with batch metadata', () async {
+    final testGroup = GroupModel(
+      id: 'group-1',
+      name: 'Test Group',
+      type: GroupType.chat,
+      topicName: '/mknoon/group/group-1',
+      createdAt: DateTime.now().toUtc(),
+      createdBy: 'peer-admin',
+      myRole: GroupRole.admin,
+    );
+    await groupRepo.saveGroup(testGroup);
+
+    final ts = DateTime.now().toUtc().toIso8601String();
+    bridge.addPage('group-1', '', [
+      {
+        'groupId': 'group-1',
+        'senderId': 'peer-sender',
+        'senderUsername': 'Sender',
+        'keyEpoch': 1,
+        'text': 'Drain timing proof',
+        'timestamp': ts,
+        'messageId': 'msg-d1',
+      },
+    ], '');
+
+    final output = <String>[];
+    final originalDebugPrint = debugPrint;
+    flowEventLoggingEnabled = true;
+    debugPrint = (String? message, {int? wrapWidth}) {
+      if (message != null) output.add(message);
+    };
+    addTearDown(() {
+      debugPrint = originalDebugPrint;
+      flowEventLoggingEnabled = kDebugMode;
+    });
+
+    await drainGroupOfflineInbox(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      drainAllPages: true,
+    );
+
+    final events = output
+        .where((line) => line.startsWith('[FLOW] '))
+        .map(
+          (line) =>
+              jsonDecode(line.substring('[FLOW] '.length))
+                  as Map<String, dynamic>,
+        )
+        .toList();
+
+    final timing = events.lastWhere(
+      (event) => event['event'] == 'GROUP_DRAIN_OFFLINE_INBOX_TIMING',
+    );
+    expect(timing['details']['outcome'], 'complete');
+    expect(timing['details']['scope'], 'batch');
+    expect(timing['details']['groupCount'], 1);
+    expect(timing['details']['drainAllPages'], isTrue);
+    expect(timing['details']['elapsedMs'], isA<int>());
+  });
+
   // ---------------------------------------------------------------------------
   // Existing tests adapted to cursor-based API
   // ---------------------------------------------------------------------------

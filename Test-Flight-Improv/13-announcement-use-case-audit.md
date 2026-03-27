@@ -1,6 +1,6 @@
 # Use Case Audit: Announcements
 
-**Status:** Core announcement behavior is solid across Flutter and repo-local Go enforcement
+**Status:** Core announcement behavior is solid across Flutter and repo-local Go enforcement, and Session 28 revalidated that the shared group reliability work did not regress announcement behavior
 **QA Group Type:** Placeholder only (filtered out of UI, cannot currently be created)
 
 ---
@@ -64,7 +64,7 @@ Announcements are a `GroupType.announcement` where only admins can send, while a
 | UI enforcement | **Good** | Read-only / hidden compose behavior covered |
 | Reactions allowed | **Good** | Explicitly covered for non-admin readers |
 | Resume/read/media behavior | **Good** | Existing integration/resume tests cover meaningful announcement flows |
-| Single concise create → send → read → react flow | **Partial** | Coverage exists, but is spread across multiple tests |
+| Single concise create → send → read → react flow | **Good** | `announcement_happy_path_test.dart` plus Session 28 acceptance evidence keep this flow easy to verify |
 
 ---
 
@@ -72,9 +72,7 @@ Announcements are a `GroupType.announcement` where only admins can send, while a
 
 1. **Bridge-package publish coverage is thinner than node-side proof**
    - `bridge.go` delegates into the node enforcement path and `go test ./bridge` is green, but bridge publish tests are still mostly chat-shaped rather than announcement-specific
-2. **No single concise happy-path file for create → send → read → react**
-   - The behavior is partly covered, but the evidence is spread across multiple tests
-3. **Role consistency across `groups.my_role` and `group_members.role` is not directly asserted**
+2. **Role consistency across `groups.my_role` and `group_members.role` is not directly asserted**
    - Lower risk, but worth a targeted check if schema work resumes
 
 ---
@@ -107,12 +105,11 @@ Announcements are a `GroupType.announcement` where only admins can send, while a
 
 | # | Test | Priority | What it verifies |
 |---|------|----------|-----------------|
-| 1 | **Compact create → send → read → react happy-path test** | MEDIUM | Keeps announcement coverage easier to understand in one place |
-| 2 | **Optional bridge-package announcement `GroupPublish()` regression** | LOW | Adds package-boundary proof on top of the already-sufficient node-side enforcement evidence |
-| 3 | **Role consistency across group/member storage** | LOW | Guards against schema drift |
+| 1 | **Optional bridge-package announcement `GroupPublish()` regression** | LOW | Adds package-boundary proof on top of the already-sufficient node-side enforcement evidence |
+| 2 | **Role consistency across group/member storage** | LOW | Guards against schema drift |
 
 ---
 
 ## Verdict
 
-**Core announcement functionality is solid across the Flutter tree and the repo-local Go layer.** Session 13 closed the announcement-specific create-group gap, and Session 14 verified that Go-side writer enforcement is directly present in `go-mknoon/node/pubsub.go`, backed by announcement-specific node tests, with `go test ./node` and `go test ./bridge` both green. The remaining evidence caveat is narrower: bridge publish tests are still mostly chat-shaped, even though `bridge.go` delegates into the already-verified node enforcement path.
+**Core announcement functionality is solid across the Flutter tree and the repo-local Go layer.** Session 13 closed the announcement-specific create-group gap, Session 14 verified that Go-side writer enforcement is directly present in `go-mknoon/node/pubsub.go`, and Session 28 revalidated that the shared group reliability changes did not regress announcement auth/send/recovery/read-only behavior. The remaining evidence caveat is narrower: bridge publish tests are still mostly chat-shaped, even though `bridge.go` delegates into the already-verified node enforcement path.

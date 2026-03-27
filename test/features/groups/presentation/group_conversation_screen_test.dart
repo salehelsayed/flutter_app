@@ -38,6 +38,7 @@ void main() {
   Widget buildTestWidget({
     List<GroupMessage> messages = const [],
     bool canWrite = true,
+    bool isSending = false,
     GroupModel? group,
     bool initialLoadDone = false,
     ValueListenable<ConversationComposerViewState>? composerStateListenable,
@@ -46,6 +47,8 @@ void main() {
     VoidCallback? onClearQuote,
     ValueChanged<String>? onQuoteReply,
     Map<String, List<MediaAttachment>> mediaMap = const {},
+    ValueChanged<String>? onSend,
+    String? initialText,
   }) {
     return MaterialApp(
       locale: const Locale('en'),
@@ -56,9 +59,10 @@ void main() {
           group: group ?? testGroup,
           messages: messages,
           ownPeerId: 'peer-1',
-          onSend: (_) {},
+          onSend: onSend ?? (_) {},
           onBack: () {},
           canWrite: canWrite,
+          isSending: isSending,
           initialLoadDone: initialLoadDone,
           composerStateListenable: composerStateListenable,
           activeQuoteText: activeQuoteText,
@@ -66,6 +70,7 @@ void main() {
           onClearQuote: onClearQuote,
           onQuoteReply: onQuoteReply,
           mediaMap: mediaMap,
+          initialText: initialText,
         ),
       ),
     );
@@ -82,6 +87,26 @@ void main() {
     await tester.pumpWidget(buildTestWidget(canWrite: true));
 
     expect(find.text('Write something...'), findsOneWidget);
+  });
+
+  testWidgets('passes isSending through to the compose send affordance', (
+    tester,
+  ) async {
+    String? sentText;
+
+    await tester.pumpWidget(
+      buildTestWidget(
+        isSending: true,
+        initialText: 'Blocked send',
+        onSend: (text) => sentText = text,
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 300));
+
+    await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+    await tester.pump();
+
+    expect(sentText, isNull);
   });
 
   testWidgets('renders active quote preview and dismisses it', (tester) async {

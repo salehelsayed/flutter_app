@@ -25,8 +25,18 @@ class PendingMessageRetrier {
   final MediaAttachmentRepository? mediaAttachmentRepo;
 
   // Injectable recovery callbacks for correct ordering
+  final Future<void> Function()? rejoinGroupTopicsFn;
+  final Future<void> Function()? drainGroupOfflineInboxFn;
   final Future<int> Function()? recoverStuckSendingMessagesFn; // Part A
   final Future<int> Function()? retryIncompleteUploadsFn; // Part G -- NEW
+  final Future<int> Function()? recoverStuckSendingGroupMessagesFn;
+  final Future<int> Function()? retryIncompleteGroupUploadsFn;
+  final Future<int> Function()? retryFailedGroupMessagesFn;
+  final Future<int> Function()? retryFailedGroupInboxStoresFn;
+  final Future<int> Function()? retryFailedMessagesOverride;
+  final Future<int> Function()? retryUnackedMessagesOverride;
+
+  bool Function()? _isExternalRecoveryInProgressFn;
 
   StreamSubscription? _stateSubscription;
   Timer? _debounceTimer;
@@ -41,17 +51,26 @@ class PendingMessageRetrier {
     required this.contactRepo,
     required this.bridge,
     this.mediaAttachmentRepo,
+    this.rejoinGroupTopicsFn,
+    this.drainGroupOfflineInboxFn,
     this.recoverStuckSendingMessagesFn, // Part A
     this.retryIncompleteUploadsFn, // Part G -- NEW
-  });
+    this.recoverStuckSendingGroupMessagesFn,
+    this.retryIncompleteGroupUploadsFn,
+    this.retryFailedGroupMessagesFn,
+    this.retryFailedGroupInboxStoresFn,
+    this.retryFailedMessagesOverride,
+    this.retryUnackedMessagesOverride,
+    bool Function()? isExternalRecoveryInProgressFn,
+  }) : _isExternalRecoveryInProgressFn = isExternalRecoveryInProgressFn;
+
+  void setExternalRecoveryInProgressProvider(bool Function() provider) {
+    _isExternalRecoveryInProgressFn = provider;
+  }
 
   /// Starts listening for state transitions.
   void start() {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'PENDING_RETRIER_START',
-      details: {},
-    );
+    emitFlowEvent(layer: 'FL', event: 'PENDING_RETRIER_START', details: {});
 
     _wasOnline = _isOnline(p2pService.currentState);
 
@@ -94,18 +113,125 @@ class PendingMessageRetrier {
     return state.isStarted && (state.circuitAddresses as List).isNotEmpty;
   }
 
+  bool _isGroupRecoveryEnabled() {
+    return p2pService.currentState.featureFlags?['enableResumeGroupRecovery'] ??
+        true;
+  }
+
+  Future<int> _retryFailedMessagesNow() {
+    if (retryFailedMessagesOverride != null) {
+      return retryFailedMessagesOverride!();
+    }
+    return retryFailedMessages(
+      messageRepo: messageRepo,
+      identityRepo: identityRepo,
+      contactRepo: contactRepo,
+      p2pService: p2pService,
+      bridge: bridge,
+      mediaAttachmentRepo: mediaAttachmentRepo,
+    );
+  }
+
+  Future<int> _retryUnackedMessagesNow() {
+    if (retryUnackedMessagesOverride != null) {
+      return retryUnackedMessagesOverride!();
+    }
+    return retryUnackedMessages(
+      messageRepo: messageRepo,
+      p2pService: p2pService,
+    );
+  }
+
   Future<void> _retryIfNeeded() async {
     if (_isRetrying) return;
+    if (_isExternalRecoveryInProgressFn?.call() == true) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'PENDING_RETRIER_SKIPPED_EXTERNAL_RECOVERY',
+        details: {},
+      );
+      return;
+    }
     _isRetrying = true;
 
     try {
-      // ORDERING CONTRACT (matches handleAppResumed Step 8):
-      //   1. recoverStuckSendingMessages  -- 'sending' -> 'failed'
-      //   2. retryIncompleteUploads       -- re-upload 'upload_pending' attachments
-      //   3. retryFailedMessages          -- retry 'failed' messages
-      //   4. retryUnackedMessages         -- retry 'sent' but unacked
+      final groupRecoveryEnabled = _isGroupRecoveryEnabled();
 
-      // Step 1: Recover stuck sending messages
+      // ORDERING CONTRACT:
+      //   1. group rejoin topics
+      //   2. group drain offline inbox
+      //   3. group recover stuck
+      //   4. group retry incomplete uploads
+      //   5. group retry failed messages
+      //   6. 1:1 recover stuck
+      //   7. 1:1 retry incomplete uploads
+      //   8. 1:1 retry failed messages
+      //   9. 1:1 retry unacked messages
+      //  10. group retry failed inbox stores
+
+      if (groupRecoveryEnabled) {
+        if (rejoinGroupTopicsFn != null) {
+          try {
+            await rejoinGroupTopicsFn!();
+          } catch (e) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'PENDING_RETRIER_GROUP_REJOIN_ERROR',
+              details: {'error': e.toString()},
+            );
+          }
+        }
+
+        if (drainGroupOfflineInboxFn != null) {
+          try {
+            await drainGroupOfflineInboxFn!();
+          } catch (e) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'PENDING_RETRIER_GROUP_DRAIN_ERROR',
+              details: {'error': e.toString()},
+            );
+          }
+        }
+
+        if (recoverStuckSendingGroupMessagesFn != null) {
+          try {
+            await recoverStuckSendingGroupMessagesFn!();
+          } catch (e) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'PENDING_RETRIER_GROUP_RECOVER_STUCK_ERROR',
+              details: {'error': e.toString()},
+            );
+          }
+        }
+
+        if (retryIncompleteGroupUploadsFn != null) {
+          try {
+            await retryIncompleteGroupUploadsFn!();
+          } catch (e) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'PENDING_RETRIER_GROUP_INCOMPLETE_UPLOAD_ERROR',
+              details: {'error': e.toString()},
+            );
+          }
+        }
+
+        if (retryFailedGroupMessagesFn != null) {
+          try {
+            await retryFailedGroupMessagesFn!();
+          } catch (e) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'PENDING_RETRIER_GROUP_FAILED_MESSAGES_ERROR',
+              details: {'error': e.toString()},
+            );
+          }
+        }
+      }
+
+      // Step 6: Recover stuck sending messages
       if (recoverStuckSendingMessagesFn != null) {
         try {
           final count = await recoverStuckSendingMessagesFn!();
@@ -125,7 +251,7 @@ class PendingMessageRetrier {
         }
       }
 
-      // Step 2: Re-upload incomplete attachments (Part G)
+      // Step 7: Re-upload incomplete attachments (Part G)
       if (retryIncompleteUploadsFn != null) {
         try {
           final count = await retryIncompleteUploadsFn!();
@@ -146,15 +272,8 @@ class PendingMessageRetrier {
         }
       }
 
-      // Step 3: Retry failed messages
-      final count = await retryFailedMessages(
-        messageRepo: messageRepo,
-        identityRepo: identityRepo,
-        contactRepo: contactRepo,
-        p2pService: p2pService,
-        bridge: bridge,
-        mediaAttachmentRepo: mediaAttachmentRepo,
-      );
+      // Step 8: Retry failed messages
+      final count = await _retryFailedMessagesNow();
 
       if (count > 0) {
         emitFlowEvent(
@@ -164,11 +283,8 @@ class PendingMessageRetrier {
         );
       }
 
-      // Step 4: Retry unacked messages
-      final unackedCount = await retryUnackedMessages(
-        messageRepo: messageRepo,
-        p2pService: p2pService,
-      );
+      // Step 9: Retry unacked messages
+      final unackedCount = await _retryUnackedMessagesNow();
 
       if (unackedCount > 0) {
         emitFlowEvent(
@@ -176,6 +292,18 @@ class PendingMessageRetrier {
           event: 'PENDING_RETRIER_UNACKED_RETRIED',
           details: {'count': unackedCount},
         );
+      }
+
+      if (groupRecoveryEnabled && retryFailedGroupInboxStoresFn != null) {
+        try {
+          await retryFailedGroupInboxStoresFn!();
+        } catch (e) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'PENDING_RETRIER_GROUP_INBOX_RETRY_ERROR',
+            details: {'error': e.toString()},
+          );
+        }
       }
     } catch (e) {
       emitFlowEvent(
@@ -190,11 +318,7 @@ class PendingMessageRetrier {
 
   /// Stops listening and cleans up resources.
   void dispose() {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'PENDING_RETRIER_DISPOSE',
-      details: {},
-    );
+    emitFlowEvent(layer: 'FL', event: 'PENDING_RETRIER_DISPOSE', details: {});
 
     _debounceTimer?.cancel();
     _periodicTimer?.cancel();

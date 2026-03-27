@@ -226,6 +226,31 @@ Future<_SmokeTestStack> _setupStack() async {
         dbLoadUnackedOutgoingMessages(db, olderThan: olderThan, limit: limit),
     dbLoadConversationThreadSummaries: (contactPeerIds) =>
         dbLoadConversationThreadSummaries(db, contactPeerIds),
+    dbRecoverStuckSendingMessages:
+        ({required DateTime olderThan, int limit = 50}) =>
+            dbRecoverStuckSendingMessages(
+              db,
+              olderThan: olderThan,
+              limit: limit,
+            ),
+    dbUpdateWireEnvelope: (id, wireEnvelope) =>
+        dbUpdateWireEnvelope(db, id, wireEnvelope),
+    dbLoadStuckSendingOutgoingMessages:
+        ({required DateTime olderThan, int limit = 50}) =>
+            dbLoadStuckSendingOutgoingMessages(
+              db,
+              olderThan: olderThan,
+              limit: limit,
+            ),
+    dbLoadSendingOutgoingMessages: () => dbLoadSendingOutgoingMessages(db),
+    dbConditionalTransitionStatus:
+        (id, {required fromStatus, required toStatus}) =>
+            dbConditionalTransitionStatus(
+              db,
+              id,
+              fromStatus: fromStatus,
+              toStatus: toStatus,
+            ),
   );
 
   final bridge = GoBridgeClient();
