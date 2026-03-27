@@ -100,6 +100,8 @@ import 'package:flutter_app/features/groups/domain/repositories/group_message_re
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
 import 'package:flutter_app/features/groups/application/group_key_update_listener.dart';
+import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
+import 'package:flutter_app/features/groups/application/rejoin_group_topics_use_case.dart';
 import 'package:flutter_app/features/groups/application/retry_incomplete_group_uploads_use_case.dart';
 import 'package:flutter_app/features/groups/application/retry_failed_group_messages_use_case.dart';
 import 'package:flutter_app/features/groups/application/retry_failed_group_inbox_stores_use_case.dart';
@@ -997,6 +999,50 @@ void main() async {
     contactRepo: contactRepository,
     bridge: bridge,
     mediaAttachmentRepo: mediaAttachmentRepository,
+    rejoinGroupTopicsFn: () async {
+      final needsGroupRecovery =
+          p2pService.currentState.needsGroupRecovery ?? false;
+      final recoveryMethod = p2pService.lastRecoveryMethod;
+      final reason = needsGroupRecovery
+          ? RejoinReason.nodeRequestedRecovery
+          : recoveryMethod == 'watchdog_restart'
+          ? RejoinReason.watchdogRestart
+          : RejoinReason.inPlaceRecovery;
+      await rejoinGroupTopics(
+        bridge: bridge,
+        groupRepo: groupRepository,
+        reason: reason,
+      );
+    },
+    drainGroupOfflineInboxFn: () => drainGroupOfflineInbox(
+      bridge: bridge,
+      groupRepo: groupRepository,
+      msgRepo: groupMessageRepository,
+      mediaAttachmentRepo: mediaAttachmentRepository,
+      reactionRepo: reactionRepository,
+    ),
+    recoverStuckSendingGroupMessagesFn: () =>
+        recoverStuckSendingGroupMessages(groupMsgRepo: groupMessageRepository),
+    retryIncompleteGroupUploadsFn: () => retryIncompleteGroupUploads(
+      groupRepo: groupRepository,
+      groupMsgRepo: groupMessageRepository,
+      mediaAttachmentRepo: mediaAttachmentRepository,
+      bridge: bridge,
+      p2pService: p2pService,
+      identityRepo: repository,
+      mediaFileManager: mediaFileManager,
+    ),
+    retryFailedGroupMessagesFn: () => retryFailedGroupMessages(
+      groupMsgRepo: groupMessageRepository,
+      groupRepo: groupRepository,
+      identityRepo: repository,
+      bridge: bridge,
+      mediaAttachmentRepo: mediaAttachmentRepository,
+    ),
+    retryFailedGroupInboxStoresFn: () => retryFailedGroupInboxStores(
+      bridge: bridge,
+      msgRepo: groupMessageRepository,
+    ),
     recoverStuckSendingMessagesFn: () =>
         recoverStuckSendingMessages(messageRepo: messageRepository),
     retryIncompleteUploadsFn: () => retryIncompleteUploads(
@@ -1256,6 +1302,9 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    widget.pendingMessageRetrier.setExternalRecoveryInProgressProvider(
+      () => _isResuming,
+    );
     _postNotificationOpenCoordinator = PostNotificationOpenCoordinator(
       pendingTargetStore: widget.pendingPostTargetStore,
       postRepository: widget.postRepository,
@@ -1630,6 +1679,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           groupRepo: widget.groupRepository,
           identityRepo: widget.repository,
           bridge: widget.bridge,
+          mediaAttachmentRepo: widget.mediaAttachmentRepository,
         ),
         retryIncompleteUploadsFn: () => retryIncompleteUploads(
           mediaAttachmentRepo: widget.mediaAttachmentRepository,

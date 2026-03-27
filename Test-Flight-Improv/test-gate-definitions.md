@@ -247,15 +247,16 @@ Session 1 rule:
 
 ## Known Failures
 
-Validation run date: 2026-03-25.
+Validation run dates:
+- 2026-03-25 initial gate validation
+- 2026-03-26 Session 27 revalidation for `baseline`, `groups`, and `transport`
 
 - Completeness check: `./scripts/run_test_gates.sh completeness-check` passed with `564/564` test files classified.
-- Baseline Gate: host-side files passed. `integration_test/loading_states_smoke_test.dart` fails to build because `StartupRouter` now requires `postRepository`; see `integration_test/loading_states_smoke_test.dart:288` and `lib/features/identity/presentation/startup_router.dart:154`.
-- Baseline Gate: `integration_test/posts_phase1_fake_test.dart` still ran and passed in the same integration invocation, but the gate remains red because of the loading-states build failure.
+- Baseline Gate: revalidated on 2026-03-26 via `./scripts/run_test_gates.sh baseline` and passed.
 - 1:1 Reliability Gate: passed via `./scripts/run_test_gates.sh 1to1`.
 - Feed / Surface Gate: passed via `./scripts/run_test_gates.sh feed`.
-- Group Messaging Gate: passed via `./scripts/run_test_gates.sh groups`.
+- Group Messaging Gate: revalidated on 2026-03-26 via `./scripts/run_test_gates.sh groups` and passed.
 - Posts / Privacy Gate: `test/features/posts/phase3/post_presence_listener_test.dart` passed, and `integration_test/posts_phase1_fake_test.dart` ran successfully on macOS. `integration_test/posts_phase2_fake_test.dart` through `integration_test/posts_phase5_fake_test.dart` failed to start on macOS with `Error waiting for a debug connection` / `Unable to start the app on the device`.
-- Startup / Transport Gate: `integration_test/background_reconnect_test.dart` passed on macOS. `integration_test/wifi_relay_fallback_smoke_test.dart:197` and `integration_test/transport_e2e_test.dart:240` fail to build because `MessageRepositoryImpl` now requires `dbRecoverStuckSendingMessages`. `integration_test/media_stable_id_smoke_test.dart` failed to start on macOS with `Error waiting for a debug connection` / `Unable to start the app on the device`.
-- Top-level script validation: `FLUTTER_DEVICE_ID=macos ./scripts/run_test_gates.sh all` exits non-zero in the Baseline Gate for the same `loading_states_smoke_test.dart` build failure.
-- Device note: when multiple Flutter targets are attached, set `FLUTTER_DEVICE_ID=<device-id>` for integration-backed gates. Session 1 validation used `FLUTTER_DEVICE_ID=macos`.
+- Startup / Transport Gate: revalidated on 2026-03-26 via `FLUTTER_DEVICE_ID=5BA69F1C-B112-47BE-B1FF-8C1003728C8F ./scripts/run_test_gates.sh transport` and passed. During the first rerun, `integration_test/wifi_relay_fallback_smoke_test.dart` and `integration_test/transport_e2e_test.dart` exposed stale `MessageRepositoryImpl` constructor wiring; after those repo-local test harness fixes landed, the same simulator-backed gate reran green.
+- Top-level script validation: the current Session 27 reruns confirm `baseline`, `groups`, and `transport` are green.
+- Device note: when multiple Flutter targets are attached, set `FLUTTER_DEVICE_ID=<device-id>` for integration-backed gates. Session 27 revalidation used `FLUTTER_DEVICE_ID=5BA69F1C-B112-47BE-B1FF-8C1003728C8F`.

@@ -1,8 +1,8 @@
 # Test-Flight-1 Improvement Reports
 
-Generated: 2026-03-26
+Generated: 2026-03-27
 
-**Closure note:** Sessions `1` through `23` from `15-session-todo-roadmap.md` and `16-session-todo-roadmap-2.md` have now been planned/executed/closed. Reports `01` through `14` remain the rationale archive. The current closure state lives in Sections `8` and `9` below.
+**Closure note:** Sessions `1` through `29` have now been planned/executed/closed. Roadmaps `15` and `16` plus the residual reliability/measurement sessions `24` through `29` are historical execution artifacts. Reports `01` through `14` remain the rationale archive. The current closure state lives in Sections `8`, `9`, and `10` below.
 
 ---
 
@@ -36,9 +36,9 @@ Generated: 2026-03-26
 
 **Top findings:**
 - `OrbitWired` already disposes its controllers/subscriptions — that earlier P0 is stale
-- Hot-path `PRAGMA table_info(...)` calls in posts helpers are real and worth fixing
-- Identity loading repeats secure-storage reads across multiple screens
-- Blanket index additions, message-order SQL rewrites, and heavy SQL/materialized-view work are not yet justified
+- The narrow DB/storage fixes worth doing were helper-local schema-capability caching, the small identity cache, the pinned-post single-load reduction, and the reload-after-update cleanup
+- Targeted index work remains evidence-only; no broad SQL/index/caching program should be reopened without new profiling
+- Blanket index additions, message-order SQL rewrites, and heavy SQL/materialized-view work are still not justified by default
 
 ---
 
@@ -62,11 +62,11 @@ Generated: 2026-03-26
 | [10-network-measurement-strategy.md](10-network-measurement-strategy.md) | Incremental observability plan — local counters/timers first, export stack deferred |
 
 **Top findings:**
-- The main concrete 1:1 reliability gap is that inline feed replies do not use the same durable pre-persist send path as the conversation screen
-- Shared 1:1 delivery changes should trigger a named regression gate that covers text, media, voice, retry, and offline/recovery paths
+- 1:1 durable send-path parity between conversation and feed inline reply is now landed in the current Flutter tree
+- Shared 1:1 delivery changes now have a named regression gate plus feed-surface companion direct coverage
 - Group media retry/recovery already exists; it is not a missing P0 feature
 - Announcement coverage is stronger than earlier reported inside the Flutter tree
-- Measurement should start with local timing counters around send/retry/discovery/media, not a full metrics collector/exporter/dashboard stack
+- Lean local timing/counter coverage for the highest-value messaging gaps is now landed; exporter/dashboard work remains deferred
 
 ---
 
@@ -80,10 +80,10 @@ Generated: 2026-03-26
 | [18-group-discussion-reliability-audit.md](18-group-discussion-reliability-audit.md) | Lean reliability-gap review: what group chat still needs to feel as trustworthy as 1:1 without overengineering |
 
 **Top findings:**
-- **1:1 Chat:** Core implemented flows are tested; the highest-value correctness gap is durable send-path parity between conversation and feed inline reply
+- **1:1 Chat:** Core implemented flows are tested; the earlier feed-inline durable-send gap is now closed, and the remaining gaps are mostly product features plus small residual edge-case/semantics work
 - **Group Discussions:** Core use cases/listeners are well tested; missing items are mostly intentional product scope, not correctness failures
-- **Group Discussion Reliability:** The core architecture is already solid; the main remaining reliability work is media/voice failed-send retry parity, early parent-row persistence for ordinary media, and explicit sequential send behavior so “send then lock the phone” remains trustworthy
-- **Announcements:** Admin-only send and member reactions are already well covered in Flutter tests; the main remaining gap is explicit Go-side enforcement verification in the Go repo
+- **Group Discussion Reliability:** Final acceptance revalidation confirms ordinary-media parent-row durability, ordinary-media failed-send retry parity, and explicit one-thread send serialization are landed; voice publish-failure retry remains only a narrower producer-side residual if reopened later
+- **Announcements:** Session `28` revalidated that shared group reliability work did not regress announcement auth/send/recovery/read-only behavior; remaining gaps are now narrower evidence niceties, not a new reliability program
 - **QA type:** Still defined in the enum/schema but filtered out of creation UI — placeholder only
 
 ---
@@ -104,9 +104,15 @@ Generated: 2026-03-26
 |--------|-------|
 | [15-session-todo-roadmap.md](15-session-todo-roadmap.md) | Historical execution backlog for Sessions `1` through `11` |
 | [16-session-todo-roadmap-2.md](16-session-todo-roadmap-2.md) | Historical follow-on backlog for Sessions `12` through `23`, including profile/evidence-gated and cross-tree work |
+| [session-24-plan.md](session-24-plan.md) | Historical residual reliability implementation session |
+| [session-25-plan.md](session-25-plan.md) | Historical residual reliability implementation session |
+| [session-26-plan.md](session-26-plan.md) | Historical residual reliability implementation session |
+| [session-27-plan.md](session-27-plan.md) | Historical residual reliability acceptance session |
+| [session-28-plan.md](session-28-plan.md) | Historical announcement acceptance session |
+| [session-29-plan.md](session-29-plan.md) | Historical lean local measurement session |
 | [17-roadmap-closure-audit.md](17-roadmap-closure-audit.md) | Post-execution closure audit and current reading order for the folder |
 
-**Top finding:** The folder has now moved from backlog mode into closure mode. Roadmaps `15` and `16` served as the execution backlogs through Session `23`; the closure audit now describes what is historical rationale, what remains open, and what should only be reopened if a real residual gap appears.
+**Top finding:** The folder has now moved from backlog mode into closure mode. Roadmaps `15` and `16` served as the main execution backlogs through Session `23`, and Sessions `24` through `29` closed the residual group/announcement/measurement track. The closure audit now describes what is historical rationale, what remains open, and what should only be reopened if a real residual gap appears.
 
 ---
 
@@ -115,7 +121,21 @@ Generated: 2026-03-26
 | Status | Item | Why It Still Matters | Report |
 |--------|------|----------------------|--------|
 | Maintain | Keep `test-gate-definitions.md` and named gates canonical | Future changes should continue to use the same gate language and command surface | 14 / 15 / 16 |
+| Maintain | Keep the lean local messaging measurement events coherent with the current flow-event contract | Future send/retry/media/rejoin work should extend the landed local event layer, not invent a second metrics stack | 10 / 29 |
 | Follow up only if needed | Complete external CI / release owner wiring for Session `12` if the local handoff artifact is still the final state | This is the only clearly externalized closure item | 16 |
+| Residual only | Reopen group reliability only if voice publish-failure retry becomes a real escaped bug or a clearly justified trust gap | The broader discussion reliability program is closed | 18 / 24 / 25 / 26 / 27 |
 | Residual only | Reopen a roadmap item only if a real regression, failed gate, or newly proven gap appears | Avoids restarting broad cleanup work without evidence | 17 |
 | Intentionally deferred | Product-scope items such as read receipts, typing indicators, search, exporter/dashboard work | These were deferred by design, not missed correctness work | 08 / 09 / 10 |
 | Do not reopen by default | Broad SQL/index/caching work, mass dead-code cleanup, or exporter architecture | These remain unjustified without new evidence | 05 / 06 / 10 |
+
+---
+
+## 10. Closure References
+
+| Report | Focus |
+|--------|-------|
+| [19-1to1-message-reliability-closure-reference.md](19-1to1-message-reliability-closure-reference.md) | Stable closure bar for trustworthy 1:1 text/media/voice messaging |
+| [20-group-discussion-reliability-closure-reference.md](20-group-discussion-reliability-closure-reference.md) | Stable closure bar for trustworthy group discussions under current receipt-less group architecture |
+| [21-announcement-reliability-closure-reference.md](21-announcement-reliability-closure-reference.md) | Stable closure bar for trustworthy announcements on top of shared group reliability and admin-only enforcement |
+
+**Top finding:** These three docs are the canonical "stop here unless a real regression appears" references for messaging reliability after the roadmap work. They are intentionally narrower than full feature backlogs and should be used to avoid reopening product-scope or protocol-scope debates by accident.

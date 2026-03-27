@@ -1,5 +1,9 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_app/core/constants/retry_constants.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/groups/application/retry_incomplete_group_uploads_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
@@ -16,6 +20,35 @@ import '../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../shared/fakes/in_memory_media_attachment_repository.dart';
 import '../../identity/domain/repositories/fake_identity_repository.dart';
 import '../../conversation/application/helpers/fake_upload_media_fn.dart';
+
+Future<List<Map<String, dynamic>>> captureFlowEvents(
+  Future<void> Function() action,
+) async {
+  final printed = <String>[];
+  final previousLogging = flowEventLoggingEnabled;
+  final originalDebugPrint = debugPrint;
+  flowEventLoggingEnabled = true;
+  debugPrint = (String? message, {int? wrapWidth}) {
+    if (message != null) {
+      printed.add(message);
+    }
+  };
+  try {
+    await action();
+  } finally {
+    debugPrint = originalDebugPrint;
+    flowEventLoggingEnabled = previousLogging;
+  }
+
+  return printed
+      .where((line) => line.startsWith('[FLOW] '))
+      .map(
+        (line) =>
+            jsonDecode(line.substring('[FLOW] '.length))
+                as Map<String, dynamic>,
+      )
+      .toList();
+}
 
 MediaAttachment _pendingAttachment({
   required String id,
@@ -215,6 +248,56 @@ void main() {
     );
 
     test(
+      'emits RETRY_INCOMPLETE_GROUP_UPLOADS_TIMING with attachment and message counts',
+      () async {
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: 'msg-1',
+            groupId: 'group-1',
+            senderPeerId: 'peer-admin',
+            senderUsername: 'Admin',
+            text: 'Hello',
+            timestamp: DateTime.utc(2026, 1, 1),
+            status: 'failed',
+            isIncoming: false,
+            createdAt: DateTime.utc(2026, 1, 1),
+          ),
+        );
+        await mediaRepo.saveAttachment(
+          _doneAttachment(id: 'done-1', messageId: 'msg-1'),
+        );
+        await mediaRepo.saveAttachment(
+          _pendingAttachment(id: 'pending-1', messageId: 'msg-1'),
+        );
+        uploadFn.willReturn(
+          _doneAttachment(id: 'pending-1', messageId: 'msg-1'),
+        );
+
+        final events = await captureFlowEvents(() async {
+          await retryIncompleteGroupUploads(
+            groupRepo: groupRepo,
+            groupMsgRepo: groupMsgRepo,
+            mediaAttachmentRepo: mediaRepo,
+            bridge: bridge,
+            p2pService: p2pService,
+            identityRepo: identityRepo,
+            uploadMediaFn: uploadFn.call,
+            mediaFileManager: mediaFileManager,
+          );
+        });
+
+        final timing = events.lastWhere(
+          (event) => event['event'] == 'RETRY_INCOMPLETE_GROUP_UPLOADS_TIMING',
+        );
+        expect(timing['details']['outcome'], 'complete');
+        expect(timing['details']['attachmentCount'], 1);
+        expect(timing['details']['messageCount'], 1);
+        expect(timing['details']['succeeded'], 1);
+        expect(timing['details']['elapsedMs'], isA<int>());
+      },
+    );
+
+    test(
       'transient failure increments retry count and terminal state at max',
       () async {
         await groupMsgRepo.saveMessage(
@@ -286,7 +369,10 @@ void main() {
       'skips retry work when upload_pending attachments have no parent group message row',
       () async {
         await mediaRepo.saveAttachment(
-          _pendingAttachment(id: 'pending-missing-parent', messageId: 'msg-404'),
+          _pendingAttachment(
+            id: 'pending-missing-parent',
+            messageId: 'msg-404',
+          ),
         );
 
         final count = await retryIncompleteGroupUploads(

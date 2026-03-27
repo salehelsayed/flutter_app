@@ -1,6 +1,8 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_app/features/groups/application/rejoin_group_topics_use_case.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -8,6 +10,35 @@ import 'package:flutter_test/flutter_test.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
+
+Future<List<Map<String, dynamic>>> captureFlowEvents(
+  Future<void> Function() action,
+) async {
+  final printed = <String>[];
+  final previousLogging = flowEventLoggingEnabled;
+  final originalDebugPrint = debugPrint;
+  flowEventLoggingEnabled = true;
+  debugPrint = (String? message, {int? wrapWidth}) {
+    if (message != null) {
+      printed.add(message);
+    }
+  };
+  try {
+    await action();
+  } finally {
+    debugPrint = originalDebugPrint;
+    flowEventLoggingEnabled = previousLogging;
+  }
+
+  return printed
+      .where((line) => line.startsWith('[FLOW] '))
+      .map(
+        (line) =>
+            jsonDecode(line.substring('[FLOW] '.length))
+                as Map<String, dynamic>,
+      )
+      .toList();
+}
 
 void main() {
   late FakeBridge bridge;
@@ -118,6 +149,44 @@ void main() {
           .map((c) => c['payload']['groupId'] as String)
           .toSet();
       expect(groupIds, {'group-1', 'group-2'});
+    });
+
+    test('emits GROUP_REJOIN_TOPICS_TIMING with batch metadata', () async {
+      final now = DateTime.now().toUtc();
+
+      await seedGroup(
+        groupId: 'group-1',
+        name: 'Group One',
+        members: [
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'alice',
+            username: 'Alice',
+            role: MemberRole.admin,
+            publicKey: 'pk-alice',
+            joinedAt: now,
+          ),
+        ],
+        keyInfo: GroupKeyInfo(
+          groupId: 'group-1',
+          keyGeneration: 1,
+          encryptedKey: 'key-1-base64',
+          createdAt: now,
+        ),
+      );
+
+      final events = await captureFlowEvents(() async {
+        await rejoinGroupTopics(bridge: bridge, groupRepo: groupRepo);
+      });
+
+      final timing = events.lastWhere(
+        (event) => event['event'] == 'GROUP_REJOIN_TOPICS_TIMING',
+      );
+      expect(timing['details']['outcome'], 'complete');
+      expect(timing['details']['scope'], 'batch');
+      expect(timing['details']['groupCount'], 1);
+      expect(timing['details']['joinedGroupCount'], 1);
+      expect(timing['details']['elapsedMs'], isA<int>());
     });
 
     test('skips groups with no key info', () async {

@@ -30,6 +30,7 @@ class GroupConversationScreen extends StatelessWidget {
   final VoidCallback onBack;
   final VoidCallback? onInfo;
   final bool canWrite;
+  final bool isSending;
   final bool initialLoadDone;
   final ScrollController? scrollController;
   final Map<String, List<MediaAttachment>> mediaMap;
@@ -66,6 +67,7 @@ class GroupConversationScreen extends StatelessWidget {
     required this.onBack,
     this.onInfo,
     this.canWrite = true,
+    this.isSending = false,
     this.initialLoadDone = false,
     this.scrollController,
     this.mediaMap = const {},
@@ -156,6 +158,7 @@ class GroupConversationScreen extends StatelessWidget {
             onAttach: onAttach,
             hasAttachments: composerState.pendingAttachments.isNotEmpty,
             isProcessing: composerState.isProcessing,
+            isSending: isSending,
             recordingState: composerState.recordingState,
             onRecordStart: onRecordStart,
             onRecordStop: onRecordStop,

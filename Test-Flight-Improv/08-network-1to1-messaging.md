@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-Sophisticated 1:1 messaging with ML-KEM encryption, relay-backed fallback, offline inbox storage, and multiple delivery paths. The earlier pass was too optimistic about durability: crash-safe wire-envelope persistence is strong in the conversation screen path, but **not yet uniform across every send entry point**. The clearest current gap is inline feed reply durability.
+Sophisticated 1:1 messaging with ML-KEM encryption, relay-backed fallback, offline inbox storage, and multiple delivery paths. The earlier pass was too optimistic about durability, but the highest-value reliability corrections are now landed in the current Flutter tree: feed inline reply now uses the same durable pre-persist contract as the conversation screen, V2 decrypt failures are explicitly classified, media download calls are deduplicated through an in-flight guard, and the repo now has a named 1:1 reliability gate.
 
 ---
 
@@ -17,7 +17,7 @@ Sophisticated 1:1 messaging with ML-KEM encryption, relay-backed fallback, offli
    - **V1 (plaintext):** fallback when recipient has no ML-KEM key
 4. **Wire Envelope Persistence**
    - **Conversation screen path:** saved to DB before send (durable recovery path)
-   - **Feed inline reply path:** currently weaker; it does not use the same pre-persist contract consistently
+   - **Feed inline reply path:** now uses the same pre-persist contract consistently via the same `messageId`/`wireEnvelope` contract
 5. **Connection Reuse Fast Path** — if peer already connected, direct send
 6. **Send Race** — Local WiFi vs direct P2P
 7. **Relay Probe Fallback**
@@ -162,11 +162,16 @@ V1 plaintext remains as compatibility fallback when the recipient lacks ML-KEM m
 
 | Issue | Severity | Description |
 |-------|----------|-------------|
-| **Inline feed reply durability gap** | High | Feed inline replies do not use the same durable pre-persist send contract as the conversation screen |
-| V2 decryption failure handling | Medium | Missing/invalid crypto state can still fail too quietly from a user-visibility perspective |
-| Media download deduplication | Medium | Multiple callers can still race or duplicate work around attachment download |
 | Sender-visible undelivered/read semantics | Medium | No proper read receipts and limited age/visibility around long-undelivered messages |
 | Local file missing during retry | Low | Retry path still depends on local media presence for some flows |
+
+### Historical Concerns Now Closed In The Current Flutter Tree
+
+| Concern | Current State |
+|---------|---------------|
+| Inline feed reply durability gap | Closed — feed inline reply now uses the durable pre-persist send contract |
+| V2 decryption failure handling | Closed for local operability — decrypt failures are explicitly classified and surfaced in local flow events |
+| Media download deduplication | Closed — overlapping callers now join one in-flight download |
 
 ### Missing Features
 
@@ -188,6 +193,8 @@ V1 plaintext remains as compatibility fallback when the recipient lacks ML-KEM m
 Smoke is not enough protection for shared 1:1 delivery changes. A startup or text-only smoke can still pass while media upload, voice send, retry recovery, or a secondary send surface regresses.
 
 The safer model is a named **1:1 reliability gate** that runs whenever shared send/retry/upload/inbox code changes.
+
+**Current status:** this recommendation is now implemented in the current repo via the named `1to1` gate plus companion feed-surface direct coverage in `feed_wired_test.dart`.
 
 ### Minimum Coverage Matrix
 
@@ -255,13 +262,13 @@ Start with lightweight local timers/counters rather than a full observability st
 ## Recommended Improvements (Prioritized)
 
 ### P0 — Correctness / Reliability
-1. **Define and enforce a named 1:1 reliability regression gate** — run text + media + voice + retry/recovery coverage when shared delivery code changes
-2. **Align all send entry points with the durable pre-persist contract** — especially feed inline reply
-3. **Surface V2 decryption failures more clearly** — log/report/drop with explicit handling, not silent disappearance
+1. **Preserve and keep using the named 1:1 reliability regression gate** — run text + media + voice + retry/recovery coverage when shared delivery code changes
+2. **Preserve durable send-path parity across all active send entry points** — especially if future work touches feed-originated send paths again
+3. **Keep V2 decryption failures explicit** — do not regress back into silent/non-specific handling
 
 ### P1 — Operability
-4. **Media download deduplication** — centralize in a small download coordinator or guard
-5. **Add lightweight timers around encrypt/send/retry/download** — local counters first
+4. **Preserve media download deduplication** — keep the current in-flight guard behavior if this seam changes again
+5. **Keep the local lightweight timers/counters coherent** — continue extending the landed flow-event-based measurement layer instead of building a second metrics stack
 
 ### P2 — Product / Security
 6. **Proper read receipts**

@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
+import 'package:flutter_app/features/introduction/presentation/widgets/intro_group_header.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_group.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_item.dart';
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_screen.dart';
@@ -217,9 +218,18 @@ void main() {
       );
       await tester.pump(const Duration(milliseconds: 500));
 
+      final header = find.byType(IntroGroupHeader);
       expect(find.byType(CustomScrollView), findsOneWidget);
       expect(find.byType(ListView), findsNothing);
-      expect(find.text('From Noor'), findsOneWidget);
+      expect(header, findsOneWidget);
+      expect(
+        find.descendant(of: header, matching: find.text('From')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: header, matching: find.text('Noor')),
+        findsOneWidget,
+      );
       expect(find.text('Sarah'), findsOneWidget);
     });
   });

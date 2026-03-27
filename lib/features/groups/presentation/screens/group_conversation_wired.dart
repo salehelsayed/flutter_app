@@ -134,6 +134,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
   StreamSubscription<GroupMessage>? _messageSubscription;
   final ScrollController _scrollController = ScrollController();
   bool _initialLoadDone = false;
+  bool _isSending = false;
   String? _activeQuoteMessageId;
   String _draftText = '';
 
@@ -158,6 +159,25 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
   MediaPicker get _mediaPicker => widget.mediaPicker ?? _defaultMediaPicker;
 
   bool get _isRecording => _composerViewState.recordingState.isActive;
+
+  bool _tryBeginSendFlow() {
+    if (_isSending) return false;
+    if (mounted) {
+      setState(() => _isSending = true);
+    } else {
+      _isSending = true;
+    }
+    return true;
+  }
+
+  void _endSendFlow() {
+    if (!_isSending) return;
+    if (mounted) {
+      setState(() => _isSending = false);
+    } else {
+      _isSending = false;
+    }
+  }
 
   @override
   void initState() {
@@ -492,6 +512,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
 
     final hasAttachments = _pendingAttachments.isNotEmpty;
     if (text.isEmpty && !hasAttachments) return;
+    if (!_tryBeginSendFlow()) return;
     final draftText = text;
     final quotedMessageId = _activeQuoteMessageId;
     final composerSnapshot = _GroupComposerSnapshot(
@@ -737,6 +758,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
       await _restoreComposerSnapshot(composerSnapshot, messageId);
     } finally {
       await callBgEnd(widget.bridge, bgTaskId);
+      _endSendFlow();
     }
   }
 
@@ -1149,6 +1171,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
 
   Future<void> _onRecordStart() async {
     if (!_canWrite) return;
+    if (_isSending) return;
     final recorder = widget.audioRecorderService;
     if (recorder == null || _composerViewState.recordingState.isActive) {
       return;
@@ -1274,223 +1297,230 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
       _updateComposerState(recordingState: VoiceRecordingState.stopping);
       return;
     }
-
-    _updateComposerState(recordingState: VoiceRecordingState.stopping);
-    final quotedMessageId = _activeQuoteMessageId;
-
-    final durationSub = _durationSub;
-    _durationSub = null;
-    if (durationSub != null) {
-      unawaited(durationSub.cancel());
-    }
-    final amplitudeSub = _amplitudeSub;
-    _amplitudeSub = null;
-    if (amplitudeSub != null) {
-      unawaited(amplitudeSub.cancel());
-    }
-    _amplitudeBuffer.reset();
-
-    final waveform = downsampleWaveform(_waveformSamples, 50);
-    _waveformSamples = [];
-
-    final recording = await recorder.stop();
-
-    if (mounted) {
-      _pendingRecorderAbort = false;
-      _updateComposerState(
-        recordingState: VoiceRecordingState.idle,
-        recordingDuration: Duration.zero,
-        amplitudeValues: const [],
-      );
-    }
-
-    if (recording == null || _ownPeerId == null) return;
-
-    if (quotedMessageId != null && mounted) {
-      setState(() => _activeQuoteMessageId = null);
-    }
-
-    final messageId = _uuid.v4();
-    final attachmentId = _uuid.v4();
-    final now = DateTime.now().toUtc();
-    final optimisticMessage = GroupMessage(
-      id: messageId,
-      groupId: widget.group.id,
-      senderPeerId: _ownPeerId!,
-      senderUsername: _senderUsername,
-      text: '',
-      timestamp: now,
-      quotedMessageId: quotedMessageId,
-      status: 'sending',
-      isIncoming: false,
-      createdAt: now,
-    );
-
-    String? durableRelativePath;
-    String? absoluteDurablePath;
-    MediaAttachment? pendingAttachment;
+    if (!_tryBeginSendFlow()) return;
 
     try {
-      durableRelativePath = await mediaFileManager.copyToDurableStorage(
-        sourceFilePath: recording.filePath,
-        messageId: messageId,
-        attachmentId: attachmentId,
-        mime: recording.mime,
-      );
-      absoluteDurablePath = await mediaFileManager.resolveStoredPath(
-        durableRelativePath,
-      );
-      try {
-        await File(recording.filePath).delete();
-      } catch (_) {}
+      _updateComposerState(recordingState: VoiceRecordingState.stopping);
+      final quotedMessageId = _activeQuoteMessageId;
 
-      pendingAttachment = MediaAttachment(
-        id: attachmentId,
-        messageId: messageId,
-        mime: recording.mime,
-        size: recording.sizeBytes,
-        mediaType: 'audio',
-        durationMs: recording.durationMs,
-        localPath: durableRelativePath,
-        waveform: waveform,
-        downloadStatus: 'upload_pending',
-        createdAt: now.toIso8601String(),
-      );
-      await mediaAttachmentRepo.saveAttachment(pendingAttachment);
-      await widget.msgRepo.saveMessage(optimisticMessage);
-    } catch (e) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'GROUP_CONV_FL_VOICE_DURABLE_PREP_ERROR',
-        details: {'error': e.toString()},
-      );
-      if (mounted) {
-        _updateComposerState(isUploading: false);
+      final durationSub = _durationSub;
+      _durationSub = null;
+      if (durationSub != null) {
+        unawaited(durationSub.cancel());
       }
-      _updateLocalMessageStatus(messageId, 'failed');
-      await _persistMessageStatus(messageId, 'failed');
-      _restoreActiveQuoteIfNeeded(quotedMessageId);
-      return;
-    }
+      final amplitudeSub = _amplitudeSub;
+      _amplitudeSub = null;
+      if (amplitudeSub != null) {
+        unawaited(amplitudeSub.cancel());
+      }
+      _amplitudeBuffer.reset();
 
-    final durablePendingAttachment = pendingAttachment;
-    final durableAbsolutePath = absoluteDurablePath;
-    final optimisticMedia = [
-      durablePendingAttachment.copyWith(localPath: durableAbsolutePath),
-    ];
+      final waveform = downsampleWaveform(_waveformSamples, 50);
+      _waveformSamples = [];
 
-    if (mounted) {
-      setState(() {
-        _upsertMessage(optimisticMessage);
-        _updateMediaForMessage(messageId, optimisticMedia);
-      });
-    }
+      final recording = await recorder.stop();
 
-    final bgTaskId = await callBgBegin(widget.bridge);
-    try {
-      final members = await widget.groupRepo.getMembers(widget.group.id);
-      final allowedPeers = members.map((m) => m.peerId).toList();
+      if (mounted) {
+        _pendingRecorderAbort = false;
+        _updateComposerState(
+          recordingState: VoiceRecordingState.idle,
+          recordingDuration: Duration.zero,
+          amplitudeValues: const [],
+        );
+      }
 
-      _updateComposerState(isUploading: true);
+      if (recording == null || _ownPeerId == null) return;
 
-      final voiceAttachment = await widget.uploadMediaFn(
-        bridge: widget.bridge,
-        localFilePath: durableAbsolutePath,
-        mime: recording.mime,
-        recipientPeerId: widget.group.id,
-        mediaFileManager: mediaFileManager,
-        durationMs: recording.durationMs,
-        waveform: waveform,
-        allowedPeers: allowedPeers,
-        blobId: attachmentId,
+      if (quotedMessageId != null && mounted) {
+        setState(() => _activeQuoteMessageId = null);
+      }
+
+      final messageId = _uuid.v4();
+      final attachmentId = _uuid.v4();
+      final now = DateTime.now().toUtc();
+      final optimisticMessage = GroupMessage(
+        id: messageId,
+        groupId: widget.group.id,
+        senderPeerId: _ownPeerId!,
+        senderUsername: _senderUsername,
+        text: '',
+        timestamp: now,
+        quotedMessageId: quotedMessageId,
+        status: 'sending',
+        isIncoming: false,
+        createdAt: now,
       );
 
-      if (voiceAttachment == null) {
+      String? durableRelativePath;
+      String? absoluteDurablePath;
+      MediaAttachment? pendingAttachment;
+
+      try {
+        durableRelativePath = await mediaFileManager.copyToDurableStorage(
+          sourceFilePath: recording.filePath,
+          messageId: messageId,
+          attachmentId: attachmentId,
+          mime: recording.mime,
+        );
+        absoluteDurablePath = await mediaFileManager.resolveStoredPath(
+          durableRelativePath,
+        );
+        try {
+          await File(recording.filePath).delete();
+        } catch (_) {}
+
+        pendingAttachment = MediaAttachment(
+          id: attachmentId,
+          messageId: messageId,
+          mime: recording.mime,
+          size: recording.sizeBytes,
+          mediaType: 'audio',
+          durationMs: recording.durationMs,
+          localPath: durableRelativePath,
+          waveform: waveform,
+          downloadStatus: 'upload_pending',
+          createdAt: now.toIso8601String(),
+        );
+        await mediaAttachmentRepo.saveAttachment(pendingAttachment);
+        await widget.msgRepo.saveMessage(optimisticMessage);
+      } catch (e) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_CONV_FL_VOICE_DURABLE_PREP_ERROR',
+          details: {'error': e.toString()},
+        );
         if (mounted) {
           _updateComposerState(isUploading: false);
-          _updateLocalMessageStatus(messageId, 'failed');
         }
+        _updateLocalMessageStatus(messageId, 'failed');
         await _persistMessageStatus(messageId, 'failed');
         _restoreActiveQuoteIfNeeded(quotedMessageId);
         return;
       }
 
-      final stableVoiceAttachment = voiceAttachment.copyWith(
-        id: attachmentId,
-        messageId: messageId,
-        downloadStatus: 'done',
-        uploadRetryCount: durablePendingAttachment.uploadRetryCount,
-      );
+      final durablePendingAttachment = pendingAttachment;
+      final durableAbsolutePath = absoluteDurablePath;
+      final optimisticMedia = [
+        durablePendingAttachment.copyWith(localPath: durableAbsolutePath),
+      ];
 
       if (mounted) {
-        _updateComposerState(isUploading: false);
+        setState(() {
+          _upsertMessage(optimisticMessage);
+          _updateMediaForMessage(messageId, optimisticMedia);
+        });
       }
 
-      final (result, message) = await sendGroupMessage(
-        bridge: widget.bridge,
-        groupRepo: widget.groupRepo,
-        msgRepo: widget.msgRepo,
-        groupId: widget.group.id,
-        text: '',
-        senderPeerId: _ownPeerId!,
-        senderPublicKey: _senderPublicKey,
-        senderPrivateKey: _senderPrivateKey,
-        senderUsername: _senderUsername,
-        messageId: messageId,
-        timestamp: now,
-        quotedMessageId: quotedMessageId,
-        mediaAttachments: [stableVoiceAttachment],
-        mediaAttachmentRepo: mediaAttachmentRepo,
-      );
+      final bgTaskId = await callBgBegin(widget.bridge);
+      try {
+        final members = await widget.groupRepo.getMembers(widget.group.id);
+        final allowedPeers = members.map((m) => m.peerId).toList();
 
-      if ((result == SendGroupMessageResult.success ||
-              result == SendGroupMessageResult.successNoPeers) &&
-          message != null) {
-        List<MediaAttachment>? displayMedia;
-        if (mounted) {
-          displayMedia = [];
-          for (final a in [stableVoiceAttachment]) {
-            if (a.localPath != null) {
-              final absPath = await mediaFileManager.resolveStoredPath(
-                a.localPath!,
-              );
-              displayMedia.add(a.copyWith(localPath: absPath));
-            } else {
-              displayMedia.add(a);
-            }
+        _updateComposerState(isUploading: true);
+
+        final voiceAttachment = await widget.uploadMediaFn(
+          bridge: widget.bridge,
+          localFilePath: durableAbsolutePath,
+          mime: recording.mime,
+          recipientPeerId: widget.group.id,
+          mediaFileManager: mediaFileManager,
+          durationMs: recording.durationMs,
+          waveform: waveform,
+          allowedPeers: allowedPeers,
+          blobId: attachmentId,
+        );
+
+        if (voiceAttachment == null) {
+          if (mounted) {
+            _updateComposerState(isUploading: false);
+            _updateLocalMessageStatus(messageId, 'failed');
           }
+          await _persistMessageStatus(messageId, 'failed');
+          _restoreActiveQuoteIfNeeded(quotedMessageId);
+          return;
         }
+
+        final stableVoiceAttachment = voiceAttachment.copyWith(
+          id: attachmentId,
+          messageId: messageId,
+          downloadStatus: 'done',
+          uploadRetryCount: durablePendingAttachment.uploadRetryCount,
+        );
+
         if (mounted) {
-          setState(() {
-            _upsertMessage(message);
-            if (displayMedia != null && displayMedia.isNotEmpty) {
-              _updateMediaForMessage(messageId, displayMedia);
+          _updateComposerState(isUploading: false);
+        }
+
+        final (result, message) = await sendGroupMessage(
+          bridge: widget.bridge,
+          groupRepo: widget.groupRepo,
+          msgRepo: widget.msgRepo,
+          groupId: widget.group.id,
+          text: '',
+          senderPeerId: _ownPeerId!,
+          senderPublicKey: _senderPublicKey,
+          senderPrivateKey: _senderPrivateKey,
+          senderUsername: _senderUsername,
+          messageId: messageId,
+          timestamp: now,
+          quotedMessageId: quotedMessageId,
+          mediaAttachments: [stableVoiceAttachment],
+          mediaAttachmentRepo: mediaAttachmentRepo,
+        );
+
+        try {
+          if ((result == SendGroupMessageResult.success ||
+                  result == SendGroupMessageResult.successNoPeers) &&
+              message != null) {
+            List<MediaAttachment>? displayMedia;
+            if (mounted) {
+              displayMedia = [];
+              for (final a in [stableVoiceAttachment]) {
+                if (a.localPath != null) {
+                  final absPath = await mediaFileManager.resolveStoredPath(
+                    a.localPath!,
+                  );
+                  displayMedia.add(a.copyWith(localPath: absPath));
+                } else {
+                  displayMedia.add(a);
+                }
+              }
             }
-          });
-        }
-        try {
-          await mediaFileManager.deletePendingUploadDir(messageId);
+            if (mounted) {
+              setState(() {
+                _upsertMessage(message);
+                if (displayMedia != null && displayMedia.isNotEmpty) {
+                  _updateMediaForMessage(messageId, displayMedia);
+                }
+              });
+            }
+            try {
+              await mediaFileManager.deletePendingUploadDir(messageId);
+            } catch (_) {}
+          } else if (result == SendGroupMessageResult.groupNotFound ||
+              result == SendGroupMessageResult.unauthorized) {
+            if (mounted) {
+              _removeLocalMessage(messageId);
+            }
+            try {
+              await mediaAttachmentRepo.deleteAttachmentsForMessage(messageId);
+            } catch (_) {}
+            try {
+              await mediaFileManager.deletePendingUploadDir(messageId);
+            } catch (_) {}
+            await widget.msgRepo.deleteMessage(messageId);
+            _restoreActiveQuoteIfNeeded(quotedMessageId);
+          } else {
+            _updateLocalMessageStatus(messageId, 'failed');
+            await _persistMessageStatus(messageId, 'failed');
+            _restoreActiveQuoteIfNeeded(quotedMessageId);
+          }
         } catch (_) {}
-      } else if (result == SendGroupMessageResult.groupNotFound ||
-          result == SendGroupMessageResult.unauthorized) {
-        if (mounted) {
-          _removeLocalMessage(messageId);
-        }
-        try {
-          await mediaAttachmentRepo.deleteAttachmentsForMessage(messageId);
-        } catch (_) {}
-        try {
-          await mediaFileManager.deletePendingUploadDir(messageId);
-        } catch (_) {}
-        await widget.msgRepo.deleteMessage(messageId);
-        _restoreActiveQuoteIfNeeded(quotedMessageId);
-      } else {
-        _updateLocalMessageStatus(messageId, 'failed');
-        await _persistMessageStatus(messageId, 'failed');
-        _restoreActiveQuoteIfNeeded(quotedMessageId);
+      } finally {
+        await callBgEnd(widget.bridge, bgTaskId);
       }
     } finally {
-      await callBgEnd(widget.bridge, bgTaskId);
+      _endSendFlow();
     }
   }
 
@@ -1810,6 +1840,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
       onBack: _onBack,
       onInfo: _onInfo,
       canWrite: _canWrite,
+      isSending: _isSending,
       initialLoadDone: _initialLoadDone,
       scrollController: _scrollController,
       mediaMap: _mediaMap,

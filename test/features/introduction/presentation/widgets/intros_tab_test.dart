@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
+import 'package:flutter_app/features/introduction/presentation/widgets/intro_group_header.dart';
+import 'package:flutter_app/features/introduction/presentation/widgets/intro_row.dart';
 import 'package:flutter_app/features/introduction/presentation/widgets/intros_tab.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -74,7 +76,16 @@ void main() {
         ),
       );
 
-      expect(find.text('From Alice'), findsOneWidget);
+      final header = find.byType(IntroGroupHeader);
+      expect(header, findsOneWidget);
+      expect(
+        find.descendant(of: header, matching: find.text('From')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: header, matching: find.text('Alice')),
+        findsOneWidget,
+      );
       expect(find.text('Charlie'), findsOneWidget);
       expect(find.text('Dana'), findsOneWidget);
       expect(find.byType(ListView), findsNothing);
@@ -92,7 +103,16 @@ void main() {
         ),
       );
 
-      expect(find.text('From Alice'), findsOneWidget);
+      final header = find.byType(IntroGroupHeader);
+      expect(header, findsOneWidget);
+      expect(
+        find.descendant(of: header, matching: find.text('From')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: header, matching: find.text('Alice')),
+        findsOneWidget,
+      );
     });
 
     testWidgets('each intro row shows introduced username', (tester) async {
@@ -122,7 +142,16 @@ void main() {
         ),
       );
 
-      expect(find.text('Introduced by Alice'), findsOneWidget);
+      final row = find.byType(IntroRow);
+      expect(row, findsOneWidget);
+      expect(
+        find.descendant(of: row, matching: find.text('Introduced by')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: row, matching: find.text('Alice')),
+        findsOneWidget,
+      );
     });
 
     testWidgets('accept button visible for pending intros', (tester) async {

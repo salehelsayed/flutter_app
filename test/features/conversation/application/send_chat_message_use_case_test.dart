@@ -1,7 +1,10 @@
 import 'dart:convert';
 import 'dart:async';
 import 'dart:ui' show VoidCallback;
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
@@ -309,6 +312,35 @@ Future<List<String>> capturePrintedLines(Future<void> Function() action) async {
   return printed;
 }
 
+Future<List<Map<String, dynamic>>> captureFlowEvents(
+  Future<void> Function() action,
+) async {
+  final printed = <String>[];
+  final previousLogging = flowEventLoggingEnabled;
+  final originalDebugPrint = debugPrint;
+  flowEventLoggingEnabled = true;
+  debugPrint = (String? message, {int? wrapWidth}) {
+    if (message != null) {
+      printed.add(message);
+    }
+  };
+  try {
+    await action();
+  } finally {
+    debugPrint = originalDebugPrint;
+    flowEventLoggingEnabled = previousLogging;
+  }
+
+  return printed
+      .where((line) => line.startsWith('[FLOW] '))
+      .map(
+        (line) =>
+            jsonDecode(line.substring('[FLOW] '.length))
+                as Map<String, dynamic>,
+      )
+      .toList();
+}
+
 void main() {
   late FakeP2PService p2pService;
   late FakeMessageRepository messageRepo;
@@ -590,6 +622,29 @@ void main() {
         isTrue,
       );
     });
+
+    test(
+      'emits CHAT_MSG_SEND_TIMING with elapsed outcome and attachment flag',
+      () async {
+        final events = await captureFlowEvents(() async {
+          await sendChatMessage(
+            p2pService: p2pService,
+            messageRepo: messageRepo,
+            targetPeerId: 'target-peer',
+            text: 'Timing proof',
+            senderPeerId: 'my-peer',
+            senderUsername: 'Me',
+          );
+        });
+
+        final timing = events.lastWhere(
+          (event) => event['event'] == 'CHAT_MSG_SEND_TIMING',
+        );
+        expect(timing['details']['outcome'], 'success');
+        expect(timing['details']['elapsedMs'], isA<int>());
+        expect(timing['details']['hasAttachments'], isFalse);
+      },
+    );
 
     test(
       'returns sendFailed and persists with failed status when send returns false',

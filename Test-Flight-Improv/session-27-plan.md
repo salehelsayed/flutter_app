@@ -8,7 +8,7 @@ This session is not another feature session. Its first job is to verify whether 
 
 Targeted gaps:
 - Session 24: ordinary group media persists the parent `GroupMessage` row before upload starts
-- Session 25: failed group media/voice messages retry successfully once attachments are already complete
+- Session 25: failed ordinary-media group messages retry successfully once persisted attachments are already complete
 - Session 26: one group conversation screen cannot start overlapping local send pipelines
 
 In scope:
@@ -58,6 +58,7 @@ Primary code likely affected by Sessions 24 through 26:
 - `lib/features/groups/application/retry_failed_group_messages_use_case.dart`
 - `lib/features/groups/application/retry_incomplete_group_uploads_use_case.dart`
 - `lib/features/groups/application/send_group_message_use_case.dart`
+- `lib/main.dart` for the Session 25 resume wiring seam that threads `mediaAttachmentRepository` into failed group retry on app resume
 - `lib/features/conversation/presentation/widgets/compose_area.dart` only if Session 26 touched the shared compose seam
 - `lib/features/conversation/presentation/screens/conversation_wired.dart` as the existing 1:1 reference for explicit local send serialization
 - `lib/features/conversation/presentation/screens/conversation_screen.dart` as the existing 1:1 reference for `isSending` wiring
@@ -69,6 +70,7 @@ Primary tests:
 - `test/features/groups/application/retry_failed_group_messages_use_case_test.dart`
 - `test/features/groups/application/retry_incomplete_group_uploads_use_case_test.dart`
 - `test/features/groups/application/send_group_message_use_case_test.dart`
+- `test/core/lifecycle/main_resume_group_upload_wiring_test.dart`
 - `test/features/groups/integration/group_edge_cases_smoke_test.dart`
 - `test/features/groups/integration/group_resume_recovery_test.dart`
 - `test/features/conversation/presentation/widgets/compose_area_test.dart` only if Session 26 touched the shared widget
@@ -94,11 +96,13 @@ Already present and relevant:
 - `test/features/groups/presentation/screens/group_conversation_wired_bg_task_test.dart`
   - background-task / lock-unmount protection evidence for send paths
 - `test/features/groups/application/retry_failed_group_messages_use_case_test.dart`
-  - current proof for failed text retry behavior; must be re-checked for media/voice parity because stale assumptions are likely here
+  - current proof for failed text retry behavior plus ordinary-media retry parity; voice publish-failure retry remains an explicit residual outside Session 27 acceptance
 - `test/features/groups/application/retry_incomplete_group_uploads_use_case_test.dart`
   - lower-layer proof for unfinished upload recovery and parent-row dependency
 - `test/features/groups/application/send_group_message_use_case_test.dart`
   - nearby safety net for the core send contract
+- `test/core/lifecycle/main_resume_group_upload_wiring_test.dart`
+  - direct proof that the Session 25 resume seam still threads `mediaAttachmentRepository` into failed group retry from `lib/main.dart`
 - `test/features/groups/integration/group_edge_cases_smoke_test.dart`
   - integration-level edge-case pressure, but not by itself proof of concurrent local send serialization if the burst case is still sequential
 - `test/features/groups/integration/group_resume_recovery_test.dart`
@@ -116,7 +120,7 @@ What this session must prove:
 
 Current repo risk to validate first:
 - Session 24 appears likely landed, but Session 27 must still re-check the direct evidence
-- Session 25 may still be absent if `retry_failed_group_messages_use_case.dart` still skips rows carrying media/voice retry metadata
+- Session 25 may still be absent if `retry_failed_group_messages_use_case.dart` still skips rows carrying ordinary-media retry metadata or if the resume wiring seam is missing
 - Session 26 may still be absent if the group conversation path still lacks an explicit `_isSending`/reentry guard and does not wire `isSending` into `ComposeArea`
 
 ## 5. regression/tests to add first, if any
@@ -144,10 +148,12 @@ Before deciding the session is accepted, gather:
   - Session 25 landed or not landed
   - Session 26 landed or not landed
 - the final direct test results for the three reliability areas
+- the direct result for the Session 25 resume wiring proof in `test/core/lifecycle/main_resume_group_upload_wiring_test.dart`
 - the final `groups` gate result
 - the final `baseline` gate result
 - the `transport` gate result if any of Sessions 24 through 26 touched that layer
 - a short file-level check of the landed implementation seams from Sessions 24 through 26
+- explicit confirmation that the Session 25 resume wiring seam in `lib/main.dart` is still present
 - a comparison of those results against the expected closure criteria in `18-group-discussion-reliability-audit.md`
 - revalidation of any known-failure ledger note used to downgrade a red named gate result
 
@@ -159,12 +165,14 @@ Before deciding the session is accepted, gather:
    - first confirm what actually changed
    - use `conversation_wired.dart` / `conversation_screen.dart` as the reference path for what explicit send serialization should look like
 3. Run a prerequisite preflight before any closure decision:
-   - if Session 25 media/voice retry parity is not actually present in code + direct tests, record that as a blocker and stop the acceptance pass
+   - if Session 24 ordinary-media parent-row durability is not actually present in code + direct tests, record that as a blocker and stop the acceptance pass
+   - if Session 25 ordinary-media failed-send retry parity is not actually present in code + direct tests, record that as a blocker and stop the acceptance pass
    - if Session 26 sequential-send behavior is not actually present in code + direct tests, record that as a blocker and stop the acceptance pass
    - only continue to the full closure audit if all three prerequisites are truly landed
 4. Run the combined direct suites that cover:
    - ordinary media parent-row durability
-   - failed-send media/voice retry parity
+   - failed-send ordinary-media retry parity
+   - the Session 25 resume wiring seam
    - explicit sequential send behavior
 5. Run the Group Messaging Gate.
 6. Run the Baseline Gate.
@@ -194,16 +202,21 @@ Before deciding the session is accepted, gather:
 - Do not let Session 24 evidence mask the possibility that Session 25 or Session 26 is still missing in current production code.
 - Do not use `group_edge_cases_smoke_test.dart` as concurrency proof unless its relevant case actually exercises overlapping local sends rather than sequential await.
 
-## 9. exact tests to run after implementation, if code changes occur
+## 9. exact tests to run for this evidence-gated acceptance audit
+
+These reruns are required evidence for Session 27 even if this session lands no
+new production code.
 
 Primary direct suites:
 - `flutter test test/features/groups/presentation/group_conversation_wired_test.dart`
+- `flutter test test/features/groups/presentation/screens/group_conversation_wired_bg_task_test.dart`
 - `flutter test test/features/groups/application/retry_failed_group_messages_use_case_test.dart`
 - `flutter test test/features/groups/application/retry_incomplete_group_uploads_use_case_test.dart`
 
 Direct companion suites:
 - `flutter test test/features/groups/presentation/group_conversation_screen_test.dart`
 - `flutter test test/features/groups/application/send_group_message_use_case_test.dart`
+- `flutter test test/core/lifecycle/main_resume_group_upload_wiring_test.dart`
 
 Conditional shared-widget suite only if Session 26 touched the shared compose widget:
 - `flutter test test/features/conversation/presentation/widgets/compose_area_test.dart`
@@ -212,10 +225,8 @@ Integration safety nets:
 - `flutter test test/features/groups/integration/group_edge_cases_smoke_test.dart`
 - `flutter test test/features/groups/integration/group_resume_recovery_test.dart`
 
-Conditional background-task safety net if any changed scope touched send-phase background-task ordering:
-- `flutter test test/features/groups/presentation/screens/group_conversation_wired_bg_task_test.dart`
-
 Prerequisite interpretation note:
+- if the direct suites show Session 24 still lacks the parent-row durability contract, Session 27 must stop as blocked
 - if the direct suites show Session 25 still only supports text-only failed-send retry, Session 27 must stop as blocked
 - if the direct suites show Session 26 still lacks explicit local send serialization in the group path, Session 27 must stop as blocked
 
@@ -255,6 +266,10 @@ Only if the actual landed scope from Sessions 24 through 26 crossed into:
 - background-task ordering around send completion
 - device-backed recovery behavior beyond local screen/state management
 
+Current expected answer:
+- yes, because Session 25’s accepted scope includes the `lib/main.dart` resume wiring seam for failed group retry parity
+- still re-check that this seam remains landed before treating `transport` as required evidence rather than stale plan text
+
 Command when needed:
 - `./scripts/run_test_gates.sh transport`
 
@@ -285,7 +300,8 @@ Session 27 is done when all of the following are true:
 If Session 27 blocks:
 - the group-discussion reliability program is not actually finished
 - the most likely block classes are:
-  - Session 25 media/voice failed-send retry parity is still not landed
+  - Session 24 ordinary-media parent-row durability is still not landed
+  - Session 25 ordinary-media failed-send retry parity or its resume wiring seam is still not landed
   - Session 26 explicit local send serialization is still not landed
 - future group cleanup/closure work should pause until the smallest remaining blocker is explicitly defined
 - do not create broad new roadmap work; create only the smallest follow-up session needed to close the proven remaining gap

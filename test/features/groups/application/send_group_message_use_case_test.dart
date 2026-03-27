@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
@@ -14,6 +16,35 @@ import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../shared/fakes/in_memory_media_attachment_repository.dart';
+
+Future<List<Map<String, dynamic>>> captureFlowEvents(
+  Future<void> Function() action,
+) async {
+  final printed = <String>[];
+  final previousLogging = flowEventLoggingEnabled;
+  final originalDebugPrint = debugPrint;
+  flowEventLoggingEnabled = true;
+  debugPrint = (String? message, {int? wrapWidth}) {
+    if (message != null) {
+      printed.add(message);
+    }
+  };
+  try {
+    await action();
+  } finally {
+    debugPrint = originalDebugPrint;
+    flowEventLoggingEnabled = previousLogging;
+  }
+
+  return printed
+      .where((line) => line.startsWith('[FLOW] '))
+      .map(
+        (line) =>
+            jsonDecode(line.substring('[FLOW] '.length))
+                as Map<String, dynamic>,
+      )
+      .toList();
+}
 
 /// A bridge that delays group:publish by [delay] to test concurrency.
 class _SlowPublishBridge extends FakeBridge {
@@ -169,6 +200,30 @@ void main() {
     expect(message!.text, 'Hello group!');
     expect(message.isIncoming, false);
     expect(message.status, 'sent');
+  });
+
+  test('emits GROUP_SEND_MSG_TIMING with group and media metadata', () async {
+    final events = await captureFlowEvents(() async {
+      await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        text: 'Hello group!',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        senderUsername: 'Alice',
+      );
+    });
+
+    final timing = events.lastWhere(
+      (event) => event['event'] == 'GROUP_SEND_MSG_TIMING',
+    );
+    expect(timing['details']['outcome'], 'success');
+    expect(timing['details']['groupId'], 'group-1');
+    expect(timing['details']['hasMedia'], isFalse);
+    expect(timing['details']['elapsedMs'], isA<int>());
   });
 
   test('returns groupNotFound for unknown group', () async {

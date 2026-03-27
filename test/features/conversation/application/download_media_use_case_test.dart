@@ -2,9 +2,11 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/application/download_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
@@ -141,6 +143,35 @@ class _FakeMediaFileManager extends MediaFileManager {
       await file.delete();
     }
   }
+}
+
+Future<List<Map<String, dynamic>>> captureFlowEvents(
+  Future<void> Function() action,
+) async {
+  final printed = <String>[];
+  final previousLogging = flowEventLoggingEnabled;
+  final originalDebugPrint = debugPrint;
+  flowEventLoggingEnabled = true;
+  debugPrint = (String? message, {int? wrapWidth}) {
+    if (message != null) {
+      printed.add(message);
+    }
+  };
+  try {
+    await action();
+  } finally {
+    debugPrint = originalDebugPrint;
+    flowEventLoggingEnabled = previousLogging;
+  }
+
+  return printed
+      .where((line) => line.startsWith('[FLOW] '))
+      .map(
+        (line) =>
+            jsonDecode(line.substring('[FLOW] '.length))
+                as Map<String, dynamic>,
+      )
+      .toList();
 }
 
 void main() {
@@ -323,6 +354,30 @@ void main() {
       expect(result.width, 1920);
       expect(result.height, 1080);
     });
+
+    test(
+      'emits MEDIA_DOWNLOAD_TIMING with blob, mime, and size metadata',
+      () async {
+        final events = await captureFlowEvents(() async {
+          await downloadMedia(
+            bridge: bridge,
+            mediaAttachmentRepo: mediaRepo,
+            mediaFileManager: fileManager,
+            attachment: testAttachment,
+            contactPeerId: 'contact-A',
+          );
+        });
+
+        final timing = events.lastWhere(
+          (event) => event['event'] == 'MEDIA_DOWNLOAD_TIMING',
+        );
+        expect(timing['details']['outcome'], 'success');
+        expect(timing['details']['blobId'], 'blob-dow');
+        expect(timing['details']['mime'], 'image/jpeg');
+        expect(timing['details']['sizeBytes'], 245000);
+        expect(timing['details']['elapsedMs'], isA<int>());
+      },
+    );
 
     test(
       'overlapping callers for the same attachment trigger only one real download',

@@ -36,6 +36,7 @@ const (
 type PushService struct {
 	client       *messaging.Client
 	tokenBackend PushTokenBackend
+	sender       func(context.Context, *messaging.Message) (string, error)
 }
 
 type tokenEntry struct {
@@ -100,10 +101,6 @@ func (ps *PushService) UnregisterToken(peerId string) {
 }
 
 func (ps *PushService) SendNotification(ctx context.Context, toPeerId, fromPeerId string) {
-	if ps.client == nil {
-		return
-	}
-
 	entry := ps.tokenBackend.LookupToken(toPeerId)
 	if entry == nil {
 		return
@@ -111,7 +108,7 @@ func (ps *PushService) SendNotification(ctx context.Context, toPeerId, fromPeerI
 
 	msg := buildPushMessage(entry.Token, fromPeerId)
 
-	_, err := ps.client.Send(ctx, msg)
+	err := ps.send(ctx, msg)
 	if err != nil {
 		log.Printf("[PUSH] Failed to send to %s: %v", toPeerId[:min(20, len(toPeerId))], err)
 		// Remove invalid tokens
@@ -126,6 +123,48 @@ func (ps *PushService) SendNotification(ctx context.Context, toPeerId, fromPeerI
 	}
 	pushSentCounter.WithLabelValues("success").Inc()
 	log.Printf("[PUSH] Notification sent to %s", toPeerId[:min(20, len(toPeerId))])
+}
+
+func (ps *PushService) SendGroupNotification(
+	ctx context.Context,
+	toPeerId string,
+	groupId string,
+	title string,
+	body string,
+) {
+	entry := ps.tokenBackend.LookupToken(toPeerId)
+	if entry == nil {
+		return
+	}
+
+	msg := buildGroupPushMessage(entry.Token, groupId, title, body)
+
+	err := ps.send(ctx, msg)
+	if err != nil {
+		log.Printf("[PUSH] Failed to send group push to %s: %v", toPeerId[:min(20, len(toPeerId))], err)
+		if isInvalidTokenError(err) {
+			ps.tokenBackend.UnregisterToken(toPeerId)
+			pushSentCounter.WithLabelValues("invalid_token").Inc()
+			log.Printf("[PUSH] Removed invalid token for %s", toPeerId[:min(20, len(toPeerId))])
+		} else {
+			pushSentCounter.WithLabelValues("failed").Inc()
+		}
+		return
+	}
+	pushSentCounter.WithLabelValues("success").Inc()
+	log.Printf("[PUSH] Group notification sent to %s", toPeerId[:min(20, len(toPeerId))])
+}
+
+func (ps *PushService) send(ctx context.Context, msg *messaging.Message) error {
+	if ps.sender != nil {
+		_, err := ps.sender(ctx, msg)
+		return err
+	}
+	if ps.client == nil {
+		return nil
+	}
+	_, err := ps.client.Send(ctx, msg)
+	return err
 }
 
 func buildPushMessage(token, fromPeerId string) *messaging.Message {
@@ -156,6 +195,56 @@ func buildPushMessage(token, fromPeerId string) *messaging.Message {
 					Alert: &messaging.ApsAlert{
 						Title: pushNotificationTitle,
 						Body:  pushNotificationBody,
+					},
+				},
+			},
+		},
+	}
+}
+
+func buildGroupPushMessage(token, groupId, title, body string) *messaging.Message {
+	resolvedTitle := title
+	if resolvedTitle == "" {
+		resolvedTitle = pushNotificationTitle
+	}
+	resolvedBody := body
+	if resolvedBody == "" {
+		resolvedBody = pushNotificationBody
+	}
+
+	data := map[string]string{
+		"type":    "group_message",
+		"groupId": groupId,
+	}
+	if title != "" {
+		data["title"] = title
+	}
+	if body != "" {
+		data["body"] = body
+	}
+
+	return &messaging.Message{
+		Token: token,
+		Data:  data,
+		Android: &messaging.AndroidConfig{
+			Priority: "high",
+			Notification: &messaging.AndroidNotification{
+				Title:     resolvedTitle,
+				Body:      resolvedBody,
+				ChannelID: pushNotificationChannelID,
+			},
+		},
+		APNS: &messaging.APNSConfig{
+			Headers: map[string]string{
+				"apns-priority":  "10",
+				"apns-push-type": "alert",
+			},
+			Payload: &messaging.APNSPayload{
+				Aps: &messaging.Aps{
+					ContentAvailable: true,
+					Alert: &messaging.ApsAlert{
+						Title: resolvedTitle,
+						Body:  resolvedBody,
 					},
 				},
 			},
@@ -202,6 +291,10 @@ func extractMessageId(message string) string {
 
 	// V2 encrypted: top-level "id" field
 	if id, ok := envelope["id"].(string); ok && id != "" {
+		return id
+	}
+
+	if id, ok := envelope["messageId"].(string); ok && id != "" {
 		return id
 	}
 
@@ -320,6 +413,7 @@ type groupInboxMessage struct {
 // GroupInboxStore wraps a GroupInboxBackend.
 type GroupInboxStore struct {
 	backend GroupInboxBackend
+	push    *PushService
 }
 
 // NewGroupInboxStore creates a store with an in-memory backend.
@@ -336,6 +430,10 @@ func NewGroupInboxStoreWithBackend(backend GroupInboxBackend) *GroupInboxStore {
 	}
 }
 
+func (s *GroupInboxStore) SetPush(push *PushService) {
+	s.push = push
+}
+
 func (s *GroupInboxStore) Store(groupId, from, message string) error {
 	err := s.backend.Store(groupId, from, message)
 	if err == nil {
@@ -345,6 +443,81 @@ func (s *GroupInboxStore) Store(groupId, from, message string) error {
 			from[:min(20, len(from))])
 	}
 	return err
+}
+
+func (s *GroupInboxStore) StoreWithPushMetadata(
+	groupId string,
+	from string,
+	message string,
+	recipientPeerIds []string,
+	pushTitle string,
+	pushBody string,
+) error {
+	if err := s.Store(groupId, from, message); err != nil {
+		return err
+	}
+
+	if !s.shouldFanoutPush(groupId, message) {
+		return nil
+	}
+
+	s.fanOutPush(groupId, from, recipientPeerIds, pushTitle, pushBody)
+	return nil
+}
+
+func (s *GroupInboxStore) shouldFanoutPush(groupId, message string) bool {
+	if s.push == nil {
+		return false
+	}
+	if len(s.backend.RetrieveSince(groupId, 0)) == 0 {
+		return false
+	}
+
+	messageID := extractMessageId(message)
+	if messageID == "" {
+		return true
+	}
+
+	seen := 0
+	for _, stored := range s.backend.RetrieveSince(groupId, 0) {
+		if extractMessageId(stored.Message) == messageID {
+			seen++
+			if seen > 1 {
+				return false
+			}
+		}
+	}
+	return seen == 1
+}
+
+func (s *GroupInboxStore) fanOutPush(
+	groupId string,
+	from string,
+	recipientPeerIds []string,
+	pushTitle string,
+	pushBody string,
+) {
+	if s.push == nil || len(recipientPeerIds) == 0 {
+		return
+	}
+
+	seen := make(map[string]struct{}, len(recipientPeerIds))
+	for _, peerID := range recipientPeerIds {
+		if peerID == "" || peerID == from {
+			continue
+		}
+		if _, ok := seen[peerID]; ok {
+			continue
+		}
+		seen[peerID] = struct{}{}
+		go s.push.SendGroupNotification(
+			context.Background(),
+			peerID,
+			groupId,
+			pushTitle,
+			pushBody,
+		)
+	}
 }
 
 func (s *GroupInboxStore) Retrieve(groupId string, sinceTimestamp int64) []groupInboxMessage {
@@ -417,9 +590,12 @@ type inboxRequest struct {
 	Token    string                 `json:"token,omitempty"`
 	Platform string                 `json:"platform,omitempty"`
 	// Group inbox fields.
-	GroupId        string `json:"groupId,omitempty"`
-	SinceTimestamp int64  `json:"sinceTimestamp,omitempty"`
-	Cursor         string `json:"cursor,omitempty"`
+	GroupId          string   `json:"groupId,omitempty"`
+	RecipientPeerIds []string `json:"recipientPeerIds,omitempty"`
+	PushTitle        string   `json:"pushTitle,omitempty"`
+	PushBody         string   `json:"pushBody,omitempty"`
+	SinceTimestamp   int64    `json:"sinceTimestamp,omitempty"`
+	Cursor           string   `json:"cursor,omitempty"`
 }
 
 type inboxResponse struct {
@@ -517,7 +693,14 @@ func HandleInboxStream(s network.Stream, inbox *InboxStore, groupInbox *GroupInb
 			if from == "" {
 				from = remotePeer
 			}
-			if err := groupInbox.Store(req.GroupId, from, req.Message); err != nil {
+			if err := groupInbox.StoreWithPushMetadata(
+				req.GroupId,
+				from,
+				req.Message,
+				req.RecipientPeerIds,
+				req.PushTitle,
+				req.PushBody,
+			); err != nil {
 				resp = inboxResponse{Status: "ERROR", Error: err.Error()}
 			} else {
 				resp = inboxResponse{Status: "OK"}

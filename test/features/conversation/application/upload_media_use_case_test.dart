@@ -1,9 +1,11 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/connection_state.dart';
@@ -44,6 +46,35 @@ class _FakeBridge implements Bridge {
   void Function(Map<String, dynamic>)? onGroupMessageReceived;
   @override
   void Function(Map<String, dynamic>)? onGroupReactionReceived;
+}
+
+Future<List<Map<String, dynamic>>> captureFlowEvents(
+  Future<void> Function() action,
+) async {
+  final printed = <String>[];
+  final previousLogging = flowEventLoggingEnabled;
+  final originalDebugPrint = debugPrint;
+  flowEventLoggingEnabled = true;
+  debugPrint = (String? message, {int? wrapWidth}) {
+    if (message != null) {
+      printed.add(message);
+    }
+  };
+  try {
+    await action();
+  } finally {
+    debugPrint = originalDebugPrint;
+    flowEventLoggingEnabled = previousLogging;
+  }
+
+  return printed
+      .where((line) => line.startsWith('[FLOW] '))
+      .map(
+        (line) =>
+            jsonDecode(line.substring('[FLOW] '.length))
+                as Map<String, dynamic>,
+      )
+      .toList();
 }
 
 void main() {
@@ -145,6 +176,29 @@ void main() {
 
       expect(result, isNull);
     });
+
+    test(
+      'emits MEDIA_UPLOAD_TIMING with blob, mime, and size metadata',
+      () async {
+        final events = await captureFlowEvents(() async {
+          await uploadMedia(
+            bridge: bridge,
+            localFilePath: tempFile.path,
+            mime: 'image/jpeg',
+            recipientPeerId: '12D3KooWRecipient123',
+          );
+        });
+
+        final timing = events.lastWhere(
+          (event) => event['event'] == 'MEDIA_UPLOAD_TIMING',
+        );
+        expect(timing['details']['outcome'], 'success');
+        expect(timing['details']['blobId'], isA<String>());
+        expect(timing['details']['mime'], 'image/jpeg');
+        expect(timing['details']['sizeBytes'], 1024);
+        expect(timing['details']['elapsedMs'], isA<int>());
+      },
+    );
 
     test('infers mediaType from mime', () async {
       final cases = {

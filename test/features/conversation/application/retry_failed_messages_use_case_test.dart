@@ -1,4 +1,8 @@
+import 'dart:convert';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/application/retry_failed_messages_use_case.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
@@ -12,6 +16,35 @@ import '../../../features/conversation/domain/repositories/fake_message_reposito
 import '../../../features/contacts/domain/repositories/fake_contact_repository.dart';
 import '../../../core/services/fake_p2p_service.dart';
 import '../../../core/bridge/fake_bridge.dart';
+
+Future<List<Map<String, dynamic>>> captureFlowEvents(
+  Future<void> Function() action,
+) async {
+  final printed = <String>[];
+  final previousLogging = flowEventLoggingEnabled;
+  final originalDebugPrint = debugPrint;
+  flowEventLoggingEnabled = true;
+  debugPrint = (String? message, {int? wrapWidth}) {
+    if (message != null) {
+      printed.add(message);
+    }
+  };
+  try {
+    await action();
+  } finally {
+    debugPrint = originalDebugPrint;
+    flowEventLoggingEnabled = previousLogging;
+  }
+
+  return printed
+      .where((line) => line.startsWith('[FLOW] '))
+      .map(
+        (line) =>
+            jsonDecode(line.substring('[FLOW] '.length))
+                as Map<String, dynamic>,
+      )
+      .toList();
+}
 
 IdentityModel makeIdentity() {
   return IdentityModel(
@@ -214,6 +247,47 @@ void main() {
         );
 
         expect(count, 1);
+      },
+    );
+
+    test(
+      'emits RETRY_FAILED_MESSAGES_TIMING with total and succeeded counts',
+      () async {
+        identityRepo.seed(makeIdentity());
+        messageRepo.seed([makeFailedMessage()]);
+        contactRepo.seed([makeContact(peerId: 'peer-target')]);
+
+        final p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+          discoverPeerResult: const DiscoveredPeer(
+            id: 'peer-target',
+            addresses: ['/ip4/127.0.0.1/tcp/4001'],
+          ),
+          dialPeerResult: true,
+          sendMessageWithReplyResult: const p2p.SendMessageResult(
+            sent: true,
+            reply: 'ack',
+          ),
+          storeInInboxResult: true,
+        );
+
+        final events = await captureFlowEvents(() async {
+          await retryFailedMessages(
+            messageRepo: messageRepo,
+            identityRepo: identityRepo,
+            contactRepo: contactRepo,
+            p2pService: p2pService,
+            bridge: bridge,
+          );
+        });
+
+        final timing = events.lastWhere(
+          (event) => event['event'] == 'RETRY_FAILED_MESSAGES_TIMING',
+        );
+        expect(timing['details']['outcome'], 'complete');
+        expect(timing['details']['total'], 1);
+        expect(timing['details']['succeeded'], 1);
+        expect(timing['details']['elapsedMs'], isA<int>());
       },
     );
 
@@ -509,52 +583,49 @@ void main() {
       expect(saved.wireEnvelope, isNull);
     });
 
-    test(
-      'retryFailedMessages skips storeInInbox when message transport '
-      'is already inbox',
-      () async {
-        identityRepo.seed(makeIdentity());
-        // Simulate the post-crash state: message was successfully stored
-        // in inbox but app crashed before DB was updated. On resume,
-        // a recovery path re-saved the row with transport='inbox'.
-        final msgWithInboxTransport = ConversationMessage(
-          id: 'msg-crash-001',
-          contactPeerId: 'peer-target',
-          senderPeerId: 'my-peer-id',
-          text: 'Crash test',
-          timestamp: '2026-01-01T00:00:00.000Z',
-          status: 'failed',
-          isIncoming: false,
-          createdAt: '2026-01-01T00:00:00.000Z',
-          transport: 'inbox', // already delivered via inbox before crash
-          wireEnvelope:
-              '{"type":"chat","version":"1","payload":{"id":"msg-crash-001"}}',
-        );
-        messageRepo.seed([msgWithInboxTransport]);
+    test('retryFailedMessages skips storeInInbox when message transport '
+        'is already inbox', () async {
+      identityRepo.seed(makeIdentity());
+      // Simulate the post-crash state: message was successfully stored
+      // in inbox but app crashed before DB was updated. On resume,
+      // a recovery path re-saved the row with transport='inbox'.
+      final msgWithInboxTransport = ConversationMessage(
+        id: 'msg-crash-001',
+        contactPeerId: 'peer-target',
+        senderPeerId: 'my-peer-id',
+        text: 'Crash test',
+        timestamp: '2026-01-01T00:00:00.000Z',
+        status: 'failed',
+        isIncoming: false,
+        createdAt: '2026-01-01T00:00:00.000Z',
+        transport: 'inbox', // already delivered via inbox before crash
+        wireEnvelope:
+            '{"type":"chat","version":"1","payload":{"id":"msg-crash-001"}}',
+      );
+      messageRepo.seed([msgWithInboxTransport]);
 
-        final p2pService = FakeP2PService(
-          initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
-          storeInInboxResult: true,
-        );
+      final p2pService = FakeP2PService(
+        initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+        storeInInboxResult: true,
+      );
 
-        final count = await retryFailedMessages(
-          messageRepo: messageRepo,
-          identityRepo: identityRepo,
-          contactRepo: contactRepo,
-          p2pService: p2pService,
-          bridge: bridge,
-        );
+      final count = await retryFailedMessages(
+        messageRepo: messageRepo,
+        identityRepo: identityRepo,
+        contactRepo: contactRepo,
+        p2pService: p2pService,
+        bridge: bridge,
+      );
 
-        // storeInInbox should NOT be called — message already has transport='inbox'
-        expect(p2pService.storeInInboxCallCount, 0);
-        // But the message should still be marked as delivered
-        expect(count, 1);
-        final saved = messageRepo.lastSavedMessage;
-        expect(saved, isNotNull);
-        expect(saved!.status, 'delivered');
-        expect(saved.wireEnvelope, isNull);
-      },
-    );
+      // storeInInbox should NOT be called — message already has transport='inbox'
+      expect(p2pService.storeInInboxCallCount, 0);
+      // But the message should still be marked as delivered
+      expect(count, 1);
+      final saved = messageRepo.lastSavedMessage;
+      expect(saved, isNotNull);
+      expect(saved!.status, 'delivered');
+      expect(saved.wireEnvelope, isNull);
+    });
 
     test('calls getFailedOutgoingMessages on messageRepo', () async {
       identityRepo.seed(makeIdentity());
