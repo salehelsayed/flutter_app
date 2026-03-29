@@ -2,6 +2,7 @@ import 'dart:ui' show TextDirection;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/letter_card.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/reaction_display.dart';
@@ -17,10 +18,14 @@ void main() {
     String? transport,
     String? quotedText,
     bool isQuoteUnavailable = false,
+    List<MediaAttachment> media = const [],
     List<MessageReaction> reactions = const [],
     String? ownPeerId,
     VoidCallback? onLongPress,
     void Function(String emoji)? onReactionTap,
+    VoidCallback? onRetryFailedMedia,
+    VoidCallback? onDeleteFailedMedia,
+    String? failedMediaActionKeySuffix,
   }) {
     return MaterialApp(
       home: Scaffold(
@@ -35,10 +40,14 @@ void main() {
             transport: transport,
             quotedText: quotedText,
             isQuoteUnavailable: isQuoteUnavailable,
+            media: media,
             reactions: reactions,
             ownPeerId: ownPeerId,
             onLongPress: onLongPress,
             onReactionTap: onReactionTap,
+            onRetryFailedMedia: onRetryFailedMedia,
+            onDeleteFailedMedia: onDeleteFailedMedia,
+            failedMediaActionKeySuffix: failedMediaActionKeySuffix,
           ),
         ),
       ),
@@ -135,10 +144,7 @@ void main() {
           expect(iconFinder, findsOneWidget);
 
           final icon = tester.widget<Icon>(iconFinder);
-          expect(
-            icon.color,
-            const Color.fromRGBO(255, 200, 100, 0.50),
-          );
+          expect(icon.color, const Color.fromRGBO(255, 200, 100, 0.50));
           expect(
             find.bySemanticsLabel('Message status: pending delivery via inbox'),
             findsOneWidget,
@@ -187,7 +193,9 @@ void main() {
         expect(find.byIcon(Icons.device_hub), findsOneWidget);
       });
 
-      testWidgets('shows direct icon when transport is reuse', (tester) async {
+      testWidgets('shows direct icon when transport is legacy reuse fallback', (
+        tester,
+      ) async {
         await tester.pumpWidget(buildTestWidget(transport: 'reuse'));
         expect(find.byIcon(Icons.device_hub), findsOneWidget);
       });
@@ -635,6 +643,82 @@ void main() {
           hasAvatar,
           isFalse,
           reason: 'Timestamp Row should not contain the avatar (header)',
+        );
+      });
+    });
+
+    group('failed media actions', () {
+      const kFailedMedia = [
+        MediaAttachment(
+          id: 'failed-attachment',
+          messageId: 'failed-message',
+          mime: 'image/jpeg',
+          size: 10,
+          mediaType: 'image',
+          localPath: '/tmp/failed.jpg',
+          downloadStatus: 'upload_failed',
+          createdAt: '2026-02-27T10:00:00.000Z',
+        ),
+      ];
+
+      testWidgets('shows retry and delete controls when callbacks are wired', (
+        tester,
+      ) async {
+        var retried = false;
+        var deleted = false;
+
+        await tester.pumpWidget(
+          buildTestWidget(
+            isIncoming: false,
+            status: 'failed',
+            text: '',
+            media: kFailedMedia,
+            onRetryFailedMedia: () => retried = true,
+            onDeleteFailedMedia: () => deleted = true,
+            failedMediaActionKeySuffix: 'failed-message',
+          ),
+        );
+
+        final retryFinder = find.byKey(
+          const ValueKey('failed-media-retry-failed-message'),
+        );
+        final deleteFinder = find.byKey(
+          const ValueKey('failed-media-delete-failed-message'),
+        );
+        expect(retryFinder, findsOneWidget);
+        expect(deleteFinder, findsOneWidget);
+
+        await tester.ensureVisible(retryFinder);
+        await tester.tap(retryFinder);
+        await tester.pump();
+        await tester.ensureVisible(deleteFinder);
+        await tester.tap(deleteFinder);
+        await tester.pump();
+
+        expect(retried, isTrue);
+        expect(deleted, isTrue);
+      });
+
+      testWidgets('hides failed media controls when callbacks are absent', (
+        tester,
+      ) async {
+        await tester.pumpWidget(
+          buildTestWidget(
+            isIncoming: false,
+            status: 'failed',
+            text: '',
+            media: kFailedMedia,
+            failedMediaActionKeySuffix: 'failed-message',
+          ),
+        );
+
+        expect(
+          find.byKey(const ValueKey('failed-media-retry-failed-message')),
+          findsNothing,
+        );
+        expect(
+          find.byKey(const ValueKey('failed-media-delete-failed-message')),
+          findsNothing,
         );
       });
     });

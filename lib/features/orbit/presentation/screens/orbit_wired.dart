@@ -189,6 +189,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   Set<String> _blockedPeerIds = {};
   final Set<String> _changedContactPeerIds = <String>{};
   final Set<String> _changedGroupIds = <String>{};
+  int _introLoadRequestId = 0;
 
   static const _animCurve = Cubic(0.22, 0.61, 0.36, 1);
 
@@ -566,6 +567,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   Future<void> _loadIntroductions() async {
     final introRepo = widget.introductionRepository;
     if (introRepo == null || _identity == null) return;
+    final requestId = ++_introLoadRequestId;
 
     try {
       final ownPeerId = _identity!.peerId;
@@ -582,7 +584,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           () => intro.introducerUsername ?? 'Unknown',
         );
       }
-      if (!mounted) return;
+      if (!mounted || requestId != _introLoadRequestId) return;
       _introsCount = pending.length;
       _groupedIntros = grouped;
       _introducerUsernames = usernames;
@@ -675,7 +677,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         await _refreshOrbitFriend(otherPeerId);
       }
     }
-    _loadIntroductions();
+    await _loadIntroductions();
   }
 
   Future<void> _onPassIntro(String introductionId) async {
@@ -690,7 +692,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       ownPeerId: _identity!.peerId,
       ownUsername: _identity!.username,
     );
-    _loadIntroductions();
+    await _loadIntroductions();
   }
 
   void _onIntroSendMessage(String peerId) {

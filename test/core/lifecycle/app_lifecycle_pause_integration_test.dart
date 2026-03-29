@@ -51,33 +51,50 @@ void main() {
           dbCountMessagesForContact(db, peerId),
       dbMarkConversationAsRead: (peerId) =>
           dbMarkConversationAsRead(db, peerId),
-      dbCountUnreadForContact: (peerId) =>
-          dbCountUnreadForContact(db, peerId),
+      dbCountUnreadForContact: (peerId) => dbCountUnreadForContact(db, peerId),
       dbCountTotalUnread: () => dbCountTotalUnread(db),
       dbCountTotalUnreadExcludingArchived: () =>
           dbCountTotalUnreadExcludingArchived(db),
       dbDeleteMessagesForContact: (peerId) =>
           dbDeleteMessagesForContact(db, peerId),
+      dbDeleteMessage: (id) => dbDeleteMessage(db, id),
       dbLoadMessagesPage: (peerId, {limit = 50, beforeTimestamp}) =>
-          dbLoadMessagesPage(db, peerId,
-              limit: limit, beforeTimestamp: beforeTimestamp),
+          dbLoadMessagesPage(
+            db,
+            peerId,
+            limit: limit,
+            beforeTimestamp: beforeTimestamp,
+          ),
       dbLoadFailedOutgoingMessages: () => dbLoadFailedOutgoingMessages(db),
       dbLoadUnackedOutgoingMessages: ({required olderThan, limit = 50}) =>
-          dbLoadUnackedOutgoingMessages(db,
-              olderThan: olderThan, limit: limit),
+          dbLoadUnackedOutgoingMessages(db, olderThan: olderThan, limit: limit),
       dbLoadConversationThreadSummaries: (ids) =>
           dbLoadConversationThreadSummaries(db, ids),
-      dbRecoverStuckSendingMessages: ({required DateTime olderThan, int limit = 50}) =>
-          dbRecoverStuckSendingMessages(db, olderThan: olderThan, limit: limit),
+      dbRecoverStuckSendingMessages:
+          ({required DateTime olderThan, int limit = 50}) =>
+              dbRecoverStuckSendingMessages(
+                db,
+                olderThan: olderThan,
+                limit: limit,
+              ),
       dbUpdateWireEnvelope: (id, wireEnvelope) =>
           dbUpdateWireEnvelope(db, id, wireEnvelope),
-      dbLoadStuckSendingOutgoingMessages: ({required DateTime olderThan, int limit = 50}) =>
-          dbLoadStuckSendingOutgoingMessages(db, olderThan: olderThan, limit: limit),
+      dbLoadStuckSendingOutgoingMessages:
+          ({required DateTime olderThan, int limit = 50}) =>
+              dbLoadStuckSendingOutgoingMessages(
+                db,
+                olderThan: olderThan,
+                limit: limit,
+              ),
       dbLoadSendingOutgoingMessages: () => dbLoadSendingOutgoingMessages(db),
       dbConditionalTransitionStatus:
           (id, {required fromStatus, required toStatus}) =>
-              dbConditionalTransitionStatus(db, id,
-                  fromStatus: fromStatus, toStatus: toStatus),
+              dbConditionalTransitionStatus(
+                db,
+                id,
+                fromStatus: fromStatus,
+                toStatus: toStatus,
+              ),
     );
   });
 
@@ -88,18 +105,17 @@ void main() {
     required String status,
     String contactPeerId = 'peer-a',
     String? wireEnvelope,
-  }) =>
-      {
-        'id': id,
-        'contact_peer_id': contactPeerId,
-        'sender_peer_id': 'my-peer-id',
-        'text': 'Hello',
-        'timestamp': '2026-01-01T00:00:00.000Z',
-        'status': status,
-        'is_incoming': 0,
-        'created_at': '2026-01-01T00:00:00.000Z',
-        'wire_envelope': wireEnvelope,
-      };
+  }) => {
+    'id': id,
+    'contact_peer_id': contactPeerId,
+    'sender_peer_id': 'my-peer-id',
+    'text': 'Hello',
+    'timestamp': '2026-01-01T00:00:00.000Z',
+    'status': status,
+    'is_incoming': 0,
+    'created_at': '2026-01-01T00:00:00.000Z',
+    'wire_envelope': wireEnvelope,
+  };
 
   group('DB state after handleAppPaused', () {
     test('sending message is persisted as failed in DB after pause', () async {
@@ -119,8 +135,7 @@ void main() {
       const envelope = '{"version":"2","encrypted":{}}';
       await dbInsertMessage(
         db,
-        makeRow(
-            id: 'msg-002', status: 'sending', wireEnvelope: envelope),
+        makeRow(id: 'msg-002', status: 'sending', wireEnvelope: envelope),
       );
 
       await handleAppPaused(messageRepo: messageRepo);
@@ -135,10 +150,7 @@ void main() {
     });
 
     test('delivered messages remain delivered after pause', () async {
-      await dbInsertMessage(
-        db,
-        makeRow(id: 'msg-003', status: 'delivered'),
-      );
+      await dbInsertMessage(db, makeRow(id: 'msg-003', status: 'delivered'));
 
       await handleAppPaused(messageRepo: messageRepo);
 
@@ -168,27 +180,34 @@ void main() {
       expect(emitted, contains('msg-004:failed'));
     });
 
-    test('failed messages are available for retryFailedMessages after pause',
-        () async {
-      await dbInsertMessage(db, makeRow(id: 'msg-005', status: 'sending'));
+    test(
+      'failed messages are available for retryFailedMessages after pause',
+      () async {
+        await dbInsertMessage(db, makeRow(id: 'msg-005', status: 'sending'));
 
-      await handleAppPaused(messageRepo: messageRepo);
+        await handleAppPaused(messageRepo: messageRepo);
 
-      final failed = await messageRepo.getFailedOutgoingMessages();
-      expect(failed.length, 1);
-      expect(failed.first.id, 'msg-005');
-      expect(failed.first.status, 'failed');
-    });
+        final failed = await messageRepo.getFailedOutgoingMessages();
+        expect(failed.length, 1);
+        expect(failed.first.id, 'msg-005');
+        expect(failed.first.status, 'failed');
+      },
+    );
 
-    test('getSendingOutgoingMessages returns empty after pause completes',
-        () async {
-      await dbInsertMessage(db, makeRow(id: 'msg-006', status: 'sending'));
+    test(
+      'getSendingOutgoingMessages returns empty after pause completes',
+      () async {
+        await dbInsertMessage(db, makeRow(id: 'msg-006', status: 'sending'));
 
-      await handleAppPaused(messageRepo: messageRepo);
+        await handleAppPaused(messageRepo: messageRepo);
 
-      final sending = await messageRepo.getSendingOutgoingMessages();
-      expect(sending, isEmpty,
-          reason: 'No messages should remain in sending state after pause');
-    });
+        final sending = await messageRepo.getSendingOutgoingMessages();
+        expect(
+          sending,
+          isEmpty,
+          reason: 'No messages should remain in sending state after pause',
+        );
+      },
+    );
   });
 }

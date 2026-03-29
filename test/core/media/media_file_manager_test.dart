@@ -6,6 +6,8 @@ import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 
 import 'package:flutter_app/core/media/media_file_manager.dart';
 
+import '../../shared/fakes/fake_media_file_manager.dart';
+
 /// Fake path provider that returns a temp directory.
 class _FakePathProvider extends Fake
     with MockPlatformInterfaceMixin
@@ -234,16 +236,23 @@ void main() {
 
     group('resolveStoredPath', () {
       test('resolves relative path to absolute', () async {
-        final resolved =
-            await fileManager.resolveStoredPath('media/contact-A/blob-001.jpg');
-        expect(resolved, equals('${tempDir.path}/media/contact-A/blob-001.jpg'));
+        final resolved = await fileManager.resolveStoredPath(
+          'media/contact-A/blob-001.jpg',
+        );
+        expect(
+          resolved,
+          equals('${tempDir.path}/media/contact-A/blob-001.jpg'),
+        );
       });
 
       test('resolves legacy absolute path with /media/ segment', () async {
         final legacyPath =
             '/old-container-uuid/Documents/media/contact-A/blob-001.jpg';
         final resolved = await fileManager.resolveStoredPath(legacyPath);
-        expect(resolved, equals('${tempDir.path}/media/contact-A/blob-001.jpg'));
+        expect(
+          resolved,
+          equals('${tempDir.path}/media/contact-A/blob-001.jpg'),
+        );
       });
 
       test('returns unknown absolute path as-is', () async {
@@ -270,6 +279,65 @@ void main() {
 
       test('does not throw when file does not exist', () async {
         await fileManager.deleteFile('/nonexistent/path/file.jpg');
+      });
+    });
+
+    group('deleteOwnedPendingUploadFilesForMessage', () {
+      test(
+        'deletes only app-owned pending_upload paths for the target message',
+        () async {
+          final fakeFileManager = FakeMediaFileManager();
+
+          await fakeFileManager.deleteOwnedPendingUploadFilesForMessage(
+            messageId: 'msg-123',
+            storedPaths: const [
+              'pending_uploads/msg-123/owned.jpg',
+              'pending_uploads/msg-other/other.jpg',
+              '/private/var/mobile/Containers/Data/Application/uuid/Documents/pending_uploads/msg-123/owned-abs.jpg',
+              '/var/mobile/Media/DCIM/100APPLE/source.jpg',
+            ],
+          );
+
+          expect(
+            fakeFileManager.deletedFilePaths,
+            contains('/tmp/test_docs/pending_uploads/msg-123/owned.jpg'),
+          );
+          expect(
+            fakeFileManager.deletedFilePaths,
+            contains(
+              '/private/var/mobile/Containers/Data/Application/uuid/Documents/pending_uploads/msg-123/owned-abs.jpg',
+            ),
+          );
+          expect(
+            fakeFileManager.deletedFilePaths,
+            isNot(
+              contains('/tmp/test_docs/pending_uploads/msg-other/other.jpg'),
+            ),
+          );
+          expect(
+            fakeFileManager.deletedFilePaths,
+            isNot(contains('/var/mobile/Media/DCIM/100APPLE/source.jpg')),
+          );
+        },
+      );
+
+      test('preserves arbitrary stored source paths on disk', () async {
+        final ownedDir = Directory('${tempDir.path}/pending_uploads/msg-safe');
+        await ownedDir.create(recursive: true);
+        final ownedFile = File('${ownedDir.path}/owned.jpg');
+        await ownedFile.writeAsBytes([0x01]);
+
+        final galleryFile = File('${tempDir.path}/gallery/source.jpg');
+        await galleryFile.parent.create(recursive: true);
+        await galleryFile.writeAsBytes([0x02]);
+
+        await fileManager.deleteOwnedPendingUploadFilesForMessage(
+          messageId: 'msg-safe',
+          storedPaths: ['pending_uploads/msg-safe/owned.jpg', galleryFile.path],
+        );
+
+        expect(await ownedFile.exists(), isFalse);
+        expect(await galleryFile.exists(), isTrue);
       });
     });
   });

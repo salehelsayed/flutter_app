@@ -24,6 +24,8 @@ class FakeP2PService implements P2PService {
   final NodeState _currentState;
   bool sendMessageResult;
   String? sendMessageReply;
+  bool? sendMessageAcked;
+  String? sendMessageTransport;
   bool shouldThrow;
   bool storeInInboxResult;
   RelayProbeResult probeRelayResult;
@@ -58,6 +60,8 @@ class FakeP2PService implements P2PService {
     NodeState? currentState,
     this.sendMessageResult = true,
     this.sendMessageReply = 'received: ok',
+    this.sendMessageAcked,
+    this.sendMessageTransport,
     this.shouldThrow = false,
     this.storeInInboxResult = false,
     this.probeRelayResult = RelayProbeResult.error,
@@ -109,7 +113,12 @@ class FakeP2PService implements P2PService {
     lastSentPayload = message;
     sendCallCount++;
     onSendMessage?.call();
-    return SendMessageResult(sent: sendMessageResult, reply: sendMessageReply);
+    return SendMessageResult(
+      sent: sendMessageResult,
+      acked: sendMessageAcked,
+      reply: sendMessageReply,
+      transport: sendMessageTransport,
+    );
   }
 
   @override
@@ -953,6 +962,69 @@ void main() {
 
   group('Phase 3 — relay probe recovery', () {
     test(
+      'relay probe success persists relay when send result transport says relay',
+      () async {
+        p2pService = FakeP2PService(
+          useNullDiscover: true,
+          sendMessageTransport: 'relay',
+        );
+        p2pService.probeRelayResult = RelayProbeResult.connected;
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Hello through relay probe',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message, isNotNull);
+        expect(message!.status, 'delivered');
+        expect(message.transport, 'relay');
+      },
+    );
+
+    test(
+      'relay probe falls back to state inference only when send transport is absent',
+      () async {
+        p2pService = FakeP2PService(
+          currentState: NodeState(
+            isStarted: true,
+            connections: [
+              const p2p.ConnectionState(
+                peerId: 'target-peer',
+                multiaddrs: [
+                  '/ip4/10.0.0.8/tcp/4001/p2p/12D3KooWRelay/p2p-circuit',
+                ],
+                direction: 'outbound',
+                status: 'connected',
+              ),
+            ],
+          ),
+          useNullDiscover: true,
+          sendMessageTransport: null,
+        );
+        p2pService.probeRelayResult = RelayProbeResult.connected;
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Hello with inferred relay fallback',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message, isNotNull);
+        expect(message!.status, 'delivered');
+        expect(message.transport, 'relay');
+      },
+    );
+
+    test(
       'discover miss then relay probe connected sends live without inbox',
       () async {
         p2pService = FakeP2PService(useNullDiscover: true);
@@ -1095,6 +1167,28 @@ void main() {
   // ─── Phase 1: Interactive Send Path Tests ─────────────────────────
   group('Phase 1 — interactive send path', () {
     test(
+      'direct discover path persists actual send transport when Go returns relay',
+      () async {
+        p2pService = FakeP2PService(sendMessageTransport: 'relay');
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Hello through actual relay',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message, isNotNull);
+        expect(message!.transport, 'relay');
+        expect(p2pService.discoverCallCount, 1);
+        expect(p2pService.sendCallCount, 1);
+      },
+    );
+
+    test(
       'existing connected peer is used before launching new transport attempts',
       () async {
         // Set up a FakeP2PService with the target peer already connected
@@ -1123,11 +1217,125 @@ void main() {
 
         expect(result, SendChatMessageResult.success);
         expect(message, isNotNull);
+        expect(message!.transport, 'direct');
         // Should have sent without discover/dial (connection reuse)
         expect(p2pService.sendCallCount, 1);
         expect(p2pService.discoverCallCount, 0);
         expect(p2pService.dialCallCount, 0);
         expect(p2pService.probeRelayCallCount, 0);
+      },
+    );
+
+    test(
+      'existing relay-backed connection persists relay transport on the reuse fast path',
+      () async {
+        p2pService = FakeP2PService(
+          currentState: NodeState(
+            isStarted: true,
+            connections: [
+              const p2p.ConnectionState(
+                peerId: 'target-peer',
+                multiaddrs: [
+                  '/ip4/10.0.0.8/tcp/4001/p2p/12D3KooWRelay/p2p-circuit',
+                ],
+                direction: 'outbound',
+                status: 'connected',
+              ),
+            ],
+          ),
+        );
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Hello through reused relay',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message, isNotNull);
+        expect(message!.transport, 'relay');
+        expect(p2pService.sendCallCount, 1);
+        expect(p2pService.discoverCallCount, 0);
+        expect(p2pService.dialCallCount, 0);
+      },
+    );
+
+    test(
+      'explicit send transport beats conflicting mixed peer state on the reuse fast path',
+      () async {
+        p2pService = FakeP2PService(
+          currentState: NodeState(
+            isStarted: true,
+            connections: [
+              const p2p.ConnectionState(
+                peerId: 'target-peer',
+                multiaddrs: ['/ip4/192.168.1.20/tcp/4001'],
+                direction: 'outbound',
+                status: 'connected',
+              ),
+              const p2p.ConnectionState(
+                peerId: 'target-peer',
+                multiaddrs: [
+                  '/ip4/10.0.0.8/tcp/4001/p2p/12D3KooWRelay/p2p-circuit',
+                ],
+                direction: 'outbound',
+                status: 'connected',
+              ),
+            ],
+          ),
+          sendMessageTransport: 'direct',
+        );
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Hello through actual direct stream',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message, isNotNull);
+        expect(message!.transport, 'direct');
+      },
+    );
+
+    test(
+      'existing local peer persists local transport on the reuse fast path',
+      () async {
+        p2pService = FakeP2PService(
+          currentState: NodeState(
+            isStarted: true,
+            connections: [
+              const p2p.ConnectionState(
+                peerId: 'target-peer',
+                multiaddrs: ['/ip4/192.168.1.20/tcp/4001'],
+                direction: 'outbound',
+                status: 'connected',
+              ),
+            ],
+          ),
+        )..localPeers.add('target-peer');
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Hello through reused local',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message, isNotNull);
+        expect(message!.transport, 'local');
+        expect(p2pService.sendCallCount, 1);
+        expect(p2pService.discoverCallCount, 0);
+        expect(p2pService.dialCallCount, 0);
       },
     );
 

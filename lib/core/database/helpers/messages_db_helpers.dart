@@ -49,10 +49,9 @@ Future<List<Map<String, Object?>>> dbLoadMessagesPage(
     layer: 'DB',
     event: 'MESSAGES_DB_LOAD_PAGE_START',
     details: {
-      'contactPeerId':
-          contactPeerId.length > 10
-              ? contactPeerId.substring(0, 10)
-              : contactPeerId,
+      'contactPeerId': contactPeerId.length > 10
+          ? contactPeerId.substring(0, 10)
+          : contactPeerId,
       'limit': limit,
       'hasCursor': beforeTimestamp != null,
     },
@@ -104,10 +103,9 @@ Future<List<Map<String, Object?>>> dbLoadMessagesForContact(
     layer: 'DB',
     event: 'MESSAGES_DB_LOAD_FOR_CONTACT_START',
     details: {
-      'contactPeerId':
-          contactPeerId.length > 10
-              ? contactPeerId.substring(0, 10)
-              : contactPeerId,
+      'contactPeerId': contactPeerId.length > 10
+          ? contactPeerId.substring(0, 10)
+          : contactPeerId,
     },
   );
 
@@ -145,10 +143,9 @@ Future<Map<String, Object?>?> dbLoadLatestMessageForContact(
     layer: 'DB',
     event: 'MESSAGES_DB_LOAD_LATEST_START',
     details: {
-      'contactPeerId':
-          contactPeerId.length > 10
-              ? contactPeerId.substring(0, 10)
-              : contactPeerId,
+      'contactPeerId': contactPeerId.length > 10
+          ? contactPeerId.substring(0, 10)
+          : contactPeerId,
     },
   );
 
@@ -197,8 +194,7 @@ Future<List<Map<String, Object?>>> dbLoadConversationThreadSummaries(
   if (contactPeerIds.isEmpty) return const [];
 
   final placeholders = List.filled(contactPeerIds.length, '?').join(', ');
-  final results = await db.rawQuery(
-    '''
+  final results = await db.rawQuery('''
     SELECT
       summary.contact_peer_id,
       summary.message_count,
@@ -239,18 +235,12 @@ Future<List<Map<String, Object?>>> dbLoadConversationThreadSummaries(
                  inner_latest.id DESC
         LIMIT 1
       )
-    ''',
-    contactPeerIds,
-  );
+    ''', contactPeerIds);
   return results;
 }
 
 /// Updates the status of a message by ID.
-Future<int> dbUpdateMessageStatus(
-  Database db,
-  String id,
-  String status,
-) async {
+Future<int> dbUpdateMessageStatus(Database db, String id, String status) async {
   emitFlowEvent(
     layer: 'DB',
     event: 'MESSAGES_DB_UPDATE_STATUS_START',
@@ -287,9 +277,7 @@ Future<int> dbUpdateMessageStatus(
 /// Returns the total number of messages.
 Future<int> dbGetMessageCount(Database db) async {
   try {
-    final result = await db.rawQuery(
-      'SELECT COUNT(*) as count FROM messages',
-    );
+    final result = await db.rawQuery('SELECT COUNT(*) as count FROM messages');
     return Sqflite.firstIntValue(result) ?? 0;
   } catch (e) {
     return 0;
@@ -302,10 +290,9 @@ Future<int> dbCountMessagesForContact(Database db, String contactPeerId) async {
     layer: 'DB',
     event: 'MESSAGES_DB_COUNT_FOR_CONTACT_START',
     details: {
-      'contactPeerId':
-          contactPeerId.length > 10
-              ? contactPeerId.substring(0, 10)
-              : contactPeerId,
+      'contactPeerId': contactPeerId.length > 10
+          ? contactPeerId.substring(0, 10)
+          : contactPeerId,
     },
   );
 
@@ -339,10 +326,9 @@ Future<int> dbMarkConversationAsRead(Database db, String contactPeerId) async {
     layer: 'DB',
     event: 'MESSAGES_DB_MARK_READ_START',
     details: {
-      'contactPeerId':
-          contactPeerId.length > 10
-              ? contactPeerId.substring(0, 10)
-              : contactPeerId,
+      'contactPeerId': contactPeerId.length > 10
+          ? contactPeerId.substring(0, 10)
+          : contactPeerId,
     },
   );
 
@@ -376,10 +362,9 @@ Future<int> dbCountUnreadForContact(Database db, String contactPeerId) async {
     layer: 'DB',
     event: 'MESSAGES_DB_COUNT_UNREAD_CONTACT_START',
     details: {
-      'contactPeerId':
-          contactPeerId.length > 10
-              ? contactPeerId.substring(0, 10)
-              : contactPeerId,
+      'contactPeerId': contactPeerId.length > 10
+          ? contactPeerId.substring(0, 10)
+          : contactPeerId,
     },
   );
 
@@ -472,15 +457,17 @@ Future<int> dbCountTotalUnreadExcludingArchived(Database db) async {
 }
 
 /// Deletes all messages for a contact.
-Future<int> dbDeleteMessagesForContact(Database db, String contactPeerId) async {
+Future<int> dbDeleteMessagesForContact(
+  Database db,
+  String contactPeerId,
+) async {
   emitFlowEvent(
     layer: 'DB',
     event: 'MESSAGES_DB_DELETE_FOR_CONTACT_START',
     details: {
-      'contactPeerId':
-          contactPeerId.length > 10
-              ? contactPeerId.substring(0, 10)
-              : contactPeerId,
+      'contactPeerId': contactPeerId.length > 10
+          ? contactPeerId.substring(0, 10)
+          : contactPeerId,
     },
   );
 
@@ -502,6 +489,34 @@ Future<int> dbDeleteMessagesForContact(Database db, String contactPeerId) async 
     emitFlowEvent(
       layer: 'DB',
       event: 'MESSAGES_DB_DELETE_FOR_CONTACT_ERROR',
+      details: {'error': e.toString()},
+    );
+    rethrow;
+  }
+}
+
+/// Deletes a single message by ID.
+Future<int> dbDeleteMessage(Database db, String id) async {
+  emitFlowEvent(
+    layer: 'DB',
+    event: 'MESSAGES_DB_DELETE_START',
+    details: {'id': id.length > 8 ? id.substring(0, 8) : id},
+  );
+
+  try {
+    final count = await db.delete('messages', where: 'id = ?', whereArgs: [id]);
+
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'MESSAGES_DB_DELETE_SUCCESS',
+      details: {'count': count},
+    );
+
+    return count;
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'MESSAGES_DB_DELETE_ERROR',
       details: {'error': e.toString()},
     );
     rethrow;

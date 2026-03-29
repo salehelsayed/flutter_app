@@ -7,28 +7,31 @@ import 'introduction_repository.dart';
 class IntroductionRepositoryImpl implements IntroductionRepository {
   final Future<void> Function(Map<String, Object?> row) dbInsertIntroduction;
   final Future<Map<String, Object?>?> Function(String id) dbLoadIntroduction;
+  final Future<void> Function(String id) dbDeleteIntroduction;
   final Future<List<Map<String, Object?>>> Function(String recipientId)
-      dbLoadIntroductionsByRecipient;
+  dbLoadIntroductionsByRecipient;
   final Future<List<Map<String, Object?>>> Function(String introducedId)
-      dbLoadIntroductionsByIntroduced;
+  dbLoadIntroductionsByIntroduced;
   final Future<List<Map<String, Object?>>> Function(String introducerId)
-      dbLoadIntroductionsByIntroducer;
+  dbLoadIntroductionsByIntroducer;
   final Future<List<Map<String, Object?>>> Function(
     String recipientId,
     String introducerId,
-  ) dbLoadIntroductionsForRecipientAndIntroducer;
+  )
+  dbLoadIntroductionsForRecipientAndIntroducer;
   final Future<void> Function(String id, String status, String respondedAt)
-      dbUpdateRecipientStatus;
+  dbUpdateRecipientStatus;
   final Future<void> Function(String id, String status, String respondedAt)
-      dbUpdateIntroducedStatus;
+  dbUpdateIntroducedStatus;
   final Future<void> Function(String id, String status) dbUpdateOverallStatus;
   final Future<List<Map<String, Object?>>> Function(String peerId)
-      dbLoadPendingIntroductionsForUser;
+  dbLoadPendingIntroductionsForUser;
   final Future<int> Function(String peerId) dbCountPendingIntroductions;
 
   IntroductionRepositoryImpl({
     required this.dbInsertIntroduction,
     required this.dbLoadIntroduction,
+    required this.dbDeleteIntroduction,
     required this.dbLoadIntroductionsByRecipient,
     required this.dbLoadIntroductionsByIntroduced,
     required this.dbLoadIntroductionsByIntroducer,
@@ -45,7 +48,9 @@ class IntroductionRepositoryImpl implements IntroductionRepository {
     emitFlowEvent(
       layer: 'FL',
       event: 'INTRODUCTIONS_REPO_SAVE_START',
-      details: {'id': intro.id.length > 10 ? intro.id.substring(0, 10) : intro.id},
+      details: {
+        'id': intro.id.length > 10 ? intro.id.substring(0, 10) : intro.id,
+      },
     );
 
     try {
@@ -54,7 +59,9 @@ class IntroductionRepositoryImpl implements IntroductionRepository {
       emitFlowEvent(
         layer: 'FL',
         event: 'INTRODUCTIONS_REPO_SAVE_SUCCESS',
-        details: {'id': intro.id.length > 10 ? intro.id.substring(0, 10) : intro.id},
+        details: {
+          'id': intro.id.length > 10 ? intro.id.substring(0, 10) : intro.id,
+        },
       );
     } catch (e) {
       emitFlowEvent(
@@ -74,19 +81,30 @@ class IntroductionRepositoryImpl implements IntroductionRepository {
   }
 
   @override
-  Future<List<IntroductionModel>> getIntroductionsByRecipient(String recipientId) async {
+  Future<void> deleteIntroduction(String id) async {
+    await dbDeleteIntroduction(id);
+  }
+
+  @override
+  Future<List<IntroductionModel>> getIntroductionsByRecipient(
+    String recipientId,
+  ) async {
     final rows = await dbLoadIntroductionsByRecipient(recipientId);
     return rows.map((row) => IntroductionModel.fromMap(row)).toList();
   }
 
   @override
-  Future<List<IntroductionModel>> getIntroductionsByIntroduced(String introducedId) async {
+  Future<List<IntroductionModel>> getIntroductionsByIntroduced(
+    String introducedId,
+  ) async {
     final rows = await dbLoadIntroductionsByIntroduced(introducedId);
     return rows.map((row) => IntroductionModel.fromMap(row)).toList();
   }
 
   @override
-  Future<List<IntroductionModel>> getIntroductionsByIntroducer(String introducerId) async {
+  Future<List<IntroductionModel>> getIntroductionsByIntroducer(
+    String introducerId,
+  ) async {
     final rows = await dbLoadIntroductionsByIntroducer(introducerId);
     return rows.map((row) => IntroductionModel.fromMap(row)).toList();
   }
@@ -104,11 +122,17 @@ class IntroductionRepositoryImpl implements IntroductionRepository {
   }
 
   @override
-  Future<void> updateRecipientStatus(String id, IntroductionStatus status) async {
+  Future<void> updateRecipientStatus(
+    String id,
+    IntroductionStatus status,
+  ) async {
     emitFlowEvent(
       layer: 'FL',
       event: 'INTRODUCTIONS_REPO_UPDATE_RECIPIENT_STATUS_START',
-      details: {'id': id.length > 10 ? id.substring(0, 10) : id, 'status': status.toDbString()},
+      details: {
+        'id': id.length > 10 ? id.substring(0, 10) : id,
+        'status': status.toDbString(),
+      },
     );
 
     try {
@@ -118,7 +142,10 @@ class IntroductionRepositoryImpl implements IntroductionRepository {
       emitFlowEvent(
         layer: 'FL',
         event: 'INTRODUCTIONS_REPO_UPDATE_RECIPIENT_STATUS_SUCCESS',
-        details: {'id': id.length > 10 ? id.substring(0, 10) : id, 'status': status.toDbString()},
+        details: {
+          'id': id.length > 10 ? id.substring(0, 10) : id,
+          'status': status.toDbString(),
+        },
       );
     } catch (e) {
       emitFlowEvent(
@@ -131,11 +158,17 @@ class IntroductionRepositoryImpl implements IntroductionRepository {
   }
 
   @override
-  Future<void> updateIntroducedStatus(String id, IntroductionStatus status) async {
+  Future<void> updateIntroducedStatus(
+    String id,
+    IntroductionStatus status,
+  ) async {
     emitFlowEvent(
       layer: 'FL',
       event: 'INTRODUCTIONS_REPO_UPDATE_INTRODUCED_STATUS_START',
-      details: {'id': id.length > 10 ? id.substring(0, 10) : id, 'status': status.toDbString()},
+      details: {
+        'id': id.length > 10 ? id.substring(0, 10) : id,
+        'status': status.toDbString(),
+      },
     );
 
     try {
@@ -145,7 +178,10 @@ class IntroductionRepositoryImpl implements IntroductionRepository {
       emitFlowEvent(
         layer: 'FL',
         event: 'INTRODUCTIONS_REPO_UPDATE_INTRODUCED_STATUS_SUCCESS',
-        details: {'id': id.length > 10 ? id.substring(0, 10) : id, 'status': status.toDbString()},
+        details: {
+          'id': id.length > 10 ? id.substring(0, 10) : id,
+          'status': status.toDbString(),
+        },
       );
     } catch (e) {
       emitFlowEvent(
@@ -158,11 +194,17 @@ class IntroductionRepositoryImpl implements IntroductionRepository {
   }
 
   @override
-  Future<void> updateOverallStatus(String id, IntroductionOverallStatus status) async {
+  Future<void> updateOverallStatus(
+    String id,
+    IntroductionOverallStatus status,
+  ) async {
     emitFlowEvent(
       layer: 'FL',
       event: 'INTRODUCTIONS_REPO_UPDATE_OVERALL_STATUS_START',
-      details: {'id': id.length > 10 ? id.substring(0, 10) : id, 'status': status.toDbString()},
+      details: {
+        'id': id.length > 10 ? id.substring(0, 10) : id,
+        'status': status.toDbString(),
+      },
     );
 
     try {
@@ -171,7 +213,10 @@ class IntroductionRepositoryImpl implements IntroductionRepository {
       emitFlowEvent(
         layer: 'FL',
         event: 'INTRODUCTIONS_REPO_UPDATE_OVERALL_STATUS_SUCCESS',
-        details: {'id': id.length > 10 ? id.substring(0, 10) : id, 'status': status.toDbString()},
+        details: {
+          'id': id.length > 10 ? id.substring(0, 10) : id,
+          'status': status.toDbString(),
+        },
       );
     } catch (e) {
       emitFlowEvent(
@@ -184,7 +229,9 @@ class IntroductionRepositoryImpl implements IntroductionRepository {
   }
 
   @override
-  Future<List<IntroductionModel>> getPendingIntroductionsForUser(String peerId) async {
+  Future<List<IntroductionModel>> getPendingIntroductionsForUser(
+    String peerId,
+  ) async {
     final rows = await dbLoadPendingIntroductionsForUser(peerId);
     return rows.map((row) => IntroductionModel.fromMap(row)).toList();
   }

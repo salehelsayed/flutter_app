@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/go_bridge_client.dart';
 
 void main() {
@@ -300,6 +301,33 @@ void main() {
       expect(received!['watchdogRestartCount'], equals(2));
       expect(received!['needsGroupRecovery'], isTrue);
     });
+
+    test(
+      'media:upload_progress push event forwards to upload stream',
+      () async {
+        final eventFuture = mediaUploadProgressStream.first.timeout(
+          const Duration(seconds: 1),
+        );
+
+        client.debugHandleEventForTest(
+          jsonEncode({
+            'event': 'media:upload_progress',
+            'data': {
+              'id': 'blob-1',
+              'sentBytes': 5,
+              'totalBytes': 10,
+              'toPeerId': 'peer-1',
+            },
+          }),
+        );
+
+        final received = await eventFuture;
+        expect(received['id'], 'blob-1');
+        expect(received['sentBytes'], 5);
+        expect(received['totalBytes'], 10);
+        expect(received['toPeerId'], 'peer-1');
+      },
+    );
   });
 
   // ---------------------------------------------------------------------------

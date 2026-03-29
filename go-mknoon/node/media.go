@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"time"
 
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -44,6 +45,35 @@ type MediaMeta struct {
 }
 
 // --- Helper ---
+
+const mediaUploadProgressEmitChunkBytes int64 = 256 * 1024
+const mediaUploadProgressEmitInterval = 250 * time.Millisecond
+
+type mediaUploadProgressReader struct {
+	reader         io.Reader
+	totalBytes     int64
+	sentBytes      int64
+	lastEmitBytes  int64
+	lastEmitAt     time.Time
+	emitProgressFn func(sentBytes, totalBytes int64)
+}
+
+func (r *mediaUploadProgressReader) Read(p []byte) (int, error) {
+	n, err := r.reader.Read(p)
+	if n > 0 {
+		r.sentBytes += int64(n)
+		now := time.Now()
+		shouldEmit := r.sentBytes == r.totalBytes ||
+			r.sentBytes-r.lastEmitBytes >= mediaUploadProgressEmitChunkBytes ||
+			now.Sub(r.lastEmitAt) >= mediaUploadProgressEmitInterval
+		if shouldEmit && r.emitProgressFn != nil {
+			r.lastEmitBytes = r.sentBytes
+			r.lastEmitAt = now
+			r.emitProgressFn(r.sentBytes, r.totalBytes)
+		}
+	}
+	return n, err
+}
 
 // openMediaStream connects to the relay and opens a MediaProtocol stream.
 // Tries each configured relay in order until one succeeds.
@@ -154,9 +184,24 @@ func (n *Node) MediaUpload(id, toPeerId, mime, filePath string, allowedPeers []s
 	}
 
 	// Stream raw bytes
-	if _, err := io.Copy(s, f); err != nil {
+	progressReader := &mediaUploadProgressReader{
+		reader:     f,
+		totalBytes: fi.Size(),
+		lastEmitAt: time.Now(),
+		emitProgressFn: func(sentBytes, totalBytes int64) {
+			n.emitEvent("media:upload_progress", map[string]interface{}{
+				"id":         id,
+				"sentBytes":  sentBytes,
+				"totalBytes": totalBytes,
+				"toPeerId":   toPeerId,
+			})
+		},
+	}
+	progressReader.emitProgressFn(0, fi.Size())
+	if _, err := io.Copy(s, progressReader); err != nil {
 		return fmt.Errorf("stream file data: %w", err)
 	}
+	progressReader.emitProgressFn(fi.Size(), fi.Size())
 
 	// Read final confirmation
 	confirmBytes, err := readFrame(s)

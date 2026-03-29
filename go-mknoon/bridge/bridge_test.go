@@ -10,6 +10,7 @@ import (
 
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/mknoon/go-mknoon/node"
 )
 
 // parseJSON is a test helper that unmarshals a JSON string into a map.
@@ -1035,6 +1036,52 @@ func TestNodeCallbackAdapter_ForwardsRelayStateEventUntouched(t *testing.T) {
 	}
 	if recorder.events[0] != payload {
 		t.Fatalf("expected forwarded payload %q, got %q", payload, recorder.events[0])
+	}
+}
+
+func TestSendMessage_IncludesTransportInResponse(t *testing.T) {
+	withFreshSingletonNode(t)
+
+	keyHex := generateTestKeyHex(t)
+	startResult := StartNode(startNodeJSON(t, keyHex))
+	assertOk(t, parseJSON(t, startResult))
+
+	target := node.NewNode()
+	targetState, err := target.Start(node.NodeConfig{
+		PrivateKeyHex:  generateTestKeyHex(t),
+		RelayAddresses: []string{},
+		AutoRegister:   false,
+	})
+	if err != nil {
+		t.Fatalf("target Start: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = target.Stop()
+	})
+
+	var targetAddrs []string
+	for _, addr := range target.Host().Addrs() {
+		targetAddrs = append(targetAddrs, addr.String())
+	}
+
+	if err := singletonNode.DialPeer(targetState.PeerId, targetAddrs); err != nil {
+		t.Fatalf("DialPeer: %v", err)
+	}
+
+	input, err := json.Marshal(map[string]interface{}{
+		"peerId":  targetState.PeerId,
+		"message": "hello over bridge",
+	})
+	if err != nil {
+		t.Fatalf("marshal input: %v", err)
+	}
+
+	result := SendMessage(string(input))
+	response := parseJSON(t, result)
+	assertOk(t, response)
+
+	if got := response["transport"]; got != "direct" {
+		t.Fatalf("expected direct transport, got %v", got)
 	}
 }
 

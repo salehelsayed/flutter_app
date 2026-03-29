@@ -6,6 +6,7 @@ import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_screen.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/upload_progress_banner.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bubble.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -42,10 +43,14 @@ void main() {
     GroupModel? group,
     bool initialLoadDone = false,
     ValueListenable<ConversationComposerViewState>? composerStateListenable,
+    UploadProgressViewState? uploadProgress,
+    VoidCallback? onCancelUpload,
     String? activeQuoteText,
     bool isActiveQuoteUnavailable = false,
     VoidCallback? onClearQuote,
     ValueChanged<String>? onQuoteReply,
+    ValueChanged<String>? onRetryFailedMedia,
+    ValueChanged<String>? onDeleteFailedMedia,
     Map<String, List<MediaAttachment>> mediaMap = const {},
     ValueChanged<String>? onSend,
     String? initialText,
@@ -63,12 +68,16 @@ void main() {
           onBack: () {},
           canWrite: canWrite,
           isSending: isSending,
+          uploadProgress: uploadProgress,
+          onCancelUpload: onCancelUpload,
           initialLoadDone: initialLoadDone,
           composerStateListenable: composerStateListenable,
           activeQuoteText: activeQuoteText,
           isActiveQuoteUnavailable: isActiveQuoteUnavailable,
           onClearQuote: onClearQuote,
           onQuoteReply: onQuoteReply,
+          onRetryFailedMedia: onRetryFailedMedia,
+          onDeleteFailedMedia: onDeleteFailedMedia,
           mediaMap: mediaMap,
           initialText: initialText,
         ),
@@ -88,6 +97,24 @@ void main() {
 
     expect(find.text('Write something...'), findsOneWidget);
   });
+
+  MediaAttachment makeImageAttachment({
+    String id = 'att-1',
+    String messageId = '',
+    String localPath = '/tmp/att-1.jpg',
+    String downloadStatus = 'done',
+  }) {
+    return MediaAttachment(
+      id: id,
+      messageId: messageId,
+      mime: 'image/jpeg',
+      size: 42,
+      mediaType: 'image',
+      localPath: localPath,
+      downloadStatus: downloadStatus,
+      createdAt: '2026-02-09T15:30:00.000Z',
+    );
+  }
 
   testWidgets('passes isSending through to the compose send affordance', (
     tester,
@@ -125,6 +152,47 @@ void main() {
     await tester.pump();
 
     expect(cleared, isTrue);
+  });
+
+  testWidgets('upload banner shows cancel affordance only when supplied', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      buildTestWidget(
+        messages: testMessages,
+        uploadProgress: const UploadProgressViewState(
+          sentBytes: 5,
+          totalBytes: 10,
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(
+      find.byKey(const ValueKey('upload-progress-banner')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('upload-progress-cancel-button')),
+      findsNothing,
+    );
+
+    await tester.pumpWidget(
+      buildTestWidget(
+        messages: testMessages,
+        uploadProgress: const UploadProgressViewState(
+          sentBytes: 5,
+          totalBytes: 10,
+        ),
+        onCancelUpload: () {},
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(
+      find.byKey(const ValueKey('upload-progress-cancel-button')),
+      findsOneWidget,
+    );
   });
 
   testWidgets('shows loading shell while initial group page is still loading', (
@@ -223,9 +291,12 @@ void main() {
       composerState.value = const ConversationComposerViewState(
         isProcessing: true,
         processingProgress: 0.6,
+        processingCurrent: 3,
+        processingTotal: 5,
       );
       await tester.pump();
 
+      expect(find.text('Processing (3/5)'), findsOneWidget);
       expect(find.text('60%'), findsOneWidget);
       expect(
         identical(
@@ -240,6 +311,144 @@ void main() {
           tester.element(find.byKey(const ValueKey('group-messages'))),
         ),
         isTrue,
+      );
+    },
+  );
+
+  testWidgets('failed outgoing media rows show retry and delete controls', (
+    tester,
+  ) async {
+    String? retriedId;
+    String? deletedId;
+    await tester.pumpWidget(
+      buildTestWidget(
+        messages: [
+          GroupMessage(
+            id: 'failed-media',
+            groupId: 'group-1',
+            senderPeerId: 'peer-1',
+            senderUsername: 'You',
+            text: '',
+            status: 'failed',
+            timestamp: DateTime.now().toUtc(),
+            createdAt: DateTime.now().toUtc(),
+            isIncoming: false,
+            media: [
+              makeImageAttachment(
+                id: 'att-failed-media',
+                messageId: 'failed-media',
+              ),
+            ],
+          ),
+        ],
+        initialLoadDone: true,
+        onRetryFailedMedia: (id) => retriedId = id,
+        onDeleteFailedMedia: (id) => deletedId = id,
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 300));
+
+    final retryKey = find.byKey(
+      const ValueKey('failed-media-retry-failed-media'),
+    );
+    final deleteKey = find.byKey(
+      const ValueKey('failed-media-delete-failed-media'),
+    );
+    expect(retryKey, findsOneWidget);
+    expect(deleteKey, findsOneWidget);
+
+    await tester.tap(retryKey);
+    await tester.pump();
+    await tester.tap(deleteKey);
+    await tester.pump();
+
+    expect(retriedId, 'failed-media');
+    expect(deletedId, 'failed-media');
+  });
+
+  testWidgets(
+    'incoming, text-only, and read-only announcement rows do not show failed-media controls',
+    (tester) async {
+      final failedMedia = makeImageAttachment(
+        id: 'att-incoming',
+        messageId: 'incoming-failed-media',
+      );
+
+      await tester.pumpWidget(
+        buildTestWidget(
+          messages: [
+            GroupMessage(
+              id: 'incoming-failed-media',
+              groupId: 'group-1',
+              senderPeerId: 'peer-2',
+              senderUsername: 'Alice',
+              text: '',
+              status: 'failed',
+              timestamp: DateTime.now().toUtc(),
+              createdAt: DateTime.now().toUtc(),
+              isIncoming: true,
+              media: [failedMedia],
+            ),
+            GroupMessage(
+              id: 'failed-text-only',
+              groupId: 'group-1',
+              senderPeerId: 'peer-1',
+              senderUsername: 'You',
+              text: 'text only',
+              status: 'failed',
+              timestamp: DateTime.now().toUtc(),
+              createdAt: DateTime.now().toUtc(),
+              isIncoming: false,
+            ),
+            GroupMessage(
+              id: 'failed-reader-media',
+              groupId: 'group-1',
+              senderPeerId: 'peer-1',
+              senderUsername: 'You',
+              text: '',
+              status: 'failed',
+              timestamp: DateTime.now().toUtc(),
+              createdAt: DateTime.now().toUtc(),
+              isIncoming: false,
+              media: [
+                makeImageAttachment(
+                  id: 'att-reader',
+                  messageId: 'failed-reader-media',
+                ),
+              ],
+            ),
+          ],
+          canWrite: false,
+          initialLoadDone: true,
+          onRetryFailedMedia: (_) {},
+          onDeleteFailedMedia: (_) {},
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(
+        find.byKey(const ValueKey('failed-media-retry-incoming-failed-media')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey('failed-media-retry-failed-text-only')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey('failed-media-retry-failed-reader-media')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey('failed-media-delete-incoming-failed-media')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey('failed-media-delete-failed-text-only')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey('failed-media-delete-failed-reader-media')),
+        findsNothing,
       );
     },
   );

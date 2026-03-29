@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
@@ -14,6 +12,7 @@ import 'package:flutter_app/features/feed/presentation/widgets/quote_preview_bar
 import 'package:flutter_app/features/feed/presentation/widgets/replied_indicator.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/scrollable_message_preview.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
+import 'package:flutter_app/shared/widgets/media/media_thumbnail_image.dart';
 import 'package:flutter_app/shared/widgets/media/media_preview_text.dart';
 
 /// Body of a feed card in collapsed mode (replied / read / session-reply).
@@ -230,10 +229,11 @@ class CollapsedModeCardBody extends StatelessWidget {
     final thumbAttachment = hasMedia
         ? _firstThumbnailAttachment(previewMsg.media)
         : null;
-    final thumbPath =
-        (thumbAttachment != null && thumbAttachment.downloadStatus == 'done')
-        ? thumbAttachment.localPath
-        : null;
+    final showThumb =
+        thumbAttachment != null &&
+        thumbAttachment.downloadStatus == 'done' &&
+        thumbAttachment.localPath != null;
+    final thumbPath = thumbAttachment?.localPath;
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
@@ -248,15 +248,24 @@ class CollapsedModeCardBody extends StatelessWidget {
               color: labelColor,
             ),
           ),
-          if (thumbPath != null) ...[
+          if (showThumb) ...[
             ClipRRect(
               borderRadius: BorderRadius.circular(6),
-              child: Image.file(
-                File(thumbPath),
-                width: 20,
-                height: 20,
+              child: MediaThumbnailImage(
+                mediaPath: thumbPath!,
+                mediaType: thumbAttachment.mediaType,
                 fit: BoxFit.cover,
                 cacheWidth: 40,
+                placeholder: Container(
+                  width: 20,
+                  height: 20,
+                  color: const Color.fromRGBO(255, 255, 255, 0.08),
+                ),
+                error: Container(
+                  width: 20,
+                  height: 20,
+                  color: const Color.fromRGBO(255, 255, 255, 0.08),
+                ),
               ),
             ),
             const SizedBox(width: 6),

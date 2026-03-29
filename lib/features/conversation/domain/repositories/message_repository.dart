@@ -46,6 +46,9 @@ abstract class MessageRepository {
   /// Deletes all messages for a contact. Returns the count of deleted rows.
   Future<int> deleteMessagesForContact(String contactPeerId);
 
+  /// Deletes a single message by ID. Returns the count of deleted rows.
+  Future<int> deleteMessage(String id);
+
   /// Retrieves all outgoing messages with status='failed'.
   ///
   /// Used by the retry service to find messages that need re-sending.
@@ -84,9 +87,7 @@ abstract class MessageRepository {
   /// than [olderThan] to status='failed', so the retry service picks them up.
   ///
   /// Returns the count of rows updated.
-  Future<int> recoverStuckSendingMessages({
-    required Duration olderThan,
-  });
+  Future<int> recoverStuckSendingMessages({required Duration olderThan});
 
   /// Updates the wire_envelope column for a message by ID.
   ///

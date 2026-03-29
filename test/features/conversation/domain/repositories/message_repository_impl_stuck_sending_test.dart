@@ -8,7 +8,7 @@ import 'package:flutter_app/features/conversation/domain/repositories/message_re
 MessageRepositoryImpl _buildRepo({
   required Map<String, Map<String, Object?>> store,
   required Future<int> Function({required DateTime olderThan, int limit})
-      dbRecoverStuckSendingMessages,
+  dbRecoverStuckSendingMessages,
 }) {
   return MessageRepositoryImpl(
     dbInsertMessage: (row) async => store[row['id'] as String] = Map.from(row),
@@ -23,46 +23,61 @@ MessageRepositoryImpl _buildRepo({
     dbCountTotalUnread: () async => 0,
     dbCountTotalUnreadExcludingArchived: () async => 0,
     dbDeleteMessagesForContact: (cp) async => 0,
+    dbDeleteMessage: (id) async => 0,
     dbLoadMessagesPage: (cp, {int limit = 50, String? beforeTimestamp}) async =>
         [],
     dbLoadFailedOutgoingMessages: () async => [],
-    dbLoadUnackedOutgoingMessages: ({required DateTime olderThan, int limit = 50}) async =>
-        [],
+    dbLoadUnackedOutgoingMessages:
+        ({required DateTime olderThan, int limit = 50}) async => [],
     dbLoadConversationThreadSummaries: (ids) async => [],
     dbRecoverStuckSendingMessages: dbRecoverStuckSendingMessages,
     dbUpdateWireEnvelope: (id, wireEnvelope) async {},
-    dbLoadStuckSendingOutgoingMessages: ({required DateTime olderThan, int limit = 50}) async => [],
+    dbLoadStuckSendingOutgoingMessages:
+        ({required DateTime olderThan, int limit = 50}) async => [],
     dbLoadSendingOutgoingMessages: () async => [],
-    dbConditionalTransitionStatus: (id, {required fromStatus, required toStatus}) async => 0,
+    dbConditionalTransitionStatus:
+        (id, {required fromStatus, required toStatus}) async => 0,
   );
 }
 
 void main() {
   group('MessageRepositoryImpl.recoverStuckSendingMessages', () {
-    test('delegates to dbRecoverStuckSendingMessages with correct cutoff', () async {
-      int helperCallCount = 0;
-      DateTime? capturedOlderThan;
+    test(
+      'delegates to dbRecoverStuckSendingMessages with correct cutoff',
+      () async {
+        int helperCallCount = 0;
+        DateTime? capturedOlderThan;
 
-      final store = <String, Map<String, Object?>>{};
-      final repo = _buildRepo(
-        store: store,
-        dbRecoverStuckSendingMessages: ({required DateTime olderThan, int limit = 50}) async {
-          helperCallCount++;
-          capturedOlderThan = olderThan;
-          return 0;
-        },
-      );
+        final store = <String, Map<String, Object?>>{};
+        final repo = _buildRepo(
+          store: store,
+          dbRecoverStuckSendingMessages:
+              ({required DateTime olderThan, int limit = 50}) async {
+                helperCallCount++;
+                capturedOlderThan = olderThan;
+                return 0;
+              },
+        );
 
-      const threshold = Duration(seconds: 30);
-      final before = DateTime.now().toUtc().subtract(threshold);
-      await repo.recoverStuckSendingMessages(olderThan: threshold);
-      final after = DateTime.now().toUtc().subtract(threshold);
+        const threshold = Duration(seconds: 30);
+        final before = DateTime.now().toUtc().subtract(threshold);
+        await repo.recoverStuckSendingMessages(olderThan: threshold);
+        final after = DateTime.now().toUtc().subtract(threshold);
 
-      expect(helperCallCount, 1);
-      // The cutoff passed to the helper must be between before and after
-      expect(capturedOlderThan!.isAfter(before.subtract(const Duration(seconds: 1))), isTrue);
-      expect(capturedOlderThan!.isBefore(after.add(const Duration(seconds: 1))), isTrue);
-    });
+        expect(helperCallCount, 1);
+        // The cutoff passed to the helper must be between before and after
+        expect(
+          capturedOlderThan!.isAfter(
+            before.subtract(const Duration(seconds: 1)),
+          ),
+          isTrue,
+        );
+        expect(
+          capturedOlderThan!.isBefore(after.add(const Duration(seconds: 1))),
+          isTrue,
+        );
+      },
+    );
 
     test('returns count from db helper', () async {
       final store = <String, Map<String, Object?>>{};

@@ -15,6 +15,7 @@ import 'package:flutter_app/features/groups/application/group_message_listener.d
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
+import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 import 'package:flutter_app/features/share/presentation/screens/share_target_picker_wired.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
@@ -44,6 +45,10 @@ void main() {
     required GroupMessageListener groupMessageListener,
     required ShareIntent shareIntent,
     ImageProcessor? imageProcessor,
+    ImageQualityPreference qualityPreference =
+        ImageQualityPreference.compressed,
+    ImageQualityPreference videoQualityPreference =
+        ImageQualityPreference.compressed,
   }) {
     return MaterialApp(
       locale: const Locale('en'),
@@ -74,6 +79,8 @@ void main() {
                   ({required path, required compress, onProgress}) async =>
                       null,
             ),
+        qualityPreference: qualityPreference,
+        videoQualityPreference: videoQualityPreference,
         groupRepository: groupRepository,
         groupMessageRepository: groupMessageRepository,
         groupMessageListener: groupMessageListener,
@@ -93,6 +100,10 @@ void main() {
     required GroupMessageListener groupMessageListener,
     required ShareIntent shareIntent,
     ImageProcessor? imageProcessor,
+    ImageQualityPreference qualityPreference =
+        ImageQualityPreference.compressed,
+    ImageQualityPreference videoQualityPreference =
+        ImageQualityPreference.compressed,
   }) async {
     await tester.pumpWidget(
       buildWidget(
@@ -106,10 +117,35 @@ void main() {
         groupMessageListener: groupMessageListener,
         shareIntent: shareIntent,
         imageProcessor: imageProcessor,
+        qualityPreference: qualityPreference,
+        videoQualityPreference: videoQualityPreference,
       ),
     );
     await tester.pump();
     await tester.pump();
+  }
+
+  Future<void> tapAndAwaitRoute(
+    WidgetTester tester, {
+    required Finder tapTarget,
+    required Finder routeTarget,
+    int maxFrames = 30,
+  }) async {
+    await tester.tap(tapTarget);
+    Object? exception;
+    for (var i = 0; i < maxFrames; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+      exception ??= tester.takeException();
+      if (routeTarget.evaluate().isNotEmpty) {
+        return;
+      }
+    }
+    final navigator = tester.state<NavigatorState>(find.byType(Navigator));
+    fail(
+      'Route target did not appear within ${maxFrames * 50}ms'
+      '; canPop=${navigator.canPop()}'
+      '${exception != null ? '; pending exception: $exception' : ''}',
+    );
   }
 
   testWidgets(
@@ -231,7 +267,11 @@ void main() {
               required keepExif,
               minWidth = 1920,
               minHeight = 1080,
-            }) async => XFile('$path.processed.jpg'),
+            }) async {
+              final processed = File('$path.processed.jpg')
+                ..writeAsStringSync('12');
+              return XFile(processed.path);
+            },
         compressVideo: ({required path, required compress, onProgress}) async =>
             null,
       );
@@ -254,22 +294,29 @@ void main() {
         imageProcessor: processor,
       );
 
-      await tester.tap(
-        find.byKey(ValueKey('share-contact-${activeContact.peerId}')),
+      await tapAndAwaitRoute(
+        tester,
+        tapTarget: find.byKey(ValueKey('share-contact-${activeContact.peerId}')),
+        routeTarget: find.byType(ConversationWired, skipOffstage: false),
       );
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 400));
 
       final conversation = tester.widget<ConversationWired>(
-        find.byType(ConversationWired),
+        find.byType(ConversationWired, skipOffstage: false),
       );
       expect(conversation.initialText, 'Shared hello');
       expect(conversation.initialAttachments, isNotNull);
       expect(conversation.initialAttachments, hasLength(1));
+      expect(conversation.initialPendingMedia, isNotNull);
+      expect(conversation.initialPendingMedia, hasLength(1));
       expect(
         conversation.initialAttachments!.first.path,
         '${sourceImage.path}.processed.jpg',
       );
+      expect(
+        conversation.initialPendingMedia!.first.file.path,
+        '${sourceImage.path}.processed.jpg',
+      );
+      expect(conversation.initialPendingMedia!.first.budgetBytes, 2);
     },
   );
 
@@ -318,8 +365,11 @@ void main() {
               minWidth = 1920,
               minHeight = 1080,
             }) async => null,
-        compressVideo: ({required path, required compress, onProgress}) async =>
-            VideoProcessResult(path: '$path.processed.mp4'),
+        compressVideo: ({required path, required compress, onProgress}) async {
+          final processed = File('$path.processed.mp4')
+            ..writeAsStringSync('1234');
+          return VideoProcessResult(path: processed.path);
+        },
       );
 
       await pumpPicker(
@@ -340,20 +390,29 @@ void main() {
         imageProcessor: processor,
       );
 
-      await tester.tap(find.byKey(ValueKey('share-group-${group.id}')));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 400));
+      await tapAndAwaitRoute(
+        tester,
+        tapTarget: find.byKey(ValueKey('share-group-${group.id}')),
+        routeTarget: find.byType(GroupConversationWired, skipOffstage: false),
+      );
 
       final conversation = tester.widget<GroupConversationWired>(
-        find.byType(GroupConversationWired),
+        find.byType(GroupConversationWired, skipOffstage: false),
       );
       expect(conversation.initialText, 'https://mknoon.app/share');
       expect(conversation.initialAttachments, isNotNull);
       expect(conversation.initialAttachments, hasLength(1));
+      expect(conversation.initialPendingMedia, isNotNull);
+      expect(conversation.initialPendingMedia, hasLength(1));
       expect(
         conversation.initialAttachments!.first.path,
         '${sourceVideo.path}.processed.mp4',
       );
+      expect(
+        conversation.initialPendingMedia!.first.file.path,
+        '${sourceVideo.path}.processed.mp4',
+      );
+      expect(conversation.initialPendingMedia!.first.budgetBytes, 4);
     },
   );
 
@@ -422,13 +481,98 @@ void main() {
         imageProcessor: processor,
       );
 
-      await tester.tap(
-        find.byKey(ValueKey('share-contact-${activeContact.peerId}')),
+      await tapAndAwaitRoute(
+        tester,
+        tapTarget: find.byKey(ValueKey('share-contact-${activeContact.peerId}')),
+        routeTarget: find.byType(ConversationWired, skipOffstage: false),
       );
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 400));
 
       expect(processedPaths, [sourceImage.path]);
+    },
+  );
+
+  testWidgets(
+    'share target selection preserves raw budget bytes for original-quality media',
+    (tester) async {
+      final contactRepository = InMemoryContactRepository();
+      final groupRepository = InMemoryGroupRepository();
+      final messageRepository = InMemoryMessageRepository();
+      final mediaAttachmentRepository = InMemoryMediaAttachmentRepository();
+      final identityRepository = FakeIdentityRepository();
+      final groupMessageRepository = InMemoryGroupMessageRepository();
+      identityRepository.seed(_makeIdentity());
+      final chatMessageListener = ChatMessageListener(
+        chatMessageStream: const Stream<ChatMessage>.empty(),
+        messageRepo: messageRepository,
+        contactRepo: contactRepository,
+      );
+      final groupMessageListener = GroupMessageListener(
+        groupRepo: groupRepository,
+        msgRepo: groupMessageRepository,
+      );
+      final tempDir = Directory.systemTemp.createTempSync(
+        'share_picker_original_budget_',
+      );
+      addTearDown(() {
+        if (tempDir.existsSync()) {
+          tempDir.deleteSync(recursive: true);
+        }
+      });
+      final sourceImage = File('${tempDir.path}/shared.jpg')
+        ..writeAsStringSync('1234567890');
+
+      contactRepository.addTestContact(activeContact);
+      final processor = ImageProcessor(
+        compressFile:
+            ({
+              required path,
+              required quality,
+              required keepExif,
+              minWidth = 1920,
+              minHeight = 1080,
+            }) async {
+              final processed = File('$path.processed.jpg')
+                ..writeAsStringSync('12');
+              return XFile(processed.path);
+            },
+        compressVideo: ({required path, required compress, onProgress}) async =>
+            null,
+      );
+
+      await pumpPicker(
+        tester,
+        contactRepository: contactRepository,
+        groupRepository: groupRepository,
+        messageRepository: messageRepository,
+        mediaAttachmentRepository: mediaAttachmentRepository,
+        identityRepository: identityRepository,
+        chatMessageListener: chatMessageListener,
+        groupMessageRepository: groupMessageRepository,
+        groupMessageListener: groupMessageListener,
+        shareIntent: ShareIntent(
+          type: ShareIntentType.files,
+          filePaths: [sourceImage.path],
+        ),
+        imageProcessor: processor,
+        qualityPreference: ImageQualityPreference.original,
+      );
+
+      await tapAndAwaitRoute(
+        tester,
+        tapTarget: find.byKey(ValueKey('share-contact-${activeContact.peerId}')),
+        routeTarget: find.byType(ConversationWired, skipOffstage: false),
+      );
+
+      final conversation = tester.widget<ConversationWired>(
+        find.byType(ConversationWired, skipOffstage: false),
+      );
+      expect(conversation.initialPendingMedia, isNotNull);
+      expect(conversation.initialPendingMedia, hasLength(1));
+      expect(
+        conversation.initialPendingMedia!.first.file.path,
+        '${sourceImage.path}.processed.jpg',
+      );
+      expect(conversation.initialPendingMedia!.first.budgetBytes, 10);
     },
   );
 
@@ -571,54 +715,56 @@ void main() {
     expect(find.byType(CircularProgressIndicator), findsNothing);
   });
 
-  testWidgets('loading indicator replaced by empty state when no contacts exist',
-      (tester) async {
-    final contactRepository = InMemoryContactRepository();
-    final groupRepository = InMemoryGroupRepository();
-    final messageRepository = InMemoryMessageRepository();
-    final mediaAttachmentRepository = InMemoryMediaAttachmentRepository();
-    final identityRepository = FakeIdentityRepository();
-    final groupMessageRepository = InMemoryGroupMessageRepository();
-    identityRepository.seed(_makeIdentity());
+  testWidgets(
+    'loading indicator replaced by empty state when no contacts exist',
+    (tester) async {
+      final contactRepository = InMemoryContactRepository();
+      final groupRepository = InMemoryGroupRepository();
+      final messageRepository = InMemoryMessageRepository();
+      final mediaAttachmentRepository = InMemoryMediaAttachmentRepository();
+      final identityRepository = FakeIdentityRepository();
+      final groupMessageRepository = InMemoryGroupMessageRepository();
+      identityRepository.seed(_makeIdentity());
 
-    final chatMessageListener = ChatMessageListener(
-      chatMessageStream: const Stream<ChatMessage>.empty(),
-      messageRepo: messageRepository,
-      contactRepo: contactRepository,
-    );
-    final groupMessageListener = GroupMessageListener(
-      groupRepo: groupRepository,
-      msgRepo: groupMessageRepository,
-    );
+      final chatMessageListener = ChatMessageListener(
+        chatMessageStream: const Stream<ChatMessage>.empty(),
+        messageRepo: messageRepository,
+        contactRepo: contactRepository,
+      );
+      final groupMessageListener = GroupMessageListener(
+        groupRepo: groupRepository,
+        msgRepo: groupMessageRepository,
+      );
 
-    await tester.pumpWidget(
-      buildWidget(
-        contactRepository: contactRepository,
-        groupRepository: groupRepository,
-        messageRepository: messageRepository,
-        mediaAttachmentRepository: mediaAttachmentRepository,
-        identityRepository: identityRepository,
-        chatMessageListener: chatMessageListener,
-        groupMessageRepository: groupMessageRepository,
-        groupMessageListener: groupMessageListener,
-        shareIntent: const ShareIntent(
-          type: ShareIntentType.text,
-          text: 'Shared hello',
+      await tester.pumpWidget(
+        buildWidget(
+          contactRepository: contactRepository,
+          groupRepository: groupRepository,
+          messageRepository: messageRepository,
+          mediaAttachmentRepository: mediaAttachmentRepository,
+          identityRepository: identityRepository,
+          chatMessageListener: chatMessageListener,
+          groupMessageRepository: groupMessageRepository,
+          groupMessageListener: groupMessageListener,
+          shareIntent: const ShareIntent(
+            type: ShareIntentType.text,
+            text: 'Shared hello',
+          ),
         ),
-      ),
-    );
+      );
 
-    // Initially shows loading
-    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      // Initially shows loading
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
 
-    // Pump to allow _loadTargets to complete
-    await tester.pump();
-    await tester.pump();
+      // Pump to allow _loadTargets to complete
+      await tester.pump();
+      await tester.pump();
 
-    // Empty state shown, no spinner
-    expect(find.text('No contacts or groups yet'), findsOneWidget);
-    expect(find.byType(CircularProgressIndicator), findsNothing);
-  });
+      // Empty state shown, no spinner
+      expect(find.text('No contacts or groups yet'), findsOneWidget);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+    },
+  );
 
   testWidgets('loading indicator clears on error', (tester) async {
     final contactRepository = _ThrowingContactRepository();

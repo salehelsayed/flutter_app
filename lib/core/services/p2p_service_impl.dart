@@ -586,6 +586,7 @@ class P2PServiceImpl implements P2PService {
       if (response['ok'] == true) {
         final reply = response['reply'] as String?;
         final acked = response['acked'] as bool?;
+        final transport = response['transport']?.toString();
         emitFlowEvent(
           layer: 'FL',
           event: 'P2P_SERVICE_SEND_MESSAGE_WITH_REPLY_SUCCESS',
@@ -593,9 +594,15 @@ class P2PServiceImpl implements P2PService {
             'peerId': peerId,
             'hasReply': reply != null,
             'acked': acked,
+            'transport': transport,
           },
         );
-        return SendMessageResult(sent: true, acked: acked, reply: reply);
+        return SendMessageResult(
+          sent: true,
+          acked: acked,
+          reply: reply,
+          transport: transport,
+        );
       } else {
         emitFlowEvent(
           layer: 'FL',

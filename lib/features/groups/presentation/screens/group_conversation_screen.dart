@@ -11,6 +11,7 @@ import 'package:flutter_app/features/conversation/presentation/widgets/compose_a
 import 'package:flutter_app/features/conversation/presentation/widgets/full_emoji_picker.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/letter_card.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/reaction_bar.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/upload_progress_banner.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bubble.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -31,6 +32,8 @@ class GroupConversationScreen extends StatelessWidget {
   final VoidCallback? onInfo;
   final bool canWrite;
   final bool isSending;
+  final UploadProgressViewState? uploadProgress;
+  final VoidCallback? onCancelUpload;
   final bool initialLoadDone;
   final ScrollController? scrollController;
   final Map<String, List<MediaAttachment>> mediaMap;
@@ -38,6 +41,8 @@ class GroupConversationScreen extends StatelessWidget {
   final bool isUploading;
   final bool isProcessing;
   final double processingProgress;
+  final int processingCurrent;
+  final int processingTotal;
   final ValueChanged<int>? onRemoveAttachment;
   final VoidCallback? onAttach;
   final VoidCallback? onRecordStart;
@@ -54,6 +59,8 @@ class GroupConversationScreen extends StatelessWidget {
   final String? initialText;
   final ValueChanged<String>? onDraftChanged;
   final ValueChanged<String>? onQuoteReply;
+  final ValueChanged<String>? onRetryFailedMedia;
+  final ValueChanged<String>? onDeleteFailedMedia;
   final String? activeQuoteText;
   final bool isActiveQuoteUnavailable;
   final VoidCallback? onClearQuote;
@@ -68,6 +75,8 @@ class GroupConversationScreen extends StatelessWidget {
     this.onInfo,
     this.canWrite = true,
     this.isSending = false,
+    this.uploadProgress,
+    this.onCancelUpload,
     this.initialLoadDone = false,
     this.scrollController,
     this.mediaMap = const {},
@@ -75,6 +84,8 @@ class GroupConversationScreen extends StatelessWidget {
     this.isUploading = false,
     this.isProcessing = false,
     this.processingProgress = 0.0,
+    this.processingCurrent = 0,
+    this.processingTotal = 0,
     this.onRemoveAttachment,
     this.onAttach,
     this.onRecordStart,
@@ -91,6 +102,8 @@ class GroupConversationScreen extends StatelessWidget {
     this.initialText,
     this.onDraftChanged,
     this.onQuoteReply,
+    this.onRetryFailedMedia,
+    this.onDeleteFailedMedia,
     this.activeQuoteText,
     this.isActiveQuoteUnavailable = false,
     this.onClearQuote,
@@ -102,6 +115,8 @@ class GroupConversationScreen extends StatelessWidget {
         isUploading: isUploading,
         isProcessing: isProcessing,
         processingProgress: processingProgress,
+        processingCurrent: processingCurrent,
+        processingTotal: processingTotal,
         recordingState: recordingState != VoiceRecordingState.idle
             ? recordingState
             : (isRecording
@@ -119,6 +134,11 @@ class GroupConversationScreen extends StatelessWidget {
         child: Column(
           children: [
             _buildHeader(context),
+            if (uploadProgress != null)
+              UploadProgressBanner(
+                state: uploadProgress!,
+                onCancel: onCancelUpload,
+              ),
             Expanded(
               child: messages.isEmpty
                   ? _buildEmptyOrLoadingState()
@@ -148,6 +168,8 @@ class GroupConversationScreen extends StatelessWidget {
             isUploading: composerState.isUploading,
             isProcessing: composerState.isProcessing,
             processingProgress: composerState.processingProgress,
+            processingCurrent: composerState.processingCurrent,
+            processingTotal: composerState.processingTotal,
             onRemove: onRemoveAttachment,
           ),
         if (!canWrite)
@@ -184,7 +206,7 @@ class GroupConversationScreen extends StatelessWidget {
         decoration: BoxDecoration(
           border: Border(
             bottom: BorderSide(
-              color: Colors.white.withOpacity(0.06),
+              color: Colors.white.withValues(alpha: 0.06),
               width: 0.5,
             ),
           ),
@@ -226,7 +248,7 @@ class GroupConversationScreen extends StatelessWidget {
               IconButton(
                 icon: Icon(
                   Icons.info_outline,
-                  color: Colors.white.withOpacity(0.6),
+                  color: Colors.white.withValues(alpha: 0.6),
                   size: 22,
                 ),
                 onPressed: onInfo,
@@ -252,14 +274,14 @@ class GroupConversationScreen extends StatelessWidget {
           Icon(
             Icons.chat_bubble_outline,
             size: 48,
-            color: Colors.white.withOpacity(0.15),
+            color: Colors.white.withValues(alpha: 0.15),
           ),
           const SizedBox(height: 12),
           Text(
             'No messages yet',
             style: TextStyle(
               fontSize: 14,
-              color: Colors.white.withOpacity(0.3),
+              color: Colors.white.withValues(alpha: 0.3),
             ),
           ),
           const SizedBox(height: 4),
@@ -269,7 +291,7 @@ class GroupConversationScreen extends StatelessWidget {
                 : 'Waiting for messages',
             style: TextStyle(
               fontSize: 12,
-              color: Colors.white.withOpacity(0.2),
+              color: Colors.white.withValues(alpha: 0.2),
             ),
           ),
         ],
@@ -290,6 +312,12 @@ class GroupConversationScreen extends StatelessWidget {
         final message = messages[messages.length - 1 - index];
         final isSent = message.senderPeerId == ownPeerId;
         final (quotedText, isQuoteUnavailable) = _resolveQuotedText(message);
+        final messageMedia = mediaMap[message.id] ?? message.media;
+        final showFailedMediaActions =
+            canWrite &&
+            isSent &&
+            message.status == 'failed' &&
+            messageMedia.isNotEmpty;
 
         Widget bubble = Padding(
           key: ValueKey('grp-msg-${message.id}'),
@@ -306,7 +334,7 @@ class GroupConversationScreen extends StatelessWidget {
               status: isSent ? message.status : null,
               quotedText: quotedText,
               isQuoteUnavailable: isQuoteUnavailable,
-              media: mediaMap[message.id] ?? const [],
+              media: messageMedia,
               onMediaTap: onMediaTap != null
                   ? (index) => onMediaTap!(message.id, index)
                   : null,
@@ -318,6 +346,15 @@ class GroupConversationScreen extends StatelessWidget {
               onLongPress: onReactionSelected != null
                   ? () => _showReactionBar(cardContext, message.id)
                   : null,
+              onRetryFailedMedia:
+                  showFailedMediaActions && onRetryFailedMedia != null
+                  ? () => onRetryFailedMedia!(message.id)
+                  : null,
+              onDeleteFailedMedia:
+                  showFailedMediaActions && onDeleteFailedMedia != null
+                  ? () => onDeleteFailedMedia!(message.id)
+                  : null,
+              failedMediaActionKeySuffix: message.id,
             ),
           ),
         );
@@ -365,13 +402,19 @@ class GroupConversationScreen extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
         border: Border(
-          top: BorderSide(color: Colors.white.withOpacity(0.06), width: 0.5),
+          top: BorderSide(
+            color: Colors.white.withValues(alpha: 0.06),
+            width: 0.5,
+          ),
         ),
       ),
       child: Text(
         'Only admins can send messages in this group',
         textAlign: TextAlign.center,
-        style: TextStyle(fontSize: 13, color: Colors.white.withOpacity(0.35)),
+        style: TextStyle(
+          fontSize: 13,
+          color: Colors.white.withValues(alpha: 0.35),
+        ),
       ),
     );
   }

@@ -90,6 +90,81 @@ func TestSendMessage_RetriesChatStreamOpenAfterSelfHeal(t *testing.T) {
 	}
 }
 
+func TestSendMessage_RetriesNoAddressesOpenErrorAfterSelfHeal(t *testing.T) {
+	nodeA := NewNode()
+	_, err := nodeA.Start(NodeConfig{
+		PrivateKeyHex:  generateTestKey(t),
+		RelayAddresses: []string{},
+		AutoRegister:   false,
+	})
+	if err != nil {
+		t.Fatalf("nodeA Start: %v", err)
+	}
+	defer nodeA.Stop()
+
+	nodeB := NewNode()
+	stateB, err := nodeB.Start(NodeConfig{
+		PrivateKeyHex:  generateTestKey(t),
+		RelayAddresses: []string{},
+		AutoRegister:   false,
+	})
+	if err != nil {
+		t.Fatalf("nodeB Start: %v", err)
+	}
+	defer nodeB.Stop()
+
+	var nodeBAddrStrs []string
+	for _, addr := range nodeB.Host().Addrs() {
+		nodeBAddrStrs = append(nodeBAddrStrs, addr.String())
+	}
+
+	if err := nodeA.DialPeer(stateB.PeerId, nodeBAddrStrs); err != nil {
+		t.Fatalf("DialPeer: %v", err)
+	}
+
+	targetID, err := peer.Decode(stateB.PeerId)
+	if err != nil {
+		t.Fatalf("decode target peer: %v", err)
+	}
+
+	openCalls := 0
+	recoverCalls := 0
+	nodeA.openChatStreamHook = func(ctx context.Context, h host.Host, pid peer.ID) (network.Stream, error) {
+		openCalls++
+		if openCalls == 1 {
+			return nil, fmt.Errorf("failed to dial: failed to dial %s: no addresses", pid)
+		}
+		return h.NewStream(ctx, pid, ChatProtocol)
+	}
+	nodeA.recoverPeerForSendHook = func(h host.Host, pid peer.ID, peerIdStr string, timeout time.Duration) error {
+		recoverCalls++
+		if pid != targetID {
+			t.Fatalf("unexpected recover peer id: got %s want %s", pid, targetID)
+		}
+		if peerIdStr != stateB.PeerId {
+			t.Fatalf("unexpected recover peer string: got %s want %s", peerIdStr, stateB.PeerId)
+		}
+		return nil
+	}
+
+	reply, acked, err := nodeA.SendMessage(stateB.PeerId, "phase4 no-address self-heal retry", 1000)
+	if err != nil {
+		t.Fatalf("SendMessage: %v", err)
+	}
+	if !acked {
+		t.Fatal("expected SendMessage to be acknowledged after no-address self-heal retry")
+	}
+	if reply == "" {
+		t.Fatal("expected non-empty reply after no-address self-heal retry")
+	}
+	if openCalls != 2 {
+		t.Fatalf("expected 2 open attempts, got %d", openCalls)
+	}
+	if recoverCalls != 1 {
+		t.Fatalf("expected 1 self-heal attempt, got %d", recoverCalls)
+	}
+}
+
 func TestSendMessage_DoesNotSelfHealNonRetryableOpenErrors(t *testing.T) {
 	nodeA := NewNode()
 	_, err := nodeA.Start(NodeConfig{

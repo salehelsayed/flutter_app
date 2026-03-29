@@ -11,7 +11,8 @@ If this document and `scripts/run_test_gates.sh` ever disagree, the script wins.
 - The 1:1 Reliability Gate stays at 9 tests.
 - `test/features/conversation/integration/quote_reply_thread_test.dart` stays in the 1:1 gate because quoted-message persistence rides the same shared send/persist path that Session 2 and Session 3 will touch.
 - `test/features/conversation/integration/emoji_reaction_exchange_test.dart` stays out of the 1:1 gate because it validates the reaction pipeline, not the shared durable send / retry / media / voice contract.
-- `test/features/feed/presentation/screens/feed_wired_test.dart` now carries the Session 2 feed inline 1:1 parity regression as required companion direct coverage for feed-originated 1:1 send changes; it stays outside the frozen named gate lists.
+- `test/features/feed/presentation/screens/feed_wired_test.dart` now carries the Session 2 feed inline 1:1 parity regression and the Session 35 delayed-mutual-acceptance / later-block follow-up regression; it stays outside the frozen named gate lists.
+- `test/features/orbit/presentation/screens/orbit_wired_test.dart` and `test/features/orbit/presentation/screens/orbit_intros_wiring_test.dart` now carry the Session 35 stale-intro-reload and intro follow-up wiring regressions; they stay outside the frozen named gate lists and should be run directly with the intro listener/regression/integration suites when intro-to-Orbit or intro-to-Feed follow-up wiring changes.
 - `test/features/groups/integration/announcement_happy_path_test.dart` carries the Session 6 announcement create/send/read-only/react regression and stays in the Optional / Manual direct-suite bucket so the frozen named gate lists do not widen.
 - `test/features/groups/integration/group_startup_rejoin_smoke_test.dart` stays in the Group Messaging Gate, not Startup / Transport. It validates group-topic rejoin behavior with fake infrastructure rather than the real transport gate.
 - `integration_test/multi_relay_failover_test.dart` stays nightly-only because it needs multi-relay runtime configuration and composes heavier real-stack coverage than the named transport gate.
@@ -198,9 +199,13 @@ These are intentionally classified, but not promoted into the frozen named gates
 | `test/integration/onboarding_golden_path_test.dart` | Optional / manual direct suite | Session 7 onboarding confidence flow spanning identity create, accepted contact request, and first 1:1 send without widening frozen named gates |
 | `test/integration/notification_deeplink_integration_test.dart` | Optional / manual direct suite | Notification routing boundary; Session 4 work will harden this area |
 | `test/integration/rapid_lock_unlock_integration_test.dart` | Optional / manual direct suite | Lifecycle retry edge case, narrower than the named gates |
-| `test/integration/relay_down_degradation_integration_test.dart` | Optional / manual direct suite | 1:1 degradation and exact-once retry edge case |
+| `test/integration/relay_down_degradation_integration_test.dart` | Optional / manual direct suite | 1:1 degradation edge-case coverage, including failed-send during transport loss -> foreground online-transition retry healing the same row exactly once |
+| `integration_test/conversation_wired_performance_test.dart` | Optional / manual direct suite | Performance-only validation for conversation screen wiring |
+| `integration_test/conversation_wired_subscription_performance_test.dart` | Optional / manual direct suite | Performance-only validation for conversation subscription churn |
 | `integration_test/feed_performance_test.dart` | Optional / manual direct suite | Performance-only validation |
+| `integration_test/feed_wired_init_performance_test.dart` | Optional / manual direct suite | Performance-only validation for feed initialization |
 | `integration_test/identity_progress_performance_test.dart` | Optional / manual direct suite | Performance-only validation |
+| `integration_test/orbit_performance_test.dart` | Optional / manual direct suite | Performance-only validation for Orbit surface behavior |
 
 ### Explicit Out-of-Gate File
 
@@ -220,6 +225,7 @@ These directories are intentionally outside the named gates, but they are not ac
 | `test/core/notifications/*.dart` | Direct suite | Notification route/dispatch helpers without promoting them into the baseline |
 | `test/core/bridge/*.dart` | Direct suite | Bridge adapter and helper behavior |
 | `test/core/database/*.dart` | Direct suite | Database helper and migration coverage |
+| `test/core/device/*.dart` | Direct suite | Device-level helpers such as wake-lock coordination without widening named gates |
 | `test/core/inbox/*.dart` | Direct suite | Lower-level inbox behavior |
 | `test/core/local_discovery/*.dart` | Direct suite | WiFi/local discovery support coverage |
 | `test/core/media/*.dart` | Direct suite | Media helper and processing behavior |
@@ -251,12 +257,12 @@ Validation run dates:
 - 2026-03-25 initial gate validation
 - 2026-03-26 Session 27 revalidation for `baseline`, `groups`, and `transport`
 
-- Completeness check: `./scripts/run_test_gates.sh completeness-check` passed with `564/564` test files classified.
-- Baseline Gate: revalidated on 2026-03-26 via `./scripts/run_test_gates.sh baseline` and passed.
-- 1:1 Reliability Gate: passed via `./scripts/run_test_gates.sh 1to1`.
+- Completeness check: revalidated on 2026-03-29 via `./scripts/run_test_gates.sh completeness-check` and passed with `580/580` test files classified.
+- Baseline Gate: revalidated on 2026-03-29 via `FLUTTER_DEVICE_ID=macos ./scripts/run_test_gates.sh baseline` and passed.
+- 1:1 Reliability Gate: revalidated on 2026-03-29 via `FLUTTER_DEVICE_ID=macos ./scripts/run_test_gates.sh 1to1` and passed.
 - Feed / Surface Gate: passed via `./scripts/run_test_gates.sh feed`.
-- Group Messaging Gate: revalidated on 2026-03-26 via `./scripts/run_test_gates.sh groups` and passed.
+- Group Messaging Gate: revalidated on 2026-03-29 via `FLUTTER_DEVICE_ID=macos ./scripts/run_test_gates.sh groups` and passed.
 - Posts / Privacy Gate: `test/features/posts/phase3/post_presence_listener_test.dart` passed, and `integration_test/posts_phase1_fake_test.dart` ran successfully on macOS. `integration_test/posts_phase2_fake_test.dart` through `integration_test/posts_phase5_fake_test.dart` failed to start on macOS with `Error waiting for a debug connection` / `Unable to start the app on the device`.
 - Startup / Transport Gate: revalidated on 2026-03-26 via `FLUTTER_DEVICE_ID=5BA69F1C-B112-47BE-B1FF-8C1003728C8F ./scripts/run_test_gates.sh transport` and passed. During the first rerun, `integration_test/wifi_relay_fallback_smoke_test.dart` and `integration_test/transport_e2e_test.dart` exposed stale `MessageRepositoryImpl` constructor wiring; after those repo-local test harness fixes landed, the same simulator-backed gate reran green.
-- Top-level script validation: the current Session 27 reruns confirm `baseline`, `groups`, and `transport` are green.
+- Top-level script validation: the current Session 41 reruns confirm `completeness-check`, `baseline`, `1to1`, and `groups` are green.
 - Device note: when multiple Flutter targets are attached, set `FLUTTER_DEVICE_ID=<device-id>` for integration-backed gates. Session 27 revalidation used `FLUTTER_DEVICE_ID=5BA69F1C-B112-47BE-B1FF-8C1003728C8F`.

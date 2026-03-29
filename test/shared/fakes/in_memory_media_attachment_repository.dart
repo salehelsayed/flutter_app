@@ -4,23 +4,25 @@ import 'package:flutter_app/features/conversation/domain/repositories/media_atta
 /// In-memory [MediaAttachmentRepository] for integration tests.
 class InMemoryMediaAttachmentRepository implements MediaAttachmentRepository {
   final Map<String, MediaAttachment> _attachments = {};
+  void Function(MediaAttachment attachment)? onSaveAttachment;
 
   @override
   Future<void> saveAttachment(MediaAttachment attachment) async {
+    onSaveAttachment?.call(attachment);
     _attachments[attachment.id] = attachment;
   }
 
   @override
   Future<List<MediaAttachment>> getAttachmentsForMessage(
-      String messageId) async {
-    return _attachments.values
-        .where((a) => a.messageId == messageId)
-        .toList();
+    String messageId,
+  ) async {
+    return _attachments.values.where((a) => a.messageId == messageId).toList();
   }
 
   @override
   Future<Map<String, List<MediaAttachment>>> getAttachmentsForMessages(
-      List<String> messageIds) async {
+    List<String> messageIds,
+  ) async {
     final result = <String, List<MediaAttachment>>{};
     for (final id in messageIds) {
       final attachments = await getAttachmentsForMessage(id);
@@ -67,6 +69,24 @@ class InMemoryMediaAttachmentRepository implements MediaAttachmentRepository {
     // In a real implementation this would join with messages table.
     // For tests, we don't have that link, so return 0.
     return 0;
+  }
+
+  @override
+  Future<int> markUploadPendingAttachmentsFailedForMessage(
+    String messageId,
+  ) async {
+    var count = 0;
+    for (final entry in _attachments.entries.toList()) {
+      final attachment = entry.value;
+      if (attachment.messageId == messageId &&
+          attachment.downloadStatus == 'upload_pending') {
+        _attachments[entry.key] = attachment.copyWith(
+          downloadStatus: 'upload_failed',
+        );
+        count++;
+      }
+    }
+    return count;
   }
 
   @override

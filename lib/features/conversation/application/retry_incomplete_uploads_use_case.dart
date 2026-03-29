@@ -6,6 +6,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
+import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
@@ -147,14 +148,10 @@ Future<int> retryIncompleteUploads({
       final allAttachments = await mediaAttachmentRepo.getAttachmentsForMessage(
         messageId,
       );
-      final doneAttachments = allAttachments
-          .where((a) => a.downloadStatus == 'done')
-          .toList();
 
       // 2. Re-upload ALL pending attachments for this message.
       //    If any single upload fails, the message is skipped and
       //    sendChatMessage is NOT called (no partial sends).
-      final uploadedAttachments = <MediaAttachment>[];
       var allUploadsSucceeded = true;
       var isNonRetryable = false;
 
@@ -217,7 +214,6 @@ Future<int> retryIncompleteUploads({
           downloadStatus: 'done',
         );
         await mediaAttachmentRepo.saveAttachment(completedAttachment);
-        uploadedAttachments.add(completedAttachment);
       }
 
       // Canonical failure handling (G.8.2): transient vs non-retryable
@@ -261,23 +257,47 @@ Future<int> retryIncompleteUploads({
         continue;
       }
 
-      // 3. All uploads succeeded — send the message ONCE with the full list.
-      // Combine previously-done attachments with newly-uploaded ones.
-      final fullAttachmentList = [...doneAttachments, ...uploadedAttachments];
+      final refreshedMsg = await messageRepo.getMessage(messageId);
+      final refreshedAttachments = await mediaAttachmentRepo
+          .getAttachmentsForMessage(messageId);
+      final abortReason = _lateSendAbortReason(
+        message: refreshedMsg,
+        attachments: refreshedAttachments,
+        expectedAttachmentCount: allAttachments.length,
+      );
+      if (abortReason != null) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'RETRY_INCOMPLETE_UPLOAD_ABORT_FINAL_SEND',
+          details: {
+            'messageId': messageId.length > 8
+                ? messageId.substring(0, 8)
+                : messageId,
+            'reason': abortReason,
+          },
+        );
+        continue;
+      }
 
-      final contact = await contactRepo.getContact(msg.contactPeerId);
+      // 3. All uploads still belong to a live retryable row — send ONCE with
+      // the current completed attachment set.
+      final fullAttachmentList = refreshedAttachments
+          .where((attachment) => attachment.downloadStatus == 'done')
+          .toList(growable: false);
+
+      final contact = await contactRepo.getContact(refreshedMsg!.contactPeerId);
       final (result, _) = await sendChatMessage(
         p2pService: p2pService,
         messageRepo: messageRepo,
-        targetPeerId: msg.contactPeerId,
-        text: msg.text,
+        targetPeerId: refreshedMsg.contactPeerId,
+        text: refreshedMsg.text,
         senderPeerId: identity.peerId,
         senderUsername: identity.username,
-        messageId: msg.id,
-        timestamp: msg.timestamp,
+        messageId: refreshedMsg.id,
+        timestamp: refreshedMsg.timestamp,
         bridge: bridge,
         recipientMlKemPublicKey: contact?.mlKemPublicKey,
-        quotedMessageId: msg.quotedMessageId,
+        quotedMessageId: refreshedMsg.quotedMessageId,
         mediaAttachments: fullAttachmentList,
         mediaAttachmentRepo: mediaAttachmentRepo,
         emitTimingEvent: false,
@@ -335,4 +355,30 @@ Future<int> retryIncompleteUploads({
   );
 
   return successCount;
+}
+
+String? _lateSendAbortReason({
+  required ConversationMessage? message,
+  required List<MediaAttachment> attachments,
+  required int expectedAttachmentCount,
+}) {
+  if (message == null) {
+    return 'message_missing';
+  }
+  if (message.status != 'sending' && message.status != 'failed') {
+    return 'message_status_${message.status}';
+  }
+
+  if (attachments.any(
+    (attachment) => attachment.downloadStatus == 'upload_failed',
+  )) {
+    return 'attachments_terminalized';
+  }
+  final doneCount = attachments
+      .where((attachment) => attachment.downloadStatus == 'done')
+      .length;
+  if (doneCount < expectedAttachmentCount) {
+    return 'attachments_not_done';
+  }
+  return null;
 }

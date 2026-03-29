@@ -320,6 +320,11 @@ class InMemoryMessageRepository implements MessageRepository {
   }
 
   @override
+  Future<int> deleteMessage(String id) async {
+    return _messages.remove(id) == null ? 0 : 1;
+  }
+
+  @override
   Future<List<ConversationMessage>> getMessagesPage(
     String contactPeerId, {
     int limit = 50,
@@ -352,7 +357,9 @@ class InMemoryMessageRepository implements MessageRepository {
   }) async => [];
 
   @override
-  Future<int> recoverStuckSendingMessages({required Duration olderThan}) async => 0;
+  Future<int> recoverStuckSendingMessages({
+    required Duration olderThan,
+  }) async => 0;
 
   @override
   Future<void> updateWireEnvelope(String id, String envelope) async {}

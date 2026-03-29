@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/device/upload_wake_lock.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
@@ -33,6 +34,7 @@ import '../../../core/services/fake_p2p_service.dart';
 import '../../../shared/fakes/fake_audio_recorder_service.dart';
 import '../../../shared/fakes/fake_media_file_manager.dart';
 import '../../../shared/fakes/fake_group_pubsub_network.dart';
+import '../../../shared/fakes/fake_upload_wake_lock_driver.dart';
 import '../../../shared/fakes/group_test_user.dart';
 import '../../../shared/fakes/in_memory_contact_repository.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
@@ -987,6 +989,11 @@ void main() {
 
   setUp(() {
     network = FakeGroupPubSubNetwork();
+    UploadWakeLockController.debugReset(driver: FakeUploadWakeLockDriver());
+  });
+
+  tearDown(() {
+    UploadWakeLockController.debugReset(driver: FakeUploadWakeLockDriver());
   });
 
   Future<void> pump() => Future.delayed(const Duration(milliseconds: 50));
@@ -1378,7 +1385,7 @@ void main() {
     );
 
     test(
-      'announcement media send with zero topic peers stays pending and readers recover intact media refs after resume',
+      'announcement media send with zero topic peers stays sent and readers recover intact media refs after resume',
       () async {
         final admin = GroupTestUser.create(
           peerId: 'admin-media-peer',
@@ -1471,7 +1478,7 @@ void main() {
 
         expect(sendResult, SendGroupMessageResult.successNoPeers);
         expect(sent, isNotNull);
-        expect(sent!.status, 'pending');
+        expect(sent!.status, 'sent');
         expect(sent!.keyGeneration, 4);
 
         final readerMessages = await reader.loadGroupMessages(groupId);
@@ -2022,7 +2029,7 @@ void main() {
 
         expect(result, SendGroupMessageResult.successNoPeers);
         expect(sent, isNotNull);
-        expect(sent!.status, 'pending');
+        expect(sent!.status, 'sent');
         expect(sent.inboxStored, isTrue);
         expect(admin.bridge.commandLog, contains('group:publish'));
         expect(admin.bridge.commandLog, contains('group:inboxStore'));

@@ -113,6 +113,11 @@ class InMemoryMessageRepository
   }
 
   @override
+  Future<int> deleteMessage(String id) async {
+    return _messages.remove(id) == null ? 0 : 1;
+  }
+
+  @override
   Future<List<ConversationMessage>> getMessagesPage(
     String contactPeerId, {
     int limit = 50,

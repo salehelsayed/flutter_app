@@ -48,6 +48,19 @@ abstract class Bridge {
   void Function(Map<String, dynamic>)? onGroupReactionReceived;
 }
 
+final StreamController<Map<String, dynamic>> _mediaUploadProgressController =
+    StreamController<Map<String, dynamic>>.broadcast(sync: true);
+
+/// Broadcast stream for relay media-upload progress events emitted by the
+/// active bridge implementation.
+Stream<Map<String, dynamic>> get mediaUploadProgressStream =>
+    _mediaUploadProgressController.stream;
+
+/// Publishes a media-upload progress event to Flutter listeners.
+void emitMediaUploadProgressEvent(Map<String, dynamic> data) {
+  _mediaUploadProgressController.add(Map<String, dynamic>.from(data));
+}
+
 /// Calls the bridge to generate a new identity.
 ///
 /// Sends the "identity.generate" command and returns

@@ -51,14 +51,16 @@ class FakeMediaAttachmentRepository implements MediaAttachmentRepository {
 
   @override
   Future<List<MediaAttachment>> getAttachmentsForMessage(
-      String messageId) async {
+    String messageId,
+  ) async {
     getAttachmentsForMessageCallCount++;
     return _attachments.where((a) => a.messageId == messageId).toList();
   }
 
   @override
   Future<Map<String, List<MediaAttachment>>> getAttachmentsForMessages(
-      List<String> messageIds) async {
+    List<String> messageIds,
+  ) async {
     final result = <String, List<MediaAttachment>>{};
     for (final a in _attachments) {
       if (messageIds.contains(a.messageId)) {
@@ -83,8 +85,9 @@ class FakeMediaAttachmentRepository implements MediaAttachmentRepository {
   Future<void> updateDownloadStatus(String id, String downloadStatus) async {
     final idx = _attachments.indexWhere((a) => a.id == id);
     if (idx >= 0) {
-      _attachments[idx] =
-          _attachments[idx].copyWith(downloadStatus: downloadStatus);
+      _attachments[idx] = _attachments[idx].copyWith(
+        downloadStatus: downloadStatus,
+      );
     }
   }
 
@@ -99,6 +102,22 @@ class FakeMediaAttachmentRepository implements MediaAttachmentRepository {
   Future<int> deleteAttachmentsForContact(String contactPeerId) async {
     // simplified - in tests we don't join with messages table
     return 0;
+  }
+
+  @override
+  Future<int> markUploadPendingAttachmentsFailedForMessage(
+    String messageId,
+  ) async {
+    var count = 0;
+    for (var i = 0; i < _attachments.length; i++) {
+      final attachment = _attachments[i];
+      if (attachment.messageId == messageId &&
+          attachment.downloadStatus == 'upload_pending') {
+        _attachments[i] = attachment.copyWith(downloadStatus: 'upload_failed');
+        count++;
+      }
+    }
+    return count;
   }
 
   @override

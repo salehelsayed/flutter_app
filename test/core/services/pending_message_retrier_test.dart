@@ -1,3 +1,4 @@
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/services/pending_message_retrier.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
@@ -241,6 +242,69 @@ void main() {
         expect(identityRepo.loadIdentityCallCount, 0);
       },
       timeout: const Timeout(Duration(seconds: 10)),
+    );
+
+    test(
+      'group continuity sweep runs on a shorter cadence than full retry loop',
+      () {
+        fakeAsync((async) {
+          final callOrder = <String>[];
+
+          p2pService = FakeP2PService(
+            initialState: const NodeState(
+              isStarted: true,
+              peerId: 'my-peer',
+              circuitAddresses: ['/addr'],
+            ),
+          );
+          retrier = PendingMessageRetrier(
+            p2pService: p2pService,
+            messageRepo: messageRepo,
+            identityRepo: identityRepo,
+            contactRepo: contactRepo,
+            bridge: bridge,
+            rejoinGroupTopicsFn: () async {
+              callOrder.add('rejoinGroupTopics');
+            },
+            drainGroupOfflineInboxFn: () async {
+              callOrder.add('drainGroupOfflineInbox');
+            },
+            retryFailedMessagesOverride: () async {
+              callOrder.add('retryFailedMessages');
+              return 0;
+            },
+            retryUnackedMessagesOverride: () async {
+              callOrder.add('retryUnackedMessages');
+              return 0;
+            },
+          );
+          retrier.start();
+
+          async.elapse(PendingMessageRetrier.defaultRetryDebounce);
+          async.flushMicrotasks();
+
+          expect(callOrder, <String>[
+            'rejoinGroupTopics',
+            'drainGroupOfflineInbox',
+            'retryFailedMessages',
+            'retryUnackedMessages',
+          ]);
+
+          async.elapse(
+            PendingMessageRetrier.defaultGroupContinuitySweepInterval,
+          );
+          async.flushMicrotasks();
+
+          expect(callOrder, <String>[
+            'rejoinGroupTopics',
+            'drainGroupOfflineInbox',
+            'retryFailedMessages',
+            'retryUnackedMessages',
+            'rejoinGroupTopics',
+            'drainGroupOfflineInbox',
+          ]);
+        });
+      },
     );
   });
 }

@@ -26,6 +26,7 @@ class MessageRepositoryImpl
   final Future<int> Function() dbCountTotalUnread;
   final Future<int> Function() dbCountTotalUnreadExcludingArchived;
   final Future<int> Function(String contactPeerId) dbDeleteMessagesForContact;
+  final Future<int> Function(String id) dbDeleteMessage;
   final Future<List<Map<String, Object?>>> Function(
     String contactPeerId, {
     int limit,
@@ -52,8 +53,11 @@ class MessageRepositoryImpl
   dbLoadStuckSendingOutgoingMessages;
   final Future<List<Map<String, Object?>>> Function()
   dbLoadSendingOutgoingMessages;
-  final Future<int> Function(String id,
-      {required String fromStatus, required String toStatus})
+  final Future<int> Function(
+    String id, {
+    required String fromStatus,
+    required String toStatus,
+  })
   dbConditionalTransitionStatus;
   final StreamController<ConversationMessage> _messageChangeController =
       StreamController<ConversationMessage>.broadcast();
@@ -71,6 +75,7 @@ class MessageRepositoryImpl
     required this.dbCountTotalUnread,
     required this.dbCountTotalUnreadExcludingArchived,
     required this.dbDeleteMessagesForContact,
+    required this.dbDeleteMessage,
     required this.dbLoadMessagesPage,
     required this.dbLoadFailedOutgoingMessages,
     required this.dbLoadUnackedOutgoingMessages,
@@ -141,7 +146,8 @@ class MessageRepositoryImpl
   Future<void> updateMessageStatus(String id, String status) async {
     final updatedCount = await dbUpdateMessageStatus(id, status);
     if (updatedCount <= 0) return;
-    final updated = _updatedMessageSnapshot(id, status) ??
+    final updated =
+        _updatedMessageSnapshot(id, status) ??
         await _loadAndRememberMessage(id);
     if (updated != null) {
       _messageChangeController.add(updated);
@@ -263,6 +269,37 @@ class MessageRepositoryImpl
   }
 
   @override
+  Future<int> deleteMessage(String id) async {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'MESSAGE_REPO_DELETE_START',
+      details: {'id': id.length > 8 ? id.substring(0, 8) : id},
+    );
+
+    try {
+      final count = await dbDeleteMessage(id);
+      if (count > 0) {
+        _messageSnapshots.remove(id);
+      }
+
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'MESSAGE_REPO_DELETE_SUCCESS',
+        details: {'count': count},
+      );
+
+      return count;
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'MESSAGE_REPO_DELETE_ERROR',
+        details: {'error': e.toString()},
+      );
+      rethrow;
+    }
+  }
+
+  @override
   Future<List<ConversationMessage>> getFailedOutgoingMessages() async {
     final rows = await dbLoadFailedOutgoingMessages();
     return _rememberMessages(
@@ -282,9 +319,7 @@ class MessageRepositoryImpl
   }
 
   @override
-  Future<int> recoverStuckSendingMessages({
-    required Duration olderThan,
-  }) async {
+  Future<int> recoverStuckSendingMessages({required Duration olderThan}) async {
     final cutoff = DateTime.now().toUtc().subtract(olderThan);
     return dbRecoverStuckSendingMessages(olderThan: cutoff);
   }
@@ -320,7 +355,8 @@ class MessageRepositoryImpl
       toStatus: toStatus,
     );
     if (count > 0) {
-      final updated = _updatedMessageSnapshot(id, toStatus) ??
+      final updated =
+          _updatedMessageSnapshot(id, toStatus) ??
           await _loadAndRememberMessage(id);
       if (updated != null) {
         _messageChangeController.add(updated);

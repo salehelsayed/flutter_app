@@ -456,6 +456,48 @@ void main() {
       expect(count, 1);
     });
 
+    test(
+      'skips the final send when the message is deleted after upload work completes',
+      () async {
+        final msg = _makeMsg(
+          'msg-late-delete',
+          status: 'failed',
+          contactPeerId: 'peer-bob',
+        );
+        var deleted = false;
+        messageRepo.seed([msg]);
+        identityRepo.seed(FakeIdentityRepository.makeIdentity());
+        mediaRepo.seed([_pendingAtt(messageId: msg.id)]);
+        mediaRepo.onSaveAttachment = (attachment) {
+          if (!deleted &&
+              attachment.messageId == msg.id &&
+              attachment.downloadStatus == 'done') {
+            deleted = true;
+            messageRepo.deleteMessage(msg.id);
+          }
+        };
+        fakeUploadFn.willReturn(_doneAttachment('blob-uploaded', msg.id));
+
+        final count = await retryIncompleteUploads(
+          mediaAttachmentRepo: mediaRepo,
+          messageRepo: messageRepo,
+          bridge: bridge,
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          uploadMediaFn: fakeUploadFn.call,
+        );
+
+        expect(count, 0);
+        expect(await messageRepo.getMessage(msg.id), isNull);
+        expect(
+          p2pService.storeInInboxCallCount,
+          0,
+          reason: 'late-send guard must suppress sendChatMessage',
+        );
+      },
+    );
+
     // ---- Multi-attachment per-message tests ----
 
     test(

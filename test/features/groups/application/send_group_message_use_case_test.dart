@@ -1108,7 +1108,7 @@ void main() {
       () async {
         // When the Go pubsub topic has zero peers, publish still returns ok:true
         // because the durable inbox store is the fallback path. The send should
-        // return successNoPeers with status 'pending'.
+        // return successNoPeers while persisting the row as a successful send.
         bridge.responses['group:publish'] = {
           'ok': true,
           'messageId': 'msg-zero-peers',
@@ -1130,7 +1130,7 @@ void main() {
         expect(result, SendGroupMessageResult.successNoPeers);
         expect(message, isNotNull);
         expect(message!.text, 'No peers online');
-        expect(message.status, 'pending');
+        expect(message.status, 'sent');
         // Both publish and inbox store should have been called
         expect(bridge.commandLog, contains('group:publish'));
         expect(bridge.commandLog, contains('group:inboxStore'));
@@ -1174,7 +1174,7 @@ void main() {
 
         expect(result, SendGroupMessageResult.successNoPeers);
         expect(message, isNotNull);
-        expect(message!.status, 'pending');
+        expect(message!.status, 'sent');
       },
     );
 
@@ -1410,7 +1410,7 @@ void main() {
   });
 
   group('WU-3: 0-peer publish detection and 4-way matrix', () {
-    test('0-peer + inbox OK → successNoPeers, status pending', () async {
+    test('0-peer + inbox OK → successNoPeers, status sent', () async {
       bridge.responses['group:publish'] = {
         'ok': true,
         'messageId': 'msg-zero-peers',
@@ -1432,11 +1432,11 @@ void main() {
 
       expect(result, SendGroupMessageResult.successNoPeers);
       expect(message, isNotNull);
-      expect(message!.status, 'pending');
+      expect(message!.status, 'sent');
 
       final saved = await msgRepo.getMessage('msg-zero-peers');
       expect(saved, isNotNull);
-      expect(saved!.status, 'pending');
+      expect(saved!.status, 'sent');
       expect(saved.inboxStored, isTrue);
     });
 

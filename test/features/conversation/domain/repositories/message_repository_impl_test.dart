@@ -20,15 +20,21 @@ void main() {
         return store.values
             .where((row) => row['contact_peer_id'] == contactPeerId)
             .toList()
-          ..sort((a, b) => (a['timestamp'] as String)
-              .compareTo(b['timestamp'] as String));
+          ..sort(
+            (a, b) =>
+                (a['timestamp'] as String).compareTo(b['timestamp'] as String),
+          );
       },
       dbLoadLatestMessageForContact: (contactPeerId) async {
-        final rows = store.values
-            .where((row) => row['contact_peer_id'] == contactPeerId)
-            .toList()
-          ..sort((a, b) => (b['timestamp'] as String)
-              .compareTo(a['timestamp'] as String));
+        final rows =
+            store.values
+                .where((row) => row['contact_peer_id'] == contactPeerId)
+                .toList()
+              ..sort(
+                (a, b) => (b['timestamp'] as String).compareTo(
+                  a['timestamp'] as String,
+                ),
+              );
         return rows.isNotEmpty ? rows.first : null;
       },
       dbUpdateMessageStatus: (id, status) async {
@@ -62,22 +68,22 @@ void main() {
       },
       dbCountUnreadForContact: (contactPeerId) async {
         return store.values
-            .where((row) =>
-                row['contact_peer_id'] == contactPeerId &&
-                row['is_incoming'] == 1 &&
-                row['read_at'] == null)
+            .where(
+              (row) =>
+                  row['contact_peer_id'] == contactPeerId &&
+                  row['is_incoming'] == 1 &&
+                  row['read_at'] == null,
+            )
             .length;
       },
       dbCountTotalUnread: () async {
         return store.values
-            .where((row) =>
-                row['is_incoming'] == 1 && row['read_at'] == null)
+            .where((row) => row['is_incoming'] == 1 && row['read_at'] == null)
             .length;
       },
       dbCountTotalUnreadExcludingArchived: () async {
         return store.values
-            .where((row) =>
-                row['is_incoming'] == 1 && row['read_at'] == null)
+            .where((row) => row['is_incoming'] == 1 && row['read_at'] == null)
             .length;
       },
       dbDeleteMessagesForContact: (contactPeerId) async {
@@ -90,60 +96,82 @@ void main() {
         }
         return keysToRemove.length;
       },
+      dbDeleteMessage: (id) async {
+        return store.remove(id) == null ? 0 : 1;
+      },
       dbLoadMessagesPage: (contactPeerId, {limit = 50, beforeTimestamp}) async {
         var rows = store.values
             .where((row) => row['contact_peer_id'] == contactPeerId)
             .toList();
         if (beforeTimestamp != null) {
-          rows = rows.where((row) => (row['timestamp'] as String).compareTo(beforeTimestamp) < 0).toList();
+          rows = rows
+              .where(
+                (row) =>
+                    (row['timestamp'] as String).compareTo(beforeTimestamp) < 0,
+              )
+              .toList();
         }
-        rows.sort((a, b) => (b['timestamp'] as String).compareTo(a['timestamp'] as String));
+        rows.sort(
+          (a, b) =>
+              (b['timestamp'] as String).compareTo(a['timestamp'] as String),
+        );
         final page = rows.take(limit).toList();
         return page.reversed.toList();
       },
       dbLoadFailedOutgoingMessages: () async {
         return store.values
-            .where((row) =>
-                row['status'] == 'failed' && row['is_incoming'] == 0)
+            .where(
+              (row) => row['status'] == 'failed' && row['is_incoming'] == 0,
+            )
             .toList()
-          ..sort((a, b) => (a['timestamp'] as String)
-              .compareTo(b['timestamp'] as String));
+          ..sort(
+            (a, b) =>
+                (a['timestamp'] as String).compareTo(b['timestamp'] as String),
+          );
       },
       dbLoadUnackedOutgoingMessages: ({required olderThan, limit = 50}) async {
         return store.values
-            .where((row) =>
-                row['status'] == 'sent' &&
-                row['is_incoming'] == 0 &&
-                row['wire_envelope'] != null &&
-                (row['timestamp'] as String)
-                        .compareTo(olderThan.toUtc().toIso8601String()) <
-                    0)
+            .where(
+              (row) =>
+                  row['status'] == 'sent' &&
+                  row['is_incoming'] == 0 &&
+                  row['wire_envelope'] != null &&
+                  (row['timestamp'] as String).compareTo(
+                        olderThan.toUtc().toIso8601String(),
+                      ) <
+                      0,
+            )
             .take(limit)
             .toList()
-          ..sort((a, b) => (a['timestamp'] as String)
-              .compareTo(b['timestamp'] as String));
+          ..sort(
+            (a, b) =>
+                (a['timestamp'] as String).compareTo(b['timestamp'] as String),
+          );
       },
       dbLoadConversationThreadSummaries: (contactPeerIds) async {
         final summaries = <Map<String, Object?>>[];
         for (final contactPeerId in contactPeerIds) {
-          final rows = store.values
-              .where((row) => row['contact_peer_id'] == contactPeerId)
-              .toList()
-            ..sort((a, b) {
-              final timestampOrder = (b['timestamp'] as String)
-                  .compareTo(a['timestamp'] as String);
-              if (timestampOrder != 0) return timestampOrder;
-              final createdAtA = a['created_at'] as String? ?? '';
-              final createdAtB = b['created_at'] as String? ?? '';
-              return createdAtB.compareTo(createdAtA);
-            });
+          final rows =
+              store.values
+                  .where((row) => row['contact_peer_id'] == contactPeerId)
+                  .toList()
+                ..sort((a, b) {
+                  final timestampOrder = (b['timestamp'] as String).compareTo(
+                    a['timestamp'] as String,
+                  );
+                  if (timestampOrder != 0) return timestampOrder;
+                  final createdAtA = a['created_at'] as String? ?? '';
+                  final createdAtB = b['created_at'] as String? ?? '';
+                  return createdAtB.compareTo(createdAtA);
+                });
           final latest = rows.isEmpty ? null : rows.first;
           summaries.add({
             'contact_peer_id': contactPeerId,
             'message_count': rows.length,
             'unread_count': rows
-                .where((row) =>
-                    row['is_incoming'] == 1 && row['read_at'] == null)
+                .where(
+                  (row) => row['is_incoming'] == 1 && row['read_at'] == null,
+                )
                 .length,
             'latest_id': latest?['id'],
             'latest_contact_peer_id': latest?['contact_peer_id'],
@@ -161,22 +189,21 @@ void main() {
         }
         return summaries;
       },
-      dbRecoverStuckSendingMessages: ({required DateTime olderThan, int limit = 50}) async => 0,
+      dbRecoverStuckSendingMessages:
+          ({required DateTime olderThan, int limit = 50}) async => 0,
       dbUpdateWireEnvelope: (id, wireEnvelope) async {},
-      dbLoadStuckSendingOutgoingMessages: ({required DateTime olderThan, int limit = 50}) async => [],
+      dbLoadStuckSendingOutgoingMessages:
+          ({required DateTime olderThan, int limit = 50}) async => [],
       dbLoadSendingOutgoingMessages: () async => [],
-      dbConditionalTransitionStatus: (
-        id, {
-        required fromStatus,
-        required toStatus,
-      }) async {
-        final row = store[id];
-        if (row == null || row['status'] != fromStatus) {
-          return 0;
-        }
-        row['status'] = toStatus;
-        return 1;
-      },
+      dbConditionalTransitionStatus:
+          (id, {required fromStatus, required toStatus}) async {
+            final row = store[id];
+            if (row == null || row['status'] != fromStatus) {
+              return 0;
+            }
+            row['status'] = toStatus;
+            return 1;
+          },
     );
   });
 
@@ -242,26 +269,26 @@ void main() {
       expect(result, isEmpty);
     });
 
-    test('getMessagesForContact returns messages ordered by timestamp', () async {
-      await repo.saveMessage(makeMessage(
-        id: 'msg-2',
-        timestamp: '2026-02-09T11:00:00.000Z',
-      ));
-      await repo.saveMessage(makeMessage(
-        id: 'msg-1',
-        timestamp: '2026-02-09T10:00:00.000Z',
-      ));
-      await repo.saveMessage(makeMessage(
-        id: 'msg-3',
-        timestamp: '2026-02-09T12:00:00.000Z',
-      ));
+    test(
+      'getMessagesForContact returns messages ordered by timestamp',
+      () async {
+        await repo.saveMessage(
+          makeMessage(id: 'msg-2', timestamp: '2026-02-09T11:00:00.000Z'),
+        );
+        await repo.saveMessage(
+          makeMessage(id: 'msg-1', timestamp: '2026-02-09T10:00:00.000Z'),
+        );
+        await repo.saveMessage(
+          makeMessage(id: 'msg-3', timestamp: '2026-02-09T12:00:00.000Z'),
+        );
 
-      final messages = await repo.getMessagesForContact('contact-peer');
-      expect(messages.length, 3);
-      expect(messages[0].id, 'msg-1');
-      expect(messages[1].id, 'msg-2');
-      expect(messages[2].id, 'msg-3');
-    });
+        final messages = await repo.getMessagesForContact('contact-peer');
+        expect(messages.length, 3);
+        expect(messages[0].id, 'msg-1');
+        expect(messages[1].id, 'msg-2');
+        expect(messages[2].id, 'msg-3');
+      },
+    );
 
     test('getMessagesForContact filters by contactPeerId', () async {
       await repo.saveMessage(makeMessage(id: 'msg-1', contactPeerId: 'peer-A'));
@@ -277,14 +304,12 @@ void main() {
     });
 
     test('getLatestMessageForContact returns most recent', () async {
-      await repo.saveMessage(makeMessage(
-        id: 'msg-1',
-        timestamp: '2026-02-09T10:00:00.000Z',
-      ));
-      await repo.saveMessage(makeMessage(
-        id: 'msg-2',
-        timestamp: '2026-02-09T12:00:00.000Z',
-      ));
+      await repo.saveMessage(
+        makeMessage(id: 'msg-1', timestamp: '2026-02-09T10:00:00.000Z'),
+      );
+      await repo.saveMessage(
+        makeMessage(id: 'msg-2', timestamp: '2026-02-09T12:00:00.000Z'),
+      );
 
       final latest = await repo.getLatestMessageForContact('contact-peer');
       expect(latest, isNotNull);
@@ -296,39 +321,59 @@ void main() {
       expect(latest, isNull);
     });
 
-    test('getConversationThreadSummaries returns counts and latest rows', () async {
-      await repo.saveMessage(makeMessage(
-        id: 'msg-1',
-        contactPeerId: 'peer-A',
-        text: 'older',
-        timestamp: '2026-02-09T10:00:00.000Z',
-        isIncoming: true,
-      ));
-      await repo.saveMessage(makeMessage(
-        id: 'msg-2',
-        contactPeerId: 'peer-A',
-        text: 'newer',
-        timestamp: '2026-02-09T11:00:00.000Z',
-        isIncoming: true,
-      ));
+    test(
+      'getConversationThreadSummaries returns counts and latest rows',
+      () async {
+        await repo.saveMessage(
+          makeMessage(
+            id: 'msg-1',
+            contactPeerId: 'peer-A',
+            text: 'older',
+            timestamp: '2026-02-09T10:00:00.000Z',
+            isIncoming: true,
+          ),
+        );
+        await repo.saveMessage(
+          makeMessage(
+            id: 'msg-2',
+            contactPeerId: 'peer-A',
+            text: 'newer',
+            timestamp: '2026-02-09T11:00:00.000Z',
+            isIncoming: true,
+          ),
+        );
 
-      final summaries = await repo.getConversationThreadSummaries([
-        'peer-A',
-        'peer-B',
-      ]);
+        final summaries = await repo.getConversationThreadSummaries([
+          'peer-A',
+          'peer-B',
+        ]);
 
-      expect(summaries['peer-A']!.messageCount, 2);
-      expect(summaries['peer-A']!.unreadCount, 2);
-      expect(summaries['peer-A']!.latestMessage!.id, 'msg-2');
-      expect(summaries['peer-B']!.messageCount, 0);
-      expect(summaries['peer-B']!.latestMessage, isNull);
-    });
+        expect(summaries['peer-A']!.messageCount, 2);
+        expect(summaries['peer-A']!.unreadCount, 2);
+        expect(summaries['peer-A']!.latestMessage!.id, 'msg-2');
+        expect(summaries['peer-B']!.messageCount, 0);
+        expect(summaries['peer-B']!.latestMessage, isNull);
+      },
+    );
 
     test('updateMessageStatus changes status', () async {
       await repo.saveMessage(makeMessage(id: 'msg-1', status: 'sent'));
       await repo.updateMessageStatus('msg-1', 'delivered');
 
       expect(store['msg-1']!['status'], 'delivered');
+    });
+
+    test('deleteMessage removes only the targeted row', () async {
+      await repo.saveMessage(makeMessage(id: 'msg-1', contactPeerId: 'peer-a'));
+      await repo.saveMessage(makeMessage(id: 'msg-2', contactPeerId: 'peer-a'));
+      await repo.saveMessage(makeMessage(id: 'msg-3', contactPeerId: 'peer-b'));
+
+      final count = await repo.deleteMessage('msg-2');
+
+      expect(count, 1);
+      expect(store.containsKey('msg-1'), isTrue);
+      expect(store.containsKey('msg-2'), isFalse);
+      expect(store.containsKey('msg-3'), isTrue);
     });
 
     test(
@@ -416,10 +461,7 @@ void main() {
         expect(updated, 1);
         expect(dbLoadMessageCallCount, 0);
         expect(emitted, hasLength(1));
-        expectMessageShape(
-          emitted.single,
-          original.copyWith(status: 'failed'),
-        );
+        expectMessageShape(emitted.single, original.copyWith(status: 'failed'));
       },
     );
 
@@ -434,10 +476,12 @@ void main() {
 
     test('getMessagesPage returns most recent page', () async {
       for (var i = 1; i <= 5; i++) {
-        await repo.saveMessage(makeMessage(
-          id: 'msg-$i',
-          timestamp: '2026-02-09T${10 + i}:00:00.000Z',
-        ));
+        await repo.saveMessage(
+          makeMessage(
+            id: 'msg-$i',
+            timestamp: '2026-02-09T${10 + i}:00:00.000Z',
+          ),
+        );
       }
 
       final page = await repo.getMessagesPage('contact-peer', limit: 3);
@@ -449,10 +493,12 @@ void main() {
 
     test('getMessagesPage returns older page with cursor', () async {
       for (var i = 1; i <= 5; i++) {
-        await repo.saveMessage(makeMessage(
-          id: 'msg-$i',
-          timestamp: '2026-02-09T${10 + i}:00:00.000Z',
-        ));
+        await repo.saveMessage(
+          makeMessage(
+            id: 'msg-$i',
+            timestamp: '2026-02-09T${10 + i}:00:00.000Z',
+          ),
+        );
       }
 
       final page = await repo.getMessagesPage(

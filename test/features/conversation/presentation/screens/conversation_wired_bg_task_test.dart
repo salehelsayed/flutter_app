@@ -5,6 +5,8 @@
 // and bg:end afterwards. These tests are expected to FAIL (red) because
 // the presentation layer does not yet call bg:begin/bg:end.
 
+// ignore_for_file: unused_element_parameter
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -12,6 +14,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/device/upload_wake_lock.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
@@ -38,6 +41,7 @@ import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
 import '../../../../shared/fakes/fake_audio_recorder_service.dart';
+import '../../../../shared/fakes/fake_upload_wake_lock_driver.dart';
 
 // ---------------------------------------------------------------------------
 // Fakes
@@ -56,9 +60,9 @@ class _OrderRecordingBridge implements Bridge {
     this.bgBeginResponse = '99',
     Set<String>? throwOnCommands,
     Map<String, String>? responseOverrides,
-  })  : operationLog = operationLog ?? <String>[],
-        throwOnCommands = throwOnCommands ?? <String>{},
-        responseOverrides = responseOverrides ?? const <String, String>{};
+  }) : operationLog = operationLog ?? <String>[],
+       throwOnCommands = throwOnCommands ?? <String>{},
+       responseOverrides = responseOverrides ?? const <String, String>{};
 
   @override
   Future<String> send(String message) async {
@@ -176,18 +180,17 @@ class _FakeMessageRepository
     String pid, {
     int limit = 50,
     String? beforeTimestamp,
-  }) async =>
-      [];
+  }) async => [];
   @override
   Future<List<ConversationMessage>> getFailedOutgoingMessages() async => [];
   @override
   Future<List<ConversationMessage>> getUnackedOutgoingMessages({
     required Duration olderThan,
-  }) async =>
-      [];
+  }) async => [];
   @override
-  Future<int> recoverStuckSendingMessages({required Duration olderThan}) async =>
-      0;
+  Future<int> recoverStuckSendingMessages({
+    required Duration olderThan,
+  }) async => 0;
   @override
   Future<void> updateWireEnvelope(String id, String envelope) async {}
   @override
@@ -285,20 +288,25 @@ class _FakeP2PService implements P2PService {
     operationLog.add('p2p:sendMessageWithReply');
     return SendMessageResult(sent: sendMessageResult, reply: 'received: ok');
   }
+
   @override
   Future<DiscoveredPeer?> discoverPeer(String peerId, {int? timeoutMs}) async {
     operationLog.add('p2p:discoverPeer');
     return discoverPeerResult;
   }
+
   @override
-  Future<bool> dialPeer(String peerId,
-          {List<String>? addresses, int? timeoutMs}) async =>
-      dialPeerResult;
+  Future<bool> dialPeer(
+    String peerId, {
+    List<String>? addresses,
+    int? timeoutMs,
+  }) async => dialPeerResult;
   @override
   Future<bool> storeInInbox(String toPeerId, String message) async {
     operationLog.add('p2p:storeInInbox');
     return storeInInboxResult;
   }
+
   @override
   Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) async =>
       [];
@@ -321,8 +329,7 @@ class _FakeP2PService implements P2PService {
     String message,
     String fromPeerId, {
     int? timeoutMs,
-  }) async =>
-      false;
+  }) async => false;
   @override
   Future<bool> sendLocalMedia({
     required String peerId,
@@ -354,8 +361,8 @@ class _FakeMediaAttachmentRepository implements MediaAttachmentRepository {
       [];
   @override
   Future<Map<String, List<MediaAttachment>>> getAttachmentsForMessages(
-          List<String> mids) async =>
-      {};
+    List<String> mids,
+  ) async => {};
   @override
   Future<int> deleteAttachmentsForContact(String contactPeerId) async => 0;
   @override
@@ -375,23 +382,23 @@ class _FakeMediaAttachmentRepository implements MediaAttachmentRepository {
 // ---------------------------------------------------------------------------
 
 ContactModel _makeContact() => ContactModel(
-      peerId: '12D3KooWContactPeer123',
-      publicKey: 'pub',
-      rendezvous: '/dns4/relay/tcp/443/p2p/relay',
-      username: 'Alice',
-      signature: 'sig',
-      scannedAt: '2026-02-11T10:00:00.000Z',
-    );
+  peerId: '12D3KooWContactPeer123',
+  publicKey: 'pub',
+  rendezvous: '/dns4/relay/tcp/443/p2p/relay',
+  username: 'Alice',
+  signature: 'sig',
+  scannedAt: '2026-02-11T10:00:00.000Z',
+);
 
 IdentityModel _makeIdentity() => IdentityModel(
-      peerId: '12D3KooWMyPeer123',
-      publicKey: 'pub',
-      privateKey: 'priv',
-      mnemonic12: 'one two three four five six seven eight nine ten eleven twelve',
-      username: 'Me',
-      createdAt: '2026-02-11T09:00:00.000Z',
-      updatedAt: '2026-02-11T09:00:00.000Z',
-    );
+  peerId: '12D3KooWMyPeer123',
+  publicKey: 'pub',
+  privateKey: 'priv',
+  mnemonic12: 'one two three four five six seven eight nine ten eleven twelve',
+  username: 'Me',
+  createdAt: '2026-02-11T09:00:00.000Z',
+  updatedAt: '2026-02-11T09:00:00.000Z',
+);
 
 /// Instant-success send function.
 Future<(SendChatMessageResult, ConversationMessage?)> _instantSuccessSendFn({
@@ -472,11 +479,7 @@ int _logIndex(List<String> operationLog, String entry) {
   return index;
 }
 
-void _expectOrdered(
-  List<String> operationLog,
-  String earlier,
-  String later,
-) {
+void _expectOrdered(List<String> operationLog, String earlier, String later) {
   expect(
     _logIndex(operationLog, earlier),
     lessThan(_logIndex(operationLog, later)),
@@ -512,116 +515,128 @@ void main() {
   late void Function(FlutterErrorDetails)? originalOnError;
   setUp(() {
     originalOnError = FlutterError.onError;
+    UploadWakeLockController.debugReset(driver: FakeUploadWakeLockDriver());
     FlutterError.onError = (details) {
       if (details.toString().contains('overflowed')) return;
       originalOnError?.call(details);
     };
   });
-  tearDown(() => FlutterError.onError = originalOnError);
+  tearDown(() {
+    FlutterError.onError = originalOnError;
+    UploadWakeLockController.debugReset(driver: FakeUploadWakeLockDriver());
+  });
 
   group('ConversationWired _onSend — background task ordering', () {
     testWidgets(
-        'bg:begin happens before media upload and bg:end happens after send',
-        (tester) async {
+      'bg:begin happens before media upload and bg:end happens after send',
+      (tester) async {
+        final operationLog = <String>[];
+        final bridge = _OrderRecordingBridge(operationLog: operationLog);
+        bool uploadCalled = false;
+        bool sendCalled = false;
+
+        final tempDir = Directory.systemTemp.createTempSync('bg_task_test_');
+        addTearDown(() {
+          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+        });
+        final attachment = File('${tempDir.path}/photo.jpg')
+          ..writeAsStringSync('image');
+
+        await _pumpConversationWired(
+          tester,
+          bridge: bridge,
+          uploadMediaFn:
+              ({
+                required Bridge bridge,
+                required String localFilePath,
+                required String mime,
+                required String recipientPeerId,
+                MediaFileManager? mediaFileManager,
+                int? width,
+                int? height,
+                int? durationMs,
+                List<double>? waveform,
+                List<String>? allowedPeers,
+                String? blobId,
+              }) async {
+                uploadCalled = true;
+                operationLog.add('uploadMediaFn');
+                return MediaAttachment(
+                  id: 'media-1',
+                  messageId: '',
+                  mime: mime,
+                  size: 100,
+                  mediaType: 'image',
+                  localPath: localFilePath,
+                  downloadStatus: 'done',
+                  createdAt: DateTime.now().toUtc().toIso8601String(),
+                );
+              },
+          sendFn:
+              ({
+                required P2PService p2pService,
+                required MessageRepository messageRepo,
+                required String targetPeerId,
+                required String text,
+                required String senderPeerId,
+                required String senderUsername,
+                String? messageId,
+                String? timestamp,
+                Bridge? bridge,
+                String? recipientMlKemPublicKey,
+                String? quotedMessageId,
+                List<MediaAttachment>? mediaAttachments,
+                MediaAttachmentRepository? mediaAttachmentRepo,
+              }) async {
+                sendCalled = true;
+                operationLog.add('sendChatMessageFn');
+                return _instantSuccessSendFn(
+                  p2pService: p2pService,
+                  messageRepo: messageRepo,
+                  targetPeerId: targetPeerId,
+                  text: text,
+                  senderPeerId: senderPeerId,
+                  senderUsername: senderUsername,
+                  messageId: messageId,
+                  timestamp: timestamp,
+                  bridge: bridge,
+                  recipientMlKemPublicKey: recipientMlKemPublicKey,
+                  quotedMessageId: quotedMessageId,
+                  mediaAttachments: mediaAttachments,
+                  mediaAttachmentRepo: mediaAttachmentRepo,
+                );
+              },
+          initialAttachments: [attachment],
+        );
+
+        // Type text and tap send
+        await tester.enterText(find.byType(TextField), 'hello');
+        await tester.pump();
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await tester.pump(const Duration(milliseconds: 500));
+        await tester.pump(const Duration(milliseconds: 500));
+
+        expect(
+          uploadCalled,
+          isTrue,
+          reason: 'uploadMediaFn must be called when there are attachments',
+        );
+        expect(sendCalled, isTrue);
+        _expectOrdered(operationLog, 'bridge:bg:begin', 'uploadMediaFn');
+        _expectOrdered(operationLog, 'uploadMediaFn', 'sendChatMessageFn');
+        _expectOrdered(operationLog, 'sendChatMessageFn', 'bridge:bg:end');
+      },
+    );
+
+    testWidgets('bg:end fires in finally when media upload throws', (
+      tester,
+    ) async {
       final operationLog = <String>[];
       final bridge = _OrderRecordingBridge(operationLog: operationLog);
-      bool uploadCalled = false;
-      bool sendCalled = false;
 
-      final tempDir = Directory.systemTemp.createTempSync('bg_task_test_');
-      addTearDown(() {
-        if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
-      });
-      final attachment = File('${tempDir.path}/photo.jpg')
-        ..writeAsStringSync('image');
-
-      await _pumpConversationWired(
-        tester,
-        bridge: bridge,
-        uploadMediaFn: ({
-          required Bridge bridge,
-          required String localFilePath,
-          required String mime,
-          required String recipientPeerId,
-          MediaFileManager? mediaFileManager,
-          int? width,
-          int? height,
-          int? durationMs,
-          List<double>? waveform,
-          List<String>? allowedPeers,
-          String? blobId,
-        }) async {
-          uploadCalled = true;
-          operationLog.add('uploadMediaFn');
-          return MediaAttachment(
-            id: 'media-1',
-            messageId: '',
-            mime: mime,
-            size: 100,
-            mediaType: 'image',
-            localPath: localFilePath,
-            downloadStatus: 'done',
-            createdAt: DateTime.now().toUtc().toIso8601String(),
-          );
-        },
-        sendFn: ({
-          required P2PService p2pService,
-          required MessageRepository messageRepo,
-          required String targetPeerId,
-          required String text,
-          required String senderPeerId,
-          required String senderUsername,
-          String? messageId,
-          String? timestamp,
-          Bridge? bridge,
-          String? recipientMlKemPublicKey,
-          String? quotedMessageId,
-          List<MediaAttachment>? mediaAttachments,
-          MediaAttachmentRepository? mediaAttachmentRepo,
-        }) async {
-          sendCalled = true;
-          operationLog.add('sendChatMessageFn');
-          return _instantSuccessSendFn(
-            p2pService: p2pService,
-            messageRepo: messageRepo,
-            targetPeerId: targetPeerId,
-            text: text,
-            senderPeerId: senderPeerId,
-            senderUsername: senderUsername,
-            messageId: messageId,
-            timestamp: timestamp,
-            bridge: bridge,
-            recipientMlKemPublicKey: recipientMlKemPublicKey,
-            quotedMessageId: quotedMessageId,
-            mediaAttachments: mediaAttachments,
-            mediaAttachmentRepo: mediaAttachmentRepo,
-          );
-        },
-        initialAttachments: [attachment],
+      final tempDir = Directory.systemTemp.createTempSync(
+        'bg_task_test_throw_',
       );
-
-      // Type text and tap send
-      await tester.enterText(find.byType(TextField), 'hello');
-      await tester.pump();
-      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
-      await tester.pump(const Duration(milliseconds: 500));
-      await tester.pump(const Duration(milliseconds: 500));
-
-      expect(uploadCalled, isTrue,
-          reason: 'uploadMediaFn must be called when there are attachments');
-      expect(sendCalled, isTrue);
-      _expectOrdered(operationLog, 'bridge:bg:begin', 'uploadMediaFn');
-      _expectOrdered(operationLog, 'uploadMediaFn', 'sendChatMessageFn');
-      _expectOrdered(operationLog, 'sendChatMessageFn', 'bridge:bg:end');
-    });
-
-    testWidgets('bg:end fires in finally when media upload throws',
-        (tester) async {
-      final operationLog = <String>[];
-      final bridge = _OrderRecordingBridge(operationLog: operationLog);
-
-      final tempDir =
-          Directory.systemTemp.createTempSync('bg_task_test_throw_');
       addTearDown(() {
         if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
       });
@@ -631,22 +646,23 @@ void main() {
       await _pumpConversationWired(
         tester,
         bridge: bridge,
-        uploadMediaFn: ({
-          required Bridge bridge,
-          required String localFilePath,
-          required String mime,
-          required String recipientPeerId,
-          MediaFileManager? mediaFileManager,
-          int? width,
-          int? height,
-          int? durationMs,
-          List<double>? waveform,
-          List<String>? allowedPeers,
-          String? blobId,
-        }) async {
-          operationLog.add('uploadMediaFn');
-          throw Exception('simulated network interruption during upload');
-        },
+        uploadMediaFn:
+            ({
+              required Bridge bridge,
+              required String localFilePath,
+              required String mime,
+              required String recipientPeerId,
+              MediaFileManager? mediaFileManager,
+              int? width,
+              int? height,
+              int? durationMs,
+              List<double>? waveform,
+              List<String>? allowedPeers,
+              String? blobId,
+            }) async {
+              operationLog.add('uploadMediaFn');
+              throw Exception('simulated network interruption during upload');
+            },
         initialAttachments: [attachment],
       );
 
@@ -663,129 +679,135 @@ void main() {
 
   group('ConversationWired _onSend text-only — background task ordering', () {
     testWidgets(
-        'bg:begin happens before text-only send and bg:end happens after',
-        (tester) async {
-      final operationLog = <String>[];
-      final bridge = _OrderRecordingBridge(operationLog: operationLog);
-      bool sendCalled = false;
+      'bg:begin happens before text-only send and bg:end happens after',
+      (tester) async {
+        final operationLog = <String>[];
+        final bridge = _OrderRecordingBridge(operationLog: operationLog);
+        bool sendCalled = false;
 
-      await _pumpConversationWired(
-        tester,
-        bridge: bridge,
-        sendFn: ({
-          required P2PService p2pService,
-          required MessageRepository messageRepo,
-          required String targetPeerId,
-          required String text,
-          required String senderPeerId,
-          required String senderUsername,
-          String? messageId,
-          String? timestamp,
-          Bridge? bridge,
-          String? recipientMlKemPublicKey,
-          String? quotedMessageId,
-          List<MediaAttachment>? mediaAttachments,
-          MediaAttachmentRepository? mediaAttachmentRepo,
-        }) async {
-          sendCalled = true;
-          operationLog.add('sendChatMessageFn');
-          final ts = timestamp ?? DateTime.now().toUtc().toIso8601String();
-          return (
-            SendChatMessageResult.success,
-            ConversationMessage(
-              id: messageId ?? 'msg-1',
-              contactPeerId: targetPeerId,
-              senderPeerId: senderPeerId,
-              text: text,
-              timestamp: ts,
-              status: 'delivered',
-              isIncoming: false,
-              createdAt: ts,
-            )
-          );
-        },
-      );
+        await _pumpConversationWired(
+          tester,
+          bridge: bridge,
+          sendFn:
+              ({
+                required P2PService p2pService,
+                required MessageRepository messageRepo,
+                required String targetPeerId,
+                required String text,
+                required String senderPeerId,
+                required String senderUsername,
+                String? messageId,
+                String? timestamp,
+                Bridge? bridge,
+                String? recipientMlKemPublicKey,
+                String? quotedMessageId,
+                List<MediaAttachment>? mediaAttachments,
+                MediaAttachmentRepository? mediaAttachmentRepo,
+              }) async {
+                sendCalled = true;
+                operationLog.add('sendChatMessageFn');
+                final ts =
+                    timestamp ?? DateTime.now().toUtc().toIso8601String();
+                return (
+                  SendChatMessageResult.success,
+                  ConversationMessage(
+                    id: messageId ?? 'msg-1',
+                    contactPeerId: targetPeerId,
+                    senderPeerId: senderPeerId,
+                    text: text,
+                    timestamp: ts,
+                    status: 'delivered',
+                    isIncoming: false,
+                    createdAt: ts,
+                  ),
+                );
+              },
+        );
 
-      await tester.enterText(find.byType(TextField), 'hello text only');
-      await tester.pump();
-      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
-      await tester.pump(const Duration(milliseconds: 500));
-      await tester.pump(const Duration(milliseconds: 500));
+        await tester.enterText(find.byType(TextField), 'hello text only');
+        await tester.pump();
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await tester.pump(const Duration(milliseconds: 500));
+        await tester.pump(const Duration(milliseconds: 500));
 
-      expect(sendCalled, isTrue);
-      _expectOrdered(operationLog, 'bridge:bg:begin', 'sendChatMessageFn');
-      _expectOrdered(operationLog, 'sendChatMessageFn', 'bridge:bg:end');
-    });
+        expect(sendCalled, isTrue);
+        _expectOrdered(operationLog, 'bridge:bg:begin', 'sendChatMessageFn');
+        _expectOrdered(operationLog, 'sendChatMessageFn', 'bridge:bg:end');
+      },
+    );
   });
 
   group('ConversationWired _onRecordStop — background task ordering', () {
     testWidgets(
-        'local WiFi voice send starts bg task before local transfer and ends after delegated send',
-        (tester) async {
-      final operationLog = <String>[];
-      final bridge = _OrderRecordingBridge(operationLog: operationLog);
-      final recorder = FakeAudioRecorderService()
-        ..fakeDurationMs = 1200
-        ..fakeOutputPath = '/tmp/voice_local_bg.m4a';
-      final file = File(recorder.fakeOutputPath!)..writeAsStringSync('voice');
-      addTearDown(() {
-        if (file.existsSync()) file.deleteSync();
-      });
-      final p2pService = _FakeP2PService(
-        localPeer: true,
-        localMediaResult: true,
-        operationLog: operationLog,
-      );
+      'local WiFi voice send starts bg task before local transfer and ends after delegated send',
+      (tester) async {
+        final operationLog = <String>[];
+        final bridge = _OrderRecordingBridge(operationLog: operationLog);
+        final recorder = FakeAudioRecorderService()
+          ..fakeDurationMs = 1200
+          ..fakeOutputPath = '/tmp/voice_local_bg.m4a';
+        final file = File(recorder.fakeOutputPath!)..writeAsStringSync('voice');
+        addTearDown(() {
+          if (file.existsSync()) file.deleteSync();
+        });
+        final p2pService = _FakeP2PService(
+          localPeer: true,
+          localMediaResult: true,
+          operationLog: operationLog,
+        );
 
-      await _pumpConversationWired(
-        tester,
-        bridge: bridge,
-        p2pService: p2pService,
-        audioRecorderService: recorder,
-        sendFn: ({
-          required P2PService p2pService,
-          required MessageRepository messageRepo,
-          required String targetPeerId,
-          required String text,
-          required String senderPeerId,
-          required String senderUsername,
-          String? messageId,
-          String? timestamp,
-          Bridge? bridge,
-          String? recipientMlKemPublicKey,
-          String? quotedMessageId,
-          List<MediaAttachment>? mediaAttachments,
-          MediaAttachmentRepository? mediaAttachmentRepo,
-        }) async {
-          operationLog.add('sendChatMessageFn');
-          return _instantSuccessSendFn(
-            p2pService: p2pService,
-            messageRepo: messageRepo,
-            targetPeerId: targetPeerId,
-            text: text,
-            senderPeerId: senderPeerId,
-            senderUsername: senderUsername,
-            messageId: messageId,
-            timestamp: timestamp,
-            bridge: bridge,
-            recipientMlKemPublicKey: recipientMlKemPublicKey,
-            quotedMessageId: quotedMessageId,
-            mediaAttachments: mediaAttachments,
-            mediaAttachmentRepo: mediaAttachmentRepo,
-          );
-        },
-      );
+        await _pumpConversationWired(
+          tester,
+          bridge: bridge,
+          p2pService: p2pService,
+          audioRecorderService: recorder,
+          sendFn:
+              ({
+                required P2PService p2pService,
+                required MessageRepository messageRepo,
+                required String targetPeerId,
+                required String text,
+                required String senderPeerId,
+                required String senderUsername,
+                String? messageId,
+                String? timestamp,
+                Bridge? bridge,
+                String? recipientMlKemPublicKey,
+                String? quotedMessageId,
+                List<MediaAttachment>? mediaAttachments,
+                MediaAttachmentRepository? mediaAttachmentRepo,
+              }) async {
+                operationLog.add('sendChatMessageFn');
+                return _instantSuccessSendFn(
+                  p2pService: p2pService,
+                  messageRepo: messageRepo,
+                  targetPeerId: targetPeerId,
+                  text: text,
+                  senderPeerId: senderPeerId,
+                  senderUsername: senderUsername,
+                  messageId: messageId,
+                  timestamp: timestamp,
+                  bridge: bridge,
+                  recipientMlKemPublicKey: recipientMlKemPublicKey,
+                  quotedMessageId: quotedMessageId,
+                  mediaAttachments: mediaAttachments,
+                  mediaAttachmentRepo: mediaAttachmentRepo,
+                );
+              },
+        );
 
-      await _recordAndStopVoice(tester);
+        await _recordAndStopVoice(tester);
 
-      expect(p2pService.sendLocalMediaCallCount, 1);
-      _expectOrdered(operationLog, 'bridge:bg:begin', 'p2p:sendLocalMedia');
-      _expectOrdered(operationLog, 'p2p:sendLocalMedia', 'sendChatMessageFn');
-      _expectOrdered(operationLog, 'sendChatMessageFn', 'bridge:bg:end');
-    });
+        expect(p2pService.sendLocalMediaCallCount, 1);
+        _expectOrdered(operationLog, 'bridge:bg:begin', 'p2p:sendLocalMedia');
+        _expectOrdered(operationLog, 'p2p:sendLocalMedia', 'sendChatMessageFn');
+        _expectOrdered(operationLog, 'sendChatMessageFn', 'bridge:bg:end');
+      },
+    );
 
-    testWidgets('bg:end fires when relay voice upload fails early',
-        (tester) async {
+    testWidgets('bg:end fires when relay voice upload fails early', (
+      tester,
+    ) async {
       final operationLog = <String>[];
       final bridge = _OrderRecordingBridge(operationLog: operationLog);
       final recorder = FakeAudioRecorderService()
@@ -801,27 +823,28 @@ void main() {
         bridge: bridge,
         p2pService: _FakeP2PService(operationLog: operationLog),
         audioRecorderService: recorder,
-        sendVoiceFn: ({
-          required P2PService p2pService,
-          required MessageRepository messageRepo,
-          required String targetPeerId,
-          required String senderPeerId,
-          required String senderUsername,
-          required AudioRecording recording,
-          required Bridge bridge,
-          String? recipientMlKemPublicKey,
-          MediaAttachmentRepository? mediaAttachmentRepo,
-          MediaFileManager? mediaFileManager,
-          String? text,
-          String? quotedMessageId,
-          List<double>? waveform,
-          String? messageId,
-          String? timestamp,
-          String? blobId,
-        }) async {
-          operationLog.add('sendVoiceMessageFn');
-          return (SendVoiceMessageResult.uploadFailed, null);
-        },
+        sendVoiceFn:
+            ({
+              required P2PService p2pService,
+              required MessageRepository messageRepo,
+              required String targetPeerId,
+              required String senderPeerId,
+              required String senderUsername,
+              required AudioRecording recording,
+              required Bridge bridge,
+              String? recipientMlKemPublicKey,
+              MediaAttachmentRepository? mediaAttachmentRepo,
+              MediaFileManager? mediaFileManager,
+              String? text,
+              String? quotedMessageId,
+              List<double>? waveform,
+              String? messageId,
+              String? timestamp,
+              String? blobId,
+            }) async {
+              operationLog.add('sendVoiceMessageFn');
+              return (SendVoiceMessageResult.uploadFailed, null);
+            },
       );
 
       await _recordAndStopVoice(tester);
@@ -830,66 +853,70 @@ void main() {
       _expectOrdered(operationLog, 'sendVoiceMessageFn', 'bridge:bg:end');
     });
 
-    testWidgets('relay voice branch begins before sendVoiceMessage and ends after success',
-        (tester) async {
-      final operationLog = <String>[];
-      final bridge = _OrderRecordingBridge(operationLog: operationLog);
-      final recorder = FakeAudioRecorderService()
-        ..fakeDurationMs = 1600
-        ..fakeOutputPath = '/tmp/voice_relay_bg.m4a';
-      final file = File(recorder.fakeOutputPath!)..writeAsStringSync('voice');
-      addTearDown(() {
-        if (file.existsSync()) file.deleteSync();
-      });
+    testWidgets(
+      'relay voice branch begins before sendVoiceMessage and ends after success',
+      (tester) async {
+        final operationLog = <String>[];
+        final bridge = _OrderRecordingBridge(operationLog: operationLog);
+        final recorder = FakeAudioRecorderService()
+          ..fakeDurationMs = 1600
+          ..fakeOutputPath = '/tmp/voice_relay_bg.m4a';
+        final file = File(recorder.fakeOutputPath!)..writeAsStringSync('voice');
+        addTearDown(() {
+          if (file.existsSync()) file.deleteSync();
+        });
 
-      final relayP2pService = _FakeP2PService(operationLog: operationLog);
-      await _pumpConversationWired(
-        tester,
-        bridge: bridge,
-        p2pService: relayP2pService,
-        audioRecorderService: recorder,
-        sendVoiceFn: ({
-          required P2PService p2pService,
-          required MessageRepository messageRepo,
-          required String targetPeerId,
-          required String senderPeerId,
-          required String senderUsername,
-          required AudioRecording recording,
-          required Bridge bridge,
-          String? recipientMlKemPublicKey,
-          MediaAttachmentRepository? mediaAttachmentRepo,
-          MediaFileManager? mediaFileManager,
-          String? text,
-          String? quotedMessageId,
-          List<double>? waveform,
-          String? messageId,
-          String? timestamp,
-          String? blobId,
-        }) async {
-          operationLog.add('sendVoiceMessageFn');
-          final ts = timestamp ?? DateTime.now().toUtc().toIso8601String();
-          return (
-            SendVoiceMessageResult.success,
-            ConversationMessage(
-              id: messageId ?? 'voice-msg-1',
-              contactPeerId: targetPeerId,
-              senderPeerId: senderPeerId,
-              text: text ?? '',
-              timestamp: ts,
-              status: 'delivered',
-              isIncoming: false,
-              createdAt: ts,
-              media: const [],
-            ),
-          );
-        },
-      );
+        final relayP2pService = _FakeP2PService(operationLog: operationLog);
+        await _pumpConversationWired(
+          tester,
+          bridge: bridge,
+          p2pService: relayP2pService,
+          audioRecorderService: recorder,
+          sendVoiceFn:
+              ({
+                required P2PService p2pService,
+                required MessageRepository messageRepo,
+                required String targetPeerId,
+                required String senderPeerId,
+                required String senderUsername,
+                required AudioRecording recording,
+                required Bridge bridge,
+                String? recipientMlKemPublicKey,
+                MediaAttachmentRepository? mediaAttachmentRepo,
+                MediaFileManager? mediaFileManager,
+                String? text,
+                String? quotedMessageId,
+                List<double>? waveform,
+                String? messageId,
+                String? timestamp,
+                String? blobId,
+              }) async {
+                operationLog.add('sendVoiceMessageFn');
+                final ts =
+                    timestamp ?? DateTime.now().toUtc().toIso8601String();
+                return (
+                  SendVoiceMessageResult.success,
+                  ConversationMessage(
+                    id: messageId ?? 'voice-msg-1',
+                    contactPeerId: targetPeerId,
+                    senderPeerId: senderPeerId,
+                    text: text ?? '',
+                    timestamp: ts,
+                    status: 'delivered',
+                    isIncoming: false,
+                    createdAt: ts,
+                    media: const [],
+                  ),
+                );
+              },
+        );
 
-      await _recordAndStopVoice(tester);
+        await _recordAndStopVoice(tester);
 
-      expect(relayP2pService.sendLocalMediaCallCount, 0);
-      _expectOrdered(operationLog, 'bridge:bg:begin', 'sendVoiceMessageFn');
-      _expectOrdered(operationLog, 'sendVoiceMessageFn', 'bridge:bg:end');
-    });
+        expect(relayP2pService.sendLocalMediaCallCount, 0);
+        _expectOrdered(operationLog, 'bridge:bg:begin', 'sendVoiceMessageFn');
+        _expectOrdered(operationLog, 'sendVoiceMessageFn', 'bridge:bg:end');
+      },
+    );
   });
 }

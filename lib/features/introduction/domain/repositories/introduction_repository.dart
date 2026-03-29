@@ -12,14 +12,23 @@ abstract class IntroductionRepository {
   /// Returns null if no introduction with the given ID exists.
   Future<IntroductionModel?> getIntroduction(String id);
 
+  /// Deletes an introduction by its ID.
+  Future<void> deleteIntroduction(String id);
+
   /// Retrieves all introductions where the user is the recipient.
-  Future<List<IntroductionModel>> getIntroductionsByRecipient(String recipientId);
+  Future<List<IntroductionModel>> getIntroductionsByRecipient(
+    String recipientId,
+  );
 
   /// Retrieves all introductions where the user is the introduced party.
-  Future<List<IntroductionModel>> getIntroductionsByIntroduced(String introducedId);
+  Future<List<IntroductionModel>> getIntroductionsByIntroduced(
+    String introducedId,
+  );
 
   /// Retrieves all introductions where the user is the introducer.
-  Future<List<IntroductionModel>> getIntroductionsByIntroducer(String introducerId);
+  Future<List<IntroductionModel>> getIntroductionsByIntroducer(
+    String introducerId,
+  );
 
   /// Retrieves introductions for a specific recipient from a specific introducer.
   Future<List<IntroductionModel>> getIntroductionsForRecipientAndIntroducer(

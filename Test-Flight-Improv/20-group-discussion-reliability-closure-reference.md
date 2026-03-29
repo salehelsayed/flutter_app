@@ -77,6 +77,38 @@ Current closure treats these as the meaningful outgoing statuses:
 
 That is the correct level of honesty for a publish + inbox-backed, receipt-less group system.
 
+### 6. Settled media budget and foreground upload protection
+
+- Ordinary group attachments now use the settled `5 GB` general-media budget
+  across the live composer entry points that matter in this repo, including the
+  hydrated attachment paths that reuse the same pending-media state.
+- The in-app voice recorder keeps its separate `100 MB` sanity limit; that
+  remains a recorder-specific safeguard, not the ordinary attachment budget.
+- The current group conversation surfaces now show honest foreground upload
+  protection for active relay uploads:
+  - aggregate byte progress
+  - the warning copy `Keep the app open until the upload completes`
+  - leave confirmation while an upload is active
+  - a ref-counted wake lock that stays held until the last active relay upload
+    finishes, fails, or is cancelled
+- Active relay-backed group uploads now also expose a user-controlled cancel
+  path in the live conversation surface, but the promise stays honest:
+  - cancel does not interrupt in-flight member uploads mid-stream
+  - the current parallel upload batch is allowed to resolve, then the composer
+    snapshot is restored, the optimistic row is terminalized to `failed`, and
+    durable pending attachments are marked `upload_failed`
+- Failed outgoing group media rows now expose message-scoped retry/delete
+  controls:
+  - retry acts on the same failed row instead of creating a duplicate
+    optimistic row
+  - delete removes only the targeted failed row and only app-owned durable
+    pending-upload files
+- Announcement admins inherit this shared group failed-media recovery surface,
+  while read-only announcement members still do not gain the write-path
+  controls.
+- This closure is still intentionally foreground-only. The repo does **not**
+  promise true background upload execution or download-side wake-lock behavior.
+
 ---
 
 ## Accepted Architectural Differences From 1:1
@@ -86,7 +118,10 @@ These differences are real and do **not** automatically mean group discussions a
 1. group publish is receipt-less; it does not prove end-user receipt the way 1:1 ACK/inbox logic is stronger,
 2. `sent` in groups means accepted into the current publish path, not "every member definitely received it",
 3. `pending` in groups honestly means inbox-backed / no-live-peer style fallback, not a failure,
-4. local ordering is intentionally serialized per conversation screen, but distributed total ordering is not guaranteed.
+4. local ordering is intentionally serialized per conversation screen, but distributed total ordering is not guaranteed,
+5. group cancel remains batch-bounded: the current parallel upload batch is
+   allowed to resolve before the optimistic row is terminalized, rather than
+   pretending member uploads are interruptible mid-stream.
 
 Future work may strengthen those areas, but they are not required to keep the current group system trustworthy.
 
@@ -111,6 +146,7 @@ These are intentionally **not** part of the current closure bar:
 - total ordering across devices
 - heavy outbox/job architecture
 - broad status-model redesign
+- true background upload architecture
 - announcement authorization proof
 - search, scheduling, analytics, or other product-scope features
 
@@ -124,10 +160,17 @@ Reopen this area only if one of these happens:
 
 1. a send surface bypasses the current durable pre-persist contract,
 2. ordinary media loses parent-row or publish-failure retry parity,
-3. resume recovery stops restoring sender work safely,
-4. the one-thread send guard regresses,
-5. voice publish-failure retry becomes a real escaped bug or clearly justified trust gap,
-6. a direct regression or named gate proves an escaped bug in shared group send/retry/recovery behavior.
+3. the settled `5 GB` ordinary-attachment budget regresses across live or
+   hydrated group entry paths, or in-app voice recordings stop honoring the
+   separate `100 MB` sanity cap,
+4. active relay upload protection regresses in the group conversation surface
+   (aggregate progress, leave guard, wake-lock lifetime, batch-bounded cancel,
+   targeted failed-media retry/delete, or bounded owned-file cleanup), or the
+   repo starts overclaiming true background upload behavior,
+5. resume recovery stops restoring sender work safely,
+6. the one-thread send guard regresses,
+7. voice publish-failure retry becomes a real escaped bug or clearly justified trust gap,
+8. a direct regression or named gate proves an escaped bug in shared group send/retry/recovery behavior.
 
 Do **not** reopen group reliability just because someone notices that group semantics are weaker than 1:1 in the abstract.
 
@@ -144,6 +187,16 @@ When touching shared group discussion reliability code:
 5. run `./scripts/run_test_gates.sh transport` only when lifecycle, startup, resume, reconnect, or device-backed media recovery wiring changes,
 6. run `./scripts/run_test_gates.sh 1to1` as well if shared 1:1 retry/transport infrastructure is touched.
 
+For the cancelable-upload seams, direct proof should keep covering:
+
+- batch-bounded cancel restoring the composer snapshot while terminalizing the
+  same group row to `failed` plus attachment `upload_failed`
+- targeted failed-media retry/delete on the same group row
+- announcement admins inheriting the shared controls while read-only
+  announcement members do not
+- delete cleanup staying bounded to the targeted row and app-owned
+  pending-upload files instead of unrelated stored source paths
+
 Use `Test-Flight-Improv/test-gate-definitions.md` as the execution source of truth and `Test-Flight-Improv/14-regression-test-strategy.md` as the policy/rationale reference.
 
 ---
@@ -158,6 +211,9 @@ Future changes should preserve:
 - inbox-backed recovery,
 - resume-oriented repair,
 - one-thread send determinism,
-- and honest receipt-less status semantics.
+- honest receipt-less status semantics,
+- the settled general-media size contract,
+- and honest foreground-only upload protection plus batch-bounded failed-media
+  recovery while relay uploads are active.
 
 Anything beyond that should be treated as new product/protocol scope unless a real regression proves otherwise.

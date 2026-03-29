@@ -16,7 +16,12 @@
 | 4 | Send with quoted message | Embedded in `send_chat_message` | YES | Partial |
 | 5 | Send with media attachments | Embedded in `send_chat_message` | YES | Partial |
 
-**Important nuance:** the earlier feed-inline durable-send mismatch is now closed; conversation and feed-originated inline reply use the same durable pre-persist contract in the current Flutter tree.
+**Important nuance:** the earlier feed-inline durable-send mismatch is now
+closed; conversation and feed-originated inline reply use the same durable
+pre-persist contract in the current Flutter tree. The sender-visible 1:1
+transport-truth seams are also now closed for new rows: outgoing Go/libp2p
+sends persist actual `direct` vs `relay`, reuse-fast-path/local semantics stay
+honest, and legacy `reuse` remains old-row fallback only.
 
 ---
 
@@ -31,7 +36,11 @@
 | 10 | Handle incoming emoji reaction | `handle_incoming_reaction_use_case.dart` | YES | Good |
 | 11 | Reaction listener (broadcast) | `reaction_listener.dart` | YES | Good |
 
-**Current behavior note:** the earlier “lazy-only media download” description was too narrow; the main current receive path already attempts auto-download.
+**Current behavior note:** the earlier “lazy-only media download” description
+was too narrow; the main current receive path already attempts auto-download.
+Incoming Go-backed 1:1 rows now also carry additive transport truth, so mixed
+direct+relay peer state no longer forces a relay icon when the actual inbound
+stream was direct.
 
 ---
 
@@ -128,4 +137,13 @@
 
 ## Verdict
 
-**The 1:1 system is strong for core messaging, retry/recovery, encryption, contact management, and media handling.** The earlier feed-inline durable-send gap is now closed, and the medium-priority operability follow-ups from report `08` around decrypt-failure visibility and media-download dedup are also landed in the current Flutter tree. The remaining gaps are mostly product features such as deletion, editing, search, typing, and read receipts, plus smaller residual edge cases like local-file-missing retry behavior.
+**The 1:1 system is strong for core messaging, retry/recovery, encryption,
+contact management, and media handling.** The earlier feed-inline durable-send
+gap, the sender-visible reuse transport-label mismatch, and the broader
+direct-vs-relay transport-truth seam for new Go-backed 1:1 rows are now
+closed, and the medium-priority operability follow-ups from report `08` around
+decrypt-failure visibility and media-download dedup are also landed in the
+current Flutter tree. The remaining gaps are mostly product features such as
+deletion, editing, search, typing, and read receipts, plus narrower residual
+edge cases like local-file-missing retry behavior. Legacy `reuse` rows remain
+an intentional old-row fallback rather than an active correctness gap.

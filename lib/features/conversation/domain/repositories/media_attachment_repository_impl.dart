@@ -7,18 +7,25 @@ import 'media_attachment_repository.dart';
 class MediaAttachmentRepositoryImpl implements MediaAttachmentRepository {
   final Future<void> Function(Map<String, Object?> row) dbInsertMediaAttachment;
   final Future<List<Map<String, Object?>>> Function(String messageId)
-      dbLoadMediaForMessage;
+  dbLoadMediaForMessage;
   final Future<List<Map<String, Object?>>> Function(List<String> messageIds)
-      dbLoadMediaForMessages;
-  final Future<void> Function(String id, String localPath, String downloadStatus)
-      dbUpdateMediaLocalPath;
+  dbLoadMediaForMessages;
+  final Future<void> Function(
+    String id,
+    String localPath,
+    String downloadStatus,
+  )
+  dbUpdateMediaLocalPath;
   final Future<void> Function(String id, String downloadStatus)
-      dbUpdateMediaDownloadStatus;
+  dbUpdateMediaDownloadStatus;
   final Future<int> Function(String messageId) dbDeleteMediaForMessage;
   final Future<int> Function(String contactPeerId) dbDeleteMediaForContact;
-  final Future<List<Map<String, Object?>>> Function() dbLoadPendingMediaDownloads;
+  final Future<int> Function(String messageId)
+  dbMarkUploadPendingAttachmentsFailedForMessage;
+  final Future<List<Map<String, Object?>>> Function()
+  dbLoadPendingMediaDownloads;
   final Future<List<Map<String, Object?>>> Function({int limit})
-      dbLoadUploadPendingAttachments;
+  dbLoadUploadPendingAttachments;
 
   MediaAttachmentRepositoryImpl({
     required this.dbInsertMediaAttachment,
@@ -28,6 +35,7 @@ class MediaAttachmentRepositoryImpl implements MediaAttachmentRepository {
     required this.dbUpdateMediaDownloadStatus,
     required this.dbDeleteMediaForMessage,
     required this.dbDeleteMediaForContact,
+    required this.dbMarkUploadPendingAttachmentsFailedForMessage,
     required this.dbLoadPendingMediaDownloads,
     required this.dbLoadUploadPendingAttachments,
   });
@@ -68,14 +76,16 @@ class MediaAttachmentRepositoryImpl implements MediaAttachmentRepository {
 
   @override
   Future<List<MediaAttachment>> getAttachmentsForMessage(
-      String messageId) async {
+    String messageId,
+  ) async {
     final rows = await dbLoadMediaForMessage(messageId);
     return rows.map((row) => MediaAttachment.fromMap(row)).toList();
   }
 
   @override
   Future<Map<String, List<MediaAttachment>>> getAttachmentsForMessages(
-      List<String> messageIds) async {
+    List<String> messageIds,
+  ) async {
     if (messageIds.isEmpty) return {};
 
     final rows = await dbLoadMediaForMessages(messageIds);
@@ -93,8 +103,7 @@ class MediaAttachmentRepositoryImpl implements MediaAttachmentRepository {
   }
 
   @override
-  Future<void> updateDownloadStatus(
-      String id, String downloadStatus) async {
+  Future<void> updateDownloadStatus(String id, String downloadStatus) async {
     await dbUpdateMediaDownloadStatus(id, downloadStatus);
   }
 
@@ -156,6 +165,40 @@ class MediaAttachmentRepositoryImpl implements MediaAttachmentRepository {
       emitFlowEvent(
         layer: 'FL',
         event: 'MEDIA_REPO_DELETE_FOR_CONTACT_ERROR',
+        details: {'error': e.toString()},
+      );
+      rethrow;
+    }
+  }
+
+  @override
+  Future<int> markUploadPendingAttachmentsFailedForMessage(
+    String messageId,
+  ) async {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'MEDIA_REPO_TERMINALIZE_UPLOADS_START',
+      details: {
+        'messageId': messageId.length > 8
+            ? messageId.substring(0, 8)
+            : messageId,
+      },
+    );
+
+    try {
+      final count = await dbMarkUploadPendingAttachmentsFailedForMessage(
+        messageId,
+      );
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'MEDIA_REPO_TERMINALIZE_UPLOADS_SUCCESS',
+        details: {'count': count},
+      );
+      return count;
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'MEDIA_REPO_TERMINALIZE_UPLOADS_ERROR',
         details: {'error': e.toString()},
       );
       rethrow;

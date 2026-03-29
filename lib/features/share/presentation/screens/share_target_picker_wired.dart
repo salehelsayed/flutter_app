@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/pending_composer_media.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
@@ -107,9 +108,11 @@ class _ShareTargetPickerWiredState extends State<ShareTargetPickerWired> {
         final allGroups = await widget.groupRepository!.getActiveGroups();
         // Filter out announcement groups where user is not admin
         groups = allGroups
-            .where((g) =>
-                g.type != GroupType.announcement ||
-                g.myRole == GroupRole.admin)
+            .where(
+              (g) =>
+                  g.type != GroupType.announcement ||
+                  g.myRole == GroupRole.admin,
+            )
             .toList();
       }
 
@@ -136,7 +139,10 @@ class _ShareTargetPickerWiredState extends State<ShareTargetPickerWired> {
     setState(() => _isProcessing = true);
 
     try {
-      final files = await _processSharedFiles();
+      final pendingMedia = await _processSharedFiles();
+      final files = pendingMedia
+          .map((media) => media.file)
+          .toList(growable: false);
 
       if (!mounted) return;
       Navigator.of(context).pushReplacement(
@@ -152,6 +158,7 @@ class _ShareTargetPickerWiredState extends State<ShareTargetPickerWired> {
             mediaAttachmentRepo: widget.mediaAttachmentRepository,
             mediaFileManager: widget.mediaFileManager,
             initialAttachments: files.isNotEmpty ? files : null,
+            initialPendingMedia: pendingMedia.isNotEmpty ? pendingMedia : null,
             initialText: widget.shareIntent.text,
             imageProcessor: widget.imageProcessor,
             qualityPreference: widget.qualityPreference,
@@ -179,7 +186,10 @@ class _ShareTargetPickerWiredState extends State<ShareTargetPickerWired> {
     setState(() => _isProcessing = true);
 
     try {
-      final files = await _processSharedFiles();
+      final pendingMedia = await _processSharedFiles();
+      final files = pendingMedia
+          .map((media) => media.file)
+          .toList(growable: false);
 
       if (!mounted) return;
       Navigator.of(context).pushReplacement(
@@ -196,6 +206,7 @@ class _ShareTargetPickerWiredState extends State<ShareTargetPickerWired> {
             mediaAttachmentRepo: widget.mediaAttachmentRepository,
             mediaFileManager: widget.mediaFileManager,
             initialAttachments: files.isNotEmpty ? files : null,
+            initialPendingMedia: pendingMedia.isNotEmpty ? pendingMedia : null,
             initialText: widget.shareIntent.text,
             imageProcessor: widget.imageProcessor,
             qualityPreference: widget.qualityPreference,
@@ -217,33 +228,30 @@ class _ShareTargetPickerWiredState extends State<ShareTargetPickerWired> {
   }
 
   /// Process shared media files (EXIF strip, compress) once on target selection.
-  Future<List<File>> _processSharedFiles() async {
+  Future<List<PendingComposerMedia>> _processSharedFiles() async {
     if (!widget.shareIntent.hasFiles) return [];
 
-    final processed = <File>[];
+    final processed = <PendingComposerMedia>[];
     for (final path in widget.shareIntent.filePaths) {
       try {
         final file = File(path);
         if (!file.existsSync()) continue;
 
-        if (widget.imageProcessor.isProcessableVideo(path)) {
-          final result = await widget.imageProcessor.processVideo(
+        processed.add(
+          await preparePendingComposerMedia(
             inputPath: path,
-            quality: widget.videoQualityPreference,
-          );
-          processed.add(File(result.path));
-        } else if (widget.imageProcessor.isProcessableImage(path)) {
-          final resultPath = await widget.imageProcessor.processImage(
-            inputPath: path,
-            quality: widget.qualityPreference,
-          );
-          processed.add(File(resultPath));
-        } else {
-          processed.add(file);
-        }
+            imageProcessor: widget.imageProcessor,
+            imageQualityPreference: widget.qualityPreference,
+            videoQualityPreference: widget.videoQualityPreference,
+          ),
+        );
       } catch (e) {
         // Fallback: use original file
-        processed.add(File(path));
+        final file = File(path);
+        if (!file.existsSync()) continue;
+        processed.add(
+          PendingComposerMedia(file: file, budgetBytes: file.lengthSync()),
+        );
       }
     }
     return processed;

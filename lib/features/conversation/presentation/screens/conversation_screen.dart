@@ -14,6 +14,7 @@ import 'package:flutter_app/features/conversation/presentation/widgets/empty_con
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/letter_card.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/reaction_bar.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/upload_progress_banner.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/full_emoji_picker.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
 import 'package:flutter_app/features/introduction/presentation/widgets/intro_banner.dart';
@@ -28,6 +29,8 @@ class ConversationComposerViewState {
   final bool isUploading;
   final bool isProcessing;
   final double processingProgress;
+  final int processingCurrent;
+  final int processingTotal;
   final VoiceRecordingState recordingState;
   final Duration recordingDuration;
   final List<double> amplitudeValues;
@@ -37,6 +40,8 @@ class ConversationComposerViewState {
     this.isUploading = false,
     this.isProcessing = false,
     this.processingProgress = 0.0,
+    this.processingCurrent = 0,
+    this.processingTotal = 0,
     this.recordingState = VoiceRecordingState.idle,
     this.recordingDuration = Duration.zero,
     this.amplitudeValues = const [],
@@ -47,6 +52,8 @@ class ConversationComposerViewState {
     bool? isUploading,
     bool? isProcessing,
     double? processingProgress,
+    int? processingCurrent,
+    int? processingTotal,
     VoiceRecordingState? recordingState,
     Duration? recordingDuration,
     List<double>? amplitudeValues,
@@ -56,6 +63,8 @@ class ConversationComposerViewState {
       isUploading: isUploading ?? this.isUploading,
       isProcessing: isProcessing ?? this.isProcessing,
       processingProgress: processingProgress ?? this.processingProgress,
+      processingCurrent: processingCurrent ?? this.processingCurrent,
+      processingTotal: processingTotal ?? this.processingTotal,
       recordingState: recordingState ?? this.recordingState,
       recordingDuration: recordingDuration ?? this.recordingDuration,
       amplitudeValues: amplitudeValues ?? this.amplitudeValues,
@@ -91,6 +100,8 @@ class ConversationScreen extends StatefulWidget {
   final bool isProcessing;
   final bool isSending;
   final double processingProgress;
+  final int processingCurrent;
+  final int processingTotal;
   final bool isRecording;
   final VoiceRecordingState recordingState;
   final VoidCallback? onRecordStart;
@@ -104,11 +115,15 @@ class ConversationScreen extends StatefulWidget {
   final void Function(String messageId)? onReactionPlusTap;
   final bool showIntroBanner;
   final String? bannerContactUsername;
+  final UploadProgressViewState? uploadProgress;
+  final VoidCallback? onCancelUpload;
   final VoidCallback? onMakeIntroductions;
   final VoidCallback? onMaybeLater;
   final String? initialText;
   final ValueChanged<String>? onDraftChanged;
   final ValueChanged<String>? onQuoteReply;
+  final ValueChanged<String>? onRetryFailedMedia;
+  final ValueChanged<String>? onDeleteFailedMedia;
   final String? activeQuoteText;
   final bool isActiveQuoteUnavailable;
   final VoidCallback? onClearQuote;
@@ -136,6 +151,8 @@ class ConversationScreen extends StatefulWidget {
     this.isProcessing = false,
     this.isSending = false,
     this.processingProgress = 0.0,
+    this.processingCurrent = 0,
+    this.processingTotal = 0,
     this.isRecording = false,
     this.recordingState = VoiceRecordingState.idle,
     this.onRecordStart,
@@ -149,11 +166,15 @@ class ConversationScreen extends StatefulWidget {
     this.onReactionPlusTap,
     this.showIntroBanner = false,
     this.bannerContactUsername,
+    this.uploadProgress,
+    this.onCancelUpload,
     this.onMakeIntroductions,
     this.onMaybeLater,
     this.initialText,
     this.onDraftChanged,
     this.onQuoteReply,
+    this.onRetryFailedMedia,
+    this.onDeleteFailedMedia,
     this.activeQuoteText,
     this.isActiveQuoteUnavailable = false,
     this.onClearQuote,
@@ -172,6 +193,8 @@ class _ConversationScreenState extends State<ConversationScreen> {
         isUploading: widget.isUploading,
         isProcessing: widget.isProcessing,
         processingProgress: widget.processingProgress,
+        processingCurrent: widget.processingCurrent,
+        processingTotal: widget.processingTotal,
         recordingState: widget.recordingState != VoiceRecordingState.idle
             ? widget.recordingState
             : (widget.isRecording
@@ -225,6 +248,11 @@ class _ConversationScreenState extends State<ConversationScreen> {
                   )
                 : const SizedBox.shrink(key: ValueKey('no-banner')),
           ),
+          if (widget.uploadProgress != null)
+            UploadProgressBanner(
+              state: widget.uploadProgress!,
+              onCancel: widget.onCancelUpload,
+            ),
           // Body with animated transition
           Expanded(
             child: AnimatedSwitcher(
@@ -262,6 +290,8 @@ class _ConversationScreenState extends State<ConversationScreen> {
             isUploading: composerState.isUploading,
             isProcessing: composerState.isProcessing,
             processingProgress: composerState.processingProgress,
+            processingCurrent: composerState.processingCurrent,
+            processingTotal: composerState.processingTotal,
             onRemove: widget.onRemoveAttachment,
           ),
         ComposeArea(
@@ -385,6 +415,10 @@ class _ConversationScreenState extends State<ConversationScreen> {
             }
 
             final messageReactions = widget.reactions[message.id] ?? const [];
+            final showFailedMediaActions =
+                !message.isIncoming &&
+                message.status == 'failed' &&
+                message.media.isNotEmpty;
 
             final letterCard = Builder(
               builder: (cardContext) => LetterCard(
@@ -405,6 +439,15 @@ class _ConversationScreenState extends State<ConversationScreen> {
                 onReactionTap: widget.onReactionSelected != null
                     ? (emoji) => widget.onReactionSelected!(message.id, emoji)
                     : null,
+                onRetryFailedMedia:
+                    showFailedMediaActions && widget.onRetryFailedMedia != null
+                    ? () => widget.onRetryFailedMedia!(message.id)
+                    : null,
+                onDeleteFailedMedia:
+                    showFailedMediaActions && widget.onDeleteFailedMedia != null
+                    ? () => widget.onDeleteFailedMedia!(message.id)
+                    : null,
+                failedMediaActionKeySuffix: message.id,
                 onMediaTap: (index) {
                   final visual = message.media
                       .where(

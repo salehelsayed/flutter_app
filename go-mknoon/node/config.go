@@ -37,7 +37,7 @@ const (
 	PubSubTimeout              = 30 * time.Second
 	KeyRotationGracePeriod     = 30 * time.Second
 	GroupDiscoveryInterval     = 30 * time.Second // periodic rendezvous re-discovery for group peers
-	MaxGroupDiscoveryBackoff   = 5 * time.Minute  // max backoff for group peer discovery
+	MaxGroupDiscoveryBackoff   = 1 * time.Minute  // cap retry stalls; multi-minute fanout gaps are too slow for active chat
 	GroupDiscoveryConcurrency  = 5                // max concurrent discovery goroutines
 	GroupDiscoveryJitterFactor = 4                // +/-25% interval jitter
 	GroupRecoveryInitialJitter = 3 * time.Second  // initial stagger for resume/watchdog bursts

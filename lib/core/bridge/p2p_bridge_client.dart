@@ -710,7 +710,7 @@ Future<Map<String, dynamic>> callP2PProfileDownload(
 ///   - [message]: The message content
 ///   - [timeoutMs]: Optional send timeout in milliseconds
 ///
-/// Returns: `{ "ok": true, "sent": true, "reply": "..." }`
+/// Returns: `{ "ok": true, "sent": true, "reply": "...", "transport": "direct|relay" }`
 Future<Map<String, dynamic>> callP2PMessageSend(
   Bridge bridge, {
   required String peerId,
@@ -743,6 +743,7 @@ Future<Map<String, dynamic>> callP2PMessageSend(
       'sent': response['sent'],
       'acked': response['acked'],
       'hasReply': response['reply'] != null,
+      'transport': response['transport'],
       'errorCode': response['errorCode'],
       'errorMessage': response['errorMessage'],
     },

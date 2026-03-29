@@ -17,11 +17,15 @@ import (
 
 const (
 	MediaProtocol        = "/mknoon/media/1.0.0"
-	maxMediaSize         = 100 * 1024 * 1024 // 100 MB
 	maxMediaPerPeer      = 50
 	mediaTTL             = 7 * 24 * time.Hour
 	mediaCleanupInterval = 10 * time.Minute
 	mediaDataDir         = "/data/media"
+)
+
+var (
+	maxMediaSize         int64 = 5 * 1024 * 1024 * 1024 // 5 GB
+	maxMediaBytesPerPeer int64 = 5 * 1024 * 1024 * 1024 // 5 GB pending bytes per recipient
 )
 
 // --- Media metadata ---
@@ -131,28 +135,55 @@ func (ms *MediaStore) store(meta *mediaMeta) {
 	ms.index[meta.ID] = meta
 	ms.byPeer[meta.To] = append(ms.byPeer[meta.To], meta.ID)
 
-	// Prune oldest if over limit
-	ids := ms.byPeer[meta.To]
-	if len(ids) > maxMediaPerPeer {
-		// Sort by creation time so we remove the oldest
-		sort.Slice(ids, func(i, j int) bool {
-			mi, mj := ms.index[ids[i]], ms.index[ids[j]]
-			if mi == nil || mj == nil {
-				return false
-			}
-			return mi.CreatedAt < mj.CreatedAt
-		})
-		// Remove oldest entries beyond the limit
-		toRemove := ids[:len(ids)-maxMediaPerPeer]
-		for _, id := range toRemove {
-			if m := ms.index[id]; m != nil {
-				mediaDeletedCounter.WithLabelValues("peer_cap").Inc()
-				mediaDeletedBytesCounter.WithLabelValues("peer_cap").Add(float64(m.Size))
-			}
-			ms.removeLocked(id)
-		}
-		log.Printf("[MEDIA] Pruned %d blob(s) for peer %s", len(toRemove), meta.To[:min(20, len(meta.To))])
+	removed := ms.prunePeerLocked(meta.To)
+	if removed > 0 {
+		log.Printf("[MEDIA] Pruned %d blob(s) for peer %s", removed, meta.To[:min(20, len(meta.To))])
 	}
+}
+
+func (ms *MediaStore) prunePeerLocked(peerID string) int {
+	ids := append([]string(nil), ms.byPeer[peerID]...)
+	if len(ids) == 0 {
+		return 0
+	}
+
+	totalBytes := ms.pendingBytesForPeerLocked(peerID)
+	if len(ids) <= maxMediaPerPeer && totalBytes <= maxMediaBytesPerPeer {
+		return 0
+	}
+
+	sort.Slice(ids, func(i, j int) bool {
+		mi, mj := ms.index[ids[i]], ms.index[ids[j]]
+		if mi == nil || mj == nil {
+			return false
+		}
+		return mi.CreatedAt < mj.CreatedAt
+	})
+
+	removed := 0
+	for removed < len(ids) &&
+		((len(ids)-removed) > maxMediaPerPeer || totalBytes > maxMediaBytesPerPeer) {
+		id := ids[removed]
+		if meta := ms.index[id]; meta != nil {
+			totalBytes -= meta.Size
+			mediaDeletedCounter.WithLabelValues("peer_cap").Inc()
+			mediaDeletedBytesCounter.WithLabelValues("peer_cap").Add(float64(meta.Size))
+		}
+		ms.removeLocked(id)
+		removed++
+	}
+
+	return removed
+}
+
+func (ms *MediaStore) pendingBytesForPeerLocked(peerID string) int64 {
+	var total int64
+	for _, id := range ms.byPeer[peerID] {
+		if meta := ms.index[id]; meta != nil {
+			total += meta.Size
+		}
+	}
+	return total
 }
 
 func (ms *MediaStore) lookup(id string) *mediaMeta {

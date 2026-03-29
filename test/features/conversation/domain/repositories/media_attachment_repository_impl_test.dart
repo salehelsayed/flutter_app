@@ -18,15 +18,21 @@ void main() {
         return store.values
             .where((row) => row['message_id'] == messageId)
             .toList()
-          ..sort((a, b) =>
-              (a['created_at'] as String).compareTo(b['created_at'] as String));
+          ..sort(
+            (a, b) => (a['created_at'] as String).compareTo(
+              b['created_at'] as String,
+            ),
+          );
       },
       dbLoadMediaForMessages: (messageIds) async {
         return store.values
             .where((row) => messageIds.contains(row['message_id']))
             .toList()
-          ..sort((a, b) =>
-              (a['created_at'] as String).compareTo(b['created_at'] as String));
+          ..sort(
+            (a, b) => (a['created_at'] as String).compareTo(
+              b['created_at'] as String,
+            ),
+          );
       },
       dbUpdateMediaLocalPath: (id, localPath, downloadStatus) async {
         if (store.containsKey(id)) {
@@ -54,19 +60,36 @@ void main() {
         // For testing, we just return 0
         return 0;
       },
+      dbMarkUploadPendingAttachmentsFailedForMessage: (messageId) async {
+        var count = 0;
+        for (final row in store.values) {
+          if (row['message_id'] == messageId &&
+              row['download_status'] == 'upload_pending') {
+            row['download_status'] = 'upload_failed';
+            count++;
+          }
+        }
+        return count;
+      },
       dbLoadPendingMediaDownloads: () async {
         return store.values
             .where((row) => row['download_status'] == 'pending')
             .toList()
-          ..sort((a, b) =>
-              (a['created_at'] as String).compareTo(b['created_at'] as String));
+          ..sort(
+            (a, b) => (a['created_at'] as String).compareTo(
+              b['created_at'] as String,
+            ),
+          );
       },
       dbLoadUploadPendingAttachments: ({int limit = 50}) async {
         return store.values
             .where((row) => row['download_status'] == 'upload_pending')
             .toList()
-          ..sort((a, b) =>
-              (a['created_at'] as String).compareTo(b['created_at'] as String));
+          ..sort(
+            (a, b) => (a['created_at'] as String).compareTo(
+              b['created_at'] as String,
+            ),
+          );
       },
     );
   });
@@ -120,20 +143,23 @@ void main() {
     });
 
     test('getAttachmentsForMessage returns matching attachments', () async {
-      await repo.saveAttachment(makeAttachment(
-        id: 'blob-1',
-        messageId: 'msg-A',
-        createdAt: '2026-02-20T10:00:00.000Z',
-      ));
-      await repo.saveAttachment(makeAttachment(
-        id: 'blob-2',
-        messageId: 'msg-A',
-        createdAt: '2026-02-20T10:01:00.000Z',
-      ));
-      await repo.saveAttachment(makeAttachment(
-        id: 'blob-3',
-        messageId: 'msg-B',
-      ));
+      await repo.saveAttachment(
+        makeAttachment(
+          id: 'blob-1',
+          messageId: 'msg-A',
+          createdAt: '2026-02-20T10:00:00.000Z',
+        ),
+      );
+      await repo.saveAttachment(
+        makeAttachment(
+          id: 'blob-2',
+          messageId: 'msg-A',
+          createdAt: '2026-02-20T10:01:00.000Z',
+        ),
+      );
+      await repo.saveAttachment(
+        makeAttachment(id: 'blob-3', messageId: 'msg-B'),
+      );
 
       final result = await repo.getAttachmentsForMessage('msg-A');
       expect(result.length, 2);
@@ -142,14 +168,16 @@ void main() {
     });
 
     test('getAttachmentsForMessage returns MediaAttachment objects', () async {
-      await repo.saveAttachment(makeAttachment(
-        id: 'blob-typed',
-        mime: 'video/mp4',
-        size: 5000000,
-        mediaType: 'video',
-        width: 1280,
-        height: 720,
-      ));
+      await repo.saveAttachment(
+        makeAttachment(
+          id: 'blob-typed',
+          mime: 'video/mp4',
+          size: 5000000,
+          mediaType: 'video',
+          width: 1280,
+          height: 720,
+        ),
+      );
 
       final result = await repo.getAttachmentsForMessage('msg-001');
       expect(result.length, 1);
@@ -166,29 +194,36 @@ void main() {
       });
 
       test('groups attachments by messageId', () async {
-        await repo.saveAttachment(makeAttachment(
-          id: 'blob-1',
-          messageId: 'msg-A',
-          createdAt: '2026-02-20T10:00:00.000Z',
-        ));
-        await repo.saveAttachment(makeAttachment(
-          id: 'blob-2',
-          messageId: 'msg-A',
-          createdAt: '2026-02-20T10:01:00.000Z',
-        ));
-        await repo.saveAttachment(makeAttachment(
-          id: 'blob-3',
-          messageId: 'msg-B',
-          createdAt: '2026-02-20T10:02:00.000Z',
-        ));
-        await repo.saveAttachment(makeAttachment(
-          id: 'blob-4',
-          messageId: 'msg-C',
-          createdAt: '2026-02-20T10:03:00.000Z',
-        ));
+        await repo.saveAttachment(
+          makeAttachment(
+            id: 'blob-1',
+            messageId: 'msg-A',
+            createdAt: '2026-02-20T10:00:00.000Z',
+          ),
+        );
+        await repo.saveAttachment(
+          makeAttachment(
+            id: 'blob-2',
+            messageId: 'msg-A',
+            createdAt: '2026-02-20T10:01:00.000Z',
+          ),
+        );
+        await repo.saveAttachment(
+          makeAttachment(
+            id: 'blob-3',
+            messageId: 'msg-B',
+            createdAt: '2026-02-20T10:02:00.000Z',
+          ),
+        );
+        await repo.saveAttachment(
+          makeAttachment(
+            id: 'blob-4',
+            messageId: 'msg-C',
+            createdAt: '2026-02-20T10:03:00.000Z',
+          ),
+        );
 
-        final result =
-            await repo.getAttachmentsForMessages(['msg-A', 'msg-B']);
+        final result = await repo.getAttachmentsForMessages(['msg-A', 'msg-B']);
 
         expect(result.length, 2);
         expect(result['msg-A']!.length, 2);
@@ -201,20 +236,17 @@ void main() {
       });
 
       test('returns empty map when no matches', () async {
-        await repo.saveAttachment(makeAttachment(
-          id: 'blob-1',
-          messageId: 'msg-X',
-        ));
+        await repo.saveAttachment(
+          makeAttachment(id: 'blob-1', messageId: 'msg-X'),
+        );
 
-        final result =
-            await repo.getAttachmentsForMessages(['msg-A', 'msg-B']);
+        final result = await repo.getAttachmentsForMessages(['msg-A', 'msg-B']);
         expect(result, isEmpty);
       });
     });
 
     test('updateLocalPath updates path and sets status to done', () async {
-      await repo.saveAttachment(
-          makeAttachment(downloadStatus: 'downloading'));
+      await repo.saveAttachment(makeAttachment(downloadStatus: 'downloading'));
 
       await repo.updateLocalPath('blob-001', '/path/to/file.jpg');
 
@@ -233,18 +265,15 @@ void main() {
     });
 
     test('deleteAttachmentsForMessage removes matching rows', () async {
-      await repo.saveAttachment(makeAttachment(
-        id: 'blob-1',
-        messageId: 'msg-A',
-      ));
-      await repo.saveAttachment(makeAttachment(
-        id: 'blob-2',
-        messageId: 'msg-A',
-      ));
-      await repo.saveAttachment(makeAttachment(
-        id: 'blob-3',
-        messageId: 'msg-B',
-      ));
+      await repo.saveAttachment(
+        makeAttachment(id: 'blob-1', messageId: 'msg-A'),
+      );
+      await repo.saveAttachment(
+        makeAttachment(id: 'blob-2', messageId: 'msg-A'),
+      );
+      await repo.saveAttachment(
+        makeAttachment(id: 'blob-3', messageId: 'msg-B'),
+      );
 
       final count = await repo.deleteAttachmentsForMessage('msg-A');
       expect(count, 2);
@@ -257,22 +286,70 @@ void main() {
       expect(count, 0);
     });
 
+    test(
+      'markUploadPendingAttachmentsFailedForMessage only terminalizes pending rows for the target message',
+      () async {
+        await repo.saveAttachment(
+          makeAttachment(
+            id: 'blob-target-pending',
+            messageId: 'msg-target',
+            downloadStatus: 'upload_pending',
+          ),
+        );
+        await repo.saveAttachment(
+          makeAttachment(
+            id: 'blob-target-done',
+            messageId: 'msg-target',
+            downloadStatus: 'done',
+          ),
+        );
+        await repo.saveAttachment(
+          makeAttachment(
+            id: 'blob-other-pending',
+            messageId: 'msg-other',
+            downloadStatus: 'upload_pending',
+          ),
+        );
+
+        final count = await repo.markUploadPendingAttachmentsFailedForMessage(
+          'msg-target',
+        );
+
+        expect(count, 1);
+        expect(
+          store['blob-target-pending']!['download_status'],
+          'upload_failed',
+        );
+        expect(store['blob-target-done']!['download_status'], 'done');
+        expect(
+          store['blob-other-pending']!['download_status'],
+          'upload_pending',
+        );
+      },
+    );
+
     test('getPendingDownloads returns only pending attachments', () async {
-      await repo.saveAttachment(makeAttachment(
-        id: 'blob-1',
-        downloadStatus: 'pending',
-        createdAt: '2026-02-20T10:00:00.000Z',
-      ));
-      await repo.saveAttachment(makeAttachment(
-        id: 'blob-2',
-        downloadStatus: 'done',
-        createdAt: '2026-02-20T10:01:00.000Z',
-      ));
-      await repo.saveAttachment(makeAttachment(
-        id: 'blob-3',
-        downloadStatus: 'pending',
-        createdAt: '2026-02-20T10:02:00.000Z',
-      ));
+      await repo.saveAttachment(
+        makeAttachment(
+          id: 'blob-1',
+          downloadStatus: 'pending',
+          createdAt: '2026-02-20T10:00:00.000Z',
+        ),
+      );
+      await repo.saveAttachment(
+        makeAttachment(
+          id: 'blob-2',
+          downloadStatus: 'done',
+          createdAt: '2026-02-20T10:01:00.000Z',
+        ),
+      );
+      await repo.saveAttachment(
+        makeAttachment(
+          id: 'blob-3',
+          downloadStatus: 'pending',
+          createdAt: '2026-02-20T10:02:00.000Z',
+        ),
+      );
 
       final pending = await repo.getPendingDownloads();
       expect(pending.length, 2);
@@ -281,10 +358,9 @@ void main() {
     });
 
     test('getPendingDownloads returns empty list when none pending', () async {
-      await repo.saveAttachment(makeAttachment(
-        id: 'blob-1',
-        downloadStatus: 'done',
-      ));
+      await repo.saveAttachment(
+        makeAttachment(id: 'blob-1', downloadStatus: 'done'),
+      );
 
       final pending = await repo.getPendingDownloads();
       expect(pending, isEmpty);

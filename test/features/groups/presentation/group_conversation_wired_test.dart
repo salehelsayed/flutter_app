@@ -5,13 +5,15 @@ import 'dart:io';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:path/path.dart' as p;
+import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/device/upload_wake_lock.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_picker.dart';
+import 'package:flutter_app/core/media/pending_composer_media.dart';
 import 'package:flutter_app/core/media/video_process_result.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
@@ -32,17 +34,92 @@ import 'package:flutter_app/core/notifications/active_conversation_tracker.dart'
 import 'package:flutter_app/features/groups/presentation/screens/group_info_screen.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
+import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../core/services/fake_p2p_service.dart';
 import '../../../shared/fakes/fake_audio_recorder_service.dart';
 import '../../../shared/fakes/fake_media_file_manager.dart';
 import '../../../shared/fakes/fake_media_picker.dart';
+import '../../../shared/fakes/fake_upload_wake_lock_driver.dart';
 import '../../../shared/fakes/in_memory_contact_repository.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../shared/fakes/in_memory_media_attachment_repository.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
 import '../../conversation/domain/repositories/fake_reaction_repository.dart';
+
+const _tinyPngBytes = <int>[
+  0x89,
+  0x50,
+  0x4E,
+  0x47,
+  0x0D,
+  0x0A,
+  0x1A,
+  0x0A,
+  0x00,
+  0x00,
+  0x00,
+  0x0D,
+  0x49,
+  0x48,
+  0x44,
+  0x52,
+  0x00,
+  0x00,
+  0x00,
+  0x01,
+  0x00,
+  0x00,
+  0x00,
+  0x01,
+  0x08,
+  0x02,
+  0x00,
+  0x00,
+  0x00,
+  0x90,
+  0x77,
+  0x53,
+  0xDE,
+  0x00,
+  0x00,
+  0x00,
+  0x0C,
+  0x49,
+  0x44,
+  0x41,
+  0x54,
+  0x08,
+  0xD7,
+  0x63,
+  0xF8,
+  0xCF,
+  0xC0,
+  0x00,
+  0x00,
+  0x03,
+  0x01,
+  0x01,
+  0x00,
+  0x18,
+  0xDD,
+  0x8D,
+  0xB1,
+  0x00,
+  0x00,
+  0x00,
+  0x00,
+  0x49,
+  0x45,
+  0x4E,
+  0x44,
+  0xAE,
+  0x42,
+  0x60,
+  0x82,
+];
 
 // --- FakeIdentityRepository ---
 
@@ -279,6 +356,10 @@ GroupMessage makeMessage({
   String senderPeerId = 'peer-alice',
   String senderUsername = 'Alice',
   String? quotedMessageId,
+  String status = 'sent',
+  List<MediaAttachment> media = const [],
+  String? wireEnvelope,
+  String? inboxRetryPayload,
 }) => GroupMessage(
   id: id,
   groupId: groupId,
@@ -287,8 +368,12 @@ GroupMessage makeMessage({
   text: text,
   quotedMessageId: quotedMessageId,
   timestamp: DateTime.now().toUtc(),
+  status: status,
   isIncoming: isIncoming,
   createdAt: DateTime.now().toUtc(),
+  media: media,
+  wireEnvelope: wireEnvelope,
+  inboxRetryPayload: inboxRetryPayload,
 );
 
 // --- Helpers ---
@@ -323,6 +408,7 @@ void main() {
     late FakeIdentityRepository identityRepo;
     late FakeP2PService p2pService;
     late StreamController<GroupMessage> messageStreamController;
+    late FakeUploadWakeLockDriver wakeLockDriver;
 
     setUp(() {
       groupRepo = InMemoryGroupRepository();
@@ -337,10 +423,13 @@ void main() {
       identityRepo = FakeIdentityRepository(identity: testIdentity);
       p2pService = FakeP2PService();
       messageStreamController = StreamController<GroupMessage>.broadcast();
+      wakeLockDriver = FakeUploadWakeLockDriver();
+      UploadWakeLockController.debugReset(driver: wakeLockDriver);
     });
 
     tearDown(() {
       messageStreamController.close();
+      UploadWakeLockController.debugReset(driver: FakeUploadWakeLockDriver());
     });
 
     Widget buildWidget({
@@ -352,7 +441,13 @@ void main() {
       MediaFileManager? mediaFileManager,
       UploadMediaFn? uploadMediaFn,
       List<File>? initialAttachments,
+      List<PendingComposerMedia>? initialPendingMedia,
       String? initialText,
+      ImageQualityPreference qualityPreference =
+          ImageQualityPreference.compressed,
+      ImageQualityPreference videoQualityPreference =
+          ImageQualityPreference.compressed,
+      int maxAttachmentBudgetBytes = kGeneralMediaAttachmentBudgetBytes,
       ReactionRepository? reactionRepo,
       StreamController<ReactionChange>? reactionStreamController,
     }) {
@@ -378,9 +473,13 @@ void main() {
           imageProcessor: imageProcessor,
           audioRecorderService: audioRecorderService,
           mediaPicker: mediaPicker,
+          qualityPreference: qualityPreference,
+          videoQualityPreference: videoQualityPreference,
           uploadMediaFn: uploadMediaFn ?? uploadMedia,
           initialAttachments: initialAttachments,
+          initialPendingMedia: initialPendingMedia,
           initialText: initialText,
+          maxAttachmentBudgetBytes: maxAttachmentBudgetBytes,
           reactionRepo: reactionRepo,
         ),
       );
@@ -398,6 +497,39 @@ void main() {
       final textField = tester.widget<TextField>(find.byType(TextField));
       expect(textField.controller?.text, 'Shared group text');
     });
+
+    testWidgets(
+      'hydrated group initialPendingMedia uses budget bytes instead of file size',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+
+        final tempDir = Directory.systemTemp.createTempSync(
+          'group_hydrated_budget_',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) {
+            tempDir.deleteSync(recursive: true);
+          }
+        });
+        final smallFile = File('${tempDir.path}/hydrated.jpg')
+          ..writeAsStringSync('12');
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            initialPendingMedia: [
+              PendingComposerMedia(file: smallFile, budgetBytes: 12),
+            ],
+            maxAttachmentBudgetBytes: 10,
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        expect(find.text('Media Too Large'), findsOneWidget);
+      },
+    );
 
     testWidgets('loads and displays messages on init', (tester) async {
       final group = makeChatGroup();
@@ -460,7 +592,9 @@ void main() {
         await pumpUntil(
           tester,
           () => tester
-              .widget<GroupConversationScreen>(find.byType(GroupConversationScreen))
+              .widget<GroupConversationScreen>(
+                find.byType(GroupConversationScreen),
+              )
               .isSending,
         );
         await pumpFrames(tester, count: 5);
@@ -572,13 +706,17 @@ void main() {
         await pumpUntil(
           tester,
           () => tester
-              .widget<GroupConversationScreen>(find.byType(GroupConversationScreen))
+              .widget<GroupConversationScreen>(
+                find.byType(GroupConversationScreen),
+              )
               .isSending,
         );
         expect(uploadStarted.isCompleted, isTrue);
         expect(
           tester
-              .widget<GroupConversationScreen>(find.byType(GroupConversationScreen))
+              .widget<GroupConversationScreen>(
+                find.byType(GroupConversationScreen),
+              )
               .isSending,
           isTrue,
         );
@@ -632,18 +770,18 @@ void main() {
           File('${tempDir.path}/three.jpg')..writeAsStringSync('three'),
         ];
 
-        final mediaFileManager = FakeMediaFileManager();
+        final testMediaFileManager = FakeMediaFileManager();
         final uploadStarts = <DateTime>[];
         final seenBlobIds = <String>[];
         final pendingSeenBeforeUpload = <bool>[];
         final deletedDirs = <String>[];
-        mediaFileManager.onDeletePendingUploadDir = deletedDirs.add;
+        testMediaFileManager.onDeletePendingUploadDir = deletedDirs.add;
 
         await tester.pumpWidget(
           buildWidget(
             group: group,
             mediaRepo: mediaAttachmentRepo,
-            mediaFileManager: mediaFileManager,
+            mediaFileManager: testMediaFileManager,
             initialAttachments: files,
             uploadMediaFn:
                 ({
@@ -744,9 +882,9 @@ void main() {
           }
         });
         final file = File('${tempDir.path}/one.jpg')..writeAsStringSync('one');
-        final mediaFileManager = FakeMediaFileManager();
+        final testMediaFileManager = FakeMediaFileManager();
         final deletedDirs = <String>[];
-        mediaFileManager.onDeletePendingUploadDir = deletedDirs.add;
+        testMediaFileManager.onDeletePendingUploadDir = deletedDirs.add;
         final uploadStarted = Completer<void>();
         final uploadGate = Completer<void>();
         String? receivedBlobId;
@@ -755,7 +893,7 @@ void main() {
           buildWidget(
             group: group,
             mediaRepo: mediaAttachmentRepo,
-            mediaFileManager: mediaFileManager,
+            mediaFileManager: testMediaFileManager,
             initialAttachments: [file],
             uploadMediaFn:
                 ({
@@ -852,14 +990,14 @@ void main() {
           File('${tempDir.path}/three.jpg')..writeAsStringSync('three'),
         ];
 
-        final mediaFileManager = FakeMediaFileManager();
+        final testMediaFileManager = FakeMediaFileManager();
         var uploadCount = 0;
 
         await tester.pumpWidget(
           buildWidget(
             group: group,
             mediaRepo: mediaAttachmentRepo,
-            mediaFileManager: mediaFileManager,
+            mediaFileManager: testMediaFileManager,
             initialAttachments: files,
             uploadMediaFn:
                 ({
@@ -1089,7 +1227,10 @@ void main() {
         await pumpFrames(tester, count: 20);
 
         expect(await msgRepo.getMessagesPage(missingGroup.id), isEmpty);
-        expect(await mediaAttachmentRepo.getUploadPendingAttachments(), isEmpty);
+        expect(
+          await mediaAttachmentRepo.getUploadPendingAttachments(),
+          isEmpty,
+        );
         expect(mediaAttachmentRepo.count, 0);
         expect(deletedDirs, hasLength(1));
         expect(bridge.commandLog, isNot(contains('group:publish')));
@@ -1160,7 +1301,10 @@ void main() {
         await pumpFrames(tester, count: 20);
 
         expect(await msgRepo.getMessagesPage(widgetGroup.id), isEmpty);
-        expect(await mediaAttachmentRepo.getUploadPendingAttachments(), isEmpty);
+        expect(
+          await mediaAttachmentRepo.getUploadPendingAttachments(),
+          isEmpty,
+        );
         expect(mediaAttachmentRepo.count, 0);
         expect(deletedDirs, hasLength(1));
         expect(bridge.commandLog, isNot(contains('group:publish')));
@@ -1238,7 +1382,7 @@ void main() {
     );
 
     testWidgets(
-      'sending a message with zero topic peers keeps the row pending and does not restore the draft',
+      'sending a message with zero topic peers keeps the row sent and does not restore the draft',
       (tester) async {
         final group = makeChatGroup();
         await groupRepo.saveGroup(group);
@@ -1262,14 +1406,14 @@ void main() {
         await pumpFrames(tester, count: 20);
 
         expect(find.text('No peers online'), findsOneWidget);
-        expect(find.byIcon(Icons.schedule_rounded), findsOneWidget);
+        expect(find.byIcon(Icons.schedule_rounded), findsNothing);
         expect(find.byIcon(Icons.error_outline_rounded), findsNothing);
 
         final messages = await msgRepo.getMessagesPage(group.id);
         final saved = messages.firstWhere(
           (message) => message.text == 'No peers online',
         );
-        expect(saved.status, 'pending');
+        expect(saved.status, 'sent');
         expect(saved.inboxStored, isTrue);
       },
     );
@@ -1539,163 +1683,6 @@ void main() {
         expect(find.byIcon(Icons.mic_rounded), findsOneWidget);
       },
     );
-
-    testWidgets(
-      'video processing progress updates composer without rebuilding header or message list',
-      (tester) async {
-        final group = makeChatGroup();
-        await groupRepo.saveGroup(group);
-        await msgRepo.saveMessage(
-          makeMessage(id: 'msg-video-1', text: 'Hello'),
-        );
-
-        final mediaPicker = FakeMediaPicker()
-          ..videoResult = XFile('/tmp/group-video.mp4');
-        final resultCompleter = Completer<VideoProcessResult>();
-        void Function(double progress)? progressCallback;
-        final imageProcessor = ImageProcessor(
-          compressFile:
-              ({
-                required path,
-                required quality,
-                required keepExif,
-                minWidth = 1920,
-                minHeight = 1080,
-              }) async => null,
-          compressVideo:
-              ({
-                required path,
-                required compress,
-                void Function(double)? onProgress,
-              }) async {
-                progressCallback = onProgress;
-                return resultCompleter.future;
-              },
-        );
-
-        tester.view.physicalSize = const Size(800, 1600);
-        tester.view.devicePixelRatio = 1.0;
-        addTearDown(tester.view.resetPhysicalSize);
-        addTearDown(tester.view.resetDevicePixelRatio);
-
-        await tester.pumpWidget(
-          buildWidget(
-            group: group,
-            mediaRepo: mediaAttachmentRepo,
-            imageProcessor: imageProcessor,
-            mediaPicker: mediaPicker,
-          ),
-        );
-        await pumpFrames(tester, count: 20);
-
-        final headerFinder = find.byKey(const ValueKey('group-header'));
-        final listFinder = find.byKey(const ValueKey('group-messages'));
-        final headerElement = tester.element(headerFinder);
-        final listElement = tester.element(listFinder);
-        final initialPageLoads = msgRepo.getMessagesPageCalls;
-        final initialBatchMediaLoads =
-            mediaAttachmentRepo.getAttachmentsForMessagesCalls;
-
-        await tester.tap(find.byIcon(Icons.add_rounded));
-        await tester.pump(const Duration(milliseconds: 500));
-        tester
-            .widget<ListTile>(find.widgetWithText(ListTile, 'Record Video'))
-            .onTap!();
-        await tester.pump();
-
-        expect(progressCallback, isNotNull);
-
-        progressCallback!(35);
-        await tester.pump();
-
-        expect(find.byType(AttachmentPreviewStrip), findsOneWidget);
-        expect(find.text('35%'), findsOneWidget);
-        expect(identical(headerElement, tester.element(headerFinder)), isTrue);
-        expect(identical(listElement, tester.element(listFinder)), isTrue);
-        expect(msgRepo.getMessagesPageCalls, initialPageLoads);
-        expect(
-          mediaAttachmentRepo.getAttachmentsForMessagesCalls,
-          initialBatchMediaLoads,
-        );
-
-        progressCallback!(80);
-        await tester.pump();
-        expect(find.text('80%'), findsOneWidget);
-
-        resultCompleter.complete(
-          VideoProcessResult(path: '/tmp/processed-group-video.mp4'),
-        );
-        await tester.pump();
-      },
-    );
-
-    testWidgets('video processing failure clears composer processing state', (
-      tester,
-    ) async {
-      final group = makeChatGroup();
-      await groupRepo.saveGroup(group);
-      await msgRepo.saveMessage(makeMessage(id: 'msg-video-fail', text: 'Hi'));
-
-      final mediaPicker = FakeMediaPicker()
-        ..videoResult = XFile('/tmp/group-video.mp4');
-      final resultCompleter = Completer<VideoProcessResult>();
-      void Function(double progress)? progressCallback;
-      final imageProcessor = ImageProcessor(
-        compressFile:
-            ({
-              required path,
-              required quality,
-              required keepExif,
-              minWidth = 1920,
-              minHeight = 1080,
-            }) async => null,
-        compressVideo:
-            ({
-              required path,
-              required compress,
-              void Function(double)? onProgress,
-            }) async {
-              progressCallback = onProgress;
-              return resultCompleter.future;
-            },
-      );
-
-      tester.view.physicalSize = const Size(800, 1600);
-      tester.view.devicePixelRatio = 1.0;
-      addTearDown(tester.view.resetPhysicalSize);
-      addTearDown(tester.view.resetDevicePixelRatio);
-
-      await tester.pumpWidget(
-        buildWidget(
-          group: group,
-          mediaRepo: mediaAttachmentRepo,
-          imageProcessor: imageProcessor,
-          mediaPicker: mediaPicker,
-        ),
-      );
-      await pumpFrames(tester, count: 20);
-
-      await tester.tap(find.byIcon(Icons.add_rounded));
-      await tester.pump(const Duration(milliseconds: 500));
-      tester
-          .widget<ListTile>(find.widgetWithText(ListTile, 'Record Video'))
-          .onTap!();
-      await tester.pump();
-
-      progressCallback!(40);
-      await tester.pump();
-      expect(find.text('40%'), findsOneWidget);
-
-      resultCompleter.completeError(StateError('group video failed'));
-      await tester.pump();
-
-      expect(find.byType(AttachmentPreviewStrip), findsNothing);
-      expect(find.text('40%'), findsNothing);
-
-      await tester.tap(find.byIcon(Icons.add_rounded));
-      await tester.pump(const Duration(milliseconds: 500));
-      expect(find.text('Record Video'), findsOneWidget);
-    });
 
     testWidgets('info button navigates to group info', (tester) async {
       final group = makeChatGroup();
@@ -1974,6 +1961,209 @@ void main() {
     });
 
     testWidgets(
+      'gallery multi-video batches keep one processing tile with honest batch context',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+
+        final tempDir = Directory.systemTemp.createTempSync(
+          'group_gallery_batch_',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) {
+            tempDir.deleteSync(recursive: true);
+          }
+        });
+        final firstVideo = File('${tempDir.path}/video-1.mp4')
+          ..writeAsBytesSync(_tinyPngBytes);
+        final stillImage = File('${tempDir.path}/image-1.jpg')
+          ..writeAsBytesSync(_tinyPngBytes);
+        final secondVideo = File('${tempDir.path}/video-2.mp4')
+          ..writeAsBytesSync(_tinyPngBytes);
+        final processedFirstVideo = File('${tempDir.path}/processed-1.mp4')
+          ..writeAsBytesSync(_tinyPngBytes);
+        final processedImage = File('${tempDir.path}/processed-1.jpg')
+          ..writeAsBytesSync(_tinyPngBytes);
+        final processedSecondVideo = File('${tempDir.path}/processed-2.mp4')
+          ..writeAsBytesSync(_tinyPngBytes);
+
+        final mediaPicker = FakeMediaPicker()
+          ..multipleMediaResult = [
+            XFile(firstVideo.path),
+            XFile(stillImage.path),
+            XFile(secondVideo.path),
+          ];
+        final videoResults = [
+          Completer<VideoProcessResult>(),
+          Completer<VideoProcessResult>(),
+        ];
+        final imageResult = Completer<XFile?>();
+        var imageCompressionStarted = false;
+        final progressCallbacks = <void Function(double)?>[];
+        var videoCallCount = 0;
+        final imageProcessor = ImageProcessor(
+          compressFile:
+              ({
+                required path,
+                required quality,
+                required keepExif,
+                minWidth = 1920,
+                minHeight = 1080,
+              }) async {
+                if (path == stillImage.path) {
+                  imageCompressionStarted = true;
+                  return imageResult.future;
+                }
+                return null;
+              },
+          compressVideo:
+              ({
+                required path,
+                required compress,
+                void Function(double progress)? onProgress,
+              }) async {
+                progressCallbacks.add(onProgress);
+                final result = videoResults[videoCallCount];
+                videoCallCount++;
+                return result.future;
+              },
+        );
+
+        tester.view.physicalSize = const Size(800, 1600);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            imageProcessor: imageProcessor,
+            mediaPicker: mediaPicker,
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        await tester.tap(find.byIcon(Icons.add_rounded));
+        await tester.pump(const Duration(milliseconds: 500));
+        tester
+            .widget<ListTile>(find.widgetWithText(ListTile, 'Media Library'))
+            .onTap!();
+        await pumpUntil(tester, () => progressCallbacks.length == 1);
+
+        progressCallbacks.single!(35);
+        await tester.pump();
+
+        expect(find.byType(AttachmentPreviewStrip), findsOneWidget);
+        expect(find.text('Processing (1/2)'), findsOneWidget);
+        expect(find.text('35%'), findsOneWidget);
+        expect(find.byType(CircularProgressIndicator), findsOneWidget);
+
+        videoResults[0].complete(
+          VideoProcessResult(path: processedFirstVideo.path),
+        );
+        await pumpUntil(tester, () => imageCompressionStarted);
+        await tester.pump();
+
+        expect(find.byType(AttachmentPreviewStrip), findsOneWidget);
+        expect(find.text('Processing (1/2)'), findsOneWidget);
+
+        imageResult.complete(XFile(processedImage.path));
+        await pumpUntil(tester, () => progressCallbacks.length == 2);
+
+        progressCallbacks.last!(60);
+        await tester.pump();
+
+        expect(find.text('Processing (2/2)'), findsOneWidget);
+        expect(find.text('60%'), findsOneWidget);
+
+        videoResults[1].complete(
+          VideoProcessResult(path: processedSecondVideo.path),
+        );
+        await tester.pump();
+      },
+    );
+
+    testWidgets('recorded single video keeps single-item processing copy', (
+      tester,
+    ) async {
+      final group = makeChatGroup();
+      await groupRepo.saveGroup(group);
+
+      final tempDir = Directory.systemTemp.createTempSync(
+        'group_camera_video_',
+      );
+      addTearDown(() {
+        if (tempDir.existsSync()) {
+          tempDir.deleteSync(recursive: true);
+        }
+      });
+      final cameraVideo = File('${tempDir.path}/camera-video.mp4')
+        ..writeAsBytesSync(_tinyPngBytes);
+      final processedVideo = File('${tempDir.path}/camera-video-out.mp4')
+        ..writeAsBytesSync(_tinyPngBytes);
+
+      final mediaPicker = FakeMediaPicker()
+        ..videoResult = XFile(cameraVideo.path);
+      final result = Completer<VideoProcessResult>();
+      void Function(double progress)? progressCallback;
+      final imageProcessor = ImageProcessor(
+        compressFile:
+            ({
+              required path,
+              required quality,
+              required keepExif,
+              minWidth = 1920,
+              minHeight = 1080,
+            }) async => null,
+        compressVideo:
+            ({
+              required path,
+              required compress,
+              void Function(double progress)? onProgress,
+            }) async {
+              progressCallback = onProgress;
+              return result.future;
+            },
+      );
+
+      tester.view.physicalSize = const Size(800, 1600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(
+        buildWidget(
+          group: group,
+          mediaRepo: mediaAttachmentRepo,
+          imageProcessor: imageProcessor,
+          mediaPicker: mediaPicker,
+        ),
+      );
+      await pumpFrames(tester, count: 20);
+
+      await tester.tap(find.byIcon(Icons.add_rounded));
+      await tester.pump(const Duration(milliseconds: 500));
+      tester
+          .widget<ListTile>(find.widgetWithText(ListTile, 'Record Video'))
+          .onTap!();
+      await tester.pump();
+
+      expect(progressCallback, isNotNull);
+
+      progressCallback!(40);
+      await tester.pump();
+
+      expect(find.byType(AttachmentPreviewStrip), findsOneWidget);
+      expect(find.text('Processing'), findsOneWidget);
+      expect(find.text('Processing (1/1)'), findsNothing);
+      expect(find.text('40%'), findsOneWidget);
+
+      result.complete(VideoProcessResult(path: processedVideo.path));
+      await tester.pump();
+    });
+
+    testWidgets(
       'sent text message appears immediately before bridge responds',
       (tester) async {
         final group = makeChatGroup();
@@ -2141,6 +2331,529 @@ void main() {
         'Retry upload',
       );
     });
+
+    testWidgets('shows relay upload progress and blocks leaving mid-upload', (
+      tester,
+    ) async {
+      final group = makeChatGroup();
+      await groupRepo.saveGroup(group);
+
+      final tempDir = Directory.systemTemp.createTempSync(
+        'group_upload_progress_',
+      );
+      addTearDown(() {
+        if (tempDir.existsSync()) {
+          tempDir.deleteSync(recursive: true);
+        }
+      });
+      final attachment = File('${tempDir.path}/progress.jpg')
+        ..writeAsStringSync('0123456789');
+
+      final uploadGate = Completer<void>();
+      final uploadStarted = Completer<void>();
+      String? activeBlobId;
+
+      await tester.pumpWidget(
+        buildWidget(
+          group: group,
+          initialAttachments: [attachment],
+          uploadMediaFn:
+              ({
+                required bridge,
+                required localFilePath,
+                required mime,
+                required recipientPeerId,
+                String? blobId,
+                mediaFileManager,
+                width,
+                height,
+                durationMs,
+                waveform,
+                allowedPeers,
+              }) async {
+                activeBlobId = blobId;
+                uploadStarted.complete();
+                await uploadGate.future;
+                return MediaAttachment(
+                  id: blobId ?? 'uploaded-group-progress-1',
+                  messageId: '',
+                  mime: mime,
+                  size: File(localFilePath).lengthSync(),
+                  mediaType: MediaAttachment.mediaTypeFromMime(mime),
+                  localPath: localFilePath,
+                  downloadStatus: 'done',
+                  createdAt: DateTime.now().toUtc().toIso8601String(),
+                );
+              },
+        ),
+      );
+      await pumpFrames(tester, count: 20);
+
+      await tester.enterText(find.byType(TextField), 'Uploading');
+      await pumpFrames(tester);
+      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+      await uploadStarted.future;
+      await tester.pump();
+
+      expect(
+        find.byKey(const ValueKey('upload-progress-banner')),
+        findsOneWidget,
+      );
+      expect(wakeLockDriver.enableCalls, 1);
+      expect(UploadWakeLockController.debugActiveHolds, 1);
+
+      emitMediaUploadProgressEvent({
+        'id': activeBlobId,
+        'sentBytes': 5,
+        'totalBytes': 10,
+        'toPeerId': group.id,
+      });
+      await tester.pump();
+
+      expect(
+        find.text(
+          '${formatPendingComposerBudgetBytes(5)} / '
+          '${formatPendingComposerBudgetBytes(10)}',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.text('Keep the app open until the upload completes'),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.byIcon(Icons.arrow_back_ios_new));
+      await tester.pump();
+
+      expect(find.text('Leave conversation?'), findsOneWidget);
+      expect(
+        find.text(
+          'An upload is in progress. Leaving may interrupt it. Are you sure?',
+        ),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.byKey(const ValueKey('upload-leave-stay')));
+      await tester.pump();
+
+      expect(
+        find.byKey(const ValueKey('upload-progress-banner')),
+        findsOneWidget,
+      );
+      expect(wakeLockDriver.disableCalls, 0);
+
+      uploadGate.complete();
+      await pumpUntil(
+        tester,
+        () =>
+            find
+                .byKey(const ValueKey('upload-progress-banner'))
+                .evaluate()
+                .isEmpty &&
+            wakeLockDriver.disableCalls == 1,
+      );
+
+      expect(UploadWakeLockController.debugActiveHolds, 0);
+    });
+
+    testWidgets(
+      'cancel on the active upload banner restores composer state and terminalizes durable pending rows',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+
+        final tempDir = Directory.systemTemp.createTempSync(
+          'group_cancel_upload_',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) {
+            tempDir.deleteSync(recursive: true);
+          }
+        });
+        final attachmentA = File('${tempDir.path}/cancel-a.jpg')
+          ..writeAsStringSync('0123456789');
+        final attachmentB = File('${tempDir.path}/cancel-b.jpg')
+          ..writeAsStringSync('abcdefghij');
+        final testMediaFileManager = FakeMediaFileManager();
+
+        final uploadGate = Completer<void>();
+        final uploadStarted = <String>[];
+        final uploadCompleted = <String>[];
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: testMediaFileManager,
+            initialAttachments: [attachmentA, attachmentB],
+            uploadMediaFn:
+                ({
+                  required bridge,
+                  required localFilePath,
+                  required mime,
+                  required recipientPeerId,
+                  String? blobId,
+                  mediaFileManager,
+                  width,
+                  height,
+                  durationMs,
+                  waveform,
+                  allowedPeers,
+                }) async {
+                  uploadStarted.add(blobId ?? 'missing-blob-id');
+                  await uploadGate.future;
+                  uploadCompleted.add(blobId ?? 'missing-blob-id');
+                  return MediaAttachment(
+                    id: blobId ?? 'uploaded-group-cancel',
+                    messageId: '',
+                    mime: mime,
+                    size: 1,
+                    mediaType: MediaAttachment.mediaTypeFromMime(mime),
+                    localPath: testMediaFileManager.relativePathForAttachment(
+                      contactPeerId: group.id,
+                      blobId: blobId!,
+                      mime: mime,
+                    ),
+                    downloadStatus: 'done',
+                    createdAt: DateTime.now().toUtc().toIso8601String(),
+                  );
+                },
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        await tester.enterText(find.byType(TextField), 'Cancel upload');
+        await pumpFrames(tester);
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await pumpUntil(tester, () => uploadStarted.length == 2, maxPumps: 120);
+        await pumpFrames(tester, count: 5);
+
+        final cancellingScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(uploadStarted, hasLength(2));
+        expect(cancellingScreen.uploadProgress, isNotNull);
+        expect(cancellingScreen.onCancelUpload, isNotNull);
+        expect(wakeLockDriver.enableCalls, 1);
+        expect(UploadWakeLockController.debugActiveHolds, 1);
+
+        cancellingScreen.onCancelUpload!.call();
+        await tester.pump();
+        expect(
+          bridge.commandLog.where((cmd) => cmd == 'group:publish'),
+          isEmpty,
+        );
+
+        uploadGate.complete();
+        await pumpUntil(
+          tester,
+          () =>
+              find
+                  .byKey(const ValueKey('upload-progress-banner'))
+                  .evaluate()
+                  .isEmpty &&
+              wakeLockDriver.disableCalls == 1,
+        );
+
+        final storedMessages = await msgRepo.getMessagesPage(group.id);
+        expect(storedMessages, hasLength(1));
+        final failedMessage = storedMessages.single;
+        final storedAttachments = await mediaAttachmentRepo
+            .getAttachmentsForMessage(failedMessage.id);
+
+        expect(uploadCompleted, hasLength(2));
+        expect(failedMessage.status, 'failed');
+        expect(storedAttachments, hasLength(2));
+        expect(
+          storedAttachments.every(
+            (attachment) => attachment.downloadStatus == 'upload_failed',
+          ),
+          isTrue,
+        );
+        expect(find.text('Upload cancelled.'), findsOneWidget);
+        expect(find.byType(AttachmentPreviewStrip), findsOneWidget);
+        expect(find.text('Retry'), findsOneWidget);
+        expect(find.text('Delete'), findsOneWidget);
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).controller?.text,
+          'Cancel upload',
+        );
+        expect(
+          bridge.commandLog.where((cmd) => cmd == 'group:publish'),
+          isEmpty,
+        );
+        expect(UploadWakeLockController.debugActiveHolds, 0);
+      },
+    );
+
+    testWidgets(
+      'retry control re-sends only the targeted failed outgoing media row',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        final mediaFileManager = FakeMediaFileManager();
+
+        String retryPayload({
+          required String messageId,
+          required String text,
+          required String attachmentId,
+          required String timestamp,
+        }) {
+          return jsonEncode({
+            'groupId': group.id,
+            'message': jsonEncode({
+              'groupId': group.id,
+              'senderId': testIdentity.peerId,
+              'senderUsername': testIdentity.username,
+              'keyEpoch': 0,
+              'text': text,
+              'timestamp': timestamp,
+              'messageId': messageId,
+              'media': [
+                {'id': attachmentId},
+              ],
+            }),
+          });
+        }
+
+        await msgRepo.saveMessage(
+          makeMessage(
+            id: 'msg-targeted',
+            text: 'Retry only me',
+            groupId: group.id,
+            isIncoming: false,
+            senderPeerId: testIdentity.peerId,
+            senderUsername: testIdentity.username,
+            status: 'failed',
+            inboxRetryPayload: retryPayload(
+              messageId: 'msg-targeted',
+              text: 'Retry only me',
+              attachmentId: 'att-targeted',
+              timestamp: '2026-01-15T12:00:00.000Z',
+            ),
+          ),
+        );
+        await msgRepo.saveMessage(
+          makeMessage(
+            id: 'msg-untouched',
+            text: 'Leave me failed',
+            groupId: group.id,
+            isIncoming: false,
+            senderPeerId: testIdentity.peerId,
+            senderUsername: testIdentity.username,
+            status: 'failed',
+            inboxRetryPayload: retryPayload(
+              messageId: 'msg-untouched',
+              text: 'Leave me failed',
+              attachmentId: 'att-untouched',
+              timestamp: '2026-01-15T12:01:00.000Z',
+            ),
+          ),
+        );
+        await mediaAttachmentRepo.saveAttachment(
+          const MediaAttachment(
+            id: 'att-targeted',
+            messageId: 'msg-targeted',
+            mime: 'image/jpeg',
+            size: 10,
+            mediaType: 'image',
+            localPath: 'pending_uploads/msg-targeted/att-targeted.jpg',
+            downloadStatus: 'done',
+            createdAt: '2026-01-15T12:00:00.000Z',
+          ),
+        );
+        await mediaAttachmentRepo.saveAttachment(
+          const MediaAttachment(
+            id: 'att-untouched',
+            messageId: 'msg-untouched',
+            mime: 'image/jpeg',
+            size: 10,
+            mediaType: 'image',
+            localPath: 'pending_uploads/msg-untouched/att-untouched.jpg',
+            downloadStatus: 'done',
+            createdAt: '2026-01-15T12:01:00.000Z',
+          ),
+        );
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: mediaFileManager,
+          ),
+        );
+        await pumpUntil(tester, () {
+          final screen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          return screen.ownPeerId == testIdentity.peerId &&
+              (screen.mediaMap['msg-targeted']?.isNotEmpty ?? false);
+        });
+
+        final retryScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(retryScreen.ownPeerId, testIdentity.peerId);
+        expect(retryScreen.onRetryFailedMedia, isNotNull);
+        expect(retryScreen.mediaMap['msg-targeted'], isNotEmpty);
+
+        retryScreen.onRetryFailedMedia!('msg-targeted');
+        await pumpUntil(
+          tester,
+          () =>
+              bridge.commandLog.where((cmd) => cmd == 'group:publish').length ==
+              1,
+        );
+
+        expect((await msgRepo.getMessage('msg-targeted'))?.status, 'sent');
+        expect((await msgRepo.getMessage('msg-untouched'))?.status, 'failed');
+        expect(
+          bridge.commandLog.where((cmd) => cmd == 'group:publish').length,
+          1,
+        );
+        expect(find.text('Could not retry media message.'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'delete control removes only the targeted failed media row and owned files',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        final mediaFileManager = FakeMediaFileManager();
+
+        await msgRepo.saveMessage(
+          makeMessage(
+            id: 'msg-delete-target',
+            text: '',
+            groupId: group.id,
+            isIncoming: false,
+            senderPeerId: testIdentity.peerId,
+            senderUsername: testIdentity.username,
+            status: 'failed',
+            media: const [
+              MediaAttachment(
+                id: 'att-delete-target',
+                messageId: 'msg-delete-target',
+                mime: 'image/jpeg',
+                size: 10,
+                mediaType: 'image',
+                localPath:
+                    'pending_uploads/msg-delete-target/att-delete-target.jpg',
+                downloadStatus: 'upload_pending',
+                createdAt: '2026-01-15T12:02:00.000Z',
+              ),
+            ],
+          ),
+        );
+        await msgRepo.saveMessage(
+          makeMessage(
+            id: 'msg-delete-untouched',
+            text: '',
+            groupId: group.id,
+            isIncoming: false,
+            senderPeerId: testIdentity.peerId,
+            senderUsername: testIdentity.username,
+            status: 'failed',
+            media: const [
+              MediaAttachment(
+                id: 'att-delete-untouched',
+                messageId: 'msg-delete-untouched',
+                mime: 'image/jpeg',
+                size: 10,
+                mediaType: 'image',
+                localPath:
+                    'pending_uploads/msg-delete-untouched/att-delete-untouched.jpg',
+                downloadStatus: 'upload_pending',
+                createdAt: '2026-01-15T12:03:00.000Z',
+              ),
+            ],
+          ),
+        );
+        await mediaAttachmentRepo.saveAttachment(
+          const MediaAttachment(
+            id: 'att-delete-target',
+            messageId: 'msg-delete-target',
+            mime: 'image/jpeg',
+            size: 10,
+            mediaType: 'image',
+            localPath:
+                'pending_uploads/msg-delete-target/att-delete-target.jpg',
+            downloadStatus: 'upload_pending',
+            createdAt: '2026-01-15T12:02:00.000Z',
+          ),
+        );
+        await mediaAttachmentRepo.saveAttachment(
+          const MediaAttachment(
+            id: 'att-delete-untouched',
+            messageId: 'msg-delete-untouched',
+            mime: 'image/jpeg',
+            size: 10,
+            mediaType: 'image',
+            localPath:
+                'pending_uploads/msg-delete-untouched/att-delete-untouched.jpg',
+            downloadStatus: 'upload_pending',
+            createdAt: '2026-01-15T12:03:00.000Z',
+          ),
+        );
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: mediaFileManager,
+          ),
+        );
+        await pumpUntil(tester, () {
+          final screen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          return screen.ownPeerId == testIdentity.peerId &&
+              (screen.mediaMap['msg-delete-target']?.isNotEmpty ?? false);
+        });
+
+        final deleteScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(deleteScreen.ownPeerId, testIdentity.peerId);
+        expect(deleteScreen.onDeleteFailedMedia, isNotNull);
+        expect(deleteScreen.mediaMap['msg-delete-target'], isNotEmpty);
+
+        deleteScreen.onDeleteFailedMedia!('msg-delete-target');
+        await tester.pump(const Duration(milliseconds: 300));
+
+        expect(await msgRepo.getMessage('msg-delete-target'), isNull);
+        expect(await msgRepo.getMessage('msg-delete-untouched'), isNotNull);
+        expect(
+          await mediaAttachmentRepo.getAttachmentsForMessage(
+            'msg-delete-target',
+          ),
+          isEmpty,
+        );
+        expect(
+          await mediaAttachmentRepo.getAttachmentsForMessage(
+            'msg-delete-untouched',
+          ),
+          hasLength(1),
+        );
+        expect(
+          mediaFileManager.deletedFilePaths,
+          contains(
+            '/tmp/test_docs/pending_uploads/msg-delete-target/'
+            'att-delete-target.jpg',
+          ),
+        );
+        expect(
+          mediaFileManager.deletedFilePaths,
+          isNot(
+            contains(
+              '/tmp/test_docs/pending_uploads/msg-delete-untouched/'
+              'att-delete-untouched.jpg',
+            ),
+          ),
+        );
+      },
+    );
 
     testWidgets('publish failure restores quote draft and attachments', (
       tester,
@@ -2822,7 +3535,7 @@ void main() {
     );
 
     testWidgets(
-      'voice send with zero topic peers leaves the final row pending',
+      'voice send with zero topic peers still persists the final row as sent',
       (tester) async {
         final group = makeChatGroup();
         await groupRepo.saveGroup(group);
@@ -2921,10 +3634,10 @@ void main() {
         expect(saved, isNotNull);
         expect(saved!.isIncoming, isFalse);
         expect(saved.text, '');
-        expect(saved.status, 'pending');
+        expect(saved.status, 'sent');
         expect(saved.quotedMessageId, isNull);
         expect(saved.inboxStored, isTrue);
-        expect(find.byIcon(Icons.schedule_rounded), findsOneWidget);
+        expect(find.byIcon(Icons.schedule_rounded), findsNothing);
       },
     );
 

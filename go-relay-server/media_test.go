@@ -111,6 +111,21 @@ func setupTestEnv(t *testing.T) *testEnv {
 	return &testEnv{server, sender, recipient, intruder, media, profile}
 }
 
+func withMediaLimits(t *testing.T, sizeLimit, peerByteCap int64, fn func()) {
+	t.Helper()
+
+	prevSizeLimit := maxMediaSize
+	prevPeerByteCap := maxMediaBytesPerPeer
+	maxMediaSize = sizeLimit
+	maxMediaBytesPerPeer = peerByteCap
+	t.Cleanup(func() {
+		maxMediaSize = prevSizeLimit
+		maxMediaBytesPerPeer = prevPeerByteCap
+	})
+
+	fn()
+}
+
 // upload opens a stream, uploads a blob, and waits for OK.
 func (env *testEnv) upload(t *testing.T, from host.Host, blobID, toStr, mime string, data []byte) {
 	t.Helper()
@@ -401,8 +416,8 @@ func TestDownloadNotFound(t *testing.T) {
 	}
 }
 
-// TestSizeLimitExceeded verifies uploads above 100 MB are rejected at
-// the protocol level (before any data transfer).
+// TestSizeLimitExceeded verifies uploads above the configured max are rejected
+// at the protocol level (before any data transfer).
 func TestSizeLimitExceeded(t *testing.T) {
 	env := setupTestEnv(t)
 	recipientStr := env.recipient.ID().String()
@@ -426,6 +441,26 @@ func TestSizeLimitExceeded(t *testing.T) {
 	if resp.Status != "ERROR" {
 		t.Fatalf("expected ERROR for oversized upload, got %s", resp.Status)
 	}
+}
+
+func TestUploadAtConfiguredMaxSize(t *testing.T) {
+	withMediaLimits(t, 1024, 8*1024, func() {
+		env := setupTestEnv(t)
+		recipientStr := env.recipient.ID().String()
+
+		data := make([]byte, int(maxMediaSize))
+		rand.Read(data)
+
+		env.upload(t, env.sender, "max-size", recipientStr, "video/mp4", data)
+
+		meta := env.media.lookup("max-size")
+		if meta == nil {
+			t.Fatal("expected blob metadata to be stored")
+		}
+		if meta.Size != maxMediaSize {
+			t.Fatalf("expected stored size %d, got %d", maxMediaSize, meta.Size)
+		}
+	})
 }
 
 // TestPeerPruning verifies that when a recipient exceeds maxMediaPerPeer,
@@ -465,6 +500,36 @@ func TestPeerPruning(t *testing.T) {
 	if meta := env.media.lookup(newest); meta == nil {
 		t.Fatalf("newest blob (%s) should still exist", newest)
 	}
+}
+
+func TestPeerByteCapPruning(t *testing.T) {
+	withMediaLimits(t, 1024, 8, func() {
+		env := setupTestEnv(t)
+		recipientStr := env.recipient.ID().String()
+
+		for i := 0; i < 3; i++ {
+			data := []byte{byte(i), byte(i + 1), byte(i + 2)}
+			env.upload(t, env.sender, fmt.Sprintf("bytes-%03d", i), recipientStr, "image/jpeg", data)
+			time.Sleep(2 * time.Millisecond)
+		}
+
+		if meta := env.media.lookup("bytes-000"); meta != nil {
+			t.Fatal("oldest blob should have been pruned to satisfy peer byte cap")
+		}
+		if meta := env.media.lookup("bytes-001"); meta == nil {
+			t.Fatal("second blob should remain after byte-cap pruning")
+		}
+		if meta := env.media.lookup("bytes-002"); meta == nil {
+			t.Fatal("newest blob should remain after byte-cap pruning")
+		}
+
+		env.media.mu.RLock()
+		totalBytes := env.media.pendingBytesForPeerLocked(recipientStr)
+		env.media.mu.RUnlock()
+		if totalBytes > maxMediaBytesPerPeer {
+			t.Fatalf("expected pending bytes <= %d, got %d", maxMediaBytesPerPeer, totalBytes)
+		}
+	})
 }
 
 // TestListEmpty verifies list returns OK with zero blobs for a peer

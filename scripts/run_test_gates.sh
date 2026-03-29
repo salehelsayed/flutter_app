@@ -84,8 +84,12 @@ readonly OPTIONAL_MANUAL_TESTS=(
   "test/integration/notification_deeplink_integration_test.dart"
   "test/integration/rapid_lock_unlock_integration_test.dart"
   "test/integration/relay_down_degradation_integration_test.dart"
+  "integration_test/conversation_wired_performance_test.dart"
+  "integration_test/conversation_wired_subscription_performance_test.dart"
   "integration_test/feed_performance_test.dart"
+  "integration_test/feed_wired_init_performance_test.dart"
   "integration_test/identity_progress_performance_test.dart"
+  "integration_test/orbit_performance_test.dart"
 )
 
 readonly OUT_OF_GATE_TESTS=(
@@ -259,7 +263,7 @@ classify_path() {
     return 0
   fi
 
-  if [[ "$path" =~ ^test/core/(bridge|constants|database|inbox|local_discovery|media|secure_storage|theme|utils)/.*_test\.dart$ ]]; then
+  if [[ "$path" =~ ^test/core/(bridge|constants|database|device|inbox|local_discovery|media|secure_storage|theme|utils)/.*_test\.dart$ ]]; then
     printf 'core component direct suite'
     return 0
   fi

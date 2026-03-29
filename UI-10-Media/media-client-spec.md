@@ -344,7 +344,12 @@ This is a simple binary container. The recipient reads the lengths, splits the f
 
 ### Large file consideration
 
-For files > 10 MB, encrypting/decrypting the entire file as a single base64 string is memory-intensive. For the focus group phase, this is acceptable (100 MB peak = ~200 MB memory during encrypt). For scaling, a chunked encrypt/decrypt bridge command (`media.encryptChunk` / `media.decryptChunk`) would stream 1 MB chunks. Defer this to a later phase.
+The live ordinary-media transfer cap is now `5 GB`, but the current bridge
+encryption/decryption path still works on whole-file payloads. That means the
+repo accepts multi-gigabyte attachments at the transport and selection layers
+without claiming that every device can process them cheaply in memory. A
+chunked encrypt/decrypt bridge command (`media.encryptChunk` /
+`media.decryptChunk`) remains the future scaling path.
 
 ---
 
@@ -376,7 +381,11 @@ sendMediaMessage({
 ```
 1. VALIDATE
    - At least 1 file
-   - Each file ≤ 100 MB
+   - The settled ordinary-media budget for the message stays within `5 GB`
+     after the current quality-processing path runs
+   - App-recorded voice messages keep their separate `100 MB` sanity limit in
+     `send_voice_message_use_case.dart`; they are not redefined by this
+     ordinary-media path
    - P2P node is running
    - Recipient ML-KEM public key available (required — media always encrypted)
 
@@ -426,6 +435,21 @@ sendMediaMessage({
    a. Delete temp .enc files
    b. If all uploads failed: update message status to 'failed'
 ```
+
+### Current foreground upload contract
+
+The live conversation and group send surfaces now provide honest
+foreground-only upload protection for active relay uploads:
+
+- aggregate byte progress is surfaced in the composer screen
+- the banner warns: `Keep the app open until the upload completes`
+- leaving the conversation while a relay upload is active requires explicit
+  confirmation
+- a wake lock stays enabled until the last active relay upload finishes, fails,
+  or is cancelled
+
+This is **not** a true background-upload architecture claim, and it does not
+promise download-side wake-lock behavior.
 
 ### Result type
 
@@ -759,7 +783,7 @@ Follow existing `emitFlowEvent` pattern:
 | **Compression fails** | Skip compression, fall back to original. Log warning. |
 | **Encryption fails** | Abort send entirely. Media must always be encrypted. |
 | **Upload fails (network)** | Retry 3x with backoff. Then mark `upload_status = 'failed'`. User sees retry button. |
-| **Upload fails (size rejected)** | Show error: "File too large (max 100 MB)". Don't retry. |
+| **Upload fails (size rejected)** | Show an over-limit error for the settled `5 GB` ordinary-media budget. Don't retry. |
 | **Message send fails but uploads succeeded** | Blobs are on server. Retry message send (inbox fallback). Blobs have 7-day TTL. |
 | **Download fails (network)** | Mark `download_status = 'failed'`. User sees retry. Auto-retry on next app resume. |
 | **Download fails (blob expired)** | Show "Media no longer available" in place of thumbnail. |

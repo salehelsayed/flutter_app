@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/device/upload_wake_lock.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
@@ -28,6 +29,7 @@ import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/fake_audio_recorder_service.dart';
 import '../../../shared/fakes/fake_notification_service.dart';
 import '../../../shared/fakes/fake_p2p_network.dart';
+import '../../../shared/fakes/fake_upload_wake_lock_driver.dart';
 import '../../../shared/fakes/in_memory_media_attachment_repository.dart';
 import '../../../shared/fakes/test_user.dart';
 import '../../identity/domain/repositories/fake_identity_repository.dart';
@@ -605,6 +607,7 @@ void main() {
       originalAudioPlatform = JustAudioPlatform.instance;
       fakeAudioPlatform = _FakeJustAudioPlatform();
       JustAudioPlatform.instance = fakeAudioPlatform;
+      UploadWakeLockController.debugReset(driver: FakeUploadWakeLockDriver());
 
       network = FakeP2PNetwork();
       tempDir = await Directory.systemTemp.createTemp('send_then_lock_');
@@ -654,6 +657,7 @@ void main() {
     });
 
     tearDown(() async {
+      UploadWakeLockController.debugReset(driver: FakeUploadWakeLockDriver());
       bobHarness.stop();
       alice.dispose();
       bob.dispose();
@@ -1250,6 +1254,65 @@ void main() {
         bobHarness.expectLatestNotification(
           contactPeerId: alice.peerId,
           body: 'Killed mid-send',
+          senderUsername: 'Alice',
+        );
+      },
+    );
+
+    test(
+      '7b. failed send during transport loss survives lock and recovers on resume exactly once',
+      () async {
+        bobHarness.clearNotifications();
+        network.deliveryFails = true;
+        network.inboxDisabled = true;
+
+        final (result, failedMessage) = await alice.sendMessage(
+          bob.peerId,
+          'Switch then lock',
+        );
+
+        expect(result, isNot(SendChatMessageResult.success));
+        expect(failedMessage, isNotNull);
+        expect(failedMessage!.status, 'failed');
+        expect(failedMessage.wireEnvelope, isNotNull);
+
+        final failedId = failedMessage.id;
+        final failedRows = await alice.messageRepo.getMessagesForContact(
+          bob.peerId,
+        );
+        expect(failedRows, hasLength(1));
+        expect(failedRows.single.id, failedId);
+        expect(failedRows.single.status, 'failed');
+
+        network.deliveryFails = false;
+        network.inboxDisabled = false;
+        bob.setOnline(false);
+
+        await alice.simulatePause();
+        final afterPause = await alice.messageRepo.getMessage(failedId);
+        expect(afterPause?.status, 'failed');
+
+        await alice.simulateResume(
+          retryFailedMessagesFn: retryAliceFailedMessages,
+        );
+
+        final recoveredMessage = await alice.messageRepo.getMessage(failedId);
+        expect(recoveredMessage?.status, 'delivered');
+        expect(recoveredMessage?.transport, 'inbox');
+
+        bob.setOnline(true);
+        final drained = await bob.drainOfflineInbox();
+        expect(drained, 1);
+        await waitForBob();
+
+        await bobHarness.expectMessageCount(alice.peerId, 1);
+        await bobHarness.expectLatestMessageText(
+          alice.peerId,
+          'Switch then lock',
+        );
+        bobHarness.expectLatestNotification(
+          contactPeerId: alice.peerId,
+          body: 'Switch then lock',
           senderUsername: 'Alice',
         );
       },

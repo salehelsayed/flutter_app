@@ -304,6 +304,10 @@ class GoBridgeClient extends Bridge {
           }
           break;
 
+        case 'media:upload_progress':
+          emitMediaUploadProgressEvent(eventData);
+          break;
+
         case 'group_message:received':
           if (onGroupMessageReceived != null) {
             try {

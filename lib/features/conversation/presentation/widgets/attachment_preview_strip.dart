@@ -1,5 +1,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/media/video_thumbnail_cache.dart';
+import 'package:flutter_app/shared/widgets/media/media_thumbnail_image.dart';
 
 /// Horizontal thumbnail strip shown above the compose area when
 /// the user has picked attachments to send.
@@ -11,6 +13,8 @@ class AttachmentPreviewStrip extends StatelessWidget {
   final bool isUploading;
   final bool isProcessing;
   final double processingProgress;
+  final int processingCurrent;
+  final int processingTotal;
   final ValueChanged<int>? onRemove;
 
   const AttachmentPreviewStrip({
@@ -19,6 +23,8 @@ class AttachmentPreviewStrip extends StatelessWidget {
     this.isUploading = false,
     this.isProcessing = false,
     this.processingProgress = 0.0,
+    this.processingCurrent = 0,
+    this.processingTotal = 0,
     this.onRemove,
   });
 
@@ -31,10 +37,14 @@ class AttachmentPreviewStrip extends StatelessWidget {
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         itemCount: totalCount,
-        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        separatorBuilder: (_, index) => const SizedBox(width: 8),
         itemBuilder: (context, index) {
           if (isProcessing && index == totalCount - 1) {
-            return _ProcessingThumbnail(progress: processingProgress);
+            return _ProcessingThumbnail(
+              progress: processingProgress,
+              current: processingCurrent,
+              total: processingTotal,
+            );
           }
           return _Thumbnail(
             file: attachments[index],
@@ -60,6 +70,7 @@ class _Thumbnail extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final mediaType = isLikelyVideoPath(file.path) ? 'video' : 'image';
     return SizedBox(
       width: 72,
       height: 72,
@@ -69,12 +80,28 @@ class _Thumbnail extends StatelessWidget {
           // Thumbnail image
           ClipRRect(
             borderRadius: BorderRadius.circular(10),
-            child: Image.file(
-              file,
-              width: 72,
-              height: 72,
+            child: MediaThumbnailImage(
+              mediaPath: file.path,
+              mediaType: mediaType,
               fit: BoxFit.cover,
               cacheWidth: 200,
+              placeholder: Container(
+                width: 72,
+                height: 72,
+                color: const Color.fromRGBO(255, 255, 255, 0.06),
+              ),
+              error: Container(
+                width: 72,
+                height: 72,
+                color: const Color.fromRGBO(255, 255, 255, 0.06),
+                child: const Center(
+                  child: Icon(
+                    Icons.broken_image_outlined,
+                    size: 18,
+                    color: Color.fromRGBO(255, 255, 255, 0.25),
+                  ),
+                ),
+              ),
             ),
           ),
           // Upload overlay
@@ -112,11 +139,7 @@ class _Thumbnail extends StatelessWidget {
                     color: Color.fromRGBO(0, 0, 0, 0.7),
                     shape: BoxShape.circle,
                   ),
-                  child: const Icon(
-                    Icons.close,
-                    size: 14,
-                    color: Colors.white,
-                  ),
+                  child: const Icon(Icons.close, size: 14, color: Colors.white),
                 ),
               ),
             ),
@@ -128,7 +151,21 @@ class _Thumbnail extends StatelessWidget {
 
 class _ProcessingThumbnail extends StatelessWidget {
   final double progress;
-  const _ProcessingThumbnail({required this.progress});
+  final int current;
+  final int total;
+
+  const _ProcessingThumbnail({
+    required this.progress,
+    required this.current,
+    required this.total,
+  });
+
+  String get _label {
+    if (total > 1 && current > 0) {
+      return 'Processing ($current/$total)';
+    }
+    return 'Processing';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -144,6 +181,22 @@ class _ProcessingThumbnail extends StatelessWidget {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  child: Text(
+                    _label,
+                    textAlign: TextAlign.center,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white70,
+                      fontSize: 9,
+                      fontWeight: FontWeight.w500,
+                      height: 1.1,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 4),
                 SizedBox(
                   width: 28,
                   height: 28,

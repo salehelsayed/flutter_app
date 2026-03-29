@@ -36,8 +36,8 @@ class ConversationMessage {
   /// The ID of the message being quoted (quote-reply). NULL means no quote.
   final String? quotedMessageId;
 
-  /// Transport type: 'wifi', 'local', 'direct', 'reuse', 'relay', 'inbox',
-  /// or null (unknown/pre-migration).
+  /// Transport type: 'wifi', 'local', 'direct', legacy-only 'reuse',
+  /// 'relay', 'inbox', or null (unknown/pre-migration).
   final String? transport;
 
   /// Serialized wire envelope (JSON) for retry. NULL once delivered.

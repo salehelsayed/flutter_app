@@ -37,6 +37,7 @@ class SettingsScreen extends StatelessWidget {
   final ValueChanged<ImageQualityPreference>? onVideoQualityChanged;
   final bool isNearbySharingEnabled;
   final ValueChanged<bool>? onNearbySharingChanged;
+  final Widget? debugSection;
   final void Function(String) onSwitchView;
   final String activeTab;
   final bool showNavigationBar;
@@ -63,6 +64,7 @@ class SettingsScreen extends StatelessWidget {
     this.onVideoQualityChanged,
     this.isNearbySharingEnabled = false,
     this.onNearbySharingChanged,
+    this.debugSection,
     required this.onSwitchView,
     required this.activeTab,
     this.showNavigationBar = true,
@@ -178,7 +180,9 @@ class SettingsScreen extends StatelessWidget {
                           ImageQualityToggle(
                             value: currentQuality,
                             onChanged: onQualityChanged!,
-                            label: AppLocalizations.of(context)!.settings_photo_quality,
+                            label: AppLocalizations.of(
+                              context,
+                            )!.settings_photo_quality,
                           ),
                           const SizedBox(height: 24),
                         ],
@@ -186,7 +190,9 @@ class SettingsScreen extends StatelessWidget {
                           ImageQualityToggle(
                             value: currentVideoQuality,
                             onChanged: onVideoQualityChanged!,
-                            label: AppLocalizations.of(context)!.settings_video_quality,
+                            label: AppLocalizations.of(
+                              context,
+                            )!.settings_video_quality,
                             icon: Icons.videocam,
                           ),
                           const SizedBox(height: 24),
@@ -207,7 +213,9 @@ class SettingsScreen extends StatelessWidget {
                             onCopy: onCopyMnemonic,
                             onHide: onHideMnemonic,
                           ),
+                          const SizedBox(height: 24),
                         ],
+                        if (debugSection != null) debugSection!,
                       ],
                     ),
                   ),

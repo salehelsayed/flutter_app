@@ -55,6 +55,7 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository_impl.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository_impl.dart';
 
 // ---------------------------------------------------------------------------
@@ -469,6 +470,25 @@ Future<bool> _waitForSignalFile(
   return false;
 }
 
+Future<String?> _waitForSignalContent(
+  String name, {
+  Duration timeout = const Duration(seconds: 60),
+}) async {
+  final deadline = DateTime.now().add(timeout);
+  final path = _readSignalPath(name);
+  while (DateTime.now().isBefore(deadline)) {
+    final file = File(path);
+    if (file.existsSync()) {
+      final content = file.readAsStringSync().trim();
+      if (content.isNotEmpty) {
+        return content;
+      }
+    }
+    await Future.delayed(const Duration(milliseconds: 500));
+  }
+  return null;
+}
+
 Future<bool> _waitForDiscoverabilityState(
   P2PServiceImpl p2pService,
   String peerId, {
@@ -632,13 +652,13 @@ void main() {
     try {
       // ==== A1: Send v1 plaintext to CLI peer ====
       if (hasCli) {
-        print('\n--- A1: Send v1 plaintext via relay ---');
+        print('\n--- A1: Send v1 plaintext ---');
         try {
           final (r1, m1) = await sendChatMessage(
             p2pService: stack.p2pService,
             messageRepo: stack.messageRepo,
             targetPeerId: stack.cliPeerId!,
-            text: 'A1: Hello via relay v1',
+            text: 'A1: Hello from Flutter v1',
             senderPeerId: stack.ownPeerId,
             senderUsername: 'FlutterE2E',
           );
@@ -652,7 +672,9 @@ void main() {
           final pass =
               m1 != null &&
               status == 'delivered' &&
-              (transport == 'relay' || transport == 'inbox');
+              (transport == 'direct' ||
+                  transport == 'relay' ||
+                  transport == 'inbox');
           results.add(_ScenarioResult('A1', pass, detail));
           print('[TEST] A1: $detail');
         } catch (e) {
@@ -685,7 +707,9 @@ void main() {
           final pass =
               m4 != null &&
               status == 'delivered' &&
-              (transport == 'relay' || transport == 'inbox');
+              (transport == 'direct' ||
+                  transport == 'relay' ||
+                  transport == 'inbox');
           results.add(_ScenarioResult('A4', pass, detail));
           print('[TEST] A4: $detail');
         } catch (e) {
@@ -754,12 +778,12 @@ void main() {
           );
         }
 
-        // ==== A2: Receive v1 via relay ====
-        print('\n--- A2: Receive v1 plaintext via relay ---');
+        // ==== A2: Receive v1 over the live stream ====
+        print('\n--- A2: Receive v1 plaintext ---');
         final a2 = incoming.where((m) => m.text.contains('A2:')).toList();
         if (a2.isNotEmpty) {
           final a2Transport = a2.first.transport;
-          final a2Pass = a2Transport == 'relay';
+          final a2Pass = a2Transport == 'direct' || a2Transport == 'relay';
           results.add(_ScenarioResult('A2', a2Pass, 'transport=$a2Transport'));
           print(
             '[TEST] A2 ${a2Pass ? 'PASS' : 'FAIL'}: '
@@ -786,7 +810,7 @@ void main() {
         final a5 = incoming.where((m) => m.text.contains('A5:')).toList();
         if (a5.isNotEmpty) {
           final a5Transport = a5.first.transport;
-          final a5Pass = a5Transport == 'relay';
+          final a5Pass = a5Transport == 'direct' || a5Transport == 'relay';
           results.add(
             _ScenarioResult(
               'A5',
@@ -1062,14 +1086,14 @@ void main() {
         final d4 = incoming.where((m) => m.text.contains('D4:')).toList();
         if (d4.length == 1) {
           final d4Transport = d4.first.transport;
-          // Relay arrives first. If dedup works, inbox dup rejected → stays relay.
-          // If dedup breaks, INSERT OR REPLACE overwrites → transport flips to inbox → FAIL.
-          final d4Pass = d4Transport == 'relay';
+          // Dedup is the contract here. Surviving live-stream truth can be direct
+          // or relay depending on runtime connectivity.
+          final d4Pass = d4Transport == 'direct' || d4Transport == 'relay';
           results.add(
             _ScenarioResult(
               'D4',
               d4Pass,
-              'count=1 transport=$d4Transport (expect relay)',
+              'count=1 transport=$d4Transport (expect direct|relay)',
             ),
           );
           print(
@@ -1145,7 +1169,7 @@ void main() {
         final a7 = incoming.where((m) => m.text.contains('A7:')).toList();
         if (a7.isNotEmpty) {
           final a7Transport = a7.first.transport;
-          final a7Pass = a7Transport == 'relay';
+          final a7Pass = a7Transport == 'direct' || a7Transport == 'relay';
           results.add(_ScenarioResult('A7', a7Pass, 'transport=$a7Transport'));
           print(
             '[TEST] A7 ${a7Pass ? 'PASS' : 'FAIL'}: '
@@ -1455,14 +1479,13 @@ void main() {
       // ==== Phase 4: B8 — Encrypted inbox from Flutter ====
       if (hasCli && stack.cliMlKemPublicKey != null) {
         print('\n--- B8: Encrypted inbox from Flutter ---');
-        var b8Stopped = false;
-        for (var i = 0; i < 60; i++) {
-          await Future.delayed(const Duration(seconds: 1));
-          if (File(_readSignalPath('e2e_cli_b8_stopped')).existsSync()) {
-            b8Stopped = true;
-            print('[TEST] B8: CLI stopped signal found after ${i + 1}s');
-            break;
-          }
+        final b8StoppedSignal = await _waitForSignalContent(
+          'e2e_cli_b8_stopped',
+          timeout: const Duration(seconds: 60),
+        );
+        final b8Stopped = b8StoppedSignal != null;
+        if (b8Stopped) {
+          print('[TEST] B8: CLI stopped signal content="$b8StoppedSignal"');
         }
 
         if (!b8Stopped) {
@@ -1546,6 +1569,19 @@ void main() {
           print('[TEST] E8: upload ok=$uploaded');
 
           if (uploaded) {
+            final e8Attachment = MediaAttachment(
+              id: e8BlobId,
+              messageId: '',
+              mime: 'image/png',
+              size: e8Bytes.length,
+              mediaType: 'image',
+              width: 1,
+              height: 1,
+              localPath: e8TempFile.path,
+              downloadStatus: 'done',
+              createdAt: DateTime.now().toUtc().toIso8601String(),
+            );
+
             // Send chat message with media reference.
             final (e8Result, e8Msg) = await sendChatMessage(
               p2pService: stack.p2pService,
@@ -1554,18 +1590,23 @@ void main() {
               text: 'E8: Media attachment test',
               senderPeerId: stack.ownPeerId,
               senderUsername: 'FlutterE2E',
+              mediaAttachments: [e8Attachment],
             );
 
             // Write blob ID signal for orchestrator.
             File(_writeSignalPath('e2e_e8_blobid')).writeAsStringSync(e8BlobId);
             print('[TEST] E8: blob ID signal written');
 
-            final e8Pass = e8Msg != null;
+            final e8Pass =
+                e8Result == SendChatMessageResult.success &&
+                e8Msg != null &&
+                e8Msg.media.any((attachment) => attachment.id == e8BlobId);
             results.add(
               _ScenarioResult(
                 'E8',
                 e8Pass,
-                'uploaded=$uploaded blobId=$e8BlobId',
+                'uploaded=$uploaded send=${e8Result.name} '
+                    'attachments=${e8Msg?.media.length ?? 0} blobId=$e8BlobId',
               ),
             );
             print('[TEST] E8 ${e8Pass ? 'PASS' : 'FAIL'}');
@@ -1610,14 +1651,15 @@ void main() {
             print('[TEST] G6: upload signal written');
 
             // Wait for CLI to upload its profile.
-            var cliUploaded = false;
-            for (var i = 0; i < 60; i++) {
-              await Future.delayed(const Duration(seconds: 1));
-              if (File(_readSignalPath('e2e_g6_cli_uploaded')).existsSync()) {
-                cliUploaded = true;
-                print('[TEST] G6: CLI upload signal after ${i + 1}s');
-                break;
-              }
+            final cliUploadedSignal = await _waitForSignalContent(
+              'e2e_g6_cli_uploaded',
+              timeout: const Duration(seconds: 60),
+            );
+            final cliUploaded = cliUploadedSignal != null;
+            if (cliUploaded) {
+              print(
+                '[TEST] G6: CLI upload signal content="$cliUploadedSignal"',
+              );
             }
 
             if (cliUploaded) {

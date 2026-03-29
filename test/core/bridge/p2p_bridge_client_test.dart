@@ -72,8 +72,11 @@ void main() {
     test('defaultRelayAddresses() returns /dns/ addresses', () {
       final addrs = defaultRelayAddresses();
       for (final addr in addrs) {
-        expect(addr, isNot(contains('/dns4/')),
-            reason: 'relay address should use /dns/ for dual-stack: $addr');
+        expect(
+          addr,
+          isNot(contains('/dns4/')),
+          reason: 'relay address should use /dns/ for dual-stack: $addr',
+        );
       }
     });
   });
@@ -618,6 +621,27 @@ void main() {
       expect(payload['peerId'], equals('12D3KooWSendTarget'));
       expect(payload['message'], equals('Hello, world!'));
     });
+
+    test(
+      'preserves additive transport field from the bridge response',
+      () async {
+        bridge.nextResponse = {
+          'ok': true,
+          'sent': true,
+          'acked': true,
+          'transport': 'relay',
+        };
+
+        final result = await callP2PMessageSend(
+          bridge,
+          peerId: '12D3KooWSendTarget',
+          message: 'Hello, relay!',
+        );
+
+        expect(result['acked'], isTrue);
+        expect(result['transport'], equals('relay'));
+      },
+    );
 
     test('includes timeoutMs when provided', () async {
       bridge.nextResponse = {'ok': true, 'sent': true};
