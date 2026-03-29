@@ -273,6 +273,7 @@ void main() {
       find.byType(ConversationWired),
     );
     expect(conversation.initialAttachments, hasLength(1));
+    expect(conversation.initialPendingMedia, hasLength(1));
   });
 
   testWidgets('6c: share text to group shows text in compose area', (
@@ -334,6 +335,7 @@ void main() {
       find.byType(GroupConversationWired),
     );
     expect(conversation.initialAttachments, hasLength(1));
+    expect(conversation.initialPendingMedia, hasLength(1));
   });
 
   testWidgets('6e: share URL keeps URL text in compose area', (tester) async {
@@ -388,6 +390,7 @@ void main() {
       find.byType(ConversationWired),
     );
     expect(conversation.initialAttachments, hasLength(2));
+    expect(conversation.initialPendingMedia, hasLength(2));
   });
 
   testWidgets(

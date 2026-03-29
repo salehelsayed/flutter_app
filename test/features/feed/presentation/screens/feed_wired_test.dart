@@ -25,6 +25,7 @@ import 'package:flutter_app/features/feed/application/app_shell_controller.dart'
 import 'package:flutter_app/features/feed/domain/models/feed_route_changes.dart';
 import 'package:flutter_app/features/feed/presentation/screens/feed_wired.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/feed_card.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/introduction_connection_card.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/inline_reply_input.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/message_bubble.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/quote_preview_bar.dart';
@@ -1855,6 +1856,92 @@ void main() {
     );
 
     testWidgets(
+      'late mutual acceptance surfaces intro connection card and later block update keeps the same contact card',
+      (tester) async {
+        final originalOnError = FlutterError.onError;
+        FlutterError.onError = (details) {
+          if (details.toString().contains('overflowed')) return;
+          originalOnError?.call(details);
+        };
+        addTearDown(() => FlutterError.onError = originalOnError);
+
+        identityRepo.seed(testIdentity);
+
+        final spyContactRepo = _SpyContactRepository()..seed([testContact]);
+        final spyMessageRepo = _SpyMessageRepository();
+        final fakeChatListener = _FakeChatMessageListener(
+          messageRepo: spyMessageRepo,
+          contactRepo: spyContactRepo,
+        );
+        final introRepo = InMemoryIntroductionRepository();
+        final fakeIntroListener = _FakeIntroductionListener(
+          introRepo: introRepo,
+          contactRepo: spyContactRepo,
+          messageRepo: spyMessageRepo,
+          bridge: bridge,
+        );
+
+        await tester.pumpWidget(
+          buildFeedWired(
+            contactRepository: spyContactRepo,
+            messageRepository: spyMessageRepo,
+            chatMessageListener: fakeChatListener,
+            introductionListener: fakeIntroListener,
+          ),
+        );
+        await pumpFeedFrames(tester);
+
+        final introducedContact = ContactModel(
+          peerId: 'intro-peer-id',
+          publicKey: 'intro-pk',
+          rendezvous: '/dns4/relay/tcp/443',
+          username: 'Dora',
+          signature: 'intro-sig',
+          scannedAt: '2026-03-02T12:00:00.000Z',
+          introducedBy: 'Eve',
+          introducedByPeerId: 'introducer-peer-id',
+        );
+        await spyContactRepo.addContact(introducedContact);
+
+        fakeIntroListener.emitIntroStatusChanged(
+          IntroductionModel(
+            id: 'intro-late-feed',
+            introducerId: 'introducer-peer-id',
+            recipientId: testIdentity.peerId,
+            introducedId: introducedContact.peerId,
+            recipientStatus: IntroductionStatus.accepted,
+            introducedStatus: IntroductionStatus.accepted,
+            status: IntroductionOverallStatus.mutualAccepted,
+            createdAt: '2026-02-25T11:00:00.000Z',
+            introducerUsername: 'Eve',
+            recipientUsername: testIdentity.username,
+            introducedUsername: introducedContact.username,
+          ),
+        );
+
+        await pumpFeedFrames(tester);
+
+        expect(find.textContaining('Dora'), findsWidgets);
+        expect(find.text('Introduced by Eve'), findsOneWidget);
+        expect(find.byType(IntroductionConnectionCard), findsOneWidget);
+
+        final blockedContact = introducedContact.copyWith(
+          isBlocked: true,
+          blockedAt: '2026-03-02T12:05:00.000Z',
+        );
+        await spyContactRepo.addContact(blockedContact);
+        fakeChatListener.emitContactUpdate(blockedContact);
+
+        await pumpFeedFrames(tester);
+
+        expect(find.textContaining('Dora'), findsWidgets);
+        expect(find.text('Introduced by Eve'), findsOneWidget);
+        expect(find.byType(IntroductionConnectionCard), findsOneWidget);
+        expect(find.text('Blocked'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
       'orbit route result refreshes only the changed contact snapshot',
       (tester) async {
         final originalOnError = FlutterError.onError;
@@ -3125,7 +3212,7 @@ void main() {
     );
 
     testWidgets(
-      'group inline reply treats zero-peer publish as success and keeps the message pending',
+      'group inline reply treats zero-peer publish as success and keeps the message sent',
       (tester) async {
         final originalOnError = FlutterError.onError;
         FlutterError.onError = (details) {
@@ -3213,7 +3300,7 @@ void main() {
         final saved = savedMessages.firstWhere(
           (message) => message.text == 'Zero peers' && !message.isIncoming,
         );
-        expect(saved.status, 'pending');
+        expect(saved.status, 'sent');
         expect(saved.inboxStored, isTrue);
       },
     );

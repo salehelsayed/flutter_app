@@ -12,6 +12,7 @@ import 'package:flutter_app/features/conversation/domain/models/media_attachment
 import 'package:flutter_app/features/conversation/domain/models/message_payload.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
+import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
 
 /// Interactive send budget for local WiFi attempts.
 const Duration interactiveLocalBudget = Duration(milliseconds: 1500);
@@ -241,7 +242,12 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
           targetPeerId: targetPeerId,
           jsonString: jsonString,
           acknowledged: sendResult.acknowledged,
-          via: 'reuse',
+          via: _resolveGoSendTransport(
+            p2pService,
+            targetPeerId,
+            sendResult,
+            preserveLocalPeerLabel: true,
+          ),
           resolvedMessageId: resolvedMessageId,
           textPreview: textPreview,
           text: sanitizedText,
@@ -523,6 +529,50 @@ class _RaceResult {
   );
 }
 
+String _inferTransportForConnectedPeer(P2PService p2pService, String peerId) {
+  if (p2pService.isLocalPeer(peerId)) {
+    return 'local';
+  }
+
+  return _inferDirectVsRelayForConnectedPeer(p2pService, peerId);
+}
+
+String _inferDirectVsRelayForConnectedPeer(
+  P2PService p2pService,
+  String peerId,
+) {
+  final hasRelayConnection = p2pService.currentState.connections.any(
+    (connection) =>
+        connection.peerId == peerId &&
+        connection.multiaddrs.any(
+          (multiaddr) => multiaddr.contains('/p2p-circuit'),
+        ),
+  );
+  return hasRelayConnection ? 'relay' : 'direct';
+}
+
+String _resolveGoSendTransport(
+  P2PService p2pService,
+  String peerId,
+  SendMessageResult sendResult, {
+  bool preserveLocalPeerLabel = false,
+}) {
+  if (preserveLocalPeerLabel && p2pService.isLocalPeer(peerId)) {
+    return 'local';
+  }
+
+  final actualTransport = sendResult.transport;
+  if (actualTransport != null && actualTransport.isNotEmpty) {
+    return actualTransport;
+  }
+
+  if (preserveLocalPeerLabel) {
+    return _inferTransportForConnectedPeer(p2pService, peerId);
+  }
+
+  return _inferDirectVsRelayForConnectedPeer(p2pService, peerId);
+}
+
 /// Try sending via local WiFi.
 Future<_RaceResult> _tryLocalSend(
   P2PService p2pService,
@@ -578,7 +628,7 @@ Future<_RaceResult> _tryDirectSend(
   }
 
   return _RaceResult.succeeded(
-    via: 'direct',
+    via: _resolveGoSendTransport(p2pService, targetPeerId, sendResult),
     acknowledged: sendResult.acknowledged,
   );
 }
@@ -640,7 +690,11 @@ Future<_RaceResult> _tryRelayProbeSend(
           );
           if (sendResult.sent) {
             return _RaceResult.succeeded(
-              via: 'direct',
+              via: _resolveGoSendTransport(
+                p2pService,
+                targetPeerId,
+                sendResult,
+              ),
               acknowledged: sendResult.acknowledged,
             );
           }

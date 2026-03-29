@@ -17,6 +17,12 @@ import 'package:flutter_app/features/identity/domain/repositories/identity_repos
 /// to online state (isStarted && circuitAddresses.isNotEmpty).
 /// Debounces by 5 seconds to avoid retrying during rapid state changes.
 class PendingMessageRetrier {
+  static const Duration defaultRetryDebounce = Duration(seconds: 5);
+  static const Duration defaultPeriodicRetryInterval = Duration(minutes: 5);
+  static const Duration defaultGroupContinuitySweepInterval = Duration(
+    seconds: 30,
+  );
+
   final P2PService p2pService;
   final MessageRepository messageRepo;
   final IdentityRepository identityRepo;
@@ -35,14 +41,19 @@ class PendingMessageRetrier {
   final Future<int> Function()? retryFailedGroupInboxStoresFn;
   final Future<int> Function()? retryFailedMessagesOverride;
   final Future<int> Function()? retryUnackedMessagesOverride;
+  final Duration retryDebounce;
+  final Duration periodicRetryInterval;
+  final Duration groupContinuitySweepInterval;
 
   bool Function()? _isExternalRecoveryInProgressFn;
 
   StreamSubscription? _stateSubscription;
   Timer? _debounceTimer;
   Timer? _periodicTimer;
+  Timer? _groupContinuityTimer;
   bool _wasOnline = false;
   bool _isRetrying = false;
+  bool _isGroupContinuitySweeping = false;
 
   PendingMessageRetrier({
     required this.p2pService,
@@ -61,6 +72,9 @@ class PendingMessageRetrier {
     this.retryFailedGroupInboxStoresFn,
     this.retryFailedMessagesOverride,
     this.retryUnackedMessagesOverride,
+    this.retryDebounce = defaultRetryDebounce,
+    this.periodicRetryInterval = defaultPeriodicRetryInterval,
+    this.groupContinuitySweepInterval = defaultGroupContinuitySweepInterval,
     bool Function()? isExternalRecoveryInProgressFn,
   }) : _isExternalRecoveryInProgressFn = isExternalRecoveryInProgressFn;
 
@@ -78,19 +92,12 @@ class PendingMessageRetrier {
       final nowOnline = _isOnline(state);
 
       if (nowOnline && !_wasOnline) {
-        // Transition to online — schedule retry with debounce
-        _debounceTimer?.cancel();
-        _debounceTimer = Timer(const Duration(seconds: 5), _retryIfNeeded);
-        // Periodic retry every 5 minutes while online
-        _periodicTimer?.cancel();
-        _periodicTimer = Timer.periodic(
-          const Duration(minutes: 5),
-          (_) => _retryIfNeeded(),
-        );
+        // Transition to online — schedule retry with debounce and
+        // keep group continuity catch-up on a shorter cadence.
+        _startOnlineTimers();
       } else if (!nowOnline && _wasOnline) {
-        // Went offline — cancel periodic
-        _periodicTimer?.cancel();
-        _periodicTimer = null;
+        // Went offline — stop background sweeps.
+        _stopRecurringOnlineTimers();
       }
 
       _wasOnline = nowOnline;
@@ -99,13 +106,7 @@ class PendingMessageRetrier {
     // If already online when start() is called, schedule an initial sweep.
     // Handles cold-start where the Go node reports already-running.
     if (_wasOnline) {
-      _debounceTimer?.cancel();
-      _debounceTimer = Timer(const Duration(seconds: 5), _retryIfNeeded);
-      _periodicTimer?.cancel();
-      _periodicTimer = Timer.periodic(
-        const Duration(minutes: 5),
-        (_) => _retryIfNeeded(),
-      );
+      _startOnlineTimers();
     }
   }
 
@@ -140,6 +141,81 @@ class PendingMessageRetrier {
       messageRepo: messageRepo,
       p2pService: p2pService,
     );
+  }
+
+  void _startOnlineTimers() {
+    _debounceTimer?.cancel();
+    _debounceTimer = Timer(retryDebounce, _retryIfNeeded);
+
+    _periodicTimer?.cancel();
+    _periodicTimer = Timer.periodic(
+      periodicRetryInterval,
+      (_) => _retryIfNeeded(),
+    );
+
+    _groupContinuityTimer?.cancel();
+    _groupContinuityTimer = Timer.periodic(
+      groupContinuitySweepInterval,
+      (_) => _runGroupContinuitySweepIfNeeded(),
+    );
+  }
+
+  void _stopRecurringOnlineTimers() {
+    _periodicTimer?.cancel();
+    _periodicTimer = null;
+    _groupContinuityTimer?.cancel();
+    _groupContinuityTimer = null;
+  }
+
+  void _stopAllTimers() {
+    _debounceTimer?.cancel();
+    _debounceTimer = null;
+    _stopRecurringOnlineTimers();
+  }
+
+  Future<void> _runGroupContinuitySweepIfNeeded() async {
+    if (_isGroupContinuitySweeping || _isRetrying) return;
+    if (!_isGroupRecoveryEnabled()) return;
+    if (rejoinGroupTopicsFn == null && drainGroupOfflineInboxFn == null) {
+      return;
+    }
+    if (_isExternalRecoveryInProgressFn?.call() == true) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'PENDING_RETRIER_GROUP_SWEEP_SKIPPED_EXTERNAL_RECOVERY',
+        details: {},
+      );
+      return;
+    }
+
+    _isGroupContinuitySweeping = true;
+    try {
+      if (rejoinGroupTopicsFn != null) {
+        try {
+          await rejoinGroupTopicsFn!();
+        } catch (e) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'PENDING_RETRIER_GROUP_REJOIN_ERROR',
+            details: {'error': e.toString()},
+          );
+        }
+      }
+
+      if (drainGroupOfflineInboxFn != null) {
+        try {
+          await drainGroupOfflineInboxFn!();
+        } catch (e) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'PENDING_RETRIER_GROUP_DRAIN_ERROR',
+            details: {'error': e.toString()},
+          );
+        }
+      }
+    } finally {
+      _isGroupContinuitySweeping = false;
+    }
   }
 
   Future<void> _retryIfNeeded() async {
@@ -320,8 +396,7 @@ class PendingMessageRetrier {
   void dispose() {
     emitFlowEvent(layer: 'FL', event: 'PENDING_RETRIER_DISPOSE', details: {});
 
-    _debounceTimer?.cancel();
-    _periodicTimer?.cancel();
+    _stopAllTimers();
     _stateSubscription?.cancel();
     _stateSubscription = null;
   }

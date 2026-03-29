@@ -71,7 +71,8 @@ class MediaFileManager {
     final ext = _extensionFromMime(mime);
     final appDir = await getApplicationDocumentsDirectory();
     final destDir = Directory(
-        p.join(appDir.path, 'pending_uploads', messageId));
+      p.join(appDir.path, 'pending_uploads', messageId),
+    );
     if (!await destDir.exists()) {
       await destDir.create(recursive: true);
     }
@@ -83,10 +84,32 @@ class MediaFileManager {
   /// Deletes the pending-upload directory for a message after successful upload.
   Future<void> deletePendingUploadDir(String messageId) async {
     final appDir = await getApplicationDocumentsDirectory();
-    final dir = Directory(
-        p.join(appDir.path, 'pending_uploads', messageId));
+    final dir = Directory(p.join(appDir.path, 'pending_uploads', messageId));
     if (await dir.exists()) {
       await dir.delete(recursive: true);
+    }
+  }
+
+  /// Deletes only app-owned durable pending-upload files for [messageId].
+  ///
+  /// Arbitrary absolute source/gallery paths are ignored even if they were
+  /// persisted on the message.
+  Future<void> deleteOwnedPendingUploadFilesForMessage({
+    required String messageId,
+    required Iterable<String?> storedPaths,
+  }) async {
+    for (final storedPath in storedPaths) {
+      if (storedPath == null || storedPath.isEmpty) {
+        continue;
+      }
+      if (!_isOwnedPendingUploadPathForMessage(
+        storedPath: storedPath,
+        messageId: messageId,
+      )) {
+        continue;
+      }
+      final resolvedPath = await resolveStoredPath(storedPath);
+      await deleteFile(resolvedPath);
     }
   }
 
@@ -163,6 +186,16 @@ class MediaFileManager {
       await dir.create(recursive: true);
     }
     return dir;
+  }
+
+  bool _isOwnedPendingUploadPathForMessage({
+    required String storedPath,
+    required String messageId,
+  }) {
+    final normalized = storedPath.replaceAll('\\', '/');
+    final relativePrefix = 'pending_uploads/$messageId/';
+    return normalized.startsWith(relativePrefix) ||
+        normalized.contains('/$relativePrefix');
   }
 
   static String _extensionFromMime(String mime) {

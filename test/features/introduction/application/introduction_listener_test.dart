@@ -39,7 +39,7 @@ void main() {
   });
 
   group('IntroductionListener', () {
-    test('rejects messages from blocked senders', () async {
+    test('rejects send messages from blocked senders', () async {
       contactRepo.addTestContact(ContactModel(
         peerId: 'blocked-peer',
         publicKey: 'pk',
@@ -73,6 +73,59 @@ void main() {
 
       await Future.delayed(const Duration(milliseconds: 100));
       expect(received, isEmpty);
+    });
+
+    test('allows accept from blocked sender to complete handshake', () async {
+      // Pre-save an introduction where own-peer (recipient) already accepted
+      await introRepo.saveIntroduction(IntroductionModel(
+        id: 'intro-blocked-accept',
+        introducerId: 'peer-A',
+        recipientId: 'own-peer',
+        introducedId: 'blocked-peer',
+        recipientStatus: IntroductionStatus.accepted,
+        createdAt: DateTime.now().toUtc().toIso8601String(),
+      ));
+
+      // Add sender as a blocked contact
+      contactRepo.addTestContact(ContactModel(
+        peerId: 'blocked-peer',
+        publicKey: 'pk',
+        rendezvous: '/rv',
+        username: 'Blocked',
+        signature: 'sig',
+        scannedAt: DateTime.now().toUtc().toIso8601String(),
+        isBlocked: true,
+        blockedAt: DateTime.now().toUtc().toIso8601String(),
+      ));
+
+      final changed = Completer<IntroductionModel>();
+      listener.introStatusChangedStream.listen((intro) {
+        if (!changed.isCompleted) changed.complete(intro);
+      });
+
+      // Send accept from the blocked contact
+      final payload = IntroductionPayload(
+        action: 'accept',
+        introductionId: 'intro-blocked-accept',
+        responderId: 'blocked-peer',
+        responderUsername: 'Blocked',
+        timestamp: DateTime.now().toUtc().toIso8601String(),
+      );
+
+      streamController.add(ChatMessage(
+        from: 'blocked-peer',
+        to: 'own-peer',
+        content: payload.toJson(),
+        timestamp: DateTime.now().toUtc().toIso8601String(),
+        isIncoming: true,
+      ));
+
+      // Accept should NOT be dropped — it should complete the handshake
+      final updated = await changed.future.timeout(
+        const Duration(seconds: 2),
+      );
+      expect(updated.id, 'intro-blocked-accept');
+      expect(updated.introducedStatus, IntroductionStatus.accepted);
     });
 
     test('dispatches new intros to introReceivedStream', () async {

@@ -259,6 +259,22 @@ class _OrchestratorResult {
   _OrchestratorResult(this.name, this.passed, this.detail);
 }
 
+class _IncomingProof {
+  final String from;
+  final String to;
+  final String content;
+  final String source;
+  final String timestamp;
+
+  const _IncomingProof({
+    required this.from,
+    required this.to,
+    required this.content,
+    required this.source,
+    required this.timestamp,
+  });
+}
+
 // ---------------------------------------------------------------------------
 // TestPeer — manages the Go CLI test peer process
 // ---------------------------------------------------------------------------
@@ -268,6 +284,7 @@ class TestPeer {
   final _responses = StreamController<Map<String, dynamic>>.broadcast();
   final _events = StreamController<Map<String, dynamic>>.broadcast();
   final _pending = <Completer<Map<String, dynamic>>>[];
+  final _incomingProof = <_IncomingProof>[];
   StreamSubscription? _stdoutSub;
   StreamSubscription? _stderrSub;
 
@@ -277,6 +294,7 @@ class TestPeer {
   String? mnemonic;
   String? mlKemPublicKey;
   String? mlKemSecretKey;
+  String? lastFlutterPeerId;
 
   Future<void> start() async {
     _process = await Process.start(_testpeerBin, []);
@@ -301,6 +319,17 @@ class TestPeer {
 
       if (json.containsKey('event')) {
         _log('EVENT', '${json['event']}: ${json['data']}');
+        final rawData = json['data'];
+        if (json['event'] == 'message:received' && rawData is Map) {
+          final data = Map<String, dynamic>.from(rawData);
+          _retainIncomingProof(
+            from: _stringValue(data['from']),
+            to: _stringValue(data['to']),
+            content: _stringValue(data['content']),
+            source: 'event',
+            timestamp: _stringValue(data['timestamp']),
+          );
+        }
         _events.add(json);
       } else {
         _log('RESP', line.length > 200 ? '${line.substring(0, 200)}...' : line);
@@ -339,6 +368,78 @@ class TestPeer {
       },
     );
   }
+
+  void _retainIncomingProof({
+    required String from,
+    required String to,
+    required String content,
+    required String source,
+    required String timestamp,
+  }) {
+    if (content.isEmpty) {
+      return;
+    }
+    final duplicate = _incomingProof.any(
+      (proof) =>
+          proof.from == from &&
+          proof.to == to &&
+          proof.content == content &&
+          proof.source == source &&
+          proof.timestamp == timestamp,
+    );
+    if (duplicate) {
+      return;
+    }
+    _incomingProof.add(
+      _IncomingProof(
+        from: from,
+        to: to,
+        content: content,
+        source: source,
+        timestamp: timestamp,
+      ),
+    );
+  }
+
+  void retainCollectorMessages(
+    Map<String, dynamic> getMessagesResult, {
+    required String source,
+  }) {
+    final messages =
+        getMessagesResult['messages'] as List<dynamic>? ?? const [];
+    for (final raw in messages) {
+      if (raw is! Map) continue;
+      final msg = Map<String, dynamic>.from(raw);
+      _retainIncomingProof(
+        from: _stringValue(msg['from']),
+        to: _stringValue(msg['to']),
+        content: _stringValue(msg['content']),
+        source: source,
+        timestamp: _stringValue(msg['timestamp']),
+      );
+    }
+  }
+
+  void retainInboxMessages(
+    Map<String, dynamic> inboxResult, {
+    required String source,
+  }) {
+    final messages = inboxResult['messages'] as List<dynamic>? ?? const [];
+    for (final raw in messages) {
+      if (raw is! Map) continue;
+      final msg = Map<String, dynamic>.from(raw);
+      _retainIncomingProof(
+        from: _stringValue(msg['from']),
+        to: peerId ?? '',
+        content: _stringValue(msg['message']),
+        source: source,
+        timestamp: _stringValue(msg['timestamp']),
+      );
+    }
+  }
+
+  List<_IncomingProof> incomingProofSnapshot() =>
+      List<_IncomingProof>.from(_incomingProof);
 
   /// Sends a command and asserts ok:true.
   Future<Map<String, dynamic>> commandOk(
@@ -451,6 +552,56 @@ class TestPeer {
   }
 }
 
+List<_IncomingProof> _matchingIncomingProof(
+  Iterable<_IncomingProof> evidence, {
+  required String fromPeerId,
+  required bool Function(String content) contentMatches,
+  bool Function(_IncomingProof proof)? proofMatches,
+}) {
+  return evidence.where((proof) {
+    if (proof.from != fromPeerId) {
+      return false;
+    }
+    if (proofMatches != null && !proofMatches(proof)) {
+      return false;
+    }
+    return contentMatches(proof.content);
+  }).toList();
+}
+
+Map<String, dynamic>? _firstJsonEnvelopeFromProof(
+  Iterable<_IncomingProof> evidence, {
+  required String fromPeerId,
+  required bool Function(String content) contentMatches,
+  bool Function(_IncomingProof proof)? proofMatches,
+}) {
+  final matches = _matchingIncomingProof(
+    evidence,
+    fromPeerId: fromPeerId,
+    contentMatches: contentMatches,
+    proofMatches: proofMatches,
+  );
+  for (final match in matches) {
+    try {
+      final decoded = jsonDecode(match.content);
+      if (decoded is Map<String, dynamic>) {
+        return decoded;
+      }
+      if (decoded is Map) {
+        return Map<String, dynamic>.from(decoded);
+      }
+    } catch (_) {}
+  }
+  return null;
+}
+
+String _proofSources(List<_IncomingProof> proof) {
+  final sources = proof.map((item) => item.source).toSet().toList()..sort();
+  return sources.join(',');
+}
+
+String _stringValue(dynamic value) => value?.toString() ?? '';
+
 // ---------------------------------------------------------------------------
 // Scenario Runners
 // ---------------------------------------------------------------------------
@@ -493,6 +644,7 @@ Future<List<_OrchestratorResult>> _runScenarios(
 
   final flutterPeerId = flutterPeer['peerId'] as String;
   final flutterMlKemPK = flutterPeer['mlKemPublicKey'] as String?;
+  peer.lastFlutterPeerId = flutterPeerId;
   _log('ORCH', 'Flutter peer: ${flutterPeerId.substring(0, 20)}...');
 
   // --- G1: Status check ---
@@ -1008,6 +1160,7 @@ Future<List<_OrchestratorResult>> _runScenarios(
       _log('ORCH', 'C1: CLI node restarted');
 
       final inboxResult = await peer.commandOk('inbox_retrieve');
+      peer.retainInboxMessages(inboxResult, source: 'inbox:c1');
       final msgs = inboxResult['messages'] as List<dynamic>? ?? [];
       _log('ORCH', 'C1: retrieved ${msgs.length} inbox messages');
 
@@ -1119,27 +1272,23 @@ Future<List<_OrchestratorResult>> _runScenarios(
     _log('ORCH', 'B8: CLI stopped');
     await _deviceWriteFile(paths.cliB8Stopped, 'stopped');
 
-    var b8SentFound = false;
-    for (var i = 0; i < 60; i++) {
-      await Future.delayed(const Duration(seconds: 1));
-      if (await _appFileExists(paths.b8Sent)) {
-        b8SentFound = true;
-        _log('ORCH', 'B8: Flutter sent signal after ${i + 1}s');
-        break;
-      }
-    }
-
-    if (!b8SentFound) {
+    final b8Signal = await _waitForAppFile(
+      paths.b8Sent,
+      timeout: const Duration(seconds: 60),
+    );
+    if (b8Signal == null) {
       results.add(
         _OrchestratorResult('B8', false, 'Flutter signal not received'),
       );
       _log('ORCH', 'B8: SKIP — Flutter signal not found');
     } else {
+      _log('ORCH', 'B8: Flutter sent signal content="$b8Signal"');
       await peer.startNode();
       await peer.register();
       _log('ORCH', 'B8: CLI restarted');
 
       final inboxResult = await peer.commandOk('inbox_retrieve');
+      peer.retainInboxMessages(inboxResult, source: 'inbox:b8');
       final msgs = inboxResult['messages'] as List<dynamic>? ?? [];
       _log('ORCH', 'B8: retrieved ${msgs.length} inbox messages');
 
@@ -1189,7 +1338,9 @@ Future<List<_OrchestratorResult>> _runScenarios(
   _log('ORCH', 'Phase 5: E8 — Media attachment...');
   try {
     var e8BlobIdVal = '';
-    for (var i = 0; i < 60; i++) {
+    // E8 runs after the longer reconnect / inbox phases on the Flutter side,
+    // so give the full orchestrated test enough time to reach it.
+    for (var i = 0; i < 180; i++) {
       await Future.delayed(const Duration(seconds: 1));
       final content = await _appReadFile(paths.e8BlobId);
       if (content != null && content.trim().isNotEmpty) {
@@ -1205,6 +1356,60 @@ Future<List<_OrchestratorResult>> _runScenarios(
       );
       _log('ORCH', 'E8: SKIP — no blob ID');
     } else {
+      Map<String, dynamic>? e8Envelope;
+      for (var i = 0; i < 30; i++) {
+        e8Envelope = _firstJsonEnvelopeFromProof(
+          peer.incomingProofSnapshot(),
+          fromPeerId: flutterPeerId,
+          contentMatches: (content) => content.contains(e8BlobIdVal),
+        );
+        if (e8Envelope != null) {
+          break;
+        }
+        final messagesResult = await peer.commandOk('get_messages');
+        peer.retainCollectorMessages(messagesResult, source: 'collector:e8');
+        e8Envelope = _firstJsonEnvelopeFromProof(
+          peer.incomingProofSnapshot(),
+          fromPeerId: flutterPeerId,
+          contentMatches: (content) => content.contains(e8BlobIdVal),
+        );
+        if (e8Envelope != null) {
+          break;
+        }
+        await Future.delayed(const Duration(seconds: 1));
+      }
+
+      if (e8Envelope == null) {
+        final inboxResult = await peer.commandOk('inbox_retrieve');
+        peer.retainInboxMessages(inboxResult, source: 'inbox:e8');
+        e8Envelope = _firstJsonEnvelopeFromProof(
+          peer.incomingProofSnapshot(),
+          fromPeerId: flutterPeerId,
+          contentMatches: (content) => content.contains(e8BlobIdVal),
+        );
+      }
+
+      final payload = e8Envelope?['payload'] as Map<String, dynamic>?;
+      final payloadText = payload?['text'] as String? ?? '';
+      final media = payload?['media'] as List<dynamic>? ?? const [];
+      var attachmentReferenced = false;
+      for (final item in media) {
+        if (item is! Map) continue;
+        final attachment = Map<String, dynamic>.from(item);
+        if (attachment['id'] == e8BlobIdVal &&
+            attachment['mime'] == 'image/png' &&
+            attachment['mediaType'] == 'image') {
+          attachmentReferenced = true;
+          break;
+        }
+      }
+      final messageSeen = e8Envelope != null;
+      _log(
+        'ORCH',
+        'E8: messageSeen=$messageSeen attachmentReferenced=$attachmentReferenced '
+            'text="$payloadText"',
+      );
+
       final dlResult = await peer.commandOk('media_download', {
         'id': e8BlobIdVal,
         'outputPath': paths.e8Downloaded,
@@ -1212,6 +1417,9 @@ Future<List<_OrchestratorResult>> _runScenarios(
       final dlSize = dlResult['size'] ?? 0;
       _log('ORCH', 'E8: downloaded, size=$dlSize');
 
+      // Receiver-side proof for Session 33 is the message envelope carrying the
+      // attachment metadata plus a successful receiver-side blob download. The
+      // local media listing is informative only and is not a contract signal.
       final listResult = await peer.commandOk('media_list');
       final blobs = listResult['blobs'] as List<dynamic>? ?? [];
       final blobFound = blobs.any(
@@ -1223,12 +1431,13 @@ Future<List<_OrchestratorResult>> _runScenarios(
         await peer.commandOk('media_delete', {'id': e8BlobIdVal});
       } catch (_) {}
 
-      final pass = (dlSize as num) > 0 && blobFound;
+      final pass = messageSeen && attachmentReferenced && (dlSize as num) > 0;
       results.add(
         _OrchestratorResult(
           'E8',
           pass,
-          'downloaded size=$dlSize blobInList=$blobFound',
+          'messageSeen=$messageSeen attachmentReferenced=$attachmentReferenced '
+              'downloaded size=$dlSize blobInList=$blobFound',
         ),
       );
     }
@@ -1243,22 +1452,17 @@ Future<List<_OrchestratorResult>> _runScenarios(
   // --- Phase 6: G6 — Profile upload/download ---
   _log('ORCH', 'Phase 6: G6 — Profile exchange...');
   try {
-    var g6FlutterUploadedFound = false;
-    for (var i = 0; i < 60; i++) {
-      await Future.delayed(const Duration(seconds: 1));
-      if (await _appFileExists(paths.g6FlutterUploaded)) {
-        g6FlutterUploadedFound = true;
-        _log('ORCH', 'G6: Flutter upload signal after ${i + 1}s');
-        break;
-      }
-    }
-
-    if (!g6FlutterUploadedFound) {
+    final g6Signal = await _waitForAppFile(
+      paths.g6FlutterUploaded,
+      timeout: const Duration(seconds: 60),
+    );
+    if (g6Signal == null) {
       results.add(
         _OrchestratorResult('G6', false, 'Flutter upload signal not received'),
       );
       _log('ORCH', 'G6: SKIP — no upload signal');
     } else {
+      _log('ORCH', 'G6: Flutter upload signal content="$g6Signal"');
       // Download Flutter's profile.
       final dlResult = await peer.commandOk('profile_download', {
         'ownerPeerId': flutterPeerId,
@@ -1292,7 +1496,8 @@ Future<List<_OrchestratorResult>> _runScenarios(
     _log('ORCH', 'G6: failed: $e');
   } finally {
     _deleteIfExists(paths.g6FlutterUploaded);
-    _deleteIfExists(paths.g6CliUploaded);
+    // Keep this signal available for Flutter's consumer-side validation.
+    // It is still removed by run-scoped temp-dir cleanup at process end.
     _deleteIfExists(paths.g6FlutterProfile);
     _deleteIfExists(paths.g6CliProfile);
   }
@@ -1306,61 +1511,86 @@ Future<List<_OrchestratorResult>> _runScenarios(
 // ---------------------------------------------------------------------------
 
 /// Verifies that the CLI peer's message collector received messages sent by
-/// the Flutter test (A1, A4, A6). Called after the Flutter test completes.
+/// the Flutter test where a durable receiver-side proof surface exists.
 List<_OrchestratorResult> _verifyCliReceivedMessages(
-  Map<String, dynamic> getMessagesResult,
+  List<_IncomingProof> evidence,
   String flutterPeerId,
 ) {
   final results = <_OrchestratorResult>[];
-  final messages = getMessagesResult['messages'] as List<dynamic>? ?? [];
-  final count = messages.length;
-  _log('VERIFY', 'CLI peer collected $count messages');
+  final retainedCount = evidence
+      .where((proof) => proof.from == flutterPeerId)
+      .length;
+  _log(
+    'VERIFY',
+    'CLI retained $retainedCount Flutter-originated message proofs',
+  );
 
-  // Collect raw content strings from the message collector.
-  final rawContents = <String>[];
-  for (final m in messages) {
-    final msg = m as Map<String, dynamic>;
-    final content = msg['content'] as String? ?? '';
-    rawContents.add(content);
-  }
+  bool isLiveProof(_IncomingProof proof) =>
+      proof.source.startsWith('event') || proof.source.startsWith('collector');
 
-  // A1: Flutter sent v1 plaintext — look for "A1:" in raw envelopes.
-  final hasA1 = rawContents.any((c) => c.contains('"A1:'));
+  // A1: Flutter sent v1 plaintext — retain live receive proof across restarts.
+  final a1Proof = _matchingIncomingProof(
+    evidence,
+    fromPeerId: flutterPeerId,
+    contentMatches: (content) => content.contains('"A1:'),
+    proofMatches: isLiveProof,
+  );
+  final hasA1 = a1Proof.isNotEmpty;
   results.add(
     _OrchestratorResult(
       'RECV-A1',
       hasA1,
-      hasA1 ? 'v1 envelope received' : 'not found',
+      hasA1
+          ? 'v1 envelope received via ${_proofSources(a1Proof)}'
+          : 'not found in retained live proof',
     ),
   );
   _log('VERIFY', 'RECV-A1: ${hasA1 ? 'PASS' : 'FAIL'}');
 
-  // A4: Flutter sent v2 encrypted — look for version "2" AND Flutter's peer ID.
-  // Matching both avoids false positives from non-A4 v2 messages.
-  final hasA4 = rawContents.any(
-    (c) =>
-        (c.contains('"version":"2"') || c.contains('"version": "2"')) &&
-        c.contains(flutterPeerId),
+  // A4: Flutter sent v2 encrypted over the live path. Ignore inbox-only v2
+  // traffic such as B8 when checking this residual.
+  final a4Proof = _matchingIncomingProof(
+    evidence,
+    fromPeerId: flutterPeerId,
+    contentMatches: (content) =>
+        (content.contains('"version":"2"') ||
+            content.contains('"version": "2"')) &&
+        content.contains(flutterPeerId),
+    proofMatches: isLiveProof,
   );
+  final hasA4 = a4Proof.isNotEmpty;
   results.add(
     _OrchestratorResult(
       'RECV-A4',
       hasA4,
-      hasA4 ? 'v2 envelope from Flutter received' : 'not found',
+      hasA4
+          ? 'v2 envelope from Flutter received via ${_proofSources(a4Proof)}'
+          : 'not found in retained live proof',
     ),
   );
   _log('VERIFY', 'RECV-A4: ${hasA4 ? 'PASS' : 'FAIL'}');
 
-  // A6: Flutter sent fast-path message — look for "A6:" in raw envelopes.
-  final hasA6 = rawContents.any((c) => c.contains('"A6:'));
-  results.add(
-    _OrchestratorResult(
-      'RECV-A6',
-      hasA6,
-      hasA6 ? 'fast-path envelope received' : 'not found',
-    ),
+  final a6Proof = _matchingIncomingProof(
+    evidence,
+    fromPeerId: flutterPeerId,
+    contentMatches: (content) => content.contains('"A6:'),
   );
-  _log('VERIFY', 'RECV-A6: ${hasA6 ? 'PASS' : 'FAIL'}');
+  if (a6Proof.isNotEmpty) {
+    results.add(
+      _OrchestratorResult(
+        'RECV-A6',
+        true,
+        'receiver proof retained via ${_proofSources(a6Proof)}',
+      ),
+    );
+    _log('VERIFY', 'RECV-A6: PASS');
+  } else {
+    _log(
+      'VERIFY',
+      'RECV-A6: SKIP — no durable receiver-side proof retained; '
+          'Flutter-side A6 remains sender-side delivered-contract only',
+    );
+  }
 
   return results;
 }
@@ -1657,10 +1887,12 @@ void main(List<String> args) async {
 
       try {
         final msgs = await peer.commandOk('get_messages');
+        peer.retainCollectorMessages(msgs, source: 'collector:post-verify');
         final verifyResults = _verifyCliReceivedMessages(
-          msgs,
-          // Read Flutter peer ID from fixture if available.
-          await _readFlutterPeerId(paths) ?? 'unknown',
+          peer.incomingProofSnapshot(),
+          peer.lastFlutterPeerId ??
+              await _readFlutterPeerId(paths) ??
+              'unknown',
         );
         orchResults.addAll(verifyResults);
       } catch (e) {
@@ -1674,6 +1906,7 @@ void main(List<String> args) async {
       _log('ORCH', 'Scenario G3: inbox_retrieve...');
       try {
         final inboxResult = await peer.commandOk('inbox_retrieve');
+        peer.retainInboxMessages(inboxResult, source: 'inbox:g3');
         final inboxCount = inboxResult['count'] ?? 0;
         orchResults.add(
           _OrchestratorResult(

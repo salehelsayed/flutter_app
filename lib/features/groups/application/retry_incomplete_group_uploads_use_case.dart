@@ -151,9 +151,6 @@ Future<int> retryIncompleteGroupUploads({
       final allAttachments = await mediaAttachmentRepo.getAttachmentsForMessage(
         messageId,
       );
-      final doneAttachments = allAttachments
-          .where((attachment) => attachment.downloadStatus == 'done')
-          .toList();
 
       final group = await groupRepo.getGroup(parentMessage.groupId);
       if (group == null) {
@@ -173,7 +170,6 @@ Future<int> retryIncompleteGroupUploads({
       final allowedPeers = members.map((member) => member.peerId).toList();
 
       final preparedUploads = <_PreparedGroupRetryUpload>[];
-      final uploadedAttachments = <MediaAttachment>[];
       var allUploadsSucceeded = true;
 
       for (final attachment in pendingAttachmentsForMessage) {
@@ -275,7 +271,6 @@ Future<int> retryIncompleteGroupUploads({
           uploadRetryCount: plan.pendingAttachment.uploadRetryCount,
         );
         await mediaAttachmentRepo.saveAttachment(completed);
-        uploadedAttachments.add(completed);
       }
 
       if (failedPlans.isNotEmpty) {
@@ -306,27 +301,45 @@ Future<int> retryIncompleteGroupUploads({
         continue;
       }
 
-      final completedById = <String, MediaAttachment>{
-        for (final attachment in doneAttachments) attachment.id: attachment,
-        for (final attachment in uploadedAttachments) attachment.id: attachment,
-      };
-      final fullAttachmentList = allAttachments
-          .map((attachment) => completedById[attachment.id] ?? attachment)
+      final refreshedMessage = await groupMsgRepo.getMessage(messageId);
+      final refreshedAttachments = await mediaAttachmentRepo
+          .getAttachmentsForMessage(messageId);
+      final abortReason = _lateGroupSendAbortReason(
+        message: refreshedMessage,
+        attachments: refreshedAttachments,
+        expectedAttachmentCount: allAttachments.length,
+      );
+      if (abortReason != null) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'RETRY_INCOMPLETE_GROUP_UPLOAD_ABORT_FINAL_SEND',
+          details: {
+            'messageId': messageId.length > 8
+                ? messageId.substring(0, 8)
+                : messageId,
+            'reason': abortReason,
+          },
+        );
+        continue;
+      }
+
+      final fullAttachmentList = refreshedAttachments
+          .where((attachment) => attachment.downloadStatus == 'done')
           .toList(growable: false);
 
       final (result, _) = await sendGroupMessage(
         bridge: bridge,
         groupRepo: groupRepo,
         msgRepo: groupMsgRepo,
-        groupId: parentMessage.groupId,
-        text: parentMessage.text,
+        groupId: refreshedMessage!.groupId,
+        text: refreshedMessage.text,
         senderPeerId: identity.peerId,
         senderPublicKey: identity.publicKey,
         senderPrivateKey: identity.privateKey,
         senderUsername: identity.username,
-        messageId: parentMessage.id,
-        timestamp: parentMessage.timestamp,
-        quotedMessageId: parentMessage.quotedMessageId,
+        messageId: refreshedMessage.id,
+        timestamp: refreshedMessage.timestamp,
+        quotedMessageId: refreshedMessage.quotedMessageId,
         mediaAttachments: fullAttachmentList,
         mediaAttachmentRepo: mediaAttachmentRepo,
         emitTimingEvent: false,
@@ -385,4 +398,33 @@ Future<int> retryIncompleteGroupUploads({
   );
 
   return successCount;
+}
+
+String? _lateGroupSendAbortReason({
+  required GroupMessage? message,
+  required List<MediaAttachment> attachments,
+  required int expectedAttachmentCount,
+}) {
+  if (message == null) {
+    return 'message_missing';
+  }
+  if (message.isIncoming) {
+    return 'message_incoming';
+  }
+  if (message.status != 'sending' && message.status != 'failed') {
+    return 'message_status_${message.status}';
+  }
+
+  if (attachments.any(
+    (attachment) => attachment.downloadStatus == 'upload_failed',
+  )) {
+    return 'attachments_terminalized';
+  }
+  final doneCount = attachments
+      .where((attachment) => attachment.downloadStatus == 'done')
+      .length;
+  if (doneCount < expectedAttachmentCount) {
+    return 'attachments_not_done';
+  }
+  return null;
 }

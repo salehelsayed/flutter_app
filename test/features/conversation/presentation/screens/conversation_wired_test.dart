@@ -4,10 +4,11 @@ import 'dart:async';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:image_picker/image_picker.dart';
+import 'package:flutter_app/core/device/upload_wake_lock.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_picker.dart';
+import 'package:flutter_app/core/media/pending_composer_media.dart';
 import 'package:flutter_app/core/media/video_process_result.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/text_sanitizer.dart';
@@ -35,11 +36,87 @@ import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
+import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
+import 'package:image_picker/image_picker.dart';
 import '../../../../core/bridge/fake_bridge.dart';
 import '../../../../shared/fakes/fake_audio_recorder_service.dart';
+import '../../../../shared/fakes/fake_media_file_manager.dart';
 import '../../../../shared/fakes/fake_media_picker.dart';
+import '../../../../shared/fakes/fake_upload_wake_lock_driver.dart';
 import '../../domain/repositories/fake_media_attachment_repository.dart';
+
+const _tinyPngBytes = <int>[
+  0x89,
+  0x50,
+  0x4E,
+  0x47,
+  0x0D,
+  0x0A,
+  0x1A,
+  0x0A,
+  0x00,
+  0x00,
+  0x00,
+  0x0D,
+  0x49,
+  0x48,
+  0x44,
+  0x52,
+  0x00,
+  0x00,
+  0x00,
+  0x01,
+  0x00,
+  0x00,
+  0x00,
+  0x01,
+  0x08,
+  0x02,
+  0x00,
+  0x00,
+  0x00,
+  0x90,
+  0x77,
+  0x53,
+  0xDE,
+  0x00,
+  0x00,
+  0x00,
+  0x0C,
+  0x49,
+  0x44,
+  0x41,
+  0x54,
+  0x08,
+  0xD7,
+  0x63,
+  0xF8,
+  0xCF,
+  0xC0,
+  0x00,
+  0x00,
+  0x03,
+  0x01,
+  0x01,
+  0x00,
+  0x18,
+  0xDD,
+  0x8D,
+  0xB1,
+  0x00,
+  0x00,
+  0x00,
+  0x00,
+  0x49,
+  0x45,
+  0x4E,
+  0x44,
+  0xAE,
+  0x42,
+  0x60,
+  0x82,
+];
 
 class FakeIdentityRepository implements IdentityRepository {
   IdentityModel? identity;
@@ -168,6 +245,12 @@ class FakeMessageRepository
 
   @override
   Future<int> deleteMessagesForContact(String contactPeerId) async => 0;
+
+  @override
+  Future<int> deleteMessage(String id) async {
+    final removed = store.remove(id);
+    return removed == null ? 0 : 1;
+  }
 
   @override
   Future<List<ConversationMessage>> getMessagesPage(
@@ -379,7 +462,23 @@ class TrackingLocalMediaP2PService extends FakeP2PService {
   }
 }
 
+class InboxRetryP2PService extends FakeP2PService {
+  @override
+  Future<bool> storeInInbox(String toPeerId, String message) async => true;
+}
+
 void main() {
+  late FakeUploadWakeLockDriver wakeLockDriver;
+
+  setUp(() {
+    wakeLockDriver = FakeUploadWakeLockDriver();
+    UploadWakeLockController.debugReset(driver: wakeLockDriver);
+  });
+
+  tearDown(() {
+    UploadWakeLockController.debugReset(driver: FakeUploadWakeLockDriver());
+  });
+
   ContactModel makeContact() {
     return ContactModel(
       peerId: '12D3KooWContactPeer123',
@@ -415,11 +514,19 @@ void main() {
     UploadMediaFn? uploadMediaFn,
     SendVoiceMessageFn? sendVoiceMessageFn,
     MediaAttachmentRepository? mediaAttachmentRepo,
+    ContactRepository? contactRepo,
+    MediaFileManager? mediaFileManager,
     FakeAudioRecorderService? audioRecorderService,
     ImageProcessor? imageProcessor,
     MediaPicker? mediaPicker,
     String? initialText,
     List<File>? initialAttachments,
+    List<PendingComposerMedia>? initialPendingMedia,
+    ImageQualityPreference qualityPreference =
+        ImageQualityPreference.compressed,
+    ImageQualityPreference videoQualityPreference =
+        ImageQualityPreference.compressed,
+    int maxAttachmentBudgetBytes = kGeneralMediaAttachmentBudgetBytes,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -436,12 +543,18 @@ void main() {
           sendChatMessageFn: sendFn,
           uploadMediaFn: uploadMediaFn ?? uploadMedia,
           sendVoiceMessageFn: sendVoiceMessageFn ?? sendVoiceMessage,
+          contactRepo: contactRepo,
           mediaAttachmentRepo: mediaAttachmentRepo,
+          mediaFileManager: mediaFileManager,
           audioRecorderService: audioRecorderService,
           imageProcessor: imageProcessor,
           mediaPicker: mediaPicker,
+          qualityPreference: qualityPreference,
+          videoQualityPreference: videoQualityPreference,
           initialText: initialText,
           initialAttachments: initialAttachments,
+          initialPendingMedia: initialPendingMedia,
+          maxAttachmentBudgetBytes: maxAttachmentBudgetBytes,
         ),
       ),
     );
@@ -455,9 +568,13 @@ void main() {
     Duration step = const Duration(milliseconds: 100),
   }) async {
     for (var i = 0; i < maxPumps; i++) {
-      if (condition()) return;
+      if (condition()) {
+        await tester.pump(const Duration(milliseconds: 500));
+        return;
+      }
       await tester.pump(step);
     }
+    await tester.pump(const Duration(milliseconds: 500));
     expect(condition(), isTrue);
   }
 
@@ -602,6 +719,43 @@ void main() {
       expect(textField.controller?.text, 'Shared hello');
       expect(find.byType(AttachmentPreviewStrip), findsOneWidget);
     });
+
+    testWidgets(
+      'hydrated initialPendingMedia uses budget bytes instead of file size',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        final tempDir = Directory.systemTemp.createTempSync(
+          'conversation_hydrated_budget_',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) {
+            tempDir.deleteSync(recursive: true);
+          }
+        });
+        final smallFile = File('${tempDir.path}/hydrated.jpg')
+          ..writeAsStringSync('12');
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+          initialPendingMedia: [
+            PendingComposerMedia(file: smallFile, budgetBytes: 12),
+          ],
+          maxAttachmentBudgetBytes: 10,
+        );
+
+        expect(find.text('Media Too Large'), findsOneWidget);
+      },
+    );
 
     testWidgets('shows loading shell until the initial page resolves', (
       tester,
@@ -1053,6 +1207,8 @@ void main() {
           pending.where((attachment) => attachment.messageId == sentMessageId!),
           isEmpty,
         );
+
+        await tester.pump(const Duration(milliseconds: 500));
       },
     );
 
@@ -1259,6 +1415,215 @@ void main() {
     });
 
     testWidgets(
+      'gallery multi-video batches keep one processing tile with honest batch context',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        final tempDir = Directory.systemTemp.createTempSync(
+          'conv_gallery_batch_',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) {
+            tempDir.deleteSync(recursive: true);
+          }
+        });
+        final firstVideo = File('${tempDir.path}/video-1.mp4')
+          ..writeAsBytesSync(_tinyPngBytes);
+        final stillImage = File('${tempDir.path}/image-1.jpg')
+          ..writeAsBytesSync(_tinyPngBytes);
+        final secondVideo = File('${tempDir.path}/video-2.mp4')
+          ..writeAsBytesSync(_tinyPngBytes);
+        final processedFirstVideo = File('${tempDir.path}/processed-1.mp4')
+          ..writeAsBytesSync(_tinyPngBytes);
+        final processedImage = File('${tempDir.path}/processed-1.jpg')
+          ..writeAsBytesSync(_tinyPngBytes);
+        final processedSecondVideo = File('${tempDir.path}/processed-2.mp4')
+          ..writeAsBytesSync(_tinyPngBytes);
+
+        final mediaPicker = FakeMediaPicker()
+          ..multipleMediaResult = [
+            XFile(firstVideo.path),
+            XFile(stillImage.path),
+            XFile(secondVideo.path),
+          ];
+        final videoResults = [
+          Completer<VideoProcessResult>(),
+          Completer<VideoProcessResult>(),
+        ];
+        final imageResult = Completer<XFile?>();
+        var imageCompressionStarted = false;
+        final progressCallbacks = <void Function(double)?>[];
+        var videoCallCount = 0;
+        final imageProcessor = ImageProcessor(
+          compressFile:
+              ({
+                required path,
+                required quality,
+                required keepExif,
+                minWidth = 1920,
+                minHeight = 1080,
+              }) async {
+                if (path == stillImage.path) {
+                  imageCompressionStarted = true;
+                  return imageResult.future;
+                }
+                return null;
+              },
+          compressVideo:
+              ({
+                required path,
+                required compress,
+                void Function(double progress)? onProgress,
+              }) async {
+                progressCallbacks.add(onProgress);
+                final result = videoResults[videoCallCount];
+                videoCallCount++;
+                return result.future;
+              },
+        );
+
+        tester.view.physicalSize = const Size(800, 1600);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+          imageProcessor: imageProcessor,
+          mediaPicker: mediaPicker,
+        );
+
+        await tester.tap(find.byIcon(Icons.add_rounded));
+        await tester.pump(const Duration(milliseconds: 500));
+        tester
+            .widget<ListTile>(find.widgetWithText(ListTile, 'Media Library'))
+            .onTap!();
+        await pumpUntil(tester, () => progressCallbacks.length == 1);
+
+        progressCallbacks.single!(35);
+        await tester.pump();
+
+        expect(find.byType(AttachmentPreviewStrip), findsOneWidget);
+        expect(find.text('Processing (1/2)'), findsOneWidget);
+        expect(find.text('35%'), findsOneWidget);
+        expect(find.byType(CircularProgressIndicator), findsOneWidget);
+
+        videoResults[0].complete(
+          VideoProcessResult(path: processedFirstVideo.path),
+        );
+        await pumpUntil(tester, () => imageCompressionStarted);
+        await tester.pump();
+
+        expect(find.byType(AttachmentPreviewStrip), findsOneWidget);
+        expect(find.text('Processing (1/2)'), findsOneWidget);
+
+        imageResult.complete(XFile(processedImage.path));
+        await pumpUntil(tester, () => progressCallbacks.length == 2);
+
+        progressCallbacks.last!(60);
+        await tester.pump();
+
+        expect(find.text('Processing (2/2)'), findsOneWidget);
+        expect(find.text('60%'), findsOneWidget);
+
+        videoResults[1].complete(
+          VideoProcessResult(path: processedSecondVideo.path),
+        );
+        await tester.pump();
+      },
+    );
+
+    testWidgets('recorded single video keeps single-item processing copy', (
+      tester,
+    ) async {
+      final identityRepo = FakeIdentityRepository(makeIdentity());
+      final messageRepo = FakeMessageRepository();
+      final chatListener = ChatMessageListener(
+        chatMessageStream: const Stream.empty(),
+        messageRepo: messageRepo,
+        contactRepo: FakeContactRepository(),
+      );
+      final tempDir = Directory.systemTemp.createTempSync('conv_camera_video_');
+      addTearDown(() {
+        if (tempDir.existsSync()) {
+          tempDir.deleteSync(recursive: true);
+        }
+      });
+      final cameraVideo = File('${tempDir.path}/camera-video.mp4')
+        ..writeAsBytesSync(_tinyPngBytes);
+      final processedVideo = File('${tempDir.path}/camera-video-out.mp4')
+        ..writeAsBytesSync(_tinyPngBytes);
+
+      final mediaPicker = FakeMediaPicker()
+        ..videoResult = XFile(cameraVideo.path);
+      final result = Completer<VideoProcessResult>();
+      void Function(double progress)? progressCallback;
+      final imageProcessor = ImageProcessor(
+        compressFile:
+            ({
+              required path,
+              required quality,
+              required keepExif,
+              minWidth = 1920,
+              minHeight = 1080,
+            }) async => null,
+        compressVideo:
+            ({
+              required path,
+              required compress,
+              void Function(double progress)? onProgress,
+            }) async {
+              progressCallback = onProgress;
+              return result.future;
+            },
+      );
+
+      tester.view.physicalSize = const Size(800, 1600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await pumpScreen(
+        tester,
+        identityRepo: identityRepo,
+        messageRepo: messageRepo,
+        chatListener: chatListener,
+        sendFn: _instantSuccessSendFn,
+        imageProcessor: imageProcessor,
+        mediaPicker: mediaPicker,
+      );
+
+      await tester.tap(find.byIcon(Icons.add_rounded));
+      await tester.pump(const Duration(milliseconds: 500));
+      tester
+          .widget<ListTile>(find.widgetWithText(ListTile, 'Record Video'))
+          .onTap!();
+      await tester.pump();
+
+      expect(progressCallback, isNotNull);
+
+      progressCallback!(40);
+      await tester.pump();
+
+      expect(find.byType(AttachmentPreviewStrip), findsOneWidget);
+      expect(find.text('Processing'), findsOneWidget);
+      expect(find.text('Processing (1/1)'), findsNothing);
+      expect(find.text('40%'), findsOneWidget);
+
+      result.complete(VideoProcessResult(path: processedVideo.path));
+      await tester.pump();
+    });
+
+    testWidgets(
       'recording ticks update composer without rebuilding header or message list',
       (tester) async {
         final contact = makeContact();
@@ -1319,188 +1684,6 @@ void main() {
         await tester.pump();
       },
     );
-
-    testWidgets(
-      'video processing progress updates composer without rebuilding header or message list',
-      (tester) async {
-        final contact = makeContact();
-        final identityRepo = FakeIdentityRepository(makeIdentity());
-        final messageRepo = FakeMessageRepository();
-        await messageRepo.saveMessage(
-          ConversationMessage(
-            id: 'msg-video-1',
-            contactPeerId: contact.peerId,
-            text: 'Seed message',
-            senderPeerId: contact.peerId,
-            timestamp: DateTime.now().toUtc().toIso8601String(),
-            status: 'delivered',
-            isIncoming: true,
-            createdAt: DateTime.now().toUtc().toIso8601String(),
-          ),
-        );
-        final chatListener = ChatMessageListener(
-          chatMessageStream: const Stream.empty(),
-          messageRepo: messageRepo,
-          contactRepo: FakeContactRepository(),
-        );
-        final mediaPicker = FakeMediaPicker()
-          ..videoResult = XFile('/tmp/test-video.mp4');
-        final resultCompleter = Completer<VideoProcessResult>();
-        void Function(double progress)? progressCallback;
-        final imageProcessor = ImageProcessor(
-          compressFile:
-              ({
-                required path,
-                required quality,
-                required keepExif,
-                minWidth = 1920,
-                minHeight = 1080,
-              }) async => null,
-          compressVideo:
-              ({
-                required path,
-                required compress,
-                void Function(double)? onProgress,
-              }) async {
-                progressCallback = onProgress;
-                return resultCompleter.future;
-              },
-        );
-
-        tester.view.physicalSize = const Size(800, 1600);
-        tester.view.devicePixelRatio = 1.0;
-        addTearDown(tester.view.resetPhysicalSize);
-        addTearDown(tester.view.resetDevicePixelRatio);
-
-        await pumpScreen(
-          tester,
-          identityRepo: identityRepo,
-          messageRepo: messageRepo,
-          chatListener: chatListener,
-          sendFn: _instantSuccessSendFn,
-          imageProcessor: imageProcessor,
-          mediaPicker: mediaPicker,
-        );
-
-        final headerFinder = find.byType(ConversationHeader);
-        final listFinder = find.byKey(const ValueKey('messages'));
-        final headerElement = tester.element(headerFinder);
-        final listElement = tester.element(listFinder);
-        final initialPageLoads = messageRepo.getMessagesPageCalls;
-
-        await tester.tap(find.byIcon(Icons.add_rounded));
-        await tester.pump(const Duration(milliseconds: 500));
-        tester
-            .widget<ListTile>(find.widgetWithText(ListTile, 'Record Video'))
-            .onTap!();
-        await tester.pump();
-
-        expect(progressCallback, isNotNull);
-
-        progressCallback!(25);
-        await tester.pump();
-
-        expect(find.byType(AttachmentPreviewStrip), findsOneWidget);
-        expect(find.text('25%'), findsOneWidget);
-        expect(identical(headerElement, tester.element(headerFinder)), isTrue);
-        expect(identical(listElement, tester.element(listFinder)), isTrue);
-        expect(messageRepo.getMessagesPageCalls, initialPageLoads);
-
-        progressCallback!(60);
-        await tester.pump();
-        expect(find.text('60%'), findsOneWidget);
-        expect(messageRepo.getMessagesPageCalls, initialPageLoads);
-
-        resultCompleter.complete(
-          VideoProcessResult(path: '/tmp/processed-video.mp4'),
-        );
-        await tester.pump();
-      },
-    );
-
-    testWidgets('video processing failure clears composer processing state', (
-      tester,
-    ) async {
-      final contact = makeContact();
-      final identityRepo = FakeIdentityRepository(makeIdentity());
-      final messageRepo = FakeMessageRepository();
-      await messageRepo.saveMessage(
-        ConversationMessage(
-          id: 'msg-video-fail-1',
-          contactPeerId: contact.peerId,
-          text: 'Seed message',
-          senderPeerId: contact.peerId,
-          timestamp: DateTime.now().toUtc().toIso8601String(),
-          status: 'delivered',
-          isIncoming: true,
-          createdAt: DateTime.now().toUtc().toIso8601String(),
-        ),
-      );
-      final chatListener = ChatMessageListener(
-        chatMessageStream: const Stream.empty(),
-        messageRepo: messageRepo,
-        contactRepo: FakeContactRepository(),
-      );
-      final mediaPicker = FakeMediaPicker()
-        ..videoResult = XFile('/tmp/test-video.mp4');
-      final resultCompleter = Completer<VideoProcessResult>();
-      void Function(double progress)? progressCallback;
-      final imageProcessor = ImageProcessor(
-        compressFile:
-            ({
-              required path,
-              required quality,
-              required keepExif,
-              minWidth = 1920,
-              minHeight = 1080,
-            }) async => null,
-        compressVideo:
-            ({
-              required path,
-              required compress,
-              void Function(double)? onProgress,
-            }) async {
-              progressCallback = onProgress;
-              return resultCompleter.future;
-            },
-      );
-
-      tester.view.physicalSize = const Size(800, 1600);
-      tester.view.devicePixelRatio = 1.0;
-      addTearDown(tester.view.resetPhysicalSize);
-      addTearDown(tester.view.resetDevicePixelRatio);
-
-      await pumpScreen(
-        tester,
-        identityRepo: identityRepo,
-        messageRepo: messageRepo,
-        chatListener: chatListener,
-        sendFn: _instantSuccessSendFn,
-        imageProcessor: imageProcessor,
-        mediaPicker: mediaPicker,
-      );
-
-      await tester.tap(find.byIcon(Icons.add_rounded));
-      await tester.pump(const Duration(milliseconds: 500));
-      tester
-          .widget<ListTile>(find.widgetWithText(ListTile, 'Record Video'))
-          .onTap!();
-      await tester.pump();
-
-      progressCallback!(40);
-      await tester.pump();
-      expect(find.text('40%'), findsOneWidget);
-
-      resultCompleter.completeError(StateError('video failed'));
-      await tester.pump();
-
-      expect(find.byType(AttachmentPreviewStrip), findsNothing);
-      expect(find.text('40%'), findsNothing);
-
-      await tester.tap(find.byIcon(Icons.add_rounded));
-      await tester.pump(const Duration(milliseconds: 500));
-      expect(find.text('Record Video'), findsOneWidget);
-    });
 
     testWidgets('text-only send works without bridge or media repos', (
       tester,
@@ -2224,6 +2407,387 @@ void main() {
         'Retry upload',
       );
       expect(find.text('Failed to upload media. Try again.'), findsOneWidget);
+    });
+
+    testWidgets('shows relay upload progress and blocks leaving mid-upload', (
+      tester,
+    ) async {
+      final identityRepo = FakeIdentityRepository(makeIdentity());
+      final messageRepo = FakeMessageRepository();
+      final chatListener = ChatMessageListener(
+        chatMessageStream: const Stream.empty(),
+        messageRepo: messageRepo,
+        contactRepo: FakeContactRepository(),
+      );
+      final tempDir = Directory.systemTemp.createTempSync(
+        'conv_upload_progress_',
+      );
+      addTearDown(() {
+        if (tempDir.existsSync()) {
+          tempDir.deleteSync(recursive: true);
+        }
+      });
+      final attachment = File('${tempDir.path}/progress.jpg')
+        ..writeAsStringSync('0123456789');
+
+      final uploadGate = Completer<void>();
+      final uploadStarted = Completer<void>();
+      String? activeBlobId;
+
+      await pumpScreen(
+        tester,
+        identityRepo: identityRepo,
+        messageRepo: messageRepo,
+        chatListener: chatListener,
+        sendFn: _instantSuccessSendFn,
+        bridge: FakeBridge(),
+        uploadMediaFn:
+            ({
+              required bridge,
+              required localFilePath,
+              required mime,
+              required recipientPeerId,
+              mediaFileManager,
+              blobId,
+              width,
+              height,
+              durationMs,
+              waveform,
+              allowedPeers,
+            }) async {
+              activeBlobId = blobId;
+              uploadStarted.complete();
+              await uploadGate.future;
+              return MediaAttachment(
+                id: blobId ?? 'uploaded-progress-1',
+                messageId: '',
+                mime: mime,
+                size: File(localFilePath).lengthSync(),
+                mediaType: MediaAttachment.mediaTypeFromMime(mime),
+                localPath: localFilePath,
+                downloadStatus: 'done',
+                createdAt: DateTime.now().toUtc().toIso8601String(),
+              );
+            },
+        initialAttachments: [attachment],
+      );
+
+      await tester.enterText(find.byType(TextField), 'Uploading');
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+      await uploadStarted.future;
+      await tester.pump();
+
+      expect(
+        find.byKey(const ValueKey('upload-progress-banner')),
+        findsOneWidget,
+      );
+      expect(wakeLockDriver.enableCalls, 1);
+      expect(UploadWakeLockController.debugActiveHolds, 1);
+
+      emitMediaUploadProgressEvent({
+        'id': activeBlobId,
+        'sentBytes': 5,
+        'totalBytes': 10,
+        'toPeerId': makeContact().peerId,
+      });
+      await tester.pump();
+
+      expect(
+        find.text(
+          '${formatPendingComposerBudgetBytes(5)} / '
+          '${formatPendingComposerBudgetBytes(10)}',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.text('Keep the app open until the upload completes'),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.byIcon(Icons.chevron_left));
+      await tester.pump();
+
+      expect(find.text('Leave conversation?'), findsOneWidget);
+      expect(
+        find.text(
+          'An upload is in progress. Leaving may interrupt it. Are you sure?',
+        ),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.byKey(const ValueKey('upload-leave-stay')));
+      await tester.pump();
+
+      expect(
+        find.byKey(const ValueKey('upload-progress-banner')),
+        findsOneWidget,
+      );
+      expect(wakeLockDriver.disableCalls, 0);
+
+      uploadGate.complete();
+      await pumpUntil(
+        tester,
+        () =>
+            find
+                .byKey(const ValueKey('upload-progress-banner'))
+                .evaluate()
+                .isEmpty &&
+            wakeLockDriver.disableCalls == 1,
+      );
+
+      expect(UploadWakeLockController.debugActiveHolds, 0);
+      await tester.pump(const Duration(milliseconds: 500));
+    });
+
+    testWidgets(
+      'cancel on the active upload banner restores composer state and leaves a retryable failed row',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        final mediaAttachmentRepo = FakeMediaAttachmentRepository();
+        final tempDir = Directory.systemTemp.createTempSync(
+          'conv_cancel_upload_',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) {
+            tempDir.deleteSync(recursive: true);
+          }
+        });
+        final attachment = File('${tempDir.path}/cancel.jpg')
+          ..writeAsStringSync('0123456789');
+
+        final uploadGate = Completer<void>();
+        final uploadStarted = Completer<void>();
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+          bridge: FakeBridge(),
+          mediaAttachmentRepo: mediaAttachmentRepo,
+          uploadMediaFn:
+              ({
+                required bridge,
+                required localFilePath,
+                required mime,
+                required recipientPeerId,
+                mediaFileManager,
+                blobId,
+                width,
+                height,
+                durationMs,
+                waveform,
+                allowedPeers,
+              }) async {
+                uploadStarted.complete();
+                await uploadGate.future;
+                return MediaAttachment(
+                  id: blobId ?? 'uploaded-cancel-1',
+                  messageId: '',
+                  mime: mime,
+                  size: File(localFilePath).lengthSync(),
+                  mediaType: MediaAttachment.mediaTypeFromMime(mime),
+                  localPath: localFilePath,
+                  downloadStatus: 'done',
+                  createdAt: DateTime.now().toUtc().toIso8601String(),
+                );
+              },
+          initialAttachments: [attachment],
+        );
+
+        await tester.enterText(find.byType(TextField), 'Cancel upload');
+        await tester.pump(const Duration(milliseconds: 300));
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await uploadStarted.future;
+        await tester.pump();
+
+        expect(
+          find.byKey(const ValueKey('upload-progress-cancel-button')),
+          findsOneWidget,
+        );
+
+        await tester.tap(
+          find.byKey(const ValueKey('upload-progress-cancel-button')),
+        );
+        await tester.pump();
+
+        expect(
+          find.byKey(const ValueKey('upload-progress-cancel-button')),
+          findsNothing,
+        );
+
+        uploadGate.complete();
+        await pumpUntil(
+          tester,
+          () =>
+              find
+                  .byKey(const ValueKey('upload-progress-banner'))
+                  .evaluate()
+                  .isEmpty &&
+              wakeLockDriver.disableCalls == 1,
+        );
+
+        expect(find.text('Upload cancelled.'), findsOneWidget);
+        expect(find.byType(AttachmentPreviewStrip), findsOneWidget);
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).controller?.text,
+          'Cancel upload',
+        );
+        expect(find.text('Retry'), findsOneWidget);
+        expect(find.text('Delete'), findsOneWidget);
+        expect(messageRepo.store.values.single.status, 'failed');
+        final failedMessageId = messageRepo.store.values.single.id;
+        final storedAttachments = await mediaAttachmentRepo
+            .getAttachmentsForMessage(failedMessageId);
+        expect(storedAttachments, hasLength(1));
+        expect(storedAttachments.single.downloadStatus, 'upload_failed');
+        expect(UploadWakeLockController.debugActiveHolds, 0);
+      },
+    );
+
+    testWidgets('retry control re-sends a failed outgoing media row', (
+      tester,
+    ) async {
+      final identityRepo = FakeIdentityRepository(makeIdentity());
+      final messageRepo = FakeMessageRepository();
+      final mediaAttachmentRepo = FakeMediaAttachmentRepository();
+      final chatListener = ChatMessageListener(
+        chatMessageStream: const Stream.empty(),
+        messageRepo: messageRepo,
+        contactRepo: FakeContactRepository(),
+      );
+      final failedMessage = ConversationMessage(
+        id: 'failed-media-msg',
+        contactPeerId: makeContact().peerId,
+        senderPeerId: makeIdentity().peerId,
+        text: 'Retry me',
+        timestamp: '2026-02-11T10:05:00.000Z',
+        status: 'failed',
+        wireEnvelope: '{"ciphertext":"abc"}',
+        isIncoming: false,
+        createdAt: '2026-02-11T10:05:00.000Z',
+        media: const [
+          MediaAttachment(
+            id: 'persisted-attachment',
+            messageId: 'failed-media-msg',
+            mime: 'image/jpeg',
+            size: 10,
+            mediaType: 'image',
+            localPath: '/tmp/retry.jpg',
+            downloadStatus: 'done',
+            createdAt: '2026-02-11T10:05:00.000Z',
+          ),
+        ],
+      );
+      await messageRepo.saveMessage(failedMessage);
+      mediaAttachmentRepo.seedAttachments(
+        messageId: failedMessage.id,
+        attachments: failedMessage.media,
+      );
+
+      await pumpScreen(
+        tester,
+        identityRepo: identityRepo,
+        messageRepo: messageRepo,
+        chatListener: chatListener,
+        sendFn: _instantSuccessSendFn,
+        bridge: FakeBridge(),
+        contactRepo: FakeContactRepository(),
+        mediaAttachmentRepo: mediaAttachmentRepo,
+        p2pService: InboxRetryP2PService(),
+      );
+      await tester.pump(const Duration(milliseconds: 500));
+
+      await tester.tap(
+        find.byKey(const ValueKey('failed-media-retry-failed-media-msg')),
+      );
+      await pumpUntil(
+        tester,
+        () => messageRepo.store['failed-media-msg']?.status == 'delivered',
+      );
+
+      expect(messageRepo.store['failed-media-msg']?.status, 'delivered');
+      expect(find.byIcon(Icons.done_all_rounded), findsOneWidget);
+      expect(find.text('Could not retry media message.'), findsNothing);
+    });
+
+    testWidgets('delete control removes a failed outgoing media row and files', (
+      tester,
+    ) async {
+      final identityRepo = FakeIdentityRepository(makeIdentity());
+      final messageRepo = FakeMessageRepository();
+      final mediaAttachmentRepo = FakeMediaAttachmentRepository();
+      final mediaFileManager = FakeMediaFileManager();
+      final chatListener = ChatMessageListener(
+        chatMessageStream: const Stream.empty(),
+        messageRepo: messageRepo,
+        contactRepo: FakeContactRepository(),
+      );
+      final failedMessage = ConversationMessage(
+        id: 'failed-delete-msg',
+        contactPeerId: makeContact().peerId,
+        senderPeerId: makeIdentity().peerId,
+        text: '',
+        timestamp: '2026-02-11T10:05:00.000Z',
+        status: 'failed',
+        isIncoming: false,
+        createdAt: '2026-02-11T10:05:00.000Z',
+        media: const [
+          MediaAttachment(
+            id: 'pending-delete-attachment',
+            messageId: 'failed-delete-msg',
+            mime: 'image/jpeg',
+            size: 10,
+            mediaType: 'image',
+            localPath:
+                'pending_uploads/failed-delete-msg/pending-delete-attachment.jpg',
+            downloadStatus: 'upload_pending',
+            createdAt: '2026-02-11T10:05:00.000Z',
+          ),
+        ],
+      );
+      await messageRepo.saveMessage(failedMessage);
+      mediaAttachmentRepo.seedAttachments(
+        messageId: failedMessage.id,
+        attachments: failedMessage.media,
+      );
+
+      await pumpScreen(
+        tester,
+        identityRepo: identityRepo,
+        messageRepo: messageRepo,
+        chatListener: chatListener,
+        sendFn: _instantSuccessSendFn,
+        mediaAttachmentRepo: mediaAttachmentRepo,
+        mediaFileManager: mediaFileManager,
+      );
+      await tester.pump(const Duration(milliseconds: 500));
+
+      await tester.tap(
+        find.byKey(const ValueKey('failed-media-delete-failed-delete-msg')),
+      );
+      await tester.pump(const Duration(milliseconds: 500));
+
+      expect(messageRepo.store.containsKey(failedMessage.id), isFalse);
+      expect(
+        await mediaAttachmentRepo.getAttachmentsForMessage(failedMessage.id),
+        isEmpty,
+      );
+      expect(
+        mediaFileManager.deletedFilePaths,
+        contains(
+          '/tmp/test_docs/pending_uploads/failed-delete-msg/'
+          'pending-delete-attachment.jpg',
+        ),
+      );
     });
 
     testWidgets(

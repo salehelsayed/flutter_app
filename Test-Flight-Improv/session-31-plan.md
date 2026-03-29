@@ -112,6 +112,10 @@ Tests to inspect:
 - `test/features/conversation/presentation/widgets/letter_card_test.dart`
 - `test/integration/onboarding_golden_path_test.dart`
 
+Infra / gate file to inspect:
+
+- `scripts/run_test_gates.sh` (authoritative named-gate membership)
+
 No Go, relay, or external repo work is expected.
 
 ---
@@ -148,8 +152,8 @@ Add these direct proofs before implementation:
 2. `letter_card_test.dart`
    - keep the existing `reuse` icon test, but mark it as a legacy-row fallback
 3. `onboarding_golden_path_test.dart`
-   - update the broad matcher so it accepts the real new labels and stops
-     expecting `reuse`
+   - tighten the broad matcher to `anyOf('direct', 'relay', 'local')` so new
+     sends stop accepting `reuse`
 
 These are the minimum regressions needed to prove the exact seam being changed
 without widening scope.
@@ -161,23 +165,29 @@ without widening scope.
 1. Confirm the current reuse fast path in
    `send_chat_message_use_case.dart` persists `via: 'reuse'` and that the fast
    path still must skip discover / dial.
-2. Add a small helper in `send_chat_message_use_case.dart` that infers the
+2. Add / update the direct regressions first:
+   - `send_chat_message_use_case_test.dart` for reused `relay`, `direct`, and
+     `local`
+   - `letter_card_test.dart` to describe `reuse` as legacy-only fallback
+   - `onboarding_golden_path_test.dart` to require
+     `anyOf('direct', 'relay', 'local')`
+3. Add a small helper in `send_chat_message_use_case.dart` that infers the
    transport for an already-connected peer from `p2pService.currentState` and
    `p2pService.isLocalPeer(peerId)`.
-3. Use local-first precedence:
+4. Use local-first precedence:
    - if `isLocalPeer(peerId)` => `local`
    - else if any matching connection multiaddr contains `/p2p-circuit` =>
      `relay`
    - else => `direct`
-4. Replace the reuse fast-path `via: 'reuse'` callsite with the helper result.
-5. Keep `case 'reuse'` in `letter_card.dart` as a legacy fallback with an
+5. Replace the reuse fast-path `via: 'reuse'` callsite with the helper result.
+6. Keep `case 'reuse'` in `letter_card.dart` as a legacy fallback with an
    explicit comment.
-6. Update the transport comments in:
+7. Update the transport comments in:
    - `conversation_message.dart`
    - `012_transport_column.dart`
    so `reuse` is clearly documented as legacy-only for old rows.
-7. Add / update the direct tests above.
-8. Stop after the transport-label seam is fixed. Do not broaden into relay
+8. Make the new regressions pass with the smallest safe send-path change, then
+   stop after the transport-label seam is fixed. Do not broaden into relay
    probe labeling or transport API cleanup.
 
 If repo evidence shows the helper cannot determine the real transport from the

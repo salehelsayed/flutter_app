@@ -505,5 +505,88 @@ void main() {
       expect((await msgRepo.getMessage('msg-fail-1'))!.status, 'failed');
       expect((await msgRepo.getMessage('msg-fail-2'))!.status, 'sent');
     });
+
+    test(
+      'retryFailedGroupMessage only retries the requested failed media row',
+      () async {
+        identityRepo.seed(_makeIdentity());
+        await groupRepo.saveGroup(_makeGroup());
+        await msgRepo.saveMessage(
+          _makeFailedGroupMessage(
+            id: 'msg-targeted',
+            text: 'Retry only me',
+            timestampIso: '2026-01-15T12:00:00.000Z',
+            inboxRetryPayload: jsonEncode({
+              'groupId': 'group-1',
+              'message': jsonEncode({
+                'groupId': 'group-1',
+                'senderId': 'peer-1',
+                'senderUsername': 'Alice',
+                'keyEpoch': 0,
+                'text': 'Retry only me',
+                'timestamp': '2026-01-15T12:00:00.000Z',
+                'messageId': 'msg-targeted',
+                'media': [
+                  {'id': 'att-targeted'},
+                ],
+              }),
+            }),
+          ),
+        );
+        await msgRepo.saveMessage(
+          _makeFailedGroupMessage(
+            id: 'msg-untouched',
+            text: 'Leave me failed',
+            timestampIso: '2026-01-15T12:01:00.000Z',
+            inboxRetryPayload: jsonEncode({
+              'groupId': 'group-1',
+              'message': jsonEncode({
+                'groupId': 'group-1',
+                'senderId': 'peer-1',
+                'senderUsername': 'Alice',
+                'keyEpoch': 0,
+                'text': 'Leave me failed',
+                'timestamp': '2026-01-15T12:01:00.000Z',
+                'messageId': 'msg-untouched',
+                'media': [
+                  {'id': 'att-untouched'},
+                ],
+              }),
+            }),
+          ),
+        );
+        await mediaRepo.saveAttachment(
+          _makeAttachment(
+            id: 'att-targeted',
+            messageId: 'msg-targeted',
+            downloadStatus: 'done',
+          ),
+        );
+        await mediaRepo.saveAttachment(
+          _makeAttachment(
+            id: 'att-untouched',
+            messageId: 'msg-untouched',
+            downloadStatus: 'done',
+          ),
+        );
+
+        final count = await retryFailedGroupMessage(
+          messageId: 'msg-targeted',
+          groupMsgRepo: msgRepo,
+          groupRepo: groupRepo,
+          identityRepo: identityRepo,
+          bridge: bridge,
+          mediaAttachmentRepo: mediaRepo,
+        );
+
+        expect(count, 1);
+        expect((await msgRepo.getMessage('msg-targeted'))!.status, 'sent');
+        expect((await msgRepo.getMessage('msg-untouched'))!.status, 'failed');
+        expect(
+          bridge.commandLog.where((cmd) => cmd == 'group:publish').length,
+          1,
+        );
+      },
+    );
   });
 }

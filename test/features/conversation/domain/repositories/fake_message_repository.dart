@@ -44,20 +44,19 @@ class FakeMessageRepository implements MessageRepository {
 
   @override
   Future<List<ConversationMessage>> getMessagesForContact(
-      String contactPeerId) async {
-    return _messages
-        .where((m) => m.contactPeerId == contactPeerId)
-        .toList()
+    String contactPeerId,
+  ) async {
+    return _messages.where((m) => m.contactPeerId == contactPeerId).toList()
       ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
   }
 
   @override
   Future<ConversationMessage?> getLatestMessageForContact(
-      String contactPeerId) async {
-    final msgs = _messages
-        .where((m) => m.contactPeerId == contactPeerId)
-        .toList()
-      ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    String contactPeerId,
+  ) async {
+    final msgs =
+        _messages.where((m) => m.contactPeerId == contactPeerId).toList()
+          ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
     return msgs.isNotEmpty ? msgs.first : null;
   }
 
@@ -98,10 +97,12 @@ class FakeMessageRepository implements MessageRepository {
   @override
   Future<int> getUnreadCountForContact(String contactPeerId) async {
     return _messages
-        .where((m) =>
-            m.contactPeerId == contactPeerId &&
-            m.isIncoming &&
-            m.readAt == null)
+        .where(
+          (m) =>
+              m.contactPeerId == contactPeerId &&
+              m.isIncoming &&
+              m.readAt == null,
+        )
         .length;
   }
 
@@ -124,6 +125,13 @@ class FakeMessageRepository implements MessageRepository {
   }
 
   @override
+  Future<int> deleteMessage(String id) async {
+    final before = _messages.length;
+    _messages.removeWhere((m) => m.id == id);
+    return before - _messages.length;
+  }
+
+  @override
   Future<List<ConversationMessage>> getFailedOutgoingMessages() async {
     getFailedOutgoingCallCount++;
     if (failedOutgoingOverride != null) return failedOutgoingOverride!;
@@ -138,10 +146,13 @@ class FakeMessageRepository implements MessageRepository {
     int limit = 50,
     String? beforeTimestamp,
   }) async {
-    var msgs =
-        _messages.where((m) => m.contactPeerId == contactPeerId).toList();
+    var msgs = _messages
+        .where((m) => m.contactPeerId == contactPeerId)
+        .toList();
     if (beforeTimestamp != null) {
-      msgs = msgs.where((m) => m.timestamp.compareTo(beforeTimestamp) < 0).toList();
+      msgs = msgs
+          .where((m) => m.timestamp.compareTo(beforeTimestamp) < 0)
+          .toList();
     }
     msgs.sort((a, b) => b.timestamp.compareTo(a.timestamp));
     if (msgs.length > limit) msgs = msgs.sublist(0, limit);
@@ -154,11 +165,13 @@ class FakeMessageRepository implements MessageRepository {
   }) async {
     if (unackedOutgoingOverride != null) return unackedOutgoingOverride!;
     return _messages
-        .where((m) =>
-            m.status == 'sent' &&
-            !m.isIncoming &&
-            m.wireEnvelope != null &&
-            m.wireEnvelope!.isNotEmpty)
+        .where(
+          (m) =>
+              m.status == 'sent' &&
+              !m.isIncoming &&
+              m.wireEnvelope != null &&
+              m.wireEnvelope!.isNotEmpty,
+        )
         .toList();
   }
 
@@ -167,7 +180,9 @@ class FakeMessageRepository implements MessageRepository {
   @override
   Future<List<ConversationMessage>> getSendingOutgoingMessages() async {
     getSendingOutgoingCallCount++;
-    return _messages.where((m) => m.status == 'sending' && !m.isIncoming).toList();
+    return _messages
+        .where((m) => m.status == 'sending' && !m.isIncoming)
+        .toList();
   }
 
   int conditionalTransitionCallCount = 0;
@@ -179,7 +194,9 @@ class FakeMessageRepository implements MessageRepository {
     required String toStatus,
   }) async {
     conditionalTransitionCallCount++;
-    final idx = _messages.indexWhere((m) => m.id == id && m.status == fromStatus);
+    final idx = _messages.indexWhere(
+      (m) => m.id == id && m.status == fromStatus,
+    );
     if (idx >= 0) {
       _messages[idx] = _messages[idx].copyWith(status: toStatus);
       return 1;
@@ -194,13 +211,16 @@ class FakeMessageRepository implements MessageRepository {
   Future<List<ConversationMessage>> getStuckSendingOutgoingMessages({
     required Duration olderThan,
   }) async {
-    if (stuckSendingOutgoingOverride != null) return stuckSendingOutgoingOverride!;
+    if (stuckSendingOutgoingOverride != null)
+      return stuckSendingOutgoingOverride!;
     final cutoff = DateTime.now().toUtc().subtract(olderThan);
     return _messages
-        .where((m) =>
-            m.status == 'sending' &&
-            !m.isIncoming &&
-            DateTime.parse(m.timestamp).toUtc().isBefore(cutoff))
+        .where(
+          (m) =>
+              m.status == 'sending' &&
+              !m.isIncoming &&
+              DateTime.parse(m.timestamp).toUtc().isBefore(cutoff),
+        )
         .toList();
   }
 
@@ -212,14 +232,14 @@ class FakeMessageRepository implements MessageRepository {
   int? recoverStuckSendingReturnValue;
 
   @override
-  Future<int> recoverStuckSendingMessages({
-    required Duration olderThan,
-  }) async {
+  Future<int> recoverStuckSendingMessages({required Duration olderThan}) async {
     recoverStuckSendingCallCount++;
     lastRecoverStuckSendingThreshold = olderThan;
     onRecoverStuckSending?.call();
     if (throwOnRecoverStuckSending) {
-      throw Exception('FakeMessageRepository: recoverStuckSendingMessages error');
+      throw Exception(
+        'FakeMessageRepository: recoverStuckSendingMessages error',
+      );
     }
     if (recoverStuckSendingReturnValue != null) {
       return recoverStuckSendingReturnValue!;

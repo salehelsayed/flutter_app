@@ -398,5 +398,61 @@ void main() {
         expect(pending.single.downloadStatus, 'upload_pending');
       },
     );
+
+    test(
+      'skips the final group send when the parent row is deleted after uploads complete',
+      () async {
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: 'msg-late-delete',
+            groupId: 'group-1',
+            senderPeerId: 'peer-admin',
+            senderUsername: 'Admin',
+            text: 'Hello',
+            timestamp: DateTime.utc(2026, 1, 1),
+            status: 'failed',
+            isIncoming: false,
+            createdAt: DateTime.utc(2026, 1, 1),
+          ),
+        );
+        await mediaRepo.saveAttachment(
+          _pendingAttachment(
+            id: 'pending-late-delete',
+            messageId: 'msg-late-delete',
+          ),
+        );
+        mediaRepo.onSaveAttachment = (attachment) {
+          if (attachment.messageId == 'msg-late-delete' &&
+              attachment.downloadStatus == 'done') {
+            groupMsgRepo.deleteMessage('msg-late-delete');
+          }
+        };
+        uploadFn.willReturn(
+          _doneAttachment(
+            id: 'pending-late-delete',
+            messageId: 'msg-late-delete',
+          ),
+        );
+
+        final count = await retryIncompleteGroupUploads(
+          groupRepo: groupRepo,
+          groupMsgRepo: groupMsgRepo,
+          mediaAttachmentRepo: mediaRepo,
+          bridge: bridge,
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          uploadMediaFn: uploadFn.call,
+          mediaFileManager: mediaFileManager,
+        );
+
+        expect(count, 0);
+        expect(await groupMsgRepo.getMessage('msg-late-delete'), isNull);
+        expect(
+          bridge.commandLog.where((cmd) => cmd == 'group:publish'),
+          isEmpty,
+          reason: 'late-send guard must suppress the final group send',
+        );
+      },
+    );
   });
 }

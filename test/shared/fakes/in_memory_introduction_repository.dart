@@ -16,37 +16,48 @@ class InMemoryIntroductionRepository implements IntroductionRepository {
   }
 
   @override
+  Future<void> deleteIntroduction(String id) async {
+    _store.remove(id);
+  }
+
+  @override
   Future<List<IntroductionModel>> getIntroductionsByRecipient(
-      String recipientId) async {
+    String recipientId,
+  ) async {
     return _store.values.where((i) => i.recipientId == recipientId).toList();
   }
 
   @override
   Future<List<IntroductionModel>> getIntroductionsByIntroduced(
-      String introducedId) async {
+    String introducedId,
+  ) async {
     return _store.values.where((i) => i.introducedId == introducedId).toList();
   }
 
   @override
   Future<List<IntroductionModel>> getIntroductionsByIntroducer(
-      String introducerId) async {
-    return _store.values
-        .where((i) => i.introducerId == introducerId)
-        .toList();
+    String introducerId,
+  ) async {
+    return _store.values.where((i) => i.introducerId == introducerId).toList();
   }
 
   @override
   Future<List<IntroductionModel>> getIntroductionsForRecipientAndIntroducer(
-      String recipientId, String introducerId) async {
+    String recipientId,
+    String introducerId,
+  ) async {
     return _store.values
-        .where((i) =>
-            i.recipientId == recipientId && i.introducerId == introducerId)
+        .where(
+          (i) => i.recipientId == recipientId && i.introducerId == introducerId,
+        )
         .toList();
   }
 
   @override
   Future<void> updateRecipientStatus(
-      String id, IntroductionStatus status) async {
+    String id,
+    IntroductionStatus status,
+  ) async {
     final intro = _store[id];
     if (intro == null) return;
     _store[id] = intro.copyWith(
@@ -57,7 +68,9 @@ class InMemoryIntroductionRepository implements IntroductionRepository {
 
   @override
   Future<void> updateIntroducedStatus(
-      String id, IntroductionStatus status) async {
+    String id,
+    IntroductionStatus status,
+  ) async {
     final intro = _store[id];
     if (intro == null) return;
     _store[id] = intro.copyWith(
@@ -68,7 +81,9 @@ class InMemoryIntroductionRepository implements IntroductionRepository {
 
   @override
   Future<void> updateOverallStatus(
-      String id, IntroductionOverallStatus status) async {
+    String id,
+    IntroductionOverallStatus status,
+  ) async {
     final intro = _store[id];
     if (intro == null) return;
     _store[id] = intro.copyWith(status: status);
@@ -76,21 +91,26 @@ class InMemoryIntroductionRepository implements IntroductionRepository {
 
   @override
   Future<List<IntroductionModel>> getPendingIntroductionsForUser(
-      String peerId) async {
+    String peerId,
+  ) async {
     return _store.values
-        .where((i) =>
-            (i.recipientId == peerId || i.introducedId == peerId) &&
-            (i.status == IntroductionOverallStatus.pending ||
-             i.status == IntroductionOverallStatus.alreadyConnected))
+        .where(
+          (i) =>
+              (i.recipientId == peerId || i.introducedId == peerId) &&
+              (i.status == IntroductionOverallStatus.pending ||
+                  i.status == IntroductionOverallStatus.alreadyConnected),
+        )
         .toList();
   }
 
   @override
   Future<int> countPendingIntroductions(String peerId) async {
     return _store.values
-        .where((i) =>
-            (i.recipientId == peerId || i.introducedId == peerId) &&
-            i.status == IntroductionOverallStatus.pending)
+        .where(
+          (i) =>
+              (i.recipientId == peerId || i.introducedId == peerId) &&
+              i.status == IntroductionOverallStatus.pending,
+        )
         .length;
   }
 

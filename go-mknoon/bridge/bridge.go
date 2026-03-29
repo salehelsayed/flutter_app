@@ -781,16 +781,21 @@ func SendMessage(paramsJSON string) (result string) {
 		return errJSON("INVALID_INPUT", "missing peerId or message")
 	}
 
-	reply, acked, err := n.SendMessage(params.PeerId, params.Message, params.TimeoutMs)
+	sendResult, err := n.SendMessageWithTransport(
+		params.PeerId,
+		params.Message,
+		params.TimeoutMs,
+	)
 	if err != nil {
 		return errJSON("SEND_ERROR", err.Error())
 	}
 
 	return okJSON(map[string]interface{}{
-		"ok":    true,
-		"sent":  true,
-		"acked": acked,
-		"reply": reply,
+		"ok":        true,
+		"sent":      true,
+		"acked":     sendResult.Acked,
+		"reply":     sendResult.Reply,
+		"transport": sendResult.Transport,
 	})
 }
 

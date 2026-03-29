@@ -445,6 +445,7 @@ void main() async {
         dbCountTotalUnreadExcludingArchived(db),
     dbDeleteMessagesForContact: (contactPeerId) =>
         dbDeleteMessagesForContact(db, contactPeerId),
+    dbDeleteMessage: (id) => dbDeleteMessage(db, id),
     dbLoadMessagesPage: (contactPeerId, {limit = 50, beforeTimestamp}) =>
         dbLoadMessagesPage(
           db,
@@ -615,6 +616,8 @@ void main() async {
         dbDeleteMediaForMessage(db, messageId),
     dbDeleteMediaForContact: (contactPeerId) =>
         dbDeleteMediaForContact(db, contactPeerId),
+    dbMarkUploadPendingAttachmentsFailedForMessage: (messageId) =>
+        dbMarkUploadPendingAttachmentsFailedForMessage(db, messageId),
     dbLoadPendingMediaDownloads: () => dbLoadPendingMediaDownloads(db),
     dbLoadUploadPendingAttachments: ({int limit = 50}) =>
         dbLoadUploadPendingAttachments(db, limit: limit),
@@ -708,6 +711,7 @@ void main() async {
   final introductionRepository = IntroductionRepositoryImpl(
     dbInsertIntroduction: (row) => dbInsertIntroduction(db, row),
     dbLoadIntroduction: (id) => dbLoadIntroduction(db, id),
+    dbDeleteIntroduction: (id) => dbDeleteIntroduction(db, id),
     dbLoadIntroductionsByRecipient: (recipientId) =>
         dbLoadIntroductionsByRecipient(db, recipientId),
     dbLoadIntroductionsByIntroduced: (introducedId) =>

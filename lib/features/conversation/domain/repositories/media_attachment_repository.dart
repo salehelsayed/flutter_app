@@ -12,7 +12,8 @@ abstract class MediaAttachmentRepository {
 
   /// Retrieves all attachments for multiple messages, grouped by message ID.
   Future<Map<String, List<MediaAttachment>>> getAttachmentsForMessages(
-      List<String> messageIds);
+    List<String> messageIds,
+  );
 
   /// Updates the local path and marks download as done.
   Future<void> updateLocalPath(String id, String localPath);
@@ -25,6 +26,11 @@ abstract class MediaAttachmentRepository {
 
   /// Deletes all attachments for a contact. Returns count of deleted rows.
   Future<int> deleteAttachmentsForContact(String contactPeerId);
+
+  /// Marks only this message's upload-pending attachments as upload-failed.
+  ///
+  /// Returns the number of rows transitioned.
+  Future<int> markUploadPendingAttachmentsFailedForMessage(String messageId);
 
   /// Retrieves all attachments with pending download status.
   Future<List<MediaAttachment>> getPendingDownloads();

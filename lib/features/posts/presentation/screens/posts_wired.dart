@@ -532,6 +532,7 @@ class _PostsWiredState extends State<PostsWired> {
             appShellController: _settingsAppShellController,
             postsPrivacySettingsRepository:
                 widget.postsPrivacySettingsRepository,
+            introductionRepository: widget.introductionRepository,
             nearbyLocationService: widget.nearbyLocationService,
             showNavigationBar: false,
           ),
@@ -1088,10 +1089,7 @@ Future<Uint8List?> _loadAvatarFromDisk(String peerId) async {
     emitFlowEvent(
       layer: 'FL',
       event: 'POST_PASS_AVATAR_PATH_UNAVAILABLE',
-      details: {
-        'peerId': peerId,
-        'reason': 'documents_dir_unset',
-      },
+      details: {'peerId': peerId, 'reason': 'documents_dir_unset'},
     );
     return null;
   }
@@ -1099,19 +1097,13 @@ Future<Uint8List?> _loadAvatarFromDisk(String peerId) async {
   emitFlowEvent(
     layer: 'FL',
     event: 'POST_PASS_AVATAR_PATH_RESOLVED',
-    details: {
-      'peerId': peerId,
-      'avatarPath': file.path,
-    },
+    details: {'peerId': peerId, 'avatarPath': file.path},
   );
   if (!await file.exists()) {
     emitFlowEvent(
       layer: 'FL',
       event: 'POST_PASS_AVATAR_PATH_MISSING',
-      details: {
-        'peerId': peerId,
-        'avatarPath': file.path,
-      },
+      details: {'peerId': peerId, 'avatarPath': file.path},
     );
     return null;
   }

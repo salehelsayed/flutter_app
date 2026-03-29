@@ -29,6 +29,9 @@ class LetterCard extends StatelessWidget {
   final String? ownPeerId;
   final VoidCallback? onLongPress;
   final void Function(String emoji)? onReactionTap;
+  final VoidCallback? onRetryFailedMedia;
+  final VoidCallback? onDeleteFailedMedia;
+  final String? failedMediaActionKeySuffix;
 
   const LetterCard({
     super.key,
@@ -47,6 +50,9 @@ class LetterCard extends StatelessWidget {
     this.ownPeerId,
     this.onLongPress,
     this.onReactionTap,
+    this.onRetryFailedMedia,
+    this.onDeleteFailedMedia,
+    this.failedMediaActionKeySuffix,
   });
 
   List<MediaAttachment> get _imageVideoMedia => media
@@ -231,6 +237,36 @@ class LetterCard extends StatelessWidget {
                       )
                     else if (media.isNotEmpty)
                       const SizedBox(height: 12),
+                    if (onRetryFailedMedia != null || onDeleteFailedMedia != null)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                        child: Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            if (onRetryFailedMedia != null)
+                              _buildFailedMediaAction(
+                                key: ValueKey(
+                                  'failed-media-retry-${failedMediaActionKeySuffix ?? 'message'}',
+                                ),
+                                icon: Icons.refresh_rounded,
+                                label: 'Retry',
+                                color: const Color(0xFF4ECDC4),
+                                onTap: onRetryFailedMedia!,
+                              ),
+                            if (onDeleteFailedMedia != null)
+                              _buildFailedMediaAction(
+                                key: ValueKey(
+                                  'failed-media-delete-${failedMediaActionKeySuffix ?? 'message'}',
+                                ),
+                                icon: Icons.delete_outline_rounded,
+                                label: 'Delete',
+                                color: const Color(0xFFFF8A80),
+                                onTap: onDeleteFailedMedia!,
+                              ),
+                          ],
+                        ),
+                      ),
                     // Footer: inline reactions + timestamp + delivery status
                     Padding(
                       padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
@@ -278,6 +314,29 @@ class LetterCard extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildFailedMediaAction({
+    required Key key,
+    required IconData icon,
+    required String label,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    return OutlinedButton.icon(
+      key: key,
+      onPressed: onTap,
+      style: OutlinedButton.styleFrom(
+        foregroundColor: color,
+        side: BorderSide(color: color.withAlpha(140)),
+        backgroundColor: color.withAlpha(20),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        visualDensity: VisualDensity.compact,
+      ),
+      icon: Icon(icon, size: 16),
+      label: Text(label),
     );
   }
 
@@ -360,6 +419,7 @@ class LetterCard extends StatelessWidget {
         return Icons.wifi;
       case 'direct':
       case 'reuse':
+        // Keep old rows renderable after the send path stopped persisting reuse.
         return Icons.device_hub;
       case 'relay':
         return Icons.cell_tower;

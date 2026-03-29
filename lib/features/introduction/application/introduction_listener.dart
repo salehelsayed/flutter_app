@@ -114,23 +114,7 @@ class IntroductionListener {
     );
 
     try {
-      // 1. Check if sender is blocked
-      final senderPeerId = message.from;
-      final senderContact = await contactRepo.getContact(senderPeerId);
-      if (senderContact != null && senderContact.isBlocked) {
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'INTRO_LISTENER_BLOCKED_REJECT',
-          details: {
-            'from': senderPeerId.length > 10
-                ? senderPeerId.substring(0, 10)
-                : senderPeerId,
-          },
-        );
-        return;
-      }
-
-      // 2. Try v2 decryption, fall back to v1 parsing
+      // 1. Try v2 decryption, fall back to v1 parsing
       String? innerJson;
       final envelope =
           IntroductionPayload.parseEncryptedEnvelope(message.content);
@@ -194,7 +178,27 @@ class IntroductionListener {
         return;
       }
 
-      // 4. Call handleIncomingIntroduction
+      // 4. Block check: only reject new introduction offers from blocked
+      //    contacts. Accept/pass messages must always pass through — they
+      //    complete the mutual-acceptance handshake and are not user content.
+      if (payload.action == 'send') {
+        final senderPeerId = message.from;
+        final senderContact = await contactRepo.getContact(senderPeerId);
+        if (senderContact != null && senderContact.isBlocked) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'INTRO_LISTENER_BLOCKED_REJECT',
+            details: {
+              'from': senderPeerId.length > 10
+                  ? senderPeerId.substring(0, 10)
+                  : senderPeerId,
+            },
+          );
+          return;
+        }
+      }
+
+      // 5. Call handleIncomingIntroduction
       final ownPeerId = await getOwnPeerId();
       if (ownPeerId == null) {
         emitFlowEvent(

@@ -4,21 +4,14 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:path/path.dart' as p;
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/device/upload_wake_lock.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
-import 'package:flutter_app/core/media/media_picker.dart';
-import 'package:flutter_app/core/media/video_process_result.dart';
-import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
-import 'package:flutter_app/core/services/p2p_service.dart';
-import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
-import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
-import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
@@ -36,6 +29,7 @@ import '../../../../core/bridge/fake_bridge.dart';
 import '../../../../core/services/fake_p2p_service.dart';
 import '../../../../shared/fakes/fake_audio_recorder_service.dart';
 import '../../../../shared/fakes/fake_media_file_manager.dart';
+import '../../../../shared/fakes/fake_upload_wake_lock_driver.dart';
 import '../../../../shared/fakes/in_memory_contact_repository.dart';
 import '../../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../../shared/fakes/in_memory_group_repository.dart';
@@ -306,6 +300,14 @@ Future<void> _sendText(WidgetTester tester, String text) async {
 }
 
 void main() {
+  setUp(() {
+    UploadWakeLockController.debugReset(driver: FakeUploadWakeLockDriver());
+  });
+
+  tearDown(() {
+    UploadWakeLockController.debugReset(driver: FakeUploadWakeLockDriver());
+  });
+
   group('GroupConversationWired Section 3 background-task protection', () {
     testWidgets(
       'bg:begin happens before media upload and bg:end happens after publish and inbox store',
@@ -327,27 +329,28 @@ void main() {
           mediaAttachmentRepo: InMemoryMediaAttachmentRepository(),
           mediaFileManager: FakeMediaFileManager(),
           initialAttachments: [attachment],
-          uploadMediaFn: ({
-            required Bridge bridge,
-            required String localFilePath,
-            required String mime,
-            required String recipientPeerId,
-            MediaFileManager? mediaFileManager,
-            int? width,
-            int? height,
-            int? durationMs,
-            List<double>? waveform,
-            List<String>? allowedPeers,
-            String? blobId,
-          }) async {
-            operationLog.add('uploadMediaFn');
-            return _uploadedMedia(
-              id: blobId ?? 'blob-1',
-              messageId: '',
-              mime: mime,
-              localPath: localFilePath,
-            );
-          },
+          uploadMediaFn:
+              ({
+                required Bridge bridge,
+                required String localFilePath,
+                required String mime,
+                required String recipientPeerId,
+                MediaFileManager? mediaFileManager,
+                int? width,
+                int? height,
+                int? durationMs,
+                List<double>? waveform,
+                List<String>? allowedPeers,
+                String? blobId,
+              }) async {
+                operationLog.add('uploadMediaFn');
+                return _uploadedMedia(
+                  id: blobId ?? 'blob-1',
+                  messageId: '',
+                  mime: mime,
+                  localPath: localFilePath,
+                );
+              },
         );
 
         await _sendText(tester, 'hello');
@@ -360,7 +363,11 @@ void main() {
           'bridge:group:publish',
           'bridge:group:inboxStore',
         );
-        _expectOrdered(operationLog, 'bridge:group:inboxStore', 'bridge:bg:end');
+        _expectOrdered(
+          operationLog,
+          'bridge:group:inboxStore',
+          'bridge:bg:end',
+        );
       },
     );
 
@@ -383,19 +390,20 @@ void main() {
         mediaAttachmentRepo: InMemoryMediaAttachmentRepository(),
         mediaFileManager: FakeMediaFileManager(),
         initialAttachments: [attachment],
-        uploadMediaFn: ({
-          required Bridge bridge,
-          required String localFilePath,
-          required String mime,
-          required String recipientPeerId,
-          MediaFileManager? mediaFileManager,
-          int? width,
-          int? height,
-          int? durationMs,
-          List<double>? waveform,
-          List<String>? allowedPeers,
-          String? blobId,
-        }) async => null,
+        uploadMediaFn:
+            ({
+              required Bridge bridge,
+              required String localFilePath,
+              required String mime,
+              required String recipientPeerId,
+              MediaFileManager? mediaFileManager,
+              int? width,
+              int? height,
+              int? durationMs,
+              List<double>? waveform,
+              List<String>? allowedPeers,
+              String? blobId,
+            }) async => null,
       );
 
       await _sendText(tester, 'upload fail');
@@ -424,21 +432,22 @@ void main() {
         mediaAttachmentRepo: InMemoryMediaAttachmentRepository(),
         mediaFileManager: FakeMediaFileManager(),
         initialAttachments: [attachment],
-        uploadMediaFn: ({
-          required Bridge bridge,
-          required String localFilePath,
-          required String mime,
-          required String recipientPeerId,
-          MediaFileManager? mediaFileManager,
-          int? width,
-          int? height,
-          int? durationMs,
-          List<double>? waveform,
-          List<String>? allowedPeers,
-          String? blobId,
-        }) async {
-          throw Exception('upload failed');
-        },
+        uploadMediaFn:
+            ({
+              required Bridge bridge,
+              required String localFilePath,
+              required String mime,
+              required String recipientPeerId,
+              MediaFileManager? mediaFileManager,
+              int? width,
+              int? height,
+              int? durationMs,
+              List<double>? waveform,
+              List<String>? allowedPeers,
+              String? blobId,
+            }) async {
+              throw Exception('upload failed');
+            },
       );
 
       await _sendText(tester, 'upload throws');
@@ -479,10 +488,7 @@ void main() {
         commandGates: {'group:inboxStore': inboxGate},
       );
 
-      await _pumpGroupConversationWired(
-        tester,
-        bridge: bridge,
-      );
+      await _pumpGroupConversationWired(tester, bridge: bridge);
 
       await _sendText(tester, 'unmount');
       await pumpUntil(
@@ -527,25 +533,26 @@ void main() {
           mediaAttachmentRepo: mediaRepo,
           mediaFileManager: mediaFileManager,
           initialAttachments: [attachment],
-          uploadMediaFn: ({
-            required Bridge bridge,
-            required String localFilePath,
-            required String mime,
-            required String recipientPeerId,
-            MediaFileManager? mediaFileManager,
-            int? width,
-            int? height,
-            int? durationMs,
-            List<double>? waveform,
-            List<String>? allowedPeers,
-            String? blobId,
-          }) async {
-            if (!uploadStarted.isCompleted) {
-              uploadStarted.complete();
-            }
-            await uploadGate.future;
-            return null;
-          },
+          uploadMediaFn:
+              ({
+                required Bridge bridge,
+                required String localFilePath,
+                required String mime,
+                required String recipientPeerId,
+                MediaFileManager? mediaFileManager,
+                int? width,
+                int? height,
+                int? durationMs,
+                List<double>? waveform,
+                List<String>? allowedPeers,
+                String? blobId,
+              }) async {
+                if (!uploadStarted.isCompleted) {
+                  uploadStarted.complete();
+                }
+                await uploadGate.future;
+                return null;
+              },
         );
 
         await _sendText(tester, 'unmount media fail');
@@ -579,10 +586,7 @@ void main() {
       final operationLog = <String>[];
       final bridge = _OrderRecordingBridge(operationLog: operationLog);
 
-      await _pumpGroupConversationWired(
-        tester,
-        bridge: bridge,
-      );
+      await _pumpGroupConversationWired(tester, bridge: bridge);
 
       await _sendText(tester, 'text only');
       await pumpFrames(tester, count: 20);
@@ -596,9 +600,7 @@ void main() {
       _expectOrdered(operationLog, 'bridge:group:inboxStore', 'bridge:bg:end');
     });
 
-    testWidgets('voice send path is background-task protected', (
-      tester,
-    ) async {
+    testWidgets('voice send path is background-task protected', (tester) async {
       final operationLog = <String>[];
       final bridge = _OrderRecordingBridge(operationLog: operationLog);
       final mediaFileManager = FakeMediaFileManager();
@@ -622,33 +624,34 @@ void main() {
         mediaAttachmentRepo: mediaRepo,
         mediaFileManager: mediaFileManager,
         audioRecorderService: recorder,
-        uploadMediaFn: ({
-          required Bridge bridge,
-          required String localFilePath,
-          required String mime,
-          required String recipientPeerId,
-          MediaFileManager? mediaFileManager,
-          int? width,
-          int? height,
-          int? durationMs,
-          List<double>? waveform,
-          List<String>? allowedPeers,
-          String? blobId,
-        }) async {
-          operationLog.add('uploadMediaFn');
-          return _uploadedMedia(
-            id: blobId ?? 'voice-1',
-            messageId: '',
-            mime: mime,
-            localPath: mediaFileManager!.relativePathForAttachment(
-              contactPeerId: recipientPeerId,
-              blobId: blobId ?? 'voice-1',
-              mime: mime,
-            ),
-            durationMs: durationMs,
-            waveform: waveform,
-          );
-        },
+        uploadMediaFn:
+            ({
+              required Bridge bridge,
+              required String localFilePath,
+              required String mime,
+              required String recipientPeerId,
+              MediaFileManager? mediaFileManager,
+              int? width,
+              int? height,
+              int? durationMs,
+              List<double>? waveform,
+              List<String>? allowedPeers,
+              String? blobId,
+            }) async {
+              operationLog.add('uploadMediaFn');
+              return _uploadedMedia(
+                id: blobId ?? 'voice-1',
+                messageId: '',
+                mime: mime,
+                localPath: mediaFileManager!.relativePathForAttachment(
+                  contactPeerId: recipientPeerId,
+                  blobId: blobId ?? 'voice-1',
+                  mime: mime,
+                ),
+                durationMs: durationMs,
+                waveform: waveform,
+              );
+            },
       );
 
       final screen = tester.widget<GroupConversationScreen>(
@@ -676,7 +679,7 @@ void main() {
     });
 
     testWidgets(
-      'announcement voice-only send uses durable path, exact push body, and pending status when no peers are live',
+      'announcement voice-only send uses durable path, exact push body, and sent status when no peers are live',
       (tester) async {
         final operationLog = <String>[];
         final bridge = _OrderRecordingBridge(
@@ -710,33 +713,34 @@ void main() {
           mediaFileManager: mediaFileManager,
           audioRecorderService: recorder,
           group: _makeAnnouncementGroup(role: GroupRole.admin),
-          uploadMediaFn: ({
-            required Bridge bridge,
-            required String localFilePath,
-            required String mime,
-            required String recipientPeerId,
-            MediaFileManager? mediaFileManager,
-            int? width,
-            int? height,
-            int? durationMs,
-            List<double>? waveform,
-            List<String>? allowedPeers,
-            String? blobId,
-          }) async {
-            operationLog.add('uploadMediaFn');
-            return _uploadedMedia(
-              id: blobId ?? 'announce-voice-1',
-              messageId: '',
-              mime: mime,
-              localPath: mediaFileManager!.relativePathForAttachment(
-                contactPeerId: recipientPeerId,
-                blobId: blobId ?? 'announce-voice-1',
-                mime: mime,
-              ),
-              durationMs: durationMs,
-              waveform: waveform,
-            );
-          },
+          uploadMediaFn:
+              ({
+                required Bridge bridge,
+                required String localFilePath,
+                required String mime,
+                required String recipientPeerId,
+                MediaFileManager? mediaFileManager,
+                int? width,
+                int? height,
+                int? durationMs,
+                List<double>? waveform,
+                List<String>? allowedPeers,
+                String? blobId,
+              }) async {
+                operationLog.add('uploadMediaFn');
+                return _uploadedMedia(
+                  id: blobId ?? 'announce-voice-1',
+                  messageId: '',
+                  mime: mime,
+                  localPath: mediaFileManager!.relativePathForAttachment(
+                    contactPeerId: recipientPeerId,
+                    blobId: blobId ?? 'announce-voice-1',
+                    mime: mime,
+                  ),
+                  durationMs: durationMs,
+                  waveform: waveform,
+                );
+              },
         );
 
         final screen = tester.widget<GroupConversationScreen>(
@@ -760,18 +764,21 @@ void main() {
 
         _expectOrdered(operationLog, 'bridge:bg:begin', 'uploadMediaFn');
         _expectOrdered(operationLog, 'uploadMediaFn', 'bridge:group:publish');
-        _expectOrdered(operationLog, 'bridge:group:inboxStore', 'bridge:bg:end');
+        _expectOrdered(
+          operationLog,
+          'bridge:group:inboxStore',
+          'bridge:bg:end',
+        );
 
         final inboxMessage = bridge.sentMessages.firstWhere(
-          (raw) => (jsonDecode(raw) as Map<String, dynamic>)['cmd'] == 'group:inboxStore',
+          (raw) =>
+              (jsonDecode(raw) as Map<String, dynamic>)['cmd'] ==
+              'group:inboxStore',
         );
         final inboxPayload =
             (jsonDecode(inboxMessage) as Map<String, dynamic>)['payload']
                 as Map<String, dynamic>;
-        expect(
-          inboxPayload['pushBody'],
-          equals('Alice sent a voice message'),
-        );
+        expect(inboxPayload['pushBody'], equals('Alice sent a voice message'));
         final innerEnvelope =
             jsonDecode(inboxPayload['message'] as String)
                 as Map<String, dynamic>;
@@ -789,7 +796,7 @@ void main() {
 
         final saved = await msgRepo.getMessage(sentMessageId);
         expect(saved, isNotNull);
-        expect(saved!.status, 'pending');
+        expect(saved!.status, 'sent');
       },
     );
 
@@ -831,7 +838,11 @@ void main() {
           'bridge:group:publish',
           'bridge:group:inboxStore',
         );
-        _expectOrdered(operationLog, 'bridge:group:inboxStore', 'bridge:bg:end');
+        _expectOrdered(
+          operationLog,
+          'bridge:group:inboxStore',
+          'bridge:bg:end',
+        );
 
         final publishMessage = bridge.sentMessages.firstWhere(
           (raw) =>
@@ -851,7 +862,7 @@ void main() {
     );
 
     testWidgets(
-      'announcement admin text send returns pending after lock/unmount when topic peers are zero',
+      'announcement admin text send returns sent after lock/unmount when topic peers are zero',
       (tester) async {
         final inboxGate = Completer<void>();
         final operationLog = <String>[];
@@ -883,7 +894,11 @@ void main() {
         await pumpFrames(tester, count: 20);
 
         _expectOrdered(operationLog, 'bridge:bg:begin', 'bridge:group:publish');
-        _expectOrdered(operationLog, 'bridge:group:inboxStore', 'bridge:bg:end');
+        _expectOrdered(
+          operationLog,
+          'bridge:group:inboxStore',
+          'bridge:bg:end',
+        );
 
         final publishMessage = bridge.sentMessages.firstWhere(
           (raw) =>
@@ -897,7 +912,7 @@ void main() {
 
         final saved = await msgRepo.getMessage(sentMessageId);
         expect(saved, isNotNull);
-        expect(saved!.status, 'pending');
+        expect(saved!.status, 'sent');
         expect(saved.inboxStored, isTrue);
       },
     );
@@ -924,7 +939,9 @@ void main() {
           ),
         );
 
-        final tempDir = Directory.systemTemp.createTempSync('group-announce-media-');
+        final tempDir = Directory.systemTemp.createTempSync(
+          'group-announce-media-',
+        );
         addTearDown(() {
           if (tempDir.existsSync()) {
             tempDir.deleteSync(recursive: true);
@@ -942,30 +959,31 @@ void main() {
           mediaFileManager: FakeMediaFileManager(),
           initialAttachments: [attachment],
           group: _makeAnnouncementGroup(role: GroupRole.admin),
-          uploadMediaFn: ({
-            required Bridge bridge,
-            required String localFilePath,
-            required String mime,
-            required String recipientPeerId,
-            MediaFileManager? mediaFileManager,
-            int? width,
-            int? height,
-            int? durationMs,
-            List<double>? waveform,
-            List<String>? allowedPeers,
-            String? blobId,
-          }) async {
-            operationLog.add('uploadMediaFn');
-            uploadedBlobId = blobId;
-            return _uploadedMedia(
-              id: blobId ?? 'att-announce-media',
-              messageId: '',
-              mime: mime,
-              localPath: localFilePath,
-              width: 1080,
-              height: 720,
-            );
-          },
+          uploadMediaFn:
+              ({
+                required Bridge bridge,
+                required String localFilePath,
+                required String mime,
+                required String recipientPeerId,
+                MediaFileManager? mediaFileManager,
+                int? width,
+                int? height,
+                int? durationMs,
+                List<double>? waveform,
+                List<String>? allowedPeers,
+                String? blobId,
+              }) async {
+                operationLog.add('uploadMediaFn');
+                uploadedBlobId = blobId;
+                return _uploadedMedia(
+                  id: blobId ?? 'att-announce-media',
+                  messageId: '',
+                  mime: mime,
+                  localPath: localFilePath,
+                  width: 1080,
+                  height: 720,
+                );
+              },
         );
 
         await _sendText(tester, 'Photo update');
@@ -973,10 +991,16 @@ void main() {
 
         _expectOrdered(operationLog, 'bridge:bg:begin', 'uploadMediaFn');
         _expectOrdered(operationLog, 'uploadMediaFn', 'bridge:group:publish');
-        _expectOrdered(operationLog, 'bridge:group:inboxStore', 'bridge:bg:end');
+        _expectOrdered(
+          operationLog,
+          'bridge:group:inboxStore',
+          'bridge:bg:end',
+        );
 
         final publishMessage = bridge.sentMessages.firstWhere(
-          (raw) => (jsonDecode(raw) as Map<String, dynamic>)['cmd'] == 'group:publish',
+          (raw) =>
+              (jsonDecode(raw) as Map<String, dynamic>)['cmd'] ==
+              'group:publish',
         );
         final publishPayload =
             (jsonDecode(publishMessage) as Map<String, dynamic>)['payload']
@@ -991,13 +1015,16 @@ void main() {
         expect(publishMedia['height'], 720);
 
         final inboxMessage = bridge.sentMessages.firstWhere(
-          (raw) => (jsonDecode(raw) as Map<String, dynamic>)['cmd'] == 'group:inboxStore',
+          (raw) =>
+              (jsonDecode(raw) as Map<String, dynamic>)['cmd'] ==
+              'group:inboxStore',
         );
         final inboxPayload =
             (jsonDecode(inboxMessage) as Map<String, dynamic>)['payload']
                 as Map<String, dynamic>;
         final inboxEnvelope =
-            jsonDecode(inboxPayload['message'] as String) as Map<String, dynamic>;
+            jsonDecode(inboxPayload['message'] as String)
+                as Map<String, dynamic>;
         expect(inboxEnvelope['messageId'], sentMessageId);
         expect(inboxEnvelope['keyEpoch'], 7);
         final inboxMedia =
@@ -1030,8 +1057,9 @@ void main() {
         operationLog: operationLog,
         commandGates: {'group:inboxStore': inboxGate},
       );
-      final tempDir =
-          Directory.systemTemp.createTempSync('group-bg-order-proof-');
+      final tempDir = Directory.systemTemp.createTempSync(
+        'group-bg-order-proof-',
+      );
       addTearDown(() {
         if (tempDir.existsSync()) {
           tempDir.deleteSync(recursive: true);
@@ -1046,27 +1074,28 @@ void main() {
         mediaAttachmentRepo: InMemoryMediaAttachmentRepository(),
         mediaFileManager: FakeMediaFileManager(),
         initialAttachments: [attachment],
-        uploadMediaFn: ({
-          required Bridge bridge,
-          required String localFilePath,
-          required String mime,
-          required String recipientPeerId,
-          MediaFileManager? mediaFileManager,
-          int? width,
-          int? height,
-          int? durationMs,
-          List<double>? waveform,
-          List<String>? allowedPeers,
-          String? blobId,
-        }) async {
-          operationLog.add('uploadMediaFn');
-          return _uploadedMedia(
-            id: blobId ?? 'blob-1',
-            messageId: '',
-            mime: mime,
-            localPath: localFilePath,
-          );
-        },
+        uploadMediaFn:
+            ({
+              required Bridge bridge,
+              required String localFilePath,
+              required String mime,
+              required String recipientPeerId,
+              MediaFileManager? mediaFileManager,
+              int? width,
+              int? height,
+              int? durationMs,
+              List<double>? waveform,
+              List<String>? allowedPeers,
+              String? blobId,
+            }) async {
+              operationLog.add('uploadMediaFn');
+              return _uploadedMedia(
+                id: blobId ?? 'blob-1',
+                messageId: '',
+                mime: mime,
+                localPath: localFilePath,
+              );
+            },
       );
 
       await _sendText(tester, 'proof');

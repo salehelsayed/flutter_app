@@ -81,53 +81,62 @@ void main() {
   // Area 1: Pass status
   // ═══════════════════════════════════════════════════════════════════
   group('Area 1: Pass status', () {
-    test('introduced party passes → introducedStatus=passed, recipientStatus unchanged', () async {
-      final introId = await createStandardIntro();
+    test(
+      'introduced party passes → introducedStatus=passed, recipientStatus unchanged',
+      () async {
+        final introId = await createStandardIntro();
 
-      // Carol passes
-      await carol.introRepo.updateIntroducedStatus(introId, IntroductionStatus.passed);
-      final newOverall = IntroductionModel.deriveStatus(
-        recipientStatus: IntroductionStatus.pending,
-        introducedStatus: IntroductionStatus.passed,
-        createdAt: DateTime.now().toUtc().toIso8601String(),
-      );
-      await carol.introRepo.updateOverallStatus(introId, newOverall);
+        // Carol passes
+        await carol.introRepo.updateIntroducedStatus(
+          introId,
+          IntroductionStatus.passed,
+        );
+        final newOverall = IntroductionModel.deriveStatus(
+          recipientStatus: IntroductionStatus.pending,
+          introducedStatus: IntroductionStatus.passed,
+          createdAt: DateTime.now().toUtc().toIso8601String(),
+        );
+        await carol.introRepo.updateOverallStatus(introId, newOverall);
 
-      final updated = await carol.introRepo.getIntroduction(introId);
-      expect(updated!.introducedStatus, IntroductionStatus.passed);
-      expect(updated.recipientStatus, IntroductionStatus.pending);
-      expect(updated.status, IntroductionOverallStatus.passed);
-    });
+        final updated = await carol.introRepo.getIntroduction(introId);
+        expect(updated!.introducedStatus, IntroductionStatus.passed);
+        expect(updated.recipientStatus, IntroductionStatus.pending);
+        expect(updated.status, IntroductionOverallStatus.passed);
+      },
+    );
   });
 
   // ═══════════════════════════════════════════════════════════════════
   // Area 2: Unknown responderId guard
   // ═══════════════════════════════════════════════════════════════════
   group('Area 2: Unknown responderId', () {
-    test('responderId matching neither party → error, no state mutation', () async {
-      final introId = await createStandardIntro();
+    test(
+      'responderId matching neither party → error, no state mutation',
+      () async {
+        final introId = await createStandardIntro();
 
-      final (result, _) = await handleIncomingIntroduction(
-        payload: IntroductionPayload(
-          action: 'accept',
-          introductionId: introId,
-          responderId: 'peer-unknown',
-          responderUsername: 'Unknown',
-          timestamp: DateTime.now().toUtc().toIso8601String(),
-        ),
-        introRepo: bob.introRepo,
-        contactRepo: bob.contactRepo,
-        ownPeerId: bob.peerId,
-      );
+        final (result, _) = await handleIncomingIntroduction(
+          payload: IntroductionPayload(
+            action: 'accept',
+            introductionId: introId,
+            responderId: 'peer-unknown',
+            responderUsername: 'Unknown',
+            timestamp: DateTime.now().toUtc().toIso8601String(),
+          ),
+          introRepo: bob.introRepo,
+          contactRepo: bob.contactRepo,
+          ownPeerId: bob.peerId,
+        );
 
-      expect(result, HandleIntroductionResult.error);
+        expect(result, HandleIntroductionResult.error);
 
-      // Verify no state mutation
-      final intro = await bob.introRepo.getIntroduction(introId);
-      expect(intro!.recipientStatus, IntroductionStatus.pending);
-      expect(intro.introducedStatus, IntroductionStatus.pending);
-      expect(intro.status, IntroductionOverallStatus.pending);
-    });
+        // Verify no state mutation
+        final intro = await bob.introRepo.getIntroduction(introId);
+        expect(intro!.recipientStatus, IntroductionStatus.pending);
+        expect(intro.introducedStatus, IntroductionStatus.pending);
+        expect(intro.status, IntroductionOverallStatus.pending);
+      },
+    );
   });
 
   // ═══════════════════════════════════════════════════════════════════
@@ -144,7 +153,10 @@ void main() {
         recipientId: 'peer-bob',
         introducedId: 'peer-carol',
         status: IntroductionOverallStatus.expired,
-        createdAt: DateTime.now().subtract(const Duration(days: 31)).toUtc().toIso8601String(),
+        createdAt: DateTime.now()
+            .subtract(const Duration(days: 31))
+            .toUtc()
+            .toIso8601String(),
       );
       await introRepo.saveIntroduction(expiredIntro);
 
@@ -181,14 +193,16 @@ void main() {
       contactRepo.addTestContact(target);
 
       // Add another friend so gate 5 passes
-      contactRepo.addTestContact(ContactModel(
-        peerId: 'peer-other',
-        publicKey: 'pk2',
-        rendezvous: '',
-        username: 'Other',
-        signature: 'sig2',
-        scannedAt: DateTime.now().toUtc().toIso8601String(),
-      ));
+      contactRepo.addTestContact(
+        ContactModel(
+          peerId: 'peer-other',
+          publicKey: 'pk2',
+          rendezvous: '',
+          username: 'Other',
+          signature: 'sig2',
+          scannedAt: DateTime.now().toUtc().toIso8601String(),
+        ),
+      );
 
       // Initially banner shows
       expect(
@@ -230,59 +244,79 @@ void main() {
   // Area 5: Concurrent idempotency
   // ═══════════════════════════════════════════════════════════════════
   group('Area 5: Concurrent idempotency', () {
-    test('handleMutualAcceptance called twice → exactly 1 contact created', () async {
-      final introId = await createStandardIntro();
+    test(
+      'handleMutualAcceptance called twice → exactly 1 contact created',
+      () async {
+        final introId = await createStandardIntro();
 
-      // Both accept
-      await bob.introRepo.updateRecipientStatus(introId, IntroductionStatus.accepted);
-      await bob.introRepo.updateIntroducedStatus(introId, IntroductionStatus.accepted);
-      await bob.introRepo.updateOverallStatus(introId, IntroductionOverallStatus.mutualAccepted);
+        // Both accept
+        await bob.introRepo.updateRecipientStatus(
+          introId,
+          IntroductionStatus.accepted,
+        );
+        await bob.introRepo.updateIntroducedStatus(
+          introId,
+          IntroductionStatus.accepted,
+        );
+        await bob.introRepo.updateOverallStatus(
+          introId,
+          IntroductionOverallStatus.mutualAccepted,
+        );
 
-      final intro = await bob.introRepo.getIntroduction(introId);
+        final intro = await bob.introRepo.getIntroduction(introId);
 
-      // Call handleMutualAcceptance twice
-      final contact1 = await handleMutualAcceptance(
-        introduction: intro!,
-        contactRepo: bob.contactRepo,
-        ownPeerId: bob.peerId,
-      );
-      final contact2 = await handleMutualAcceptance(
-        introduction: intro,
-        contactRepo: bob.contactRepo,
-        ownPeerId: bob.peerId,
-      );
+        // Call handleMutualAcceptance twice
+        final contact1 = await handleMutualAcceptance(
+          introduction: intro!,
+          contactRepo: bob.contactRepo,
+          ownPeerId: bob.peerId,
+        );
+        final contact2 = await handleMutualAcceptance(
+          introduction: intro,
+          contactRepo: bob.contactRepo,
+          ownPeerId: bob.peerId,
+        );
 
-      expect(contact1, isNotNull);
-      expect(contact2, isNull); // Already exists → null
+        expect(contact1, isNotNull);
+        expect(contact2, isNull); // Already exists → null
 
-      final allContacts = await bob.contactRepo.getAllContacts();
-      final carolContacts = allContacts.where((c) => c.peerId == carol.peerId);
-      expect(carolContacts.length, 1);
-    });
+        final allContacts = await bob.contactRepo.getAllContacts();
+        final carolContacts = allContacts.where(
+          (c) => c.peerId == carol.peerId,
+        );
+        expect(carolContacts.length, 1);
+      },
+    );
   });
 
   // ═══════════════════════════════════════════════════════════════════
   // Area 6: One-sided no contact
   // ═══════════════════════════════════════════════════════════════════
   group('Area 6: One-sided no contact', () {
-    test('recipient accepts alone → no contact created for other party', () async {
-      final introId = await createStandardIntro();
+    test(
+      'recipient accepts alone → no contact created for other party',
+      () async {
+        final introId = await createStandardIntro();
 
-      // Only Bob accepts
-      await bob.introRepo.updateRecipientStatus(introId, IntroductionStatus.accepted);
-      final newOverall = IntroductionModel.deriveStatus(
-        recipientStatus: IntroductionStatus.accepted,
-        introducedStatus: IntroductionStatus.pending,
-        createdAt: DateTime.now().toUtc().toIso8601String(),
-      );
-      await bob.introRepo.updateOverallStatus(introId, newOverall);
+        // Only Bob accepts
+        await bob.introRepo.updateRecipientStatus(
+          introId,
+          IntroductionStatus.accepted,
+        );
+        final newOverall = IntroductionModel.deriveStatus(
+          recipientStatus: IntroductionStatus.accepted,
+          introducedStatus: IntroductionStatus.pending,
+          createdAt: DateTime.now().toUtc().toIso8601String(),
+        );
+        await bob.introRepo.updateOverallStatus(introId, newOverall);
 
-      // Status should be pending (not mutualAccepted)
-      expect(newOverall, IntroductionOverallStatus.pending);
+        // Status should be pending (not mutualAccepted)
+        expect(newOverall, IntroductionOverallStatus.pending);
 
-      // Carol should not exist as a contact for Bob
-      expect(await bob.contactRepo.contactExists(carol.peerId), isFalse);
-    });
+        // Carol should not exist as a contact for Bob
+        expect(await bob.contactRepo.contactExists(carol.peerId), isFalse);
+      },
+    );
   });
 
   // ═══════════════════════════════════════════════════════════════════
@@ -353,7 +387,10 @@ void main() {
       final introId = await createStandardIntro();
 
       // Bob accepts first (local)
-      await bob.introRepo.updateRecipientStatus(introId, IntroductionStatus.accepted);
+      await bob.introRepo.updateRecipientStatus(
+        introId,
+        IntroductionStatus.accepted,
+      );
 
       // Simulate receiving Carol's accept twice
       await bob.receiveAcceptNotification(
@@ -379,26 +416,32 @@ void main() {
   group('Area 9: Picker exclusion', () {
     test('recipient excluded from friend list', () async {
       final contactRepo = InMemoryContactRepository();
-      contactRepo.addTestContact(ContactModel(
-        peerId: 'peer-bob',
-        publicKey: 'pk',
-        rendezvous: '',
-        username: 'Bob',
-        signature: 'sig',
-        scannedAt: DateTime.now().toUtc().toIso8601String(),
-      ));
-      contactRepo.addTestContact(ContactModel(
-        peerId: 'peer-carol',
-        publicKey: 'pk2',
-        rendezvous: '',
-        username: 'Carol',
-        signature: 'sig2',
-        scannedAt: DateTime.now().toUtc().toIso8601String(),
-      ));
+      contactRepo.addTestContact(
+        ContactModel(
+          peerId: 'peer-bob',
+          publicKey: 'pk',
+          rendezvous: '',
+          username: 'Bob',
+          signature: 'sig',
+          scannedAt: DateTime.now().toUtc().toIso8601String(),
+        ),
+      );
+      contactRepo.addTestContact(
+        ContactModel(
+          peerId: 'peer-carol',
+          publicKey: 'pk2',
+          rendezvous: '',
+          username: 'Carol',
+          signature: 'sig2',
+          scannedAt: DateTime.now().toUtc().toIso8601String(),
+        ),
+      );
 
       final contacts = await contactRepo.getActiveContacts();
       final recipientPeerId = 'peer-bob';
-      final filtered = contacts.where((c) => c.peerId != recipientPeerId && !c.isBlocked).toList();
+      final filtered = contacts
+          .where((c) => c.peerId != recipientPeerId && !c.isBlocked)
+          .toList();
 
       expect(filtered.length, 1);
       expect(filtered.first.peerId, 'peer-carol');
@@ -406,28 +449,34 @@ void main() {
 
     test('blocked contacts excluded from friend list', () async {
       final contactRepo = InMemoryContactRepository();
-      contactRepo.addTestContact(ContactModel(
-        peerId: 'peer-bob',
-        publicKey: 'pk',
-        rendezvous: '',
-        username: 'Bob',
-        signature: 'sig',
-        scannedAt: DateTime.now().toUtc().toIso8601String(),
-      ));
-      contactRepo.addTestContact(ContactModel(
-        peerId: 'peer-carol',
-        publicKey: 'pk2',
-        rendezvous: '',
-        username: 'Carol',
-        signature: 'sig2',
-        scannedAt: DateTime.now().toUtc().toIso8601String(),
-        isBlocked: true,
-        blockedAt: DateTime.now().toUtc().toIso8601String(),
-      ));
+      contactRepo.addTestContact(
+        ContactModel(
+          peerId: 'peer-bob',
+          publicKey: 'pk',
+          rendezvous: '',
+          username: 'Bob',
+          signature: 'sig',
+          scannedAt: DateTime.now().toUtc().toIso8601String(),
+        ),
+      );
+      contactRepo.addTestContact(
+        ContactModel(
+          peerId: 'peer-carol',
+          publicKey: 'pk2',
+          rendezvous: '',
+          username: 'Carol',
+          signature: 'sig2',
+          scannedAt: DateTime.now().toUtc().toIso8601String(),
+          isBlocked: true,
+          blockedAt: DateTime.now().toUtc().toIso8601String(),
+        ),
+      );
 
       final contacts = await contactRepo.getActiveContacts();
       final recipientPeerId = 'peer-dave'; // not in list
-      final filtered = contacts.where((c) => c.peerId != recipientPeerId && !c.isBlocked).toList();
+      final filtered = contacts
+          .where((c) => c.peerId != recipientPeerId && !c.isBlocked)
+          .toList();
 
       // Carol is blocked → excluded
       expect(filtered.length, 1);
@@ -440,34 +489,42 @@ void main() {
       final recipientPeerId = 'peer-bob';
       final introducerPeerId = 'peer-alice';
 
-      contactRepo.addTestContact(ContactModel(
-        peerId: 'peer-carol',
-        publicKey: 'pk',
-        rendezvous: '',
-        username: 'Carol',
-        signature: 'sig',
-        scannedAt: DateTime.now().toUtc().toIso8601String(),
-      ));
-      contactRepo.addTestContact(ContactModel(
-        peerId: 'peer-dave',
-        publicKey: 'pk2',
-        rendezvous: '',
-        username: 'Dave',
-        signature: 'sig2',
-        scannedAt: DateTime.now().toUtc().toIso8601String(),
-      ));
+      contactRepo.addTestContact(
+        ContactModel(
+          peerId: 'peer-carol',
+          publicKey: 'pk',
+          rendezvous: '',
+          username: 'Carol',
+          signature: 'sig',
+          scannedAt: DateTime.now().toUtc().toIso8601String(),
+        ),
+      );
+      contactRepo.addTestContact(
+        ContactModel(
+          peerId: 'peer-dave',
+          publicKey: 'pk2',
+          rendezvous: '',
+          username: 'Dave',
+          signature: 'sig2',
+          scannedAt: DateTime.now().toUtc().toIso8601String(),
+        ),
+      );
 
       // Carol was already introduced to Bob by Alice
-      await introRepo.saveIntroduction(IntroductionModel(
-        id: 'intro-existing',
-        introducerId: introducerPeerId,
-        recipientId: recipientPeerId,
-        introducedId: 'peer-carol',
-        createdAt: DateTime.now().toUtc().toIso8601String(),
-      ));
+      await introRepo.saveIntroduction(
+        IntroductionModel(
+          id: 'intro-existing',
+          introducerId: introducerPeerId,
+          recipientId: recipientPeerId,
+          introducedId: 'peer-carol',
+          createdAt: DateTime.now().toUtc().toIso8601String(),
+        ),
+      );
 
       // Replicate picker logic
-      final existingIntros = await introRepo.getIntroductionsByIntroducer(introducerPeerId);
+      final existingIntros = await introRepo.getIntroductionsByIntroducer(
+        introducerPeerId,
+      );
       final alreadyIntroduced = <String>{};
       for (final intro in existingIntros) {
         if (intro.recipientId == recipientPeerId) {
@@ -495,102 +552,107 @@ void main() {
   // Area 10: Banner full matrix
   // ═══════════════════════════════════════════════════════════════════
   group('Area 10: Banner full matrix', () {
-    test('all 6 gates pass → true; flip each gate individually → false', () async {
-      final contactRepo = InMemoryContactRepository();
+    test(
+      'all 6 gates pass → true; flip each gate individually → false',
+      () async {
+        final contactRepo = InMemoryContactRepository();
 
-      // The target contact (all gates pass)
-      final baseContact = ContactModel(
-        peerId: 'peer-target',
-        publicKey: 'pk',
-        rendezvous: '',
-        username: 'Target',
-        signature: 'sig',
-        scannedAt: DateTime.now().toUtc().toIso8601String(),
-      );
-      contactRepo.addTestContact(baseContact);
+        // The target contact (all gates pass)
+        final baseContact = ContactModel(
+          peerId: 'peer-target',
+          publicKey: 'pk',
+          rendezvous: '',
+          username: 'Target',
+          signature: 'sig',
+          scannedAt: DateTime.now().toUtc().toIso8601String(),
+        );
+        contactRepo.addTestContact(baseContact);
 
-      // Another friend (gate 5: at least 1 other active non-blocked contact)
-      contactRepo.addTestContact(ContactModel(
-        peerId: 'peer-friend',
-        publicKey: 'pk2',
-        rendezvous: '',
-        username: 'Friend',
-        signature: 'sig2',
-        scannedAt: DateTime.now().toUtc().toIso8601String(),
-      ));
+        // Another friend (gate 5: at least 1 other active non-blocked contact)
+        contactRepo.addTestContact(
+          ContactModel(
+            peerId: 'peer-friend',
+            publicKey: 'pk2',
+            rendezvous: '',
+            username: 'Friend',
+            signature: 'sig2',
+            scannedAt: DateTime.now().toUtc().toIso8601String(),
+          ),
+        );
 
-      // All gates pass
-      expect(
-        await shouldShowIntroBanner(
-          contactRepo: contactRepo,
-          contact: baseContact,
-          messageCount: 0,
-        ),
-        isTrue,
-      );
+        // All gates pass
+        expect(
+          await shouldShowIntroBanner(
+            contactRepo: contactRepo,
+            contact: baseContact,
+            messageCount: 0,
+          ),
+          isTrue,
+        );
 
-      // Gate 1: blocked → false
-      expect(
-        await shouldShowIntroBanner(
-          contactRepo: contactRepo,
-          contact: baseContact.copyWith(isBlocked: true),
-          messageCount: 0,
-        ),
-        isFalse,
-      );
+        // Gate 1: blocked → false
+        expect(
+          await shouldShowIntroBanner(
+            contactRepo: contactRepo,
+            contact: baseContact.copyWith(isBlocked: true),
+            messageCount: 0,
+          ),
+          isFalse,
+        );
 
-      // Gate 2: archived → false
-      expect(
-        await shouldShowIntroBanner(
-          contactRepo: contactRepo,
-          contact: baseContact.copyWith(isArchived: true),
-          messageCount: 0,
-        ),
-        isFalse,
-      );
+        // Gate 2: archived → false
+        expect(
+          await shouldShowIntroBanner(
+            contactRepo: contactRepo,
+            contact: baseContact.copyWith(isArchived: true),
+            messageCount: 0,
+          ),
+          isFalse,
+        );
 
-      // Gate 3: banner dismissed → false
-      expect(
-        await shouldShowIntroBanner(
-          contactRepo: contactRepo,
-          contact: baseContact.copyWith(introsBannerDismissed: true),
-          messageCount: 0,
-        ),
-        isFalse,
-      );
+        // Gate 3: banner dismissed → false
+        expect(
+          await shouldShowIntroBanner(
+            contactRepo: contactRepo,
+            contact: baseContact.copyWith(introsBannerDismissed: true),
+            messageCount: 0,
+          ),
+          isFalse,
+        );
 
-      // Gate 4: intros already sent → false
-      expect(
-        await shouldShowIntroBanner(
-          contactRepo: contactRepo,
-          contact: baseContact.copyWith(introsSentAt: '2025-01-01T00:00:00Z'),
-          messageCount: 0,
-        ),
-        isFalse,
-      );
+        // Gate 4: intros already sent → false
+        expect(
+          await shouldShowIntroBanner(
+            contactRepo: contactRepo,
+            contact: baseContact.copyWith(introsSentAt: '2025-01-01T00:00:00Z'),
+            messageCount: 0,
+          ),
+          isFalse,
+        );
 
-      // Gate 5: no other friends (remove friend)
-      final lonelyRepo = InMemoryContactRepository();
-      lonelyRepo.addTestContact(baseContact);
-      expect(
-        await shouldShowIntroBanner(
-          contactRepo: lonelyRepo,
-          contact: baseContact,
-          messageCount: 0,
-        ),
-        isFalse,
-      );
+        // Gate 5: no other friends (remove friend)
+        final lonelyRepo = InMemoryContactRepository();
+        lonelyRepo.addTestContact(baseContact);
+        expect(
+          await shouldShowIntroBanner(
+            contactRepo: lonelyRepo,
+            contact: baseContact,
+            messageCount: 0,
+          ),
+          isFalse,
+        );
 
-      // Gate 6: too many messages → false
-      expect(
-        await shouldShowIntroBanner(
-          contactRepo: contactRepo,
-          contact: baseContact,
-          messageCount: 3,
-        ),
-        isFalse,
-      );
-    });
+        // Gate 6: too many messages → false
+        expect(
+          await shouldShowIntroBanner(
+            contactRepo: contactRepo,
+            contact: baseContact,
+            messageCount: 3,
+          ),
+          isFalse,
+        );
+      },
+    );
   });
 
   // ═══════════════════════════════════════════════════════════════════
@@ -599,7 +661,9 @@ void main() {
   group('Area 11: Encryption fallback', () {
     test('callEncryptMessage returns ok=false → v1 plaintext sent', () async {
       final failBridge = FakeBridge(
-        initialResponses: {'message.encrypt': {'ok': false}},
+        initialResponses: {
+          'message.encrypt': {'ok': false},
+        },
       );
       final failNetwork = FakeP2PNetwork();
       final failAlice = IntroTestUser.create(
@@ -666,19 +730,21 @@ void main() {
     test('v1 fallback when intro record lacks ML-KEM key', () async {
       // Create intro WITHOUT any ML-KEM keys (pre-ML-KEM introduction)
       final introId = 'intro-no-mlkem';
-      await bob.introRepo.saveIntroduction(IntroductionModel(
-        id: introId,
-        introducerId: alice.peerId,
-        recipientId: bob.peerId,
-        introducedId: carol.peerId,
-        introducerUsername: 'Alice',
-        recipientUsername: 'Bob',
-        introducedUsername: 'Carol',
-        // No ML-KEM keys on intro record
-        recipientMlKemPublicKey: null,
-        introducedMlKemPublicKey: null,
-        createdAt: DateTime.now().toUtc().toIso8601String(),
-      ));
+      await bob.introRepo.saveIntroduction(
+        IntroductionModel(
+          id: introId,
+          introducerId: alice.peerId,
+          recipientId: bob.peerId,
+          introducedId: carol.peerId,
+          introducerUsername: 'Alice',
+          recipientUsername: 'Bob',
+          introducedUsername: 'Carol',
+          // No ML-KEM keys on intro record
+          recipientMlKemPublicKey: null,
+          introducedMlKemPublicKey: null,
+          createdAt: DateTime.now().toUtc().toIso8601String(),
+        ),
+      );
 
       // Bob knows Alice (the introducer) but NOT Carol
       bob.addContact(alice);
@@ -690,64 +756,215 @@ void main() {
 
       // Should have 1 encrypt call (for Alice, who is a contact with ML-KEM key)
       // Carol's send should be v1 (no encrypt) because intro has no ML-KEM key for her
-      final encryptCalls =
-          bridgeBob.commandLog.where((c) => c == 'message.encrypt').length;
-      expect(encryptCalls, 1,
-          reason: 'only introducer encrypted, stranger gets v1 (no ML-KEM key on intro)');
+      final encryptCalls = bridgeBob.commandLog
+          .where((c) => c == 'message.encrypt')
+          .length;
+      expect(
+        encryptCalls,
+        1,
+        reason:
+            'only introducer encrypted, stranger gets v1 (no ML-KEM key on intro)',
+      );
     });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════
+  // Area 14: Block does not prevent accept/pass from completing handshake
+  // ═══════════════════════════════════════════════════════════════════
+  group('Area 14: Block does not prevent accept from completing handshake', () {
+    test(
+      'Bob accepts, blocks Carol, Carol accept arrives → mutual acceptance completes',
+      () async {
+        final introId = await createStandardIntro();
+
+        // Bob accepts locally
+        await bob.introRepo.updateRecipientStatus(
+          introId,
+          IntroductionStatus.accepted,
+        );
+
+        // Simulate Carol's accept arriving via handleIncomingIntroduction
+        // (Carol is NOT a contact of Bob yet — block is a no-op at DB level,
+        //  but the IntroductionListener block check could drop the message)
+        final (result, model) = await handleIncomingIntroduction(
+          payload: IntroductionPayload(
+            action: 'accept',
+            introductionId: introId,
+            responderId: carol.peerId,
+            responderUsername: carol.username,
+            timestamp: DateTime.now().toUtc().toIso8601String(),
+          ),
+          introRepo: bob.introRepo,
+          contactRepo: bob.contactRepo,
+          ownPeerId: bob.peerId,
+          bridge: bob.bridge,
+        );
+
+        expect(result, HandleIntroductionResult.success);
+        expect(model, isNotNull);
+        expect(model!.status, IntroductionOverallStatus.mutualAccepted);
+
+        // Carol should now exist as a contact on Bob's device
+        expect(await bob.contactRepo.contactExists(carol.peerId), isTrue);
+      },
+    );
+
+    test(
+      'Bob accepts, Carol becomes contact, Bob blocks Carol, Carol accept duplicate arrives → no crash',
+      () async {
+        final introId = await createStandardIntro();
+
+        // Bob accepts locally
+        await bob.introRepo.updateRecipientStatus(
+          introId,
+          IntroductionStatus.accepted,
+        );
+
+        // First accept from Carol → mutual acceptance → Carol added as contact
+        await bob.receiveAcceptNotification(
+          introId: introId,
+          responderId: carol.peerId,
+          responderUsername: carol.username,
+        );
+
+        expect(await bob.contactRepo.contactExists(carol.peerId), isTrue);
+
+        // Bob blocks Carol
+        await bob.contactRepo.blockContact(carol.peerId);
+        final blockedContact = await bob.contactRepo.getContact(carol.peerId);
+        expect(blockedContact!.isBlocked, isTrue);
+
+        // Duplicate accept arrives (e.g. via inbox) — should not crash,
+        // and should be processed idempotently
+        final (result, model) = await handleIncomingIntroduction(
+          payload: IntroductionPayload(
+            action: 'accept',
+            introductionId: introId,
+            responderId: carol.peerId,
+            responderUsername: carol.username,
+            timestamp: DateTime.now().toUtc().toIso8601String(),
+          ),
+          introRepo: bob.introRepo,
+          contactRepo: bob.contactRepo,
+          ownPeerId: bob.peerId,
+          bridge: bob.bridge,
+        );
+
+        expect(result, HandleIntroductionResult.success);
+        // Contact still exists (not deleted by the duplicate processing)
+        expect(await bob.contactRepo.contactExists(carol.peerId), isTrue);
+      },
+    );
+  });
+
+  // ═══════════════════════════════════════════════════════════════════
+  // Area 15: Introducer-side intro state stays limited to the sent pair
+  // ═══════════════════════════════════════════════════════════════════
+  group('Area 15: Introducer-side data-path state', () {
+    test(
+      'send plus listener delivery does not create unrelated introducer rows',
+      () async {
+        final dave = IntroTestUser.create(
+          peerId: 'peer-dave',
+          username: 'Dave',
+          network: network,
+        );
+        addTearDown(dave.dispose);
+
+        alice.addContact(dave);
+        bob.start();
+        dave.start();
+
+        final friendDave = await alice.contactRepo.getContact(dave.peerId);
+        final intros = await alice.sendIntroductions(
+          recipientPeerId: bob.peerId,
+          friends: [friendDave!],
+        );
+        expect(intros, hasLength(1));
+
+        await Future.delayed(const Duration(milliseconds: 100));
+
+        expect(
+          await bob.introRepo.getIntroduction(intros.single.id),
+          isNotNull,
+        );
+        expect(
+          await dave.introRepo.getIntroduction(intros.single.id),
+          isNotNull,
+        );
+
+        final aliceIntros = await alice.introRepo.getIntroductionsByIntroducer(
+          alice.peerId,
+        );
+        expect(aliceIntros, hasLength(1));
+        expect(aliceIntros.single.id, intros.single.id);
+        expect(aliceIntros.single.recipientId, bob.peerId);
+        expect(aliceIntros.single.introducedId, dave.peerId);
+      },
+    );
   });
 
   // ═══════════════════════════════════════════════════════════════════
   // Area 12: Listener resilience
   // ═══════════════════════════════════════════════════════════════════
   group('Area 12: Listener resilience', () {
-    test('12a: completely malformed JSON → silently dropped, no crash', () async {
-      alice.start();
-      bob.start();
+    test(
+      '12a: completely malformed JSON → silently dropped, no crash',
+      () async {
+        alice.start();
+        bob.start();
 
-      final received = <IntroductionModel>[];
-      bob.introListener.introReceivedStream.listen((m) => received.add(m));
+        final received = <IntroductionModel>[];
+        bob.introListener.introReceivedStream.listen((m) => received.add(m));
 
-      // Inject malformed JSON
-      bob.p2pService.injectIncomingMessage(ChatMessage(
-        from: alice.peerId,
-        to: bob.peerId,
-        content: 'this is not json at all!!!',
-        timestamp: DateTime.now().toUtc().toIso8601String(),
-        isIncoming: true,
-      ));
+        // Inject malformed JSON
+        bob.p2pService.injectIncomingMessage(
+          ChatMessage(
+            from: alice.peerId,
+            to: bob.peerId,
+            content: 'this is not json at all!!!',
+            timestamp: DateTime.now().toUtc().toIso8601String(),
+            isIncoming: true,
+          ),
+        );
 
-      await Future.delayed(const Duration(milliseconds: 50));
+        await Future.delayed(const Duration(milliseconds: 50));
 
-      expect(received, isEmpty);
-    });
+        expect(received, isEmpty);
+      },
+    );
 
-    test('12b: valid envelope but missing required payload fields → dropped', () async {
-      alice.start();
-      bob.start();
+    test(
+      '12b: valid envelope but missing required payload fields → dropped',
+      () async {
+        alice.start();
+        bob.start();
 
-      final received = <IntroductionModel>[];
-      bob.introListener.introReceivedStream.listen((m) => received.add(m));
+        final received = <IntroductionModel>[];
+        bob.introListener.introReceivedStream.listen((m) => received.add(m));
 
-      // Valid envelope structure but missing action/introductionId/timestamp
-      final incomplete = jsonEncode({
-        'type': 'introduction',
-        'version': '1',
-        'payload': {'foo': 'bar'},
-      });
+        // Valid envelope structure but missing action/introductionId/timestamp
+        final incomplete = jsonEncode({
+          'type': 'introduction',
+          'version': '1',
+          'payload': {'foo': 'bar'},
+        });
 
-      bob.p2pService.injectIncomingMessage(ChatMessage(
-        from: alice.peerId,
-        to: bob.peerId,
-        content: incomplete,
-        timestamp: DateTime.now().toUtc().toIso8601String(),
-        isIncoming: true,
-      ));
+        bob.p2pService.injectIncomingMessage(
+          ChatMessage(
+            from: alice.peerId,
+            to: bob.peerId,
+            content: incomplete,
+            timestamp: DateTime.now().toUtc().toIso8601String(),
+            isIncoming: true,
+          ),
+        );
 
-      await Future.delayed(const Duration(milliseconds: 50));
+        await Future.delayed(const Duration(milliseconds: 50));
 
-      expect(received, isEmpty);
-    });
+        expect(received, isEmpty);
+      },
+    );
 
     test('12c: valid envelope with unknown action → no emissions', () async {
       alice.start();
@@ -756,7 +973,9 @@ void main() {
       final received = <IntroductionModel>[];
       final statusChanged = <IntroductionModel>[];
       bob.introListener.introReceivedStream.listen((m) => received.add(m));
-      bob.introListener.introStatusChangedStream.listen((m) => statusChanged.add(m));
+      bob.introListener.introStatusChangedStream.listen(
+        (m) => statusChanged.add(m),
+      );
 
       final unknownAction = jsonEncode({
         'type': 'introduction',
@@ -768,13 +987,15 @@ void main() {
         },
       });
 
-      bob.p2pService.injectIncomingMessage(ChatMessage(
-        from: alice.peerId,
-        to: bob.peerId,
-        content: unknownAction,
-        timestamp: DateTime.now().toUtc().toIso8601String(),
-        isIncoming: true,
-      ));
+      bob.p2pService.injectIncomingMessage(
+        ChatMessage(
+          from: alice.peerId,
+          to: bob.peerId,
+          content: unknownAction,
+          timestamp: DateTime.now().toUtc().toIso8601String(),
+          isIncoming: true,
+        ),
+      );
 
       await Future.delayed(const Duration(milliseconds: 50));
 

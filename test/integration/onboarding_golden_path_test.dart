@@ -42,10 +42,7 @@ String _buildContactRequestEnvelope({
   return jsonEncode({
     'type': 'contact_request',
     'version': '1',
-    'payload': {
-      ...payload,
-      'sig': 'sig-$peerId',
-    },
+    'payload': {...payload, 'sig': 'sig-$peerId'},
   });
 }
 
@@ -159,14 +156,15 @@ void main() {
         p2pService: alice.p2pService,
         identityRepo: identityRepo,
         bridge: bridge,
-        downloadProfilePictureFn: ({
-          required bridge,
-          required contactRepo,
-          required ownerPeerId,
-          required avatarVersion,
-        }) async {
-          return contactRepo.getContact(ownerPeerId);
-        },
+        downloadProfilePictureFn:
+            ({
+              required bridge,
+              required contactRepo,
+              required ownerPeerId,
+              required avatarVersion,
+            }) async {
+              return contactRepo.getContact(ownerPeerId);
+            },
       );
 
       expect(acceptResult, AcceptContactRequestResult.success);
@@ -190,11 +188,12 @@ void main() {
       expect(sendResult, SendChatMessageResult.success);
       expect(sentMessage, isNotNull);
       expect(sentMessage!.status, 'delivered');
-      expect(sentMessage.transport, anyOf('direct', 'reuse', 'local'));
+      expect(sentMessage.transport, anyOf('direct', 'relay', 'local'));
 
       await _waitFor(
         () async =>
-            (await bob.messageRepo.getMessageCountForContact(_alicePeerId)) == 1,
+            (await bob.messageRepo.getMessageCountForContact(_alicePeerId)) ==
+            1,
         description: 'Bob to persist the first message',
       );
 
@@ -212,7 +211,11 @@ void main() {
 
       expect(
         bridge.commandLog,
-        containsAll(['payload.verify', 'contactrequest.encrypt', 'message.encrypt']),
+        containsAll([
+          'payload.verify',
+          'contactrequest.encrypt',
+          'message.encrypt',
+        ]),
       );
     },
   );

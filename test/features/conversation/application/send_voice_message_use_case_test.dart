@@ -155,32 +155,38 @@ void main() {
         expect(result, SendVoiceMessageResult.invalidRecording);
       });
 
-      test('returns invalidMessage if file exceeds 100 MB', () async {
-        // We don't actually create a 100MB file — just pass sizeBytes > 100MB
-        final path = '${tempDir.path}/big.m4a';
-        File(
-          path,
-        ).writeAsBytesSync([1, 2, 3]); // tiny file but model says 101MB
+      test(
+        'returns invalidMessage if file exceeds 100 MB by one byte',
+        () async {
+          // Keep the file tiny; the use case validates the dedicated voice size
+          // field before upload.
+          final path = '${tempDir.path}/big.m4a';
+          File(path).writeAsBytesSync([
+            1,
+            2,
+            3,
+          ]); // tiny file but model says 100MB + 1 byte
 
-        final recording = AudioRecording(
-          filePath: path,
-          durationMs: 3000,
-          sizeBytes: 101 * 1024 * 1024,
-        );
+          final recording = AudioRecording(
+            filePath: path,
+            durationMs: 3000,
+            sizeBytes: (100 * 1024 * 1024) + 1,
+          );
 
-        final (result, _) = await sendVoiceMessage(
-          p2pService: p2pService,
-          messageRepo: messageRepo,
-          targetPeerId: 'target-peer',
-          senderPeerId: 'my-peer',
-          senderUsername: 'Me',
-          recording: recording,
-          bridge: bridge,
-          recipientMlKemPublicKey: mlKemKey,
-        );
+          final (result, _) = await sendVoiceMessage(
+            p2pService: p2pService,
+            messageRepo: messageRepo,
+            targetPeerId: 'target-peer',
+            senderPeerId: 'my-peer',
+            senderUsername: 'Me',
+            recording: recording,
+            bridge: bridge,
+            recipientMlKemPublicKey: mlKemKey,
+          );
 
-        expect(result, SendVoiceMessageResult.invalidRecording);
-      });
+          expect(result, SendVoiceMessageResult.invalidRecording);
+        },
+      );
     });
 
     group('upload and send', () {

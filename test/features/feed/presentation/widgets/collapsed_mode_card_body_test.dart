@@ -1,9 +1,9 @@
-import 'dart:ui' show TextDirection;
 import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/media/video_thumbnail_cache.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
 import 'package:flutter_app/features/feed/domain/models/session_reply.dart';
@@ -14,6 +14,7 @@ import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/linkable_text.dart';
+import 'package:flutter_app/shared/widgets/media/media_thumbnail_image.dart';
 
 /// Minimal valid 1x1 red PNG (67 bytes).
 final Uint8List _tinyPng = Uint8List.fromList([
@@ -703,11 +704,15 @@ void main() {
   group('CollapsedModeCardBody media thumbnail', () {
     late Directory tmpDir;
     late String imagePath;
+    late String videoPath;
 
     setUp(() {
       tmpDir = Directory.systemTemp.createTempSync('thumb_test_');
       imagePath = '${tmpDir.path}/photo.png';
       File(imagePath).writeAsBytesSync(_tinyPng);
+      videoPath = '${tmpDir.path}/clip.mp4';
+      File(videoPath).writeAsBytesSync(const [0x00, 0x00, 0x00, 0x18]);
+      File(derivedVideoThumbnailPath(videoPath)).writeAsBytesSync(_tinyPng);
     });
 
     tearDown(() {
@@ -833,6 +838,46 @@ void main() {
       expect(find.byType(Image), findsOneWidget);
       // "Photo" label should show
       expect(find.text('Photo'), findsOneWidget);
+    });
+
+    testWidgets('shows thumbnail when message has downloaded video + text', (
+      tester,
+    ) async {
+      final thread = ThreadFeedItem(
+        id: 'thread_video',
+        timestamp: DateTime(2026, 2, 9, 15, 0),
+        contactPeerId: 'peer1',
+        contactUsername: 'Solz',
+        messages: [
+          ThreadMessage(
+            id: 'm1',
+            text: 'watch this',
+            time: '3:00 PM',
+            timestamp: DateTime(2026, 2, 9, 15, 0),
+            isIncoming: true,
+            media: [
+              MediaAttachment(
+                id: 'v1',
+                messageId: 'm1',
+                mime: 'video/mp4',
+                size: 1000,
+                mediaType: 'video',
+                localPath: videoPath,
+                downloadStatus: 'done',
+                createdAt: '2026-02-09T15:00:00Z',
+              ),
+            ],
+          ),
+        ],
+        conversationState: ConversationState.read,
+      );
+
+      await tester.pumpWidget(wrap(CollapsedModeCardBody(thread: thread)));
+      await tester.pump();
+
+      expect(find.byType(MediaThumbnailImage), findsOneWidget);
+      expect(find.byIcon(Icons.videocam_outlined), findsNothing);
+      expect(find.text('watch this'), findsOneWidget);
     });
 
     testWidgets(
@@ -1019,37 +1064,43 @@ void main() {
   });
 
   group('CollapsedModeCardBody avatar tap navigation', () {
-    testWidgets('tapping avatar fires onViewFullConversation, not onTapExpand',
-        (tester) async {
-      var navigated = false;
-      var expandTapped = false;
-      final thread = ThreadFeedItem(
-        id: 'thread_nav',
-        timestamp: DateTime(2026, 2, 9, 15, 0),
-        contactPeerId: 'peer1',
-        contactUsername: 'Alice',
-        messages: [
-          ThreadMessage(
-            id: 'm1',
-            text: 'Hello',
-            time: '3:00 PM',
-            timestamp: DateTime(2026, 2, 9, 15, 0),
-            isIncoming: true,
+    testWidgets(
+      'tapping avatar fires onViewFullConversation, not onTapExpand',
+      (tester) async {
+        var navigated = false;
+        var expandTapped = false;
+        final thread = ThreadFeedItem(
+          id: 'thread_nav',
+          timestamp: DateTime(2026, 2, 9, 15, 0),
+          contactPeerId: 'peer1',
+          contactUsername: 'Alice',
+          messages: [
+            ThreadMessage(
+              id: 'm1',
+              text: 'Hello',
+              time: '3:00 PM',
+              timestamp: DateTime(2026, 2, 9, 15, 0),
+              isIncoming: true,
+            ),
+          ],
+          conversationState: ConversationState.read,
+        );
+
+        await tester.pumpWidget(
+          wrap(
+            CollapsedModeCardBody(
+              thread: thread,
+              onViewFullConversation: () => navigated = true,
+              onTapExpand: () => expandTapped = true,
+            ),
           ),
-        ],
-        conversationState: ConversationState.read,
-      );
+        );
 
-      await tester.pumpWidget(wrap(CollapsedModeCardBody(
-        thread: thread,
-        onViewFullConversation: () => navigated = true,
-        onTapExpand: () => expandTapped = true,
-      )));
-
-      await tester.tap(find.byType(UserAvatar));
-      expect(navigated, isTrue);
-      expect(expandTapped, isFalse);
-    });
+        await tester.tap(find.byType(UserAvatar));
+        expect(navigated, isTrue);
+        expect(expandTapped, isFalse);
+      },
+    );
 
     testWidgets('tapping display name still fires onTapExpand', (tester) async {
       var navigated = false;
@@ -1071,11 +1122,15 @@ void main() {
         conversationState: ConversationState.read,
       );
 
-      await tester.pumpWidget(wrap(CollapsedModeCardBody(
-        thread: thread,
-        onViewFullConversation: () => navigated = true,
-        onTapExpand: () => expandTapped = true,
-      )));
+      await tester.pumpWidget(
+        wrap(
+          CollapsedModeCardBody(
+            thread: thread,
+            onViewFullConversation: () => navigated = true,
+            onTapExpand: () => expandTapped = true,
+          ),
+        ),
+      );
 
       await tester.tap(find.text('Alice'));
       expect(expandTapped, isTrue);
@@ -1101,17 +1156,22 @@ void main() {
         conversationState: ConversationState.read,
       );
 
-      await tester.pumpWidget(wrap(CollapsedModeCardBody(
-        thread: thread,
-        onTapExpand: () => expandTapped = true,
-      )));
+      await tester.pumpWidget(
+        wrap(
+          CollapsedModeCardBody(
+            thread: thread,
+            onTapExpand: () => expandTapped = true,
+          ),
+        ),
+      );
 
       await tester.tap(find.text('3:00 PM'));
       expect(expandTapped, isTrue);
     });
 
-    testWidgets('group thread collapsed: tapping icon navigates',
-        (tester) async {
+    testWidgets('group thread collapsed: tapping icon navigates', (
+      tester,
+    ) async {
       var navigated = false;
       var expandTapped = false;
       final groupThread = GroupThreadFeedItem(
@@ -1134,11 +1194,15 @@ void main() {
         conversationState: ConversationState.read,
       );
 
-      await tester.pumpWidget(wrap(CollapsedModeCardBody(
-        thread: groupThread,
-        onViewFullConversation: () => navigated = true,
-        onTapExpand: () => expandTapped = true,
-      )));
+      await tester.pumpWidget(
+        wrap(
+          CollapsedModeCardBody(
+            thread: groupThread,
+            onViewFullConversation: () => navigated = true,
+            onTapExpand: () => expandTapped = true,
+          ),
+        ),
+      );
 
       await tester.tap(find.byIcon(Icons.group_rounded));
       expect(navigated, isTrue);
@@ -1164,18 +1228,23 @@ void main() {
         conversationState: ConversationState.read,
       );
 
-      await tester.pumpWidget(wrap(CollapsedModeCardBody(
-        thread: thread,
-        isExpanded: true,
-        onViewFullConversation: () => navigated = true,
-      )));
+      await tester.pumpWidget(
+        wrap(
+          CollapsedModeCardBody(
+            thread: thread,
+            isExpanded: true,
+            onViewFullConversation: () => navigated = true,
+          ),
+        ),
+      );
 
       await tester.tap(find.byType(UserAvatar));
       expect(navigated, isTrue);
     });
 
-    testWidgets('tapping replied checkmark still fires onTapExpand',
-        (tester) async {
+    testWidgets('tapping replied checkmark still fires onTapExpand', (
+      tester,
+    ) async {
       var expandTapped = false;
       var navigated = false;
       final thread = ThreadFeedItem(
@@ -1203,11 +1272,15 @@ void main() {
         lastRepliedAt: DateTime(2026, 2, 9, 14, 5),
       );
 
-      await tester.pumpWidget(wrap(CollapsedModeCardBody(
-        thread: thread,
-        onViewFullConversation: () => navigated = true,
-        onTapExpand: () => expandTapped = true,
-      )));
+      await tester.pumpWidget(
+        wrap(
+          CollapsedModeCardBody(
+            thread: thread,
+            onViewFullConversation: () => navigated = true,
+            onTapExpand: () => expandTapped = true,
+          ),
+        ),
+      );
 
       await tester.tap(find.byIcon(Icons.check_rounded));
       expect(expandTapped, isTrue);

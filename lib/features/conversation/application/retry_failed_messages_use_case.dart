@@ -7,6 +7,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
+import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
@@ -32,6 +33,57 @@ Future<int> retryFailedMessages({
   required ContactRepository contactRepo,
   required P2PService p2pService,
   required Bridge bridge,
+  MediaAttachmentRepository? mediaAttachmentRepo,
+  UploadMediaFn? uploadMediaFn,
+}) {
+  return _retryFailedMessagesInternal(
+    messageRepo: messageRepo,
+    identityRepo: identityRepo,
+    contactRepo: contactRepo,
+    p2pService: p2pService,
+    bridge: bridge,
+    mediaAttachmentRepo: mediaAttachmentRepo,
+    uploadMediaFn: uploadMediaFn,
+    loadFailedMessages: messageRepo.getFailedOutgoingMessages,
+  );
+}
+
+/// Retries one failed outgoing message in place.
+Future<int> retryFailedMessage({
+  required String messageId,
+  required MessageRepository messageRepo,
+  required IdentityRepository identityRepo,
+  required ContactRepository contactRepo,
+  required P2PService p2pService,
+  required Bridge bridge,
+  MediaAttachmentRepository? mediaAttachmentRepo,
+  UploadMediaFn? uploadMediaFn,
+}) {
+  return _retryFailedMessagesInternal(
+    messageRepo: messageRepo,
+    identityRepo: identityRepo,
+    contactRepo: contactRepo,
+    p2pService: p2pService,
+    bridge: bridge,
+    mediaAttachmentRepo: mediaAttachmentRepo,
+    uploadMediaFn: uploadMediaFn,
+    loadFailedMessages: () async {
+      final message = await messageRepo.getMessage(messageId);
+      if (message == null || message.isIncoming || message.status != 'failed') {
+        return const <ConversationMessage>[];
+      }
+      return <ConversationMessage>[message];
+    },
+  );
+}
+
+Future<int> _retryFailedMessagesInternal({
+  required MessageRepository messageRepo,
+  required IdentityRepository identityRepo,
+  required ContactRepository contactRepo,
+  required P2PService p2pService,
+  required Bridge bridge,
+  required Future<List<ConversationMessage>> Function() loadFailedMessages,
   MediaAttachmentRepository? mediaAttachmentRepo,
   UploadMediaFn? uploadMediaFn,
 }) async {
@@ -69,7 +121,7 @@ Future<int> retryFailedMessages({
     return 0;
   }
 
-  final failedMessages = await messageRepo.getFailedOutgoingMessages();
+  final failedMessages = await loadFailedMessages();
   if (failedMessages.isEmpty) {
     emitFlowEvent(
       layer: 'FL',
@@ -89,116 +141,18 @@ Future<int> retryFailedMessages({
   var successCount = 0;
 
   for (final msg in failedMessages) {
-    try {
-      // Prefer wire_envelope -> inbox-only (preserves media, no re-encrypt)
-      if (msg.wireEnvelope != null && msg.wireEnvelope!.isNotEmpty) {
-        if (msg.transport == 'inbox') {
-          await messageRepo.saveMessage(
-            msg.copyWith(status: 'delivered', wireEnvelope: null),
-          );
-          successCount++;
-          emitFlowEvent(
-            layer: 'FL',
-            event: 'RETRY_FAILED_MESSAGE_ALREADY_INBOX',
-            details: {
-              'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id,
-            },
-          );
-          continue;
-        }
-        try {
-          final stored = await p2pService.storeInInbox(
-            msg.contactPeerId,
-            msg.wireEnvelope!,
-          );
-          if (stored) {
-            await messageRepo.saveMessage(
-              msg.copyWith(
-                status: 'delivered',
-                transport: 'inbox',
-                wireEnvelope: null,
-              ),
-            );
-            successCount++;
-            emitFlowEvent(
-              layer: 'FL',
-              event: 'RETRY_FAILED_MESSAGE_SUCCESS',
-              details: {
-                'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id,
-                'via': 'wire_envelope',
-              },
-            );
-            continue;
-          }
-        } catch (_) {
-          // Wire envelope inbox failed -- fall through to full send
-        }
-      }
-
-      // Look up contact for ML-KEM public key
-      final contact = await contactRepo.getContact(msg.contactPeerId);
-      final mlKemPk = contact?.mlKemPublicKey;
-
-      // Three-branch attachment dispatch (Part F)
-      final (:attachments, :skipMessage) = await _resolveAttachmentsForRetry(
-        messageId: msg.id,
-        mediaAttachmentRepo: mediaAttachmentRepo,
-        bridge: bridge,
-        targetPeerId: msg.contactPeerId,
-        uploadFn: effectiveUploadFn,
-      );
-
-      if (skipMessage) {
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'RETRY_FAILED_MEDIA_LOCAL_FILE_MISSING',
-          details: {'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id},
-        );
-        continue; // Leave as 'failed' -- user must re-send manually
-      }
-
-      final (result, _) = await sendChatMessage(
-        p2pService: p2pService,
-        messageRepo: messageRepo,
-        targetPeerId: msg.contactPeerId,
-        text: msg.text,
-        senderPeerId: identity.peerId,
-        senderUsername: identity.username,
-        messageId: msg.id,
-        timestamp: msg.timestamp,
-        bridge: bridge,
-        recipientMlKemPublicKey: mlKemPk,
-        mediaAttachments: attachments,
-        mediaAttachmentRepo: mediaAttachmentRepo,
-        emitTimingEvent: false,
-      );
-
-      if (result == SendChatMessageResult.success) {
-        successCount++;
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'RETRY_FAILED_MESSAGE_SUCCESS',
-          details: {'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id},
-        );
-      } else {
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'RETRY_FAILED_MESSAGE_STILL_FAILED',
-          details: {
-            'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id,
-            'reason': result.name,
-          },
-        );
-      }
-    } catch (e) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'RETRY_FAILED_MESSAGE_ERROR',
-        details: {
-          'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id,
-          'error': e.toString(),
-        },
-      );
+    final retried = await _retryFailedMessageCandidate(
+      msg: msg,
+      messageRepo: messageRepo,
+      contactRepo: contactRepo,
+      p2pService: p2pService,
+      bridge: bridge,
+      identity: identity,
+      mediaAttachmentRepo: mediaAttachmentRepo,
+      uploadFn: effectiveUploadFn,
+    );
+    if (retried) {
+      successCount++;
     }
   }
 
@@ -214,6 +168,127 @@ Future<int> retryFailedMessages({
   );
 
   return successCount;
+}
+
+Future<bool> _retryFailedMessageCandidate({
+  required ConversationMessage msg,
+  required MessageRepository messageRepo,
+  required ContactRepository contactRepo,
+  required P2PService p2pService,
+  required Bridge bridge,
+  required dynamic identity,
+  required UploadMediaFn uploadFn,
+  MediaAttachmentRepository? mediaAttachmentRepo,
+}) async {
+  try {
+    // Prefer wire_envelope -> inbox-only (preserves media, no re-encrypt)
+    if (msg.wireEnvelope != null && msg.wireEnvelope!.isNotEmpty) {
+      if (msg.transport == 'inbox') {
+        await messageRepo.saveMessage(
+          msg.copyWith(status: 'delivered', wireEnvelope: null),
+        );
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'RETRY_FAILED_MESSAGE_ALREADY_INBOX',
+          details: {'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id},
+        );
+        return true;
+      }
+      try {
+        final stored = await p2pService.storeInInbox(
+          msg.contactPeerId,
+          msg.wireEnvelope!,
+        );
+        if (stored) {
+          await messageRepo.saveMessage(
+            msg.copyWith(
+              status: 'delivered',
+              transport: 'inbox',
+              wireEnvelope: null,
+            ),
+          );
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'RETRY_FAILED_MESSAGE_SUCCESS',
+            details: {
+              'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id,
+              'via': 'wire_envelope',
+            },
+          );
+          return true;
+        }
+      } catch (_) {
+        // Wire envelope inbox failed -- fall through to full send
+      }
+    }
+
+    // Look up contact for ML-KEM public key
+    final contact = await contactRepo.getContact(msg.contactPeerId);
+    final mlKemPk = contact?.mlKemPublicKey;
+
+    // Three-branch attachment dispatch (Part F)
+    final (:attachments, :skipMessage) = await _resolveAttachmentsForRetry(
+      messageId: msg.id,
+      mediaAttachmentRepo: mediaAttachmentRepo,
+      bridge: bridge,
+      targetPeerId: msg.contactPeerId,
+      uploadFn: uploadFn,
+    );
+
+    if (skipMessage) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'RETRY_FAILED_MEDIA_LOCAL_FILE_MISSING',
+        details: {'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id},
+      );
+      return false;
+    }
+
+    final (result, _) = await sendChatMessage(
+      p2pService: p2pService,
+      messageRepo: messageRepo,
+      targetPeerId: msg.contactPeerId,
+      text: msg.text,
+      senderPeerId: identity.peerId,
+      senderUsername: identity.username,
+      messageId: msg.id,
+      timestamp: msg.timestamp,
+      bridge: bridge,
+      recipientMlKemPublicKey: mlKemPk,
+      mediaAttachments: attachments,
+      mediaAttachmentRepo: mediaAttachmentRepo,
+      emitTimingEvent: false,
+    );
+
+    if (result == SendChatMessageResult.success) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'RETRY_FAILED_MESSAGE_SUCCESS',
+        details: {'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id},
+      );
+      return true;
+    }
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'RETRY_FAILED_MESSAGE_STILL_FAILED',
+      details: {
+        'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id,
+        'reason': result.name,
+      },
+    );
+    return false;
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'RETRY_FAILED_MESSAGE_ERROR',
+      details: {
+        'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id,
+        'error': e.toString(),
+      },
+    );
+    return false;
+  }
 }
 
 /// Resolves which attachments (if any) should be passed to [sendChatMessage]

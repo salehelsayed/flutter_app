@@ -151,21 +151,19 @@ void main() {
   }
 
   testWidgets(
-    'needsIdentity recovers surviving mnemonic and routes into first-time experience',
+    'needsIdentity ignores surviving secure-store mnemonic and stays on onboarding',
     (tester) async {
       await secureKeyStore.write('identity_mnemonic12', _storedMnemonic);
 
       await tester.pumpWidget(buildRouterApp());
       await pumpFrames(tester);
 
-      expect(find.byType(FirstTimeExperienceWired), findsOneWidget);
-      expect(find.byType(IdentityChoiceWired), findsNothing);
-      expect(identityRepository.saveIdentityCallCount, 1);
-      expect(identityRepository.loadIdentityCallCount, greaterThanOrEqualTo(2));
-      expect(identityRepository.lastSavedIdentity?.peerId, '12D3KooWRecovered');
-      expect(bridge.commandLog, contains('identity.restore'));
-      expect(bridge.commandLog, contains('mlkem.keygen'));
-      expect(p2pService.startNodeCallCount, 1);
+      expect(find.byType(IdentityChoiceWired), findsOneWidget);
+      expect(find.byType(FirstTimeExperienceWired), findsNothing);
+      expect(identityRepository.saveIdentityCallCount, 0);
+      expect(bridge.commandLog, isNot(contains('identity.restore')));
+      expect(bridge.commandLog, isNot(contains('mlkem.keygen')));
+      expect(p2pService.startNodeCallCount, 0);
     },
   );
 

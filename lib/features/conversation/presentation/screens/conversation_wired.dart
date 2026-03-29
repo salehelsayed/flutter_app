@@ -7,11 +7,13 @@ import 'package:uuid/uuid.dart';
 import 'package:intl/intl.dart' as intl;
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/device/upload_wake_lock.dart';
 import 'package:flutter_app/core/media/amplitude_buffer.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/downsample_waveform.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_picker.dart';
+import 'package:flutter_app/core/media/pending_composer_media.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
@@ -39,10 +41,12 @@ import 'package:flutter_app/features/conversation/domain/repositories/message_re
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/conversation/application/load_reactions_use_case.dart';
 import 'package:flutter_app/features/conversation/application/reaction_listener.dart';
+import 'package:flutter_app/features/conversation/application/retry_failed_messages_use_case.dart';
 import 'package:flutter_app/features/conversation/application/send_reaction_use_case.dart';
 import 'package:flutter_app/features/conversation/application/remove_reaction_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/upload_progress_banner.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/introduction/application/check_intro_banner_use_case.dart';
@@ -90,21 +94,6 @@ typedef SendVoiceMessageFn =
       String? blobId,
     });
 
-/// A pending media attachment with optional video metadata.
-class _PendingMedia {
-  final File file;
-  final int? width;
-  final int? height;
-  final int? durationMs;
-
-  const _PendingMedia({
-    required this.file,
-    this.width,
-    this.height,
-    this.durationMs,
-  });
-}
-
 /// Wired widget that connects ConversationScreen to business logic.
 ///
 /// Loads identity and messages on init, subscribes to incoming message stream,
@@ -122,11 +111,13 @@ class ConversationWired extends StatefulWidget {
   final MediaAttachmentRepository? mediaAttachmentRepo;
   final MediaFileManager? mediaFileManager;
   final List<File>? initialAttachments;
+  final List<PendingComposerMedia>? initialPendingMedia;
   final String? initialText;
   final ImageProcessor? imageProcessor;
   final MediaPicker? mediaPicker;
   final ImageQualityPreference qualityPreference;
   final ImageQualityPreference videoQualityPreference;
+  final int maxAttachmentBudgetBytes;
   final ActiveConversationTracker? conversationTracker;
   final AudioRecorderService? audioRecorderService;
   final ReactionRepository? reactionRepo;
@@ -149,11 +140,13 @@ class ConversationWired extends StatefulWidget {
     this.mediaAttachmentRepo,
     this.mediaFileManager,
     this.initialAttachments,
+    this.initialPendingMedia,
     this.initialText,
     this.imageProcessor,
     this.mediaPicker,
     this.qualityPreference = ImageQualityPreference.compressed,
     this.videoQualityPreference = ImageQualityPreference.compressed,
+    this.maxAttachmentBudgetBytes = kGeneralMediaAttachmentBudgetBytes,
     this.conversationTracker,
     this.audioRecorderService,
     this.reactionRepo,
@@ -185,7 +178,7 @@ class _ConversationWiredState extends State<ConversationWired> {
   bool _initialLoadDone = false;
   bool _isSending = false;
 
-  List<_PendingMedia> _pendingAttachments = [];
+  List<PendingComposerMedia> _pendingAttachments = [];
   final _composerState = ValueNotifier(const ConversationComposerViewState());
   static const _maxAttachments = 10;
 
@@ -198,12 +191,20 @@ class _ConversationWiredState extends State<ConversationWired> {
   // Reaction state
   Map<String, List<MessageReaction>> _reactions = {};
   StreamSubscription<ReactionChange>? _reactionSubscription;
+  StreamSubscription<Map<String, dynamic>>? _mediaUploadProgressSubscription;
 
   // Introduction banner state
   bool _showIntroBanner = false;
   bool _hasOtherFriends = false;
   String? _activeQuoteMessageId;
   String _draftText = '';
+  bool _isTrackingRelayUpload = false;
+  int _trackedUploadTotalBytes = 0;
+  int _trackedUploadCompletedBytes = 0;
+  int _trackedCurrentUploadBytes = 0;
+  String? _trackedCurrentUploadId;
+  bool _allowPopDuringActiveUpload = false;
+  _ActiveAttachmentUpload? _activeAttachmentUpload;
 
   ConversationComposerViewState get _composerViewState => _composerState.value;
 
@@ -211,20 +212,48 @@ class _ConversationWiredState extends State<ConversationWired> {
 
   bool get _isRecording => _composerViewState.recordingState.isActive;
 
+  UploadProgressViewState? get _uploadProgressViewState {
+    if (!_isTrackingRelayUpload || _trackedUploadTotalBytes <= 0) return null;
+    return UploadProgressViewState(
+      sentBytes: (_trackedUploadCompletedBytes + _trackedCurrentUploadBytes)
+          .clamp(0, _trackedUploadTotalBytes),
+      totalBytes: _trackedUploadTotalBytes,
+    );
+  }
+
   @override
   void initState() {
     super.initState();
     _contact = widget.contact;
     _draftText = widget.initialText ?? '';
     widget.conversationTracker?.setActive(widget.contact.peerId);
-    if (widget.initialAttachments != null &&
-        widget.initialAttachments!.isNotEmpty) {
-      _pendingAttachments = widget.initialAttachments!
-          .map((f) => _PendingMedia(file: f))
-          .toList();
-    }
     _updateComposerState(pendingAttachments: _pendingAttachmentFiles());
+    final initialPendingMedia = widget.initialPendingMedia;
+    final initialAttachments = widget.initialAttachments;
+    if (initialPendingMedia != null && initialPendingMedia.isNotEmpty) {
+      final seeded = _seedInitialPendingMediaIfWithinBudget(
+        initialPendingMedia,
+      );
+      if (!seeded) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          unawaited(_hydrateInitialPendingMedia(initialPendingMedia));
+        });
+      }
+    } else if (initialAttachments != null && initialAttachments.isNotEmpty) {
+      final prepared = _prepareLegacyInitialAttachmentsSync(initialAttachments);
+      final seeded = prepared.isNotEmpty
+          ? _seedInitialPendingMediaIfWithinBudget(prepared)
+          : false;
+      if (!seeded) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          unawaited(_hydrateLegacyInitialAttachments(initialAttachments));
+        });
+      }
+    }
     emitFlowEvent(layer: 'FL', event: 'CONV_FL_SCREEN_INIT', details: {});
+    _mediaUploadProgressSubscription = mediaUploadProgressStream.listen(
+      _handleMediaUploadProgress,
+    );
     _scrollController.addListener(_onScroll);
     _loadIdentity();
     if (widget.initialMessages != null) {
@@ -244,6 +273,386 @@ class _ConversationWiredState extends State<ConversationWired> {
     _startListeningForReactions();
     _checkIntroBanner();
     _checkHasOtherFriends();
+  }
+
+  void _handleMediaUploadProgress(Map<String, dynamic> event) {
+    if (!_isTrackingRelayUpload) return;
+    final id = event['id'] as String?;
+    final sentBytes = event['sentBytes'];
+    if (id == null || sentBytes is! num) return;
+    if (_trackedCurrentUploadId != null && _trackedCurrentUploadId != id) {
+      return;
+    }
+    final nextBytes = sentBytes.toInt().clamp(0, _trackedUploadTotalBytes);
+    if (mounted) {
+      setState(() {
+        _trackedCurrentUploadId = id;
+        _trackedCurrentUploadBytes = nextBytes;
+      });
+    } else {
+      _trackedCurrentUploadId = id;
+      _trackedCurrentUploadBytes = nextBytes;
+    }
+  }
+
+  Future<void> _startRelayUploadTracking(int totalBytes) async {
+    if (_isTrackingRelayUpload || totalBytes <= 0) return;
+    if (mounted) {
+      setState(() {
+        _isTrackingRelayUpload = true;
+        _trackedUploadTotalBytes = totalBytes;
+        _trackedUploadCompletedBytes = 0;
+        _trackedCurrentUploadBytes = 0;
+        _trackedCurrentUploadId = null;
+      });
+    } else {
+      _isTrackingRelayUpload = true;
+      _trackedUploadTotalBytes = totalBytes;
+      _trackedUploadCompletedBytes = 0;
+      _trackedCurrentUploadBytes = 0;
+      _trackedCurrentUploadId = null;
+    }
+    await UploadWakeLockController.acquire();
+  }
+
+  void _markRelayUploadStarted(String uploadId) {
+    if (!_isTrackingRelayUpload) return;
+    if (mounted) {
+      setState(() {
+        _trackedCurrentUploadId = uploadId;
+        _trackedCurrentUploadBytes = 0;
+      });
+    } else {
+      _trackedCurrentUploadId = uploadId;
+      _trackedCurrentUploadBytes = 0;
+    }
+  }
+
+  void _markRelayUploadCompleted(int sizeBytes) {
+    if (!_isTrackingRelayUpload) return;
+    final nextCompleted = (_trackedUploadCompletedBytes + sizeBytes).clamp(
+      0,
+      _trackedUploadTotalBytes,
+    );
+    if (mounted) {
+      setState(() {
+        _trackedUploadCompletedBytes = nextCompleted;
+        _trackedCurrentUploadBytes = 0;
+        _trackedCurrentUploadId = null;
+      });
+    } else {
+      _trackedUploadCompletedBytes = nextCompleted;
+      _trackedCurrentUploadBytes = 0;
+      _trackedCurrentUploadId = null;
+    }
+  }
+
+  Future<void> _stopRelayUploadTracking() async {
+    if (!_isTrackingRelayUpload) return;
+    if (mounted) {
+      setState(() {
+        _isTrackingRelayUpload = false;
+        _trackedUploadTotalBytes = 0;
+        _trackedUploadCompletedBytes = 0;
+        _trackedCurrentUploadBytes = 0;
+        _trackedCurrentUploadId = null;
+      });
+    } else {
+      _isTrackingRelayUpload = false;
+      _trackedUploadTotalBytes = 0;
+      _trackedUploadCompletedBytes = 0;
+      _trackedCurrentUploadBytes = 0;
+      _trackedCurrentUploadId = null;
+    }
+    await UploadWakeLockController.release();
+  }
+
+  Future<bool> _confirmLeaveWhileUploadActive() async {
+    if (!_isTrackingRelayUpload || !mounted) return true;
+    final shouldLeave = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Leave conversation?'),
+        content: const Text(
+          'An upload is in progress. Leaving may interrupt it. Are you sure?',
+        ),
+        actions: [
+          TextButton(
+            key: const ValueKey('upload-leave-stay'),
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Stay'),
+          ),
+          FilledButton(
+            key: const ValueKey('upload-leave-confirm'),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Leave'),
+          ),
+        ],
+      ),
+    );
+    return shouldLeave ?? false;
+  }
+
+  Future<void> _handleBackNavigation() async {
+    final shouldPop = await _confirmLeaveWhileUploadActive();
+    if (!shouldPop || !mounted) return;
+    setState(() => _allowPopDuringActiveUpload = true);
+    Navigator.of(context).pop();
+  }
+
+  void _beginActiveAttachmentUpload({
+    required String messageId,
+    required _ComposerSnapshot composerSnapshot,
+  }) {
+    final next = _ActiveAttachmentUpload(
+      messageId: messageId,
+      composerSnapshot: composerSnapshot,
+    );
+    if (mounted) {
+      setState(() => _activeAttachmentUpload = next);
+    } else {
+      _activeAttachmentUpload = next;
+    }
+  }
+
+  void _clearActiveAttachmentUpload() {
+    if (_activeAttachmentUpload == null) return;
+    if (mounted) {
+      setState(() => _activeAttachmentUpload = null);
+    } else {
+      _activeAttachmentUpload = null;
+    }
+  }
+
+  void _requestCancelActiveAttachmentUpload() {
+    final activeUpload = _activeAttachmentUpload;
+    if (activeUpload == null || activeUpload.cancelRequested) {
+      return;
+    }
+    final next = activeUpload.copyWith(cancelRequested: true);
+    if (mounted) {
+      setState(() => _activeAttachmentUpload = next);
+    } else {
+      _activeAttachmentUpload = next;
+    }
+  }
+
+  Future<bool> _cancelActiveAttachmentUploadIfRequested({
+    required ScaffoldMessengerState? messenger,
+  }) async {
+    final activeUpload = _activeAttachmentUpload;
+    if (activeUpload == null || !activeUpload.cancelRequested) {
+      return false;
+    }
+    await widget.mediaAttachmentRepo
+        ?.markUploadPendingAttachmentsFailedForMessage(activeUpload.messageId);
+    await _stopRelayUploadTracking();
+    _clearActiveAttachmentUpload();
+    await _restoreComposerSnapshot(
+      activeUpload.composerSnapshot,
+      optimisticMessageId: activeUpload.messageId,
+      messenger: messenger,
+      snackText: 'Upload cancelled.',
+    );
+    return true;
+  }
+
+  Future<void> _hydrateInitialPendingMedia(
+    List<PendingComposerMedia> initialPendingMedia,
+  ) async {
+    final accepted = await _resolvePendingMediaCandidates(
+      candidateAttachments: initialPendingMedia,
+    );
+    if (!mounted || accepted == null || accepted.isEmpty) return;
+    _pendingAttachments = List<PendingComposerMedia>.from(accepted);
+    _updateComposerState(pendingAttachments: _pendingAttachmentFiles());
+  }
+
+  bool _seedInitialPendingMediaIfWithinBudget(
+    List<PendingComposerMedia> initialPendingMedia,
+  ) {
+    if (initialPendingMedia.isEmpty) return false;
+    final totalBudgetBytes = totalPendingComposerBudgetBytes(
+      initialPendingMedia,
+    );
+    if (totalBudgetBytes > widget.maxAttachmentBudgetBytes) {
+      return false;
+    }
+    _pendingAttachments = List<PendingComposerMedia>.from(initialPendingMedia);
+    _updateComposerState(pendingAttachments: _pendingAttachmentFiles());
+    return true;
+  }
+
+  List<PendingComposerMedia> _prepareLegacyInitialAttachmentsSync(
+    List<File> attachments,
+  ) {
+    final prepared = <PendingComposerMedia>[];
+    for (final attachment in attachments) {
+      if (!attachment.existsSync()) continue;
+      try {
+        prepared.add(
+          PendingComposerMedia(
+            file: attachment,
+            budgetBytes: attachment.lengthSync(),
+          ),
+        );
+      } catch (_) {
+        continue;
+      }
+    }
+    return prepared;
+  }
+
+  Future<void> _hydrateLegacyInitialAttachments(List<File> attachments) async {
+    final prepared = _prepareLegacyInitialAttachmentsSync(attachments);
+    if (prepared.isEmpty) {
+      for (final attachment in attachments) {
+        if (!await attachment.exists()) continue;
+        prepared.add(
+          PendingComposerMedia(
+            file: attachment,
+            budgetBytes: await attachment.length(),
+          ),
+        );
+      }
+    }
+    if (prepared.isEmpty) return;
+    await _hydrateInitialPendingMedia(prepared);
+  }
+
+  Future<void> _attemptAddPendingMedia(
+    List<PendingComposerMedia> candidateAttachments,
+  ) async {
+    final accepted = await _resolvePendingMediaCandidates(
+      candidateAttachments: candidateAttachments,
+    );
+    if (!mounted || accepted == null || accepted.isEmpty) return;
+    _pendingAttachments = [..._pendingAttachments, ...accepted];
+    _updateComposerState(pendingAttachments: _pendingAttachmentFiles());
+  }
+
+  Future<List<PendingComposerMedia>?> _resolvePendingMediaCandidates({
+    required List<PendingComposerMedia> candidateAttachments,
+  }) async {
+    if (candidateAttachments.isEmpty) return const [];
+
+    final combinedBudgetBytes = totalPendingComposerBudgetBytes([
+      ..._pendingAttachments,
+      ...candidateAttachments,
+    ]);
+    if (combinedBudgetBytes <= widget.maxAttachmentBudgetBytes) {
+      return candidateAttachments;
+    }
+
+    final shouldCompress = await _showAttachmentOverflowDialog(
+      totalBudgetBytes: combinedBudgetBytes,
+    );
+    if (shouldCompress != true) {
+      return null;
+    }
+
+    final compressedCandidates = <PendingComposerMedia>[];
+    for (final candidate in candidateAttachments) {
+      compressedCandidates.add(
+        await _preparePendingMedia(
+          candidate.file.path,
+          imageQualityPreference: ImageQualityPreference.compressed,
+          videoQualityPreference: ImageQualityPreference.compressed,
+        ),
+      );
+    }
+
+    final compressedBudgetBytes = totalPendingComposerBudgetBytes([
+      ..._pendingAttachments,
+      ...compressedCandidates,
+    ]);
+    if (compressedBudgetBytes > widget.maxAttachmentBudgetBytes) {
+      _showAttachmentTooLargeMessage();
+      return null;
+    }
+
+    return compressedCandidates;
+  }
+
+  Future<bool?> _showAttachmentOverflowDialog({required int totalBudgetBytes}) {
+    final formattedTotal = formatPendingComposerBudgetBytes(totalBudgetBytes);
+    final formattedLimit = formatPendingComposerBudgetBytes(
+      widget.maxAttachmentBudgetBytes,
+    );
+    return showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Media Too Large'),
+        content: Text(
+          'The attached media is $formattedTotal and exceeds the '
+          '$formattedLimit limit. Would you like to compress and send, '
+          'or cancel?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Compress'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showAttachmentTooLargeMessage() {
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    messenger?.showSnackBar(
+      const SnackBar(
+        content: Text('The media is too large even after compression.'),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  Future<PendingComposerMedia> _preparePendingMedia(
+    String path, {
+    ImageQualityPreference? imageQualityPreference,
+    ImageQualityPreference? videoQualityPreference,
+    bool ownsProcessingLifecycle = true,
+  }) async {
+    final processor = widget.imageProcessor;
+    final isVideo = processor?.isProcessableVideo(path) ?? false;
+    if (isVideo && ownsProcessingLifecycle) {
+      _updateComposerState(
+        isProcessing: true,
+        processingProgress: 0.0,
+        processingCurrent: 0,
+        processingTotal: 0,
+      );
+    }
+
+    try {
+      return await preparePendingComposerMedia(
+        inputPath: path,
+        imageProcessor: processor,
+        imageQualityPreference:
+            imageQualityPreference ?? widget.qualityPreference,
+        videoQualityPreference:
+            videoQualityPreference ?? widget.videoQualityPreference,
+        onVideoProgress: (progress) {
+          if (mounted) {
+            _updateComposerState(processingProgress: progress / 100.0);
+          }
+        },
+      );
+    } finally {
+      if (isVideo && ownsProcessingLifecycle && mounted) {
+        _updateComposerState(
+          isProcessing: false,
+          processingProgress: 0.0,
+          processingCurrent: 0,
+          processingTotal: 0,
+        );
+      }
+    }
   }
 
   Future<void> _checkIntroBanner() async {
@@ -600,14 +1009,18 @@ class _ConversationWiredState extends State<ConversationWired> {
       final composerSnapshot = _ComposerSnapshot(
         draftText: draftText,
         quotedMessageId: quotedMessageId,
-        pendingAttachments: List<_PendingMedia>.from(_pendingAttachments),
+        pendingAttachments: List<PendingComposerMedia>.from(
+          _pendingAttachments,
+        ),
       );
       if (_activeQuoteMessageId != null && mounted) {
         setState(() => _activeQuoteMessageId = null);
       }
 
       // Capture and clear pending attachments
-      final mediaToUpload = List<_PendingMedia>.from(_pendingAttachments);
+      final mediaToUpload = List<PendingComposerMedia>.from(
+        _pendingAttachments,
+      );
       List<MediaAttachment>? optimisticMedia;
 
       if (mediaToUpload.isNotEmpty) {
@@ -682,70 +1095,115 @@ class _ConversationWiredState extends State<ConversationWired> {
         // Upload attachments if any
         List<MediaAttachment>? uploadedAttachments;
         if (mediaToUpload.isNotEmpty && widget.bridge != null) {
-          uploadedAttachments = [];
-          for (var index = 0; index < mediaToUpload.length; index++) {
-            final media = mediaToUpload[index];
-            final mime = _mimeFromPath(media.file.path);
-            final mediaId = optimisticMedia?[index].id ?? _uuid.v4();
+          _beginActiveAttachmentUpload(
+            messageId: optimisticMessage.id,
+            composerSnapshot: composerSnapshot,
+          );
+          try {
+            uploadedAttachments = [];
+            var relayTrackingStarted = false;
+            for (var index = 0; index < mediaToUpload.length; index++) {
+              if (await _cancelActiveAttachmentUploadIfRequested(
+                messenger: messenger,
+              )) {
+                return;
+              }
+              final media = mediaToUpload[index];
+              final mime = _mimeFromPath(media.file.path);
+              final mediaId = optimisticMedia?[index].id ?? _uuid.v4();
+              final fileSize = File(media.file.path).lengthSync();
 
-            // Try local WiFi first.
-            bool localSuccess = false;
-            if (widget.p2pService.isLocalPeer(_contact.peerId)) {
-              localSuccess = await widget.p2pService.sendLocalMedia(
-                peerId: _contact.peerId,
-                filePath: media.file.path,
-                mime: mime,
-                mediaId: mediaId,
-                fromPeerId: identity.peerId,
-                durationMs: media.durationMs,
-              );
-            }
-
-            if (localSuccess) {
-              uploadedAttachments.add(
-                MediaAttachment(
-                  id: mediaId,
-                  messageId: '',
+              // Try local WiFi first.
+              bool localSuccess = false;
+              if (widget.p2pService.isLocalPeer(_contact.peerId)) {
+                localSuccess = await widget.p2pService.sendLocalMedia(
+                  peerId: _contact.peerId,
+                  filePath: media.file.path,
                   mime: mime,
-                  size: await File(media.file.path).length(),
-                  mediaType: MediaAttachment.mediaTypeFromMime(mime),
-                  localPath: media.file.path,
-                  downloadStatus: 'done',
-                  createdAt: DateTime.now().toUtc().toIso8601String(),
+                  mediaId: mediaId,
+                  fromPeerId: identity.peerId,
+                  durationMs: media.durationMs,
+                );
+              }
+
+              if (localSuccess) {
+                if (relayTrackingStarted) {
+                  _markRelayUploadCompleted(fileSize);
+                }
+                uploadedAttachments.add(
+                  MediaAttachment(
+                    id: mediaId,
+                    messageId: '',
+                    mime: mime,
+                    size: fileSize,
+                    mediaType: MediaAttachment.mediaTypeFromMime(mime),
+                    localPath: media.file.path,
+                    downloadStatus: 'done',
+                    createdAt: DateTime.now().toUtc().toIso8601String(),
+                    width: media.width,
+                    height: media.height,
+                    durationMs: media.durationMs,
+                  ),
+                );
+              } else {
+                if (!relayTrackingStarted) {
+                  final remainingBytes = mediaToUpload
+                      .skip(index)
+                      .fold<int>(
+                        0,
+                        (sum, item) => sum + File(item.file.path).lengthSync(),
+                      );
+                  await _startRelayUploadTracking(remainingBytes);
+                  relayTrackingStarted = true;
+                }
+                _markRelayUploadStarted(mediaId);
+                final result = await widget.uploadMediaFn(
+                  bridge: widget.bridge!,
+                  localFilePath: media.file.path,
+                  mime: mime,
+                  recipientPeerId: _contact.peerId,
+                  mediaFileManager: widget.mediaFileManager,
+                  blobId: mediaId,
                   width: media.width,
                   height: media.height,
                   durationMs: media.durationMs,
-                ),
-              );
-            } else {
-              final result = await widget.uploadMediaFn(
-                bridge: widget.bridge!,
-                localFilePath: media.file.path,
-                mime: mime,
-                recipientPeerId: _contact.peerId,
-                mediaFileManager: widget.mediaFileManager,
-                blobId: mediaId,
-                width: media.width,
-                height: media.height,
-                durationMs: media.durationMs,
-              );
+                );
 
-              if (result == null) {
-                if (mounted) {
+                if (result == null) {
+                  if (relayTrackingStarted) {
+                    await _stopRelayUploadTracking();
+                  }
                   await _restoreComposerSnapshot(
                     composerSnapshot,
                     optimisticMessageId: optimisticMessage.id,
                     messenger: messenger,
                     snackText: 'Failed to upload media. Try again.',
                   );
+                  return;
                 }
+                _markRelayUploadCompleted(fileSize);
+                uploadedAttachments.add(result);
+              }
+
+              if (await _cancelActiveAttachmentUploadIfRequested(
+                messenger: messenger,
+              )) {
                 return;
               }
-              uploadedAttachments.add(result);
             }
-          }
-          if (mounted) {
-            _updateComposerState(isUploading: false);
+            if (await _cancelActiveAttachmentUploadIfRequested(
+              messenger: messenger,
+            )) {
+              return;
+            }
+            if (relayTrackingStarted) {
+              await _stopRelayUploadTracking();
+            }
+            if (mounted) {
+              _updateComposerState(isUploading: false);
+            }
+          } finally {
+            _clearActiveAttachmentUpload();
           }
         }
 
@@ -869,6 +1327,67 @@ class _ConversationWiredState extends State<ConversationWired> {
     setState(() => _draftText = text);
   }
 
+  Future<void> _onRetryFailedMedia(String messageId) async {
+    final bridge = widget.bridge;
+    final contactRepo = widget.contactRepo;
+    if (bridge == null || contactRepo == null) {
+      _showFloatingSnackBar(
+        'Retry unavailable right now.',
+        backgroundColor: Colors.red[700],
+      );
+      return;
+    }
+
+    final fallbackMedia = _messages
+        .where((message) => message.id == messageId)
+        .firstOrNull
+        ?.media;
+    final retried = await retryFailedMessage(
+      messageId: messageId,
+      messageRepo: widget.messageRepo,
+      identityRepo: widget.identityRepo,
+      contactRepo: contactRepo,
+      p2pService: widget.p2pService,
+      bridge: bridge,
+      mediaAttachmentRepo: widget.mediaAttachmentRepo,
+      uploadMediaFn: widget.uploadMediaFn,
+    );
+
+    await _refreshMessageWithHydratedMedia(
+      messageId,
+      fallbackMedia: fallbackMedia,
+    );
+
+    if (retried == 0) {
+      _showFloatingSnackBar(
+        'Could not retry media message.',
+        backgroundColor: Colors.red[700],
+      );
+    }
+  }
+
+  Future<void> _onDeleteFailedMedia(String messageId) async {
+    final mediaAttachmentRepo = widget.mediaAttachmentRepo;
+    final storedAttachments =
+        await mediaAttachmentRepo?.getAttachmentsForMessage(messageId) ??
+        const <MediaAttachment>[];
+    final storedPaths = storedAttachments.map(
+      (attachment) => attachment.localPath,
+    );
+
+    await mediaAttachmentRepo?.markUploadPendingAttachmentsFailedForMessage(
+      messageId,
+    );
+    await widget.mediaFileManager?.deleteOwnedPendingUploadFilesForMessage(
+      messageId: messageId,
+      storedPaths: storedPaths,
+    );
+    await mediaAttachmentRepo?.deleteAttachmentsForMessage(messageId);
+    await widget.messageRepo.deleteMessage(messageId);
+
+    _removeLocalMessage(messageId);
+  }
+
   Future<void> _restoreComposerSnapshot(
     _ComposerSnapshot snapshot, {
     required String optimisticMessageId,
@@ -877,7 +1396,9 @@ class _ConversationWiredState extends State<ConversationWired> {
     bool showSnackBar = true,
   }) async {
     _draftText = snapshot.draftText;
-    _pendingAttachments = List<_PendingMedia>.from(snapshot.pendingAttachments);
+    _pendingAttachments = List<PendingComposerMedia>.from(
+      snapshot.pendingAttachments,
+    );
     _updateComposerState(
       pendingAttachments: _pendingAttachmentFiles(),
       isUploading: false,
@@ -988,15 +1509,48 @@ class _ConversationWiredState extends State<ConversationWired> {
       if (picked.isEmpty || !mounted) return;
 
       final selectedFiles = picked.take(remaining).toList();
-      final media = <_PendingMedia>[];
-      for (final xf in selectedFiles) {
-        final result = await _processMediaIfNeeded(xf.path);
-        media.add(result);
+      final processor = widget.imageProcessor;
+      final processingTotal = selectedFiles
+          .where((xf) => processor?.isProcessableVideo(xf.path) ?? false)
+          .length;
+      final useBatchProcessing = processingTotal > 1;
+      var processingCurrent = 0;
+      var didStartBatchProcessing = false;
+      final media = <PendingComposerMedia>[];
+      try {
+        for (final xf in selectedFiles) {
+          final isProcessableVideo =
+              processor?.isProcessableVideo(xf.path) ?? false;
+          if (useBatchProcessing && isProcessableVideo) {
+            didStartBatchProcessing = true;
+            processingCurrent++;
+            _updateComposerState(
+              isProcessing: true,
+              processingProgress: 0.0,
+              processingCurrent: processingCurrent,
+              processingTotal: processingTotal,
+            );
+          }
+
+          final result = await _preparePendingMedia(
+            xf.path,
+            ownsProcessingLifecycle: !useBatchProcessing,
+          );
+          media.add(result);
+        }
+      } finally {
+        if (useBatchProcessing && didStartBatchProcessing && mounted) {
+          _updateComposerState(
+            isProcessing: false,
+            processingProgress: 0.0,
+            processingCurrent: 0,
+            processingTotal: 0,
+          );
+        }
       }
 
       if (!mounted) return;
-      _pendingAttachments = [..._pendingAttachments, ...media];
-      _updateComposerState(pendingAttachments: _pendingAttachmentFiles());
+      await _attemptAddPendingMedia(media);
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -1012,11 +1566,10 @@ class _ConversationWiredState extends State<ConversationWired> {
       if (picked == null || !mounted) return;
       if (_pendingAttachments.length >= _maxAttachments) return;
 
-      final result = await _processMediaIfNeeded(picked.path);
+      final result = await _preparePendingMedia(picked.path);
       if (!mounted) return;
 
-      _pendingAttachments = [..._pendingAttachments, result];
-      _updateComposerState(pendingAttachments: _pendingAttachmentFiles());
+      await _attemptAddPendingMedia([result]);
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -1032,11 +1585,10 @@ class _ConversationWiredState extends State<ConversationWired> {
       if (picked == null || !mounted) return;
       if (_pendingAttachments.length >= _maxAttachments) return;
 
-      final result = await _processMediaIfNeeded(picked.path);
+      final result = await _preparePendingMedia(picked.path);
       if (!mounted) return;
 
-      _pendingAttachments = [..._pendingAttachments, result];
-      _updateComposerState(pendingAttachments: _pendingAttachmentFiles());
+      await _attemptAddPendingMedia([result]);
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -1044,46 +1596,6 @@ class _ConversationWiredState extends State<ConversationWired> {
         details: {'error': e.toString()},
       );
     }
-  }
-
-  /// Processes a media file (image or video) before attaching.
-  Future<_PendingMedia> _processMediaIfNeeded(String path) async {
-    final processor = widget.imageProcessor;
-    if (processor == null) return _PendingMedia(file: File(path));
-
-    if (processor.isProcessableVideo(path)) {
-      _updateComposerState(isProcessing: true, processingProgress: 0.0);
-
-      try {
-        final result = await processor.processVideo(
-          inputPath: path,
-          quality: widget.videoQualityPreference,
-          onProgress: (progress) {
-            if (mounted) {
-              _updateComposerState(processingProgress: progress / 100.0);
-            }
-          },
-        );
-
-        return _PendingMedia(
-          file: File(result.path),
-          width: result.width,
-          height: result.height,
-          durationMs: result.durationMs,
-        );
-      } finally {
-        if (mounted) {
-          _updateComposerState(isProcessing: false);
-        }
-      }
-    }
-
-    // Image processing (existing behavior)
-    final processed = await processor.processImage(
-      inputPath: path,
-      quality: widget.qualityPreference,
-    );
-    return _PendingMedia(file: File(processed));
   }
 
   // -- Voice recording --
@@ -1419,6 +1931,8 @@ class _ConversationWiredState extends State<ConversationWired> {
       }
 
       // Upload + send (relay fallback)
+      await _startRelayUploadTracking(recording.sizeBytes);
+      _markRelayUploadStarted(voiceAttachmentId);
       final (result, voiceMessage) = await widget.sendVoiceMessageFn(
         p2pService: widget.p2pService,
         messageRepo: widget.messageRepo,
@@ -1436,6 +1950,10 @@ class _ConversationWiredState extends State<ConversationWired> {
         quotedMessageId: quotedMessageId,
         blobId: voiceAttachmentId,
       );
+      if (result != SendVoiceMessageResult.uploadFailed) {
+        _markRelayUploadCompleted(recording.sizeBytes);
+      }
+      await _stopRelayUploadTracking();
 
       if (mounted) {
         _updateComposerState(isUploading: false);
@@ -1478,6 +1996,7 @@ class _ConversationWiredState extends State<ConversationWired> {
         }
       }
     } finally {
+      await _stopRelayUploadTracking();
       if (bgTaskId != null && widget.bridge != null) {
         await callBgEnd(widget.bridge!, bgTaskId);
       }
@@ -1678,7 +2197,7 @@ class _ConversationWiredState extends State<ConversationWired> {
 
   void _removeAttachment(int index) {
     if (index < 0 || index >= _pendingAttachments.length) return;
-    final updated = List<_PendingMedia>.from(_pendingAttachments);
+    final updated = List<PendingComposerMedia>.from(_pendingAttachments);
     updated.removeAt(index);
     _pendingAttachments = updated;
     _updateComposerState(pendingAttachments: _pendingAttachmentFiles());
@@ -1695,6 +2214,8 @@ class _ConversationWiredState extends State<ConversationWired> {
     bool? isUploading,
     bool? isProcessing,
     double? processingProgress,
+    int? processingCurrent,
+    int? processingTotal,
     VoiceRecordingState? recordingState,
     Duration? recordingDuration,
     List<double>? amplitudeValues,
@@ -1705,6 +2226,8 @@ class _ConversationWiredState extends State<ConversationWired> {
       isUploading: isUploading,
       isProcessing: isProcessing,
       processingProgress: processingProgress,
+      processingCurrent: processingCurrent,
+      processingTotal: processingTotal,
       recordingState: recordingState,
       recordingDuration: recordingDuration,
       amplitudeValues: amplitudeValues,
@@ -1720,6 +2243,8 @@ class _ConversationWiredState extends State<ConversationWired> {
     return a.isUploading == b.isUploading &&
         a.isProcessing == b.isProcessing &&
         a.processingProgress == b.processingProgress &&
+        a.processingCurrent == b.processingCurrent &&
+        a.processingTotal == b.processingTotal &&
         a.recordingState == b.recordingState &&
         a.recordingDuration == b.recordingDuration &&
         listEquals(a.amplitudeValues, b.amplitudeValues) &&
@@ -1756,6 +2281,13 @@ class _ConversationWiredState extends State<ConversationWired> {
     });
   }
 
+  void _removeLocalMessage(String id) {
+    if (!mounted) return;
+    setState(() {
+      _messages = _messages.where((message) => message.id != id).toList();
+    });
+  }
+
   Future<void> _persistMessageStatus(String id, String status) async {
     try {
       await widget.messageRepo.updateMessageStatus(id, status);
@@ -1766,6 +2298,17 @@ class _ConversationWiredState extends State<ConversationWired> {
         details: {'error': e.toString(), 'status': status},
       );
     }
+  }
+
+  void _showFloatingSnackBar(String text, {Color? backgroundColor}) {
+    if (!mounted) return;
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      SnackBar(
+        content: Text(text),
+        backgroundColor: backgroundColor,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
   }
 
   Future<void> _persistOptimisticAttachments(
@@ -1796,6 +2339,57 @@ class _ConversationWiredState extends State<ConversationWired> {
         details: {'error': e.toString()},
       );
     }
+  }
+
+  Future<void> _refreshMessageWithHydratedMedia(
+    String messageId, {
+    List<MediaAttachment>? fallbackMedia,
+  }) async {
+    final refreshedMessage = await widget.messageRepo.getMessage(messageId);
+    if (refreshedMessage == null || !mounted) return;
+    final hydratedMedia = await _resolveHydratedMediaForMessage(
+      messageId,
+      fallbackMedia: fallbackMedia,
+    );
+    if (!mounted) return;
+    setState(() {
+      _upsertMessageById(refreshedMessage.copyWith(media: hydratedMedia));
+    });
+  }
+
+  Future<List<MediaAttachment>> _resolveHydratedMediaForMessage(
+    String messageId, {
+    List<MediaAttachment>? fallbackMedia,
+  }) async {
+    final mediaAttachmentRepo = widget.mediaAttachmentRepo;
+    if (mediaAttachmentRepo == null) {
+      return fallbackMedia ?? const <MediaAttachment>[];
+    }
+
+    final attachments = await mediaAttachmentRepo.getAttachmentsForMessage(
+      messageId,
+    );
+    if (attachments.isEmpty) {
+      return fallbackMedia ?? const <MediaAttachment>[];
+    }
+
+    final mediaFileManager = widget.mediaFileManager;
+    if (mediaFileManager == null) {
+      return attachments;
+    }
+
+    final resolved = <MediaAttachment>[];
+    for (final attachment in attachments) {
+      if (attachment.localPath == null) {
+        resolved.add(attachment);
+        continue;
+      }
+      final absolutePath = await mediaFileManager.resolveStoredPath(
+        attachment.localPath!,
+      );
+      resolved.add(attachment.copyWith(localPath: absolutePath));
+    }
+    return resolved;
   }
 
   void _onOverflow() {
@@ -2012,6 +2606,7 @@ class _ConversationWiredState extends State<ConversationWired> {
     _repoChangeSubscription?.cancel();
     _contactUpdateSubscription?.cancel();
     _reactionSubscription?.cancel();
+    _mediaUploadProgressSubscription?.cancel();
     _durationSub?.cancel();
     _amplitudeSub?.cancel();
     // Cancel active recording on dispose
@@ -2028,50 +2623,65 @@ class _ConversationWiredState extends State<ConversationWired> {
     final (activeQuoteText, isActiveQuoteUnavailable) =
         _resolveActiveQuotePreview();
 
-    return Scaffold(
-      body: ConversationScreen(
-        contactPeerId: _contact.peerId,
-        contactUsername: _contact.username,
-        connectionDate: _formatConnectionDate(),
-        ownPeerId: _identity?.peerId,
-        messages: _messages,
-        onSend: _onSend,
-        onBack: () => Navigator.of(context).pop(),
-        scrollController: _scrollController,
-        isBlocked: _contact.isBlocked,
-        onUnblock: _onUnblock,
-        onOverflow: widget.contactRepo != null ? _onOverflow : null,
-        isLoadingMore: _isLoadingMore,
-        hasMoreOlderMessages: _hasMoreOlderMessages,
-        initialLoadDone: _initialLoadDone,
-        isSending: _isSending,
-        recordingState: _composerViewState.recordingState,
-        onAttach: _onAttach,
-        onRemoveAttachment: _removeAttachment,
-        onRecordStart: widget.audioRecorderService != null
-            ? _onRecordStart
-            : null,
-        onRecordStop: widget.audioRecorderService != null
-            ? _onRecordStop
-            : null,
-        onRecordCancel: widget.audioRecorderService != null
-            ? _onRecordCancel
-            : null,
-        composerStateListenable: _composerState,
-        initialText: _draftText,
-        onDraftChanged: _onDraftChanged,
-        reactions: _reactions,
-        onReactionSelected: widget.reactionRepo != null
-            ? _onReactionSelected
-            : null,
-        showIntroBanner: _showIntroBanner,
-        bannerContactUsername: _contact.username,
-        onMakeIntroductions: _onMakeIntroductions,
-        onMaybeLater: _onMaybeLater,
-        onQuoteReply: _onQuoteReply,
-        activeQuoteText: activeQuoteText,
-        isActiveQuoteUnavailable: isActiveQuoteUnavailable,
-        onClearQuote: _onClearQuote,
+    return PopScope(
+      canPop: !_isTrackingRelayUpload || _allowPopDuringActiveUpload,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop || !_isTrackingRelayUpload) return;
+        unawaited(_handleBackNavigation());
+      },
+      child: Scaffold(
+        body: ConversationScreen(
+          contactPeerId: _contact.peerId,
+          contactUsername: _contact.username,
+          connectionDate: _formatConnectionDate(),
+          ownPeerId: _identity?.peerId,
+          messages: _messages,
+          onSend: _onSend,
+          onBack: _handleBackNavigation,
+          scrollController: _scrollController,
+          isBlocked: _contact.isBlocked,
+          onUnblock: _onUnblock,
+          onOverflow: widget.contactRepo != null ? _onOverflow : null,
+          isLoadingMore: _isLoadingMore,
+          hasMoreOlderMessages: _hasMoreOlderMessages,
+          initialLoadDone: _initialLoadDone,
+          isSending: _isSending,
+          recordingState: _composerViewState.recordingState,
+          onAttach: _onAttach,
+          onRemoveAttachment: _removeAttachment,
+          onRecordStart: widget.audioRecorderService != null
+              ? _onRecordStart
+              : null,
+          onRecordStop: widget.audioRecorderService != null
+              ? _onRecordStop
+              : null,
+          onRecordCancel: widget.audioRecorderService != null
+              ? _onRecordCancel
+              : null,
+          composerStateListenable: _composerState,
+          initialText: _draftText,
+          onDraftChanged: _onDraftChanged,
+          reactions: _reactions,
+          onReactionSelected: widget.reactionRepo != null
+              ? _onReactionSelected
+              : null,
+          onRetryFailedMedia: _onRetryFailedMedia,
+          onDeleteFailedMedia: _onDeleteFailedMedia,
+          showIntroBanner: _showIntroBanner,
+          bannerContactUsername: _contact.username,
+          uploadProgress: _uploadProgressViewState,
+          onCancelUpload:
+              _activeAttachmentUpload == null ||
+                  _activeAttachmentUpload!.cancelRequested
+              ? null
+              : _requestCancelActiveAttachmentUpload,
+          onMakeIntroductions: _onMakeIntroductions,
+          onMaybeLater: _onMaybeLater,
+          onQuoteReply: _onQuoteReply,
+          activeQuoteText: activeQuoteText,
+          isActiveQuoteUnavailable: isActiveQuoteUnavailable,
+          onClearQuote: _onClearQuote,
+        ),
       ),
     );
   }
@@ -2080,11 +2690,31 @@ class _ConversationWiredState extends State<ConversationWired> {
 class _ComposerSnapshot {
   final String draftText;
   final String? quotedMessageId;
-  final List<_PendingMedia> pendingAttachments;
+  final List<PendingComposerMedia> pendingAttachments;
 
   const _ComposerSnapshot({
     required this.draftText,
     required this.quotedMessageId,
     required this.pendingAttachments,
   });
+}
+
+class _ActiveAttachmentUpload {
+  final String messageId;
+  final _ComposerSnapshot composerSnapshot;
+  final bool cancelRequested;
+
+  const _ActiveAttachmentUpload({
+    required this.messageId,
+    required this.composerSnapshot,
+    this.cancelRequested = false,
+  });
+
+  _ActiveAttachmentUpload copyWith({bool? cancelRequested}) {
+    return _ActiveAttachmentUpload(
+      messageId: messageId,
+      composerSnapshot: composerSnapshot,
+      cancelRequested: cancelRequested ?? this.cancelRequested,
+    );
+  }
 }

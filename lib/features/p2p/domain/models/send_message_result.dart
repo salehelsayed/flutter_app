@@ -3,12 +3,19 @@ class SendMessageResult {
   final bool sent;
   final bool? acked;
   final String? reply;
+  final String? transport;
 
-  const SendMessageResult({required this.sent, this.acked, this.reply});
+  const SendMessageResult({
+    required this.sent,
+    this.acked,
+    this.reply,
+    this.transport,
+  });
 
   /// Whether the remote peer acknowledged receipt.
   ///
   /// When [acked] is explicitly set (from new Go bridge), uses that directly.
   /// Falls back to old inference (non-empty reply = acked) for backward compat.
-  bool get acknowledged => sent && (acked ?? (reply != null && reply!.isNotEmpty));
+  bool get acknowledged =>
+      sent && (acked ?? (reply != null && reply!.isNotEmpty));
 }

@@ -4,7 +4,9 @@ import '../../utils/flow_event_emitter.dart';
 
 /// Inserts a media attachment into the database.
 Future<void> dbInsertMediaAttachment(
-    Database db, Map<String, Object?> row) async {
+  Database db,
+  Map<String, Object?> row,
+) async {
   final id = row['id'] as String? ?? '';
 
   emitFlowEvent(
@@ -37,7 +39,9 @@ Future<void> dbInsertMediaAttachment(
 
 /// Loads all media attachments for a single message.
 Future<List<Map<String, Object?>>> dbLoadMediaForMessage(
-    Database db, String messageId) async {
+  Database db,
+  String messageId,
+) async {
   emitFlowEvent(
     layer: 'DB',
     event: 'MEDIA_DB_LOAD_FOR_MESSAGE_START',
@@ -73,7 +77,9 @@ Future<List<Map<String, Object?>>> dbLoadMediaForMessage(
 
 /// Loads all media attachments for multiple messages in a single query.
 Future<List<Map<String, Object?>>> dbLoadMediaForMessages(
-    Database db, List<String> messageIds) async {
+  Database db,
+  List<String> messageIds,
+) async {
   if (messageIds.isEmpty) return [];
 
   emitFlowEvent(
@@ -108,7 +114,11 @@ Future<List<Map<String, Object?>>> dbLoadMediaForMessages(
 
 /// Updates the local path and download status of a media attachment.
 Future<void> dbUpdateMediaLocalPath(
-    Database db, String id, String localPath, String downloadStatus) async {
+  Database db,
+  String id,
+  String localPath,
+  String downloadStatus,
+) async {
   emitFlowEvent(
     layer: 'DB',
     event: 'MEDIA_DB_UPDATE_LOCAL_PATH_START',
@@ -140,7 +150,10 @@ Future<void> dbUpdateMediaLocalPath(
 
 /// Updates the download status of a media attachment.
 Future<void> dbUpdateMediaDownloadStatus(
-    Database db, String id, String downloadStatus) async {
+  Database db,
+  String id,
+  String downloadStatus,
+) async {
   emitFlowEvent(
     layer: 'DB',
     event: 'MEDIA_DB_UPDATE_STATUS_START',
@@ -208,8 +221,7 @@ Future<int> dbDeleteMediaForMessage(Database db, String messageId) async {
 }
 
 /// Deletes all media attachments for a contact via subquery on messages.
-Future<int> dbDeleteMediaForContact(
-    Database db, String contactPeerId) async {
+Future<int> dbDeleteMediaForContact(Database db, String contactPeerId) async {
   emitFlowEvent(
     layer: 'DB',
     event: 'MEDIA_DB_DELETE_FOR_CONTACT_START',
@@ -238,6 +250,44 @@ Future<int> dbDeleteMediaForContact(
     emitFlowEvent(
       layer: 'DB',
       event: 'MEDIA_DB_DELETE_FOR_CONTACT_ERROR',
+      details: {'error': e.toString()},
+    );
+    rethrow;
+  }
+}
+
+/// Marks one message's upload-pending attachment rows as upload-failed.
+Future<int> dbMarkUploadPendingAttachmentsFailedForMessage(
+  Database db,
+  String messageId,
+) async {
+  emitFlowEvent(
+    layer: 'DB',
+    event: 'MEDIA_DB_TERMINALIZE_UPLOADS_START',
+    details: {
+      'messageId': messageId.length > 8 ? messageId.substring(0, 8) : messageId,
+    },
+  );
+
+  try {
+    final count = await db.update(
+      'media_attachments',
+      {'download_status': 'upload_failed'},
+      where: "message_id = ? AND download_status = 'upload_pending'",
+      whereArgs: [messageId],
+    );
+
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'MEDIA_DB_TERMINALIZE_UPLOADS_SUCCESS',
+      details: {'count': count},
+    );
+
+    return count;
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'MEDIA_DB_TERMINALIZE_UPLOADS_ERROR',
       details: {'error': e.toString()},
     );
     rethrow;
@@ -288,12 +338,9 @@ Future<List<Map<String, Object?>>> dbLoadUploadPendingAttachments(
 
 /// Loads all media attachments with download_status = 'pending'.
 Future<List<Map<String, Object?>>> dbLoadPendingMediaDownloads(
-    Database db) async {
-  emitFlowEvent(
-    layer: 'DB',
-    event: 'MEDIA_DB_LOAD_PENDING_START',
-    details: {},
-  );
+  Database db,
+) async {
+  emitFlowEvent(layer: 'DB', event: 'MEDIA_DB_LOAD_PENDING_START', details: {});
 
   try {
     final results = await db.query(

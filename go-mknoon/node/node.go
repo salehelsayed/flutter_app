@@ -92,6 +92,21 @@ func isCircuitAddr(a ma.Multiaddr) bool {
 	return strings.Contains(a.String(), "/p2p-circuit")
 }
 
+func classifyStreamTransport(s network.Stream) string {
+	conn := s.Conn()
+	if conn == nil {
+		return "direct"
+	}
+
+	if local := conn.LocalMultiaddr(); local != nil && isCircuitAddr(local) {
+		return "relay"
+	}
+	if remote := conn.RemoteMultiaddr(); remote != nil && isCircuitAddr(remote) {
+		return "relay"
+	}
+	return "direct"
+}
+
 // extractIP returns the first IP address from a multiaddr, stripping any
 // ip6zone prefix. Returns nil if the multiaddr does not start with an IP.
 func extractIP(a ma.Multiaddr) net.IP {
@@ -940,7 +955,14 @@ func isRetryableChatStreamOpenError(err error) bool {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return true
 	}
-	return strings.Contains(err.Error(), "failed to open stream")
+	msg := strings.ToLower(err.Error())
+	if strings.Contains(msg, "failed to open stream") {
+		return true
+	}
+	// Reconnect regressions can surface as open-stream dial errors with no
+	// known addresses after relay recovery.
+	return strings.Contains(msg, "failed to dial") &&
+		strings.Contains(msg, "no addresses")
 }
 
 func (n *Node) recoverPeerForSend(h host.Host, pid peer.ID, peerIdStr string, timeout time.Duration) error {
@@ -996,17 +1018,31 @@ func (n *Node) openChatStreamForSend(
 //   - acked=false, err=nil: message written to stream but no ACK received
 //   - acked=false, err!=nil: stream/write error
 func (n *Node) SendMessage(peerIdStr string, message string, timeoutMs int) (string, bool, error) {
+	result, err := n.SendMessageWithTransport(peerIdStr, message, timeoutMs)
+	if err != nil {
+		return "", false, err
+	}
+	return result.Reply, result.Acked, nil
+}
+
+type SendMessageResult struct {
+	Reply     string
+	Acked     bool
+	Transport string
+}
+
+func (n *Node) SendMessageWithTransport(peerIdStr string, message string, timeoutMs int) (SendMessageResult, error) {
 	n.mu.RLock()
 	h := n.host
 	n.mu.RUnlock()
 
 	if h == nil {
-		return "", false, fmt.Errorf("node not started")
+		return SendMessageResult{}, fmt.Errorf("node not started")
 	}
 
 	pid, err := peer.Decode(peerIdStr)
 	if err != nil {
-		return "", false, fmt.Errorf("invalid peer ID: %w", err)
+		return SendMessageResult{}, fmt.Errorf("invalid peer ID: %w", err)
 	}
 
 	timeout := SendTimeout
@@ -1016,26 +1052,32 @@ func (n *Node) SendMessage(peerIdStr string, message string, timeoutMs int) (str
 
 	s, err := n.openChatStreamForSend(h, pid, peerIdStr, timeout)
 	if err != nil {
-		return "", false, fmt.Errorf("open stream: %w", err)
+		return SendMessageResult{}, fmt.Errorf("open stream: %w", err)
 	}
 	defer s.Close()
+
+	transport := classifyStreamTransport(s)
 
 	// Apply deadline to stream read/write so stale connections fail fast.
 	s.SetDeadline(time.Now().Add(timeout))
 
 	// Write message using 4-byte BE framing (same as inbox protocol)
 	if err := writeFrame(s, []byte(message)); err != nil {
-		return "", false, fmt.Errorf("write message: %w", err)
+		return SendMessageResult{}, fmt.Errorf("write message: %w", err)
 	}
 
 	// Read reply
 	replyBytes, err := readFrame(s)
 	if err != nil {
 		// Message was written but ACK read failed
-		return "", false, nil
+		return SendMessageResult{Transport: transport}, nil
 	}
 
-	return string(replyBytes), true, nil
+	return SendMessageResult{
+		Reply:     string(replyBytes),
+		Acked:     true,
+		Transport: transport,
+	}, nil
 }
 
 // SendMessageWithTimeout sends a message with explicit timeout enforcement
@@ -1131,6 +1173,7 @@ func (n *Node) handleIncomingMessage(s network.Stream) {
 		"content":    string(msgBytes),
 		"timestamp":  timestamp,
 		"isIncoming": true,
+		"transport":  classifyStreamTransport(s),
 	}
 
 	n.emitEvent("message:received", msgData)

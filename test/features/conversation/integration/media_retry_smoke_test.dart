@@ -67,6 +67,22 @@ class _FakeMediaAttachmentRepository implements MediaAttachmentRepository {
   }
 
   @override
+  Future<int> markUploadPendingAttachmentsFailedForMessage(
+    String messageId,
+  ) async {
+    var count = 0;
+    for (var i = 0; i < _attachments.length; i++) {
+      final attachment = _attachments[i];
+      if (attachment.messageId == messageId &&
+          attachment.downloadStatus == 'upload_pending') {
+        _attachments[i] = attachment.copyWith(downloadStatus: 'upload_failed');
+        count++;
+      }
+    }
+    return count;
+  }
+
+  @override
   Future<List<MediaAttachment>> getPendingDownloads() async => const [];
   @override
   Future<List<MediaAttachment>> getUploadPendingAttachments() async => [];

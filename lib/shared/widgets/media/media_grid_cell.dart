@@ -1,7 +1,7 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'media_display_helpers.dart';
+import 'media_thumbnail_image.dart';
 import 'video_thumbnail_overlay.dart';
 
 /// A single cell in the media grid: image, video, placeholder, or "+N" overlay.
@@ -47,11 +47,15 @@ class MediaGridCell extends StatelessWidget {
     final hasPath = attachment.localPath != null;
 
     if ((isImage || isVideo) && isDone && hasPath) {
-      return Image.file(
-        File(attachment.localPath!),
+      return MediaThumbnailImage(
+        mediaPath: attachment.localPath!,
+        mediaType: attachment.mediaType,
         fit: BoxFit.cover,
         cacheWidth: 400,
-        errorBuilder: (_, __, ___) => _buildFailedPlaceholder(),
+        placeholder: isVideo
+            ? Container(color: const Color.fromRGBO(0, 0, 0, 0.60))
+            : _buildLoadingPlaceholder(),
+        error: _buildFailedPlaceholder(),
       );
     }
 

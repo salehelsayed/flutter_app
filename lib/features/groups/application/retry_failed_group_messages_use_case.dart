@@ -79,6 +79,49 @@ Future<int> retryFailedGroupMessages({
   required IdentityRepository identityRepo,
   required Bridge bridge,
   required MediaAttachmentRepository mediaAttachmentRepo,
+}) {
+  return _retryFailedGroupMessagesInternal(
+    groupMsgRepo: groupMsgRepo,
+    groupRepo: groupRepo,
+    identityRepo: identityRepo,
+    bridge: bridge,
+    mediaAttachmentRepo: mediaAttachmentRepo,
+    loadFailedMessages: groupMsgRepo.getFailedOutgoingMessages,
+  );
+}
+
+/// Retries one failed outgoing group message in place.
+Future<int> retryFailedGroupMessage({
+  required String messageId,
+  required GroupMessageRepository groupMsgRepo,
+  required GroupRepository groupRepo,
+  required IdentityRepository identityRepo,
+  required Bridge bridge,
+  required MediaAttachmentRepository mediaAttachmentRepo,
+}) {
+  return _retryFailedGroupMessagesInternal(
+    groupMsgRepo: groupMsgRepo,
+    groupRepo: groupRepo,
+    identityRepo: identityRepo,
+    bridge: bridge,
+    mediaAttachmentRepo: mediaAttachmentRepo,
+    loadFailedMessages: () async {
+      final message = await groupMsgRepo.getMessage(messageId);
+      if (message == null || message.isIncoming || message.status != 'failed') {
+        return const <GroupMessage>[];
+      }
+      return <GroupMessage>[message];
+    },
+  );
+}
+
+Future<int> _retryFailedGroupMessagesInternal({
+  required GroupMessageRepository groupMsgRepo,
+  required GroupRepository groupRepo,
+  required IdentityRepository identityRepo,
+  required Bridge bridge,
+  required MediaAttachmentRepository mediaAttachmentRepo,
+  required Future<List<GroupMessage>> Function() loadFailedMessages,
 }) async {
   final retryStopwatch = Stopwatch()..start();
   void emitRetryTiming({
@@ -122,7 +165,7 @@ Future<int> retryFailedGroupMessages({
     return 0;
   }
 
-  final failedMessages = await groupMsgRepo.getFailedOutgoingMessages();
+  final failedMessages = await loadFailedMessages();
   emitFlowEvent(
     layer: 'FL',
     event: 'RETRY_FAILED_GROUP_MESSAGES_FOUND',
@@ -148,86 +191,18 @@ Future<int> retryFailedGroupMessages({
   var skippedCount = 0;
 
   for (final msg in failedMessages) {
-    final retryPayloadAvailable =
-        (msg.inboxRetryPayload?.isNotEmpty ?? false) ||
-        (msg.wireEnvelope?.isNotEmpty ?? false);
-    final textOnlyRetry = _isTextOnlyRetryPayload(msg);
-    final attachments = await mediaAttachmentRepo.getAttachmentsForMessage(
-      msg.id,
+    final outcome = await _retryFailedGroupMessageCandidate(
+      msg: msg,
+      groupMsgRepo: groupMsgRepo,
+      groupRepo: groupRepo,
+      bridge: bridge,
+      mediaAttachmentRepo: mediaAttachmentRepo,
+      identity: identity,
     );
-    final hasPendingUploadAttachments = attachments.any(
-      (attachment) => attachment.downloadStatus == 'upload_pending',
-    );
-    final canRetryWithPersistedAttachments =
-        attachments.isNotEmpty &&
-        attachments.every((attachment) => attachment.downloadStatus == 'done');
-
-    List<MediaAttachment>? retryAttachments;
-    if (textOnlyRetry) {
-      retryAttachments = null;
-    } else if (canRetryWithPersistedAttachments) {
-      retryAttachments = attachments;
-    } else {
+    if (outcome.retried) {
+      successCount++;
+    } else if (outcome.skippedUnsupported) {
       skippedCount++;
-      var reason = 'has_media_or_invalid_payload';
-      if (!retryPayloadAvailable) {
-        reason = 'missing_retry_payload';
-      } else if (hasPendingUploadAttachments) {
-        reason = 'incomplete_media_attachments';
-      } else if (attachments.isEmpty) {
-        reason = 'missing_media_attachments';
-      }
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'RETRY_FAILED_GROUP_MESSAGES_MESSAGE_SKIPPED_UNSUPPORTED',
-        details: {
-          'messageId': _shortId(msg.id),
-          'reason': reason,
-        },
-      );
-      continue;
-    }
-
-    try {
-      final (result, _) = await sendGroupMessage(
-        bridge: bridge,
-        groupRepo: groupRepo,
-        msgRepo: groupMsgRepo,
-        groupId: msg.groupId,
-        text: msg.text,
-        senderPeerId: identity.peerId,
-        senderPublicKey: identity.publicKey,
-        senderPrivateKey: identity.privateKey,
-        senderUsername: msg.senderUsername ?? identity.username,
-        messageId: msg.id,
-        timestamp: msg.timestamp,
-        quotedMessageId: msg.quotedMessageId,
-        mediaAttachments: retryAttachments,
-        mediaAttachmentRepo: mediaAttachmentRepo,
-        emitTimingEvent: false,
-      );
-
-      if (result == SendGroupMessageResult.success ||
-          result == SendGroupMessageResult.successNoPeers) {
-        successCount++;
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'RETRY_FAILED_GROUP_MESSAGES_MESSAGE_SUCCESS',
-          details: {'messageId': _shortId(msg.id), 'result': result.name},
-        );
-      } else {
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'RETRY_FAILED_GROUP_MESSAGES_MESSAGE_STILL_FAILED',
-          details: {'messageId': _shortId(msg.id), 'result': result.name},
-        );
-      }
-    } catch (e) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'RETRY_FAILED_GROUP_MESSAGES_MESSAGE_STILL_FAILED',
-        details: {'messageId': _shortId(msg.id), 'error': e.toString()},
-      );
     }
   }
 
@@ -248,4 +223,94 @@ Future<int> retryFailedGroupMessages({
   );
 
   return successCount;
+}
+
+Future<({bool retried, bool skippedUnsupported})>
+_retryFailedGroupMessageCandidate({
+  required GroupMessage msg,
+  required GroupMessageRepository groupMsgRepo,
+  required GroupRepository groupRepo,
+  required Bridge bridge,
+  required MediaAttachmentRepository mediaAttachmentRepo,
+  required dynamic identity,
+}) async {
+  final retryPayloadAvailable =
+      (msg.inboxRetryPayload?.isNotEmpty ?? false) ||
+      (msg.wireEnvelope?.isNotEmpty ?? false);
+  final textOnlyRetry = _isTextOnlyRetryPayload(msg);
+  final attachments = await mediaAttachmentRepo.getAttachmentsForMessage(
+    msg.id,
+  );
+  final hasPendingUploadAttachments = attachments.any(
+    (attachment) => attachment.downloadStatus == 'upload_pending',
+  );
+  final canRetryWithPersistedAttachments =
+      attachments.isNotEmpty &&
+      attachments.every((attachment) => attachment.downloadStatus == 'done');
+
+  List<MediaAttachment>? retryAttachments;
+  if (textOnlyRetry) {
+    retryAttachments = null;
+  } else if (canRetryWithPersistedAttachments) {
+    retryAttachments = attachments;
+  } else {
+    var reason = 'has_media_or_invalid_payload';
+    if (!retryPayloadAvailable) {
+      reason = 'missing_retry_payload';
+    } else if (hasPendingUploadAttachments) {
+      reason = 'incomplete_media_attachments';
+    } else if (attachments.isEmpty) {
+      reason = 'missing_media_attachments';
+    }
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'RETRY_FAILED_GROUP_MESSAGES_MESSAGE_SKIPPED_UNSUPPORTED',
+      details: {'messageId': _shortId(msg.id), 'reason': reason},
+    );
+    return (retried: false, skippedUnsupported: true);
+  }
+
+  try {
+    final (result, _) = await sendGroupMessage(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      msgRepo: groupMsgRepo,
+      groupId: msg.groupId,
+      text: msg.text,
+      senderPeerId: identity.peerId,
+      senderPublicKey: identity.publicKey,
+      senderPrivateKey: identity.privateKey,
+      senderUsername: msg.senderUsername ?? identity.username,
+      messageId: msg.id,
+      timestamp: msg.timestamp,
+      quotedMessageId: msg.quotedMessageId,
+      mediaAttachments: retryAttachments,
+      mediaAttachmentRepo: mediaAttachmentRepo,
+      emitTimingEvent: false,
+    );
+
+    if (result == SendGroupMessageResult.success ||
+        result == SendGroupMessageResult.successNoPeers) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'RETRY_FAILED_GROUP_MESSAGES_MESSAGE_SUCCESS',
+        details: {'messageId': _shortId(msg.id), 'result': result.name},
+      );
+      return (retried: true, skippedUnsupported: false);
+    }
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'RETRY_FAILED_GROUP_MESSAGES_MESSAGE_STILL_FAILED',
+      details: {'messageId': _shortId(msg.id), 'result': result.name},
+    );
+    return (retried: false, skippedUnsupported: false);
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'RETRY_FAILED_GROUP_MESSAGES_MESSAGE_STILL_FAILED',
+      details: {'messageId': _shortId(msg.id), 'error': e.toString()},
+    );
+    return (retried: false, skippedUnsupported: false);
+  }
 }

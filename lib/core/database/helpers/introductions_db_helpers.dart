@@ -34,6 +34,35 @@ Future<void> dbInsertIntroduction(Database db, Map<String, Object?> row) async {
   }
 }
 
+/// Deletes a single introduction by ID.
+Future<void> dbDeleteIntroduction(Database db, String id) async {
+  emitFlowEvent(
+    layer: 'DB',
+    event: 'INTRODUCTIONS_DB_DELETE_START',
+    details: {'id': id.length > 10 ? id.substring(0, 10) : id},
+  );
+
+  try {
+    await db.delete('introductions', where: 'id = ?', whereArgs: [id]);
+
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'INTRODUCTIONS_DB_DELETE_SUCCESS',
+      details: {'id': id.length > 10 ? id.substring(0, 10) : id},
+    );
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'INTRODUCTIONS_DB_DELETE_ERROR',
+      details: {
+        'id': id.length > 10 ? id.substring(0, 10) : id,
+        'error': e.toString(),
+      },
+    );
+    rethrow;
+  }
+}
+
 /// Loads a single introduction by ID.
 Future<Map<String, Object?>?> dbLoadIntroduction(Database db, String id) async {
   emitFlowEvent(
@@ -69,7 +98,10 @@ Future<Map<String, Object?>?> dbLoadIntroduction(Database db, String id) async {
     emitFlowEvent(
       layer: 'DB',
       event: 'INTRODUCTIONS_DB_LOAD_ERROR',
-      details: {'id': id.length > 10 ? id.substring(0, 10) : id, 'error': e.toString()},
+      details: {
+        'id': id.length > 10 ? id.substring(0, 10) : id,
+        'error': e.toString(),
+      },
     );
     rethrow;
   }
@@ -83,7 +115,11 @@ Future<List<Map<String, Object?>>> dbLoadIntroductionsByRecipient(
   emitFlowEvent(
     layer: 'DB',
     event: 'INTRODUCTIONS_DB_LOAD_BY_RECIPIENT_START',
-    details: {'recipientId': recipientId.length > 10 ? recipientId.substring(0, 10) : recipientId},
+    details: {
+      'recipientId': recipientId.length > 10
+          ? recipientId.substring(0, 10)
+          : recipientId,
+    },
   );
 
   try {
@@ -119,7 +155,11 @@ Future<List<Map<String, Object?>>> dbLoadIntroductionsByIntroduced(
   emitFlowEvent(
     layer: 'DB',
     event: 'INTRODUCTIONS_DB_LOAD_BY_INTRODUCED_START',
-    details: {'introducedId': introducedId.length > 10 ? introducedId.substring(0, 10) : introducedId},
+    details: {
+      'introducedId': introducedId.length > 10
+          ? introducedId.substring(0, 10)
+          : introducedId,
+    },
   );
 
   try {
@@ -155,7 +195,11 @@ Future<List<Map<String, Object?>>> dbLoadIntroductionsByIntroducer(
   emitFlowEvent(
     layer: 'DB',
     event: 'INTRODUCTIONS_DB_LOAD_BY_INTRODUCER_START',
-    details: {'introducerId': introducerId.length > 10 ? introducerId.substring(0, 10) : introducerId},
+    details: {
+      'introducerId': introducerId.length > 10
+          ? introducerId.substring(0, 10)
+          : introducerId,
+    },
   );
 
   try {
@@ -193,8 +237,12 @@ Future<List<Map<String, Object?>>> dbLoadIntroductionsForRecipientAndIntroducer(
     layer: 'DB',
     event: 'INTRODUCTIONS_DB_LOAD_BY_RECIPIENT_AND_INTRODUCER_START',
     details: {
-      'recipientId': recipientId.length > 10 ? recipientId.substring(0, 10) : recipientId,
-      'introducerId': introducerId.length > 10 ? introducerId.substring(0, 10) : introducerId,
+      'recipientId': recipientId.length > 10
+          ? recipientId.substring(0, 10)
+          : recipientId,
+      'introducerId': introducerId.length > 10
+          ? introducerId.substring(0, 10)
+          : introducerId,
     },
   );
 
@@ -233,7 +281,10 @@ Future<void> dbUpdateRecipientStatus(
   emitFlowEvent(
     layer: 'DB',
     event: 'INTRODUCTIONS_DB_UPDATE_RECIPIENT_STATUS_START',
-    details: {'id': id.length > 10 ? id.substring(0, 10) : id, 'status': status},
+    details: {
+      'id': id.length > 10 ? id.substring(0, 10) : id,
+      'status': status,
+    },
   );
 
   try {
@@ -245,7 +296,10 @@ Future<void> dbUpdateRecipientStatus(
     emitFlowEvent(
       layer: 'DB',
       event: 'INTRODUCTIONS_DB_UPDATE_RECIPIENT_STATUS_SUCCESS',
-      details: {'id': id.length > 10 ? id.substring(0, 10) : id, 'status': status},
+      details: {
+        'id': id.length > 10 ? id.substring(0, 10) : id,
+        'status': status,
+      },
     );
   } catch (e) {
     emitFlowEvent(
@@ -267,7 +321,10 @@ Future<void> dbUpdateIntroducedStatus(
   emitFlowEvent(
     layer: 'DB',
     event: 'INTRODUCTIONS_DB_UPDATE_INTRODUCED_STATUS_START',
-    details: {'id': id.length > 10 ? id.substring(0, 10) : id, 'status': status},
+    details: {
+      'id': id.length > 10 ? id.substring(0, 10) : id,
+      'status': status,
+    },
   );
 
   try {
@@ -279,7 +336,10 @@ Future<void> dbUpdateIntroducedStatus(
     emitFlowEvent(
       layer: 'DB',
       event: 'INTRODUCTIONS_DB_UPDATE_INTRODUCED_STATUS_SUCCESS',
-      details: {'id': id.length > 10 ? id.substring(0, 10) : id, 'status': status},
+      details: {
+        'id': id.length > 10 ? id.substring(0, 10) : id,
+        'status': status,
+      },
     );
   } catch (e) {
     emitFlowEvent(
@@ -300,19 +360,25 @@ Future<void> dbUpdateOverallStatus(
   emitFlowEvent(
     layer: 'DB',
     event: 'INTRODUCTIONS_DB_UPDATE_OVERALL_STATUS_START',
-    details: {'id': id.length > 10 ? id.substring(0, 10) : id, 'status': status},
+    details: {
+      'id': id.length > 10 ? id.substring(0, 10) : id,
+      'status': status,
+    },
   );
 
   try {
-    await db.rawUpdate(
-      'UPDATE introductions SET status = ? WHERE id = ?',
-      [status, id],
-    );
+    await db.rawUpdate('UPDATE introductions SET status = ? WHERE id = ?', [
+      status,
+      id,
+    ]);
 
     emitFlowEvent(
       layer: 'DB',
       event: 'INTRODUCTIONS_DB_UPDATE_OVERALL_STATUS_SUCCESS',
-      details: {'id': id.length > 10 ? id.substring(0, 10) : id, 'status': status},
+      details: {
+        'id': id.length > 10 ? id.substring(0, 10) : id,
+        'status': status,
+      },
     );
   } catch (e) {
     emitFlowEvent(

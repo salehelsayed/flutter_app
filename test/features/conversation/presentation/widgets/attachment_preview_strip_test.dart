@@ -30,6 +30,8 @@ void main() {
     bool isUploading = false,
     bool isProcessing = false,
     double processingProgress = 0.0,
+    int processingCurrent = 0,
+    int processingTotal = 0,
     ValueChanged<int>? onRemove,
   }) {
     return MaterialApp(
@@ -39,6 +41,8 @@ void main() {
           isUploading: isUploading,
           isProcessing: isProcessing,
           processingProgress: processingProgress,
+          processingCurrent: processingCurrent,
+          processingTotal: processingTotal,
           onRemove: onRemove,
         ),
       ),
@@ -47,9 +51,7 @@ void main() {
 
   group('AttachmentPreviewStrip', () {
     testWidgets('renders correct number of thumbnails', (tester) async {
-      await tester.pumpWidget(buildTestWidget(
-        attachments: testFiles,
-      ));
+      await tester.pumpWidget(buildTestWidget(attachments: testFiles));
       await tester.pump();
 
       // Each thumbnail is a ClipRRect wrapping an Image.file
@@ -57,41 +59,40 @@ void main() {
     });
 
     testWidgets('shows remove buttons when not uploading', (tester) async {
-      await tester.pumpWidget(buildTestWidget(
-        attachments: testFiles,
-        onRemove: (_) {},
-      ));
+      await tester.pumpWidget(
+        buildTestWidget(attachments: testFiles, onRemove: (_) {}),
+      );
       await tester.pump();
 
       expect(find.byIcon(Icons.close), findsNWidgets(3));
     });
 
     testWidgets('hides remove buttons during upload', (tester) async {
-      await tester.pumpWidget(buildTestWidget(
-        attachments: testFiles,
-        isUploading: true,
-        onRemove: (_) {},
-      ));
+      await tester.pumpWidget(
+        buildTestWidget(
+          attachments: testFiles,
+          isUploading: true,
+          onRemove: (_) {},
+        ),
+      );
       await tester.pump();
 
       expect(find.byIcon(Icons.close), findsNothing);
     });
 
     testWidgets('shows upload overlay spinner during upload', (tester) async {
-      await tester.pumpWidget(buildTestWidget(
-        attachments: testFiles,
-        isUploading: true,
-      ));
+      await tester.pumpWidget(
+        buildTestWidget(attachments: testFiles, isUploading: true),
+      );
       await tester.pump();
 
       expect(find.byType(CircularProgressIndicator), findsNWidgets(3));
     });
 
     testWidgets('no spinner when not uploading', (tester) async {
-      await tester.pumpWidget(buildTestWidget(
-        attachments: testFiles,
-        isUploading: false,
-      ));
+      await tester.pumpWidget(
+        buildTestWidget(attachments: testFiles, isUploading: false),
+      );
       await tester.pump();
 
       expect(find.byType(CircularProgressIndicator), findsNothing);
@@ -99,10 +100,12 @@ void main() {
 
     testWidgets('onRemove fires with correct index', (tester) async {
       int? removedIndex;
-      await tester.pumpWidget(buildTestWidget(
-        attachments: testFiles,
-        onRemove: (index) => removedIndex = index,
-      ));
+      await tester.pumpWidget(
+        buildTestWidget(
+          attachments: testFiles,
+          onRemove: (index) => removedIndex = index,
+        ),
+      );
       await tester.pump();
 
       // Tap the first remove button
@@ -116,9 +119,7 @@ void main() {
     });
 
     testWidgets('renders nothing when empty list given', (tester) async {
-      await tester.pumpWidget(buildTestWidget(
-        attachments: [],
-      ));
+      await tester.pumpWidget(buildTestWidget(attachments: []));
       await tester.pump();
 
       expect(find.byType(Image), findsNothing);
@@ -126,10 +127,9 @@ void main() {
     });
 
     testWidgets('single attachment renders one thumbnail', (tester) async {
-      await tester.pumpWidget(buildTestWidget(
-        attachments: [testFiles[0]],
-        onRemove: (_) {},
-      ));
+      await tester.pumpWidget(
+        buildTestWidget(attachments: [testFiles[0]], onRemove: (_) {}),
+      );
       await tester.pump();
 
       expect(find.byType(Image), findsOneWidget);
@@ -137,77 +137,114 @@ void main() {
     });
 
     testWidgets('no remove buttons when onRemove is null', (tester) async {
-      await tester.pumpWidget(buildTestWidget(
-        attachments: testFiles,
-        onRemove: null,
-      ));
+      await tester.pumpWidget(
+        buildTestWidget(attachments: testFiles, onRemove: null),
+      );
       await tester.pump();
 
       expect(find.byIcon(Icons.close), findsNothing);
     });
 
-    testWidgets('shows processing thumbnail when isProcessing is true',
-        (tester) async {
-      await tester.pumpWidget(buildTestWidget(
-        attachments: [],
-        isProcessing: true,
-        processingProgress: 0.5,
-      ));
+    testWidgets('shows processing thumbnail when isProcessing is true', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        buildTestWidget(
+          attachments: [],
+          isProcessing: true,
+          processingProgress: 0.5,
+        ),
+      );
       await tester.pump();
 
       expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      expect(find.text('Processing'), findsOneWidget);
       expect(find.text('50%'), findsOneWidget);
     });
 
-    testWidgets('processing thumbnail displays correct percentage',
-        (tester) async {
-      await tester.pumpWidget(buildTestWidget(
-        attachments: [],
-        isProcessing: true,
-        processingProgress: 0.73,
-      ));
+    testWidgets(
+      'shows batch processing label when multiple videos are active',
+      (tester) async {
+        await tester.pumpWidget(
+          buildTestWidget(
+            attachments: [],
+            isProcessing: true,
+            processingProgress: 0.5,
+            processingCurrent: 2,
+            processingTotal: 4,
+          ),
+        );
+        await tester.pump();
+
+        expect(find.text('Processing (2/4)'), findsOneWidget);
+        expect(find.text('50%'), findsOneWidget);
+      },
+    );
+
+    testWidgets('processing thumbnail displays correct percentage', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        buildTestWidget(
+          attachments: [],
+          isProcessing: true,
+          processingProgress: 0.73,
+        ),
+      );
       await tester.pump();
 
       expect(find.text('73%'), findsOneWidget);
     });
 
-    testWidgets('processing thumbnail shows determinate CircularProgressIndicator',
-        (tester) async {
-      await tester.pumpWidget(buildTestWidget(
-        attachments: [],
-        isProcessing: true,
-        processingProgress: 0.42,
-      ));
-      await tester.pump();
+    testWidgets(
+      'processing thumbnail shows determinate CircularProgressIndicator',
+      (tester) async {
+        await tester.pumpWidget(
+          buildTestWidget(
+            attachments: [],
+            isProcessing: true,
+            processingProgress: 0.42,
+          ),
+        );
+        await tester.pump();
 
-      final cpi = tester.widget<CircularProgressIndicator>(
-        find.byType(CircularProgressIndicator),
+        final cpi = tester.widget<CircularProgressIndicator>(
+          find.byType(CircularProgressIndicator),
+        );
+        expect(cpi.value, 0.42);
+      },
+    );
+
+    testWidgets(
+      'does not show processing thumbnail when isProcessing is false',
+      (tester) async {
+        await tester.pumpWidget(
+          buildTestWidget(attachments: [], isProcessing: false),
+        );
+        await tester.pump();
+
+        expect(find.byType(CircularProgressIndicator), findsNothing);
+      },
+    );
+
+    testWidgets('shows processing tile alongside existing attachments', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        buildTestWidget(
+          attachments: testFiles,
+          isProcessing: true,
+          processingProgress: 0.25,
+          processingCurrent: 2,
+          processingTotal: 3,
+        ),
       );
-      expect(cpi.value, 0.42);
-    });
-
-    testWidgets('does not show processing thumbnail when isProcessing is false',
-        (tester) async {
-      await tester.pumpWidget(buildTestWidget(
-        attachments: [],
-        isProcessing: false,
-      ));
-      await tester.pump();
-
-      expect(find.byType(CircularProgressIndicator), findsNothing);
-    });
-
-    testWidgets('shows processing tile alongside existing attachments',
-        (tester) async {
-      await tester.pumpWidget(buildTestWidget(
-        attachments: testFiles,
-        isProcessing: true,
-        processingProgress: 0.25,
-      ));
       await tester.pump();
 
       // 3 image thumbnails + 1 processing tile
       expect(find.byType(Image), findsNWidgets(3));
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      expect(find.text('Processing (2/3)'), findsOneWidget);
       expect(find.text('25%'), findsOneWidget);
     });
   });

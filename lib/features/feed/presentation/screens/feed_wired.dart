@@ -9,6 +9,7 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/pending_composer_media.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
@@ -1045,6 +1046,8 @@ class _FeedWiredState extends State<FeedWired> {
   Future<void> _onInlineSend(String contactPeerId, String text) async {
     final identity = _identity;
     if (identity == null) return;
+    final localizations = AppLocalizations.of(context)!;
+    final scaffoldMessenger = ScaffoldMessenger.of(context);
 
     // Optimistic: show session reply immediately before network send.
     final quotedMsgId = _activeQuoteMessageIds[contactPeerId];
@@ -1130,7 +1133,7 @@ class _FeedWiredState extends State<FeedWired> {
         }
         await _loadTotalUnreadCount();
       } else {
-        if (message == null && optimisticMessage != null) {
+        if (message == null) {
           await widget.messageRepository.updateMessageStatus(
             optimisticMessage.id,
             'failed',
@@ -1144,8 +1147,8 @@ class _FeedWiredState extends State<FeedWired> {
         );
         final errorText = result == SendChatMessageResult.encryptionRequired
             ? 'Cannot send: contact does not support encryption.'
-            : AppLocalizations.of(context)!.error_send_message;
-        ScaffoldMessenger.of(context).showSnackBar(
+            : localizations.error_send_message;
+        scaffoldMessenger.showSnackBar(
           SnackBar(
             content: Text(errorText),
             backgroundColor: Colors.red[700],
@@ -1172,9 +1175,9 @@ class _FeedWiredState extends State<FeedWired> {
         details: {'error': e.toString()},
       );
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      scaffoldMessenger.showSnackBar(
         SnackBar(
-          content: Text(AppLocalizations.of(context)!.error_send_message),
+          content: Text(localizations.error_send_message),
           backgroundColor: Colors.red[700],
           behavior: SnackBarBehavior.floating,
         ),
@@ -1265,21 +1268,21 @@ class _FeedWiredState extends State<FeedWired> {
   }) async {
     try {
       final picker = ImagePicker();
-      List<File> files;
+      List<PendingComposerMedia> pendingMedia;
 
       switch (source) {
         case _MediaSource.camera:
           final picked = await picker.pickImage(source: ImageSource.camera);
           if (picked == null || !mounted) return;
-          final path = await _processMediaPath(picked.path);
-          files = [File(path)];
+          final media = await _preparePendingMediaForLaunch(picked.path);
+          pendingMedia = [media];
         case _MediaSource.videoCamera:
           final picked = await picker.pickVideo(source: ImageSource.camera);
           if (picked == null || !mounted) return;
           _showProcessingSnackBar();
-          final path = await _processMediaPath(picked.path);
+          final media = await _preparePendingMediaForLaunch(picked.path);
           if (mounted) ScaffoldMessenger.of(context).hideCurrentSnackBar();
-          files = [File(path)];
+          pendingMedia = [media];
         case _MediaSource.gallery:
           final picked = await picker.pickMultipleMedia();
           if (picked.isEmpty || !mounted) return;
@@ -1287,16 +1290,18 @@ class _FeedWiredState extends State<FeedWired> {
             (xf) => widget.imageProcessor.isProcessableVideo(xf.path),
           );
           if (hasVideo) _showProcessingSnackBar();
-          final processedFiles = <File>[];
+          final processedFiles = <PendingComposerMedia>[];
           for (final xf in picked) {
-            final path = await _processMediaPath(xf.path);
-            processedFiles.add(File(path));
+            processedFiles.add(await _preparePendingMediaForLaunch(xf.path));
           }
           if (hasVideo && mounted) {
             ScaffoldMessenger.of(context).hideCurrentSnackBar();
           }
-          files = processedFiles;
+          pendingMedia = processedFiles;
       }
+      final files = pendingMedia
+          .map((media) => media.file)
+          .toList(growable: false);
 
       final contact = await widget.contactRepository.getContact(contactPeerId);
       if (contact == null || !mounted) return;
@@ -1315,6 +1320,7 @@ class _FeedWiredState extends State<FeedWired> {
                 mediaAttachmentRepo: widget.mediaAttachmentRepository,
                 mediaFileManager: widget.mediaFileManager,
                 initialAttachments: files,
+                initialPendingMedia: pendingMedia,
                 imageProcessor: widget.imageProcessor,
                 qualityPreference: _qualityPreference,
                 videoQualityPreference: _videoQualityPreference,
@@ -1349,17 +1355,13 @@ class _FeedWiredState extends State<FeedWired> {
     );
   }
 
-  /// Processes a media file (image or video) and returns the processed path.
-  Future<String> _processMediaPath(String path) async {
-    final processor = widget.imageProcessor;
-    if (processor.isProcessableVideo(path)) {
-      final result = await processor.processVideo(
-        inputPath: path,
-        quality: _videoQualityPreference,
-      );
-      return result.path;
-    }
-    return processor.processImage(inputPath: path, quality: _qualityPreference);
+  Future<PendingComposerMedia> _preparePendingMediaForLaunch(String path) {
+    return preparePendingComposerMedia(
+      inputPath: path,
+      imageProcessor: widget.imageProcessor,
+      imageQualityPreference: _qualityPreference,
+      videoQualityPreference: _videoQualityPreference,
+    );
   }
 
   Future<void> _loadReactionsForFeed() async {
@@ -1488,6 +1490,7 @@ class _FeedWiredState extends State<FeedWired> {
 
   Future<void> _openGroupConversation(
     GroupThreadFeedItem groupThread, {
+    List<PendingComposerMedia>? initialPendingMedia,
     List<File>? initialAttachments,
   }) async {
     final groupRepo = widget.groupRepository;
@@ -1519,6 +1522,7 @@ class _FeedWiredState extends State<FeedWired> {
               audioRecorderService: widget.audioRecorderService,
               groupConversationTracker: widget.groupConversationTracker,
               reactionRepo: widget.reactionRepository,
+              initialPendingMedia: initialPendingMedia,
               initialAttachments: initialAttachments,
             ),
           ),
@@ -1611,21 +1615,21 @@ class _FeedWiredState extends State<FeedWired> {
   }) async {
     try {
       final picker = ImagePicker();
-      List<File> files;
+      List<PendingComposerMedia> pendingMedia;
 
       switch (source) {
         case _MediaSource.camera:
           final picked = await picker.pickImage(source: ImageSource.camera);
           if (picked == null || !mounted) return;
-          final path = await _processMediaPath(picked.path);
-          files = [File(path)];
+          final media = await _preparePendingMediaForLaunch(picked.path);
+          pendingMedia = [media];
         case _MediaSource.videoCamera:
           final picked = await picker.pickVideo(source: ImageSource.camera);
           if (picked == null || !mounted) return;
           _showProcessingSnackBar();
-          final path = await _processMediaPath(picked.path);
+          final media = await _preparePendingMediaForLaunch(picked.path);
           if (mounted) ScaffoldMessenger.of(context).hideCurrentSnackBar();
-          files = [File(path)];
+          pendingMedia = [media];
         case _MediaSource.gallery:
           final picked = await picker.pickMultipleMedia();
           if (picked.isEmpty || !mounted) return;
@@ -1633,20 +1637,26 @@ class _FeedWiredState extends State<FeedWired> {
             (xf) => widget.imageProcessor.isProcessableVideo(xf.path),
           );
           if (hasVideo) _showProcessingSnackBar();
-          final processedFiles = <File>[];
+          final processedFiles = <PendingComposerMedia>[];
           for (final xf in picked) {
-            final path = await _processMediaPath(xf.path);
-            processedFiles.add(File(path));
+            processedFiles.add(await _preparePendingMediaForLaunch(xf.path));
           }
           if (hasVideo && mounted) {
             ScaffoldMessenger.of(context).hideCurrentSnackBar();
           }
-          files = processedFiles;
+          pendingMedia = processedFiles;
       }
+      final files = pendingMedia
+          .map((media) => media.file)
+          .toList(growable: false);
 
       if (!mounted) return;
 
-      await _openGroupConversation(groupThread, initialAttachments: files);
+      await _openGroupConversation(
+        groupThread,
+        initialPendingMedia: pendingMedia,
+        initialAttachments: files,
+      );
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -1922,6 +1932,7 @@ class _FeedWiredState extends State<FeedWired> {
               appShellController: widget.appShellController,
               postsPrivacySettingsRepository:
                   widget.postsPrivacySettingsRepository,
+              introductionRepository: widget.introductionRepository,
               nearbyLocationService: widget.nearbyLocationService,
             ),
           ),

@@ -9,11 +9,12 @@ type EventCallback interface {
 	// Format: { "event": "<name>", "data": { ... } }
 	//
 	// Events:
-	//   "message:received"        — { from, to, content, timestamp, isIncoming }
+	//   "message:received"        — { from, to, content, timestamp, isIncoming, transport }
 	//   "peer:connected"          — { peerId, address, direction }
 	//   "peer:disconnected"       — { peerId }
 	//   "addresses:updated"       — { listenAddresses, circuitAddresses }
 	//   "relay:state"             — { relayState, healthyRelayCount, watchdogRestartCount, ... }
+	//   "media:upload_progress"   — { id, sentBytes, totalBytes, toPeerId }
 	//   "group_message:received"  — { groupId, senderId, senderUsername, keyEpoch, text, timestamp }
 	OnEvent(jsonString string)
 }

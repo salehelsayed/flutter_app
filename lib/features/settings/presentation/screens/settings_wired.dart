@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
@@ -17,11 +18,14 @@ import 'package:flutter_app/features/contacts/domain/repositories/contact_reposi
 import 'package:flutter_app/features/home/application/identity_avatar_resolver.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
+import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
+import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository.dart';
 import 'package:flutter_app/features/posts/application/nearby_location_service.dart';
 import 'package:flutter_app/features/posts/domain/models/posts_privacy_settings.dart';
 import 'package:flutter_app/features/posts/domain/repositories/posts_privacy_settings_repository.dart';
 import 'package:flutter_app/features/settings/application/helpers/avatar_normalization_helper.dart';
 import 'package:flutter_app/features/settings/application/upload_profile_picture_use_case.dart';
+import 'package:flutter_app/features/settings/presentation/widgets/settings_introduction_debug_card.dart';
 import 'settings_screen.dart';
 
 /// Wired widget connecting SettingsScreen to business logic.
@@ -36,6 +40,7 @@ class SettingsWired extends StatefulWidget {
   final ImageProcessor imageProcessor;
   final AppShellController appShellController;
   final PostsPrivacySettingsRepository postsPrivacySettingsRepository;
+  final IntroductionRepository? introductionRepository;
   final NearbyLocationService? nearbyLocationService;
   final bool showNavigationBar;
 
@@ -49,6 +54,7 @@ class SettingsWired extends StatefulWidget {
     required this.imageProcessor,
     required this.appShellController,
     required this.postsPrivacySettingsRepository,
+    this.introductionRepository,
     this.nearbyLocationService,
     this.showNavigationBar = true,
   });
@@ -69,6 +75,9 @@ class _SettingsWiredState extends State<SettingsWired> {
   ImageQualityPreference _currentVideoQuality =
       ImageQualityPreference.compressed;
   PostsPrivacySettings _postsPrivacySettings = const PostsPrivacySettings();
+  List<IntroductionModel> _debugIntroductions = const [];
+  bool _isLoadingDebugIntroductions = false;
+  String? _debugIntroductionsError;
 
   @override
   void initState() {
@@ -95,6 +104,8 @@ class _SettingsWiredState extends State<SettingsWired> {
           _pickedAvatarBytes = savedAvatar;
         }
       });
+
+      await _loadDebugIntroductions(identity: identity);
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -208,6 +219,89 @@ class _SettingsWiredState extends State<SettingsWired> {
     await widget.postsPrivacySettingsRepository.save(updated);
   }
 
+  Future<void> _loadDebugIntroductions({IdentityModel? identity}) async {
+    final introRepo = widget.introductionRepository;
+    final currentIdentity = identity ?? _identity;
+    if (!kDebugMode || introRepo == null || currentIdentity == null) {
+      return;
+    }
+
+    if (mounted) {
+      setState(() {
+        _isLoadingDebugIntroductions = true;
+        _debugIntroductionsError = null;
+      });
+    }
+
+    try {
+      final introductions = await introRepo.getIntroductionsByIntroducer(
+        currentIdentity.peerId,
+      );
+      introductions.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+
+      if (!mounted) return;
+      setState(() {
+        _debugIntroductions = introductions;
+        _isLoadingDebugIntroductions = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _debugIntroductionsError = e.toString();
+        _isLoadingDebugIntroductions = false;
+      });
+    }
+  }
+
+  Future<void> _deleteDebugIntroduction(String id) async {
+    final introRepo = widget.introductionRepository;
+    if (introRepo == null) return;
+
+    await introRepo.deleteIntroduction(id);
+    if (!mounted) return;
+
+    setState(() {
+      _debugIntroductions = _debugIntroductions
+          .where((intro) => intro.id != id)
+          .toList();
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Deleted local introduction row')),
+    );
+  }
+
+  Future<void> _deleteDebugPair(IntroductionModel target) async {
+    final introRepo = widget.introductionRepository;
+    if (introRepo == null) return;
+
+    final matching = _debugIntroductions.where((intro) {
+      return (intro.recipientId == target.recipientId &&
+              intro.introducedId == target.introducedId) ||
+          (intro.recipientId == target.introducedId &&
+              intro.introducedId == target.recipientId);
+    }).toList();
+
+    for (final intro in matching) {
+      await introRepo.deleteIntroduction(intro.id);
+    }
+
+    if (!mounted) return;
+
+    setState(() {
+      final removedIds = matching.map((intro) => intro.id).toSet();
+      _debugIntroductions = _debugIntroductions
+          .where((intro) => !removedIds.contains(intro.id))
+          .toList();
+    });
+
+    final pairLabel =
+        '${target.recipientUsername ?? target.recipientId} <-> ${target.introducedUsername ?? target.introducedId}';
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('Deleted local pair $pairLabel')));
+  }
+
   Future<void> _onUsernameChanged(String newUsername) async {
     final identity = _identity;
     if (identity == null) return;
@@ -290,7 +384,9 @@ class _SettingsWiredState extends State<SettingsWired> {
 
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(AppLocalizations.of(context)!.settings_photo_fail)),
+            SnackBar(
+              content: Text(AppLocalizations.of(context)!.settings_photo_fail),
+            ),
           );
         }
       }
@@ -341,6 +437,16 @@ class _SettingsWiredState extends State<SettingsWired> {
         onVideoQualityChanged: _onVideoQualityChanged,
         isNearbySharingEnabled: _postsPrivacySettings.sharingEnabled,
         onNearbySharingChanged: _onNearbySharingChanged,
+        debugSection: kDebugMode && widget.introductionRepository != null
+            ? SettingsIntroductionDebugCard(
+                introductions: _debugIntroductions,
+                isLoading: _isLoadingDebugIntroductions,
+                errorText: _debugIntroductionsError,
+                onRefresh: () => _loadDebugIntroductions(),
+                onDeleteIntroduction: _deleteDebugIntroduction,
+                onDeletePair: _deleteDebugPair,
+              )
+            : null,
         onSwitchView: _onSwitchView,
         activeTab: widget.appShellController.activeTab,
         showNavigationBar: widget.showNavigationBar,

@@ -16,16 +16,21 @@ void main() {
     late HttpServer testHttpServer;
     late int serverPort;
 
+    LocalMediaServer _createMediaServer({int? maxAcceptedFileSizeBytes}) {
+      return LocalMediaServer(
+        tempDir: '${tempDir.path}/temp',
+        mediaDir: mediaDir.path,
+        maxAcceptedFileSizeBytes: maxAcceptedFileSizeBytes,
+      );
+    }
+
     setUp(() async {
       tempDir = await Directory.systemTemp.createTemp('media_server_test_');
       mediaDir = await Directory(
         '${tempDir.path}/media',
       ).create(recursive: true);
 
-      mediaServer = LocalMediaServer(
-        tempDir: '${tempDir.path}/temp',
-        mediaDir: mediaDir.path,
-      );
+      mediaServer = _createMediaServer();
 
       // Start an HTTP server that delegates /media/* to the media server.
       testHttpServer = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
@@ -202,7 +207,7 @@ void main() {
         expect(mediaServer.acceptOffer(offer), isFalse);
       });
 
-      test('rejects offer exceeding 100MB size limit', () {
+      test('rejects offer exceeding the configured max size', () {
         final offer = _makeOffer(size: LocalMediaServer.maxFileSize + 1);
         expect(mediaServer.acceptOffer(offer), isFalse);
       });
@@ -594,10 +599,19 @@ void main() {
         }
       });
 
+      test('production maxFileSize constant is 5GB', () {
+        expect(LocalMediaServer.maxFileSize, 5 * 1024 * 1024 * 1024);
+      });
+
       test(
-        'accepts upload exactly at 100MB max size (streamed)',
+        'accepts upload exactly at the configured max size (streamed)',
         () async {
-          final maxSize = LocalMediaServer.maxFileSize;
+          mediaServer.dispose();
+          mediaServer = _createMediaServer(
+            maxAcceptedFileSizeBytes: 512 * 1024,
+          );
+
+          final maxSize = mediaServer.maxAcceptedFileSizeBytes;
           final file = await _createZeroFile(maxSize);
           final hash = await _sha256OfFile(file);
 

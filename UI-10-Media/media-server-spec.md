@@ -44,9 +44,13 @@ No processing. The raw file is encrypted and uploaded as-is. User explicitly opt
 
 | Constant | Value | Rationale |
 |---|---|---|
-| `maxMediaSize` | **100 MB** | Matches WhatsApp/Signal general limit. Covers 99% of photos and reasonable-length video |
-| `maxMediaPerPeer` | **50** | Pending blobs per recipient before oldest are pruned |
+| `maxMediaSize` | **5 GB** | Settled ordinary-media transport cap for encrypted relay uploads |
+| `maxMediaPerPeer` | **50** | Secondary count guard for pending blobs per recipient |
+| `maxMediaBytesPerPeer` | **5 GB** | Primary pending-byte retention guard per recipient so the `5 GB` blob cap does not imply an unsafe `250 GB` backlog window |
 | `mediaTTL` | **7 days** | Same as inbox message TTL. Unclaimed blobs are deleted |
+
+App-recorded voice messages still keep a separate `100 MB` client-side sanity
+limit. This server spec covers the ordinary-media relay path.
 
 ---
 
@@ -98,7 +102,8 @@ Client sends a JSON header, then streams the encrypted bytes.
 
 **Server behavior:**
 1. Validate `size` ≤ `maxMediaSize` (reject with error if exceeded)
-2. Check `maxMediaPerPeer` for recipient (prune oldest if exceeded)
+2. Prune oldest recipient blobs while either `maxMediaPerPeer` or
+   `maxMediaBytesPerPeer` is exceeded
 3. Create file at `/data/media/<to>/<id>.enc`
 4. Read exactly `size` bytes from stream, write to file
 5. If bytes received ≠ `size`, delete partial file, return error
@@ -114,7 +119,7 @@ Client sends a JSON header, then streams the encrypted bytes.
 
 **Error responses:**
 ```json
-{ "status": "ERROR", "error": "file too large: 150000000 > 104857600" }
+{ "status": "ERROR", "error": "size 6000000000 exceeds max 5368709120" }
 { "status": "ERROR", "error": "size mismatch: received 1024, expected 3200000" }
 ```
 
@@ -274,8 +279,9 @@ The `node` field defaults to the relay server's peer ID today. When users run th
 ```go
 const (
     MediaProtocol    = "/mknoon/media/1.0.0"
-    maxMediaSize     = 100 * 1024 * 1024  // 100 MB
+    maxMediaSize         = 5 * 1024 * 1024 * 1024 // 5 GB
     maxMediaPerPeer  = 50
+    maxMediaBytesPerPeer = 5 * 1024 * 1024 * 1024 // 5 GB pending bytes per recipient
     mediaTTL         = 7 * 24 * time.Hour
     mediaCleanupInterval = 10 * time.Minute
     mediaDataDir     = "/data/media"

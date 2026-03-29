@@ -2152,6 +2152,13 @@ func TestGroupDiscoveryBackoff_CapsAtMaximum(t *testing.T) {
 	}
 }
 
+// Test: Group discovery maximum backoff stays short enough for chat UX.
+func TestGroupDiscoveryBackoff_MaximumIsForegroundFriendly(t *testing.T) {
+	if MaxGroupDiscoveryBackoff > time.Minute {
+		t.Fatalf("MaxGroupDiscoveryBackoff = %v, want <= %v", MaxGroupDiscoveryBackoff, time.Minute)
+	}
+}
+
 // Test: countConnectedGroupMembers returns 0 for unknown group.
 func TestCountConnectedGroupMembers_UnknownGroup(t *testing.T) {
 	hexKey := generateTestKey(t)

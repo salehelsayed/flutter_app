@@ -18,8 +18,10 @@ import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
+import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 import 'package:flutter_app/features/settings/presentation/screens/settings_wired.dart';
 import '../../../../core/secure_storage/fake_secure_key_store.dart';
+import '../../../../shared/fakes/in_memory_introduction_repository.dart';
 import '../../../../shared/fakes/in_memory_posts_privacy_settings_repository.dart';
 
 class FakeIdentityRepository implements IdentityRepository {
@@ -195,6 +197,7 @@ void main() {
     Bridge? bridge,
     ContactRepository? contactRepo,
     P2PService? p2pService,
+    InMemoryIntroductionRepository? introductionRepository,
     InMemoryPostsPrivacySettingsRepository? postsPrivacySettingsRepository,
   }) async {
     await tester.pumpWidget(
@@ -210,6 +213,7 @@ void main() {
           secureKeyStore: FakeSecureKeyStore(),
           imageProcessor: ImageProcessor(compressFile: _noOpCompress),
           appShellController: AppShellController(),
+          introductionRepository: introductionRepository,
           postsPrivacySettingsRepository:
               postsPrivacySettingsRepository ??
               InMemoryPostsPrivacySettingsRepository(),
@@ -229,6 +233,71 @@ void main() {
 
     expect(find.text('12D3KooWMyPeer123'), findsOneWidget);
     expect(find.text('@Alice'), findsOneWidget);
+  });
+
+  testWidgets('debug intro card can delete a stored pair', (tester) async {
+    final identityRepo = FakeIdentityRepository(makeIdentity());
+    final introRepo = InMemoryIntroductionRepository();
+    await introRepo.saveIntroduction(
+      IntroductionModel(
+        id: 'intro-b-c',
+        introducerId: '12D3KooWMyPeer123',
+        recipientId: 'peer-b',
+        introducedId: 'peer-c',
+        recipientUsername: 'Bob',
+        introducedUsername: 'Carol',
+        createdAt: '2026-03-29T10:00:00.000Z',
+      ),
+    );
+
+    await introRepo.saveIntroduction(
+      IntroductionModel(
+        id: 'intro-c-b',
+        introducerId: '12D3KooWMyPeer123',
+        recipientId: 'peer-c',
+        introducedId: 'peer-b',
+        recipientUsername: 'Carol',
+        introducedUsername: 'Bob',
+        createdAt: '2026-03-29T11:00:00.000Z',
+      ),
+    );
+
+    await pumpScreen(
+      tester,
+      identityRepo: identityRepo,
+      introductionRepository: introRepo,
+    );
+
+    expect(find.text('DEBUG INTRODUCTIONS'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('settings-intro-debug-row-intro-b-c')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('settings-intro-debug-row-intro-c-b')),
+      findsOneWidget,
+    );
+
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('settings-intro-delete-pair-intro-b-c')),
+    );
+    await tester.pump();
+    await tester.tap(
+      find.byKey(const ValueKey('settings-intro-delete-pair-intro-b-c')),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(await introRepo.getIntroduction('intro-b-c'), isNull);
+    expect(await introRepo.getIntroduction('intro-c-b'), isNull);
+    expect(
+      find.byKey(const ValueKey('settings-intro-debug-row-intro-b-c')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey('settings-intro-debug-row-intro-c-b')),
+      findsNothing,
+    );
   });
 
   testWidgets('copy peer ID: sets clipboard, shows check for 2s then reverts', (

@@ -40,7 +40,7 @@ class _PendingTransfer {
 /// Files are streamed to a temp directory, then moved to a persistent
 /// media directory after the app confirms receipt.
 class LocalMediaServer {
-  static const int maxFileSize = 100 * 1024 * 1024; // 100 MB
+  static const int maxFileSize = 5 * 1024 * 1024 * 1024; // 5 GB
   static const Duration pendingTtl = Duration(minutes: 5);
   static const Set<String> allowedMimePrefixes = {
     'image/',
@@ -51,6 +51,7 @@ class LocalMediaServer {
 
   final String tempDir;
   final String mediaDir;
+  final int maxAcceptedFileSizeBytes;
   final _pendingTransfers = <String, _PendingTransfer>{};
   final _mediaReadyController = StreamController<LocalMediaReady>.broadcast();
   Timer? _cleanupTimer;
@@ -58,7 +59,11 @@ class LocalMediaServer {
   /// Stream of media files received via local WiFi transfer.
   Stream<LocalMediaReady> get mediaReadyStream => _mediaReadyController.stream;
 
-  LocalMediaServer({required this.tempDir, required this.mediaDir}) {
+  LocalMediaServer({
+    required this.tempDir,
+    required this.mediaDir,
+    int? maxAcceptedFileSizeBytes,
+  }) : maxAcceptedFileSizeBytes = maxAcceptedFileSizeBytes ?? maxFileSize {
     _cleanupTimer = Timer.periodic(
       const Duration(minutes: 1),
       (_) => _cleanupExpired(),
@@ -91,7 +96,7 @@ class LocalMediaServer {
     }
 
     // Validate size.
-    if (offer.size > maxFileSize || offer.size <= 0) {
+    if (offer.size > maxAcceptedFileSizeBytes || offer.size <= 0) {
       emitFlowEvent(
         layer: 'FL',
         event: 'LOCAL_MEDIA_OFFER_REJECTED_SIZE',

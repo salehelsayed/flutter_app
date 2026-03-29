@@ -10,6 +10,7 @@ import 'package:flutter_app/features/conversation/presentation/screens/conversat
 import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/conversation_header.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/attachment_preview_strip.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/upload_progress_banner.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bubble.dart';
 
 void main() {
@@ -27,10 +28,14 @@ void main() {
     bool isBlocked = false,
     bool isSending = false,
     ValueListenable<ConversationComposerViewState>? composerStateListenable,
+    UploadProgressViewState? uploadProgress,
+    VoidCallback? onCancelUpload,
     String? activeQuoteText,
     bool isActiveQuoteUnavailable = false,
     VoidCallback? onClearQuote,
     ValueChanged<String>? onQuoteReply,
+    ValueChanged<String>? onRetryFailedMedia,
+    ValueChanged<String>? onDeleteFailedMedia,
   }) {
     return MaterialApp(
       locale: const Locale('en'),
@@ -55,10 +60,14 @@ void main() {
           isBlocked: isBlocked,
           isSending: isSending,
           composerStateListenable: composerStateListenable,
+          uploadProgress: uploadProgress,
+          onCancelUpload: onCancelUpload,
           activeQuoteText: activeQuoteText,
           isActiveQuoteUnavailable: isActiveQuoteUnavailable,
           onClearQuote: onClearQuote,
           onQuoteReply: onQuoteReply,
+          onRetryFailedMedia: onRetryFailedMedia,
+          onDeleteFailedMedia: onDeleteFailedMedia,
         ),
       ),
     );
@@ -86,6 +95,22 @@ void main() {
       createdAt: '2026-02-09T15:30:01.000Z',
       media: media,
       quotedMessageId: quotedMessageId,
+    );
+  }
+
+  MediaAttachment makeImageAttachment({
+    String id = 'att-1',
+    String localPath = '/tmp/att-1.jpg',
+  }) {
+    return MediaAttachment(
+      id: id,
+      messageId: '',
+      mime: 'image/jpeg',
+      size: 42,
+      mediaType: 'image',
+      localPath: localPath,
+      downloadStatus: 'done',
+      createdAt: '2026-02-09T15:30:00.000Z',
     );
   }
 
@@ -179,6 +204,47 @@ void main() {
       await tester.pump();
 
       expect(cleared, isTrue);
+    });
+
+    testWidgets('upload banner shows cancel affordance only when supplied', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        buildTestWidget(
+          messages: [makeMessage()],
+          uploadProgress: const UploadProgressViewState(
+            sentBytes: 5,
+            totalBytes: 10,
+          ),
+        ),
+      );
+      await pumpFrames(tester);
+
+      expect(
+        find.byKey(const ValueKey('upload-progress-banner')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('upload-progress-cancel-button')),
+        findsNothing,
+      );
+
+      await tester.pumpWidget(
+        buildTestWidget(
+          messages: [makeMessage()],
+          uploadProgress: const UploadProgressViewState(
+            sentBytes: 5,
+            totalBytes: 10,
+          ),
+          onCancelUpload: () {},
+        ),
+      );
+      await pumpFrames(tester);
+
+      expect(
+        find.byKey(const ValueKey('upload-progress-cancel-button')),
+        findsOneWidget,
+      );
     });
 
     testWidgets('wraps incoming messages with swipe-to-quote when enabled', (
@@ -289,6 +355,94 @@ void main() {
 
       expect(find.byType(CircularProgressIndicator), findsOneWidget);
     });
+
+    testWidgets('failed outgoing media rows show retry and delete controls', (
+      tester,
+    ) async {
+      String? retriedId;
+      String? deletedId;
+      await tester.pumpWidget(
+        buildTestWidget(
+          messages: [
+            makeMessage(
+              id: 'failed-media',
+              isIncoming: false,
+              status: 'failed',
+              media: [makeImageAttachment()],
+            ),
+          ],
+          initialLoadDone: true,
+          onRetryFailedMedia: (id) => retriedId = id,
+          onDeleteFailedMedia: (id) => deletedId = id,
+        ),
+      );
+      await pumpFrames(tester);
+
+      final retryKey = find.byKey(
+        const ValueKey('failed-media-retry-failed-media'),
+      );
+      final deleteKey = find.byKey(
+        const ValueKey('failed-media-delete-failed-media'),
+      );
+      expect(retryKey, findsOneWidget);
+      expect(deleteKey, findsOneWidget);
+
+      await tester.tap(retryKey);
+      await tester.pump();
+      await tester.tap(deleteKey);
+      await tester.pump();
+
+      expect(retriedId, 'failed-media');
+      expect(deletedId, 'failed-media');
+    });
+
+    testWidgets(
+      'incoming and failed text-only rows do not show failed-media controls',
+      (tester) async {
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: [
+              makeMessage(
+                id: 'incoming-failed-media',
+                isIncoming: true,
+                status: 'failed',
+                media: [makeImageAttachment(id: 'att-incoming')],
+              ),
+              makeMessage(
+                id: 'failed-text-only',
+                isIncoming: false,
+                status: 'failed',
+              ),
+            ],
+            initialLoadDone: true,
+            onRetryFailedMedia: (_) {},
+            onDeleteFailedMedia: (_) {},
+          ),
+        );
+        await pumpFrames(tester);
+
+        expect(
+          find.byKey(
+            const ValueKey('failed-media-retry-incoming-failed-media'),
+          ),
+          findsNothing,
+        );
+        expect(
+          find.byKey(const ValueKey('failed-media-retry-failed-text-only')),
+          findsNothing,
+        );
+        expect(
+          find.byKey(
+            const ValueKey('failed-media-delete-incoming-failed-media'),
+          ),
+          findsNothing,
+        );
+        expect(
+          find.byKey(const ValueKey('failed-media-delete-failed-text-only')),
+          findsNothing,
+        );
+      },
+    );
 
     testWidgets('keeps stable message/audio keys across list updates', (
       tester,
@@ -405,6 +559,7 @@ void main() {
         await tester.pump();
 
         expect(find.byType(AttachmentPreviewStrip), findsOneWidget);
+        expect(find.text('Processing'), findsOneWidget);
         expect(find.text('40%'), findsOneWidget);
         expect(
           tester.widget<ConversationHeader>(find.byType(ConversationHeader)),

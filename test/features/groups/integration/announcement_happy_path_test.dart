@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/groups/application/create_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/application/send_group_reaction_use_case.dart';
@@ -14,10 +15,13 @@ import '../../../shared/fakes/fake_group_pubsub_network.dart';
 import '../../../shared/fakes/group_test_user.dart';
 import '../../conversation/domain/repositories/fake_reaction_repository.dart';
 
-Widget _buildReaderConversation({
+Widget _buildConversation({
   required GroupModel group,
   required List<GroupMessage> messages,
   required String ownPeerId,
+  required bool canWrite,
+  ValueChanged<String>? onRetryFailedMedia,
+  ValueChanged<String>? onDeleteFailedMedia,
 }) {
   return MaterialApp(
     locale: const Locale('en'),
@@ -30,8 +34,10 @@ Widget _buildReaderConversation({
         ownPeerId: ownPeerId,
         onSend: (_) {},
         onBack: () {},
-        canWrite: false,
+        canWrite: canWrite,
         initialLoadDone: true,
+        onRetryFailedMedia: onRetryFailedMedia,
+        onDeleteFailedMedia: onDeleteFailedMedia,
       ),
     ),
   );
@@ -111,10 +117,11 @@ void main() {
       expect(received.isIncoming, isTrue);
 
       await tester.pumpWidget(
-        _buildReaderConversation(
+        _buildConversation(
           group: readerGroup,
           messages: readerMessages,
           ownPeerId: reader.peerId,
+          canWrite: false,
         ),
       );
 
@@ -123,6 +130,80 @@ void main() {
         findsOneWidget,
       );
       expect(find.text('Write something...'), findsNothing);
+
+      final failedAdminMedia = GroupMessage(
+        id: 'failed-announcement-media',
+        groupId: created.id,
+        senderPeerId: admin.peerId,
+        senderUsername: admin.username,
+        text: '',
+        timestamp: DateTime.now().toUtc(),
+        status: 'failed',
+        isIncoming: false,
+        createdAt: DateTime.now().toUtc(),
+        media: const [
+          MediaAttachment(
+            id: 'failed-announcement-attachment',
+            messageId: 'failed-announcement-media',
+            mime: 'image/jpeg',
+            size: 10,
+            mediaType: 'image',
+            localPath: '/tmp/failed-announcement.jpg',
+            downloadStatus: 'upload_failed',
+            createdAt: '2026-03-29T10:00:00.000Z',
+          ),
+        ],
+      );
+
+      await tester.pumpWidget(
+        _buildConversation(
+          group: created,
+          messages: [failedAdminMedia],
+          ownPeerId: admin.peerId,
+          canWrite: true,
+          onRetryFailedMedia: (_) {},
+          onDeleteFailedMedia: (_) {},
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(
+        find.byKey(
+          const ValueKey('failed-media-retry-failed-announcement-media'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(
+          const ValueKey('failed-media-delete-failed-announcement-media'),
+        ),
+        findsOneWidget,
+      );
+
+      await tester.pumpWidget(
+        _buildConversation(
+          group: readerGroup,
+          messages: [failedAdminMedia],
+          ownPeerId: reader.peerId,
+          canWrite: false,
+          onRetryFailedMedia: (_) {},
+          onDeleteFailedMedia: (_) {},
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(
+        find.byKey(
+          const ValueKey('failed-media-retry-failed-announcement-media'),
+        ),
+        findsNothing,
+      );
+      expect(
+        find.byKey(
+          const ValueKey('failed-media-delete-failed-announcement-media'),
+        ),
+        findsNothing,
+      );
 
       final reactionRepo = FakeReactionRepository();
       final (reactionResult, reaction) = await sendGroupReaction(

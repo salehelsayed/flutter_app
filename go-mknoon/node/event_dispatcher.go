@@ -47,8 +47,9 @@ type EventDispatcher struct {
 // coalescedEventTypes lists events where only the latest state matters.
 // These are status-like events that can safely skip intermediate states.
 var coalescedEventTypes = map[string]bool{
-	"addresses:updated": true,
-	"relay:state":       true,
+	"addresses:updated":     true,
+	"relay:state":           true,
+	"media:upload_progress": true,
 }
 
 // NewEventDispatcher creates a dispatcher that delivers events to the callback

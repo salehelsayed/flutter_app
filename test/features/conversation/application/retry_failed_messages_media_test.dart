@@ -43,9 +43,7 @@ class _FakeMediaAttachmentRepository implements MediaAttachmentRepository {
   ) async {
     getAttachmentsForMessageCallCount++;
     lastQueriedMessageId = messageId;
-    return _attachments
-        .where((a) => a.messageId == messageId)
-        .toList();
+    return _attachments.where((a) => a.messageId == messageId).toList();
   }
 
   @override
@@ -78,6 +76,22 @@ class _FakeMediaAttachmentRepository implements MediaAttachmentRepository {
 
   @override
   Future<int> deleteAttachmentsForMessage(String messageId) async => 0;
+
+  @override
+  Future<int> markUploadPendingAttachmentsFailedForMessage(
+    String messageId,
+  ) async {
+    var count = 0;
+    for (var i = 0; i < _attachments.length; i++) {
+      final attachment = _attachments[i];
+      if (attachment.messageId == messageId &&
+          attachment.downloadStatus == 'upload_pending') {
+        _attachments[i] = attachment.copyWith(downloadStatus: 'upload_failed');
+        count++;
+      }
+    }
+    return count;
+  }
 
   @override
   Future<List<MediaAttachment>> getPendingDownloads() async => const [];
@@ -166,14 +180,17 @@ void main() {
     messageRepo = FakeMessageRepository();
     mediaAttachmentRepo = _FakeMediaAttachmentRepository();
     identityRepo = FakeIdentityRepository()
-      ..seed(IdentityModel(
-        peerId: 'peer-alice',
-        publicKey: 'pk-alice',
-        privateKey: 'sk-alice',
-        mnemonic12: 'word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12',
-        createdAt: _testTs,
-        updatedAt: _testTs,
-      ));
+      ..seed(
+        IdentityModel(
+          peerId: 'peer-alice',
+          publicKey: 'pk-alice',
+          privateKey: 'sk-alice',
+          mnemonic12:
+              'word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12',
+          createdAt: _testTs,
+          updatedAt: _testTs,
+        ),
+      );
     contactRepo = FakeContactRepository()
       ..seed([
         ContactModel(
@@ -235,38 +252,32 @@ void main() {
     // ------------------------------------------------------------------
     // C.1-TEST-2: done attachments are passed to sendChatMessage
     // ------------------------------------------------------------------
-    test(
-      'passes done attachments to sendChatMessage on retry',
-      () async {
-        final msg = _makeFailedMessage();
-        final doneAttachment = _makeDoneAttachment(messageId: msg.id);
-        messageRepo.seed([msg]);
-        mediaAttachmentRepo.seedAttachments(
-          messageId: msg.id,
-          attachments: [doneAttachment],
-        );
+    test('passes done attachments to sendChatMessage on retry', () async {
+      final msg = _makeFailedMessage();
+      final doneAttachment = _makeDoneAttachment(messageId: msg.id);
+      messageRepo.seed([msg]);
+      mediaAttachmentRepo.seedAttachments(
+        messageId: msg.id,
+        attachments: [doneAttachment],
+      );
 
-        final count = await retryFailedMessages(
-          messageRepo: messageRepo,
-          identityRepo: identityRepo,
-          contactRepo: contactRepo,
-          p2pService: p2pService,
-          bridge: bridge,
-          mediaAttachmentRepo: mediaAttachmentRepo,
-        );
+      final count = await retryFailedMessages(
+        messageRepo: messageRepo,
+        identityRepo: identityRepo,
+        contactRepo: contactRepo,
+        p2pService: p2pService,
+        bridge: bridge,
+        mediaAttachmentRepo: mediaAttachmentRepo,
+      );
 
-        expect(count, 1);
+      expect(count, 1);
 
-        // The retried message was sent via inbox fallback; verify the wire
-        // content includes the attachment id (sendChatMessage serializes
-        // media into the MessagePayload -> wire JSON).
-        expect(p2pService.lastStoreInInboxMessage, isNotNull);
-        expect(
-          p2pService.lastStoreInInboxMessage!,
-          contains(doneAttachment.id),
-        );
-      },
-    );
+      // The retried message was sent via inbox fallback; verify the wire
+      // content includes the attachment id (sendChatMessage serializes
+      // media into the MessagePayload -> wire JSON).
+      expect(p2pService.lastStoreInInboxMessage, isNotNull);
+      expect(p2pService.lastStoreInInboxMessage!, contains(doneAttachment.id));
+    });
 
     // ------------------------------------------------------------------
     // C.1-TEST-3: text-only message retries with empty attachment list
@@ -348,10 +359,7 @@ void main() {
     test(
       'voice message with empty text and done attachment retries successfully',
       () async {
-        final voiceMsg = _makeFailedMessage(
-          id: 'msg-voice-001',
-          text: '',
-        );
+        final voiceMsg = _makeFailedMessage(id: 'msg-voice-001', text: '');
         final voiceAttachment = _makeDoneAttachment(
           id: 'blob-voice-001',
           messageId: voiceMsg.id,
@@ -376,10 +384,7 @@ void main() {
 
         // Must succeed -- sendChatMessage allows empty text when hasAttachments
         expect(count, 1);
-        expect(
-          p2pService.lastStoreInInboxMessage!,
-          contains('blob-voice-001'),
-        );
+        expect(p2pService.lastStoreInInboxMessage!, contains('blob-voice-001'));
       },
     );
 
@@ -407,10 +412,7 @@ void main() {
         expect(count, 1);
         // Message was sent but without media (text-only)
         expect(p2pService.lastStoreInInboxMessage, isNotNull);
-        expect(
-          p2pService.lastStoreInInboxMessage!,
-          contains('Photo attached'),
-        );
+        expect(p2pService.lastStoreInInboxMessage!, contains('Photo attached'));
         // mediaAttachmentRepo was never queried
         expect(mediaAttachmentRepo.getAttachmentsForMessageCallCount, 0);
       },
@@ -433,10 +435,7 @@ void main() {
         );
 
         // Message 2: text-only, no attachments in DB
-        final msg2 = _makeFailedMessage(
-          id: 'msg-text-only',
-          text: 'Just text',
-        );
+        final msg2 = _makeFailedMessage(id: 'msg-text-only', text: 'Just text');
 
         // Message 3: only upload_pending attachments (Part F territory)
         final msg3 = _makeFailedMessage(
@@ -475,5 +474,40 @@ void main() {
         expect(mediaAttachmentRepo.getAttachmentsForMessageCallCount, 4);
       },
     );
+
+    test('retryFailedMessage only retries the requested failed row', () async {
+      final target = _makeFailedMessage(
+        id: 'msg-targeted-media',
+        text: 'Retry only me',
+      );
+      final untouched = _makeFailedMessage(
+        id: 'msg-untouched-media',
+        text: 'Leave me failed',
+      );
+      messageRepo.seed([target, untouched]);
+      mediaAttachmentRepo.seedAttachments(
+        messageId: target.id,
+        attachments: [_makeDoneAttachment(messageId: target.id)],
+      );
+      mediaAttachmentRepo.seedAttachments(
+        messageId: untouched.id,
+        attachments: [_makeDoneAttachment(messageId: untouched.id)],
+      );
+
+      final count = await retryFailedMessage(
+        messageId: target.id,
+        messageRepo: messageRepo,
+        identityRepo: identityRepo,
+        contactRepo: contactRepo,
+        p2pService: p2pService,
+        bridge: bridge,
+        mediaAttachmentRepo: mediaAttachmentRepo,
+      );
+
+      expect(count, 1);
+      expect(p2pService.lastStoreInInboxMessage, contains('Retry only me'));
+      expect((await messageRepo.getMessage(untouched.id))!.status, 'failed');
+      expect(mediaAttachmentRepo.lastQueriedMessageId, target.id);
+    });
   });
 }

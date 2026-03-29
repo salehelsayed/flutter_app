@@ -22,6 +22,8 @@ import 'package:flutter_app/features/groups/domain/repositories/group_message_re
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/expandable_fab.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
+import 'package:flutter_app/features/introduction/application/introduction_listener.dart';
+import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_wired.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_close_button.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_search_trigger.dart';
@@ -37,6 +39,7 @@ import '../../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../../shared/fakes/in_memory_media_attachment_repository.dart';
 import '../../../../shared/fakes/in_memory_message_repository.dart';
 import '../../../../shared/fakes/in_memory_posts_privacy_settings_repository.dart';
+import '../../../../shared/fakes/in_memory_introduction_repository.dart';
 import '../../../contacts/domain/repositories/fake_contact_repository.dart';
 import '../../../contact_request/domain/repositories/fake_contact_request_repository.dart';
 import '../../../identity/domain/repositories/fake_identity_repository.dart';
@@ -165,6 +168,8 @@ void main() {
     ContactRequestListener? contactRequestListener,
     ChatMessageListener? chatMessageListener,
     _FakeGroupMessageListener? groupMessageListener,
+    IntroductionListener? introductionListener,
+    InMemoryIntroductionRepository? introductionRepository,
     FakeContactRepository? contactRepository,
     InMemoryMessageRepository? messageRepository,
     InMemoryGroupRepository? groupRepository,
@@ -218,6 +223,8 @@ void main() {
       groupRepository: effectiveGroupRepo,
       groupMessageRepository: effectiveGroupMessageRepo,
       groupMessageListener: gmListener,
+      introductionRepository: introductionRepository,
+      introductionListener: introductionListener,
       postsPrivacySettingsRepository: postsPrivacySettingsRepository,
       initialFilterTab: initialFilterTab,
       debugOnHeaderBuild: onHeaderBuild,
@@ -1118,6 +1125,99 @@ void main() {
     );
 
     testWidgets(
+      'late mutual acceptance and later block do not let stale intro reload repopulate Intros',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+
+        final introRepo = _SequencedIntroductionRepository();
+        final fakeIntroListener = _FakeIntroductionListener(
+          introRepo: introRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          messageRepo: messageRepo,
+        );
+        final fakeChatListener = _FakeChatMessageListener(
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+        );
+
+        final pendingIntro = IntroductionModel(
+          id: 'intro-late-accept',
+          introducerId: 'peer-A',
+          recipientId: testIdentity.peerId,
+          introducedId: 'intro-peer-id',
+          introducerUsername: 'Noor',
+          recipientUsername: testIdentity.username,
+          introducedUsername: 'Dora',
+          recipientStatus: IntroductionStatus.accepted,
+          introducedStatus: IntroductionStatus.pending,
+          status: IntroductionOverallStatus.pending,
+          createdAt: '2026-03-01T12:00:00.000Z',
+        );
+
+        introRepo.pendingResultsByCall[1] = [pendingIntro];
+        introRepo.pendingResultsByCall[2] = [pendingIntro];
+        introRepo.pendingResultsByCall[3] = const <IntroductionModel>[];
+        introRepo.pendingResultsByCall[4] = const <IntroductionModel>[];
+        introRepo.pendingCallGates[2] = Completer<void>();
+
+        await tester.pumpWidget(
+          buildOrbitWired(
+            chatMessageListener: fakeChatListener,
+            introductionRepository: introRepo,
+            introductionListener: fakeIntroListener,
+          ),
+        );
+
+        await introRepo.waitForPendingCall(2);
+
+        final introducedContact = ContactModel(
+          peerId: 'intro-peer-id',
+          publicKey: 'intro-pk',
+          rendezvous: '/dns4/relay/tcp/443',
+          username: 'Dora',
+          signature: 'intro-sig',
+          scannedAt: '2026-03-02T08:00:00.000Z',
+          introducedBy: 'Noor',
+          introducedByPeerId: 'peer-A',
+        );
+        await contactRepo.addContact(introducedContact);
+
+        fakeIntroListener.emitIntroStatusChanged(
+          pendingIntro.copyWith(
+            introducedStatus: IntroductionStatus.accepted,
+            status: IntroductionOverallStatus.mutualAccepted,
+          ),
+        );
+
+        await pumpOrbitFrames(tester, count: 6);
+
+        expect(find.text('Dora'), findsWidgets);
+
+        await contactRepo.blockContact(introducedContact.peerId);
+        fakeChatListener.emitContactUpdate(
+          introducedContact.copyWith(
+            isBlocked: true,
+            blockedAt: '2026-03-02T08:05:00.000Z',
+          ),
+        );
+
+        await pumpOrbitFrames(tester, count: 4);
+
+        introRepo.pendingCallGates[2]!.complete();
+        await pumpOrbitFrames(tester, count: 6);
+
+        await tester.tap(find.text('Intros'));
+        await pumpOrbitFrames(tester, count: 3);
+
+        expect(find.text('No introductions yet'), findsOneWidget);
+        expect(find.text('Unavailable'), findsNothing);
+      },
+    );
+
+    testWidgets(
       'pushed conversation route shows loading shell before delayed initial page resolves',
       (tester) async {
         setLargeTestSurface(tester);
@@ -1579,6 +1679,71 @@ class _DelayedSpyGroupRepository extends _SpyGroupRepository {
       await gate.future;
     }
     return super.getAllGroups();
+  }
+}
+
+class _FakeIntroductionListener extends IntroductionListener {
+  final _introReceivedController =
+      StreamController<IntroductionModel>.broadcast();
+  final _introStatusController =
+      StreamController<IntroductionModel>.broadcast();
+
+  _FakeIntroductionListener({
+    required super.introRepo,
+    required super.contactRepo,
+    required super.bridge,
+    required super.messageRepo,
+  }) : super(
+         introductionStream: const Stream<ChatMessage>.empty(),
+         getOwnMlKemSecretKey: () async => null,
+         getOwnPeerId: () async => null,
+       );
+
+  @override
+  Stream<IntroductionModel> get introReceivedStream =>
+      _introReceivedController.stream;
+
+  @override
+  Stream<IntroductionModel> get introStatusChangedStream =>
+      _introStatusController.stream;
+
+  void emitIntroStatusChanged(IntroductionModel intro) =>
+      _introStatusController.add(intro);
+}
+
+class _SequencedIntroductionRepository extends InMemoryIntroductionRepository {
+  final Map<int, Completer<void>> pendingCallGates = {};
+  final Map<int, List<IntroductionModel>> pendingResultsByCall = {};
+  final Map<int, Completer<void>> _pendingCallWaiters = {};
+  int _pendingCallCount = 0;
+
+  @override
+  Future<List<IntroductionModel>> getPendingIntroductionsForUser(
+    String peerId,
+  ) async {
+    _pendingCallCount++;
+    final callIndex = _pendingCallCount;
+    _pendingCallWaiters.remove(callIndex)?.complete();
+    final gate = pendingCallGates[callIndex];
+    if (gate != null) {
+      await gate.future;
+    }
+    final configured = pendingResultsByCall[callIndex];
+    if (configured != null) {
+      return List<IntroductionModel>.from(configured);
+    }
+    return super.getPendingIntroductionsForUser(peerId);
+  }
+
+  Future<void> waitForPendingCall(int callIndex) {
+    if (_pendingCallCount >= callIndex) {
+      return Future.value();
+    }
+    final waiter = _pendingCallWaiters.putIfAbsent(
+      callIndex,
+      () => Completer<void>(),
+    );
+    return waiter.future;
   }
 }
 

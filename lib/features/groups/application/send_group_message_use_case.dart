@@ -22,7 +22,8 @@ enum SendGroupMessageResult {
 
   /// Publish succeeded but 0 peers were connected to the topic.
   /// The message was stored in the relay inbox as a fallback.
-  /// The returned [GroupMessage] has status `'pending'`.
+  /// The returned [GroupMessage] still has status `'sent'` because the
+  /// relay inbox accepted custody for offline delivery.
   successNoPeers,
 }
 
@@ -466,14 +467,16 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
 
   // topicPeers == 0
   if (inboxOk) {
-    // 0-peer + inbox OK → successNoPeers, status 'pending'
-    final pendingMessage = prePersistMessage.copyWith(
-      status: 'pending',
+    // 0-peer + inbox OK → successNoPeers, but persist as a successful send.
+    // The relay inbox has already accepted durable delivery for offline peers,
+    // so a permanent "pending" clock is misleading in the UI.
+    final sentMessage = prePersistMessage.copyWith(
+      status: 'sent',
       wireEnvelope: null,
       inboxStored: true,
       inboxRetryPayload: null,
     );
-    await msgRepo.saveMessage(pendingMessage);
+    await msgRepo.saveMessage(sentMessage);
 
     // Save media attachments
     if (mediaAttachments != null && mediaAttachmentRepo != null) {
@@ -495,9 +498,9 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     );
     emitGroupSendTiming(
       outcome: 'success_no_peers',
-      details: {'status': pendingMessage.status, 'topicPeers': 0},
+      details: {'status': sentMessage.status, 'topicPeers': 0},
     );
-    return (SendGroupMessageResult.successNoPeers, pendingMessage);
+    return (SendGroupMessageResult.successNoPeers, sentMessage);
   } else {
     // 0-peer + inbox fail → error
     await msgRepo.updateMessageStatus(resolvedMessageId, 'failed');

@@ -91,6 +91,77 @@ void main() {
     );
 
     test(
+      '1b. active send fails during transport loss, then online transition retrier heals the same row once',
+      () async {
+        final p2pService = FakeP2PService(
+          initialState: onlineState,
+          storeInInboxResult: false,
+          sendMessageWithReplyResult: const SendMessageResult(sent: false),
+          discoverPeerResult: null,
+        );
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'peer-bob',
+          text: 'Heal me after switch',
+          senderPeerId: 'peer-alice',
+          senderUsername: 'Alice',
+          bridge: bridge,
+          recipientMlKemPublicKey: 'bob-mlkem-pk',
+        );
+
+        expect(
+          result,
+          anyOf(
+            SendChatMessageResult.sendFailed,
+            SendChatMessageResult.peerNotFound,
+            SendChatMessageResult.dialFailed,
+          ),
+        );
+        expect(message, isNotNull);
+        expect(message!.status, 'failed');
+        expect(message.wireEnvelope, isNotNull);
+
+        final failedId = message.id;
+        final failedRows = await messageRepo.getMessagesForContact('peer-bob');
+        expect(failedRows, hasLength(1));
+        expect(failedRows.single.id, failedId);
+        expect(failedRows.single.status, 'failed');
+
+        p2pService.emitState(NodeState.stopped);
+
+        final retrier = PendingMessageRetrier(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+        );
+
+        p2pService.storeInInboxResult = true;
+        retrier.start();
+        p2pService.emitState(onlineState);
+        await Future.delayed(const Duration(seconds: 6));
+
+        final recoveredRows = await messageRepo.getMessagesForContact('peer-bob');
+        expect(recoveredRows, hasLength(1));
+        expect(recoveredRows.single.id, failedId);
+        expect(recoveredRows.single.status, 'delivered');
+        expect(recoveredRows.single.transport, 'inbox');
+        expect(
+          p2pService.storeInInboxCallCount,
+          2,
+          reason: 'One failed initial inbox handoff plus one successful retry',
+        );
+
+        retrier.dispose();
+        p2pService.dispose();
+      },
+      timeout: const Timeout(Duration(seconds: 15)),
+    );
+
+    test(
       '2. pause -> reconnect -> retrier delivers the original row exactly once',
       () async {
         messageRepo.seed([
